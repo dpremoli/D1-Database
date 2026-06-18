@@ -17,7 +17,9 @@ ON CONFLICT (iso_code) DO NOTHING;
 -- ---------------------------------------------------------------------------
 -- Key alloys from the Alloy Codes sheet (representative subset)
 -- ---------------------------------------------------------------------------
-INSERT INTO materials (alloy_code, common_name, iso_code, density_g_per_cm3, export_controlled) VALUES
+INSERT INTO materials
+    (alloy_code, common_name, iso_code, density_g_per_cm3, export_controlled)
+VALUES
     ('AA',   'Ti-6Al-4V Grade 5',               'S', 4.430, FALSE),
     ('AB',   'Ti-6Al-4V Grade 23 (ELI)',        'S', 4.420, FALSE),
     ('AC',   'Commercially Pure Ti Grade 2',     'S', 4.510, FALSE),
@@ -55,11 +57,17 @@ ON CONFLICT (method_code) DO NOTHING;
 -- Method parameters — FAST/SPS Sintering
 -- ---------------------------------------------------------------------------
 WITH method AS (SELECT method_id FROM manufacturing_methods WHERE method_code = 'MF')
+
 INSERT INTO method_parameters
     (method_id, parameter_name, display_name, data_type, unit_of_measure, is_required, sort_order)
 SELECT
-    method.method_id, p.parameter_name, p.display_name, p.data_type, p.unit_of_measure,
-    p.is_required, p.sort_order
+    method.method_id,
+    p.parameter_name,
+    p.display_name,
+    p.data_type,
+    p.unit_of_measure,
+    p.is_required,
+    p.sort_order
 FROM method, (VALUES
     ('peak_temperature_celsius',  'Peak Temperature',       'numeric',   'degC',   TRUE,  1),
     ('hold_time_minutes',         'Hold Time',              'numeric',   'min',    TRUE,  2),
@@ -76,11 +84,17 @@ ON CONFLICT (method_id, parameter_name) DO NOTHING;
 -- Method parameters — CNC Turning
 -- ---------------------------------------------------------------------------
 WITH method AS (SELECT method_id FROM manufacturing_methods WHERE method_code = 'MC')
+
 INSERT INTO method_parameters
     (method_id, parameter_name, display_name, data_type, unit_of_measure, is_required, sort_order)
 SELECT
-    method.method_id, p.parameter_name, p.display_name, p.data_type, p.unit_of_measure,
-    p.is_required, p.sort_order
+    method.method_id,
+    p.parameter_name,
+    p.display_name,
+    p.data_type,
+    p.unit_of_measure,
+    p.is_required,
+    p.sort_order
 FROM method, (VALUES
     ('cutting_speed_m_per_min',   'Cutting Speed (Vc)',     'numeric',   'm/min',   TRUE,  1),
     ('feed_rate_mm_per_rev',      'Feed Rate (Fz)',          'numeric',   'mm/rev',  TRUE,  2),

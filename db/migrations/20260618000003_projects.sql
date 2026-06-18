@@ -14,8 +14,8 @@ CREATE TABLE projects (
     end_date                        DATE,
     export_controlled               BOOLEAN     NOT NULL DEFAULT FALSE,
     is_active                       BOOLEAN     NOT NULL DEFAULT TRUE,
-    created_at                      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at                      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                      TIMESTAMPTZ NOT NULL DEFAULT now(),
     version                         INTEGER     NOT NULL DEFAULT 1,
     CONSTRAINT projects_pkey PRIMARY KEY (project_id),
     CONSTRAINT projects_code_unique UNIQUE (project_code)

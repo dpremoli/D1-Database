@@ -51,7 +51,7 @@ CREATE TABLE materials (
     export_controlled   BOOLEAN     NOT NULL DEFAULT FALSE,
     datasheet_url       TEXT,
     notes               TEXT,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT materials_pkey PRIMARY KEY (material_id),
     CONSTRAINT materials_alloy_code_unique UNIQUE (alloy_code),
     CONSTRAINT materials_iso_code_fkey
@@ -79,8 +79,8 @@ CREATE TABLE manufacturing_methods (
     method_code     VARCHAR(8)  NOT NULL,
     method_name     TEXT        NOT NULL,
     description     TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     version         INTEGER     NOT NULL DEFAULT 1,
     CONSTRAINT manufacturing_methods_pkey PRIMARY KEY (method_id),
     CONSTRAINT manufacturing_methods_code_unique UNIQUE (method_code)
@@ -105,7 +105,7 @@ CREATE TABLE method_parameters (
     unit_of_measure TEXT,
     is_required     BOOLEAN     NOT NULL DEFAULT FALSE,
     sort_order      INTEGER     NOT NULL DEFAULT 0,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT method_parameters_pkey PRIMARY KEY (parameter_id),
     CONSTRAINT method_parameters_method_param_unique UNIQUE (method_id, parameter_name),
     CONSTRAINT method_parameters_method_id_fkey
@@ -136,8 +136,8 @@ CREATE TABLE equipment (
     location        TEXT,
     is_active       BOOLEAN     NOT NULL DEFAULT TRUE,
     notes           TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     version         INTEGER     NOT NULL DEFAULT 1,
     CONSTRAINT equipment_pkey PRIMARY KEY (equipment_id),
     CONSTRAINT equipment_code_unique UNIQUE (equipment_code)
@@ -160,8 +160,8 @@ CREATE TABLE tools (
     tool_type   TEXT,
     is_active   BOOLEAN     NOT NULL DEFAULT TRUE,
     notes       TEXT,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     version     INTEGER     NOT NULL DEFAULT 1,
     CONSTRAINT tools_pkey PRIMARY KEY (tool_id),
     CONSTRAINT tools_code_unique UNIQUE (tool_code)
@@ -184,8 +184,8 @@ CREATE TABLE insert_types (
     coating         TEXT,
     geometry_notes  TEXT,
     datasheet_url   TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     version         INTEGER     NOT NULL DEFAULT 1,
     CONSTRAINT insert_types_pkey PRIMARY KEY (insert_type_id),
     CONSTRAINT insert_types_code_unique UNIQUE (type_code)

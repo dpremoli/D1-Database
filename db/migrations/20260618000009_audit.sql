@@ -6,7 +6,7 @@
 
 CREATE TABLE audit_logs (
     log_id          BIGSERIAL   NOT NULL,
-    event_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    event_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
     table_name      TEXT        NOT NULL,
     record_id       TEXT        NOT NULL,
     action_type     TEXT        NOT NULL,
@@ -20,8 +20,10 @@ CREATE TABLE audit_logs (
 );
 
 -- audit_logs is append-only; deny UPDATE and DELETE at the DB level.
+-- noqa: disable=PRS
 CREATE RULE audit_logs_no_update AS ON UPDATE TO audit_logs DO INSTEAD NOTHING;
 CREATE RULE audit_logs_no_delete AS ON DELETE TO audit_logs DO INSTEAD NOTHING;
+-- noqa: enable=PRS
 
 COMMENT ON TABLE audit_logs
     IS 'Append-only immutable audit trail. Every INSERT/UPDATE/DELETE on a core table'

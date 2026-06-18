@@ -21,8 +21,8 @@ CREATE TABLE test_sessions (
     plot_uris               JSONB,
     status                  TEXT        NOT NULL DEFAULT 'registered',
     notes                   TEXT,
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     version                 INTEGER     NOT NULL DEFAULT 1,
     CONSTRAINT test_sessions_pkey PRIMARY KEY (session_id),
     CONSTRAINT test_sessions_sample_fkey

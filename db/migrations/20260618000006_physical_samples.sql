@@ -20,8 +20,8 @@ CREATE TABLE physical_samples (
     manufactured_date   DATE,
     export_controlled   BOOLEAN     NOT NULL DEFAULT FALSE,
     notes               TEXT,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     version             INTEGER     NOT NULL DEFAULT 1,
     CONSTRAINT physical_samples_pkey PRIMARY KEY (sample_id),
     CONSTRAINT physical_samples_code_unique UNIQUE (sample_code),
@@ -69,7 +69,7 @@ CREATE TABLE sample_genealogy (
     relationship_type   TEXT        NOT NULL DEFAULT 'derived_from',
     fraction            NUMERIC(5, 4),
     notes               TEXT,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT sample_genealogy_pkey PRIMARY KEY (child_sample_id, parent_sample_id),
     CONSTRAINT sample_genealogy_child_fkey
         FOREIGN KEY (child_sample_id)
@@ -99,7 +99,7 @@ CREATE TABLE sample_stock_provenance (
     lot_id              UUID            NOT NULL,
     mass_used_grams     NUMERIC(12, 4),
     notes               TEXT,
-    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT now(),
     CONSTRAINT sample_stock_provenance_pkey PRIMARY KEY (sample_id, lot_id),
     CONSTRAINT sample_stock_provenance_sample_fkey
         FOREIGN KEY (sample_id)

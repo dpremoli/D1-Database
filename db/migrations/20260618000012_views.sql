@@ -32,8 +32,8 @@ SELECT
     p.project_name,
     p.document_number               AS project_document_number
 FROM physical_samples AS ps
-LEFT JOIN materials AS m ON m.material_id = ps.material_id
-LEFT JOIN projects AS p ON p.project_id = ps.project_id;
+LEFT JOIN materials AS m ON ps.material_id = m.material_id
+LEFT JOIN projects AS p ON ps.project_id = p.project_id;
 
 COMMENT ON VIEW v_complete_sample_history
     IS 'Flat sample profile with material and project context. Primary LLM target for'
@@ -61,9 +61,9 @@ SELECT
     it.manufacturer                 AS insert_manufacturer,
     it.substrate                    AS insert_substrate
 FROM tool_boxes AS tb
-LEFT JOIN cutting_inserts AS ci ON ci.tool_box_id = tb.tool_box_id
-LEFT JOIN insert_edges AS ie ON ie.insert_id = ci.insert_id
-LEFT JOIN insert_types AS it ON it.insert_type_id = ci.insert_type_id;
+LEFT JOIN cutting_inserts AS ci ON tb.tool_box_id = ci.tool_box_id
+LEFT JOIN insert_edges AS ie ON ci.insert_id = ie.insert_id
+LEFT JOIN insert_types AS it ON ci.insert_type_id = it.insert_type_id;
 
 COMMENT ON VIEW v_tooling_hierarchy
     IS 'Full denormalized view of the 3-tier tooling hierarchy:'
@@ -85,8 +85,8 @@ SELECT
     parent_s.sample_code            AS parent_sample_code,
     parent_s.form                   AS parent_form
 FROM sample_genealogy AS sg
-JOIN physical_samples AS child_s ON child_s.sample_id = sg.child_sample_id
-JOIN physical_samples AS parent_s ON parent_s.sample_id = sg.parent_sample_id;
+INNER JOIN physical_samples AS child_s ON sg.child_sample_id = child_s.sample_id
+INNER JOIN physical_samples AS parent_s ON sg.parent_sample_id = parent_s.sample_id;
 
 COMMENT ON VIEW v_sample_genealogy_flat
     IS 'Flat parent-child lineage pairs. For forward traceability:'
@@ -124,14 +124,14 @@ SELECT
     ci.insert_code,
     tb.tool_box_code
 FROM manufacturing_operations AS mo
-JOIN physical_samples AS ps ON ps.sample_id = mo.sample_id
-JOIN manufacturing_methods AS mm ON mm.method_id = mo.method_id
-LEFT JOIN projects AS p ON p.project_id = mo.project_id
-LEFT JOIN equipment AS e ON e.equipment_id = mo.equipment_id
-LEFT JOIN tools AS t ON t.tool_id = mo.tool_id
-LEFT JOIN insert_edges AS ie ON ie.edge_id = mo.insert_edge_id
-LEFT JOIN cutting_inserts AS ci ON ci.insert_id = ie.insert_id
-LEFT JOIN tool_boxes AS tb ON tb.tool_box_id = ci.tool_box_id;
+INNER JOIN physical_samples AS ps ON mo.sample_id = ps.sample_id
+INNER JOIN manufacturing_methods AS mm ON mo.method_id = mm.method_id
+LEFT JOIN projects AS p ON mo.project_id = p.project_id
+LEFT JOIN equipment AS e ON mo.equipment_id = e.equipment_id
+LEFT JOIN tools AS t ON mo.tool_id = t.tool_id
+LEFT JOIN insert_edges AS ie ON mo.insert_edge_id = ie.edge_id
+LEFT JOIN cutting_inserts AS ci ON ie.insert_id = ci.insert_id
+LEFT JOIN tool_boxes AS tb ON ci.tool_box_id = tb.tool_box_id;
 
 COMMENT ON VIEW v_manufacturing_operations_full
     IS 'Operations with fully denormalized method, sample, tooling, and project context.'
@@ -155,9 +155,9 @@ SELECT
     mat.alloy_code,
     mat.common_name                 AS material_name
 FROM sample_stock_provenance AS ssp
-JOIN physical_samples AS ps ON ps.sample_id = ssp.sample_id
-JOIN raw_stock_lots AS rsl ON rsl.lot_id = ssp.lot_id
-LEFT JOIN materials AS mat ON mat.material_id = rsl.material_id;
+INNER JOIN physical_samples AS ps ON ssp.sample_id = ps.sample_id
+INNER JOIN raw_stock_lots AS rsl ON ssp.lot_id = rsl.lot_id
+LEFT JOIN materials AS mat ON rsl.material_id = mat.material_id;
 
 COMMENT ON VIEW v_stock_provenance
     IS 'Material provenance: which raw_stock_lots fed which physical_samples.'
@@ -192,12 +192,12 @@ SELECT
     ci.insert_code,
     tb.tool_box_code
 FROM test_sessions AS ts
-JOIN physical_samples AS ps ON ps.sample_id = ts.sample_id
-LEFT JOIN projects AS p ON p.project_id = ts.project_id
-LEFT JOIN equipment AS e ON e.equipment_id = ts.equipment_id
-LEFT JOIN insert_edges AS ie ON ie.edge_id = ts.insert_edge_id
-LEFT JOIN cutting_inserts AS ci ON ci.insert_id = ie.insert_id
-LEFT JOIN tool_boxes AS tb ON tb.tool_box_id = ci.tool_box_id;
+INNER JOIN physical_samples AS ps ON ts.sample_id = ps.sample_id
+LEFT JOIN projects AS p ON ts.project_id = p.project_id
+LEFT JOIN equipment AS e ON ts.equipment_id = e.equipment_id
+LEFT JOIN insert_edges AS ie ON ts.insert_edge_id = ie.edge_id
+LEFT JOIN cutting_inserts AS ci ON ie.insert_id = ci.insert_id
+LEFT JOIN tool_boxes AS tb ON ci.tool_box_id = tb.tool_box_id;
 
 COMMENT ON VIEW v_test_sessions_full
     IS 'Test sessions with fully denormalized sample, equipment, and tooling context.'

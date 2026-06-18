@@ -66,9 +66,8 @@ jobs:
 
       - name: Roll back all migrations (down — verifies reversibility)
         run: |
-          count=$(dbmate status | grep -c applied || true)
-          for _ in $(seq 1 "$count"); do
-            dbmate --no-dump-schema down
+          for _ in $(seq 1 20); do
+            dbmate --no-dump-schema down || break
           done
 
       - name: Verify clean rollback (no tables remain)

@@ -25,8 +25,8 @@ CREATE TABLE manufacturing_operations (
     nc_program_text         TEXT,
     nc_program_file_uri     TEXT,
     outcome_notes           TEXT,
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     version                 INTEGER     NOT NULL DEFAULT 1,
     CONSTRAINT manufacturing_operations_pkey PRIMARY KEY (operation_id),
     CONSTRAINT manufacturing_operations_sample_fkey
@@ -49,9 +49,9 @@ CREATE TABLE manufacturing_operations (
         REFERENCES insert_edges (edge_id)
 );
 
--- GIN index on JSONB for key/value queries (e.g. WHERE recorded_metadata @> '{"atmosphere":"Argon"}').
+-- GIN index on JSONB for key/value containment queries.
 CREATE INDEX manufacturing_operations_metadata_gin_idx
-    ON manufacturing_operations USING GIN (recorded_metadata);
+    ON manufacturing_operations USING gin (recorded_metadata);
 
 -- Fast lookup of all operations for a sample in chronological order.
 CREATE INDEX manufacturing_operations_sample_seq_idx
