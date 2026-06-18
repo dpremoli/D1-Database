@@ -26,3 +26,55 @@ jobs:
         run: bash tests/phase0_smoke.sh
       # docker compose is preinstalled on ubuntu-latest runners, so the
       # compose-validation step inside the smoke test runs here too.
+
+  migrations:
+    name: Schema migrations (up + down + seed + schema tests)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: d1
+          POSTGRES_PASSWORD: ci_secret
+          POSTGRES_DB: d1_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://d1:ci_secret@localhost:5432/d1_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dbmate
+        run: |
+          curl -fsSL -o /usr/local/bin/dbmate \
+            https://github.com/amacneil/dbmate/releases/download/v2.23.0/dbmate-linux-amd64
+          chmod +x /usr/local/bin/dbmate
+
+      - name: Apply all migrations (up)
+        run: dbmate --no-dump-schema up
+
+      - name: Load seed data
+        run: psql "$DATABASE_URL" -f db/seeds/001_reference_data.sql
+
+      - name: Run Phase 1 schema tests
+        run: bash tests/phase1_schema.sh
+
+      - name: Roll back all migrations (down — verifies reversibility)
+        run: |
+          count=$(dbmate status | grep -c applied || true)
+          for _ in $(seq 1 "$count"); do
+            dbmate --no-dump-schema down
+          done
+
+      - name: Verify clean rollback (no tables remain)
+        run: |
+          tables=$(psql "$DATABASE_URL" -t -A -c \
+            "SELECT COUNT(*) FROM information_schema.tables
+             WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")
+          echo "Tables after full rollback: $tables"
+          [[ "$tables" -eq 0 ]] || (echo "FAIL: $tables tables remain after rollback" && exit 1)

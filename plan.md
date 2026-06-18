@@ -332,7 +332,7 @@ alone; the drop-Directus drill succeeds.
 | Phase | Status | Notes |
 |------:|--------|-------|
 | 0 | ✅ Done | Repo foundation — structure, ADRs, tooling, CI, smoke test (48 checks green) |
-| 1 | ☐ Not started | Postgres core — keystone (needs Sheets export) |
+| 1 | ✅ Done | Postgres core — 12 migrations, 6 views, audit+OCC triggers, code-gen functions, seeds, ADR-0004, data-dictionary, CI migrations job |
 | 2 | ☐ Not started | Compose stack |
 | 3 | ☐ Not started | Directus tracking layer + API contract |
 | 4 | ☐ Not started | Heavy-data pipeline (1st plugin) |
