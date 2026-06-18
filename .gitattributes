@@ -1,0 +1,14 @@
+# Normalise line endings: text is LF in the repo regardless of OS checkout.
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary / large data — never diff or normalise (and shouldn't be in git anyway).
+*.png binary
+*.jpg binary
+*.xlsx binary
+*.h5 binary
+*.hdf5 binary
+*.bin binary
+*.mat binary

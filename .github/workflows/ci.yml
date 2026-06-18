@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: Lint (pre-commit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run pre-commit
+        uses: pre-commit/action@v3.0.1
+
+  foundation:
+    name: Foundation smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate repository foundation
+        run: bash tests/phase0_smoke.sh
+      # docker compose is preinstalled on ubuntu-latest runners, so the
+      # compose-validation step inside the smoke test runs here too.

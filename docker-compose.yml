@@ -1,0 +1,72 @@
+# D1-Database — stack definition.
+#
+# PHASE 0 SKELETON: service definitions exist and validate (`make compose-check`),
+# but healthchecks, resource limits, reverse proxy, and backup wiring are added
+# in Phase 2 (see plan.md). Config comes from `.env` (copy from `.env.example`);
+# the `${VAR:-default}` fallbacks keep this file valid without a .env present.
+name: d1-database
+
+services:
+  # The durable core (ADR-0001). pgvector image = Postgres + pgvector extension.
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-d1}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-d1_database}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [d1net]
+
+  # Job queue for the heavy-data pipeline (Phase 4).
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    networks: [d1net]
+
+  # S3-compatible object storage for 10-100 GB files (bypasses the API).
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change_me_too}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    networks: [d1net]
+
+  # Swappable adapter (ADR-0002): UI / REST / GraphQL / RBAC over OUR schema.
+  directus:
+    image: directus/directus:11
+    depends_on: [postgres]
+    environment:
+      KEY: ${DIRECTUS_KEY:-replace-with-random-key}
+      SECRET: ${DIRECTUS_SECRET:-replace-with-random-secret}
+      DB_CLIENT: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${POSTGRES_DB:-d1_database}
+      DB_USER: ${POSTGRES_USER:-d1}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+      ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-change_me_admin}
+    ports:
+      - "${DIRECTUS_PORT:-8055}:8055"
+    networks: [d1net]
+
+volumes:
+  pgdata:
+  redis-data:
+  minio-data:
+
+networks:
+  d1net:
+    driver: bridge

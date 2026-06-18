@@ -1,0 +1,39 @@
+# Pre-commit hooks. Install: `pip install pre-commit && pre-commit install`
+# Run on all files: `pre-commit run --all-files`. CI enforces the same set.
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$'   # Markdown uses trailing spaces for line breaks
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=2048"]   # keep experimental data out of git
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  # Python (workers / plugins) — active once Python code exists.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  # SQL (migrations, views) — the schema is the contract; keep it tidy.
+  - repo: https://github.com/sqlfluff/sqlfluff
+    rev: 3.2.4
+    hooks:
+      - id: sqlfluff-lint
+        args: ["--dialect", "postgres"]
+
+  # Dockerfiles
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.13.1-beta
+    hooks:
+      - id: hadolint-docker

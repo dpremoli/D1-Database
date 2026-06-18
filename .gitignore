@@ -1,0 +1,64 @@
+# ---- Secrets & local config ----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+*.local
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# ---- Node / front-end ----
+node_modules/
+.npm/
+.pnpm-store/
+*.tsbuildinfo
+.next/
+dist-ssr/
+
+# ---- Docker / data volumes ----
+# Never commit database, object-storage, or cache state.
+data/
+pgdata/
+minio-data/
+redis-data/
+*.dump
+*.sql.gz
+
+# ---- Large experimental data (belongs in MinIO, never git) ----
+*.h5
+*.hdf5
+*.bin
+*.mat
+*.tdms
+force-files/
+
+# ---- OS / editor cruft ----
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+
+# ---- Build / tooling output ----
+*.log
+.cache/
+tmp/
