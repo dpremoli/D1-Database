@@ -68,13 +68,10 @@ run "FAST method seeded" \
 run "Equipment seeded" \
     "SELECT equipment_code FROM equipment WHERE equipment_code = 'NLX-2500'"
 run "FAST method parameters seeded" \
-    "SELECT COUNT(*) FROM method_parameters mp
-     JOIN manufacturing_methods mm ON mm.method_id = mp.method_id
-     WHERE mm.method_code = 'MF' AND COUNT(*) > 0" 2>/dev/null || \
-run "FAST method parameters seeded" \
-    "SELECT parameter_name FROM method_parameters mp
-     JOIN manufacturing_methods mm ON mm.method_id = mp.method_id
-     WHERE mm.method_code = 'MF' AND mp.parameter_name = 'peak_temperature_celsius'"
+    "SELECT parameter_name FROM method_parameters AS mp
+     JOIN manufacturing_methods AS mm ON mm.method_id = mp.method_id
+     WHERE mm.method_code = 'MF'
+       AND mp.parameter_name = 'peak_temperature_celsius'"
 
 echo "== Code-generation functions =="
 run_eq "generate_sample_code" \
