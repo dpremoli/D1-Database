@@ -1,0 +1,9 @@
+# D1-Database — Caddy reverse proxy (local dev / single-host).
+#
+# Routes HTTP traffic on port 80 to the Directus admin UI.
+# MinIO API (9000) and console (9001) are accessed directly on their own ports.
+# For TLS in production, replace ":80" with your domain name — Caddy will
+# automatically provision a Let's Encrypt certificate.
+:80 {
+    reverse_proxy directus:8055
+}

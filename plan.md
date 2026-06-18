@@ -333,7 +333,7 @@ alone; the drop-Directus drill succeeds.
 |------:|--------|-------|
 | 0 | ✅ Done | Repo foundation — structure, ADRs, tooling, CI, smoke test (48 checks green) |
 | 1 | ✅ Done | Postgres core — 12 migrations, 6 views, audit+OCC triggers, code-gen functions, seeds, ADR-0004, data-dictionary, CI migrations job |
-| 2 | ☐ Not started | Compose stack |
+| 2 | ✅ Done | Compose stack — healthchecks, restart policies, Caddy proxy, MinIO bootstrap, backup/restore scripts + runbook |
 | 3 | ☐ Not started | Directus tracking layer + API contract |
 | 4 | ☐ Not started | Heavy-data pipeline (1st plugin) |
 | 5 | ☐ Not started | Plugin framework (analysis/equipment) |

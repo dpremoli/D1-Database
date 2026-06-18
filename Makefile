@@ -14,7 +14,8 @@ POSTGRES_DB   ?= d1_database
 DATABASE_URL  ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 
 .PHONY: help setup test smoke schema-test compose-check lint up down logs \
-        migrate migrate-down migrate-status seed reset-db
+        migrate migrate-down migrate-status seed reset-db \
+        bootstrap-minio backup restore prune-backups
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -67,6 +68,24 @@ migrate-status: ## Show migration status (requires DATABASE_URL)
 
 seed: ## Load reference seed data (requires DATABASE_URL and psql in PATH)
 	psql "$(DATABASE_URL)" -f db/seeds/001_reference_data.sql
+
+bootstrap-minio: ## Create MinIO buckets after first `make up` (idempotent)
+	docker run --rm \
+		--network d1-database_d1net \
+		-e MC_HOST_local="http://$(MINIO_ROOT_USER):$(MINIO_ROOT_PASSWORD)@minio:9000" \
+		minio/mc:latest \
+		sh -c "mc mb --ignore-existing local/d1-files \
+			&& mc mb --ignore-existing local/d1-backups \
+			&& echo 'Buckets ready: d1-files, d1-backups'"
+
+backup: ## Dump PostgreSQL and upload to MinIO (stack must be running)
+	bash infra/backup/backup.sh
+
+restore: ## Restore from MinIO backup — set BACKUP_FILE=d1_<timestamp>.sql.gz
+	bash infra/backup/restore.sh
+
+prune-backups: ## Remove local backup files older than 30 days
+	find ./backups -name 'd1_*.sql.gz' -mtime +30 -print -delete
 
 reset-db: ## Drop all tables and re-apply migrations + seed (DESTRUCTIVE — dev only)
 	@echo "WARNING: this destroys all data. Ctrl-C to abort."

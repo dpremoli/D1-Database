@@ -1,15 +1,15 @@
-# D1-Database — stack definition.
+# D1-Database — full stack definition.
 #
-# PHASE 0 SKELETON: service definitions exist and validate (`make compose-check`),
-# but healthchecks, resource limits, reverse proxy, and backup wiring are added
-# in Phase 2 (see plan.md). Config comes from `.env` (copy from `.env.example`);
-# the `${VAR:-default}` fallbacks keep this file valid without a .env present.
+# Phase 2: healthchecks, restart policies, reverse proxy (Caddy),
+# and MinIO bucket bootstrap added. Config from `.env` (copy from `.env.example`);
+# `${VAR:-default}` fallbacks keep this valid without a .env present.
 name: d1-database
 
 services:
   # The durable core (ADR-0001). pgvector image = Postgres + pgvector extension.
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-d1}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
@@ -18,20 +18,35 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks: [d1net]
 
   # Job queue for the heavy-data pipeline (Phase 4).
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
+    # Persist every 60 s if at least 1 key changed; quiet logs.
+    command: redis-server --save 60 1 --loglevel warning
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks: [d1net]
 
-  # S3-compatible object storage for 10-100 GB files (bypasses the API).
+  # S3-compatible object storage for 10-100 GB files (bypasses the API layer).
   minio:
     image: minio/minio:latest
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
@@ -41,12 +56,22 @@ services:
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks: [d1net]
 
   # Swappable adapter (ADR-0002): UI / REST / GraphQL / RBAC over OUR schema.
+  # Introspects but does NOT alter structure — schema is owned by our migrations.
   directus:
     image: directus/directus:11
-    depends_on: [postgres]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       KEY: ${DIRECTUS_KEY:-replace-with-random-key}
       SECRET: ${DIRECTUS_SECRET:-replace-with-random-secret}
@@ -58,14 +83,45 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
       ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL:-admin@example.com}
       ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-change_me_admin}
+      # Public URL used for link generation; override in .env for production.
+      PUBLIC_URL: ${DIRECTUS_PUBLIC_URL:-http://localhost:80}
     ports:
       - "${DIRECTUS_PORT:-8055}:8055"
+    volumes:
+      - directus-uploads:/directus/uploads
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider",
+             "http://localhost:8055/server/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      # Directus runs its own migrations on first boot — give it time.
+      start_period: 60s
+    networks: [d1net]
+
+  # Reverse proxy: single HTTP entry point → Directus admin UI.
+  # MinIO console and API remain directly accessible on their own ports.
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      directus:
+        condition: service_healthy
+    ports:
+      - "${PROXY_HTTP_PORT:-80}:80"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
     networks: [d1net]
 
 volumes:
   pgdata:
   redis-data:
   minio-data:
+  directus-uploads:
+  caddy-data:
+  caddy-config:
 
 networks:
   d1net:
