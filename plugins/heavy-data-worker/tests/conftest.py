@@ -1,4 +1,5 @@
 """pytest configuration — add the plugin root to sys.path."""
+
 import sys
 from pathlib import Path
 

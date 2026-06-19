@@ -9,6 +9,7 @@ File layout:
   Offset 26: reserved zeros          (38 bytes)
   Offset 64: data float32, row-major (n_samples × n_channels × 4 bytes)
 """
+
 import struct
 from pathlib import Path
 from typing import BinaryIO, TypedDict

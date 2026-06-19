@@ -1,4 +1,5 @@
 """MinIO / S3-compatible object storage client."""
+
 import os
 
 import boto3
@@ -43,9 +44,7 @@ def presign_part(object_key: str, upload_id: str, part_number: int) -> str:
     )
 
 
-def complete_multipart_upload(
-    object_key: str, upload_id: str, parts: list
-) -> None:
+def complete_multipart_upload(object_key: str, upload_id: str, parts: list) -> None:
     """Finalise a multipart upload.  *parts* must be [{PartNumber, ETag}, ...]."""
     _client().complete_multipart_upload(
         Bucket=BUCKET,

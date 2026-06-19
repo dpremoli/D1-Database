@@ -6,6 +6,7 @@ Usage:
     python tests/generate_test_file.py --output /tmp/large.d1f --n-samples 25000000
       # 25M × 6 ch × 4 bytes ≈ 572 MB
 """
+
 import argparse
 import struct
 

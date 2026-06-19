@@ -1,4 +1,5 @@
 """Unit tests for the D1F parser and streaming stats."""
+
 import pytest
 
 from app.lib.parser import parse_header, strided_read
@@ -14,6 +15,7 @@ def tiny_d1f(tmp_path_factory):
 
 
 # ---- header parsing ----
+
 
 def test_parse_header(tiny_d1f):
     with open(tiny_d1f, "rb") as f:
@@ -38,6 +40,7 @@ def test_file_size(tiny_d1f):
 
 
 # ---- streaming stats ----
+
 
 def test_streaming_stats(tiny_d1f):
     with open(tiny_d1f, "rb") as f:
@@ -69,6 +72,7 @@ def test_streaming_stats_single_chunk(tiny_d1f):
 
 
 # ---- strided read ----
+
 
 def test_strided_read_shape(tiny_d1f):
     with open(tiny_d1f, "rb") as f:

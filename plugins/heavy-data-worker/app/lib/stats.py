@@ -1,4 +1,5 @@
 """Streaming per-channel statistics computed with bounded memory."""
+
 from pathlib import Path
 
 import numpy as np

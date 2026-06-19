@@ -6,6 +6,7 @@ Endpoints:
   POST /api/complete-upload   — finalise a MinIO multipart upload
   POST /api/webhook/session   — Directus Flow callback; enqueues processing job
 """
+
 import math
 import os
 
@@ -87,7 +88,7 @@ def webhook_session():
     raw_pointer: str = item_payload.get("file_storage_pointer", "")
     prefix = f"minio://{minio_client.BUCKET}/"
     if raw_pointer.startswith(prefix):
-        object_key = raw_pointer[len(prefix):]
+        object_key = raw_pointer[len(prefix) :]
     else:
         object_key = raw_pointer
 

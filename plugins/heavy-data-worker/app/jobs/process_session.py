@@ -1,4 +1,5 @@
 """rq job: download a D1F file from MinIO, compute stats, render plot, write back."""
+
 import logging
 import os
 import tempfile

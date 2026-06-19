@@ -1,4 +1,5 @@
 """Overview plot generator for D1F force files."""
+
 import io
 
 import matplotlib
