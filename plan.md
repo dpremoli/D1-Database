@@ -318,11 +318,11 @@ alone; the drop-Directus drill succeeds.
 | Phase | Status | Notes |
 |------:|--------|-------|
 | 0 | ✅ Done | Repo foundation — structure, ADRs, tooling, CI, smoke test (48 checks green) |
-| 1 | ✅ Done | Postgres core — 12 migrations, 6 views, audit+OCC triggers, code-gen functions, seeds, ADR-0004, data-dictionary, CI migrations job |
+| 1 | ✅ Done | Postgres core — 13 migrations, 6 views, audit+OCC triggers, code-gen functions, seeds, ADR-0004, data-dictionary, CI migrations job. Migration 0013 unifies the test_sessions.status vocabulary |
 | 2 | ✅ Done | Compose stack — healthchecks, restart policies, Caddy proxy, MinIO bootstrap, backup/restore scripts + runbook |
-| 3 | ✅ Done | Directus RBAC (3 roles, machine tokens), API contract doc, ADR-0005, phase3 test script, core/apply.sh config-as-code |
-| 4 | ✅ Done | Heavy-data pipeline — D1F worker, presigned multipart upload, streaming stats, SVG plots, plugin-contract doc, CI worker-build job |
-| 5 | ✅ Done | Plugin framework — plugin-template scaffold + analysis-worker (FFT/spectrum), ADR-0007, CI analysis-build job |
+| 3 | ✅ Done | Directus RBAC (3 roles, machine tokens), API contract doc, ADR-0005, phase3 test script, core/apply.sh config-as-code. Actor-identity hook (core/extensions/actor-identity) now sets d1.actor_identity in-transaction so API writes are audited |
+| 4 | ✅ Done | Heavy-data pipeline — D1F worker, presigned multipart upload, streaming stats, SVG plots, plugin-contract doc, CI worker-build job. Hardened: truncation-safe stats, header validation, webhook shared-secret auth, object-key/size validation, read-merge-write to avoid clobbering |
+| 5 | ✅ Done | Plugin framework — plugin-template scaffold + analysis-worker (FFT/spectrum), ADR-0007, CI analysis-build job. Same status/merge/auth hardening as Phase 4 |
 | 6 | ☐ Not started | Text-to-SQL + pgvector |
 | 7 | ☐ Not started | Traceability UI (deferred) |
 | 8 | ☐ Not started | Legacy data migration |

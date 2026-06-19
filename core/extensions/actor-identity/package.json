@@ -1,0 +1,13 @@
+{
+  "name": "directus-extension-actor-identity",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Sets the d1.actor_identity Postgres GUC from the authenticated user so the audit trigger attributes API writes correctly.",
+  "keywords": ["directus", "directus-extension", "directus-custom-hook"],
+  "directus:extension": {
+    "type": "hook",
+    "path": "index.js",
+    "source": "index.js",
+    "host": "^11.0.0"
+  }
+}

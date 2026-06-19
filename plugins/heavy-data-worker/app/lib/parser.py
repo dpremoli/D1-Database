@@ -40,6 +40,16 @@ def parse_header(f: BinaryIO) -> FileHeader:
     n_channels = struct.unpack("B", f.read(1))[0]
     (sample_rate_hz,) = struct.unpack("d", f.read(8))
     (n_samples,) = struct.unpack("Q", f.read(8))
+
+    # Reject nonsensical headers early so downstream maths (chunk sizing,
+    # duration, plot scaling) can't divide by zero or loop forever.
+    if n_channels <= 0:
+        msg = f"Invalid D1F header: n_channels must be > 0, got {n_channels}"
+        raise ValueError(msg)
+    if not (sample_rate_hz > 0):
+        msg = f"Invalid D1F header: sample_rate_hz must be > 0, got {sample_rate_hz}"
+        raise ValueError(msg)
+
     return {
         "version": version,
         "n_channels": n_channels,

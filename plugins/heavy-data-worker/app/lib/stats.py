@@ -32,8 +32,13 @@ def streaming_stats(
             raw = f.read(chunk_rows * row_bytes)
             if not raw:
                 break
+            # Guard against a truncated final row (corrupt / partial upload):
+            # frombuffer().reshape(-1, n_ch) would raise on a non-multiple size.
+            usable = len(raw) - (len(raw) % row_bytes)
+            if usable == 0:
+                break
             chunk = (
-                np.frombuffer(raw, dtype=np.float32)
+                np.frombuffer(raw[:usable], dtype=np.float32)
                 .reshape(-1, n_ch)
                 .astype(np.float64)
             )

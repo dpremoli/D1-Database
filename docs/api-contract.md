@@ -103,17 +103,26 @@ curl -H "Authorization: Bearer $D1_RIG1_TOKEN" \
 
 ### 2.3 Actor identity for audit
 
-Every mutating request **should** include the actor identity header so it is
-captured in `audit_logs.actor_identity`. When omitted the audit log records the
-authenticated user's email.
+Every mutating request through the API is attributed in `audit_logs.actor_identity`
+**automatically** — no client header is required or trusted.
 
-```
-X-Actor-Identity: Rig_1_Fast_Sampling_Node
+The Directus hook extension `core/extensions/actor-identity/` runs a `filter` on
+`items.create` / `items.update` / `items.delete` and, **inside the same database
+transaction as the write**, sets the `d1.actor_identity` PostgreSQL session
+variable to the authenticated identity:
+
+```js
+SELECT set_config('d1.actor_identity', <authenticated user id>, true)
 ```
 
-A Directus hook (implemented in Phase 3, `core/hooks/actor-identity.js`) reads
-this header and sets the `d1.actor_identity` PostgreSQL session variable so the
-trigger captures it. Machine nodes should always set this header.
+The audit trigger reads it back within that transaction. Because the identity is
+taken from the authenticated Directus user / machine-token user (each rig has its
+own machine user, e.g. the `Rig_1` sampling node), it **cannot be spoofed** by a
+client-supplied header. This is a deliberate hardening over the original
+header-based design.
+
+> Direct-to-PostgreSQL writers that bypass the API must still set the GUC
+> themselves — see §8.4.
 
 ---
 
@@ -279,7 +288,6 @@ GET /items/manufacturing_operations?filter[sample_id][_eq]={sample_id}&sort=oper
 POST /items/manufacturing_operations
 Content-Type: application/json
 Authorization: Bearer <static-machine-token>
-X-Actor-Identity: Rig_1_Fast_Sampling_Node
 
 {
   "sample_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -462,20 +470,16 @@ Response fields:
 | `row_id` | TEXT | Primary key of affected row (as text) |
 | `row_before` | JSONB | State before the change (null for INSERT) |
 | `row_after` | JSONB | State after the change (null for DELETE) |
-| `actor_identity` | TEXT | From `X-Actor-Identity` header or session context |
+| `actor_identity` | TEXT | Authenticated Directus user id, set by the actor-identity hook |
 | `created_at` | TIMESTAMPTZ | When the change occurred |
 
 ### 8.3 Setting actor identity
 
-Machine nodes and scripts that write via the API must set:
-
-```
-X-Actor-Identity: <descriptive name, e.g. Rig_1_Fast_Sampling_Node>
-```
-
-A Phase 3 hook translates this header into the `d1.actor_identity` PostgreSQL
-session variable before the trigger fires. Without this header, the database
-user (e.g., `directus`) is recorded as the actor, which is less informative.
+API writes are attributed automatically (see §2.3): the `actor-identity` hook
+sets `d1.actor_identity` from the authenticated user inside the write
+transaction. Machine nodes therefore only need to authenticate with their own
+static token — each rig's machine user uniquely identifies it in the audit log.
+No client-supplied header is required or trusted.
 
 ### 8.4 Audit for direct DB writes
 

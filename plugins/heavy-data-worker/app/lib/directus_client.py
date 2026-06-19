@@ -21,3 +21,16 @@ def patch_test_session(session_id: str, payload: dict) -> dict:
     resp = requests.patch(url, json=payload, headers=_headers(), timeout=30)
     resp.raise_for_status()
     return resp.json()
+
+
+def get_test_session(session_id: str) -> dict:
+    """GET /items/test_sessions/{session_id} — return the item's data dict.
+
+    Used to read-merge-write summary_stats / plot_uris so that the analysis
+    worker and this worker don't clobber each other's contributions to the
+    same JSONB columns.
+    """
+    url = f"{DIRECTUS_URL}/items/test_sessions/{session_id}"
+    resp = requests.get(url, headers=_headers(), timeout=30)
+    resp.raise_for_status()
+    return resp.json().get("data", {})

@@ -16,8 +16,14 @@ from rq import Queue
 
 from app.jobs.process_session import process_session
 from app.lib import minio_client
+from app.lib.security import (
+    MAX_UPLOAD_BYTES,
+    check_secret,
+    valid_object_key,
+)
 
 app = Flask(__name__)
+app.before_request(check_secret)
 
 _redis = Redis(
     host=os.getenv("REDIS_HOST", "redis"),
@@ -45,6 +51,11 @@ def presign_upload():
     file_size: int = int(body["file_size_bytes"])
     content_type: str = body.get("content_type", "application/octet-stream")
 
+    if not valid_object_key(object_key):
+        return jsonify({"error": "invalid object_key"}), 400
+    if file_size <= 0 or file_size > MAX_UPLOAD_BYTES:
+        return jsonify({"error": "file_size_bytes out of range"}), 400
+
     n_parts = max(1, math.ceil(file_size / PART_SIZE_BYTES))
     upload_id = minio_client.create_multipart_upload(object_key, content_type)
     parts = [
@@ -68,6 +79,9 @@ def complete_upload():
     object_key: str = body["object_key"]
     upload_id: str = body["upload_id"]
     parts: list = body["parts"]
+
+    if not valid_object_key(object_key):
+        return jsonify({"error": "invalid object_key"}), 400
 
     minio_client.complete_multipart_upload(object_key, upload_id, parts)
     pointer = f"minio://{minio_client.BUCKET}/{object_key}"
@@ -96,6 +110,8 @@ def webhook_session():
         return jsonify({"error": "missing session_id / key"}), 400
     if not object_key:
         return jsonify({"error": "missing file_storage_pointer"}), 400
+    if not valid_object_key(object_key):
+        return jsonify({"error": "invalid object_key"}), 400
 
     job = _queue.enqueue(process_session, session_id, object_key)
     return jsonify({"job_id": job.id}), 202

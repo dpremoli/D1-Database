@@ -34,6 +34,58 @@ def test_bad_magic(tmp_path):
             parse_header(f)
 
 
+def test_zero_channels_rejected(tmp_path):
+    """A header with n_channels == 0 must be rejected (avoids div-by-zero)."""
+    import struct
+
+    from tests.generate_test_file import MAGIC
+
+    header = bytearray(HEADER_SIZE)
+    header[0:8] = MAGIC
+    header[8:9] = struct.pack("B", 1)
+    header[9:10] = struct.pack("B", 0)  # n_channels = 0
+    header[10:18] = struct.pack("d", 10_000.0)
+    header[18:26] = struct.pack("Q", 0)
+    p = tmp_path / "zero_ch.d1f"
+    p.write_bytes(bytes(header))
+    with open(p, "rb") as f:
+        with pytest.raises(ValueError, match="n_channels"):
+            parse_header(f)
+
+
+def test_nonpositive_sample_rate_rejected(tmp_path):
+    """A header with sample_rate_hz <= 0 must be rejected."""
+    import struct
+
+    from tests.generate_test_file import MAGIC
+
+    header = bytearray(HEADER_SIZE)
+    header[0:8] = MAGIC
+    header[8:9] = struct.pack("B", 1)
+    header[9:10] = struct.pack("B", N_CHANNELS)
+    header[10:18] = struct.pack("d", 0.0)  # sample_rate_hz = 0
+    header[18:26] = struct.pack("Q", 0)
+    p = tmp_path / "zero_rate.d1f"
+    p.write_bytes(bytes(header))
+    with open(p, "rb") as f:
+        with pytest.raises(ValueError, match="sample_rate_hz"):
+            parse_header(f)
+
+
+def test_streaming_stats_truncated_final_row(tiny_d1f, tmp_path):
+    """A file whose last row is truncated must not crash streaming_stats."""
+    with open(tiny_d1f, "rb") as f:
+        h = parse_header(f)
+    # Copy the file then chop a few bytes off the end (partial final row).
+    data = tiny_d1f.read_bytes()
+    truncated = tmp_path / "truncated.d1f"
+    truncated.write_bytes(data[:-7])  # 7 bytes < one 24-byte row
+    stats = streaming_stats(truncated, h, chunk_rows=1024)
+    # Should process all whole rows (9_999 or 10_000 depending on the cut).
+    assert stats["n_samples"] >= 9_999
+    assert stats["n_channels"] == N_CHANNELS
+
+
 def test_file_size(tiny_d1f):
     expected = HEADER_SIZE + 10_000 * N_CHANNELS * 4
     assert tiny_d1f.stat().st_size == expected

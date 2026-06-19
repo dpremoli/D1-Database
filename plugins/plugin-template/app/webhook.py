@@ -15,8 +15,10 @@ from rq import Queue
 
 from app.jobs.example_job import example_job
 from app.lib import minio_client
+from app.lib.security import check_secret, valid_object_key
 
 app = Flask(__name__)
+app.before_request(check_secret)
 
 _redis = Redis(
     host=os.getenv("REDIS_HOST", "redis"),
@@ -46,6 +48,8 @@ def webhook_session():
 
     if not session_id or not object_key:
         return jsonify({"error": "missing session_id or file_storage_pointer"}), 400
+    if not valid_object_key(object_key):
+        return jsonify({"error": "invalid object_key"}), 400
 
     job = _queue.enqueue(example_job, session_id, object_key)
     return jsonify({"job_id": job.id}), 202

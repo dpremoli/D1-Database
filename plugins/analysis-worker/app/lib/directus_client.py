@@ -21,3 +21,15 @@ def patch_item(collection: str, item_id: str, payload: dict) -> dict:
     resp = requests.patch(url, json=payload, headers=_headers(), timeout=30)
     resp.raise_for_status()
     return resp.json()
+
+
+def get_item(collection: str, item_id: str) -> dict:
+    """GET /items/{collection}/{item_id} — return the item's data dict.
+
+    Used for read-merge-write so plugins don't clobber each other's writes to
+    shared JSONB columns (e.g. test_sessions.summary_stats).
+    """
+    url = f"{DIRECTUS_URL}/items/{collection}/{item_id}"
+    resp = requests.get(url, headers=_headers(), timeout=30)
+    resp.raise_for_status()
+    return resp.json().get("data", {})

@@ -1,0 +1,51 @@
+"""Lightweight request authentication and input validation for the webhook.
+
+The worker sits on a private Docker network, but defence-in-depth still applies:
+an attacker who reaches the network must not be able to enqueue arbitrary jobs,
+mint presigned URLs for arbitrary object keys, or trigger unbounded allocations.
+"""
+
+import hmac
+import logging
+import os
+import re
+
+from flask import jsonify, request
+
+log = logging.getLogger(__name__)
+
+SECRET_HEADER = "X-Worker-Secret"
+_OBJECT_KEY_RE = re.compile(r"^[A-Za-z0-9._/\-]+$")
+
+# Reject absurd upload sizes (default 200 GiB) before building the part list.
+MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", str(200 * 1024**3)))
+
+
+def check_secret():
+    """Flask before_request hook enforcing the shared-secret header.
+
+    Returns None to allow the request, or a Flask (response, status) tuple to
+    reject it. GET /health is always exempt so container healthchecks work.
+    If WORKER_WEBHOOK_SECRET is unset the check is disabled (a warning is logged
+    once at import time) — set it in production. See .env.example.
+    """
+    if request.method == "GET" and request.path == "/health":
+        return None
+    expected = os.getenv("WORKER_WEBHOOK_SECRET", "")
+    if not expected:
+        return None
+    provided = request.headers.get(SECRET_HEADER, "")
+    if not hmac.compare_digest(provided, expected):
+        return jsonify({"error": "unauthorized"}), 401
+    return None
+
+
+def valid_object_key(key: str) -> bool:
+    """True if *key* is a safe S3 object key (no traversal, allowed chars only)."""
+    return bool(key) and ".." not in key and bool(_OBJECT_KEY_RE.match(key))
+
+
+if not os.getenv("WORKER_WEBHOOK_SECRET"):
+    log.warning(
+        "WORKER_WEBHOOK_SECRET is not set — webhook authentication is DISABLED."
+    )

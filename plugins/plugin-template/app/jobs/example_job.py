@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 from app.lib import directus_client, minio_client
+from app.lib.statuses import STATUS_FAILED, STATUS_PROCESSED, STATUS_PROCESSING
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ def example_job(session_id: str, object_key: str) -> None:
       3. Update the result dict sent to patch_item with your output fields.
     """
     log.info("start session=%s object=%s", session_id, object_key)
-    _mark(session_id, "processing")
+    _mark(session_id, STATUS_PROCESSING)
 
     with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
         tmp_path = tmp.name
@@ -36,13 +37,13 @@ def example_job(session_id: str, object_key: str) -> None:
         directus_client.patch_item(
             COLLECTION,
             session_id,
-            {"status": "processed", "summary_stats": result},
+            {"status": STATUS_PROCESSED, "summary_stats": result},
         )
         log.info("done session=%s", session_id)
 
     except Exception:
         log.exception("failed session=%s", session_id)
-        _mark(session_id, "error")
+        _mark(session_id, STATUS_FAILED)
         raise
 
     finally:

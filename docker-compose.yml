@@ -85,10 +85,14 @@ services:
       ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-change_me_admin}
       # Public URL used for link generation; override in .env for production.
       PUBLIC_URL: ${DIRECTUS_PUBLIC_URL:-http://localhost:80}
+      # Auto-load local extensions (the actor-identity audit hook).
+      EXTENSIONS_AUTO_RELOAD: "true"
     ports:
       - "${DIRECTUS_PORT:-8055}:8055"
     volumes:
       - directus-uploads:/directus/uploads
+      # Mount the version-controlled hook extensions (read-only).
+      - ./core/extensions:/directus/extensions:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider",
              "http://localhost:8055/server/health"]
@@ -122,6 +126,8 @@ services:
       DIRECTUS_URL: http://directus:8055
       WORKER_DIRECTUS_TOKEN: ${WORKER_DIRECTUS_TOKEN:-}
       WORKER_MEMORY_LIMIT_MB: ${WORKER_MEMORY_LIMIT_MB:-256}
+      WORKER_WEBHOOK_SECRET: ${WORKER_WEBHOOK_SECRET:-}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-214748364800}
       WORKER_HTTP_PORT: "8080"
     ports:
       - "${WORKER_HTTP_PORT:-8080}:8080"
@@ -159,6 +165,7 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-d1-files}
       DIRECTUS_URL: http://directus:8055
       WORKER_DIRECTUS_TOKEN: ${WORKER_DIRECTUS_TOKEN:-}
+      WORKER_WEBHOOK_SECRET: ${WORKER_WEBHOOK_SECRET:-}
       WORKER_HTTP_PORT: "8081"
       FFT_CHANNEL_INDEX: "2"
     ports:

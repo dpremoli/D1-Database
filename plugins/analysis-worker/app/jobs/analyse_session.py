@@ -8,6 +8,7 @@ from pathlib import Path
 from app.lib import directus_client, minio_client
 from app.lib.d1f_reader import CHANNEL_NAMES, parse_header, read_channel
 from app.lib.fft_analysis import analyse_channel, plot_spectrum
+from app.lib.statuses import STATUS_ANALYSED, STATUS_ANALYSING, STATUS_FAILED
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ def analyse_session(session_id: str, object_key: str) -> None:
       8. PATCH test_sessions with fft_analysis results + plot URI
     """
     log.info("start analysis session=%s object=%s", session_id, object_key)
-    _mark(session_id, "analysing")
+    _mark(session_id, STATUS_ANALYSING)
 
     with tempfile.NamedTemporaryFile(suffix=".d1f", delete=False) as tmp:
         tmp_path = tmp.name
@@ -64,16 +65,23 @@ def analyse_session(session_id: str, object_key: str) -> None:
             "channel": ch_name,
             "channel_index": ch_idx,
             "n_samples_analysed": len(signal),
+            "stride": actual_stride,
             "effective_sample_rate_hz": header["sample_rate_hz"] / actual_stride,
             **metrics,
         }
 
+        # Read-merge-write: namespace under "fft_analysis" and append our plot
+        # so we don't clobber the heavy-data worker's "basic" stats.
+        merged_stats, merged_plots = _merge_outputs(
+            session_id, "fft_analysis", analysis_result, plot_uri
+        )
         directus_client.patch_item(
             COLLECTION,
             session_id,
             {
-                "summary_stats": {"fft_analysis": analysis_result},
-                "plot_uris": [plot_uri],
+                "status": STATUS_ANALYSED,
+                "summary_stats": merged_stats,
+                "plot_uris": merged_plots,
             },
         )
         log.info(
@@ -84,11 +92,43 @@ def analyse_session(session_id: str, object_key: str) -> None:
 
     except Exception:
         log.exception("failed analysis session=%s", session_id)
-        _mark(session_id, "error")
+        _mark(session_id, STATUS_FAILED)
         raise
 
     finally:
-        Path(tmp_path).unlink(missing_ok=True)
+        try:
+            Path(tmp_path).unlink(missing_ok=True)
+        except OSError:
+            log.warning("could not remove temp file %s", tmp_path)
+
+
+def _merge_outputs(
+    session_id: str, stats_key: str, stats: dict, plot_uri: str
+) -> tuple[dict, list]:
+    """Merge this worker's outputs into the existing JSONB columns.
+
+    Returns (summary_stats, plot_uris) with our contribution namespaced under
+    *stats_key* and our plot appended (deduped). Falls back to a fresh object
+    if the current item can't be read.
+    """
+    try:
+        current = directus_client.get_item(COLLECTION, session_id)
+    except Exception:
+        log.warning("could not read current session=%s; writing fresh", session_id)
+        current = {}
+
+    summary_stats = current.get("summary_stats") or {}
+    if not isinstance(summary_stats, dict):
+        summary_stats = {}
+    summary_stats[stats_key] = stats
+
+    plot_uris = current.get("plot_uris") or []
+    if not isinstance(plot_uris, list):
+        plot_uris = []
+    if plot_uri not in plot_uris:
+        plot_uris.append(plot_uri)
+
+    return summary_stats, plot_uris
 
 
 def _mark(session_id: str, status: str) -> None:
