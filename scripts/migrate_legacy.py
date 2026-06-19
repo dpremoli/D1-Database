@@ -74,7 +74,7 @@ def clean_date(v: Any) -> date | None:
     """Parse Excel datetime / date string; return None for garbage dates."""
     if v is None:
         return None
-    if isinstance(v, (datetime, date)):
+    if isinstance(v, datetime | date):
         d = v if isinstance(v, date) else v.date()
         # Excel zero epoch: 1899-12-30 == empty cell
         if d.year == 1899:
