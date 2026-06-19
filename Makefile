@@ -13,11 +13,12 @@ POSTGRES_DB   ?= d1_database
 # Export DATABASE_URL from .env or environment before running migrate targets.
 DATABASE_URL  ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 
-.PHONY: help setup test smoke schema-test traceability-test compose-check lint up down logs \
+.PHONY: help setup test smoke schema-test traceability-test ai-test compose-check lint up down logs \
         migrate migrate-down migrate-status seed reset-db \
         bootstrap-minio backup restore prune-backups \
         worker-build worker-test worker-logs phase4-test \
-        analysis-build analysis-test
+        analysis-build analysis-test llm-build llm-test llm-eval \
+        migrate-legacy migrate-legacy-dry
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -37,6 +38,9 @@ schema-test: ## Run Phase 1 schema tests (requires DATABASE_URL or running stack
 
 traceability-test: ## Run Phase 7 traceability tests (requires DATABASE_URL or running stack)
 	DATABASE_URL="$(DATABASE_URL)" bash tests/phase7_traceability.sh
+
+ai-test: ## Run Phase 6 AI-readiness tests (requires DATABASE_URL; superuser, to create roles)
+	DATABASE_URL="$(DATABASE_URL)" bash tests/phase6_text_to_sql.sh
 
 compose-check: ## Validate docker-compose.yml is well-formed
 	docker compose config -q && echo "docker-compose.yml OK"
@@ -111,6 +115,26 @@ analysis-build: ## Build the FFT analysis worker Docker image
 analysis-test: analysis-build ## Run FFT analysis worker unit tests inside Docker
 	docker run --rm d1-analysis-worker \
 		python -m pytest tests/ -v --tb=short
+
+llm-build: ## Build the text-to-SQL plugin Docker image
+	docker build -t d1-llm-text-to-sql plugins/llm-text-to-sql/
+
+llm-test: llm-build ## Run text-to-SQL guard/eval unit tests inside Docker
+	docker run --rm d1-llm-text-to-sql \
+		python -m pytest tests/ -v --tb=short
+
+llm-eval: ## Validate the NL->SQL gold set against the guard (offline; no LLM needed)
+	docker run --rm d1-llm-text-to-sql python eval/run_eval.py
+
+migrate-legacy: ## Run Phase 8 legacy data migration (requires DATABASE_URL and XLSX)
+	@test -n "$(XLSX)" || (echo "ERROR: set XLSX=/path/to/Sample_Data.xlsx" && exit 1)
+	pip install -q -r scripts/requirements.txt
+	DATABASE_URL="$(DATABASE_URL)" python3 scripts/migrate_legacy.py --xlsx "$(XLSX)"
+
+migrate-legacy-dry: ## Dry-run the legacy migration (no DB required)
+	@test -n "$(XLSX)" || (echo "ERROR: set XLSX=/path/to/Sample_Data.xlsx" && exit 1)
+	pip install -q -r scripts/requirements.txt
+	python3 scripts/migrate_legacy.py --xlsx "$(XLSX)" --dry-run
 
 reset-db: ## Drop all tables and re-apply migrations + seed (DESTRUCTIVE — dev only)
 	@echo "WARNING: this destroys all data. Ctrl-C to abort."

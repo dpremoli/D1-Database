@@ -244,20 +244,31 @@ channel on D1F files; renders spectrum SVG; writes `fft_analysis` into
 
 ---
 
-## Phase 6 — AI-Readiness & Local Text-to-SQL (plugin)
+## Phase 6 — AI-Readiness & Local Text-to-SQL (plugin) ✅ Done
 *Goal: a local LLM answers NL questions against the DB safely.*
 
-Implements spec §6 (parts not already in Phase 1).
+Implements spec §6 (parts not already in Phase 1). Implemented as a two-layer
+safety boundary (ADR-0009): an application SQL guard plus a read-only Postgres
+role, with the durable half living in the core so the Phase 9 FastAPI drill
+inherits it.
 
-- Complete/expand `v_*` views as LLM query targets; export the semantic
-  dictionary (from `COMMENT`s) as LLM context.
-- Local **Ollama** (Llama-3/Mistral) with a guarded text-to-SQL path: **read-only
-  Postgres role**, statement timeout, view allow-list — no destructive statements.
-- `pgvector`: embed unstructured test notes / algorithm outputs; hybrid
-  semantic + relational search.
-- NL→SQL evaluation set to measure accuracy/regression.
+- `v_schema_dictionary` (table/column `COMMENT`s as a queryable view) +
+  `v_llm_query_targets` (allow-list menu) — the LLM prompt is built from the live
+  schema, no second copy. Migration `…0015_ai_readiness.sql`.
+- Guarded text-to-SQL plugin `plugins/llm-text-to-sql/`: **sqlglot** AST
+  validation (single read-only SELECT, allow-listed `v_*` views only, enforced
+  LIMIT) → executed only through the **read-only `d1_llm_readonly` role**
+  (SELECT on views only, `default_transaction_read_only`, statement timeout).
+- Local **Ollama** (Llama-3/Mistral) in an opt-in `llm` compose profile.
+- `pgvector`: `semantic_embeddings` (HNSW cosine) + `v_embeddings_source_notes`;
+  incremental backfill + `/api/search` hybrid semantic search.
+- NL→SQL evaluation set (`eval/questions.json`) with offline (guard) + live
+  harness; `tests/test_eval_golds.py` keeps the gold set honest in CI.
 
-**Done when:** a curated question set returns correct SQL against a read-only role.
+**Done when:** a curated question set returns correct SQL against a read-only
+role. ✅ Guard allow/deny matrix + `tests/phase6_text_to_sql.sh` (grant isolation
+against a real login member of `d1_llm_readonly`) green in CI; `llm-build` job
+builds the image and runs the unit/eval tests.
 
 ---
 
@@ -284,12 +295,27 @@ dead ends. ✅ Verified by phase7 test (BILLET → DISC → PIECE-A/B fixture).
 
 ---
 
-## Phase 8 — Legacy Data Migration
+## Phase 8 — Legacy Data Migration ✅ Done
 *Goal: import existing AppSheet/Sheets data once the schema is proven.*
 
-- Use the maintainer's Sheets export: extract → map to schema → validate → load.
-- Idempotent, re-runnable migration scripts; reconciliation report.
-- Provenance preserved (audit log notes the migration source).
+Implemented as `scripts/migrate_legacy.py` — a standalone Python ETL that reads
+`Sample_Data.xlsx` (the AppSheet/Sheets export) and loads all entities in
+FK-dependency order. Safe to re-run (idempotent via ON CONFLICT DO NOTHING).
+Provenance recorded in every row's `notes` / `outcome_notes` field.
+
+Entities migrated (850 rows from 17 sheets):
+- `alloying_elements` (117), `materials` (36), `equipment` (6), `tools` (18),
+  `insert_types` (23), `manufacturing_methods` (17) + FAST/Turning param templates.
+- `tool_boxes` (19 + 1 synthetic), `cutting_inserts` (178), `insert_edges` (152).
+- `physical_samples` (138), `sample_genealogy` (32), `manufacturing_operations` (113).
+
+Known gaps (documented in reconciliation report):
+- 1 407 FAST Runs have no sample link (NOT NULL FK) → skipped + flagged.
+- 11 Machining Ops with `Workpiece ID = #N/A` (template rows) → skipped.
+- Legacy insert-edge codes pre-date the inventory → stored in JSONB metadata.
+- No raw stock ledger in legacy data → `sample_stock_provenance` empty.
+
+**Run:** `make migrate-legacy XLSX=/path/to/Sample_Data.xlsx`
 
 **Done when:** legacy data loads with a validated reconciliation report.
 
@@ -333,7 +359,7 @@ alone; the drop-Directus drill succeeds.
 | 3 | ✅ Done | Directus RBAC (3 roles, machine tokens), API contract doc, ADR-0005, phase3 test script, core/apply.sh config-as-code. Actor-identity hook (core/extensions/actor-identity) now sets d1.actor_identity in-transaction so API writes are audited |
 | 4 | ✅ Done | Heavy-data pipeline — D1F worker, presigned multipart upload, streaming stats, SVG plots, plugin-contract doc, CI worker-build job. Hardened: truncation-safe stats, header validation, webhook shared-secret auth, object-key/size validation, read-merge-write to avoid clobbering |
 | 5 | ✅ Done | Plugin framework — plugin-template scaffold + analysis-worker (FFT/spectrum), ADR-0007, CI analysis-build job. Same status/merge/auth hardening as Phase 4 |
-| 6 | ☐ Not started | Text-to-SQL + pgvector |
+| 6 | ✅ Done | Text-to-SQL + pgvector — guarded NL→SQL plugin (sqlglot allow-list + read-only `d1_llm_readonly` role), `v_schema_dictionary`/`v_llm_query_targets` semantic dictionary, `semantic_embeddings` (pgvector HNSW) + hybrid search, NL→SQL eval set, ADR-0009, runbook, migration 0015, phase6 test wired into CI + `llm-build` job. Ollama in opt-in `llm` compose profile |
 | 7 | ✅ Done | Traceability — recursive cradle-to-grave lineage functions (f_trace_ancestors/descendants/stock_origins/sample_timeline), migration 0014, ADR-0008, runbook, phase7 test wired into CI. Visual timeline UI deferred |
-| 8 | ☐ Not started | Legacy data migration |
+| 8 | ✅ Done | Legacy migration — `scripts/migrate_legacy.py` loads 850 rows (alloying elements, materials, equipment, tools, insert hierarchy, samples, genealogy, operations) from Sample_Data.xlsx. Idempotent. 1 407 unlinked FAST Runs flagged in reconciliation report. |
 | 9 | ☐ Not started | Hardening + drop-Directus drill |

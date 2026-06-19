@@ -16,6 +16,8 @@ Format: lightweight [MADR](https://adr.github.io/madr/)-style. Status is one of
 | [0005](./0005-directus-rbac-structure.md) | Directus RBAC structure | Accepted |
 | [0006](./0006-heavy-data-pipeline.md) | Direct-to-MinIO heavy-data pipeline | Accepted |
 | [0007](./0007-plugin-framework.md) | Plugin framework: shared template and extension pattern | Accepted |
+| [0008](./0008-traceability-layer.md) | Cradle-to-grave traceability as Postgres functions | Accepted |
+| [0009](./0009-text-to-sql-guarded-readonly.md) | Local text-to-SQL via a guarded, read-only path | Accepted |
 
 New ADRs: copy the structure of an existing one, take the next number, and add a
 row above.

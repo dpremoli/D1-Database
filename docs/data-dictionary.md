@@ -46,6 +46,9 @@ Operations
 Cross-cutting
   audit_logs                 append-only immutable change log
 
+AI-readiness (Phase 6 — text-to-SQL & semantic search)
+  semantic_embeddings        pgvector store for note text (HNSW cosine index)
+
 Views (v_ prefix — LLM query targets)
   v_complete_sample_history  flat sample + material + project
   v_tooling_hierarchy        3-tier tooling denormalized
@@ -53,6 +56,9 @@ Views (v_ prefix — LLM query targets)
   v_manufacturing_operations_full  ops + method + tooling + project
   v_stock_provenance         sample ← raw stock lots
   v_test_sessions_full       sessions + sample + tooling + project
+  v_schema_dictionary        table/column COMMENTs as a queryable dictionary
+  v_llm_query_targets        allow-list menu of views the LLM may query
+  v_embeddings_source_notes  every embeddable note (embedding backfill source)
 ```
 
 ---
@@ -203,6 +209,27 @@ Append-only; every core-table mutation produces one row. Protected by
 
 ---
 
+### `semantic_embeddings`
+
+pgvector store for unstructured note text (Phase 6 hybrid search). Derived,
+rebuildable data — keyed for idempotent, incremental backfill — so **not**
+audited. Source notes are defined by the `v_embeddings_source_notes` view.
+
+| Column | Type | Description |
+|---|---|---|
+| `embedding_id` | UUID PK | Surrogate key |
+| `source_table` | TEXT | Table the text came from (e.g. `physical_samples`) |
+| `source_id` | UUID | PK of the source row |
+| `source_column` | TEXT | Note column embedded (e.g. `notes`, `outcome_notes`) |
+| `content_text` | TEXT | The exact text embedded (kept for re-rank/display) |
+| `content_hash` | TEXT | SHA-256 of `content_text`; skips unchanged rows |
+| `embedding` | VECTOR(768) | nomic-embed-text vector; HNSW cosine index |
+| `model_name` | TEXT | Embedding model; part of the uniqueness key |
+
+Unique on `(source_table, source_id, source_column, model_name)`.
+
+---
+
 ## Naming conventions
 
 - **Table names:** plural snake_case, e.g. `physical_samples`
@@ -241,3 +268,9 @@ WHERE  sample_id  = '<uuid>'
 - Operator identity injected via `SET LOCAL d1.actor_identity = '...'` at
   session start, picked up by the audit trigger.
 - Passwords must never be stored in this schema (use Directus or separate auth).
+- **Text-to-SQL read surface (Phase 6):** the `d1_llm_readonly` role is granted
+  `SELECT` on the allow-listed `v_*` views **only** — never base tables and never
+  `audit_logs`. It is `default_transaction_read_only` with a statement timeout.
+  LLM-generated SQL is additionally validated by the plugin's SQL guard before it
+  runs (ADR-0009, `docs/runbooks/text-to-sql.md`). The login role used by the
+  plugin must inherit `d1_llm_readonly` and never be the superuser.

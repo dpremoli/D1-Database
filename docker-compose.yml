@@ -183,6 +183,68 @@ services:
       start_period: 30s
     networks: [d1net]
 
+  # Local LLM runtime for text-to-SQL and embeddings (Phase 6, spec §6).
+  # Opt-in: in the "llm" profile so the heavy image/models are not pulled by
+  # default. Start with:  docker compose --profile llm up -d
+  # Pull models once after first start (see docs/runbooks/text-to-sql.md):
+  #   docker compose exec ollama ollama pull llama3
+  #   docker compose exec ollama ollama pull nomic-embed-text
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    profiles: ["llm"]
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [d1net]
+
+  # Text-to-SQL API (Phase 6). Natural language in, guarded read-only SQL and
+  # rows out. The LLM's SQL is validated by app.lib.sql_guard and executed only
+  # through the d1_llm_readonly role (see ADR-0009). Also serves /api/search
+  # (pgvector hybrid search) and /api/embed/backfill.
+  llm-text-to-sql:
+    build:
+      context: plugins/llm-text-to-sql
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    profiles: ["llm"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    environment:
+      # Read-only role DSN for executing LLM-authored SQL (defence-in-depth).
+      LLM_DATABASE_URL: ${LLM_DATABASE_URL:-}
+      # Writer DSN for the embedding backfill (writes semantic_embeddings).
+      EMBED_DATABASE_URL: ${EMBED_DATABASE_URL:-}
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_SQL_MODEL: ${OLLAMA_SQL_MODEL:-llama3}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      LLM_STATEMENT_TIMEOUT_MS: ${LLM_STATEMENT_TIMEOUT_MS:-5000}
+      WORKER_WEBHOOK_SECRET: ${WORKER_WEBHOOK_SECRET:-}
+      WORKER_HTTP_PORT: "8080"
+    ports:
+      - "${LLM_HTTP_PORT:-8082}:8080"
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [d1net]
+
   # Reverse proxy: single HTTP entry point → Directus admin UI.
   # MinIO console and API remain directly accessible on their own ports.
   proxy:
@@ -206,6 +268,7 @@ volumes:
   directus-uploads:
   caddy-data:
   caddy-config:
+  ollama-models:
 
 networks:
   d1net:
