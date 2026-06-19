@@ -1,0 +1,7 @@
+Flask==3.0.3
+gunicorn==22.0.0
+requests==2.32.3
+pytest==8.3.2
+# --- job-specific ---
+sqlglot==25.8.1
+psycopg[binary]==3.2.1

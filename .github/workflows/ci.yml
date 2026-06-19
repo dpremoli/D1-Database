@@ -67,6 +67,9 @@ jobs:
       - name: Run Phase 7 traceability tests
         run: bash tests/phase7_traceability.sh
 
+      - name: Run Phase 6 AI-readiness tests
+        run: bash tests/phase6_text_to_sql.sh
+
       - name: Roll back all migrations (down — verifies reversibility)
         run: |
           for _ in $(seq 1 20); do
@@ -104,4 +107,16 @@ jobs:
       - name: Run unit tests
         run: |
           docker run --rm d1-analysis-worker \
+            python -m pytest tests/ -v --tb=short
+
+  llm-build:
+    name: Text-to-SQL plugin (docker build + guard tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build text-to-SQL image
+        run: docker build -t d1-llm-text-to-sql plugins/llm-text-to-sql/
+      - name: Run unit tests (SQL guard, schema context, eval golds)
+        run: |
+          docker run --rm d1-llm-text-to-sql \
             python -m pytest tests/ -v --tb=short
