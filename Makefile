@@ -16,7 +16,8 @@ DATABASE_URL  ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOS
 .PHONY: help setup test smoke schema-test compose-check lint up down logs \
         migrate migrate-down migrate-status seed reset-db \
         bootstrap-minio backup restore prune-backups \
-        worker-build worker-test worker-logs phase4-test
+        worker-build worker-test worker-logs phase4-test \
+        analysis-build analysis-test
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -100,6 +101,13 @@ worker-logs: ## Tail heavy-data worker container logs
 
 phase4-test: ## Phase 4 integration test (requires running stack + MACHINE_TOKEN)
 	bash tests/phase4_heavy_data.sh
+
+analysis-build: ## Build the FFT analysis worker Docker image
+	docker build -t d1-analysis-worker plugins/analysis-worker/
+
+analysis-test: analysis-build ## Run FFT analysis worker unit tests inside Docker
+	docker run --rm d1-analysis-worker \
+		python -m pytest tests/ -v --tb=short
 
 reset-db: ## Drop all tables and re-apply migrations + seed (DESTRUCTIVE — dev only)
 	@echo "WARNING: this destroys all data. Ctrl-C to abort."

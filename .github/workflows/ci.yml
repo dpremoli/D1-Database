@@ -90,3 +90,15 @@ jobs:
         run: |
           docker run --rm d1-heavy-data-worker \
             python -m pytest tests/ -v --tb=short
+
+  analysis-build:
+    name: Analysis worker (docker build + unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build analysis image
+        run: docker build -t d1-analysis-worker plugins/analysis-worker/
+      - name: Run unit tests
+        run: |
+          docker run --rm d1-analysis-worker \
+            python -m pytest tests/ -v --tb=short
