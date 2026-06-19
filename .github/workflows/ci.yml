@@ -64,6 +64,9 @@ jobs:
       - name: Run Phase 1 schema tests
         run: bash tests/phase1_schema.sh
 
+      - name: Run Phase 7 traceability tests
+        run: bash tests/phase7_traceability.sh
+
       - name: Roll back all migrations (down — verifies reversibility)
         run: |
           for _ in $(seq 1 20); do

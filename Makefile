@@ -13,7 +13,7 @@ POSTGRES_DB   ?= d1_database
 # Export DATABASE_URL from .env or environment before running migrate targets.
 DATABASE_URL  ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 
-.PHONY: help setup test smoke schema-test compose-check lint up down logs \
+.PHONY: help setup test smoke schema-test traceability-test compose-check lint up down logs \
         migrate migrate-down migrate-status seed reset-db \
         bootstrap-minio backup restore prune-backups \
         worker-build worker-test worker-logs phase4-test \
@@ -34,6 +34,9 @@ smoke: ## Validate the repository foundation (Phase 0 checks)
 
 schema-test: ## Run Phase 1 schema tests (requires DATABASE_URL or running stack)
 	DATABASE_URL="$(DATABASE_URL)" bash tests/phase1_schema.sh
+
+traceability-test: ## Run Phase 7 traceability tests (requires DATABASE_URL or running stack)
+	DATABASE_URL="$(DATABASE_URL)" bash tests/phase7_traceability.sh
 
 compose-check: ## Validate docker-compose.yml is well-formed
 	docker compose config -q && echo "docker-compose.yml OK"

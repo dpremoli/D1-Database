@@ -261,16 +261,26 @@ Implements spec §6 (parts not already in Phase 1).
 
 ---
 
-## Phase 7 — Traceability UI (deferred front-end)
+## Phase 7 — Traceability ✅ Done
 *Goal: bi-directional cradle-to-grave navigation. Spec §5.*
 
-- Start by leaning on Directus relational browsing over the `v_*` views.
-- Then a dedicated **cradle-to-grave timeline**: stock lot → operations → tests.
-- Forward (expand node → operator/asset/metadata) and reverse (file/session →
-  insert edge → insert → tool box → originating stock) traceability.
+Implemented as recursive PostgreSQL functions (ADR-0008), keeping the traversal
+logic in the durable core so Directus, ad-hoc SQL, plugins, and the Phase 6 LLM
+all share one correct implementation — rather than building a throwaway
+front-end (the visual timeline remains deferred; we lean on Directus relational
+browsing over the `v_*` views for now).
+
+- `f_trace_ancestors` / `f_trace_descendants` — recursive, cycle-guarded
+  genealogy walks (reverse / forward).
+- `f_trace_stock_origins` — closes the cradle end: raw stock lots feeding a
+  sample or any ancestor (reverse: file/session → sample → stock).
+- `f_sample_timeline` — chronological manufacturing operations + test sessions.
+- Migration `db/migrations/...0014_traceability.sql`, ADR-0008,
+  `docs/runbooks/traceability.md`, integration test
+  `tests/phase7_traceability.sh` wired into the CI `migrations` job.
 
 **Done when:** any sample's full lineage is walkable forward and backward without
-dead ends.
+dead ends. ✅ Verified by phase7 test (BILLET → DISC → PIECE-A/B fixture).
 
 ---
 
@@ -324,6 +334,6 @@ alone; the drop-Directus drill succeeds.
 | 4 | ✅ Done | Heavy-data pipeline — D1F worker, presigned multipart upload, streaming stats, SVG plots, plugin-contract doc, CI worker-build job. Hardened: truncation-safe stats, header validation, webhook shared-secret auth, object-key/size validation, read-merge-write to avoid clobbering |
 | 5 | ✅ Done | Plugin framework — plugin-template scaffold + analysis-worker (FFT/spectrum), ADR-0007, CI analysis-build job. Same status/merge/auth hardening as Phase 4 |
 | 6 | ☐ Not started | Text-to-SQL + pgvector |
-| 7 | ☐ Not started | Traceability UI (deferred) |
+| 7 | ✅ Done | Traceability — recursive cradle-to-grave lineage functions (f_trace_ancestors/descendants/stock_origins/sample_timeline), migration 0014, ADR-0008, runbook, phase7 test wired into CI. Visual timeline UI deferred |
 | 8 | ☐ Not started | Legacy data migration |
 | 9 | ☐ Not started | Hardening + drop-Directus drill |
