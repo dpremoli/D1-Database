@@ -217,30 +217,17 @@ Directus config is reproducible from version control.
 
 ---
 
-## Phase 4 — Heavy-Data Pipeline (first plugin)
+## Phase 4 — Heavy-Data Pipeline (first plugin) ✅ Done
 *Goal: 10–100 GB files move without touching the core's memory. Establishes the plugin pattern.*
 
-Implements spec §3 (core differentiator) and pins down the **core↔plugin contract**.
-
-- Direct-to-object-storage: client does S3 multipart upload to MinIO (presigned
-  URLs); the core never proxies binaries.
-- Session register: `POST` FKs + MinIO `file_storage_pointer` URI.
-- Async: session ingest → **Directus Flow webhook** → Redis queue → headless
-  **worker container** (in `/plugins`).
-- Worker uses streaming/memory-mapping (chunked HDF5, NumPy memmap, binary
-  streams) under a fixed memory ceiling; extracts stats; renders SVG/PNG plots to
-  MinIO; writes metrics + plot URLs back via the API.
-- Force-file object keys follow the deterministic convention
-  `{sample_code}-{pass}-{Vc}MPM_{feed}feed_{DoC}DoC` (see
-  [`docs/experiment-sheets-and-naming.md`](./docs/experiment-sheets-and-naming.md))
-  via the shared code-generation service; the MinIO key is the durable pointer.
-- Reference MATLAB/Python client (the `ABFP` capture app) demonstrating §3, and
-  persisting capture provenance (software version, sampling freq kHz) per pass.
-- **Document the plugin contract** (auth, queue message shape, write-back API)
-  as the template for all later plugins.
-
-**Done when:** a multi-GB synthetic file uploads via multipart, triggers a job,
-is parsed under a fixed memory ceiling, and stats+plots appear on the session.
+Implemented: `plugins/heavy-data-worker/` — Flask webhook receiver + rq worker
+container. D1F binary format (64-byte header + float32 row-major); streaming
+stats (chunked reads, ≤ `WORKER_MEMORY_LIMIT_MB` peak); strided-read SVG plotter
+(≤ 10 k points); MinIO multipart presign/complete API; Directus PATCH write-back.
+Plugin contract documented in `docs/plugin-contract.md`; ADR in
+`docs/adr/0006-heavy-data-pipeline.md`; runbook in
+`docs/runbooks/heavy-data-pipeline.md`. CI adds a `worker-build` job (docker
+build + pytest). Integration test at `tests/phase4_heavy_data.sh`.
 
 ---
 
@@ -335,7 +322,7 @@ alone; the drop-Directus drill succeeds.
 | 1 | ✅ Done | Postgres core — 12 migrations, 6 views, audit+OCC triggers, code-gen functions, seeds, ADR-0004, data-dictionary, CI migrations job |
 | 2 | ✅ Done | Compose stack — healthchecks, restart policies, Caddy proxy, MinIO bootstrap, backup/restore scripts + runbook |
 | 3 | ✅ Done | Directus RBAC (3 roles, machine tokens), API contract doc, ADR-0005, phase3 test script, core/apply.sh config-as-code |
-| 4 | ☐ Not started | Heavy-data pipeline (1st plugin) |
+| 4 | ✅ Done | Heavy-data pipeline — D1F worker, presigned multipart upload, streaming stats, SVG plots, plugin-contract doc, CI worker-build job |
 | 5 | ☐ Not started | Plugin framework (analysis/equipment) |
 | 6 | ☐ Not started | Text-to-SQL + pgvector |
 | 7 | ☐ Not started | Traceability UI (deferred) |
