@@ -22,7 +22,7 @@ _redis = Redis(
     host=os.getenv("REDIS_HOST", "redis"),
     port=int(os.getenv("REDIS_PORT", "6379")),
 )
-_queue = Queue("analysis", connection=_redis)
+_queue = Queue(os.getenv("QUEUE_NAME", "analysis"), connection=_redis)
 
 
 @app.get("/health")

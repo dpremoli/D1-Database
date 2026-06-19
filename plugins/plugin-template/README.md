@@ -39,12 +39,14 @@ plugins/plugin-template/
       example_job.py            # The job function to adapt; delete and replace with your logic
     lib/
       __init__.py               # Empty
-      directus_client.py        # PATCH /items/{collection}/{id} write-back helper
-      minio_client.py           # boto3 wrapper: multipart upload, presign, download, put
+      directus_client.py        # patch_item / get_item write-back + read helpers
+      minio_client.py           # boto3 wrapper: download_file + put_object
+      security.py               # webhook shared-secret auth + object_key validation
+      statuses.py               # canonical test_sessions.status vocabulary
   tests/
     __init__.py                 # Empty
     conftest.py                 # Pytest fixtures (Flask test client, env var defaults)
-    test_health.py              # Smoke test: GET /health returns 200 {"status": "ok"}
+    test_example.py             # Smoke tests: /health + the example job write-back
 ```
 
 ### File-by-file notes
@@ -69,45 +71,63 @@ both before the container exits. The only line you must change is the rq queue
 name (see step 3 below).
 
 **`app/webhook.py`**
-Declares the Flask application. `GET /health` returns `{"status": "ok"}` with
-HTTP 200. `POST /api/webhook/session` extracts `session_id` and `object_key`
-from the Directus webhook payload, enqueues your job function, and returns
-HTTP 202. You must update the `Queue(...)` name to match your plugin and
-import your job function in place of `example_job.process`.
+Declares the Flask application. `app.before_request(check_secret)` enforces the
+shared-secret header on every endpoint except `GET /health`. `GET /health`
+returns `{"status": "ok"}` with HTTP 200. `POST /api/webhook/session` extracts
+`session_id` and `object_key` from the Directus webhook payload, validates the
+key, enqueues your job function, and returns HTTP 202. The queue name is read
+from the `QUEUE_NAME` env var (default `plugin`); import your job function in
+place of `example_job`.
 
 **`app/jobs/example_job.py`**
-Contains a single function `process(session_id, object_key)` with the
-required error-handling envelope:
+Contains a single function `example_job(session_id, object_key)` with the
+required error-handling envelope (use the status constants from
+`app.lib.statuses`):
 
 ```python
-def process(session_id: str, object_key: str) -> None:
+from app.lib.statuses import STATUS_FAILED, STATUS_PROCESSED, STATUS_PROCESSING
+
+def example_job(session_id: str, object_key: str) -> None:
+    _mark(session_id, STATUS_PROCESSING)
     try:
-        directus_client.patch_item("test_sessions", session_id, {"status": "processing"})
         # --- your logic here ---
-        directus_client.patch_item("test_sessions", session_id, {"status": "processed", ...})
-    except Exception as exc:
-        directus_client.patch_item("test_sessions", session_id, {
-            "status": "error",
-            "summary_stats": {"error": type(exc).__name__, "message": str(exc)},
-        })
+        directus_client.patch_item(
+            "test_sessions", session_id,
+            {"status": STATUS_PROCESSED, "summary_stats": result},
+        )
+    except Exception:
+        _mark(session_id, STATUS_FAILED)
         raise
 ```
 
 Delete this file and create `app/jobs/<your_job>.py` with the same envelope.
 Do not remove the `except` block or the re-raise; both are required by the
-contract (`docs/plugin-contract.md` §9).
+contract (`docs/plugin-contract.md` §9). Emit only statuses from
+`app.lib.statuses.ALLOWED_STATUSES` — they mirror the DB CHECK constraint.
 
 **`app/lib/directus_client.py`**
-Wraps `PATCH /items/{collection}/{id}` with the `Authorization: Bearer
-<WORKER_DIRECTUS_TOKEN>` header. Copy verbatim unless you need to write to a
-collection other than `test_sessions`; in that case add a second helper
-function rather than changing the existing one.
+Wraps `PATCH /items/{collection}/{id}` (`patch_item`) and
+`GET /items/{collection}/{id}` (`get_item`) with the `Authorization: Bearer
+<WORKER_DIRECTUS_TOKEN>` header. Use `get_item` for read-merge-write when
+several plugins share a JSONB column (e.g. `test_sessions.summary_stats`) so
+you don't clobber another plugin's contribution. Copy verbatim.
 
 **`app/lib/minio_client.py`**
-boto3 wrapper providing `create_multipart_upload`, `presign_part`,
-`complete_multipart_upload`, `put_object`, and `download_file`. All five
-operations read their configuration from environment variables at call time
-(no module-level connection). Copy verbatim.
+Minimal boto3 wrapper providing `download_file` and `put_object`. Both read
+their configuration from environment variables at call time (no module-level
+connection). If your plugin needs presigned multipart upload, copy those
+helpers from `plugins/heavy-data-worker/app/lib/minio_client.py`.
+
+**`app/lib/security.py`**
+Provides `check_secret` (a Flask `before_request` hook enforcing the
+`X-Worker-Secret` header against `WORKER_WEBHOOK_SECRET`) and
+`valid_object_key` (rejects path traversal and unsafe characters). Copy
+verbatim and keep `app.before_request(check_secret)` wired in `webhook.py`.
+
+**`app/lib/statuses.py`**
+The canonical `test_sessions.status` vocabulary, mirroring the DB CHECK
+constraint in `db/migrations/...status_vocabulary.sql`. Import the status
+constants from here rather than hard-coding strings.
 
 **`tests/`**
 `conftest.py` sets the required environment variables to safe test defaults
@@ -131,35 +151,24 @@ Choose a name that matches the Docker Compose service name you will add
 underscores for service names; underscores are preferred for Python package
 names. The directory name becomes the Docker Compose service name.
 
-### Step 2 — Rename the rq queue
+### Step 2 — Set the rq queue name
 
 The queue name identifies this plugin's job stream in Redis. It must be
 unique across all plugins in the stack.
 
-In `entrypoint.sh`, replace the placeholder queue name on the `rq worker`
-line:
+Both `entrypoint.sh` and `app/webhook.py` read the queue name from the
+`QUEUE_NAME` environment variable (default `plugin`), so you do **not** edit
+code — set it once in the Docker Compose `environment:` block:
 
-```bash
-# before
-rq worker --url "redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}" plugin-template &
-
-# after
-rq worker --url "redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}" your-plugin-name &
+```yaml
+    environment:
+      QUEUE_NAME: your-plugin-name
 ```
 
-In `app/webhook.py`, update the `Queue(...)` constructor to match:
-
-```python
-# before
-_queue = Queue("plugin-template", connection=_redis)
-
-# after
-_queue = Queue("your-plugin-name", connection=_redis)
-```
-
-The Directus Flow webhook URL and the queue name are independent; they do not
-need to match, but keeping the service name, queue name, and directory name
-consistent makes operations easier.
+`entrypoint.sh` uses `"${QUEUE_NAME:-plugin}"` and `webhook.py` uses
+`os.getenv("QUEUE_NAME", "plugin")`; they will always agree. Keeping the
+service name, queue name, and directory name consistent makes operations
+easier.
 
 ### Step 3 — Implement your job logic
 
@@ -216,6 +225,8 @@ are read at runtime from the container environment; none may be hard-coded.
 | `WORKER_DIRECTUS_TOKEN` | yes | — | Static Bearer token for the plugin's machine user. Never commit this value. |
 | `WORKER_HTTP_PORT` | no | `8080` | Port gunicorn binds to inside the container. Must match the Dockerfile `EXPOSE` and the `healthcheck` URL. |
 | `WORKER_MEMORY_LIMIT_MB` | no | `256` | Soft memory ceiling for streaming reads. Job code should respect this when sizing read buffers. |
+| `WORKER_WEBHOOK_SECRET` | no | — | Shared secret required in the `X-Worker-Secret` header on webhook POSTs. If unset, auth is disabled (dev only). The Directus Flow must send the same value. |
+| `QUEUE_NAME` | no | `plugin` | rq queue name for this plugin's job stream. Set to a value unique across the stack. |
 
 Set all required variables in your `.env` file (copied from `.env.example`)
 or in the Docker Compose `environment:` block. The `WORKER_DIRECTUS_TOKEN`

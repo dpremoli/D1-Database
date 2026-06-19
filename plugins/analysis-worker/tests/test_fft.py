@@ -76,6 +76,35 @@ def test_band_energy_keys(sine_signal):
     }
 
 
+def test_dominant_frequency_with_stride():
+    """With stride>1 the effective sample rate must be used for the freq axis.
+
+    A 250 Hz tone sampled at 10 kHz then read with stride 4 has an effective
+    rate of 2.5 kHz; 250 Hz is still well below Nyquist (1.25 kHz) so the
+    dominant frequency must still resolve to ~250 Hz when actual_stride=4.
+    """
+    sample_rate = 10_000.0
+    freq = 250.0
+    stride = 4
+    effective_n = 4096
+    # Build the already-strided signal at the effective rate.
+    eff_rate = sample_rate / stride
+    t = np.arange(effective_n) / eff_rate
+    signal = 500.0 * np.sin(2 * np.pi * freq * t)
+    result = analyse_channel(signal, sample_rate, actual_stride=stride)
+    assert result["dominant_frequency_hz"] == pytest.approx(freq, rel=0.05)
+
+
+def test_band_energy_concentrated_in_correct_band(sine_signal):
+    """A 250 Hz tone's energy must fall almost entirely in the 0–500 Hz band."""
+    signal, sample_rate, _ = sine_signal
+    result = analyse_channel(signal, sample_rate)
+    bands = result["band_energy"]
+    total = bands["0_500_hz"] + bands["500_2000_hz"] + bands["2000_plus_hz"]
+    assert total > 0
+    assert bands["0_500_hz"] / total > 0.95
+
+
 def test_plot_spectrum_returns_svg(sine_signal):
     signal, sample_rate, _ = sine_signal
     svg = plot_spectrum(signal, sample_rate, actual_stride=1)

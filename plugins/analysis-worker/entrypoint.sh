@@ -15,7 +15,7 @@ WEBHOOK_PID=$!
 
 rq worker \
     --url "redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}" \
-    analysis &
+    "${QUEUE_NAME:-analysis}" &
 WORKER_PID=$!
 
 wait "$WEBHOOK_PID" "$WORKER_PID"

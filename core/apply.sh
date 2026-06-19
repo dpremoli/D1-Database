@@ -152,6 +152,16 @@ while IFS= read -r perm_obj; do
     validation=$(echo "$perm_obj" | jq '.validation')
     presets=$(echo "$perm_obj"    | jq '.presets')
 
+    # Idempotency: skip if a permission for this (role, collection, action)
+    # already exists, so re-running apply.sh does not create duplicate rows.
+    existing=$(dcurl GET \
+        "/permissions?filter[role][_eq]=$role_id&filter[collection][_eq]=$collection&filter[action][_eq]=$action&limit=1" \
+        2>/dev/null | jq -r '.data | length' 2>/dev/null || echo 0)
+    if [[ "$existing" -gt 0 ]]; then
+        perm_skip=$((perm_skip + 1))
+        continue
+    fi
+
     payload=$(jq -n \
         --arg role "$role_id" \
         --arg collection "$collection" \
