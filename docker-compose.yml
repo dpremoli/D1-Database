@@ -99,6 +99,44 @@ services:
       start_period: 60s
     networks: [d1net]
 
+  # Heavy-data pipeline worker (Phase 4).
+  # Exposes a webhook endpoint (Directus Flow target) and an rq worker that
+  # parses large .d1f files from MinIO under a fixed memory ceiling.
+  heavy-data-worker:
+    build:
+      context: plugins/heavy-data-worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change_me_too}
+      MINIO_BUCKET: ${MINIO_BUCKET:-d1-files}
+      DIRECTUS_URL: http://directus:8055
+      WORKER_DIRECTUS_TOKEN: ${WORKER_DIRECTUS_TOKEN:-}
+      WORKER_MEMORY_LIMIT_MB: ${WORKER_MEMORY_LIMIT_MB:-256}
+      WORKER_HTTP_PORT: "8080"
+    ports:
+      - "${WORKER_HTTP_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [d1net]
+
   # Reverse proxy: single HTTP entry point → Directus admin UI.
   # MinIO console and API remain directly accessible on their own ports.
   proxy:

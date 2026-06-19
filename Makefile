@@ -15,7 +15,8 @@ DATABASE_URL  ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOS
 
 .PHONY: help setup test smoke schema-test compose-check lint up down logs \
         migrate migrate-down migrate-status seed reset-db \
-        bootstrap-minio backup restore prune-backups
+        bootstrap-minio backup restore prune-backups \
+        worker-build worker-test worker-logs phase4-test
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -86,6 +87,19 @@ restore: ## Restore from MinIO backup — set BACKUP_FILE=d1_<timestamp>.sql.gz
 
 prune-backups: ## Remove local backup files older than 30 days
 	find ./backups -name 'd1_*.sql.gz' -mtime +30 -print -delete
+
+worker-build: ## Build the heavy-data worker Docker image
+	docker build -t d1-heavy-data-worker plugins/heavy-data-worker/
+
+worker-test: worker-build ## Run heavy-data worker unit tests inside Docker
+	docker run --rm d1-heavy-data-worker \
+		python -m pytest tests/ -v --tb=short
+
+worker-logs: ## Tail heavy-data worker container logs
+	docker compose logs -f heavy-data-worker
+
+phase4-test: ## Phase 4 integration test (requires running stack + MACHINE_TOKEN)
+	bash tests/phase4_heavy_data.sh
 
 reset-db: ## Drop all tables and re-apply migrations + seed (DESTRUCTIVE — dev only)
 	@echo "WARNING: this destroys all data. Ctrl-C to abort."

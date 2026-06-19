@@ -78,3 +78,15 @@ jobs:
                AND table_name != 'schema_migrations'")
           echo "Tables after full rollback: $tables"
           [[ "$tables" -eq 0 ]] || (echo "FAIL: $tables tables remain after rollback" && exit 1)
+
+  worker-build:
+    name: Heavy-data worker (docker build + unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build worker image
+        run: docker build -t d1-heavy-data-worker plugins/heavy-data-worker/
+      - name: Run unit tests
+        run: |
+          docker run --rm d1-heavy-data-worker \
+            python -m pytest tests/ -v --tb=short
