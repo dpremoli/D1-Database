@@ -295,12 +295,27 @@ dead ends. ✅ Verified by phase7 test (BILLET → DISC → PIECE-A/B fixture).
 
 ---
 
-## Phase 8 — Legacy Data Migration
+## Phase 8 — Legacy Data Migration ✅ Done
 *Goal: import existing AppSheet/Sheets data once the schema is proven.*
 
-- Use the maintainer's Sheets export: extract → map to schema → validate → load.
-- Idempotent, re-runnable migration scripts; reconciliation report.
-- Provenance preserved (audit log notes the migration source).
+Implemented as `scripts/migrate_legacy.py` — a standalone Python ETL that reads
+`Sample_Data.xlsx` (the AppSheet/Sheets export) and loads all entities in
+FK-dependency order. Safe to re-run (idempotent via ON CONFLICT DO NOTHING).
+Provenance recorded in every row's `notes` / `outcome_notes` field.
+
+Entities migrated (850 rows from 17 sheets):
+- `alloying_elements` (117), `materials` (36), `equipment` (6), `tools` (18),
+  `insert_types` (23), `manufacturing_methods` (17) + FAST/Turning param templates.
+- `tool_boxes` (19 + 1 synthetic), `cutting_inserts` (178), `insert_edges` (152).
+- `physical_samples` (138), `sample_genealogy` (32), `manufacturing_operations` (113).
+
+Known gaps (documented in reconciliation report):
+- 1 407 FAST Runs have no sample link (NOT NULL FK) → skipped + flagged.
+- 11 Machining Ops with `Workpiece ID = #N/A` (template rows) → skipped.
+- Legacy insert-edge codes pre-date the inventory → stored in JSONB metadata.
+- No raw stock ledger in legacy data → `sample_stock_provenance` empty.
+
+**Run:** `make migrate-legacy XLSX=/path/to/Sample_Data.xlsx`
 
 **Done when:** legacy data loads with a validated reconciliation report.
 
@@ -346,5 +361,5 @@ alone; the drop-Directus drill succeeds.
 | 5 | ✅ Done | Plugin framework — plugin-template scaffold + analysis-worker (FFT/spectrum), ADR-0007, CI analysis-build job. Same status/merge/auth hardening as Phase 4 |
 | 6 | ✅ Done | Text-to-SQL + pgvector — guarded NL→SQL plugin (sqlglot allow-list + read-only `d1_llm_readonly` role), `v_schema_dictionary`/`v_llm_query_targets` semantic dictionary, `semantic_embeddings` (pgvector HNSW) + hybrid search, NL→SQL eval set, ADR-0009, runbook, migration 0015, phase6 test wired into CI + `llm-build` job. Ollama in opt-in `llm` compose profile |
 | 7 | ✅ Done | Traceability — recursive cradle-to-grave lineage functions (f_trace_ancestors/descendants/stock_origins/sample_timeline), migration 0014, ADR-0008, runbook, phase7 test wired into CI. Visual timeline UI deferred |
-| 8 | ☐ Not started | Legacy data migration |
+| 8 | ✅ Done | Legacy migration — `scripts/migrate_legacy.py` loads 850 rows (alloying elements, materials, equipment, tools, insert hierarchy, samples, genealogy, operations) from Sample_Data.xlsx. Idempotent. 1 407 unlinked FAST Runs flagged in reconciliation report. |
 | 9 | ☐ Not started | Hardening + drop-Directus drill |

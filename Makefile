@@ -17,7 +17,8 @@ DATABASE_URL  ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOS
         migrate migrate-down migrate-status seed reset-db \
         bootstrap-minio backup restore prune-backups \
         worker-build worker-test worker-logs phase4-test \
-        analysis-build analysis-test llm-build llm-test llm-eval
+        analysis-build analysis-test llm-build llm-test llm-eval \
+        migrate-legacy migrate-legacy-dry
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -124,6 +125,16 @@ llm-test: llm-build ## Run text-to-SQL guard/eval unit tests inside Docker
 
 llm-eval: ## Validate the NL->SQL gold set against the guard (offline; no LLM needed)
 	docker run --rm d1-llm-text-to-sql python eval/run_eval.py
+
+migrate-legacy: ## Run Phase 8 legacy data migration (requires DATABASE_URL and XLSX)
+	@test -n "$(XLSX)" || (echo "ERROR: set XLSX=/path/to/Sample_Data.xlsx" && exit 1)
+	pip install -q -r scripts/requirements.txt
+	DATABASE_URL="$(DATABASE_URL)" python3 scripts/migrate_legacy.py --xlsx "$(XLSX)"
+
+migrate-legacy-dry: ## Dry-run the legacy migration (no DB required)
+	@test -n "$(XLSX)" || (echo "ERROR: set XLSX=/path/to/Sample_Data.xlsx" && exit 1)
+	pip install -q -r scripts/requirements.txt
+	python3 scripts/migrate_legacy.py --xlsx "$(XLSX)" --dry-run
 
 reset-db: ## Drop all tables and re-apply migrations + seed (DESTRUCTIVE — dev only)
 	@echo "WARNING: this destroys all data. Ctrl-C to abort."
