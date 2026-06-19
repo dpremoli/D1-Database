@@ -1,0 +1,62 @@
+[
+  {
+    "id": "samples_by_mass",
+    "question": "Which samples weigh more than 50 grams? Show their code and mass.",
+    "tags": ["samples", "filter"],
+    "gold_sql": "SELECT sample_code, mass_grams FROM v_complete_sample_history WHERE mass_grams > 50 ORDER BY mass_grams DESC"
+  },
+  {
+    "id": "count_samples_by_material",
+    "question": "How many samples exist for each material name?",
+    "tags": ["samples", "aggregate"],
+    "gold_sql": "SELECT material_name, count(*) AS sample_count FROM v_complete_sample_history GROUP BY material_name ORDER BY sample_count DESC"
+  },
+  {
+    "id": "export_controlled_samples",
+    "question": "List the codes of all export-controlled samples.",
+    "tags": ["samples", "compliance"],
+    "gold_sql": "SELECT sample_code FROM v_complete_sample_history WHERE export_controlled = true"
+  },
+  {
+    "id": "fast_operations",
+    "question": "Show manufacturing operations performed with the FAST method.",
+    "tags": ["operations", "filter"],
+    "gold_sql": "SELECT sample_code, pass_code, operation_date FROM v_manufacturing_operations_full WHERE method_code = 'MF' ORDER BY operation_date"
+  },
+  {
+    "id": "operations_using_an_edge",
+    "question": "Which operations consumed a cutting insert edge?",
+    "tags": ["operations", "tooling"],
+    "gold_sql": "SELECT sample_code, pass_code, insert_edge_code FROM v_manufacturing_operations_full WHERE insert_edge_code IS NOT NULL"
+  },
+  {
+    "id": "test_sessions_for_sample",
+    "question": "What test sessions exist for sample 10-AA-MF-2023-06-03?",
+    "tags": ["tests", "filter"],
+    "gold_sql": "SELECT session_id, test_type, session_date, status FROM v_test_sessions_full WHERE sample_code = '10-AA-MF-2023-06-03' ORDER BY session_date"
+  },
+  {
+    "id": "large_test_files",
+    "question": "Which test sessions produced files larger than 10 GB?",
+    "tags": ["tests", "heavy-data"],
+    "gold_sql": "SELECT sample_code, test_type, file_size_gb FROM v_test_sessions_full WHERE file_size_gb > 10 ORDER BY file_size_gb DESC"
+  },
+  {
+    "id": "stock_provenance_for_sample",
+    "question": "What raw stock lots fed sample 10-AA-MF-2023-06-03?",
+    "tags": ["provenance"],
+    "gold_sql": "SELECT lot_code, stock_type, supplier_name, mass_used_grams FROM v_stock_provenance WHERE sample_code = '10-AA-MF-2023-06-03'"
+  },
+  {
+    "id": "child_pieces",
+    "question": "What child pieces were cut from sample P7-DISC?",
+    "tags": ["genealogy"],
+    "gold_sql": "SELECT child_sample_code, child_form, relationship_type FROM v_sample_genealogy_flat WHERE parent_sample_code = 'P7-DISC'"
+  },
+  {
+    "id": "edges_in_toolbox",
+    "question": "List the insert edges in tool box TB-001 and whether each is used.",
+    "tags": ["tooling"],
+    "gold_sql": "SELECT insert_code, edge_code, edge_used FROM v_tooling_hierarchy WHERE tool_box_code = 'TB-001'"
+  }
+]

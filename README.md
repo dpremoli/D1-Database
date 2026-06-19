@@ -6,8 +6,11 @@ deeply nested tooling tracking, high-capacity (10–100 GB) data ingestion, and
 LLM-driven natural-language querying — replacing a brittle AppSheet-over-Google-
 Sheets setup.
 
-> **Status:** 🚧 Phase 0 (repository foundation). Private & proprietary — see
-> [`NOTICE.md`](./NOTICE.md). Multi-phase build; see [`plan.md`](./plan.md).
+> **Status:** 🚧 Active build — Phases 0–7 complete (core schema, infra,
+> Directus RBAC, heavy-data pipeline, plugin framework, traceability, and
+> local text-to-SQL); Phases 8–9 (legacy data migration, hardening) remain.
+> Private & proprietary — see [`NOTICE.md`](./NOTICE.md). Multi-phase build;
+> see [`plan.md`](./plan.md).
 
 ## Why
 
@@ -54,12 +57,13 @@ See [`docs/adr/`](./docs/adr/) for the decisions behind this and
 
 ## Quick start
 
-> The stack is built out in Phases 1–2. Today this bootstraps tooling only.
-
 ```sh
 cp .env.example .env      # then edit secrets
 make setup                # install pre-commit hooks & dev tooling
-make up                   # (Phase 2+) bring up the Docker stack
+make up                   # bring up the core Docker stack
+make migrate seed         # apply schema migrations + reference seed data
+# Optional: local text-to-SQL (heavy — pulls Ollama + models; see the runbook)
+docker compose --profile llm up -d
 ```
 
 Requires Docker (Desktop/WSL2 on Windows) and `pre-commit`. Run `make help` for
