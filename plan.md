@@ -231,17 +231,16 @@ build + pytest). Integration test at `tests/phase4_heavy_data.sh`.
 
 ---
 
-## Phase 5 — Plugin Framework: Analysis & Equipment
+## Phase 5 — Plugin Framework: Analysis & Equipment ✅ Done
 *Goal: generalise Phase 4's contract into a reusable plugin template.*
 
-- Plugin scaffolding/template (Dockerfile + contract client) others can copy.
-- **Custom analysis** container template (per-project compute, swappable).
-- **Equipment integration** adapter pattern (MATLAB clients / acquisition rigs).
-- Each plugin authenticates via token, consumes the documented contract only —
-  no direct schema coupling beyond the published interface.
-
-**Done when:** a second, non-trivial plugin is stood up from the template with no
-core changes.
+Implemented: `plugins/plugin-template/` — canonical scaffold (Flask webhook,
+rq job stub, directus_client, minio_client, pytest suite, README authoring guide).
+`plugins/analysis-worker/` — second non-trivial plugin derived from template:
+FFT amplitude spectrum, dominant frequencies, RMS, peak force, band energy per
+channel on D1F files; renders spectrum SVG; writes `fft_analysis` into
+`summary_stats` via Directus PATCH. ADR-0007 in
+`docs/adr/0007-plugin-framework.md`. CI adds `analysis-build` job.
 
 ---
 
@@ -323,7 +322,7 @@ alone; the drop-Directus drill succeeds.
 | 2 | ✅ Done | Compose stack — healthchecks, restart policies, Caddy proxy, MinIO bootstrap, backup/restore scripts + runbook |
 | 3 | ✅ Done | Directus RBAC (3 roles, machine tokens), API contract doc, ADR-0005, phase3 test script, core/apply.sh config-as-code |
 | 4 | ✅ Done | Heavy-data pipeline — D1F worker, presigned multipart upload, streaming stats, SVG plots, plugin-contract doc, CI worker-build job |
-| 5 | ☐ Not started | Plugin framework (analysis/equipment) |
+| 5 | ✅ Done | Plugin framework — plugin-template scaffold + analysis-worker (FFT/spectrum), ADR-0007, CI analysis-build job |
 | 6 | ☐ Not started | Text-to-SQL + pgvector |
 | 7 | ☐ Not started | Traceability UI (deferred) |
 | 8 | ☐ Not started | Legacy data migration |
