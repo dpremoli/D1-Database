@@ -34,18 +34,76 @@ def _connect() -> psycopg.Connection:
     return conn
 
 
+class QueryExecutionError(Exception):
+    """A guarded query was rejected by Postgres at execution time.
+
+    The SQL guard proves a statement is a read-only, allow-listed SELECT, but it
+    cannot know whether every *column* the model referenced actually exists, or
+    whether the query will exceed the statement timeout. Those surface here (e.g.
+    a hallucinated column) and are the model's fault, not a server fault — so we
+    raise a distinct error the API turns into a graceful message, not a 500.
+    """
+
+
 def run_select(sql: str) -> list[dict]:
-    """Execute an already-guarded read-only query and return rows as dicts."""
+    """Execute an already-guarded read-only query and return rows as dicts.
+
+    Raises :class:`QueryExecutionError` on a database error (undefined column,
+    statement timeout, …) so callers can respond gracefully instead of 500.
+    """
     with _connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql)
-            return cur.fetchall()
+            try:
+                cur.execute(sql)
+                return cur.fetchall()
+            except psycopg.Error as exc:
+                # e.g. UndefinedColumn, QueryCanceled (timeout). Keep the primary
+                # message; drop the multi-line CONTEXT/HINT noise psycopg appends.
+                raise QueryExecutionError(
+                    str(exc).strip().splitlines()[0]
+                ) from exc
 
 
 def fetch_query_targets() -> list[dict]:
     """Return the allow-listed views and their descriptions (the LLM menu)."""
     return run_select(
         "SELECT view_name, description FROM v_llm_query_targets ORDER BY view_name"
+    )
+
+
+def distinct_values(object_name: str, column: str, cap: int = 25) -> list | None:
+    """Distinct non-null values of a column, or None if there are more than *cap*.
+
+    Used to build the "known values" legend for low-cardinality categorical
+    columns so the model filters on real strings (e.g. method_name = 'Turning')
+    instead of guessing. Identifiers come from the schema dictionary (not user
+    input) and are quoted. Returns None for high-cardinality or unreadable columns.
+    """
+    query = (
+        f'SELECT DISTINCT "{column}" AS v FROM "{object_name}" '
+        f'WHERE "{column}" IS NOT NULL ORDER BY 1 LIMIT {int(cap) + 1}'
+    )
+    try:
+        rows = run_select(query)
+    except Exception:  # noqa: BLE001 — best-effort legend, never break prompt build
+        return None
+    values = [r["v"] for r in rows]
+    return None if len(values) > cap else values
+
+
+def fetch_dictionary_all() -> list[dict]:
+    """Return the full column dictionary for every documented object.
+
+    Used to build the LLM prompt across all readable tables and views (the
+    caller filters out denied/system objects). Ordered for stable grouping.
+    """
+    return run_select(
+        """
+        SELECT object_name, object_comment, column_name, data_type,
+               column_comment, column_position
+        FROM v_schema_dictionary
+        ORDER BY object_name, column_position
+        """
     )
 
 

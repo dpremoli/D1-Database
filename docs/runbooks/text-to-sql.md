@@ -45,8 +45,17 @@ EMBED_DATABASE_URL=postgres://d1:<d1-password>@postgres:5432/d1_database?sslmode
 
 > Verify the isolation any time with `make ai-test` (or
 > `bash tests/phase6_text_to_sql.sh`): it provisions a throwaway member of
-> `d1_llm_readonly` and asserts it can read the views but not base tables, the
-> audit log, or write.
+> `d1_llm_readonly` and asserts the role can read but not write.
+
+**Read surface (widened 2026-07-01, migration `…052_llm_readonly_broad_read`):**
+`d1_llm_readonly` can now `SELECT` **all lab/domain tables** and benign Directus
+metadata — so the AI can answer questions about any recorded field (e.g.
+`manufacturing_operations.machining_feed_mm_per_rev`). It is still **denied**
+every credential/auth/system table (`directus_users`, `directus_sessions`,
+`directus_settings`, `directus_flows`/`operations`, the policy/permission tables,
+`schema_migrations`, and `pg_catalog`/`information_schema`). The same deny-list is
+enforced a second time by `app/lib/sql_guard.py` (deny-by-default for any unknown
+`directus_*` table). See ADR-0009 §"Update (2026-07-01)".
 
 ---
 
@@ -154,3 +163,59 @@ stay within the allow-list as views change.
 | Embeddings: `expected 768 dimensions` | Embedding model dimension ≠ 768 | Use a 768-dim model or migrate the `vector(…)` size. |
 | Ollama timeouts | Model not pulled / cold | `docker compose exec ollama ollama pull <model>`; raise `OLLAMA_TIMEOUT_S`. |
 | Query killed at ~5 s | `statement_timeout` hit | Expected guardrail; refine the question or raise `LLM_STATEMENT_TIMEOUT_MS`. |
+
+---
+
+## 7. Chat in Directus — "Ask the Database"
+
+Two ways to chat with the data **inside the Directus Studio** (no separate app).
+
+### Path A — the built-in Directus AI Chat (config only, no code)
+
+Directus ships an AI Assistant/Chat (v11.14+) that speaks to any
+OpenAI-compatible endpoint, including your **host Ollama**. Fastest to try, but it
+queries via Directus RBAC/tools (not the guarded `v_*` path), returns text+tables
+(no charts), and can *write* unless constrained.
+
+1. The `directus` compose service already has
+   `extra_hosts: ["host.docker.internal:host-gateway"]` so it can reach the host.
+2. Pull a **tool-calling** model on the host: `ollama pull llama3.1` (the SQL-only
+   `llama3` is weaker at the Assistant's function-calling).
+3. In Studio → Settings → AI, choose an OpenAI-compatible provider with Base URL
+   `http://host.docker.internal:11434/v1/`, API key `ollama` (placeholder), and
+   the pulled model. (Set the equivalent env vars if your version is env-driven.)
+4. Test as a **read-only** user/policy so the Assistant can't mutate; keep
+   per-tool approval on (default).
+
+### Path B — the "Ask the Database" module (guarded, with charts)
+
+A custom page that reuses this plugin's guard + read-only role and adds a chat UI
+with **Plotly charts**. Two extensions in `core/extensions/`:
+
+- `d1-ask-endpoint` — server-side proxy mounted at `/d1-ask`. Requires a
+  logged-in user and forwards to the plugin's `POST /api/chat`, injecting
+  `WORKER_WEBHOOK_SECRET` so the browser never sees it. The plugin stays on the
+  internal network — no host port needed.
+- `d1-ask-db` — the module (sidebar entry **Ask the Database**). Multi-turn chat;
+  each answer shows the generated SQL, a table, and a chart when one fits.
+
+Setup:
+
+```bash
+# Build both extensions (module needs a build; endpoint is plain JS).
+( cd core/extensions/d1-ask-db && npm install && npm run build )
+
+# Ensure the plugin points at host Ollama (default in .env.example) and is up.
+docker compose up -d llm-text-to-sql directus
+# Pull a SQL model on the host if you haven't: ollama pull qwen2.5-coder
+```
+
+Then open the Studio → **Ask the Database** and ask, e.g. "how many samples per
+material?". Follow-ups ("now only aluminium alloys") refine the previous query.
+Unsafe/off-menu SQL is still rejected by the guard (surfaced as a note), never run.
+
+The chart the model proposes is validated against the returned columns by
+`app/lib/charts.py`; anything malformed or off-menu falls back to the table.
+
+Tests: `make llm-test` (backend, incl. `/api/chat` + chart validation) and
+`cd tests/ui && npx playwright test 08-ask-db-chat` (UI + endpoint auth).

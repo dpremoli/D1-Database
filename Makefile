@@ -18,7 +18,7 @@ DATABASE_URL  ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOS
         bootstrap-minio backup restore prune-backups \
         worker-build worker-test worker-logs phase4-test \
         analysis-build analysis-test llm-build llm-test llm-eval \
-        migrate-legacy migrate-legacy-dry
+        migrate-legacy migrate-legacy-dry index-archive index-archive-dry
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -135,6 +135,24 @@ migrate-legacy-dry: ## Dry-run the legacy migration (no DB required)
 	@test -n "$(XLSX)" || (echo "ERROR: set XLSX=/path/to/Sample_Data.xlsx" && exit 1)
 	pip install -q -r scripts/requirements.txt
 	python3 scripts/migrate_legacy.py --xlsx "$(XLSX)" --dry-run
+
+index-archive: ## Index the SMB archive into the Directus File Library (idempotent; good as a nightly cron)
+	docker run --rm \
+		--network d1-database_d1net \
+		-v "$(CURDIR)/scripts:/scripts:ro" \
+		-v d1-database_archive_share:/mnt/archive:ro \
+		-e DATABASE_URL="postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)?sslmode=disable" \
+		-e ARCHIVE_ROOT=/mnt/archive/star_group1 \
+		python:3.12-slim \
+		sh -c "pip install -q psycopg2-binary && python /scripts/index_archive.py"
+
+index-archive-dry: ## Dry-run the archive indexer (counts only, no DB writes)
+	docker run --rm \
+		-v "$(CURDIR)/scripts:/scripts:ro" \
+		-v d1-database_archive_share:/mnt/archive:ro \
+		-e ARCHIVE_ROOT=/mnt/archive/star_group1 \
+		python:3.12-slim \
+		sh -c "pip install -q psycopg2-binary && python /scripts/index_archive.py --dry-run"
 
 reset-db: ## Drop all tables and re-apply migrations + seed (DESTRUCTIVE — dev only)
 	@echo "WARNING: this destroys all data. Ctrl-C to abort."

@@ -1,0 +1,23 @@
+{
+  "name": "directus-extension-d1-report",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "directus-extension build",
+    "dev": "directus-extension build --watch"
+  },
+  "keywords": ["directus", "directus-extension", "directus-custom-endpoint"],
+  "devDependencies": {
+    "@directus/extensions-sdk": "^17",
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "directus:extension": {
+    "type": "endpoint",
+    "path": "dist/index.js",
+    "source": "src/index.js",
+    "host": "^11.0.0"
+  }
+}

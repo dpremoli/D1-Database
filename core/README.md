@@ -34,6 +34,20 @@ bash core/apply.sh
 are skipped. The Rig_1 machine token is printed once to stdout; store it in
 your secrets manager (1Password, Vault, etc.).
 
+## Extensions (`core/extensions/`)
+
+Version-controlled Directus extensions, auto-loaded from the read-only mount in
+`docker-compose.yml`. Three kinds are in use:
+
+- **hook** — server-side logic (e.g. `owner-cascade`, `actor-identity`).
+- **interface** — field-level UI (e.g. `d1-composition-bar`, `d1-sample-code`).
+- **module** — full-page apps (`d1-lab-dashboard`, and `d1-ask-db`).
+- **endpoint** — custom API routes. `d1-ask-endpoint` (mounted at `/d1-ask`) is
+  the server-side proxy for the **Ask the Database** chat page: it requires a
+  logged-in user and forwards questions to the guarded `llm-text-to-sql` plugin,
+  injecting the worker secret so it never reaches the browser. See
+  [`../docs/runbooks/text-to-sql.md`](../docs/runbooks/text-to-sql.md).
+
 ## RBAC summary
 
 | Role | Access |

@@ -1,0 +1,493 @@
+<template>
+	<div class="d1-graph-container">
+		<div class="d1-graph-toolbar">
+			<v-input
+				v-if="standalone"
+				v-model="searchQuery"
+				placeholder="Search any entity…"
+				small
+				class="d1-graph-search"
+				@keydown.enter="handleSearch"
+			/>
+			<span v-if="focalLabel" class="d1-focal-label">{{ focalLabel }}</span>
+			<div class="d1-graph-actions">
+				<v-button small secondary icon @click="resetLayout">
+					<v-icon name="center_focus_strong" />
+				</v-button>
+				<v-button small secondary icon @click="clearGraph">
+					<v-icon name="clear" />
+				</v-button>
+			</div>
+		</div>
+		<div v-if="searchResults.length" class="d1-search-results">
+			<div
+				v-for="r in searchResults"
+				:key="r.id"
+				class="d1-search-result"
+				@click="loadNeighbors(r.collection, r.id)"
+			>
+				<span class="d1-search-dot" :style="{ background: NODE_COLORS[r.collection] ?? '#888' }" />
+				<span class="d1-search-label">{{ r.label }}</span>
+				<span class="d1-search-collection">{{ r.collection }}</span>
+			</div>
+		</div>
+		<div ref="graphEl" class="d1-graph-canvas" />
+		<div v-if="loading" class="d1-graph-loading">
+			<v-progress-circular indeterminate />
+		</div>
+		<div v-if="empty" class="d1-graph-empty">Click any item in the dashboard to explore its connections</div>
+	</div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
+import cytoscape from 'cytoscape';
+import { useD1Items } from '../composables/useD1Items';
+
+const props = defineProps<{ standalone?: boolean }>();
+const emit = defineEmits<{ (e: 'select', payload: { collection: string; id: string }): void }>();
+
+const { getItems, getItem } = useD1Items();
+
+const graphEl = ref<HTMLElement | null>(null);
+const loading = ref(false);
+const searchQuery = ref('');
+const searchResults = ref<{ id: string; collection: string; label: string }[]>([]);
+const focalLabel = ref('');
+const empty = ref(true);
+
+let cy: cytoscape.Core | null = null;
+
+const NODE_COLORS: Record<string, string> = {
+	physical_samples: '#9C27B0',
+	manufacturing_operations: '#FF9800',
+	test_sessions: '#00ACC1',
+	equipment: '#607D8B',
+	tools: '#795548',
+	insert_edges: '#E91E63',
+	cutting_inserts: '#F44336',
+	tool_boxes: '#3F51B5',
+	materials: '#4CAF50',
+	projects: '#673AB7',
+};
+
+const COLLECTION_LABELS: Record<string, string> = {
+	physical_samples: 'Sample',
+	manufacturing_operations: 'Operation',
+	test_sessions: 'Test',
+	equipment: 'Equipment',
+	tools: 'Tool',
+	insert_edges: 'Edge',
+	cutting_inserts: 'Insert',
+	tool_boxes: 'Box',
+	materials: 'Material',
+	projects: 'Project',
+};
+
+onMounted(() => {
+	if (!graphEl.value) return;
+	cy = cytoscape({
+		container: graphEl.value,
+		style: [
+			{
+				selector: 'node',
+				style: {
+					'background-color': 'data(color)',
+					label: 'data(label)',
+					'font-size': '10px',
+					color: '#fff',
+					'text-valign': 'center',
+					'text-halign': 'center',
+					'text-wrap': 'wrap',
+					'text-max-width': '80px',
+					width: 'data(size)',
+					height: 'data(size)',
+					'border-width': 2,
+					'border-color': '#fff',
+					'border-opacity': 0.5,
+				},
+			},
+			{
+				selector: 'node.focal',
+				style: {
+					'border-width': 4,
+					'border-color': '#fff',
+					'border-opacity': 1,
+				},
+			},
+			{
+				selector: 'edge',
+				style: {
+					width: 1.5,
+					'line-color': '#ccc',
+					'target-arrow-color': '#ccc',
+					'target-arrow-shape': 'triangle',
+					'curve-style': 'bezier',
+					'font-size': '9px',
+					label: 'data(label)',
+					color: '#aaa',
+				},
+			},
+		],
+		elements: [],
+	});
+
+	cy.on('tap', 'node', (evt) => {
+		const { collection, id } = evt.target.data() as { collection: string; id: string };
+		loadNeighbors(collection, id);
+		emit('select', { collection, id });
+	});
+});
+
+onBeforeUnmount(() => {
+	cy?.destroy();
+});
+
+async function loadNeighbors(collection: string, id: string) {
+	if (!cy) return;
+	loading.value = true;
+	empty.value = false;
+	searchResults.value = [];
+
+	try {
+		const nodes: cytoscape.ElementDefinition[] = [];
+		const edges: cytoscape.ElementDefinition[] = [];
+
+		function addNode(col: string, nodeId: string, label: string, isFocal = false) {
+			const existing = cy!.getElementById(`${col}:${nodeId}`);
+			if (existing.length) return;
+			nodes.push({
+				data: {
+					id: `${col}:${nodeId}`,
+					collection: col,
+					label: `${COLLECTION_LABELS[col] ?? col}\n${label}`,
+					color: NODE_COLORS[col] ?? '#888',
+					size: isFocal ? 60 : 44,
+				},
+				classes: isFocal ? 'focal' : '',
+			});
+		}
+
+		function addEdge(sourceCol: string, sourceId: string, targetCol: string, targetId: string, rel: string) {
+			const edgeId = `${sourceCol}:${sourceId}--${rel}--${targetCol}:${targetId}`;
+			if (cy!.getElementById(edgeId).length) return;
+			edges.push({ data: { id: edgeId, source: `${sourceCol}:${sourceId}`, target: `${targetCol}:${targetId}`, label: rel } });
+		}
+
+		if (collection === 'physical_samples') {
+			const [sample, ops, tests, genealogy] = await Promise.all([
+				getItem('physical_samples', id, { 'fields[]': ['sample_code', 'nickname', 'material_id.common_name', 'project_id.project_code'] }),
+				getItems('manufacturing_operations', { 'filter[sample_id][_eq]': id, 'fields[]': ['operation_id', 'operation_type', 'equipment_id.equipment_name'], limit: 20 }),
+				getItems('test_sessions', { 'filter[sample_id][_eq]': id, 'fields[]': ['session_id', 'test_type', 'status'], limit: 20 }),
+				getItems('sample_genealogy', { 'filter[child_sample_id][_eq]': id, 'fields[]': ['parent_sample_id.sample_code', 'parent_sample_id.sample_id'], limit: 10 }),
+			]);
+			const label = sample.nickname ? `${sample.sample_code} (${sample.nickname})` : sample.sample_code;
+			focalLabel.value = label;
+			addNode(collection, id, label, true);
+			if (sample.material_id?.common_name && sample.material_id?.material_id) {
+				addNode('materials', sample.material_id.material_id, sample.material_id.common_name);
+				addEdge(collection, id, 'materials', sample.material_id.material_id, 'material');
+			}
+			if (sample.project_id?.project_code && sample.project_id?.project_id) {
+				addNode('projects', sample.project_id.project_id, sample.project_id.project_code);
+				addEdge(collection, id, 'projects', sample.project_id.project_id, 'project');
+			}
+			for (const op of ops) {
+				addNode('manufacturing_operations', op.operation_id, op.operation_type ?? 'op');
+				addEdge(collection, id, 'manufacturing_operations', op.operation_id, 'machined');
+			}
+			for (const ts of tests) {
+				addNode('test_sessions', ts.session_id, ts.test_type ?? ts.status);
+				addEdge(collection, id, 'test_sessions', ts.session_id, 'tested');
+			}
+			for (const g of genealogy) {
+				if (g.parent_sample_id?.sample_id) {
+					addNode('physical_samples', g.parent_sample_id.sample_id, g.parent_sample_id.sample_code);
+					addEdge('physical_samples', g.parent_sample_id.sample_id, collection, id, 'parent→child');
+				}
+			}
+		} else if (collection === 'manufacturing_operations') {
+			const op = await getItem('manufacturing_operations', id, {
+				'fields[]': ['*', 'sample_id.sample_code', 'sample_id.sample_id', 'equipment_id.equipment_name', 'equipment_id.equipment_id', 'tool_id.tool_code', 'tool_id.tool_id', 'insert_edge_id.edge_code', 'insert_edge_id.edge_id', 'method_id.method_name', 'method_id.method_id'],
+			});
+			const label = `${op.operation_type ?? 'op'}`;
+			focalLabel.value = `Operation: ${label}`;
+			addNode(collection, id, label, true);
+			if (op.sample_id?.sample_id) {
+				addNode('physical_samples', op.sample_id.sample_id, op.sample_id.sample_code);
+				addEdge('physical_samples', op.sample_id.sample_id, collection, id, 'machined');
+			}
+			if (op.equipment_id?.equipment_id) {
+				addNode('equipment', op.equipment_id.equipment_id, op.equipment_id.equipment_name);
+				addEdge(collection, id, 'equipment', op.equipment_id.equipment_id, 'machine');
+			}
+			if (op.tool_id?.tool_id) {
+				addNode('tools', op.tool_id.tool_id, op.tool_id.tool_code);
+				addEdge(collection, id, 'tools', op.tool_id.tool_id, 'tool');
+			}
+			if (op.insert_edge_id?.edge_id) {
+				addNode('insert_edges', op.insert_edge_id.edge_id, op.insert_edge_id.edge_code);
+				addEdge(collection, id, 'insert_edges', op.insert_edge_id.edge_id, 'edge');
+			}
+		} else if (collection === 'equipment') {
+			const [eq, ops] = await Promise.all([
+				getItem('equipment', id, { 'fields[]': ['equipment_name', 'equipment_type', 'project_id.project_id', 'project_id.project_code'] }),
+				getItems('manufacturing_operations', { 'filter[equipment_id][_eq]': id, 'fields[]': ['operation_id', 'operation_type', 'sample_id.sample_code', 'sample_id.sample_id', 'project_id.project_id', 'project_id.project_code'], limit: 20 }),
+			]);
+			focalLabel.value = eq.equipment_name;
+			addNode(collection, id, `${eq.equipment_name}`, true);
+			// Primary project assignment
+			if (eq.project_id?.project_id) {
+				addNode('projects', eq.project_id.project_id, eq.project_id.project_code);
+				addEdge(collection, id, 'projects', eq.project_id.project_id, 'assigned to');
+			}
+			const samplesSeen = new Set<string>();
+			const projectsSeen = new Set<string>(eq.project_id?.project_id ? [eq.project_id.project_id] : []);
+			for (const op of ops) {
+				addNode('manufacturing_operations', op.operation_id, op.operation_type ?? 'op');
+				addEdge(collection, id, 'manufacturing_operations', op.operation_id, 'ran');
+				if (op.sample_id?.sample_id && !samplesSeen.has(op.sample_id.sample_id)) {
+					samplesSeen.add(op.sample_id.sample_id);
+					addNode('physical_samples', op.sample_id.sample_id, op.sample_id.sample_code);
+					addEdge('manufacturing_operations', op.operation_id, 'physical_samples', op.sample_id.sample_id, 'on');
+				}
+				// Bubble up project nodes found via operations
+				if (op.project_id?.project_id && !projectsSeen.has(op.project_id.project_id)) {
+					projectsSeen.add(op.project_id.project_id);
+					addNode('projects', op.project_id.project_id, op.project_id.project_code);
+					addEdge('manufacturing_operations', op.operation_id, 'projects', op.project_id.project_id, 'in project');
+				}
+			}
+		} else if (collection === 'insert_edges') {
+			const [edge, ops] = await Promise.all([
+				getItem('insert_edges', id, { 'fields[]': ['edge_code', 'insert_id.insert_code', 'insert_id.insert_id'] }),
+				getItems('manufacturing_operations', { 'filter[insert_edge_id][_eq]': id, 'fields[]': ['operation_id', 'operation_type', 'sample_id.sample_code', 'sample_id.sample_id', 'project_id.project_id', 'project_id.project_code'], limit: 15 }),
+			]);
+			focalLabel.value = edge.edge_code;
+			addNode(collection, id, edge.edge_code, true);
+			if (edge.insert_id?.insert_id) {
+				addNode('cutting_inserts', edge.insert_id.insert_id, edge.insert_id.insert_code);
+				addEdge('cutting_inserts', edge.insert_id.insert_id, collection, id, 'edge');
+			}
+			const projectsSeen = new Set<string>();
+			for (const op of ops) {
+				addNode('manufacturing_operations', op.operation_id, op.operation_type ?? 'op');
+				addEdge(collection, id, 'manufacturing_operations', op.operation_id, 'used in');
+				if (op.sample_id?.sample_id) {
+					addNode('physical_samples', op.sample_id.sample_id, op.sample_id.sample_code);
+					addEdge('manufacturing_operations', op.operation_id, 'physical_samples', op.sample_id.sample_id, 'on');
+				}
+				if (op.project_id?.project_id && !projectsSeen.has(op.project_id.project_id)) {
+					projectsSeen.add(op.project_id.project_id);
+					addNode('projects', op.project_id.project_id, op.project_id.project_code);
+					addEdge('manufacturing_operations', op.operation_id, 'projects', op.project_id.project_id, 'in project');
+				}
+			}
+		} else if (collection === 'cutting_inserts') {
+			const insert = await getItem('cutting_inserts', id, { 'fields[]': ['insert_code', 'tool_box_id.box_code', 'tool_box_id.tool_box_id', 'insert_type_id.insert_type_code', 'insert_type_id.insert_type_id'] });
+			focalLabel.value = insert.insert_code;
+			addNode(collection, id, insert.insert_code, true);
+			if (insert.tool_box_id?.tool_box_id) {
+				addNode('tool_boxes', insert.tool_box_id.tool_box_id, insert.tool_box_id.box_code);
+				addEdge('tool_boxes', insert.tool_box_id.tool_box_id, collection, id, 'contains');
+			}
+			const edges = await getItems('insert_edges', { 'filter[insert_id][_eq]': id, 'fields[]': ['edge_id', 'edge_code', 'is_used'], limit: 20 });
+			for (const e of edges) {
+				addNode('insert_edges', e.edge_id, `${e.edge_code}${e.is_used ? ' ✓' : ''}`);
+				addEdge(collection, id, 'insert_edges', e.edge_id, 'edge');
+			}
+		} else if (collection === 'tool_boxes') {
+			const [box, inserts] = await Promise.all([
+				getItem('tool_boxes', id, { 'fields[]': ['box_code', 'insert_type_id.insert_type_code', 'project_id.project_id', 'project_id.project_code'] }),
+				getItems('cutting_inserts', { 'filter[tool_box_id][_eq]': id, 'fields[]': ['insert_id', 'insert_code'], limit: 20 }),
+			]);
+			focalLabel.value = box.box_code;
+			addNode(collection, id, box.box_code, true);
+			if (box.project_id?.project_id) {
+				addNode('projects', box.project_id.project_id, box.project_id.project_code);
+				addEdge(collection, id, 'projects', box.project_id.project_id, 'assigned to');
+			}
+			for (const ins of inserts) {
+				addNode('cutting_inserts', ins.insert_id, ins.insert_code);
+				addEdge(collection, id, 'cutting_inserts', ins.insert_id, 'contains');
+			}
+		} else if (collection === 'test_sessions') {
+			const ts = await getItem('test_sessions', id, { 'fields[]': ['test_type', 'status', 'sample_id.sample_code', 'sample_id.sample_id', 'equipment_id.equipment_name', 'equipment_id.equipment_id', 'project_id.project_id', 'project_id.project_code'] });
+			focalLabel.value = `Test: ${ts.test_type ?? ts.status}`;
+			addNode(collection, id, `${ts.test_type ?? 'test'}\n${ts.status}`, true);
+			if (ts.sample_id?.sample_id) {
+				addNode('physical_samples', ts.sample_id.sample_id, ts.sample_id.sample_code);
+				addEdge('physical_samples', ts.sample_id.sample_id, collection, id, 'tested');
+			}
+			if (ts.equipment_id?.equipment_id) {
+				addNode('equipment', ts.equipment_id.equipment_id, ts.equipment_id.equipment_name);
+				addEdge(collection, id, 'equipment', ts.equipment_id.equipment_id, 'machine');
+			}
+			if (ts.project_id?.project_id) {
+				addNode('projects', ts.project_id.project_id, ts.project_id.project_code);
+				addEdge(collection, id, 'projects', ts.project_id.project_id, 'in project');
+			}
+		} else {
+			// Generic fallback: just show the focal node
+			addNode(collection, id, id, true);
+			focalLabel.value = `${COLLECTION_LABELS[collection] ?? collection}: ${id}`;
+		}
+
+		cy.add([...nodes, ...edges]);
+		cy.layout({ name: 'cose', animate: true, animationDuration: 400, randomize: false }).run();
+		cy.fit(undefined, 40);
+	} catch (err) {
+		console.error('[NodeGraph] loadNeighbors error', err);
+	} finally {
+		loading.value = false;
+	}
+}
+
+async function handleSearch() {
+	const q = searchQuery.value.trim();
+	if (!q) { searchResults.value = []; return; }
+	const results: typeof searchResults.value = [];
+
+	const [samples, ops, tests, equipment, inserts, edges, boxes] = await Promise.all([
+		getItems('physical_samples', { 'filter[sample_code][_contains]': q, 'fields[]': ['sample_id', 'sample_code'], limit: 5 }),
+		getItems('manufacturing_operations', { 'filter[operation_type][_contains]': q, 'fields[]': ['operation_id', 'operation_type'], limit: 5 }),
+		getItems('test_sessions', { 'filter[test_type][_contains]': q, 'fields[]': ['session_id', 'test_type'], limit: 5 }),
+		getItems('equipment', { 'filter[equipment_name][_contains]': q, 'fields[]': ['equipment_id', 'equipment_name'], limit: 5 }),
+		getItems('cutting_inserts', { 'filter[insert_code][_contains]': q, 'fields[]': ['insert_id', 'insert_code'], limit: 5 }),
+		getItems('insert_edges', { 'filter[edge_code][_contains]': q, 'fields[]': ['edge_id', 'edge_code'], limit: 5 }),
+		getItems('tool_boxes', { 'filter[box_code][_contains]': q, 'fields[]': ['tool_box_id', 'box_code'], limit: 5 }),
+	]);
+
+	for (const s of samples) results.push({ id: s.sample_id, collection: 'physical_samples', label: s.sample_code });
+	for (const o of ops) results.push({ id: o.operation_id, collection: 'manufacturing_operations', label: o.operation_type });
+	for (const t of tests) results.push({ id: t.session_id, collection: 'test_sessions', label: t.test_type });
+	for (const e of equipment) results.push({ id: e.equipment_id, collection: 'equipment', label: e.equipment_name });
+	for (const i of inserts) results.push({ id: i.insert_id, collection: 'cutting_inserts', label: i.insert_code });
+	for (const e of edges) results.push({ id: e.edge_id, collection: 'insert_edges', label: e.edge_code });
+	for (const b of boxes) results.push({ id: b.tool_box_id, collection: 'tool_boxes', label: b.box_code });
+
+	searchResults.value = results;
+}
+
+function resetLayout() {
+	cy?.layout({ name: 'cose', animate: true }).run();
+	cy?.fit(undefined, 40);
+}
+
+function clearGraph() {
+	cy?.elements().remove();
+	focalLabel.value = '';
+	searchResults.value = [];
+	empty.value = true;
+}
+
+defineExpose({ loadNeighbors });
+</script>
+
+<style scoped>
+.d1-graph-container {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	position: relative;
+}
+
+.d1-graph-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px;
+	border-bottom: 1px solid var(--border-subdued);
+	flex-shrink: 0;
+}
+
+.d1-graph-search {
+	flex: 1;
+}
+
+.d1-focal-label {
+	font-size: 11px;
+	color: var(--foreground-subdued);
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.d1-graph-actions {
+	display: flex;
+	gap: 4px;
+	flex-shrink: 0;
+}
+
+.d1-search-results {
+	position: absolute;
+	top: 40px;
+	left: 10px;
+	right: 10px;
+	background: var(--background-page);
+	border: 1px solid var(--border-normal);
+	border-radius: var(--border-radius);
+	z-index: 10;
+	max-height: 200px;
+	overflow-y: auto;
+	box-shadow: var(--card-shadow);
+}
+
+.d1-search-result {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 10px;
+	cursor: pointer;
+	font-size: 12px;
+}
+
+.d1-search-result:hover {
+	background: var(--background-normal-alt);
+}
+
+.d1-search-dot {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	flex-shrink: 0;
+}
+
+.d1-search-label {
+	flex: 1;
+	font-weight: 500;
+}
+
+.d1-search-collection {
+	color: var(--foreground-subdued);
+	font-size: 10px;
+}
+
+.d1-graph-canvas {
+	flex: 1;
+	min-height: 0;
+}
+
+.d1-graph-loading {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: rgba(var(--background-page-rgb), 0.7);
+}
+
+.d1-graph-empty {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--foreground-subdued);
+	font-size: 13px;
+	text-align: center;
+	padding: 24px;
+	pointer-events: none;
+}
+</style>

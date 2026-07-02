@@ -8,8 +8,10 @@ read-only ``d1_llm_readonly`` Postgres role is defence-in-depth):
   2. It must be a read-only ``SELECT`` (optionally a ``WITH ... SELECT``). Any
      DML/DDL/utility node (INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/GRANT/COPY/…)
      is rejected.
-  3. Every table/view it references must be in the allow-list — the same set of
-     ``v_*`` views exposed by ``v_llm_query_targets`` in the database.
+  3. It must not reference a **denied** relation — credential/secret tables, the
+     Directus auth model, or any unknown ``directus_*`` system table. Everything
+     else (all lab/domain tables and the ``v_*`` views) is readable. This mirrors
+     the grants in ``db/migrations/…_llm_readonly_broad_read.sql`` (ADR-0009).
   4. A ``LIMIT`` is enforced by wrapping the query, so a model that forgets one
      cannot stream an unbounded result set.
 
@@ -22,8 +24,9 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
-# The allow-listed relations the LLM may read. Mirrors v_llm_query_targets in
-# db/migrations/...ai_readiness.sql — keep the two in sync.
+# The curated, denormalised views the prompt features first — the easy path for a
+# small model. Not the security gate any more (base tables are readable too); the
+# gate is the deny-list below.
 ALLOWED_RELATIONS: frozenset[str] = frozenset(
     {
         "v_complete_sample_history",
@@ -36,6 +39,76 @@ ALLOWED_RELATIONS: frozenset[str] = frozenset(
         "v_llm_query_targets",
     }
 )
+
+# Relations the LLM may NEVER read: credentials/secrets, the Directus auth model,
+# and migration bookkeeping. Mirrors the REVOKEs in
+# db/migrations/…_llm_readonly_broad_read.sql — keep the two in sync.
+DENIED_RELATIONS: frozenset[str] = frozenset(
+    {
+        # credentials / secrets
+        "directus_users",
+        "directus_sessions",
+        "directus_settings",
+        "directus_shares",
+        "directus_deployments",
+        # JSON config that can embed API keys / tokens
+        "directus_flows",
+        "directus_operations",
+        # auth / permission model
+        "directus_policies",
+        "directus_permissions",
+        "directus_access",
+        "directus_roles",
+        # migration bookkeeping
+        "schema_migrations",
+    }
+)
+
+# Benign Directus metadata that IS readable. Any other ``directus_*`` relation —
+# including future/unknown ones — is denied by default, so a new Directus release
+# cannot silently expose a secret table.
+DIRECTUS_ALLOWED: frozenset[str] = frozenset(
+    {
+        "directus_collections",
+        "directus_fields",
+        "directus_relations",
+        "directus_activity",
+        "directus_revisions",
+        "directus_files",
+        "directus_folders",
+        "directus_dashboards",
+        "directus_panels",
+        "directus_presets",
+        "directus_translations",
+        "directus_extensions",
+        "directus_migrations",
+        "directus_comments",
+        "directus_versions",
+        "directus_notifications",
+    }
+)
+
+
+# Postgres system catalog schemas — never queryable (they can expose roles and,
+# in principle, other instances' internals). Data questions never need them.
+DENIED_SCHEMAS: frozenset[str] = frozenset({"pg_catalog", "information_schema"})
+
+
+def is_denied_relation(name: str) -> bool:
+    """True if the LLM must not read *name*.
+
+    Denied: the explicit credential/auth deny-list, any ``directus_*`` table not
+    on the benign-metadata allow-list (deny-by-default for system tables), and
+    Postgres catalog relations (``pg_*``).
+    """
+    lowered = name.lower()
+    if lowered in DENIED_RELATIONS:
+        return True
+    if lowered.startswith("directus_") and lowered not in DIRECTUS_ALLOWED:
+        return True
+    if lowered.startswith("pg_"):
+        return True
+    return False
 
 # Expression classes that must never appear anywhere in the tree.
 _FORBIDDEN_NODES: tuple[type[exp.Expression], ...] = (
@@ -98,15 +171,20 @@ def validate(sql: str) -> exp.Expression:
         if isinstance(node, _FORBIDDEN_NODES):
             raise SqlGuardError(f"forbidden statement element: {type(node).__name__}")
 
+    for table in tree.find_all(exp.Table):
+        schema = (table.db or "").lower()
+        if schema in DENIED_SCHEMAS:
+            raise SqlGuardError(f"query references a system-catalog schema: {schema}")
+
     referenced = _referenced_tables(tree)
     if not referenced:
         raise SqlGuardError("query references no tables")
 
-    disallowed = sorted(referenced - ALLOWED_RELATIONS)
-    if disallowed:
+    denied = sorted(r for r in referenced if is_denied_relation(r))
+    if denied:
         raise SqlGuardError(
-            "query references relations outside the allow-list: "
-            + ", ".join(disallowed)
+            "query references blocked (credential/auth/system) relations: "
+            + ", ".join(denied)
         )
 
     return tree
@@ -125,6 +203,37 @@ def _referenced_tables(tree: exp.Expression) -> set[str]:
         if name and name not in cte_names:
             tables.add(name)
     return tables
+
+
+def message_only(sql: str) -> str | None:
+    """Return the message text if *sql* is a safe, table-free constant SELECT.
+
+    The model answers a greeting or an off-topic / unanswerable question with a
+    table-free ``SELECT '…' AS note``. That legitimately references no table, so
+    rather than reject it as "no tables" we surface the literal as a plain chat
+    reply (no data table). Returns ``None`` for any real query (one that touches
+    a table) or anything unsafe, stacked, or unparseable.
+    """
+    if not sql or not sql.strip():
+        return None
+    cleaned = _strip_trailing_semicolons(sql)
+    if ";" in cleaned:  # stacked statements are never a friendly message
+        return None
+    try:
+        tree = sqlglot.parse_one(cleaned, read="postgres")
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(tree, exp.Select):
+        return None
+    if _referenced_tables(tree):  # a real query, not a message
+        return None
+    for node in tree.walk():
+        if isinstance(node, _FORBIDDEN_NODES):
+            return None
+    literal = tree.find(exp.Literal)
+    if literal is not None and literal.is_string:
+        return str(literal.this)
+    return None
 
 
 def guard(sql: str, row_limit: int = DEFAULT_ROW_LIMIT) -> str:
