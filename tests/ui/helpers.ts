@@ -80,6 +80,20 @@ export async function selectM2O(page: Page, fieldLabel: string, optionText: stri
 	const drawer = page.locator('.v-drawer').last();
 	await drawer.waitFor({ state: 'visible' });
 	await page.waitForTimeout(700);
+	// Large collections are virtualized — a specific row may not be rendered at the
+	// current scroll position, so filter via the drawer search first. Tightly scoped
+	// + short timeout so small lists (no visible search box) are unaffected and it
+	// can never hang the test.
+	try {
+		const box = drawer.locator('.search-input').first();
+		await box.waitFor({ state: 'visible', timeout: 2500 });
+		await box.click(); // activate — the input is collapsed until clicked
+		await page.waitForTimeout(200);
+		await box.locator('input').fill(optionText);
+		await page.waitForTimeout(900); // debounce + query
+	} catch {
+		/* no usable search box — fall through to a direct click */
+	}
 	await drawer.getByText(new RegExp(escapeRe(optionText), 'i')).first().click();
 	// Confirm the selection (the ✓ button in the drawer header) to apply and close.
 	await drawer.locator('header .v-button').last().click();

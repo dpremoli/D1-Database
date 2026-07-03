@@ -71,7 +71,7 @@ test('server hook: an operation created with a campaign inherits project + owner
 	try {
 		expect(op.project_id).toBe(projectId);
 		expect(op.equipment_id).toBe(equipmentId);
-		expect(op.owner).toBeTruthy(); // campaign owner (project PI) or current user
+		expect(op.owner_person_id).toBeTruthy(); // campaign owner (project PI) or current user, as a person
 	} finally {
 		await api.delete(`/items/manufacturing_operations/${op.operation_id}`, { headers: h });
 	}
