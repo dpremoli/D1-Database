@@ -1,0 +1,13 @@
+{
+  "name": "directus-extension-d1-equipment-code",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Auto-generates a short 6-char alphanumeric equipment_code on create when none is supplied.",
+  "keywords": ["directus", "directus-extension", "directus-custom-hook"],
+  "directus:extension": {
+    "type": "hook",
+    "path": "index.js",
+    "source": "index.js",
+    "host": "^11.0.0"
+  }
+}
