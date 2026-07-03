@@ -22,6 +22,7 @@ const actions: Action[] = [
 	{ label: 'Register a sample', sub: 'Add a new physical sample', icon: 'add_circle', color: '#2563eb', to: '/home/register-sample' },
 	{ label: 'Log an operation', sub: 'Record a manufacturing step', icon: 'precision_manufacturing', color: '#0d9488', to: '/content/manufacturing_operations/+' },
 	{ label: 'Ask the database', sub: 'Chat with your data', icon: 'chat', color: '#7c3aed', to: '/ask-db' },
+	{ label: 'Manage people', sub: 'Researchers & operators', icon: 'groups', color: '#db2777', to: '/home/people' },
 	{ label: 'Dashboards', sub: 'Explore trends & graphs', icon: 'analytics', color: '#d97706', to: '/d1-lab-dashboard' },
 ];
 
