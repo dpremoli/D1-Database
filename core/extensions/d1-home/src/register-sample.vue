@@ -34,6 +34,43 @@ const saving = ref(false);
 const error = ref('');
 const created = ref<{ id: string; code: string } | null>(null);
 
+// Live isometric (45°) shape preview — same drawing the sample report uses, so the
+// creator shows the same 3-D view of the chosen form as the documentation.
+function isoBox(a: number, topY: number, h: number): string {
+	const s = a * 0.5;
+	const T = [50, topY], R = [50 + a, topY + s], B = [50, topY + 2 * s], L = [50 - a, topY + s];
+	return `<path d="M${T} L${R} L${B} L${L} Z" class="gt"/>`
+		+ `<path d="M${L} L${B} L${B[0]} ${B[1] + h} L${L[0]} ${L[1] + h} Z" class="gl"/>`
+		+ `<path d="M${B} L${R} L${R[0]} ${R[1] + h} L${B[0]} ${B[1] + h} Z" class="gr"/>`;
+}
+function isoCyl(rx: number, ry: number, ty: number, h: number, hole: boolean): string {
+	return `<path d="M${50 - rx} ${ty} L${50 - rx} ${ty + h} A${rx} ${ry} 0 0 0 ${50 + rx} ${ty + h} L${50 + rx} ${ty} Z" class="gl"/>`
+		+ `<ellipse cx="50" cy="${ty}" rx="${rx}" ry="${ry}" class="gt"/>`
+		+ (hole ? `<ellipse cx="50" cy="${ty}" rx="${rx * 0.28}" ry="${ry * 0.28}" class="gh"/>` : '');
+}
+const geoSvg = computed(() => {
+	const g = (f.value.form || '').toLowerCase();
+	if (!g || g === 'other') return '';
+	let inner: string;
+	if (g.includes('disc') || g.includes('puck')) inner = isoCyl(33, 15, 30, 16, true);
+	else if (/cylind|billet|rod|bar/.test(g)) inner = isoCyl(22, 11, 18, 46, false);
+	else if (g.includes('powder'))
+		inner = '<ellipse cx="50" cy="70" rx="34" ry="13" class="gl"/><path d="M18 70 Q50 30 82 70 Z" class="gt"/>'
+			+ ['33,62', '45,64', '57,63', '69,64', '39,56', '51,54', '63,57', '50,48']
+				.map((p) => { const [x, y] = p.split(','); return `<circle cx="${x}" cy="${y}" r="2.1" class="gh"/>`; }).join('');
+	else if (/plate|sheet/.test(g)) inner = isoBox(34, 26, 8);
+	else inner = isoBox(24, 18, 32);
+	return `<svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
+});
+const geoDimsText = computed(() => {
+	const parts: string[] = [];
+	if (f.value.diameter_mm) parts.push(`Ø${f.value.diameter_mm}`);
+	if (f.value.width_mm) parts.push(`W${f.value.width_mm}`);
+	if (f.value.length_mm) parts.push(`L${f.value.length_mm}`);
+	if (f.value.thickness_mm) parts.push(`t${f.value.thickness_mm}`);
+	return parts.length ? parts.join(' × ') + ' mm' : '';
+});
+
 const codePreview = computed(() => {
 	const mat = materials.value.find((m) => m.value === f.value.material_id);
 	const met = methods.value.find((m) => m.value === f.value.primary_method_id);
@@ -163,6 +200,11 @@ onMounted(async () => {
 						<div class="fld"><label>Length (mm)</label><v-input type="number" v-model="f.length_mm" placeholder="0" /></div>
 						<div class="fld"><label>Thickness (mm)</label><v-input type="number" v-model="f.thickness_mm" placeholder="0" /></div>
 					</div>
+					<div class="geo-live" v-if="geoSvg">
+						<div class="geo-canvas" v-html="geoSvg"></div>
+						<div class="geo-cap">{{ f.form }}<span v-if="geoDimsText"> · {{ geoDimsText }}</span></div>
+					</div>
+					<div class="geo-live empty" v-else><span>Pick a form to preview the shape</span></div>
 				</section>
 
 				<section class="card">
@@ -195,6 +237,16 @@ export default { inheritAttrs: false };
 .intro { margin-bottom: 20px; }
 .intro h1 { margin: 0; font-size: 24px; font-weight: 750; }
 .intro p { margin: 4px 0 0; color: var(--theme--foreground-subdued, #6b7684); }
+
+.geo-live { margin-top: 14px; display: flex; flex-direction: column; align-items: center; gap: 6px;
+	padding: 14px; background: var(--theme--background-subdued, #f5f7fa); border-radius: 10px; }
+.geo-live.empty span { color: var(--theme--foreground-subdued, #8a94a6); font-style: italic; font-size: 13px; }
+.geo-canvas :deep(svg) { width: 140px; height: auto; display: block; filter: drop-shadow(0 1px 3px rgba(0,0,0,.15)); }
+.geo-canvas :deep(.gt) { fill: #dbeafe; stroke: #1d4ed8; stroke-width: 1.4; stroke-linejoin: round; }
+.geo-canvas :deep(.gl) { fill: #bfdbfe; stroke: #1d4ed8; stroke-width: 1.4; stroke-linejoin: round; }
+.geo-canvas :deep(.gr) { fill: #93c5fd; stroke: #1d4ed8; stroke-width: 1.4; stroke-linejoin: round; }
+.geo-canvas :deep(.gh) { fill: #fff; stroke: #1d4ed8; stroke-width: 1.2; }
+.geo-cap { font-size: 11px; color: var(--theme--foreground-subdued, #6b7684); text-transform: capitalize; }
 
 .card {
 	background: var(--theme--background, #fff);

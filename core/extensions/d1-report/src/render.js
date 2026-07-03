@@ -37,20 +37,40 @@ const PALETTE = ['#2563eb', '#0d9488', '#d97706', '#7c3aed', '#dc2626', '#0891b2
 
 // A simple silhouette of the sample by form (used when no photo exists). The
 // dimensions are shown as a caption beneath it.
+// Isometric (45°) line-drawing of the sample's rough form. Three shaded faces —
+// top (lightest) / left / right — read as a 3-D solid rather than a flat outline.
 function geometrySvg(form) {
 	const f = (form || '').toLowerCase();
-	const wrap = (inner) => `<svg viewBox="0 0 100 84" class="geo-svg" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
-	if (f.includes('disc') || f.includes('puck'))
-		return wrap('<ellipse cx="50" cy="42" rx="38" ry="38" class="geo"/><ellipse cx="50" cy="42" rx="9" ry="9" class="geo-hole"/>');
-	if (f.includes('cylinder') || f.includes('billet') || f.includes('rod') || f.includes('bar'))
-		return wrap('<rect x="38" y="8" width="24" height="68" rx="12" class="geo"/>');
+	const wrap = (inner) => `<svg viewBox="0 0 100 92" class="geo-svg" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
+
+	// Vertical isometric cylinder: front/side wall + elliptical top cap.
+	const cyl = (rx, ry, ty, h, hole) => {
+		const side = `<path d="M${50 - rx} ${ty} L${50 - rx} ${ty + h} A${rx} ${ry} 0 0 0 ${50 + rx} ${ty + h} L${50 + rx} ${ty} Z" class="geo geo-left"/>`;
+		const top = `<ellipse cx="50" cy="${ty}" rx="${rx}" ry="${ry}" class="geo geo-top"/>`;
+		const bore = hole ? `<ellipse cx="50" cy="${ty}" rx="${rx * 0.28}" ry="${ry * 0.28}" class="geo-hole"/>` : '';
+		return wrap(side + top + bore);
+	};
+
+	// Isometric box from a top-diamond of half-width a and extruded height h.
+	const box = (a, topY, h) => {
+		const s = a * 0.5; // vertical half-run of the 45° diagonals
+		const T = [50, topY], R = [50 + a, topY + s], B = [50, topY + 2 * s], L = [50 - a, topY + s];
+		const top = `<path d="M${T} L${R} L${B} L${L} Z" class="geo geo-top"/>`;
+		const left = `<path d="M${L} L${B} L${B[0]} ${B[1] + h} L${L[0]} ${L[1] + h} Z" class="geo geo-left"/>`;
+		const right = `<path d="M${B} L${R} L${R[0]} ${R[1] + h} L${B[0]} ${B[1] + h} Z" class="geo geo-right"/>`;
+		return wrap(top + left + right);
+	};
+
+	if (f.includes('disc') || f.includes('puck')) return cyl(33, 15, 30, 16, true);
+	if (/cylind|billet|rod|bar/.test(f)) return cyl(22, 11, 18, 46, false); // cylinder / cylindrical / …
 	if (f.includes('powder'))
 		return wrap(
-			'<path d="M18 66 Q50 34 82 66 Z" class="geo"/>' +
-				['33,60', '45,62', '57,61', '69,63', '39,55', '51,53', '63,56', '57,49'].map((p) => { const [x, y] = p.split(','); return `<circle cx="${x}" cy="${y}" r="2.3" class="geo-hole"/>`; }).join('')
+			'<ellipse cx="50" cy="70" rx="34" ry="13" class="geo geo-left"/>' +
+				'<path d="M18 70 Q50 30 82 70 Z" class="geo geo-top"/>' +
+				['33,62', '45,64', '57,63', '69,64', '39,56', '51,54', '63,57', '50,48'].map((p) => { const [x, y] = p.split(','); return `<circle cx="${x}" cy="${y}" r="2.1" class="geo-hole"/>`; }).join('')
 		);
-	if (f.includes('plate') || f.includes('sheet')) return wrap('<rect x="12" y="34" width="76" height="16" rx="2" class="geo"/>');
-	return wrap('<rect x="24" y="24" width="52" height="36" rx="4" class="geo"/>'); // block / coupon / cube / default
+	if (f.includes('plate') || f.includes('sheet')) return box(34, 26, 8);
+	return box(24, 18, 32); // block / coupon / cube / default
 }
 
 export function renderSampleReport(d) {
@@ -208,10 +228,30 @@ export function renderSampleReport(d) {
 	html,body { margin:0; padding:0; }
 	body { font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--body); font-size:10.5px;
 		line-height:1.45; -webkit-print-color-adjust:exact; print-color-adjust:exact; background:#eef2f6; }
-	.doc { width:210mm; min-height:297mm; margin:0 auto; padding:14mm 15mm; background:#fff; }
-	@page { size:A4; margin:0; }
-	@media print { body { background:#fff; } .doc { margin:0; box-shadow:none; min-height:0; } .no-print { display:none !important; } }
-	@media screen { .doc { box-shadow:0 2px 16px rgba(15,23,42,.12); margin:16px auto; } }
+	.doc { position:relative; width:210mm; min-height:297mm; margin:0 auto; padding:14mm 15mm; background:#fff; }
+	.doc > * { position:relative; z-index:1; } /* keep content above the page-guide overlay */
+	/* Print: page margins live on @page so EVERY page (not just the first) is inset,
+	   and content no longer runs to the sheet edge on page 2+. */
+	@page { size:A4; margin:14mm 15mm; }
+	@media print {
+		body { background:#fff; }
+		.doc { width:auto; margin:0; padding:0; min-height:0; box-shadow:none; }
+		.doc::before { display:none; }
+		.no-print { display:none !important; }
+		/* Don't split these across a page boundary. */
+		.hd, .grid, .legend, .chips, .notes, .tl-item, figure, h2 { break-inside:avoid; }
+		h2 { break-after:avoid; } /* a heading never sits alone at the foot of a page */
+		.tbl { break-inside:auto; }
+		.tbl thead { display:table-header-group; } /* repeat table headers on each page */
+		.tbl tr { break-inside:avoid; }
+	}
+	@media screen {
+		.doc { box-shadow:0 2px 16px rgba(15,23,42,.12); margin:16px auto; }
+		/* Page-break guides: a faint rule every printable-page height (297 − 2×14 mm)
+		   so you can see where the print will break, inside the content area. */
+		.doc::before { content:''; position:absolute; left:15mm; right:15mm; top:14mm; bottom:14mm; z-index:0; pointer-events:none;
+			background:repeating-linear-gradient(to bottom, transparent 0 calc(269mm - 1px), rgba(29,78,216,.28) calc(269mm - 1px) 269mm); }
+	}
 
 	/* Toolbar */
 	.toolbar { position:sticky; top:0; z-index:10; display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:center;
@@ -238,9 +278,12 @@ export function renderSampleReport(d) {
 	.qr, .qr svg { width:74px; height:74px; display:block; }
 	.uid { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:8.5px; color:var(--muted); margin-top:4px; }
 	.geo-fig { margin:0 0 10px; text-align:center; }
-	.geo-svg { width:80px; height:66px; display:block; margin:0 auto; }
-	.geo { fill:#eff6ff; stroke:var(--accent); stroke-width:2.5; }
-	.geo-hole { fill:#fff; stroke:var(--accent); stroke-width:1.5; }
+	.geo-svg { width:82px; height:76px; display:block; margin:0 auto; }
+	.geo { stroke:var(--accent); stroke-width:1.4; stroke-linejoin:round; }
+	.geo-top { fill:#dbeafe; }
+	.geo-left { fill:#bfdbfe; }
+	.geo-right { fill:#93c5fd; }
+	.geo-hole { fill:#fff; stroke:var(--accent); stroke-width:1.2; }
 	.geo-fig figcaption { font-size:8px; color:var(--muted); margin-top:2px; text-transform:uppercase; letter-spacing:.05em; }
 
 	/* Details grid */
@@ -443,10 +486,24 @@ function datasheetHtml({ eyebrow, code, subtitle, details, paramTitle, params, n
 	* { box-sizing:border-box; } html,body { margin:0; padding:0; }
 	body { font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--body); font-size:10.5px; line-height:1.45;
 		-webkit-print-color-adjust:exact; print-color-adjust:exact; background:#eef2f6; }
-	.doc { width:210mm; min-height:297mm; margin:0 auto; padding:16mm; background:#fff; }
-	@page { size:A4; margin:0; }
-	@media print { body { background:#fff; } .doc { margin:0; min-height:0; box-shadow:none; } .no-print { display:none !important; } }
-	@media screen { .doc { box-shadow:0 2px 16px rgba(15,23,42,.12); margin:16px auto; } }
+	.doc { position:relative; width:210mm; min-height:297mm; margin:0 auto; padding:16mm; background:#fff; }
+	.doc > * { position:relative; z-index:1; }
+	@page { size:A4; margin:16mm; }
+	@media print {
+		body { background:#fff; }
+		.doc { width:auto; margin:0; padding:0; min-height:0; box-shadow:none; }
+		.doc::before { display:none; }
+		.no-print { display:none !important; }
+		.hd, .grid, .notes, figure, h2, .pcell { break-inside:avoid; }
+		h2 { break-after:avoid; }
+		.tbl thead { display:table-header-group; }
+		.tbl tr { break-inside:avoid; }
+	}
+	@media screen {
+		.doc { box-shadow:0 2px 16px rgba(15,23,42,.12); margin:16px auto; }
+		.doc::before { content:''; position:absolute; left:16mm; right:16mm; top:16mm; bottom:16mm; z-index:0; pointer-events:none;
+			background:repeating-linear-gradient(to bottom, transparent 0 calc(265mm - 1px), rgba(29,78,216,.28) calc(265mm - 1px) 265mm); }
+	}
 	.toolbar { position:sticky; top:0; z-index:10; display:flex; justify-content:center; background:#fff; border-bottom:1px solid var(--line);
 		padding:10px; box-shadow:0 1px 8px rgba(15,23,42,.08); }
 	.print-btn { cursor:pointer; font:600 11px/1 -apple-system,"Segoe UI",Roboto,sans-serif; color:#fff; background:var(--accent);
