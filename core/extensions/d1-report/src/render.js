@@ -61,7 +61,7 @@ function geometrySvg(form) {
 		return wrap(top + left + right);
 	};
 
-	if (f.includes('disc') || f.includes('puck')) return cyl(33, 15, 30, 16, true);
+	if (f.includes('disc') || f.includes('puck')) return cyl(33, 15, 30, 16, false); // solid disc — no bore
 	if (/cylind|billet|rod|bar/.test(f)) return cyl(22, 11, 18, 46, false); // cylinder / cylindrical / …
 	if (f.includes('powder'))
 		return wrap(
