@@ -70,8 +70,18 @@ async function submit() {
 		for (const k of ['diameter_mm', 'length_mm', 'thickness_mm', 'mass_grams']) {
 			if (f.value[k] !== null && f.value[k] !== '') payload[k] = Number(f.value[k]);
 		}
+		// Ownership points at people, not directus_users — resolve the current user
+		// to their person row and set that as the owner.
 		const uid = (userStore.currentUser as any)?.id;
-		if (uid) payload.owner = uid;
+		if (uid) {
+			try {
+				const pr = await api.get('/items/people', {
+					params: { filter: { user_id: { _eq: uid } }, fields: ['person_id'], limit: 1 },
+				});
+				const pid = pr?.data?.data?.[0]?.person_id;
+				if (pid) payload.owner_person_id = pid;
+			} catch { /* leave unset — owner can be picked later */ }
+		}
 
 		const res = await api.post('/items/physical_samples', payload);
 		created.value = { id: res.data.data.sample_id, code: res.data.data.sample_code };

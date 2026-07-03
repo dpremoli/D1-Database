@@ -56,7 +56,7 @@ function geometrySvg(form) {
 export function renderSampleReport(d) {
 	const { sample: s, owner, nickname, location, surfaceFinish, ops, parents, children, tests, qrSvg, recordUrl } = d;
 
-	const ownerName = owner ? [owner.first_name, owner.last_name].filter(Boolean).join(' ') : '';
+	const ownerName = owner ? (owner.full_name || [owner.first_name, owner.last_name].filter(Boolean).join(' ')) : '';
 	const shortId = String(s.sample_id).split('-')[0];
 	const dims = [
 		s.diameter_mm ? `Ø${num(s.diameter_mm, 2)}` : null,

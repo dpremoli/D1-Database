@@ -56,12 +56,12 @@ export default defineEndpoint({
 				const ps =
 					(await database('physical_samples')
 						.where('sample_id', sid)
-						.first('owner', 'nickname', 'location', 'surface_finish')) || {};
+						.first('owner_person_id', 'nickname', 'location', 'surface_finish')) || {};
 
-				const owner = ps.owner
-					? await database('directus_users')
-							.where('id', ps.owner)
-							.first('first_name', 'last_name', 'email')
+				const owner = ps.owner_person_id
+					? await database('people')
+							.where('person_id', ps.owner_person_id)
+							.first('full_name', 'email')
 					: null;
 
 				const [ops, parents, children, tests, opCamps, testCamps] = await Promise.all([
