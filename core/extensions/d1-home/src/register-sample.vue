@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useApi, useStores } from '@directus/extensions-sdk';
 import { useRouter } from 'vue-router';
+import { buildGeometry, dimsText, FORMS, FORM_FIELDS, PRESETS, fieldLabel } from './geometry';
 
 const api = useApi();
 const router = useRouter();
@@ -12,7 +13,7 @@ interface Opt { text: string; value: string; extra?: string }
 const materials = ref<Opt[]>([]);
 const methods = ref<Opt[]>([]);
 const projects = ref<Opt[]>([]);
-const forms = ['disc', 'cylinder', 'billet', 'coupon', 'plate', 'bar', 'block', 'powder', 'other'].map((f) => ({ text: f, value: f }));
+const forms = FORMS;
 
 const f = ref<Record<string, any>>({
 	material_id: null,
@@ -21,7 +22,10 @@ const f = ref<Record<string, any>>({
 	form: null,
 	diameter_mm: null,
 	length_mm: null,
+	width_mm: null,
 	thickness_mm: null,
+	gauge_length_mm: null,
+	gauge_width_mm: null,
 	mass_grams: null,
 	project_id: null,
 	location: null,
@@ -34,41 +38,17 @@ const saving = ref(false);
 const error = ref('');
 const created = ref<{ id: string; code: string } | null>(null);
 
-// Live isometric (45°) shape preview — same drawing the sample report uses, so the
-// creator shows the same 3-D view of the chosen form as the documentation.
-function isoBox(a: number, topY: number, h: number): string {
-	const s = a * 0.5;
-	const T = [50, topY], R = [50 + a, topY + s], B = [50, topY + 2 * s], L = [50 - a, topY + s];
-	return `<path d="M${T} L${R} L${B} L${L} Z" class="gt"/>`
-		+ `<path d="M${L} L${B} L${B[0]} ${B[1] + h} L${L[0]} ${L[1] + h} Z" class="gl"/>`
-		+ `<path d="M${B} L${R} L${R[0]} ${R[1] + h} L${B[0]} ${B[1] + h} Z" class="gr"/>`;
-}
-function isoCyl(rx: number, ry: number, ty: number, h: number, hole: boolean): string {
-	return `<path d="M${50 - rx} ${ty} L${50 - rx} ${ty + h} A${rx} ${ry} 0 0 0 ${50 + rx} ${ty + h} L${50 + rx} ${ty} Z" class="gl"/>`
-		+ `<ellipse cx="50" cy="${ty}" rx="${rx}" ry="${ry}" class="gt"/>`
-		+ (hole ? `<ellipse cx="50" cy="${ty}" rx="${rx * 0.28}" ry="${ry * 0.28}" class="gh"/>` : '');
-}
-const geoSvg = computed(() => {
-	const g = (f.value.form || '').toLowerCase();
-	if (!g || g === 'other') return '';
-	let inner: string;
-	if (g.includes('disc') || g.includes('puck')) inner = isoCyl(33, 15, 30, 16, true);
-	else if (/cylind|billet|rod|bar/.test(g)) inner = isoCyl(22, 11, 18, 46, false);
-	else if (g.includes('powder'))
-		inner = '<ellipse cx="50" cy="70" rx="34" ry="13" class="gl"/><path d="M18 70 Q50 30 82 70 Z" class="gt"/>'
-			+ ['33,62', '45,64', '57,63', '69,64', '39,56', '51,54', '63,57', '50,48']
-				.map((p) => { const [x, y] = p.split(','); return `<circle cx="${x}" cy="${y}" r="2.1" class="gh"/>`; }).join('');
-	else if (/plate|sheet/.test(g)) inner = isoBox(34, 26, 8);
-	else inner = isoBox(24, 18, 32);
-	return `<svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg">${inner}</svg>`;
-});
-const geoDimsText = computed(() => {
-	const parts: string[] = [];
-	if (f.value.diameter_mm) parts.push(`Ø${f.value.diameter_mm}`);
-	if (f.value.width_mm) parts.push(`W${f.value.width_mm}`);
-	if (f.value.length_mm) parts.push(`L${f.value.length_mm}`);
-	if (f.value.thickness_mm) parts.push(`t${f.value.thickness_mm}`);
-	return parts.length ? parts.join(' × ') + ' mm' : '';
+// Live parametric isometric preview + the dimension inputs relevant to the chosen
+// form. Picking a standard test coupon fills its standard dimensions, which then
+// stay editable and reshape the drawing.
+const dimFields = computed<string[]>(() => FORM_FIELDS[(f.value.form || '').toLowerCase()] ?? []);
+const geoSvg = computed(() => buildGeometry(f.value as any));
+const geoDimsText = computed(() => dimsText(f.value as any));
+const flabel = fieldLabel;
+
+watch(() => f.value.form, (form) => {
+	const preset = PRESETS[(form || '').toLowerCase()];
+	if (preset) Object.assign(f.value, preset); // standard specimen → standard dimensions
 });
 
 const codePreview = computed(() => {
@@ -104,7 +84,7 @@ async function submit() {
 		for (const k of ['material_id', 'primary_method_id', 'manufactured_date', 'form', 'project_id', 'location', 'nickname', 'notes']) {
 			if (f.value[k] !== null && f.value[k] !== '') payload[k] = f.value[k];
 		}
-		for (const k of ['diameter_mm', 'length_mm', 'thickness_mm', 'mass_grams']) {
+		for (const k of ['diameter_mm', 'length_mm', 'width_mm', 'thickness_mm', 'gauge_length_mm', 'gauge_width_mm', 'mass_grams']) {
 			if (f.value[k] !== null && f.value[k] !== '') payload[k] = Number(f.value[k]);
 		}
 		// Ownership points at people, not directus_users — resolve the current user
@@ -134,7 +114,8 @@ function resetForm() {
 	f.value.material_id = null;
 	f.value.primary_method_id = null;
 	f.value.form = null;
-	f.value.diameter_mm = f.value.length_mm = f.value.thickness_mm = f.value.mass_grams = null;
+	f.value.diameter_mm = f.value.length_mm = f.value.width_mm = f.value.thickness_mm = null;
+	f.value.gauge_length_mm = f.value.gauge_width_mm = f.value.mass_grams = null;
 	f.value.nickname = f.value.notes = f.value.location = null;
 	nextSequence().then((n) => (seq.value = n));
 }
@@ -195,10 +176,11 @@ onMounted(async () => {
 				<section class="card">
 					<h3><span class="step">2</span> Geometry</h3>
 					<div class="row"><div class="fld"><label>Form</label><v-select :items="forms" v-model="f.form" placeholder="Shape…" show-deselect /></div><div class="fld"><label>Mass (g)</label><v-input type="number" v-model="f.mass_grams" placeholder="0" /></div></div>
-					<div class="row3">
-						<div class="fld"><label>Ø Diameter (mm)</label><v-input type="number" v-model="f.diameter_mm" placeholder="0" /></div>
-						<div class="fld"><label>Length (mm)</label><v-input type="number" v-model="f.length_mm" placeholder="0" /></div>
-						<div class="fld"><label>Thickness (mm)</label><v-input type="number" v-model="f.thickness_mm" placeholder="0" /></div>
+					<div class="dimgrid" v-if="dimFields.length">
+						<div class="fld" v-for="k in dimFields" :key="k">
+							<label>{{ flabel(k) }}</label>
+							<v-input type="number" :model-value="f[k]" @update:model-value="f[k] = $event" placeholder="0" />
+						</div>
 					</div>
 					<div class="geo-live" v-if="geoSvg">
 						<div class="geo-canvas" v-html="geoSvg"></div>
@@ -241,11 +223,18 @@ export default { inheritAttrs: false };
 .geo-live { margin-top: 14px; display: flex; flex-direction: column; align-items: center; gap: 6px;
 	padding: 14px; background: var(--theme--background-subdued, #f5f7fa); border-radius: 10px; }
 .geo-live.empty span { color: var(--theme--foreground-subdued, #8a94a6); font-style: italic; font-size: 13px; }
-.geo-canvas :deep(svg) { width: 140px; height: auto; display: block; filter: drop-shadow(0 1px 3px rgba(0,0,0,.15)); }
-.geo-canvas :deep(.gt) { fill: #dbeafe; stroke: #1d4ed8; stroke-width: 1.4; stroke-linejoin: round; }
-.geo-canvas :deep(.gl) { fill: #bfdbfe; stroke: #1d4ed8; stroke-width: 1.4; stroke-linejoin: round; }
-.geo-canvas :deep(.gr) { fill: #93c5fd; stroke: #1d4ed8; stroke-width: 1.4; stroke-linejoin: round; }
+.dimgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 620px) { .dimgrid { grid-template-columns: repeat(2, 1fr); } }
+.geo-canvas :deep(svg) { width: 260px; max-width: 100%; height: auto; display: block; }
+.geo-canvas :deep(.gt) { fill: #dbeafe; stroke: #1d4ed8; stroke-width: 1.3; stroke-linejoin: round; }
+.geo-canvas :deep(.gl) { fill: #bfdbfe; stroke: #1d4ed8; stroke-width: 1.3; stroke-linejoin: round; }
+.geo-canvas :deep(.gr) { fill: #93c5fd; stroke: #1d4ed8; stroke-width: 1.3; stroke-linejoin: round; }
 .geo-canvas :deep(.gh) { fill: #fff; stroke: #1d4ed8; stroke-width: 1.2; }
+.geo-canvas :deep(.gdim) { stroke: #475569; stroke-width: 0.8; }
+.geo-canvas :deep(.gdimt) { fill: #334155; font-size: 8px; font-weight: 700; text-anchor: middle;
+	font-family: -apple-system, "Segoe UI", Roboto, sans-serif; paint-order: stroke; stroke: #fff; stroke-width: 2.5px; }
+.geo-canvas :deep(.gsupport) { fill: #94a3b8; stroke: #475569; stroke-width: 0.6; }
+.geo-canvas :deep(.gload) { stroke: #b91c1c; stroke-width: 1.4; }
 .geo-cap { font-size: 11px; color: var(--theme--foreground-subdued, #6b7684); text-transform: capitalize; }
 
 .card {
