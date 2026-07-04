@@ -84,48 +84,53 @@ const autoCode = computed<string>(() => {
 	const sample = sampleCode.value ?? '';
 	const cat = (v.process_category ?? '') as string;
 
+	// Per-sample sequence number — the unique identifier every operation carries, so
+	// two ops on the same sample never collide even with identical parameters. For
+	// machining this is the facing/roughing pass number; for other methods it's just
+	// the Nth operation on the sample.
+	const seq = v.operation_sequence;
+	const seqStr = seq === '' || seq === null || seq === undefined ? '' : String(seq);
+
 	let token = '';
 	let parts: string[] = [];
 
 	if (cat === 'machining') {
-		const pass = v.operation_sequence;
-		const passStr = pass === '' || pass === null || pass === undefined ? '' : String(pass);
-		token = `${v.machining_operation_subtype ?? ''}${passStr}`;
+		token = `${v.machining_operation_subtype ?? ''}${seqStr}`;
 		parts = [
 			num(v.machining_cutting_speed_m_per_min) && `${num(v.machining_cutting_speed_m_per_min)}MPM`,
 			num(v.machining_feed_mm_per_rev) && `${num(v.machining_feed_mm_per_rev)}feed`,
 			num(v.machining_axial_depth_of_cut_mm) && `${num(v.machining_axial_depth_of_cut_mm)}DoC`,
 		].filter(Boolean) as string[];
 	} else if (cat === 'sintering') {
-		token = 'MF';
+		token = `MF${seqStr}`;
 		parts = [
 			num(v.sintering_max_temp_celsius) && `${num(v.sintering_max_temp_celsius)}C`,
 			num(v.sintering_max_force_kn) && `${num(v.sintering_max_force_kn)}kN`,
 			num(v.sintering_mould_diameter_mm) && `${num(v.sintering_mould_diameter_mm)}dia`,
 		].filter(Boolean) as string[];
 	} else if (cat === 'heat_treatment') {
-		token = `HT${HT_TYPE[v.ht_treatment_type] ?? ''}`;
+		token = `HT${HT_TYPE[v.ht_treatment_type] ?? ''}${seqStr}`;
 		parts = [
 			num(v.ht_peak_temp_celsius) && `${num(v.ht_peak_temp_celsius)}C`,
 			num(v.ht_hold_time_min) && `${num(v.ht_hold_time_min)}min`,
 			HT_COOL[v.ht_cooling_method],
 		].filter(Boolean) as string[];
 	} else if (cat === 'deformation') {
-		token = DEFORM_TOKEN[v.deform_deformation_type] ?? 'D';
+		token = `${DEFORM_TOKEN[v.deform_deformation_type] ?? 'D'}${seqStr}`;
 		parts = [
 			num(v.deform_deformation_temp_celsius) && `${num(v.deform_deformation_temp_celsius)}C`,
 			num(v.deform_total_reduction_pct) && `${num(v.deform_total_reduction_pct)}pct`,
 			num(v.deform_pass_count) && `${num(v.deform_pass_count)}p`,
 		].filter(Boolean) as string[];
 	} else if (cat === 'additive') {
-		token = (v.am_process_variant ?? 'AM') as string;
+		token = `${v.am_process_variant ?? 'AM'}${seqStr}`;
 		parts = [
 			num(v.am_laser_power_w) && `${num(v.am_laser_power_w)}W`,
 			num(v.am_scan_speed_mm_per_s) && `${num(v.am_scan_speed_mm_per_s)}mmps`,
 			num(v.am_layer_thickness_mm) && `${num(v.am_layer_thickness_mm)}mm`,
 		].filter(Boolean) as string[];
 	} else {
-		return sample; // unknown category — just the sample code
+		return seqStr ? `${sample}-${seqStr}` : sample; // unknown category — sample + seq
 	}
 
 	let code = sample;

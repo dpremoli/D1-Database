@@ -93,39 +93,59 @@ onMounted(() => {
 				selector: 'node',
 				style: {
 					'background-color': 'data(color)',
+					'background-opacity': 0.92,
 					label: 'data(label)',
 					'font-size': '10px',
+					'font-family': '-apple-system, "Segoe UI", Roboto, sans-serif',
+					'font-weight': 600,
 					color: '#fff',
 					'text-valign': 'center',
 					'text-halign': 'center',
 					'text-wrap': 'wrap',
-					'text-max-width': '80px',
+					'text-max-width': '78px',
+					'text-outline-width': 1.5,
+					'text-outline-color': 'data(color)',
+					'text-outline-opacity': 0.6,
 					width: 'data(size)',
 					height: 'data(size)',
-					'border-width': 2,
-					'border-color': '#fff',
-					'border-opacity': 0.5,
+					'border-width': 2.5,
+					'border-color': '#ffffff',
+					'border-opacity': 0.9,
+					'shadow-blur': 12,
+					'shadow-color': '#0f172a',
+					'shadow-opacity': 0.18,
+					'shadow-offset-y': 2,
+					'transition-property': 'width height border-width',
+					'transition-duration': 0.15,
 				},
 			},
 			{
 				selector: 'node.focal',
 				style: {
 					'border-width': 4,
-					'border-color': '#fff',
+					'border-color': '#1d4ed8',
 					'border-opacity': 1,
+					'shadow-blur': 20,
+					'shadow-opacity': 0.28,
 				},
 			},
 			{
 				selector: 'edge',
 				style: {
-					width: 1.5,
-					'line-color': '#ccc',
-					'target-arrow-color': '#ccc',
+					width: 1.6,
+					'line-color': '#cbd5e1',
+					'target-arrow-color': '#cbd5e1',
 					'target-arrow-shape': 'triangle',
+					'arrow-scale': 0.9,
 					'curve-style': 'bezier',
-					'font-size': '9px',
+					'font-size': '8.5px',
+					'font-family': '-apple-system, "Segoe UI", Roboto, sans-serif',
 					label: 'data(label)',
-					color: '#aaa',
+					color: '#64748b',
+					'text-background-color': '#ffffff',
+					'text-background-opacity': 0.85,
+					'text-background-padding': '2px',
+					'text-background-shape': 'roundrectangle',
 				},
 			},
 		],
@@ -334,8 +354,7 @@ async function loadNeighbors(collection: string, id: string) {
 		}
 
 		cy.add([...nodes, ...edges]);
-		cy.layout({ name: 'cose', animate: true, animationDuration: 400, randomize: false }).run();
-		cy.fit(undefined, 40);
+		runLayout();
 	} catch (err) {
 		console.error('[NodeGraph] loadNeighbors error', err);
 	} finally {
@@ -349,13 +368,13 @@ async function handleSearch() {
 	const results: typeof searchResults.value = [];
 
 	const [samples, ops, tests, equipment, inserts, edges, boxes] = await Promise.all([
-		getItems('physical_samples', { 'filter[sample_code][_contains]': q, 'fields[]': ['sample_id', 'sample_code'], limit: 5 }),
-		getItems('manufacturing_operations', { 'filter[operation_type][_contains]': q, 'fields[]': ['operation_id', 'operation_type'], limit: 5 }),
-		getItems('test_sessions', { 'filter[test_type][_contains]': q, 'fields[]': ['session_id', 'test_type'], limit: 5 }),
-		getItems('equipment', { 'filter[equipment_name][_contains]': q, 'fields[]': ['equipment_id', 'equipment_name'], limit: 5 }),
-		getItems('cutting_inserts', { 'filter[insert_code][_contains]': q, 'fields[]': ['insert_id', 'insert_code'], limit: 5 }),
-		getItems('insert_edges', { 'filter[edge_code][_contains]': q, 'fields[]': ['edge_id', 'edge_code'], limit: 5 }),
-		getItems('tool_boxes', { 'filter[box_code][_contains]': q, 'fields[]': ['tool_box_id', 'box_code'], limit: 5 }),
+		getItems('physical_samples', { 'filter[sample_code][_icontains]': q, 'fields[]': ['sample_id', 'sample_code'], limit: 5 }),
+		getItems('manufacturing_operations', { 'filter[operation_type][_icontains]': q, 'fields[]': ['operation_id', 'operation_type'], limit: 5 }),
+		getItems('test_sessions', { 'filter[test_type][_icontains]': q, 'fields[]': ['session_id', 'test_type'], limit: 5 }),
+		getItems('equipment', { 'filter[equipment_name][_icontains]': q, 'fields[]': ['equipment_id', 'equipment_name'], limit: 5 }),
+		getItems('cutting_inserts', { 'filter[insert_code][_icontains]': q, 'fields[]': ['insert_id', 'insert_code'], limit: 5 }),
+		getItems('insert_edges', { 'filter[edge_code][_icontains]': q, 'fields[]': ['edge_id', 'edge_code'], limit: 5 }),
+		getItems('tool_boxes', { 'filter[box_code][_icontains]': q, 'fields[]': ['tool_box_id', 'box_code'], limit: 5 }),
 	]);
 
 	for (const s of samples) results.push({ id: s.sample_id, collection: 'physical_samples', label: s.sample_code });
@@ -369,9 +388,25 @@ async function handleSearch() {
 	searchResults.value = results;
 }
 
+// Stable, deterministic radial layout: focal node centred, its neighbours ringed
+// around it — far calmer than the jittery force-directed `cose`.
+function runLayout() {
+	if (!cy) return;
+	cy.layout({
+		name: 'concentric',
+		concentric: (node: any) => (node.hasClass('focal') ? 10 : 1),
+		levelWidth: () => 1,
+		minNodeSpacing: 46,
+		spacingFactor: 1.05,
+		animate: true,
+		animationDuration: 350,
+		fit: true,
+		padding: 44,
+	}).run();
+}
+
 function resetLayout() {
-	cy?.layout({ name: 'cose', animate: true }).run();
-	cy?.fit(undefined, 40);
+	runLayout();
 }
 
 function clearGraph() {
@@ -397,7 +432,7 @@ defineExpose({ loadNeighbors });
 	align-items: center;
 	gap: 8px;
 	padding: 6px 10px;
-	border-bottom: 1px solid var(--border-subdued);
+	border-bottom: 1px solid var(--theme--border-color-subdued, #eef1f5);
 	flex-shrink: 0;
 }
 
@@ -407,7 +442,7 @@ defineExpose({ loadNeighbors });
 
 .d1-focal-label {
 	font-size: 11px;
-	color: var(--foreground-subdued);
+	color: var(--theme--foreground-subdued, #64748b);
 	flex: 1;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -425,13 +460,13 @@ defineExpose({ loadNeighbors });
 	top: 40px;
 	left: 10px;
 	right: 10px;
-	background: var(--background-page);
-	border: 1px solid var(--border-normal);
-	border-radius: var(--border-radius);
+	background: var(--theme--background, #ffffff);
+	border: 1px solid var(--theme--border-color, #e2e8f0);
+	border-radius: var(--theme--border-radius, 10px);
 	z-index: 10;
 	max-height: 200px;
 	overflow-y: auto;
-	box-shadow: var(--card-shadow);
+	box-shadow: 0 4px 16px rgba(15,23,42,.10);
 }
 
 .d1-search-result {
@@ -444,7 +479,7 @@ defineExpose({ loadNeighbors });
 }
 
 .d1-search-result:hover {
-	background: var(--background-normal-alt);
+	background: var(--theme--background-accent, #eef2f7);
 }
 
 .d1-search-dot {
@@ -460,7 +495,7 @@ defineExpose({ loadNeighbors });
 }
 
 .d1-search-collection {
-	color: var(--foreground-subdued);
+	color: var(--theme--foreground-subdued, #64748b);
 	font-size: 10px;
 }
 
@@ -475,7 +510,7 @@ defineExpose({ loadNeighbors });
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	background: rgba(var(--background-page-rgb), 0.7);
+	background: rgba(255,255,255,.75);
 }
 
 .d1-graph-empty {
@@ -484,7 +519,7 @@ defineExpose({ loadNeighbors });
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	color: var(--foreground-subdued);
+	color: var(--theme--foreground-subdued, #64748b);
 	font-size: 13px;
 	text-align: center;
 	padding: 24px;

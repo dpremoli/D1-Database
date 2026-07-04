@@ -183,7 +183,7 @@ function formatDate(d: string | null): string {
 <style scoped>
 .d1-machining {
 	display: grid;
-	grid-template-columns: 220px 1fr 280px 320px;
+	grid-template-columns: 220px minmax(280px, 1fr) 300px 340px; min-width: 0;
 	gap: 12px;
 	height: calc(100vh - 120px);
 	padding: 12px;
@@ -193,9 +193,9 @@ function formatDate(d: string | null): string {
 .d1-panel {
 	display: flex;
 	flex-direction: column;
-	background: var(--background-page);
-	border: 1px solid var(--border-normal);
-	border-radius: var(--border-radius);
+	background: var(--theme--background, #ffffff);
+	border: 1px solid var(--theme--border-color, #e2e8f0);
+	border-radius: var(--theme--border-radius, 10px);
 	overflow: hidden;
 }
 
@@ -208,8 +208,8 @@ function formatDate(d: string | null): string {
 	align-items: center;
 	gap: 8px;
 	padding: 10px 12px;
-	border-bottom: 1px solid var(--border-normal);
-	background: var(--background-normal);
+	border-bottom: 1px solid var(--theme--border-color, #e2e8f0);
+	background: var(--theme--background-subdued, #f7f9fb);
 	flex-shrink: 0;
 }
 
@@ -227,8 +227,8 @@ function formatDate(d: string | null): string {
 
 .d1-count {
 	font-size: 11px;
-	background: var(--primary-alt);
-	color: var(--primary);
+	background: var(--theme--primary-background, #eef2ff);
+	color: var(--theme--primary, #1d4ed8);
 	padding: 2px 6px;
 	border-radius: 10px;
 	font-weight: 600;
@@ -242,20 +242,20 @@ function formatDate(d: string | null): string {
 .d1-row {
 	padding: 8px 12px;
 	cursor: pointer;
-	border-bottom: 1px solid var(--border-subdued);
+	border-bottom: 1px solid var(--theme--border-color-subdued, #eef1f5);
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
-	transition: background-color var(--fast) var(--transition);
+	transition: background-color .15s ease;
 }
 
 .d1-row:hover {
-	background: var(--background-normal-alt);
+	background: var(--theme--background-accent, #eef2f7);
 }
 
 .d1-row.active {
-	background: var(--primary-alt);
-	border-left: 3px solid var(--primary);
+	background: var(--theme--primary-background, #eef2ff);
+	border-left: 3px solid var(--theme--primary, #1d4ed8);
 }
 
 .d1-primary {
@@ -268,17 +268,17 @@ function formatDate(d: string | null): string {
 
 .d1-secondary {
 	font-size: 11px;
-	color: var(--foreground-subdued);
+	color: var(--theme--foreground-subdued, #64748b);
 }
 
 .d1-date {
 	font-size: 10px;
-	color: var(--foreground-subdued);
+	color: var(--theme--foreground-subdued, #64748b);
 }
 
 .d1-badge {
 	font-size: 10px;
-	background: var(--background-normal-alt);
+	background: var(--theme--background-accent, #eef2f7);
 	padding: 1px 5px;
 	border-radius: 4px;
 	font-weight: 400;
@@ -287,7 +287,7 @@ function formatDate(d: string | null): string {
 .d1-empty {
 	padding: 24px;
 	text-align: center;
-	color: var(--foreground-subdued);
+	color: var(--theme--foreground-subdued, #64748b);
 	font-size: 13px;
 }
 
@@ -311,7 +311,7 @@ function formatDate(d: string | null): string {
 	font-weight: 700;
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
-	color: var(--foreground-subdued);
+	color: var(--theme--foreground-subdued, #64748b);
 	margin: 0 0 6px;
 }
 
@@ -323,7 +323,7 @@ function formatDate(d: string | null): string {
 }
 
 .d1-kv span:nth-child(odd) {
-	color: var(--foreground-subdued);
+	color: var(--theme--foreground-subdued, #64748b);
 }
 
 .d1-kv span:nth-child(even) {
@@ -332,7 +332,7 @@ function formatDate(d: string | null): string {
 
 .d1-notes {
 	font-size: 13px;
-	color: var(--foreground-normal);
+	color: var(--theme--foreground, #1e293b);
 	margin: 0;
 	white-space: pre-wrap;
 }

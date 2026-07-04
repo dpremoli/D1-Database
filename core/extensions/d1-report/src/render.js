@@ -279,11 +279,12 @@ export function renderSampleReport(d) {
 	.badge { display:inline-block; font-size:8.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; padding:2px 7px;
 		border-radius:99px; background:var(--soft); color:var(--muted); border:1px solid var(--line); }
 	.badge.danger { background:#fef2f2; color:var(--danger); border-color:#fecaca; }
-	.hd-right { text-align:center; flex:0 0 auto; margin-left:16px; }
+	.hd-right { flex:0 0 auto; margin-left:16px; display:flex; align-items:center; gap:16px; }
+	.qr-wrap { text-align:center; flex:0 0 auto; }
 	.qr, .qr svg { width:74px; height:74px; display:block; }
 	.uid { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:8.5px; color:var(--muted); margin-top:4px; }
-	.geo-fig { margin:0 0 10px; text-align:center; }
-	.geo-fig svg { width:150px; height:auto; display:block; margin:0 auto; }
+	.geo-fig { margin:0; text-align:center; }
+	.geo-fig svg { width:122px; height:auto; display:block; margin:0 auto; }
 	/* isometric geometry engine classes (shared with the sample creator) */
 	.gt { fill:#dbeafe; stroke:var(--accent); stroke-width:1.3; stroke-linejoin:round; }
 	.gl { fill:#bfdbfe; stroke:var(--accent); stroke-width:1.3; stroke-linejoin:round; }
@@ -379,8 +380,10 @@ export function renderSampleReport(d) {
 		</div>
 		<div class="hd-right">
 			<figure class="geo-fig">${buildGeometry(s)}<figcaption>${dims ? `${esc(dims)} mm` : esc(s.form || 'geometry')}</figcaption></figure>
-			<div class="qr">${qrSvg}</div>
-			<div class="uid">ID ${esc(shortId)}</div>
+			<div class="qr-wrap">
+				<div class="qr">${qrSvg}</div>
+				<div class="uid">ID ${esc(shortId)}</div>
+			</div>
 		</div>
 	</header>			
 	<section class="grid">${details}</section>
