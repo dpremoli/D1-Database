@@ -1,0 +1,20 @@
+-- migrate:up
+-- Fix the two stray gauge fields (unconfigured columns showed at the top of the
+-- core sample form) and refresh all dimension-field show/hide conditions to the new
+-- form vocabulary so each dimension appears only for the relevant shapes.
+
+INSERT INTO directus_fields (collection, field, interface, options, display, hidden, sort, width, conditions, translations)
+SELECT 'physical_samples','gauge_length_mm','input','{"step":0.001,"suffix":"mm"}','raw',false,12,'half','[{"name": "sample only", "rule": {"_and": [{"item_type": {"_neq": "sample"}}]}, "hidden": true, "readonly": false, "required": false}, {"name": "form", "rule": {"_and": [{"form": {"_nin": ["tensile_coupon"]}}]}, "hidden": true, "readonly": false, "required": false}]','[{"language":"en-US","translation":"Gauge length"}]'
+WHERE NOT EXISTS (SELECT 1 FROM directus_fields WHERE collection='physical_samples' AND field='gauge_length_mm');
+INSERT INTO directus_fields (collection, field, interface, options, display, hidden, sort, width, conditions, translations)
+SELECT 'physical_samples','gauge_width_mm','input','{"step":0.001,"suffix":"mm"}','raw',false,13,'half','[{"name": "sample only", "rule": {"_and": [{"item_type": {"_neq": "sample"}}]}, "hidden": true, "readonly": false, "required": false}, {"name": "form", "rule": {"_and": [{"form": {"_nin": ["tensile_coupon"]}}]}, "hidden": true, "readonly": false, "required": false}]','[{"language":"en-US","translation":"Gauge width"}]'
+WHERE NOT EXISTS (SELECT 1 FROM directus_fields WHERE collection='physical_samples' AND field='gauge_width_mm');
+UPDATE directus_fields SET conditions='[{"name": "sample only", "rule": {"_and": [{"item_type": {"_neq": "sample"}}]}, "hidden": true, "readonly": false, "required": false}, {"name": "form", "rule": {"_and": [{"form": {"_nin": ["disc", "cylinder"]}}]}, "hidden": true, "readonly": false, "required": false}]' WHERE collection='physical_samples' AND field='diameter_mm';
+UPDATE directus_fields SET conditions='[{"name": "sample only", "rule": {"_and": [{"item_type": {"_neq": "sample"}}]}, "hidden": true, "readonly": false, "required": false}, {"name": "form", "rule": {"_and": [{"form": {"_nin": ["cylinder", "block", "plate", "bar", "tensile_coupon", "bend_bar"]}}]}, "hidden": true, "readonly": false, "required": false}]' WHERE collection='physical_samples' AND field='length_mm';
+UPDATE directus_fields SET conditions='[{"name": "sample only", "rule": {"_and": [{"item_type": {"_neq": "sample"}}]}, "hidden": true, "readonly": false, "required": false}, {"name": "form", "rule": {"_and": [{"form": {"_nin": ["block", "plate", "bar", "tensile_coupon", "bend_bar"]}}]}, "hidden": true, "readonly": false, "required": false}]' WHERE collection='physical_samples' AND field='width_mm';
+UPDATE directus_fields SET conditions='[{"name": "sample only", "rule": {"_and": [{"item_type": {"_neq": "sample"}}]}, "hidden": true, "readonly": false, "required": false}, {"name": "form", "rule": {"_and": [{"form": {"_nin": ["disc", "block", "plate", "bar", "tensile_coupon", "bend_bar"]}}]}, "hidden": true, "readonly": false, "required": false}]' WHERE collection='physical_samples' AND field='thickness_mm';
+UPDATE directus_fields SET conditions='[{"name": "sample only", "rule": {"_and": [{"item_type": {"_neq": "sample"}}]}, "hidden": true, "readonly": false, "required": false}, {"name": "form", "rule": {"_and": [{"form": {"_nin": ["tensile_coupon"]}}]}, "hidden": true, "readonly": false, "required": false}]' WHERE collection='physical_samples' AND field='gauge_length_mm';
+UPDATE directus_fields SET conditions='[{"name": "sample only", "rule": {"_and": [{"item_type": {"_neq": "sample"}}]}, "hidden": true, "readonly": false, "required": false}, {"name": "form", "rule": {"_and": [{"form": {"_nin": ["tensile_coupon"]}}]}, "hidden": true, "readonly": false, "required": false}]' WHERE collection='physical_samples' AND field='gauge_width_mm';
+
+-- migrate:down
+DELETE FROM directus_fields WHERE collection='physical_samples' AND field IN ('gauge_length_mm','gauge_width_mm');

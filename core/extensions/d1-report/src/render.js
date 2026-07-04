@@ -5,6 +5,8 @@
 // SVG, all styling is inline, and a no-print toolbar lets the user toggle blocks
 // (the document reflows). URL params like ?operations=0 set the initial state.
 
+import { buildGeometry } from './geometry';
+
 const esc = (v) =>
 	v === null || v === undefined
 		? ''
@@ -278,12 +280,16 @@ export function renderSampleReport(d) {
 	.qr, .qr svg { width:74px; height:74px; display:block; }
 	.uid { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:8.5px; color:var(--muted); margin-top:4px; }
 	.geo-fig { margin:0 0 10px; text-align:center; }
-	.geo-svg { width:82px; height:76px; display:block; margin:0 auto; }
-	.geo { stroke:var(--accent); stroke-width:1.4; stroke-linejoin:round; }
-	.geo-top { fill:#dbeafe; }
-	.geo-left { fill:#bfdbfe; }
-	.geo-right { fill:#93c5fd; }
-	.geo-hole { fill:#fff; stroke:var(--accent); stroke-width:1.2; }
+	.geo-fig svg { width:150px; height:auto; display:block; margin:0 auto; }
+	/* isometric geometry engine classes (shared with the sample creator) */
+	.gt { fill:#dbeafe; stroke:var(--accent); stroke-width:1.3; stroke-linejoin:round; }
+	.gl { fill:#bfdbfe; stroke:var(--accent); stroke-width:1.3; stroke-linejoin:round; }
+	.gr { fill:#93c5fd; stroke:var(--accent); stroke-width:1.3; stroke-linejoin:round; }
+	.gh { fill:#fff; stroke:var(--accent); stroke-width:1.1; }
+	.gdim { stroke:#64748b; stroke-width:0.8; }
+	.gdimt { fill:#334155; font-size:8px; font-weight:700; text-anchor:middle; paint-order:stroke; stroke:#fff; stroke-width:2.5px; }
+	.gsupport { fill:#94a3b8; stroke:#475569; stroke-width:0.6; }
+	.gload { stroke:var(--danger); stroke-width:1.4; }
 	.geo-fig figcaption { font-size:8px; color:var(--muted); margin-top:2px; text-transform:uppercase; letter-spacing:.05em; }
 
 	/* Details grid */
@@ -369,7 +375,7 @@ export function renderSampleReport(d) {
 			<div class="badges">${statusBadge}${exportBadge}</div>
 		</div>
 		<div class="hd-right">
-			<figure class="geo-fig">${geometrySvg(s.form)}<figcaption>${dims ? `${esc(dims)} mm` : esc(s.form || 'geometry')}</figcaption></figure>
+			<figure class="geo-fig">${buildGeometry(s)}<figcaption>${dims ? `${esc(dims)} mm` : esc(s.form || 'geometry')}</figcaption></figure>
 			<div class="qr">${qrSvg}</div>
 			<div class="uid">ID ${esc(shortId)}</div>
 		</div>
