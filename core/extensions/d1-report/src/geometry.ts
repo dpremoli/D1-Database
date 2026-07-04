@@ -88,11 +88,18 @@ function svgWrap(inner: string) {
 }
 
 function drawDims(dims: Dim[], to: (p: P3) => P2): string {
+	const cx = VW / 2, cy = VH / 2;
 	return dims.map((d) => {
 		const a = to(d.a), b = to(d.b);
 		const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+		// Offset the label along the line's normal, away from the drawing centre, so it
+		// sits beside the dimension line rather than on top of it.
+		let nx = -(b[1] - a[1]), ny = b[0] - a[0];
+		const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
+		if ((mx - cx) * nx + (my - cy) * ny < 0) { nx = -nx; ny = -ny; }
+		const lx = mx + nx * 11, ly = my + ny * 11;
 		return `<line x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}" class="gdim" marker-start="url(#ga)" marker-end="url(#ga)"/>`
-			+ `<text x="${mx.toFixed(1)}" y="${(my - 3).toFixed(1)}" class="gdimt">${d.label}</text>`;
+			+ `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" class="gdimt" dominant-baseline="middle">${d.label}</text>`;
 	}).join('');
 }
 
@@ -139,7 +146,7 @@ function cylSvg(D: number, H: number): string {
 		+ `L${(topC[0] + rx).toFixed(1)} ${topC[1].toFixed(1)} Z" class="gl"/>`;
 	const top = `<ellipse cx="${topC[0].toFixed(1)}" cy="${topC[1].toFixed(1)}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" class="gt"/>`;
 	// diameter marker across the top ellipse
-	const dimD = `<line x1="${(topC[0] - rx).toFixed(1)} " y1="${(topC[1] - ry - 8).toFixed(1)}" x2="${(topC[0] + rx).toFixed(1)}" y2="${(topC[1] - ry - 8).toFixed(1)}" class="gdim" marker-start="url(#ga)" marker-end="url(#ga)"/>`
+	const dimD = `<line x1="${(topC[0] - rx).toFixed(1)}" y1="${(topC[1] - ry - 8).toFixed(1)}" x2="${(topC[0] + rx).toFixed(1)}" y2="${(topC[1] - ry - 8).toFixed(1)}" class="gdim" marker-start="url(#ga)" marker-end="url(#ga)"/>`
 		+ `<text x="${topC[0].toFixed(1)}" y="${(topC[1] - ry - 11).toFixed(1)}" class="gdimt">Ø${fmt(D)}</text>`;
 	return svgWrap(body + top + dimD + drawDims(dims, to));
 }

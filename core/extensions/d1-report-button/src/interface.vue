@@ -27,12 +27,12 @@ function open() {
 </script>
 
 <template>
-	<div class="d1-report-button">
-		<v-button :disabled="isNew" @click="open">
+	<!-- Only offered once the record exists (nothing to report on a brand-new item). -->
+	<div v-if="!isNew" class="d1-report-button">
+		<v-button @click="open">
 			<v-icon name="picture_as_pdf" left />
 			{{ label }}
 		</v-button>
-		<span v-if="isNew" class="hint">Save the record first to generate its PDF.</span>
 	</div>
 </template>
 

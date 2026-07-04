@@ -240,9 +240,12 @@ export function renderSampleReport(d) {
 		.doc { width:auto; margin:0; padding:0; min-height:0; box-shadow:none; }
 		.doc::before { display:none; }
 		.no-print { display:none !important; }
-		/* Don't split these across a page boundary. */
-		.hd, .grid, .legend, .chips, .notes, .tl-item, figure, h2 { break-inside:avoid; }
-		h2 { break-after:avoid; } /* a heading never sits alone at the foot of a page */
+		/* Keep small blocks whole… */
+		.hd, .grid, .legend, .chips, .notes, .tl-item, figure { break-inside:avoid; }
+		/* …but a timeline item holding a long op/test table MUST be allowed to flow
+		   across pages, otherwise it jumps whole to the next page and leaves a gap. */
+		.tl-item:has(.tbl) { break-inside:auto; }
+		.tl-title, h2 { break-after:avoid; } /* a heading never sits alone at a page foot */
 		.tbl { break-inside:auto; }
 		.tbl thead { display:table-header-group; } /* repeat table headers on each page */
 		.tbl tr { break-inside:avoid; }
