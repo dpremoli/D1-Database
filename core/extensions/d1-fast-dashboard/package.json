@@ -1,0 +1,21 @@
+{
+  "name": "directus-extension-d1-fast-dashboard",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "directus-extension build",
+    "dev": "directus-extension build --watch"
+  },
+  "devDependencies": {
+    "@directus/extensions-sdk": "^17",
+    "@vue/compiler-sfc": "^3",
+    "typescript": "^5",
+    "vue": "^3"
+  },
+  "directus:extension": {
+    "type": "module",
+    "path": "dist/index.js",
+    "source": "src/index.ts",
+    "host": "^11.0.0"
+  }
+}

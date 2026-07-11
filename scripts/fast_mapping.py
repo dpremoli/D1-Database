@@ -184,3 +184,252 @@ def run_uid(machine: str, date_str: str, time_str: str, batch: str) -> str:
     """Deterministic dedup key — a press cycle is unique by machine + timestamp."""
     key = f"{machine}|{date_str}|{time_str}|{batch}"
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FAST trace CSV normalisation (the raw per-run machine log → one internal format)
+#
+# Two machines export different shapes (see FAST Data/ examples):
+#   FCT HP D 25  — comma-delimited, US decimals, a header row + a units row.
+#   FCT HP D 250 — semicolon-delimited, EU decimals (1.015,8 == 1015.8), 3 preamble
+#                  lines (Plant/Recipe/StartTime), "[unit]"-in-header names, cp1252.
+# normalize_fast_csv() maps both onto ONE canonical comma/US-decimal CSV whose first
+# column is elapsed time_s, mapping the physically-equivalent channels to shared keys
+# (so the same series plots across machines) and passing unmapped columns through under
+# a slug of their own label (nothing is lost). The d1-fast-dashboard fetches this CSV
+# and plots it; the series catalog in meta drives the series picker.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Canonical channels shared across both machines: normalised raw label -> (key, label,
+# unit, group). "group" buckets series by physical quantity for unit-grouped plotting.
+_CANON: dict[str, tuple[str, str, str, str]] = {
+    # 25-machine labels
+    "av pyrometer":     ("pyro_top", "Pyrometer (top)", "C", "temp"),
+    "av pyro b":        ("pyro_b", "Pyrometer B", "C", "temp"),
+    "av tc1":           ("tc1", "TC1", "C", "temp"),
+    "av tc2":           ("tc2", "TC2", "C", "temp"),
+    "av tc3":           ("tc3", "TC3", "C", "temp"),
+    "av tc4":           ("tc4", "TC4", "C", "temp"),
+    "av ptc top":       ("ptc_top", "PTC top", "C", "temp"),
+    "av ptc bot.":      ("ptc_bot", "PTC bottom", "C", "temp"),
+    "av force":         ("force", "Force", "kN", "force"),
+    "sv force":         ("force_sv", "Force (setpoint)", "kN", "force"),
+    "av speed":         ("speed", "Ram speed", "mm/min", "speed"),
+    "av abs. piston t": ("piston_abs", "Piston travel (abs)", "mm", "position"),
+    "av rel. piston t": ("piston_rel", "Piston travel (rel)", "mm", "position"),
+    "av press. abs. 1": ("pressure_abs", "Pressure (abs)", "mbar", "pressure"),
+    "av press. rel.":   ("pressure_rel", "Pressure (rel)", "mbar", "pressure"),
+    "av thermovak":     ("vacuum", "Vacuum", "mbar", "pressure"),
+    "i rms":            ("sps_current", "SPS current", "kA", "current"),
+    "u rms":            ("sps_voltage", "SPS voltage", "V", "voltage"),
+    "av heating power":  ("sps_power", "SPS power", "kW", "power"),
+    "sv temperature":   ("heating_sp", "Heating setpoint", "C", "temp"),
+    # 250-machine labels (unit stripped from the header before lookup)
+    "pyro top":                ("pyro_top", "Pyrometer (top)", "C", "temp"),
+    "pyro front":              ("pyro_b", "Pyrometer (front)", "C", "temp"),
+    "control tc 1":            ("tc1", "Control TC1", "C", "temp"),
+    "piston tc upper ram":     ("ptc_top", "Piston TC (upper ram)", "C", "temp"),
+    "piston tc contact area":  ("ptc_contact", "Piston TC (contact)", "C", "temp"),
+    "piston tc cooling ram":   ("ptc_bot", "Piston TC (cooling ram)", "C", "temp"),
+    "av pressing force":       ("force", "Force", "kN", "force"),
+    "sv pressing force":       ("force_sv", "Force (setpoint)", "kN", "force"),
+    "pressing speed":          ("speed", "Ram speed", "mm/min", "speed"),
+    "presinng max. way":       ("piston_abs", "Piston travel (abs)", "mm", "position"),
+    "pressing max. way":       ("piston_abs", "Piston travel (abs)", "mm", "position"),
+    "pressing relative way":   ("piston_rel", "Piston travel (rel)", "mm", "position"),
+    "absolute pressure vessel": ("pressure_abs", "Pressure (abs)", "mbar", "pressure"),
+    "relative pressure vessel": ("pressure_rel", "Pressure (rel)", "mbar", "pressure"),
+    "vacuum vessel":           ("vacuum", "Vacuum", "mbar", "pressure"),
+    "sps power":               ("sps_power", "SPS power", "kW", "power"),
+    "sps voltage":             ("sps_voltage", "SPS voltage", "V", "voltage"),
+    "sps current":             ("sps_current", "SPS current", "kA", "current"),
+    "sv sps heating temp.":    ("heating_sp", "Heating setpoint", "C", "temp"),
+    "hydraulic oil temp.":     ("hyd_oil_temp", "Hydraulic oil temp", "C", "temp"),
+}
+
+# Unit string -> physical group, for pass-through columns without a canonical entry.
+_UNIT_GROUP = {
+    "c": "temp", "°c": "temp", "kn": "force", "mm": "position", "mm/min": "speed",
+    "mbar": "pressure", "hpa": "pressure", "mbar(a)": "pressure", "mbar(g)": "pressure",
+    "kw": "power", "v": "voltage", "ka": "current", "a": "current", "%": "percent",
+    "l/min": "flow", "µs/cm": "other", "ms": "other",
+}
+
+# Wall-clock columns (not plottable series) by normalised label.
+_TIME_COLS = {"no.", "date", "time", "p.time", "cur. time charge", "cur. time",
+              "charge", "prozesstime 1", "prozesstime 2"}
+
+
+def _slug(label: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "_", str(label).strip().lower()).strip("_")
+    return s or "col"
+
+
+def _split_label_unit(header: str) -> tuple[str, str]:
+    """'AV pressing force [kN]' -> ('AV pressing force', 'kN'); '' unit if none."""
+    m = re.match(r"^(.*?)\s*\[(.*?)\]\s*$", header.strip())
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return header.strip(), ""
+
+
+def _num_us(s: str):
+    s = (s or "").strip()
+    if s == "" or s == "-":
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _num_eu(s: str):
+    """European decimal: '1.015,8' -> 1015.8 ; '0,0003' -> 0.0003 ; '-29,5' -> -29.5."""
+    s = (s or "").strip()
+    if s == "" or s == "-":
+        return None
+    s = s.replace(".", "").replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _hms_to_s(s: str):
+    """'HH:MM:SS' (or 'H:MM:SS') -> seconds; returns None if not a clock string."""
+    m = re.match(r"^\s*(\d+):(\d{1,2}):(\d{1,2})\s*$", str(s))
+    if not m:
+        return None
+    h, mm, ss = (int(x) for x in m.groups())
+    return h * 3600 + mm * 60 + ss
+
+
+def detect_fast_format(raw: bytes) -> str:
+    """'250' if the FCT HP D 250 shape, else '25'."""
+    head = raw[:4000].decode("cp1252", errors="replace").lower()
+    if "used recipe:" in head or "prozesstime" in head or ";" in head.splitlines()[3 if head.count("\n") > 3 else 0]:
+        # the 250 export has the Plant/Recipe preamble and semicolon delimiters
+        if "used recipe:" in head or "prozesstime" in head:
+            return "250"
+    return "25"
+
+
+def _group_for(key: str, unit: str, canon_group: str | None) -> str:
+    if canon_group:
+        return canon_group
+    return _UNIT_GROUP.get(unit.strip().lower(), "other")
+
+
+def normalize_fast_csv(raw: bytes) -> dict:
+    """Parse a raw FAST trace CSV (either machine) into one canonical form.
+
+    Returns a dict: {format, plant, recipe, run_start (iso|None), n_rows, duration_s,
+    columns: [{key,label,unit,group,min,max}], csv_text}. csv_text is a comma/US-decimal
+    CSV whose first column is 'time_s [s]'. Physically-equivalent channels get a shared
+    canonical key; everything else passes through under a slug of its own label.
+    """
+    fmt = detect_fast_format(raw)
+    text = raw.decode("cp1252", errors="replace")
+    lines = text.splitlines()
+    plant = recipe = run_start = None
+
+    if fmt == "250":
+        # preamble: Plant / Used Recipe / StartTime Charge, then header on line 4.
+        for ln in lines[:3]:
+            low = ln.lower()
+            if low.startswith("plant:"):
+                plant = ln.split(":", 1)[1].strip()
+            elif low.startswith("used recipe:"):
+                recipe = ln.split(":", 1)[1].strip()
+            elif "starttime" in low:
+                run_start = _parse_dt_de(ln.split(":", 1)[1].strip() if ":" in ln else ln)
+        header_raw = lines[3].split(";")
+        data_lines = lines[4:]
+        delim, num = ";", _num_eu
+        headers = [_split_label_unit(h) for h in header_raw]
+        # 250 time comes from Prozesstime 1 (HH:MM:SS)
+        time_idx = next((i for i, (lab, _u) in enumerate(headers) if lab.strip().lower() == "prozesstime 1"), 1)
+    else:
+        header_raw = lines[0].split(",")
+        units_row = lines[1].split(",") if len(lines) > 1 else []
+        data_lines = lines[2:]
+        delim, num = ",", _num_us
+        headers = [(h.strip(), (units_row[i].strip() if i < len(units_row) else "")) for i, h in enumerate(header_raw)]
+        time_idx = next((i for i, (lab, _u) in enumerate(headers) if lab.strip().lower() == "p.time"), 3)
+
+    # Build per-column plans (skip wall-clock/index columns as plottable series).
+    plans = []  # (idx, key, label, unit, group)
+    seen_keys: set[str] = set()
+    for i, (lab, unit) in enumerate(headers):
+        norm = _norm(lab)
+        if i == time_idx or norm in _TIME_COLS:
+            continue
+        canon = _CANON.get(norm)
+        if canon:
+            key, clabel, cunit, cgroup = canon
+            unit = cunit or unit          # canonical (clean, ASCII) unit wins for cross-machine consistency
+            label, group = clabel, cgroup
+        else:
+            key = _slug(lab)
+            label, group = lab, None
+        if key in seen_keys:
+            key = f"{key}_{i}"
+        seen_keys.add(key)
+        plans.append((i, key, label, unit, _group_for(key, unit, group)))
+
+    # Parse rows -> time_s + one value list per plan.
+    n = len(plans)
+    time_vals: list[float] = []
+    series_vals: list[list] = [[] for _ in range(n)]
+    for raw_line in data_lines:
+        if not raw_line.strip():
+            continue
+        cells = raw_line.split(delim)
+        t = _hms_to_s(cells[time_idx]) if time_idx < len(cells) else None
+        if t is None:
+            continue
+        time_vals.append(float(t))
+        for j, (idx, *_rest) in enumerate(plans):
+            series_vals[j].append(num(cells[idx]) if idx < len(cells) else None)
+
+    n_rows = len(time_vals)
+    duration_s = (time_vals[-1] - time_vals[0]) if n_rows > 1 else 0.0
+
+    # Keep only columns that carry numeric data (drop categorical/empty ones like the
+    # 250's "Technol. Step" — not a plottable line series).
+    columns = []
+    keep = []  # (j, key, label, unit, group)
+    for j, (idx, key, label, unit, group) in enumerate(plans):
+        vals = [v for v in series_vals[j] if v is not None]
+        if not vals:
+            continue
+        columns.append({
+            "key": key, "label": label, "unit": unit, "group": group,
+            "min": min(vals), "max": max(vals),
+        })
+        keep.append((j, key, label, unit, group))
+
+    # Emit the canonical CSV (time_s first, then each kept column).
+    out_header = ["time_s [s]"] + [f"{c['label']} [{c['unit']}]" if c["unit"] else c["label"] for c in columns]
+    out_lines = [",".join(out_header)]
+    for r in range(n_rows):
+        row = [f"{time_vals[r]:g}"]
+        for (j, *_rest) in keep:
+            v = series_vals[j][r]
+            row.append("" if v is None else f"{v:g}")
+        out_lines.append(",".join(row))
+
+    return {
+        "format": fmt, "plant": plant, "recipe": recipe, "run_start": run_start,
+        "n_rows": n_rows, "duration_s": duration_s, "columns": columns,
+        "csv_text": "\n".join(out_lines) + "\n",
+    }
+
+
+def _parse_dt_de(s: str):
+    """'13.06.2025 13:21:12' -> ISO 'YYYY-MM-DDTHH:MM:SS' (best effort), else None."""
+    m = re.search(r"(\d{2})\.(\d{2})\.(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})", s)
+    if not m:
+        return None
+    d, mo, y, h, mi, se = m.groups()
+    return f"{y}-{mo}-{d}T{int(h):02d}:{mi}:{se}"

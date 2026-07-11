@@ -128,6 +128,37 @@ def read_runs(folder: str) -> list[dict]:
     return runs
 
 
+def _numstr(v) -> str | None:
+    """Number → compact string with no trailing-zero noise (395.0 → '395', 20.5 → '20.5')."""
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (ValueError, TypeError):
+        return None
+    return str(int(f)) if f == int(f) else f"{f:g}"
+
+
+def sinter_params(b: dict) -> str:
+    """Compose the {temp}C_{force}kN_{dia}dia parameter tail (only the set ones)."""
+    parts = []
+    for key, suf in (("sintering_max_temp_celsius", "C"),
+                     ("sintering_max_force_kn", "kN"),
+                     ("sintering_mould_diameter_mm", "dia")):
+        s = _numstr(b.get(key))
+        if s:
+            parts.append(s + suf)
+    return "_".join(parts)
+
+
+def fast_pass_code(op_date, n: int, params: str) -> str:
+    """Globally-unique FAST op code: DD-MM-YY-MF{n}-{params} (matches migration ...091)."""
+    bits = [op_date.strftime("%d-%m-%y"), f"MF{n}"]
+    if params:
+        bits.append(params)
+    return "-".join(bits)
+
+
 def build(run: dict) -> dict | None:
     d = fmt_date(run.get("date"))
     if d is None:
@@ -238,8 +269,18 @@ def main():
     method_id = "4b13b4f4-7f7e-5356-b93a-937ab527386d"   # MF
     equipment_id = "27f468ae-5e5b-532d-bf33-e9cfc939b524"  # FCT HP D 250
 
+    # 5) assign globally-unique DD-MM-YY-MF{n}-{params} pass codes, continuing the
+    # counter from the current max so existing codes stay stable and new imports never
+    # collide (FAST ops carry no sample, so the date + running number carry uniqueness).
+    cur.execute("SELECT COALESCE(MAX((regexp_match(pass_code,'MF([0-9]+)'))[1]::int),0) "
+                "FROM manufacturing_operations WHERE process_category='sintering'")
+    counter = cur.fetchone()[0] or 0
+    for b in sorted(ops, key=lambda x: (x["operation_date"] is None, str(x["operation_date"]))):
+        counter += 1
+        b["pass_code"] = fast_pass_code(b["operation_date"], counter, sinter_params(b))
+
     cols = [
-        "operation_id", "method_id", "equipment_id", "process_category",
+        "operation_id", "method_id", "equipment_id", "process_category", "pass_code",
         "source_run_uid", "source_system", "operation_date",
         "operator", "operator_name", "owner", "material_id",
         "sintering_recipe_number", "sintering_batch_number", "sintering_mass_grams",
@@ -251,7 +292,7 @@ def main():
     values = []
     for b in ops:
         values.append((
-            b["operation_id"], method_id, equipment_id, "sintering",
+            b["operation_id"], method_id, equipment_id, "sintering", b["pass_code"],
             b["source_run_uid"], fm.SOURCE_SYSTEM, b["operation_date"],
             op_to_id.get(b["operator_disp"]), b["operator_name"],
             email_to_user.get(b["owner_email"]) if b["owner_email"] else None,

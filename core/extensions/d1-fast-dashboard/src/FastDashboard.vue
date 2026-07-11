@@ -1,0 +1,605 @@
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useApi } from '@directus/extensions-sdk';
+import { useRoute, useRouter } from 'vue-router';
+import FastChart from './FastChart.vue';
+import { type SeriesMeta, type Trace, loadTrace } from './fastCache';
+
+const api = useApi();
+const route = useRoute();
+const router = useRouter();
+
+// Open the selected operation's record form (mirrors the force dashboard's "Open").
+function openOpForm() { if (selectedId.value) router.push(`/content/manufacturing_operations/${selectedId.value}`); }
+
+// ---------------------------------------------------------------- state
+const loading = ref(true);
+const rows = ref<any[]>([]);
+const opSearch = ref('');
+const selectedId = ref<string | null>(null);
+const detail = ref<any | null>(null);
+const loadingDetail = ref(false);
+
+// numeric-aware sort so "10" comes after "2" (Directus sorts strings) — same idea as
+// the force dashboard's helpers.
+function leadingInt(s: string): number { const m = /^(\d+)/.exec(s || ''); return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER; }
+function byCode(a: any, b: any): number {
+	const ca = a.pass_code || '', cb = b.pass_code || '';
+	const na = leadingInt(ca), nb = leadingInt(cb);
+	return na !== nb ? na - nb : ca.localeCompare(cb);
+}
+
+const filteredOps = computed(() => {
+	const q = opSearch.value.trim().toLowerCase();
+	let list = rows.value;
+	if (q) list = list.filter((o) => (o.pass_code || '').toLowerCase().includes(q)
+		|| (o.sample_id?.sample_code || '').toLowerCase().includes(q)
+		|| (o.sintering_recipe_number || '').toLowerCase().includes(q));
+	return [...list].sort(byCode);
+});
+
+// ---------------------------------------------------------------- layout (resizable + persisted)
+const LAYOUT_KEY = 'd1-fast-dashboard-v1';
+const colA = ref(280);
+const dragging = ref(false);
+const tiles = ref<Tile[]>([]);
+interface Tile { id: number; series: string[]; span: 'sm' | 'wide' | 'tall' | 'big'; normalise: boolean; }
+let tileSeq = 1;
+// Either of the two left columns (operations list / operation detail) can be folded
+// away to hand the plot grid the full width — mirrors the force dashboard.
+const opsHidden = ref(false);
+const detailHidden = ref(false);
+// True until the first trace seeds the default category tiles; a saved non-empty
+// layout suppresses that so we never clobber the user's arrangement.
+let freshTiles = true;
+
+let pendingSelect: string | null = null;
+(function load() {
+	try {
+		const v = JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}');
+		if (typeof v.colA === 'number') colA.value = v.colA;
+		if (Array.isArray(v.tiles) && v.tiles.length) { tiles.value = v.tiles; tileSeq = Math.max(...v.tiles.map((t: Tile) => t.id)) + 1; freshTiles = false; }
+		if (typeof v.selectedId === 'string') pendingSelect = v.selectedId;
+		if (typeof v.opsHidden === 'boolean') opsHidden.value = v.opsHidden;
+		if (typeof v.detailHidden === 'boolean') detailHidden.value = v.detailHidden;
+	} catch { /* ignore */ }
+})();
+
+watch([colA, tiles, selectedId, opsHidden, detailHidden], () => {
+	localStorage.setItem(LAYOUT_KEY, JSON.stringify({
+		colA: colA.value, tiles: tiles.value, selectedId: selectedId.value,
+		opsHidden: opsHidden.value, detailHidden: detailHidden.value,
+	}));
+}, { deep: true });
+
+function startColAResize(ev: PointerEvent) {
+	ev.preventDefault();
+	const startX = ev.clientX, start = colA.value;
+	dragging.value = true;
+	const move = (e: PointerEvent) => { colA.value = Math.min(460, Math.max(200, start + (e.clientX - startX))); };
+	const up = () => { dragging.value = false; window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+	window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+}
+
+const layoutEl = ref<HTMLElement | null>(null);
+const availableHeight = ref(700);
+const layoutW = ref(1400);
+// Below this the fixed 3-column layout (colA + colA + plot area) wouldn't fit —
+// stack into one scrolling column instead, same threshold logic as the force
+// dashboard (measured real width, not viewport, since Directus reserves side chrome).
+const stacked = computed(() => layoutW.value < 900);
+// Column track list, rebuilt from which of the two left columns are folded away so
+// the plot area (1fr) always absorbs the freed space — collapse one and the plots
+// widen; collapse both and they take the whole row.
+const gridCols = computed(() => {
+	if (stacked.value) return '1fr';
+	const parts: string[] = [];
+	if (!opsHidden.value) parts.push(`${colA.value}px`, '6px');
+	if (!detailHidden.value) parts.push(`${colA.value}px`, '6px');
+	parts.push('1fr');
+	return parts.join(' ');
+});
+function measure() {
+	if (!layoutEl.value) return;
+	layoutW.value = layoutEl.value.getBoundingClientRect().width;
+	availableHeight.value = Math.max(460, Math.floor(window.innerHeight - layoutEl.value.getBoundingClientRect().top - 20));
+}
+let ro: ResizeObserver | undefined;
+onMounted(() => { ro = new ResizeObserver(measure); if (layoutEl.value) ro.observe(layoutEl.value); measure(); window.addEventListener('resize', measure); });
+onBeforeUnmount(() => { ro?.disconnect(); window.removeEventListener('resize', measure); });
+
+// ---------------------------------------------------------------- data load
+onMounted(async () => {
+	try {
+		const res = await api.get('/items/manufacturing_operations', {
+			params: {
+				filter: { process_category: { _eq: 'sintering' } },
+				fields: ['operation_id', 'pass_code', 'operation_date', 'operator_name',
+					'sintering_max_temp_celsius', 'sintering_max_force_kn', 'sintering_recipe_number',
+					'sample_id.sample_code', 'equipment_id.equipment_name',
+					'fast_run.status'],
+				sort: ['-operation_date'], limit: 500,
+			},
+		});
+		rows.value = (res.data?.data ?? []).map((o: any) => ({ ...o, id: o.operation_id }));
+	} finally {
+		loading.value = false;
+		await nextTick(); measure();
+		const want = (route.query.operation as string) || pendingSelect;
+		if (want) { const m = rows.value.find((o) => o.operation_id === want); if (m) selectOp(m); }
+	}
+});
+
+// ---------------------------------------------------------------- select + trace
+const trace = ref<Trace | null>(null);
+const fastRun = ref<any | null>(null);
+const traceLoading = ref(false);
+const importMsg = ref<string | null>(null);
+
+async function selectOp(row: any) {
+	selectedId.value = row.operation_id;
+	loadingDetail.value = true; detail.value = null; trace.value = null; fastRun.value = null; importMsg.value = null;
+	try {
+		const res = await api.get(`/items/manufacturing_operations/${row.operation_id}`, {
+			params: {
+				fields: ['*', 'equipment_id.equipment_name', 'method_id.method_name',
+					'material_id.common_name', 'sample_id.sample_code', 'sample_id.nickname', 'sample_id.sample_id'],
+			},
+		});
+		detail.value = res.data.data;
+		await loadFastRun(row.operation_id);
+	} finally { loadingDetail.value = false; }
+}
+
+async function loadFastRun(operationId: string) {
+	const res = await api.get('/items/fast_run_data', {
+		params: {
+			filter: { operation_id: { _eq: operationId } },
+			fields: ['id', 'status', 'machine_format', 'recipe', 'run_start', 'n_rows', 'duration_s', 'series', 'directus_files_id', 'error_message', 'updated_at'],
+			limit: 1,
+		},
+	});
+	fastRun.value = res.data?.data?.[0] ?? null;
+	trace.value = null;
+	if (fastRun.value?.status === 'done' && fastRun.value.directus_files_id) await loadTraceData();
+}
+
+async function loadTraceData() {
+	const fr = fastRun.value;
+	if (!fr?.directus_files_id) return;
+	traceLoading.value = true;
+	try {
+		const catalog: SeriesMeta[] = fr.series || [];
+		trace.value = await loadTrace(fr.directus_files_id, catalog, async () => {
+			const res = await api.get(`/assets/${fr.directus_files_id}`, { responseType: 'text' });
+			return res.data as string;
+		});
+		// seed default series for empty tiles (first temperature + force)
+		seedDefaultTiles();
+	} catch (e: any) { importMsg.value = e?.message || 'failed to load trace'; }
+	finally { traceLoading.value = false; }
+}
+
+// A row stuck at pending/processing for more than a short grace period almost
+// always means the host FAST importer (fast_orchestrator.py --daemon) isn't running
+// — nothing will ever claim it. Surface that instead of an indefinite spinner, so
+// the failure mode is diagnosable when revisiting the op (pollImport's hint only
+// fires during the active upload, not on a later visit).
+const importStalled = computed(() => {
+	const fr = fastRun.value;
+	if (!fr || (fr.status !== 'pending' && fr.status !== 'processing')) return false;
+	if (!fr.updated_at) return false;
+	return Date.now() - new Date(fr.updated_at).getTime() > 30_000;
+});
+
+const catalog = computed<SeriesMeta[]>(() => fastRun.value?.series || []);
+const groupedCatalog = computed(() => {
+	const g: Record<string, SeriesMeta[]> = {};
+	for (const s of catalog.value) (g[s.group] ||= []).push(s);
+	return Object.entries(g).sort((a, b) => a[0].localeCompare(b[0]));
+});
+
+// On first open (no saved layout), lay out a 2×3 grid of six tiles — one per main
+// series *category* present in the trace — so the user immediately sees temperature,
+// force, power, pressure, travel, electrical etc. rather than two empty tiles.
+const SEED_GROUP_ORDER = ['temp', 'force', 'power', 'pressure', 'position', 'vacuum', 'speed', 'voltage', 'current', 'flow'];
+const SEED_MAX_LINES: Record<string, number> = { temp: 6 };   // temp gets pyro + TCs; others stay focused
+function seedDefaultTiles() {
+	if (!trace.value || !freshTiles) return;
+	// bucket the catalog by group, preserving catalog order within a group
+	const byGroup: Record<string, string[]> = {};
+	for (const c of catalog.value) (byGroup[c.group || 'other'] ||= []).push(c.key);
+	// preferred categories first, then any remaining groups, capped at 6 tiles
+	const groups = [
+		...SEED_GROUP_ORDER.filter((g) => byGroup[g]?.length),
+		...Object.keys(byGroup).filter((g) => !SEED_GROUP_ORDER.includes(g)),
+	].slice(0, 6);
+	if (!groups.length) return;
+	tiles.value = groups.map((g) => ({
+		id: tileSeq++, series: byGroup[g].slice(0, SEED_MAX_LINES[g] ?? 3), span: 'sm' as const, normalise: false,
+	}));
+	freshTiles = false;
+}
+
+// ---------------------------------------------------------------- plot tiles
+const PALETTE = ['#dc2626', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#475569', '#c026d3'];
+function tileSeries(t: Tile) {
+	const tr = trace.value; if (!tr) return [];
+	return t.series.filter((k) => tr.series[k]).map((k, i) => {
+		const s = tr.series[k];
+		return { key: k, label: s.label, unit: s.unit, group: s.group, color: PALETTE[i % PALETTE.length], values: s.values };
+	});
+}
+function addTile() { if (tiles.value.length < 6) tiles.value.push({ id: tileSeq++, series: [], span: 'sm', normalise: false }); }
+function removeTile(id: number) { tiles.value = tiles.value.filter((t) => t.id !== id); }
+const SPANS: Tile['span'][] = ['sm', 'wide', 'tall', 'big'];
+function cycleSpan(t: Tile) { t.span = SPANS[(SPANS.indexOf(t.span) + 1) % SPANS.length]; }
+function toggleSeries(t: Tile, key: string) {
+	const i = t.series.indexOf(key);
+	if (i >= 0) t.series.splice(i, 1); else t.series.push(key);
+}
+
+// ---- shared x-zoom (time) across every tile ----------------------------------
+// Every tile shares the same time axis, so one zoom window drives them all — a
+// rubber-band box (when the tool is on) or the wheel on any plot, ported from the
+// force dashboard's ForceChart zoom.
+const zoomStart = ref<number | null>(null);
+const zoomEnd = ref<number | null>(null);
+const rectZoomTool = ref(false);
+const zoomed = computed(() => zoomStart.value != null || zoomEnd.value != null);
+function onChartZoom(v: { start: number; end: number } | null) {
+	if (!v) { zoomStart.value = null; zoomEnd.value = null; return; }
+	zoomStart.value = v.start; zoomEnd.value = v.end;
+}
+function resetZoom() { zoomStart.value = null; zoomEnd.value = null; }
+// A new operation changes the trace entirely — drop any stale zoom window.
+watch(selectedId, resetZoom);
+
+// right-click series picker
+const menu = ref<{ tile: number; x: number; y: number } | null>(null);
+function openMenu(ev: MouseEvent, t: Tile) {
+	ev.preventDefault();
+	if (!catalog.value.length) return;
+	// Clamp so the fixed-width menu never renders off-screen on a narrow/mobile viewport.
+	const menuW = 230;
+	const x = Math.max(8, Math.min(ev.clientX, window.innerWidth - menuW - 8));
+	const y = Math.max(8, Math.min(ev.clientY, window.innerHeight - 60));
+	menu.value = { tile: t.id, x, y };
+}
+function closeMenu() { menu.value = null; }
+const menuTile = computed(() => tiles.value.find((t) => t.id === menu.value?.tile) || null);
+onMounted(() => window.addEventListener('click', closeMenu));
+onBeforeUnmount(() => window.removeEventListener('click', closeMenu));
+
+// ---------------------------------------------------------------- import
+const fileInput = ref<HTMLInputElement | null>(null);
+const archivePath = ref('');
+const importing = ref(false);
+
+async function upsertFastRun(patch: any): Promise<void> {
+	const opId = selectedId.value;
+	const existing = fastRun.value?.id;
+	if (existing) await api.patch(`/items/fast_run_data/${existing}`, patch);
+	else await api.post('/items/fast_run_data', { operation_id: opId, ...patch });
+}
+
+async function onUpload(ev: Event) {
+	const f = (ev.target as HTMLInputElement).files?.[0];
+	if (!f || !selectedId.value) return;
+	importing.value = true; importMsg.value = 'Uploading…';
+	try {
+		const fd = new FormData();
+		fd.append('title', `staging ${f.name}`);
+		fd.append('file', f);
+		const up = await api.post('/files', fd);
+		const stagedId = up.data.data.id;
+		await upsertFastRun({ status: 'pending', staged_file: stagedId, import_archive_path: null });
+		importMsg.value = 'Queued — waiting for the host importer…';
+		await pollImport();
+	} catch (e: any) {
+		importMsg.value = e?.response?.status === 403 ? 'Not permitted (admin only) to import.' : (e?.message || 'upload failed');
+	} finally { importing.value = false; if (fileInput.value) fileInput.value.value = ''; }
+}
+
+async function onArchiveImport() {
+	if (!archivePath.value.trim() || !selectedId.value) return;
+	importing.value = true; importMsg.value = 'Queued archive import…';
+	try {
+		await upsertFastRun({ status: 'pending', import_archive_path: archivePath.value.trim(), staged_file: null });
+		await pollImport();
+	} catch (e: any) {
+		importMsg.value = e?.response?.status === 403 ? 'Not permitted (admin only) to import.' : (e?.message || 'import failed');
+	} finally { importing.value = false; }
+}
+
+async function pollImport() {
+	const opId = selectedId.value!;
+	const deadline = Date.now() + 3 * 60 * 1000;
+	while (Date.now() < deadline) {
+		await new Promise((r) => setTimeout(r, 2500));
+		await loadFastRun(opId);
+		const st = fastRun.value?.status;
+		if (st === 'done') { importMsg.value = 'Imported.'; return; }
+		if (st === 'error') { importMsg.value = `Import failed: ${fastRun.value?.error_message || 'unknown'}`; return; }
+	}
+	importMsg.value = 'Still processing on the host — check back shortly (is the FAST importer running?).';
+}
+
+// ---------------------------------------------------------------- helpers
+// In-app download: Directus serves files at /assets/<id>; ?download forces a save
+// with the file's filename_download (the orchestrator named it <op_code>.csv).
+function downloadFile(fileId: string) {
+	const a = document.createElement('a');
+	a.href = `/assets/${fileId}?download`;
+	a.rel = 'noopener';
+	document.body.appendChild(a); a.click(); a.remove();
+}
+
+function fmt(v: any, d = 1): string { if (v == null || v === '') return '—'; const n = Number(v); return Number.isFinite(n) ? (Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(d)) : '—'; }
+function fmtDate(v: string) { return v ? new Date(v).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
+function fmtDur(s: any) { const n = Number(s); if (!Number.isFinite(n)) return '—'; const m = Math.floor(n / 60); return m >= 1 ? `${m}m ${Math.round(n % 60)}s` : `${Math.round(n)}s`; }
+
+const opMeta = computed(() => {
+	const o = detail.value; if (!o) return [];
+	return [
+		['Sample', o.sample_id?.sample_code],
+		['Date', fmtDate(o.operation_date)],
+		['Operator', o.operator_name],
+		['Machine', o.equipment_id?.equipment_name],
+		['Material', o.material_id?.common_name],
+		['Recipe', o.sintering_recipe_number],
+		['Batch', o.sintering_batch_number],
+		['Atmosphere', o.sintering_atmosphere],
+		['TC/Pyro', o.sintering_tc_pyro_control],
+	].filter(([, v]) => v != null && v !== '');
+});
+const stats = computed(() => {
+	const o = detail.value; if (!o) return [];
+	return [
+		{ label: 'Max temp', value: fmt(o.sintering_max_temp_celsius), unit: '°C' },
+		{ label: 'Max force', value: fmt(o.sintering_max_force_kn), unit: 'kN' },
+		{ label: 'Mould Ø', value: fmt(o.sintering_mould_diameter_mm), unit: 'mm' },
+		{ label: 'Mass', value: fmt(o.sintering_mass_grams, 2), unit: 'g' },
+		{ label: 'V @ maxT', value: fmt(o.sintering_voltage_at_max_t_v), unit: 'V' },
+		{ label: 'P @ maxT', value: fmt(o.sintering_power_at_max_t_kw), unit: 'kW' },
+		{ label: 'PTC top', value: fmt(o.sintering_ptc_top_celsius), unit: '°C' },
+		{ label: 'PTC bot', value: fmt(o.sintering_ptc_bot_celsius), unit: '°C' },
+	];
+});
+</script>
+
+<template>
+	<private-view title="FAST Analysis">
+		<div class="fd">
+			<section class="hero">
+				<span class="hero-badge"><v-icon name="whatshot" x-small /> FAST Analysis</span>
+				<span class="hero-stat">{{ rows.length }} run{{ rows.length === 1 ? '' : 's' }}</span>
+				<div class="hero-spacer"></div>
+			</section>
+
+			<div v-show="loading" class="loading"><v-progress-circular indeterminate /></div>
+
+			<div v-show="!loading" ref="layoutEl" class="layout" :class="{ dragging, stacked }"
+				:style="{ gridTemplateColumns: gridCols, height: stacked ? 'auto' : availableHeight + 'px' }">
+				<!-- COL 1: operations (collapsible away to the left) -->
+				<div v-if="stacked || !opsHidden" class="panel">
+					<div class="panel-head"><v-icon name="whatshot" small /><span>FAST operations</span><span class="chip">{{ filteredOps.length }}</span>
+						<button v-if="!stacked" class="collapsebtn" title="Hide the operations column" @click="opsHidden = true"><v-icon name="chevron_left" x-small /></button>
+					</div>
+					<input v-model="opSearch" class="search" placeholder="Search code / sample / recipe…" />
+					<div class="list">
+						<button v-for="o in filteredOps" :key="o.id" class="rowcard" :class="{ active: selectedId === o.id }" @click="selectOp(o)">
+							<span class="mono sm">{{ o.pass_code || '—' }}</span>
+							<span class="sub">{{ o.sample_id?.sample_code || '—' }} · {{ fmtDate(o.operation_date) }}</span>
+							<span class="badge" :class="{ has: o.fast_run && o.fast_run.length }">
+								{{ o.fast_run && o.fast_run.length ? 'trace' : 'no data' }}
+							</span>
+						</button>
+						<div v-if="!filteredOps.length" class="empty">No operations</div>
+					</div>
+				</div>
+
+				<div v-if="!stacked && !opsHidden" class="resizer" @pointerdown="startColAResize"></div>
+
+				<!-- COL 2: detail + import (collapsible away to the left) -->
+				<div v-if="stacked || !detailHidden" class="col-stack">
+					<div class="card info">
+						<div class="info-head">
+							<span><v-icon name="build" x-small /> Operation detail</span>
+							<span class="ih-actions">
+								<button v-if="selectedId" class="openbtn" title="Open the operation record" @click="openOpForm">Open <v-icon name="open_in_new" x-small /></button>
+								<button v-if="!stacked" class="collapsebtn" title="Hide the detail column" @click="detailHidden = true"><v-icon name="chevron_left" x-small /></button>
+							</span>
+						</div>
+						<template v-if="detail">
+							<div class="info-code mono">{{ detail.pass_code || '—' }}</div>
+							<div v-if="opMeta.length" class="kv">
+								<template v-for="m in opMeta" :key="m[0]"><span>{{ m[0] }}</span><span>{{ m[1] }}</span></template>
+							</div>
+							<div class="stat-sep">Sinter cycle</div>
+							<div class="statgrid">
+								<div v-for="st in stats" :key="st.label" class="stat">
+									<div class="s-top"><span class="s-val">{{ st.value }}</span><span class="s-unit">{{ st.unit }}</span></div>
+									<span class="s-lab">{{ st.label }}</span>
+								</div>
+							</div>
+						</template>
+						<div v-else-if="loadingDetail" class="loading sm"><v-progress-circular indeterminate small /></div>
+						<div v-else class="empty sm">Select an operation</div>
+					</div>
+
+					<div v-if="detail" class="card info">
+						<div class="info-head"><span><v-icon name="upload_file" x-small /> Trace data</span></div>
+						<div v-if="fastRun?.status === 'done'" class="trace-meta">
+							<span class="ok"><v-icon name="check_circle" x-small /> {{ fastRun.machine_format }}-machine · {{ fastRun.n_rows }} rows · {{ fmtDur(fastRun.duration_s) }} · {{ (fastRun.series || []).length }} series</span>
+							<button v-if="fastRun.directus_files_id" class="btn dl" @click="downloadFile(fastRun.directus_files_id)"><v-icon name="download" x-small /> Download CSV</button>
+						</div>
+						<div v-else-if="importStalled" class="trace-meta warn"><v-icon name="warning" x-small /> Import stalled — is the host FAST importer running? (fast_orchestrator.py --daemon)</div>
+						<div v-else-if="fastRun?.status === 'pending' || fastRun?.status === 'processing'" class="trace-meta"><v-progress-circular indeterminate x-small /> importing…</div>
+						<div v-else class="trace-meta muted">No trace imported yet.</div>
+
+						<div class="import-row">
+							<input ref="fileInput" type="file" accept=".csv,.CSV" style="display:none" @change="onUpload" />
+							<button class="btn" :disabled="importing" @click="fileInput?.click()"><v-icon name="upload" x-small /> Upload CSV</button>
+						</div>
+						<div class="import-row">
+							<input v-model="archivePath" class="search" placeholder="archive path…" />
+							<button class="btn" :disabled="importing || !archivePath.trim()" @click="onArchiveImport"><v-icon name="folder_open" x-small /> Archive</button>
+						</div>
+						<div v-if="importMsg" class="import-msg">{{ importMsg }}</div>
+					</div>
+				</div>
+
+				<div v-if="!stacked && !detailHidden" class="resizer" @pointerdown="startColAResize"></div>
+
+				<!-- COL 3: plot grid -->
+				<div class="card plots">
+					<div class="plots-head">
+						<span class="graphs-title"><v-icon name="show_chart" small /> Plots</span>
+						<span class="plots-actions">
+							<button v-if="!stacked && opsHidden" class="expandbtn" title="Show the operations column" @click="opsHidden = false"><v-icon name="chevron_right" x-small /> Operations</button>
+							<button v-if="!stacked && detailHidden" class="expandbtn" title="Show the detail column" @click="detailHidden = false"><v-icon name="chevron_right" x-small /> Detail</button>
+							<button class="btn icobtn" :class="{ on: rectZoomTool }" title="Rectangular zoom — drag a box on any plot" :disabled="!trace" @click="rectZoomTool = !rectZoomTool"><v-icon name="crop_free" x-small /></button>
+							<button class="btn" :disabled="!zoomed" title="Reset zoom on all plots" @click="resetZoom"><v-icon name="restart_alt" x-small /> Reset zoom</button>
+							<button class="btn" :disabled="tiles.length >= 6 || !trace" @click="addTile"><v-icon name="add" x-small /> Add plot</button>
+						</span>
+					</div>
+					<div v-if="!detail" class="empty">Select an operation</div>
+					<div v-else-if="traceLoading" class="loading sm"><v-progress-circular indeterminate small /> loading trace…</div>
+					<div v-else-if="!trace" class="empty">No trace — import a CSV to plot.</div>
+					<div v-else class="plot-grid">
+						<div v-for="t in tiles" :key="t.id" class="plot-tile" :class="t.span" @contextmenu="openMenu($event, t)">
+							<div class="tile-head">
+								<span class="tile-title">{{ t.series.length ? t.series.length + ' series' : 'right-click to pick series' }}</span>
+								<span class="tile-actions">
+									<button class="ib" title="Pick series (also: right-click / long-press the tile)" @click.stop="openMenu($event, t)"><v-icon name="playlist_add_check" x-small /></button>
+									<button class="ib" :class="{ on: t.normalise }" title="Normalise each series" @click.stop="t.normalise = !t.normalise">≈</button>
+									<button class="ib" title="Resize" @click.stop="cycleSpan(t)"><v-icon name="aspect_ratio" x-small /></button>
+									<button class="ib" title="Remove" @click.stop="removeTile(t.id)"><v-icon name="close" x-small /></button>
+								</span>
+							</div>
+							<FastChart v-if="t.series.length" :time="trace.time" :series="tileSeries(t)" :normalise="t.normalise"
+								:view-start="zoomStart" :view-end="zoomEnd" :zoom-tool="rectZoomTool" @zoom="onChartZoom" />
+							<div v-else class="tile-empty" @click.stop="openMenu($event, t)">＋ pick series</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- right-click series picker -->
+		<div v-if="menu && menuTile" class="ctx" :style="{ left: menu.x + 'px', top: menu.y + 'px' }" @click.stop>
+			<div class="ctx-head">Series</div>
+			<div class="ctx-body">
+				<div v-for="[grp, items] in groupedCatalog" :key="grp" class="ctx-group">
+					<div class="ctx-grp-label">{{ grp }}</div>
+					<label v-for="s in items" :key="s.key" class="ctx-item">
+						<input type="checkbox" :checked="menuTile.series.includes(s.key)" @change="toggleSeries(menuTile, s.key)" />
+						<span>{{ s.label }}</span><em>{{ s.unit }}</em>
+					</label>
+				</div>
+			</div>
+		</div>
+	</private-view>
+</template>
+
+<style scoped>
+.fd { padding: 20px 24px 40px; font-family: var(--theme--fonts--sans--font-family, -apple-system, 'Segoe UI', Roboto, sans-serif); color: var(--theme--foreground, #1e293b);
+	container-type: inline-size; }   /* size the plot grid to the real content width, not the viewport */
+/* Thin horizontal banner: title + counts on the left. */
+.hero { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 6px 14px; border-radius: 12px;
+	color: #fff; background: linear-gradient(120deg, #b91c1c, #ea580c); box-shadow: 0 8px 20px -12px rgba(234,88,12,.6); flex-wrap: wrap; }
+.hero-badge { display: inline-flex; align-items: center; gap: 7px; font-weight: 750; font-size: 14px; }
+.hero-badge :deep(.v-icon) { --v-icon-color: #fff; }
+.hero-stat { font-size: 12px; font-weight: 600; opacity: 0.9; }
+.hero-spacer { flex: 1 1 auto; }
+.loading { display: grid; place-items: center; padding: 40px; } .loading.sm { padding: 16px; gap: 8px; grid-auto-flow: column; }
+.layout { display: grid; gap: 0; align-items: stretch; overflow: hidden; }
+.layout.stacked { align-items: start; overflow: visible; gap: 14px; }
+.layout.dragging { cursor: col-resize; user-select: none; }
+.resizer { width: 6px; cursor: col-resize; position: relative; }
+.resizer::after { content: ''; position: absolute; inset: 0 2px; border-radius: 2px; background: var(--theme--border-color-subdued, #e7ebf0); }
+
+/* Stacked (mobile / narrow) layout: the fixed 3-column grid collapses to one
+   scrolling column. Bound the operations list so 500 rows don't flood the page,
+   and let the detail column flow naturally instead of double-scrolling. */
+.layout.stacked .list { max-height: 40vh; flex: none; }
+.layout.stacked .col-stack { overflow: visible; }
+.layout.stacked .plots { min-height: 420px; }
+
+.panel, .card { background: var(--theme--background, #fff); border: 1px solid var(--theme--border-color-subdued, #e7ebf0); border-radius: 16px; min-height: 0; }
+.panel { display: flex; flex-direction: column; padding: 12px; }
+.panel-head { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--theme--foreground-subdued, #6b7684); margin-bottom: 8px; }
+.chip { margin-left: auto; background: var(--theme--background-subdued, #f1f5f9); border-radius: 99px; padding: 1px 8px; font-size: 11px; }
+.search { width: 100%; box-sizing: border-box; padding: 6px 9px; border: 1px solid var(--theme--border-color, #d1d9e6); border-radius: 8px; font: inherit; font-size: 13px; margin-bottom: 8px; }
+.list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; }
+.rowcard { display: grid; grid-template-columns: 1fr auto; gap: 1px 8px; text-align: left; border: 1px solid transparent; background: var(--theme--background-subdued, #f7f9fb); border-radius: 10px; padding: 7px 10px; cursor: pointer; }
+.rowcard:hover { border-color: var(--theme--border-color, #d1d9e6); }
+.rowcard.active { border-color: #ea580c; background: color-mix(in srgb, #ea580c 8%, transparent); }
+.rowcard .mono { font-family: 'SF Mono', Menlo, Consolas, monospace; font-weight: 650; font-size: 12.5px; }
+.rowcard .sub { grid-column: 1; color: var(--theme--foreground-subdued, #6b7684); font-size: 11px; }
+.rowcard .badge { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: 9.5px; font-weight: 700; padding: 2px 7px; border-radius: 99px; background: var(--theme--background, #eef1f5); color: #94a3b8; }
+.rowcard .badge.has { background: color-mix(in srgb, #16a34a 15%, transparent); color: #15803d; }
+.mono.sm { font-size: 12px; } .empty { color: var(--theme--foreground-subdued, #98a2b3); font-size: 12px; padding: 12px; text-align: center; } .empty.sm { padding: 8px; }
+
+.col-stack { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; }
+.card.info { padding: 14px 16px; }
+.info-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--theme--foreground-subdued, #6b7684); margin-bottom: 10px; }
+.ih-actions { display: inline-flex; align-items: center; gap: 4px; }
+.openbtn { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--theme--border-color, #d1d9e6); background: var(--theme--background-subdued, #f1f5f9); color: var(--theme--primary, #1d4ed8); font: inherit; font-size: 10px; font-weight: 700; text-transform: none; letter-spacing: 0; padding: 2px 7px; border-radius: 7px; cursor: pointer; }
+.openbtn:hover { background: var(--theme--background, #fff); }
+.collapsebtn, .expandbtn { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--theme--border-color, #d1d9e6); background: var(--theme--background-subdued, #f1f5f9); color: var(--theme--foreground-subdued, #6b7684); cursor: pointer; border-radius: 7px; padding: 2px 6px; font: inherit; font-size: 10px; font-weight: 700; text-transform: none; letter-spacing: 0; }
+.collapsebtn:hover, .expandbtn:hover { background: var(--theme--background, #fff); color: var(--theme--foreground, #334155); }
+.panel-head .collapsebtn { margin-left: auto; }
+.plots-actions { display: inline-flex; align-items: center; gap: 6px; }
+.btn.icobtn { padding: 6px 8px; }
+.btn.icobtn.on { background: #0ea5e9; border-color: #0ea5e9; color: #fff; }
+.info-code { font-size: 13px; margin-bottom: 10px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 12.5px; }
+.kv span:nth-child(odd) { color: var(--theme--foreground-subdued, #6b7684); }
+.kv span:nth-child(even) { font-weight: 600; text-align: right; }
+.stat-sep { margin: 12px 0 8px; font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--theme--foreground-subdued, #98a2b3); border-top: 1px solid var(--theme--border-color-subdued, #eef1f5); padding-top: 9px; }
+.statgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat { background: var(--theme--background-subdued, #f7f9fb); border: 1px solid var(--theme--border-color-subdued, #e7ebf0); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+.s-top { display: flex; align-items: baseline; gap: 4px; } .s-val { font-size: 15px; font-weight: 750; font-variant-numeric: tabular-nums; } .s-unit { font-size: 10px; color: var(--theme--foreground-subdued, #94a3b8); }
+.s-lab { font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--theme--foreground-subdued, #6b7684); font-weight: 600; }
+.trace-meta { font-size: 12px; margin-bottom: 8px; } .trace-meta .ok { color: #15803d; display: inline-flex; align-items: center; gap: 4px; } .trace-meta.muted { color: var(--theme--foreground-subdued, #98a2b3); }
+.trace-meta.warn { color: #b45309; display: inline-flex; align-items: center; gap: 4px; }
+.btn.dl { margin-top: 6px; }
+.import-row { display: flex; gap: 6px; margin-bottom: 6px; } .import-row .search { margin-bottom: 0; flex: 1 1 auto; min-width: 0; }
+.btn { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; padding: 6px 11px; border-radius: 8px; white-space: nowrap;
+	color: var(--theme--foreground, #334155); background: var(--theme--background-subdued, #f1f5f9); border: 1px solid var(--theme--border-color, #d1d9e6); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.import-msg { font-size: 11px; color: var(--theme--foreground-subdued, #6b7684); font-style: italic; margin-top: 4px; }
+
+.plots { display: flex; flex-direction: column; padding: 12px; min-height: 0; }
+.plots-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.graphs-title { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--theme--foreground-subdued, #6b7684); }
+/* Default: two columns of plots (so a fresh open shows a 2×3 category grid). */
+.plot-grid { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: repeat(2, 1fr); grid-auto-rows: 1fr; gap: 10px; overflow: auto; }
+.plot-tile { border: 1px solid var(--theme--border-color-subdued, #e7ebf0); border-radius: 12px; padding: 6px 8px; display: flex; flex-direction: column; min-height: 180px; min-width: 0; background: var(--theme--background, #fff); }
+.plot-tile.wide { grid-column: span 2; } .plot-tile.tall { grid-row: span 2; } .plot-tile.big { grid-column: span 2; grid-row: span 2; }
+
+/* Tablet/narrow: 2 plot columns (wide/big still span both; tall keeps its 2-row span). */
+@container (max-width: 700px) {
+	.plot-grid { grid-template-columns: repeat(2, 1fr); }
+}
+/* Phone: a single plot column — spans would just waste width/height, so collapse them. */
+@container (max-width: 460px) {
+	.plot-grid { grid-template-columns: 1fr; }
+	.plot-tile.wide, .plot-tile.tall, .plot-tile.big { grid-column: span 1; grid-row: span 1; }
+}
+.tile-head { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px; min-width: 0; }
+.tile-title { font-size: 10.5px; font-weight: 650; color: var(--theme--foreground-subdued, #6b7684); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-actions { display: flex; gap: 2px; flex: 0 0 auto; }
+.ib { border: 0; background: transparent; cursor: pointer; color: var(--theme--foreground-subdued, #94a3b8); border-radius: 6px; padding: 2px 5px; font-size: 12px; font-weight: 700; }
+.ib:hover { background: var(--theme--background-subdued, #eef2f7); } .ib.on { color: #7c3aed; background: color-mix(in srgb, #7c3aed 12%, transparent); }
+.tile-empty { flex: 1; display: grid; place-items: center; color: var(--theme--foreground-subdued, #a4adba); font-size: 12px; cursor: pointer; }
+
+.ctx { position: fixed; z-index: 50; background: var(--theme--background, #fff); border: 1px solid var(--theme--border-color, #d1d9e6); border-radius: 10px; box-shadow: 0 10px 30px rgba(15,23,42,.2); width: 230px; max-height: 60vh; display: flex; flex-direction: column; }
+.ctx-head { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--theme--foreground-subdued, #94a3b8); padding: 8px 12px 4px; }
+.ctx-body { overflow-y: auto; padding: 2px 0 6px; }
+.ctx-grp-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #b91c1c; padding: 6px 12px 2px; }
+.ctx-item { display: flex; align-items: center; gap: 7px; padding: 3px 12px; font-size: 12px; cursor: pointer; }
+.ctx-item:hover { background: var(--theme--background-subdued, #f5f7fa); } .ctx-item em { margin-left: auto; color: var(--theme--foreground-subdued, #a4adba); font-style: normal; font-size: 10px; }
+</style>
