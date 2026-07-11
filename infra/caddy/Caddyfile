@@ -5,5 +5,14 @@
 # For TLS in production, replace ":80" with your domain name — Caddy will
 # automatically provision a Let's Encrypt certificate.
 :80 {
+    # Potree octrees (Phase 2): served same-origin so Directus's CSP (connect-src
+    # 'self') allows the browser to stream them. handle_path strips the /octrees
+    # prefix, mapping /octrees/<op>/octree.bin -> /srv/octrees/<op>/octree.bin.
+    # file_server supports HTTP range reads, which potree-core relies on.
+    handle_path /octrees/* {
+        root * /srv/octrees
+        header Access-Control-Allow-Origin "*"
+        file_server
+    }
     reverse_proxy directus:8055
 }

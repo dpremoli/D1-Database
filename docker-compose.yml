@@ -87,15 +87,13 @@ services:
       PUBLIC_URL: ${DIRECTUS_PUBLIC_URL:-http://localhost:80}
       # Auto-load local extensions (the actor-identity audit hook).
       EXTENSIONS_AUTO_RELOAD: "true"
-      # Extra storage location: the read-only SMB archive (uosfstore/star_group1).
-      # Files are *registered* as pointers by scripts/index_archive.py — Directus
-      # never writes here (the mount is :ro). Used by the File Library to link
-      # archive files to records; plugins read bytes from their own mount.
-      # TEMPORARILY: star storage disabled with the SMB mount (credential expired).
-      # Restore to "local,star" and uncomment the two lines below when re-mounting.
+      # NOTE: we deliberately do NOT declare a `star` storage location. The
+      # archive files (directus_files.storage='star') are browse/link only — users
+      # open them via UNC/Explorer (d1-archive-links), never downloaded through
+      # Directus. Declaring `star` as a local driver makes Directus try to mkdir /
+      # write-probe its root, which fails for a read-only, mount-less location and
+      # turns the container unhealthy. Listing/linking works fine without it.
       STORAGE_LOCATIONS: local
-      # STORAGE_STAR_DRIVER: local
-      # STORAGE_STAR_ROOT: /mnt/archive/star_group1
       # Path B (Ask-the-Database): the d1-ask-endpoint extension proxies chat
       # requests to the guarded text-to-SQL plugin over the internal d1net.
       LLM_PLUGIN_URL: ${LLM_PLUGIN_URL:-http://llm-text-to-sql:8080}
@@ -291,6 +289,7 @@ services:
       - "${PROXY_HTTP_PORT:-80}:80"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./infra/octrees:/srv/octrees:ro          # Potree octrees, served same-origin (Phase 2)
       - caddy-data:/data
       - caddy-config:/config
     networks: [d1net]

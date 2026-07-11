@@ -60,10 +60,16 @@ pulse edges independently of the pulse count, then divides the derived rate by
   existing `opts.*` sampling settings).
 - Inside the script: compute `rpm_raw` via `tachorpm(..., 'FitType','linear')` at
   the toolbox's native pulse detection (unaffected by PPR). Divide by
-  `opts.pulses_per_rev` to get the `rpm` used for `mean_rpm` and the FRM geometry
-  (`ang_inc`, `rho_inc`). `revs_cum` written to `live_cache.bin` stays at the
-  **raw, undivided** rate (`PulsesPerRev=1` equivalent) — this is the PPR-agnostic
-  cache contract above.
+  `opts.pulses_per_rev` to get the `rpm` used for `mean_rpm`, `series.json`'s RPM
+  envelope, and the FRM geometry (`ang_inc`, `rho_inc`) — all downstream consumers
+  keep reading the same `rpm` variable they already do today, just now correctly
+  scaled. `revs_cum` (the array written into `live_cache.bin`) is computed from
+  **`rpm_raw`, not `rpm`** — it stays the raw, undivided (`PulsesPerRev=1`
+  equivalent) cumulative revolutions. This is the one deliberate asymmetry: the
+  cache's separate `rpm` array (informational only — it just seeds Live mode's
+  "Constant RPM" default guess) stays the real per-op value like today, while
+  `revs_cum` (the only array the FRM geometry actually reads) is kept
+  PPR-agnostic so the client can apply any divisor to it.
 - `force_orchestrator.py`:
   - `DEFAULT_SAMPLING` gains `"pulses_per_rev": 1`.
   - `load_sampling_opts` selects `force_crawler_state.pulses_per_rev`.
@@ -85,8 +91,10 @@ pulse edges independently of the pulse count, then divides the derived rate by
 - `liveCloud.ts` `buildCloud`'s **measured** branch divides by PPR:
   `r = (revs[i] - revsCs) / P`. The constant-RPM/constant-Vc models are analytic
   (don't read the tacho) and are unaffected by PPR.
-- The RPM strip/series display in Live mode divides the cached rpm series by PPR
-  for consistency with the FRM.
+- The Force/RPM envelope strips (the top charts) are **not** touched — they
+  always render the canonical baked `series` JSON regardless of Live mode, the
+  same way Feed/Diameter edits already don't affect them today. Only the FRM
+  spiral (driven by the cached `revs_cum`) recomputes client-side.
 - **PPR in Live mode is preview-only**, exactly like Feed/Diameter today: the
   "Process" button's PATCH already only sends `status`+`live_render_points` — it
   never persists the browser's edited Feed/Diameter back to the row, and a

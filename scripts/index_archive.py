@@ -39,11 +39,14 @@ Environment
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import hashlib
 import json
 import logging
 import mimetypes
 import os
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
@@ -56,17 +59,23 @@ log = logging.getLogger("index_archive")
 # so re-runs upsert rather than duplicate.
 _NS = uuid.uuid5(uuid.NAMESPACE_DNS, "d1-database.archive-index.v1")
 
-# Only these extensions are linked: matlab, word, pdf, excel, csv, tiff, ebsd.
+# Link-worthy extensions.
 ALLOWED_EXT = {
-    ".mat", ".m", ".fig", ".mlx",          # MATLAB
-    ".doc", ".docx",                         # Word
-    ".pdf",                                   # PDF
-    ".xls", ".xlsx", ".csv",                # Excel / CSV
-    ".tif", ".tiff",                         # TIFF
-    ".h5oina", ".ctf", ".ang", ".cpr", ".crc",  # EBSD
+    ".mat", ".m", ".fig", ".mlx",                       # MATLAB
+    ".doc", ".docx",                                     # Word
+    ".pdf",                                               # PDF
+    ".xls", ".xlsx", ".csv",                            # Excel / CSV
+    ".pptx",                                              # PowerPoint
+    ".tif", ".tiff",                                     # TIFF
+    ".jpg", ".jpeg", ".png", ".bmp", ".nef", ".psd",   # images (incl. Nikon RAW, Photoshop)
+    ".h5oina", ".ctf", ".ang", ".cpr", ".crc",          # EBSD
+    ".h5", ".dat", ".sef", ".dm3", ".dwd", ".mst", ".out", ".cfg",  # instrument / raw data
+    ".stl", ".ply",                                     # 3D meshes
+    ".mp4",                                               # video
 }
 
-# mimetypes doesn't know the science formats; give Directus something sensible.
+# mimetypes doesn't know the science/office formats on Windows; be explicit so
+# `type` is never NULL (Directus uses it for the icon + detail panel).
 _EXTRA_MIME = {
     ".mat": "application/x-matlab-data",
     ".fig": "application/x-matlab-figure",
@@ -77,6 +86,27 @@ _EXTRA_MIME = {
     ".ang": "application/octet-stream",
     ".cpr": "application/octet-stream",
     ".crc": "application/octet-stream",
+    ".pdf": "application/pdf",
+    ".csv": "text/csv",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".h5": "application/x-hdf5",
+    ".nef": "image/x-nikon-nef",
+    ".psd": "image/vnd.adobe.photoshop",
+    ".stl": "model/stl",
+    ".dm3": "application/octet-stream",
+    ".sef": "application/octet-stream",
+    ".dat": "application/octet-stream",
+    ".dwd": "application/octet-stream",
+    ".mst": "application/octet-stream",
+    ".out": "application/octet-stream",
+    ".cfg": "application/octet-stream",
+    ".ply": "application/octet-stream",
 }
 
 # directus_files.filename_disk is varchar(255). Deep archive paths can exceed that;
@@ -84,6 +114,35 @@ _EXTRA_MIME = {
 _FILENAME_DISK_MAX = 255
 
 BATCH = 1000
+
+# Light fingerprint: size + sha256 of the first and last 64 KB. Survives a
+# move/rename (content unchanged) while reading at most 128 KB per file — a
+# ~1000x cheaper read than a full hash for big .mat/.h5/.tif files. READ-ONLY
+# (opened 'rb', never written). Junctions of moved files are auto-re-pointed.
+_FP_CHUNK = 64 * 1024
+
+# Junction tables whose directus_files_id is re-pointed when a file moves.
+_JUNCTIONS = [
+    ("operation_data_files", "operation_id"),
+    ("sample_data_files", "sample_id"),
+    ("session_data_files", "session_id"),
+]
+
+
+def fingerprint(path: str, size: int) -> str | None:
+    """size + sha256(head 64KB)+sha256(tail 64KB). None on read error."""
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:          # read-only; never mutates the file
+            if size <= 2 * _FP_CHUNK:
+                h.update(f.read())
+            else:
+                h.update(f.read(_FP_CHUNK))
+                f.seek(-_FP_CHUNK, os.SEEK_END)
+                h.update(f.read(_FP_CHUNK))
+        return f"{size}:{h.hexdigest()}"
+    except OSError:
+        return None
 
 
 def folder_id(relpath: str) -> uuid.UUID:
@@ -94,27 +153,41 @@ def file_id(relpath: str) -> uuid.UUID:
     return uuid.uuid5(_NS, "file:" + relpath)
 
 
-def guess_type(name: str) -> str | None:
+def guess_type(name: str) -> str:
     ext = PurePosixPath(name).suffix.lower()
-    if ext in _EXTRA_MIME:
-        return _EXTRA_MIME[ext]
-    return mimetypes.guess_type(name)[0]
+    return _EXTRA_MIME.get(ext) or mimetypes.guess_type(name)[0] or "application/octet-stream"
 
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true", help="count only; no DB writes")
-    ap.add_argument("--root", default=os.environ.get("ARCHIVE_ROOT", "/mnt/archive/star_group1"))
+    ap.add_argument("--root", default=os.environ.get("ARCHIVE_ROOT", "/mnt/archive/star_group1"),
+                    help="the star_group1 root; all archive_path values are relative to this")
+    ap.add_argument("--subdir", default="",
+                    help="scan only this subpath under --root (paths stay relative to --root). For test runs.")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="stop after N files (0 = no limit). For test runs.")
+    ap.add_argument("--fingerprint", action="store_true",
+                    help="compute a light head/tail fingerprint per file so links survive "
+                         "moves/renames (reads up to 128 KB/file; cached across runs).")
+    ap.add_argument("--fp-workers", type=int, default=16,
+                    help="parallel threads for fingerprint reads (SMB is latency-bound).")
     args = ap.parse_args()
 
     root = args.root
+    subdir = args.subdir.strip().strip("/\\")
+    scan_root = os.path.join(root, subdir) if subdir else root
     storage = os.environ.get("STORAGE_NAME", "star")
     root_folder_name = os.environ.get("ROOT_FOLDER", "star_group1")
 
     if not os.path.isdir(root):
         log.error("ARCHIVE_ROOT does not exist or is not a directory: %s", root)
         return 2
+    if subdir and not os.path.isdir(scan_root):
+        log.error("--subdir does not exist under root: %s", scan_root)
+        return 2
+    log.info("Scanning %s (paths relative to %s), READ-ONLY.", scan_root, root)
 
     conn = None
     if not args.dry_run:
@@ -130,10 +203,31 @@ def main() -> int:
     now = datetime.now(timezone.utc)
     # Folders we've already ensured this run (memoised) → avoid redundant upserts.
     seen_folders: set[str] = set()
+    seen_ids: set[str] = set()   # every file id touched this run (for missing sweep)
+    seen_fp: dict[str, tuple] = {}   # fingerprint -> (file id, rel path), for move detection
+    pending: list[tuple] = []        # files awaiting (parallel) fingerprint + insert
     folder_rows: list[tuple] = []
     file_rows: list[tuple] = []
     n_files = 0
     n_skipped = 0
+    n_dirs = 0
+    n_fp_computed = 0
+    start_t = time.monotonic()
+    last_log = start_t
+
+    # Reuse prior fingerprints for unchanged files (keyed by id → size, modified).
+    fp_cache: dict[str, tuple] = {}
+    if args.fingerprint and conn is not None:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id::text, filesize, metadata::jsonb->>'modified', "
+                "metadata::jsonb->>'fingerprint' FROM directus_files WHERE storage=%s",
+                (storage,))
+            for fid_, sz_, mod_, fp_ in cur.fetchall():
+                if fp_:
+                    fp_cache[fid_] = (sz_, mod_, fp_)
+        log.info("fingerprint cache: %d prior fingerprints loaded (unchanged files skip the read).",
+                 len(fp_cache))
 
     def flush_folders() -> None:
         if not folder_rows or conn is None:
@@ -157,13 +251,14 @@ def main() -> int:
                 cur,
                 """
                 INSERT INTO directus_files
-                    (id, storage, filename_disk, filename_download, type, folder,
+                    (id, storage, filename_disk, filename_download, title, type, folder,
                      filesize, metadata, created_on, modified_on, uploaded_on)
                 VALUES %s
                 ON CONFLICT (id) DO UPDATE SET
                     storage           = EXCLUDED.storage,
                     filename_disk     = EXCLUDED.filename_disk,
                     filename_download = EXCLUDED.filename_download,
+                    title             = EXCLUDED.title,
                     type              = EXCLUDED.type,
                     folder            = EXCLUDED.folder,
                     filesize          = EXCLUDED.filesize,
@@ -173,6 +268,56 @@ def main() -> int:
                 file_rows,
             )
         file_rows.clear()
+
+    def flush_batch() -> None:
+        """Fingerprint the pending files (in parallel), build rows, insert, commit."""
+        nonlocal n_fp_computed
+        if not pending:
+            return
+        fps: dict[int, str] = {}
+        if args.fingerprint:
+            to_compute = []  # (index, fullpath, size)
+            for i, e in enumerate(pending):
+                fid_, size_, mtime_ = e[0], e[7], e[8]
+                cached = fp_cache.get(fid_)
+                if cached and cached[0] == size_ and cached[1] == mtime_.isoformat():
+                    fps[i] = cached[2]                       # unchanged → reuse, no read
+                else:
+                    to_compute.append((i, e[2], size_))
+            if to_compute:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=args.fp_workers) as ex:
+                    futs = {ex.submit(fingerprint, path, sz): idx for idx, path, sz in to_compute}
+                    for fut in concurrent.futures.as_completed(futs):
+                        r = fut.result()
+                        if r:
+                            fps[futs[fut]] = r
+                n_fp_computed += len(to_compute)
+
+        for i, e in enumerate(pending):
+            fid_, rel_, _full, name_, title_, disk_, dirfid_, size_, mtime_, ctime_, ext_ = e
+            fp = fps.get(i)
+            if fp:
+                seen_fp.setdefault(fp, (fid_, rel_))
+            meta = {
+                "archive_path": rel_,
+                "source": "uosfstore/shared/star_group1",
+                "extension": ext_,
+                "size_bytes": size_,
+                "modified": mtime_.isoformat(),
+                "created": ctime_.isoformat(),
+                "indexed_on": now.isoformat(),
+            }
+            if fp:
+                meta["fingerprint"] = fp
+            file_rows.append((
+                fid_, storage, disk_, name_, title_, guess_type(name_), dirfid_,
+                size_, json.dumps(meta), ctime_, mtime_, now,
+            ))
+        pending.clear()
+        flush_folders()   # parents before children (FK-free, but keeps order sane)
+        flush_files()
+        if conn is not None:
+            conn.commit()
 
     def ensure_folder(rel_dir: str) -> uuid.UUID:
         """Ensure the folder row (and all its ancestors) exist; return its id."""
@@ -191,7 +336,10 @@ def main() -> int:
 
     ensure_folder("")  # the top-level star_group1 folder
 
-    for dirpath, _dirnames, filenames in os.walk(root):
+    stop = False
+    for dirpath, _dirnames, filenames in os.walk(scan_root):
+        # Skip dedup quarantine folders (identical duplicates moved aside).
+        _dirnames[:] = [d for d in _dirnames if d != "_dedup_removed"]
         rel_dir_os = os.path.relpath(dirpath, root)
         rel_dir = "" if rel_dir_os == "." else PurePosixPath(*PurePosixPath(rel_dir_os.replace(os.sep, "/")).parts).as_posix()
         dir_fid = None  # resolved lazily, only if this dir has an allowed file
@@ -204,42 +352,126 @@ def main() -> int:
 
             rel = name if rel_dir == "" else f"{rel_dir}/{name}"
             try:
-                size = os.path.getsize(os.path.join(dirpath, name))
+                # os.stat = a single READ-ONLY metadata call (size + timestamps).
+                st = os.stat(os.path.join(dirpath, name))
             except OSError as exc:  # transient SMB hiccup — skip, next run picks it up
                 log.warning("stat failed, skipping %s: %s", rel, exc)
                 continue
+
+            size = st.st_size
+            mtime = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)
+            # On Windows (host indexing) st_ctime is the file CREATION time.
+            ctime = datetime.fromtimestamp(st.st_ctime, tz=timezone.utc)
 
             if dir_fid is None:
                 dir_fid = ensure_folder(rel_dir)
 
             fid = str(file_id(rel))
+            title = PurePosixPath(name).stem  # human-readable name shown in the Library
             filename_disk = rel if len(rel) <= _FILENAME_DISK_MAX else None
-            metadata = json.dumps({
-                "archive_path": rel,                       # canonical link, relative to star_group1
-                "source": "uosfstore/shared/star_group1",
-            })
-            file_rows.append((
-                fid, storage, filename_disk, name, guess_type(name), str(dir_fid),
-                size, metadata, now, now, now,
-            ))
+
+            # Defer fingerprint + row build to flush_batch, which reads files in
+            # parallel (SMB is latency-bound). created_on/modified_on there carry
+            # the file's real timestamps.
+            pending.append((fid, rel, os.path.join(dirpath, name), name, title,
+                            filename_disk, str(dir_fid), size, mtime, ctime, ext))
+            seen_ids.add(fid)
             n_files += 1
 
-            if len(file_rows) >= BATCH:
-                flush_folders()  # parents before children (FK-free, but keeps order sane)
-                flush_files()
-                if conn is not None:
-                    conn.commit()
+            if len(pending) >= BATCH:
+                flush_batch()
                 log.info("indexed %d files (%d skipped)…", n_files, n_skipped)
 
-    flush_folders()
-    flush_files()
-    if conn is not None:
+            if args.limit and n_files >= args.limit:
+                log.info("reached --limit %d, stopping.", args.limit)
+                stop = True
+                break
+
+        # Time-based progress so you get a heartbeat even through long stretches of
+        # non-matching files (e.g. tens of thousands of .dat/.jpg being skipped).
+        n_dirs += 1
+        t = time.monotonic()
+        if t - last_log >= 10:
+            el = t - start_t
+            log.info("progress: %d dirs, %d files indexed, %d skipped, %.0fs (%.0f files/s)…",
+                     n_dirs, n_files, n_skipped, el, (n_files / el if el > 0 else 0))
+            last_log = t
+        if stop:
+            break
+
+    flush_batch()   # remaining pending files
+
+    # Broken-link detection. Only on a FULL run — a scoped/limited run doesn't see
+    # the whole tree, so it can't tell what's genuinely gone. Flag star rows whose
+    # path was NOT seen this run; do NOT delete them, so any sample links survive
+    # and a human can re-point them. Reappeared files self-clear: their upsert
+    # overwrote metadata without the missing flag.
+    if conn is not None and not subdir and args.limit == 0:
+        n_moved = 0
+        with conn.cursor() as cur:
+            cur.execute("CREATE TEMP TABLE _seen_ids (id uuid PRIMARY KEY) ON COMMIT DROP")
+            psycopg2.extras.execute_values(
+                cur, "INSERT INTO _seen_ids (id) VALUES %s ON CONFLICT DO NOTHING",
+                [(i,) for i in seen_ids], page_size=1000)
+
+            # Candidates = star rows NOT seen this run (moved, renamed, or deleted).
+            cur.execute(
+                "SELECT df.id::text, df.metadata::jsonb->>'fingerprint' FROM directus_files df "
+                "WHERE df.storage=%s AND NOT EXISTS (SELECT 1 FROM _seen_ids s WHERE s.id = df.id)",
+                (storage,))
+            candidates = cur.fetchall()
+
+            missing_ids = []
+            for old_id, fp in candidates:
+                match = seen_fp.get(fp) if fp else None
+                if match and match[0] != old_id:
+                    # Same content re-appeared elsewhere → it MOVED. Re-point every
+                    # sample/operation/session link to the new file, then drop the
+                    # now-redundant old row (its links are already moved, so the FK
+                    # cascade removes nothing).
+                    new_id, _new_path = match
+                    for tbl, parent in _JUNCTIONS:
+                        cur.execute(
+                            f"DELETE FROM {tbl} d WHERE d.directus_files_id=%s AND EXISTS "
+                            f"(SELECT 1 FROM {tbl} e WHERE e.{parent}=d.{parent} "
+                            f"AND e.directus_files_id=%s)", (old_id, new_id))
+                        cur.execute(
+                            f"UPDATE {tbl} SET directus_files_id=%s WHERE directus_files_id=%s",
+                            (new_id, old_id))
+                    cur.execute("DELETE FROM directus_files WHERE id=%s", (old_id,))
+                    n_moved += 1
+                else:
+                    missing_ids.append(old_id)
+
+            newly_missing = 0
+            if missing_ids:
+                # Genuinely gone (no content match) → flag but KEEP, so any links
+                # survive for a human to re-point.
+                cur.execute(
+                    "UPDATE directus_files df SET metadata = (jsonb_set(jsonb_set("
+                    "COALESCE(df.metadata::jsonb,'{}'::jsonb),'{missing}','true'::jsonb,true),"
+                    "'{missing_since}',to_jsonb(COALESCE(df.metadata::jsonb->>'missing_since',%s)),true))::json "
+                    "WHERE df.id = ANY(%s::uuid[]) "
+                    "AND COALESCE(df.metadata::jsonb->>'missing','false') <> 'true'",
+                    (now.isoformat(), missing_ids))
+                newly_missing = cur.rowcount
+
+            cur.execute(
+                "SELECT count(*) FROM directus_files "
+                "WHERE storage = %s AND (metadata::jsonb->>'missing') = 'true'",
+                (storage,))
+            total_missing = cur.fetchone()[0]
         conn.commit()
+        log.info("sweep: %d moved (links re-pointed), %d newly missing, %d total missing (kept, not deleted).",
+                 n_moved, newly_missing, total_missing)
+
+    if conn is not None:
         conn.close()
 
     verb = "would index" if args.dry_run else "indexed"
-    log.info("Done: %s %d files into %d folders (%d non-matching files skipped).",
-             verb, n_files, len(seen_folders), n_skipped)
+    fp_note = f" | {n_fp_computed} fingerprints computed" if args.fingerprint else ""
+    log.info("Done: %s %d files into %d folders (%d non-matching skipped)%s.",
+             verb, n_files, len(seen_folders), n_skipped, fp_note)
     return 0
 
 
