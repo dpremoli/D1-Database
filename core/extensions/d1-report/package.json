@@ -6,12 +6,17 @@
     "build": "directus-extension build",
     "dev": "directus-extension build --watch"
   },
-  "keywords": ["directus", "directus-extension", "directus-custom-endpoint"],
+  "keywords": [
+    "directus",
+    "directus-extension",
+    "directus-custom-endpoint"
+  ],
   "devDependencies": {
     "@directus/extensions-sdk": "^17",
     "typescript": "^5"
   },
   "dependencies": {
+    "directus-extension-group-tabs-interface": "^2.1.0",
     "qrcode": "^1.5.4"
   },
   "directus:extension": {

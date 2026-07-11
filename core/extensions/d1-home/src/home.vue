@@ -17,6 +17,11 @@ const today = computed(() =>
 	new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }),
 );
 
+// Bookmark 71 = the "Samples" saved view (filter/layout) on physical_samples,
+// set up in Directus itself — link here rather than the bare collection so
+// users land on the same curated view as the sidebar bookmark.
+const SAMPLES_BOOKMARK = '/content/physical_samples?bookmark=71';
+
 interface Action { label: string; sub: string; icon: string; color: string; to: string; }
 const actions: Action[] = [
 	{ label: 'Register a sample', sub: 'Add a new physical sample', icon: 'add_circle', color: '#2563eb', to: '/content/physical_samples/+' },
@@ -24,15 +29,26 @@ const actions: Action[] = [
 	{ label: 'Ask the database', sub: 'Chat with your data', icon: 'chat', color: '#7c3aed', to: '/ask-db' },
 	{ label: 'Manage people', sub: 'Researchers & operators', icon: 'groups', color: '#db2777', to: '/home/people' },
 	{ label: 'Dashboards', sub: 'Explore trends & graphs', icon: 'analytics', color: '#d97706', to: '/d1-lab-dashboard' },
+	{ label: 'Force Analysis', sub: 'Machining force & FRM plots', icon: 'insights', color: '#0369a1', to: '/d1-force-dashboard' },
+	{ label: 'FAST Analysis', sub: 'Sintering traces & plots', icon: 'whatshot', color: '#ea580c', to: '/d1-fast-dashboard' },
+	{ label: 'Force Crawler', sub: '.mat processing queue', icon: 'dns', color: '#65a30d', to: '/d1-force-crawler' },
 ];
 
 const stats = ref([
-	{ label: 'Samples', value: '—', icon: 'science', to: '/content/physical_samples' },
-	{ label: 'Operations', value: '—', icon: 'build', to: '/content/manufacturing_operations' },
+	{ label: 'Samples', value: '—', icon: 'science', to: SAMPLES_BOOKMARK },
+	{ label: 'Machining', value: '—', icon: 'build', to: '/content/manufacturing_operations' },
+	{ label: 'FAST', value: '—', icon: 'whatshot', to: '/d1-fast-dashboard' },
 	{ label: 'Tests', value: '—', icon: 'biotech', to: '/content/test_sessions' },
 	{ label: 'Campaigns', value: '—', icon: 'flag', to: '/content/campaigns' },
 ]);
-const recent = ref<any[]>([]);
+
+// Recent activity: samples, operations, and tests merged into one feed,
+// each tagged with its kind, newest first.
+type Kind = 'sample' | 'operation' | 'fast' | 'test';
+interface Activity { kind: Kind; id: string; code: string; meta: string; date: string; to: string; }
+const KIND_LABEL: Record<Kind, string> = { sample: 'Sample', operation: 'Operation', fast: 'FAST', test: 'Test' };
+const KIND_COLOR: Record<Kind, string> = { sample: '#2563eb', operation: '#0d9488', fast: '#ea580c', test: '#7c3aed' };
+const recent = ref<Activity[]>([]);
 
 function go(to: string) {
 	// The Directus app router base is already /admin — push the bare path.
@@ -43,9 +59,11 @@ function fmtDate(v: string) {
 	return v ? new Date(v).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
 }
 
-async function count(collection: string): Promise<string> {
+async function count(collection: string, filter?: any): Promise<string> {
 	try {
-		const res = await api.get(`/items/${collection}`, { params: { aggregate: { count: '*' }, limit: 1 } });
+		const params: any = { aggregate: { count: '*' }, limit: 1 };
+		if (filter) params.filter = filter;
+		const res = await api.get(`/items/${collection}`, { params });
 		return Number(res.data.data[0].count).toLocaleString('en-GB');
 	} catch {
 		return '—';
@@ -53,16 +71,51 @@ async function count(collection: string): Promise<string> {
 }
 
 onMounted(async () => {
-	const [s, o, t, c] = await Promise.all([
-		count('physical_samples'), count('manufacturing_operations'), count('test_sessions'), count('campaigns'),
+	// Split manufacturing_operations into machining vs FAST (sintering) counts.
+	const [s, mach, fast, t, c] = await Promise.all([
+		count('physical_samples'),
+		count('manufacturing_operations', { process_category: { _neq: 'sintering' } }),
+		count('manufacturing_operations', { process_category: { _eq: 'sintering' } }),
+		count('test_sessions'), count('campaigns'),
 	]);
-	stats.value[0].value = s; stats.value[1].value = o; stats.value[2].value = t; stats.value[3].value = c;
+	stats.value[0].value = s; stats.value[1].value = mach; stats.value[2].value = fast;
+	stats.value[3].value = t; stats.value[4].value = c;
 
 	try {
-		const res = await api.get('/items/physical_samples', {
-			params: { sort: '-created_at', limit: 6, fields: ['sample_id', 'sample_code', 'form', 'current_status', 'created_at', 'material_id.common_name'] },
+		const [samplesRes, opsRes, testsRes] = await Promise.all([
+			api.get('/items/physical_samples', {
+				params: { sort: '-created_at', limit: 6, fields: ['sample_id', 'sample_code', 'form', 'created_at', 'material_id.common_name'] },
+			}),
+			api.get('/items/manufacturing_operations', {
+				params: { sort: '-created_at', limit: 8, fields: ['operation_id', 'pass_code', 'created_at', 'process_category', 'sample_id.sample_code'] },
+			}),
+			api.get('/items/test_sessions', {
+				params: { sort: '-created_at', limit: 6, fields: ['session_id', 'test_type', 'created_at', 'sample_id.sample_code'] },
+			}),
+		]);
+		const samples: Activity[] = (samplesRes.data.data ?? []).map((r: any) => ({
+			kind: 'sample', id: r.sample_id, code: r.sample_code,
+			meta: r.material_id?.common_name || r.form || '—', date: r.created_at,
+			to: `/content/physical_samples/${r.sample_id}`,
+		}));
+		const ops: Activity[] = (opsRes.data.data ?? []).map((r: any) => {
+			const isFast = r.process_category === 'sintering';
+			return {
+				kind: isFast ? 'fast' as const : 'operation' as const,
+				id: r.operation_id, code: r.pass_code || r.sample_id?.sample_code || '—',
+				meta: r.sample_id?.sample_code || '—', date: r.created_at,
+				to: isFast ? `/d1-fast-dashboard?operation=${r.operation_id}` : `/content/manufacturing_operations/${r.operation_id}`,
+			};
 		});
-		recent.value = res.data.data;
+		const tests: Activity[] = (testsRes.data.data ?? []).map((r: any) => ({
+			kind: 'test', id: r.session_id, code: r.test_type || 'Test',
+			meta: r.sample_id?.sample_code || '—', date: r.created_at,
+			to: `/content/test_sessions/${r.session_id}`,
+		}));
+		recent.value = [...samples, ...ops, ...tests]
+			.filter((a) => a.date)
+			.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+			.slice(0, 9);
 	} catch {
 		recent.value = [];
 	}
@@ -101,28 +154,23 @@ onMounted(async () => {
 				</button>
 			</div>
 
-			<!-- Recent samples -->
+			<!-- Recent activity -->
 			<section class="recent">
 				<div class="section-head">
-					<h2>Recent samples</h2>
-					<button class="link" @click="go('/content/physical_samples')">View all →</button>
+					<h2>Recent activity</h2>
+					<button class="link" @click="go(SAMPLES_BOOKMARK)">View samples →</button>
 				</div>
 				<div v-if="recent.length" class="grid recent-grid">
-					<button
-						v-for="r in recent"
-						:key="r.sample_id"
-						class="card rcard"
-						@click="go(`/content/physical_samples/${r.sample_id}`)"
-					>
-						<span class="r-code">{{ r.sample_code }}</span>
-						<span class="r-meta">{{ r.material_id?.common_name || '—' }}<template v-if="r.form"> · {{ r.form }}</template></span>
-						<span class="r-foot">
-							<span v-if="r.current_status" class="r-status">{{ r.current_status }}</span>
-							<span class="r-date">{{ fmtDate(r.created_at) }}</span>
+					<button v-for="r in recent" :key="`${r.kind}-${r.id}`" class="card rcard" @click="go(r.to)">
+						<span class="r-top">
+							<span class="r-kind" :style="{ background: KIND_COLOR[r.kind] }">{{ KIND_LABEL[r.kind] }}</span>
+							<span class="r-date">{{ fmtDate(r.date) }}</span>
 						</span>
+						<span class="r-code">{{ r.code }}</span>
+						<span class="r-meta">{{ r.meta }}</span>
 					</button>
 				</div>
-				<p v-else class="empty">No samples yet.</p>
+				<p v-else class="empty">No activity yet.</p>
 			</section>
 		</div>
 	</private-view>
@@ -152,7 +200,7 @@ onMounted(async () => {
 
 .grid { display: grid; gap: 16px; }
 .actions { grid-template-columns: repeat(2, 1fr); margin-bottom: 24px; }
-.stats { grid-template-columns: repeat(4, 1fr); margin-bottom: 32px; }
+.stats { grid-template-columns: repeat(5, 1fr); margin-bottom: 32px; }
 .recent-grid { grid-template-columns: repeat(3, 1fr); }
 
 /* Cards (shared) */
@@ -192,14 +240,13 @@ onMounted(async () => {
 .section-head h2 { margin: 0; font-size: 16px; font-weight: 700; }
 .link { border: 0; background: none; cursor: pointer; color: var(--theme--primary, #1d4ed8); font: inherit; font-weight: 600; font-size: 13px; }
 .rcard { display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; }
-.r-code { font-family: var(--theme--fonts--monospace--font-family, 'SF Mono', Menlo, monospace); font-weight: 700; font-size: 14px; }
-.r-meta { font-size: 12.5px; color: var(--theme--foreground-subdued, #6b7684); }
-.r-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
-.r-status {
-	font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700;
-	color: var(--theme--primary, #1d4ed8); background: color-mix(in srgb, var(--theme--primary, #1d4ed8) 12%, transparent);
+.r-top { display: flex; align-items: center; justify-content: space-between; }
+.r-kind {
+	font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; color: #fff;
 	padding: 2px 8px; border-radius: 99px;
 }
+.r-code { font-family: var(--theme--fonts--monospace--font-family, 'SF Mono', Menlo, monospace); font-weight: 700; font-size: 14px; }
+.r-meta { font-size: 12.5px; color: var(--theme--foreground-subdued, #6b7684); }
 .r-date { font-size: 11px; color: var(--theme--foreground-subdued, #98a2b3); }
 .empty { color: var(--theme--foreground-subdued, #6b7684); }
 

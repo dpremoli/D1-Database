@@ -220,6 +220,7 @@ INSERT INTO directus_fields (collection, field, special, interface, options, dis
 ('physical_samples','child_samples','o2m','list-o2m','{"template":"{{child_sample_id.sample_code}}","enableCreate":false}','related-values',NULL,false,false,31,'full',false,'[{"language":"en-US","translation":"Child Samples (Derived From This)"}]'),
 ('physical_samples','test_sessions','o2m','list-o2m','{"template":"{{session_date}} – {{test_type}}","enableCreate":true}','related-values',NULL,false,false,32,'full',false,'[{"language":"en-US","translation":"Test Sessions"}]'),
 ('physical_samples','data_files','m2m','files','{"template":"{{directus_files_id.filename_download}}"}','related-values','{"template":"{{directus_files_id.filename_download}}"}',false,false,33,'full',false,'[{"language":"en-US","translation":"Linked Data Files"}]'),
+('physical_samples','data_files_open','alias,no-data','d1-archive-links','{"relationField":"data_files"}',NULL,NULL,false,false,34,'full',false,'[{"language":"en-US","translation":"Open / Copy Linked Files"}]'),
 ('physical_samples','created_at','date-created','datetime',NULL,'datetime',NULL,true,true,40,'half',false,NULL),
 ('physical_samples','updated_at','date-updated','datetime',NULL,'datetime',NULL,true,true,41,'half',false,NULL),
 ('physical_samples','version',NULL,'input',NULL,'raw',NULL,true,true,42,'half',false,NULL);
@@ -376,6 +377,7 @@ INSERT INTO directus_fields (collection, field, special, interface, options, dis
 ('manufacturing_operations','gcode_file',            'file','file',NULL,'file',NULL,false,true,18,'full',false,'[{"language":"en-US","translation":"G-code / NC Program File"}]'),
 -- Linked Data Files: native M2M file picker → browse the SMB archive in the File Library and attach files
 ('manufacturing_operations','data_files',             'm2m','files','{"template":"{{directus_files_id.filename_download}}"}','related-values','{"template":"{{directus_files_id.filename_download}}"}',false,true,19,'full',false,'[{"language":"en-US","translation":"Linked Data Files"}]'),
+('manufacturing_operations','data_files_open',        'alias,no-data','d1-archive-links','{"relationField":"data_files"}',NULL,NULL,false,false,20,'full',false,'[{"language":"en-US","translation":"Open / Copy Linked Files"}]'),
 -- (Typed process-parameter fields are inline on this table — see configure_inline_params.sql)
 -- Legacy / unused duplicate columns — registered hidden so they don't clutter the form
 ('manufacturing_operations','force_file_id',       NULL,'input',NULL,'raw',NULL,true,true,33,'half',false,NULL),
@@ -474,6 +476,7 @@ INSERT INTO directus_fields (collection, field, special, interface, options, dis
 ('test_sessions','plot_uris',            'cast-json','input-code','{"language":"json"}','raw',NULL,true,false,21,'full',false,'[{"language":"en-US","translation":"Plot URIs (auto)"}]'),
 -- (Typed test-parameter fields are inline on this table — see configure_inline_params.sql)
 ('test_sessions','data_files','m2m','files','{"template":"{{directus_files_id.filename_download}}"}','related-values','{"template":"{{directus_files_id.filename_download}}"}',false,false,31,'full',false,'[{"language":"en-US","translation":"Linked Data Files"}]'),
+('test_sessions','data_files_open','alias,no-data','d1-archive-links','{"relationField":"data_files"}',NULL,NULL,false,false,32,'full',false,'[{"language":"en-US","translation":"Open / Copy Linked Files"}]'),
 ('test_sessions','created_at','date-created','datetime',NULL,'datetime',NULL,true,true,35,'half',false,NULL),
 ('test_sessions','updated_at','date-updated','datetime',NULL,'datetime',NULL,true,true,36,'half',false,NULL),
 ('test_sessions','version',NULL,'input',NULL,'raw',NULL,true,true,37,'half',false,NULL);

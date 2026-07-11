@@ -21,10 +21,136 @@ function fmtDate(v) {
 	return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 }
 
+function fmtDateTime(v) {
+	if (!v) return '—';
+	const d = new Date(v);
+	if (isNaN(d)) return esc(v);
+	return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 function num(v, digits = 3) {
 	if (v === null || v === undefined || v === '') return '—';
 	const n = Number(v);
 	return isNaN(n) ? esc(v) : n.toLocaleString('en-GB', { maximumFractionDigits: digits });
+}
+
+function niceNum(v) {
+	const a = Math.abs(v);
+	if (a === 0) return '0';
+	if (a >= 1000) return `${(v / 1000).toFixed(1)}k`;
+	if (a >= 100) return v.toFixed(0);
+	if (a >= 10) return v.toFixed(1);
+	if (a >= 1) return v.toFixed(2);
+	if (a >= 0.01) return v.toFixed(3);
+	return v.toExponential(0);
+}
+
+// A "nice" step (1/2/5 * 10^n) so evenly-spaced ticks land on round numbers.
+function niceStep(rough) {
+	if (!(rough > 0)) return 1;
+	const pow = 10 ** Math.floor(Math.log10(rough));
+	const f = rough / pow;
+	const nice = f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10;
+	return nice * pow;
+}
+
+function regularTicks(x0, x1, plotW, targetPx = 55) {
+	const targetCount = Math.max(3, Math.min(8, Math.round(plotW / targetPx)));
+	const step = niceStep((x1 - x0) / targetCount) || x1 - x0 || 1;
+	const ticks = [];
+	const first = Math.ceil(x0 / step) * step;
+	for (let v = first; v <= x1 + step * 1e-6; v += step) {
+		if (v < x0 - step * 1e-6) continue;
+		ticks.push(v);
+	}
+	if (ticks.length < 2) return [x0, x1];
+	return ticks;
+}
+
+// Static (non-interactive) SVG force/RPM envelope, for the print report. Mirrors
+// d1-force-dashboard/src/ForceChart.vue's math (env kind + crop-window shading,
+// regular x-ticks) at a fixed small size — no ResizeObserver/hover needed since
+// this is print-only.
+function miniEnvelopeSvg(series, { color = '#1d4ed8', width = 300, height = 118, xUnit = 's', yUnit = 'N', cropStart, cropEnd } = {}) {
+	if (!series?.t?.length) return '<div class="fc-empty">no data</div>';
+	const ML = 32, MR = 6, MT = 14, MB = 20;
+	const t = series.t, mn = series.min, mx = series.max;
+	const x0 = t[0], x1 = t[t.length - 1];
+	let lo = Math.min(0, ...mn), hi = Math.max(0, ...mx);
+	if (hi === lo) hi = lo + 1;
+	const plotW = width - ML - MR, plotH = height - MT - MB;
+	const sx = (x) => ML + ((x - x0) / (x1 - x0 || 1)) * plotW;
+	const sy = (y) => MT + (1 - (y - lo) / (hi - lo)) * plotH;
+
+	function areaPath(i0, i1) {
+		let up = 'M';
+		for (let i = i0; i <= i1; i++) up += `${sx(t[i]).toFixed(1)},${sy(mx[i]).toFixed(1)} `;
+		let dn = '';
+		for (let i = i1; i >= i0; i--) dn += `${sx(t[i]).toFixed(1)},${sy(mn[i]).toFixed(1)} `;
+		return `${up}L ${dn}Z`;
+	}
+	const fullArea = areaPath(0, t.length - 1);
+	let cropArea = '';
+	if (cropStart != null && cropEnd != null) {
+		let i0 = t.findIndex((v) => v >= cropStart);
+		let i1 = t.length - 1 - [...t].reverse().findIndex((v) => v <= cropEnd);
+		if (i0 < 0) i0 = 0;
+		if (i1 < i0) i1 = t.length - 1;
+		if (i1 > i0) cropArea = areaPath(i0, i1);
+	}
+	const zeroY = lo < 0 && hi > 0 ? sy(0) : null;
+	const yVals = zeroY != null ? [hi, (hi + 0) / 2, 0, lo / 2, lo] : [hi, (hi + lo) / 2, lo];
+	const yticks = [...new Set(yVals.map((v) => Math.round(v * 1000) / 1000))]
+		.map((v) => ({ y: sy(v), label: niceNum(v) }));
+	const xticks = regularTicks(x0, x1, plotW).map((v) => ({ x: sx(v), label: niceNum(v) }));
+
+	return `<svg viewBox="0 0 ${width} ${height}">
+		<text x="${ML}" y="9" class="axislabel">${esc(yUnit)}</text>
+		${yticks.map((tk) => `<line x1="${ML}" x2="${width - MR}" y1="${tk.y.toFixed(1)}" y2="${tk.y.toFixed(1)}" stroke="#eef1f5" stroke-width="0.4"/>`).join('')}
+		<line x1="${ML}" x2="${width - MR}" y1="${height - MB}" y2="${height - MB}" stroke="#94a3b8" stroke-width="0.6"/>
+		<line x1="${ML}" x2="${ML}" y1="${MT}" y2="${height - MB}" stroke="#94a3b8" stroke-width="0.6"/>
+		${zeroY != null ? `<line x1="${ML}" x2="${width - MR}" y1="${zeroY.toFixed(1)}" y2="${zeroY.toFixed(1)}" stroke="#cbd5e1" stroke-width="0.5"/>` : ''}
+		<path d="${fullArea}" fill="${color}" fill-opacity="${cropArea ? 0.1 : 0.22}" stroke="${color}" stroke-opacity="0.4" stroke-width="0.4"/>
+		${cropArea ? `<path d="${cropArea}" fill="${color}" fill-opacity="0.3" stroke="${color}" stroke-width="0.5"/>` : ''}
+		${yticks.map((tk) => `<line x1="${ML - 2.5}" x2="${ML}" y1="${tk.y.toFixed(1)}" y2="${tk.y.toFixed(1)}" stroke="#94a3b8" stroke-width="0.6"/><text x="${ML - 4}" y="${(tk.y + 2.2).toFixed(1)}" text-anchor="end" class="tick">${tk.label}</text>`).join('')}
+		${xticks.map((tk) => `<line x1="${tk.x.toFixed(1)}" x2="${tk.x.toFixed(1)}" y1="${height - MB}" y2="${height - MB + 2.5}" stroke="#94a3b8" stroke-width="0.6"/><text x="${tk.x.toFixed(1)}" y="${height - MB + 9}" text-anchor="middle" class="tick">${tk.label}</text>`).join('')}
+		<text x="${((ML + width - MR) / 2).toFixed(1)}" y="${height - 2}" text-anchor="middle" class="axislabel">${esc(xUnit)}</text>
+	</svg>`;
+}
+
+// Static log-scale FFT amplitude spectrum SVG (decade y-ticks + regular x-ticks).
+function miniFftSvg(spec, { color = '#1d4ed8', width = 300, height = 118 } = {}) {
+	if (!spec?.f?.length) return '<div class="fc-empty">no data</div>';
+	const ML = 32, MR = 6, MT = 14, MB = 20;
+	const f = spec.f, amp = spec.amp;
+	const x0 = f[0], x1 = f[f.length - 1];
+	const hi = Math.max(...amp, 1e-9);
+	let minPos = Infinity;
+	for (const v of amp) if (v > 0 && v < minPos) minPos = v;
+	if (!isFinite(minPos)) minPos = hi / 1e5;
+	const loRaw = Math.max(minPos, hi / 1e5);
+	const L0 = Math.log10(loRaw), L1 = Math.log10(hi), den = L1 - L0 || 1;
+	const plotW = width - ML - MR, plotH = height - MT - MB;
+	const sx = (x) => ML + ((x - x0) / (x1 - x0 || 1)) * plotW;
+	const sy = (y) => MT + (1 - (Math.log10(Math.max(y, loRaw)) - L0) / den) * plotH;
+	let line = 'M';
+	for (let i = 0; i < f.length; i++) line += `${sx(f[i]).toFixed(1)},${sy(amp[i]).toFixed(1)} `;
+
+	let yticks = [];
+	for (let k = Math.ceil(L0); k <= Math.floor(L1); k++) yticks.push({ y: sy(10 ** k), label: niceNum(10 ** k) });
+	if (yticks.length < 2) yticks = [loRaw, hi].map((v) => ({ y: sy(v), label: niceNum(v) }));
+	const xticks = regularTicks(x0, x1, plotW).map((v) => ({ x: sx(v), label: niceNum(v) }));
+
+	return `<svg viewBox="0 0 ${width} ${height}">
+		<text x="${ML}" y="9" class="axislabel">log amp</text>
+		${yticks.map((tk) => `<line x1="${ML}" x2="${width - MR}" y1="${tk.y.toFixed(1)}" y2="${tk.y.toFixed(1)}" stroke="#eef1f5" stroke-width="0.4"/>`).join('')}
+		<line x1="${ML}" x2="${width - MR}" y1="${height - MB}" y2="${height - MB}" stroke="#94a3b8" stroke-width="0.6"/>
+		<line x1="${ML}" x2="${ML}" y1="${MT}" y2="${height - MB}" stroke="#94a3b8" stroke-width="0.6"/>
+		<path d="${line}" fill="none" stroke="${color}" stroke-width="0.6"/>
+		${yticks.map((tk) => `<line x1="${ML - 2.5}" x2="${ML}" y1="${tk.y.toFixed(1)}" y2="${tk.y.toFixed(1)}" stroke="#94a3b8" stroke-width="0.6"/><text x="${ML - 4}" y="${(tk.y + 2.2).toFixed(1)}" text-anchor="end" class="tick">${tk.label}</text>`).join('')}
+		${xticks.map((tk) => `<line x1="${tk.x.toFixed(1)}" x2="${tk.x.toFixed(1)}" y1="${height - MB}" y2="${height - MB + 2.5}" stroke="#94a3b8" stroke-width="0.6"/><text x="${tk.x.toFixed(1)}" y="${height - MB + 9}" text-anchor="middle" class="tick">${tk.label}</text>`).join('')}
+		<text x="${((ML + width - MR) / 2).toFixed(1)}" y="${height - 2}" text-anchor="middle" class="axislabel">f (Hz)</text>
+	</svg>`;
 }
 
 function dateRange(rows, key) {
@@ -252,11 +378,13 @@ export function renderSampleReport(d) {
 	}
 	@media screen {
 		.doc { box-shadow:0 2px 16px rgba(15,23,42,.12); margin:16px auto; }
-		/* Page-break guides: a faint rule every printable-page height (297 − 2×14 mm)
-		   so you can see where the print will break, inside the content area. */
-		.doc::before { content:''; position:absolute; left:15mm; right:15mm; top:14mm; bottom:14mm; z-index:0; pointer-events:none;
-			background:repeating-linear-gradient(to bottom, transparent 0 calc(269mm - 1px), rgba(29,78,216,.28) calc(269mm - 1px) 269mm); }
 	}
+	/* Page-gap spacer inserted by report.js at the REAL computed break point (see
+	   the datasheet's own <style> for the full comment — same mechanism here). */
+	.page-gap { width:100%; box-sizing:border-box; pointer-events:none;
+		background:repeating-linear-gradient(45deg, #f1f5f9, #f1f5f9 6px, #e7ecf1 6px, #e7ecf1 12px);
+		border-top:2px dashed #94a3b8; border-bottom:2px dashed #94a3b8; }
+	@media print { .page-gap { display:none; } }
 
 	/* Toolbar */
 	.toolbar { position:sticky; top:0; z-index:10; display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:center;
@@ -488,8 +616,11 @@ function paramCells(row, defs) {
 		.join('');
 }
 
-// Shared one-page datasheet used by both operation and test reports.
-function datasheetHtml({ eyebrow, code, subtitle, details, paramTitle, params, notes, qrSvg, recordUrl, shortId }) {
+// Shared one-page datasheet used by both operation and test reports. `extraToggles`
+// (checkbox <label> html) and `extraBlocks` (the matching id="block-X" sections,
+// appended after Notes) are optional — only the operation report's force/FFT/FRM
+// appendix uses them; the generic REPORT_JS toggle wiring (index.js) needs no changes.
+function datasheetHtml({ eyebrow, code, subtitle, details, paramTitle, params, notes, qrSvg, recordUrl, shortId, extraToggles, extraBlocks }) {
 	return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8" />
 <title>${esc(eyebrow)} — ${esc(code)}</title>
@@ -513,13 +644,67 @@ function datasheetHtml({ eyebrow, code, subtitle, details, paramTitle, params, n
 	}
 	@media screen {
 		.doc { box-shadow:0 2px 16px rgba(15,23,42,.12); margin:16px auto; }
-		.doc::before { content:''; position:absolute; left:16mm; right:16mm; top:16mm; bottom:16mm; z-index:0; pointer-events:none;
-			background:repeating-linear-gradient(to bottom, transparent 0 calc(265mm - 1px), rgba(29,78,216,.28) calc(265mm - 1px) 265mm); }
 	}
-	.toolbar { position:sticky; top:0; z-index:10; display:flex; justify-content:center; background:#fff; border-bottom:1px solid var(--line);
-		padding:10px; box-shadow:0 1px 8px rgba(15,23,42,.08); }
+	/* Page-gap spacers: scripts/matlab-report.js measures REAL rendered heights and
+	   inserts one of these, sized to fill the rest of the current page, immediately
+	   before whatever unit would actually overflow onto the next printed page — so
+	   the on-screen preview shows a genuine gap exactly where content moves, not a
+	   static line that can drift out of sync with the real content. */
+	.page-gap { width:100%; box-sizing:border-box; pointer-events:none;
+		background:repeating-linear-gradient(45deg, #f1f5f9, #f1f5f9 6px, #e7ecf1 6px, #e7ecf1 12px);
+		border-top:2px dashed #94a3b8; border-bottom:2px dashed #94a3b8; }
+	@media print { .page-gap { display:none; } }
+	.toolbar { position:sticky; top:0; z-index:10; display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:center;
+		background:#fff; border-bottom:1px solid var(--line); padding:10px; box-shadow:0 1px 8px rgba(15,23,42,.08); }
+	.toolbar label { display:flex; align-items:center; gap:5px; cursor:pointer; font-size:11px; }
+	.toolbar input { accent-color:var(--accent); }
+	.tb-label { color:var(--muted); text-transform:uppercase; letter-spacing:.07em; font-size:9px; }
 	.print-btn { cursor:pointer; font:600 11px/1 -apple-system,"Segoe UI",Roboto,sans-serif; color:#fff; background:var(--accent);
 		border:0; border-radius:7px; padding:8px 14px; box-shadow:0 2px 8px rgba(29,78,216,.3); }
+	/* Compact "Plots ▾" dropdown instead of a bare row of 9-10 checkboxes. */
+	.fa-menu { position:relative; }
+	.fa-menu-btn { cursor:pointer; font:600 11px/1 -apple-system,"Segoe UI",Roboto,sans-serif; color:var(--ink); background:#fff;
+		border:1px solid var(--line); border-radius:7px; padding:8px 12px; display:flex; align-items:center; gap:6px; }
+	.fa-menu-count { background:var(--accent); color:#fff; border-radius:99px; font-size:9px; font-weight:700; padding:1px 6px; }
+	.fa-menu-panel { display:none; position:absolute; top:calc(100% + 4px); left:0; background:#fff; border:1px solid var(--line);
+		border-radius:8px; box-shadow:0 8px 24px rgba(15,23,42,.18); padding:6px 2px; z-index:20; min-width:150px; }
+	.fa-menu-panel label { display:flex; align-items:center; gap:7px; padding:6px 12px; font-size:11.5px; cursor:pointer; white-space:nowrap; }
+	.fa-menu-panel label:hover { background:var(--soft); }
+	.fa-menu.open .fa-menu-panel { display:block; }
+	/* Force graphs left / FFT right, one atomic row per axis (page-break-inside:avoid
+	   so a row moves to the next page as a whole, never splits mid-chart). report.js
+	   toggles grid-template-columns to 1fr when a whole side is empty (via the
+	   #faRows.all-force-hidden / .all-fft-hidden classes) so the remaining side fills
+	   the row instead of leaving a blank half. */
+	.fa-rows { display:flex; flex-direction:column; gap:8px; margin-bottom:8px; }
+	.fa-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; page-break-inside:avoid; break-inside:avoid; }
+	.fa-row-solo { grid-template-columns:1fr; }
+	#faRows.all-force-hidden .fa-row:not(.fa-row-solo) { grid-template-columns:1fr; }
+	#faRows.all-fft-hidden .fa-row:not(.fa-row-solo) { grid-template-columns:1fr; }
+	.force-chart { border:1px solid var(--line); border-radius:6px; padding:6px 8px; min-width:0; }
+	.force-chart .fc-title { font-size:8.5px; font-weight:700; color:var(--ink); margin-bottom:2px; }
+	.force-chart svg { display:block; width:100%; height:auto; }
+	.force-chart .tick { font-size:6.5px; fill:var(--muted); }
+	.force-chart .axislabel { font-size:7px; fill:var(--muted); font-weight:600; }
+	/* auto-fit + minmax(_,1fr): fewer visible figures grow to fill the row width as
+	   items are toggled off — but each figure is capped so a LONE one doesn't blow up
+	   to the full row width (an FRM map is ~square, so full-width would make it very
+	   tall and push it onto the next page). */
+	.frm-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; justify-items:center; }
+	.frm-fig { border:1px solid var(--line); border-radius:6px; padding:6px; text-align:center; page-break-inside:avoid; break-inside:avoid;
+		max-width:210px; width:100%; box-sizing:border-box; }
+	.frm-fig img { width:100%; height:auto; border-radius:4px; }
+	.frm-fig figcaption { font-size:8.5px; font-weight:700; color:var(--ink); margin-top:3px; }
+	/* FAST sintering trace plots (hydrated client-side by report.js from the CSV). */
+	.fast-plots { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+	.fp-plot { border:1px solid var(--line); border-radius:6px; padding:6px 8px; page-break-inside:avoid; break-inside:avoid; min-width:0; }
+	.fp-plot .fp-title { font-size:8.5px; font-weight:700; color:var(--ink); margin-bottom:2px; }
+	.fp-plot svg { display:block; width:100%; height:auto; }
+	.fp-plot .fp-tick { font-size:6.5px; fill:var(--muted); }
+	.fp-legend { display:flex; flex-wrap:wrap; gap:2px 8px; margin-top:2px; }
+	.fp-legend span { display:inline-flex; align-items:center; gap:3px; font-size:7.5px; color:var(--ink); }
+	.fp-legend i { width:8px; height:3px; border-radius:2px; display:inline-block; }
+	.fp-msg { grid-column:1 / -1; color:var(--muted); font-size:10px; padding:8px; text-align:center; }
 	.hd { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2.5px solid var(--accent); padding-bottom:12px; margin-bottom:16px; }
 	.eyebrow { text-transform:uppercase; letter-spacing:.14em; font-size:9px; font-weight:700; color:var(--accent); }
 	.code { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:20px; font-weight:700; color:var(--ink); margin:2px 0 0; }
@@ -541,7 +726,10 @@ function datasheetHtml({ eyebrow, code, subtitle, details, paramTitle, params, n
 	.foot a { color:var(--muted); text-decoration:none; }
 </style></head>
 <body>
-<div class="toolbar no-print"><button class="print-btn" id="printBtn">⤓ Save as PDF</button></div>
+<div class="toolbar no-print">
+	${extraToggles ? `<span class="tb-label">Include:</span>${extraToggles}` : ''}
+	<button class="print-btn" id="printBtn">⤓ Save as PDF</button>
+</div>
 <div class="doc">
 	<header class="hd">
 		<div>
@@ -554,6 +742,7 @@ function datasheetHtml({ eyebrow, code, subtitle, details, paramTitle, params, n
 	<section class="grid">${details}</section>
 	${params ? `<h2>${esc(paramTitle)}</h2><section class="params">${params}</section>` : ''}
 	${notes}
+	${extraBlocks || ''}
 	<footer class="foot"><span>Generated ${fmtDate(new Date())} · STARbase LIMS</span><a href="${esc(recordUrl)}">${esc(recordUrl)}</a></footer>
 </div>
 <script src="/d1-report/report.js"></script>
@@ -563,8 +752,105 @@ function datasheetHtml({ eyebrow, code, subtitle, details, paramTitle, params, n
 const kvCell = (label, value, sub) =>
 	`<div class="kv"><span class="k">${esc(label)}</span><span class="v">${value}</span>${sub ? `<span class="sub">${sub}</span>` : ''}</div>`;
 
+const FORCE_AXIS_COLOR = { Fx: '#dc2626', Fy: '#16a34a', Fz: '#2563eb', RPM: '#a855f7' };
+
+// The force/FFT/FRM appendix for a machining operation with a processed
+// machining_force_analysis row (`fa`). Every one of the up-to-10 plots (3 force
+// + RPM + 3 FFT + 3 FRM) gets its own checkbox in a compact dropdown menu.
+// Force+FFT render as PAIRED ROWS (force left cell, FFT right cell, one row per
+// axis) — each row is a single atomic print unit (page-break-inside:avoid), so
+// a row moves to the next page as a whole rather than splitting mid-content.
+// report.js additionally collapses a row/section to full width if its whole
+// force or FFT side is empty, and caps a lone FRM figure's size. Returns
+// {toggles, blocks}, both '' if there's nothing to show.
+function forceAppendix(fa, publicUrl) {
+	if (!fa || fa.status !== 'done') return { toggles: '', blocks: '' };
+
+	const cropStart = fa.sample_rate && fa.cut_start_idx != null ? fa.cut_start_idx / fa.sample_rate : null;
+	const cropEnd = fa.sample_rate && fa.cut_end_idx != null ? fa.cut_end_idx / fa.sample_rate : null;
+
+	const axes = ['Fx', 'Fy', 'Fz'];
+	const hasForce = (a) => fa.series?.[a]?.t?.length;
+	const hasFft = (a) => fa.fft?.[a]?.f?.length;
+	const hasFrm = (a) => fa[`frm_${a.toLowerCase()}`];
+	const hasRpm = fa.series?.RPM?.t?.length;
+
+	const plotCell = (key, label, svg) =>
+		svg ? `<div class="force-chart" id="block-${key}" data-block="${key}"><div class="fc-title">${esc(label)}</div>${svg}</div>` : '';
+
+	const rows = axes.filter((a) => hasForce(a) || hasFft(a)).map((a) => {
+		const left = hasForce(a) ? plotCell(`force-${a}`, `${a} · force`, miniEnvelopeSvg(fa.series[a], { color: FORCE_AXIS_COLOR[a], cropStart, cropEnd })) : '';
+		const right = hasFft(a) ? plotCell(`fft-${a}`, `${a} · spectrum (log)`, miniFftSvg(fa.fft[a], { color: FORCE_AXIS_COLOR[a] })) : '';
+		return `<div class="fa-row">${left}${right}</div>`;
+	});
+	if (hasRpm) {
+		rows.push(`<div class="fa-row fa-row-solo">${plotCell('force-RPM', 'RPM', miniEnvelopeSvg(fa.series.RPM, { color: FORCE_AXIS_COLOR.RPM, yUnit: 'rpm' }))}</div>`);
+	}
+
+	const frmFigs = axes.filter(hasFrm).map((a) => {
+		const fid = fa[`frm_${a.toLowerCase()}`];
+		return `<figure class="frm-fig" id="block-frm-${a}" data-block="frm-${a}">
+			<img src="${esc(publicUrl)}/assets/${esc(fid)}" alt="FRM ${a}" /><figcaption>FRM — ${a}</figcaption>
+		</figure>`;
+	}).join('');
+
+	if (!rows.length && !frmFigs) return { toggles: '', blocks: '' };
+
+	const toggle = (key, label, checked = true) =>
+		`<label><input type="checkbox" data-block="${key}"${checked ? ' checked' : ''} /> ${esc(label)}</label>`;
+	const toggleItems = [
+		...axes.filter(hasForce).map((a) => toggle(`force-${a}`, `${a} force`)),
+		hasRpm ? toggle('force-RPM', 'RPM') : '',
+		...axes.filter(hasFft).map((a) => toggle(`fft-${a}`, `${a} FFT`)),
+		...axes.filter(hasFrm).map((a) => toggle(`frm-${a}`, `${a} FRM`)),
+	].filter(Boolean).join('');
+
+	// A compact dropdown ("Plots ▾") rather than a bare row of checkboxes —
+	// report.js toggles `.fa-menu-open` on click/outside-click.
+	const toggles = `<div class="fa-menu">
+		<button type="button" class="fa-menu-btn" id="faMenuBtn">Plots <span class="fa-menu-count">${toggleItems.split('<label>').length - 1}</span> ▾</button>
+		<div class="fa-menu-panel" id="faMenuPanel">${toggleItems}</div>
+	</div>`;
+
+	const blocks = `<section>
+		<h2>Force Analysis</h2>
+		${rows.length ? `<div class="fa-rows" id="faRows">${rows.join('')}</div>` : ''}
+		${frmFigs ? `<div class="frm-grid" id="faFrmGrid">${frmFigs}</div>` : ''}
+	</section>`;
+
+	return { toggles, blocks };
+}
+
+// The FAST sintering trace appendix. The normalised trace CSV is large, so rather
+// than embed data server-side we hand report.js the file id + series catalog + the
+// default plot groups; it fetches the CSV same-origin and draws the line charts
+// (see REPORT_JS). Returns {toggles, blocks}, both '' if there's no trace.
+function fastAppendix(fastRun) {
+	if (!fastRun || fastRun.status !== 'done' || !fastRun.directus_files_id) return { toggles: '', blocks: '' };
+	const cat = Array.isArray(fastRun.series) ? fastRun.series : [];
+	const pick = (groups, n) => cat.filter((c) => groups.includes(c.group)).map((c) => c.key).slice(0, n);
+	const plots = [];
+	const temps = pick(['temp'], 5);
+	if (temps.length) plots.push({ title: 'Temperature', keys: temps });
+	const fp = pick(['force', 'power'], 4);
+	if (fp.length) plots.push({ title: 'Force / power', keys: fp });
+	const pr = pick(['pressure'], 3);
+	if (pr.length) plots.push({ title: 'Pressure / vacuum', keys: pr });
+	if (!plots.length) return { toggles: '', blocks: '' };
+
+	const attr = (v) => esc(JSON.stringify(v));
+	const toggles = `<label><input type="checkbox" data-block="fast-trace" checked /> Trace plots</label>`;
+	const blocks = `<section data-block="fast-trace">
+		<h2>Sintering trace</h2>
+		<div class="fast-plots" data-file="${esc(fastRun.directus_files_id)}" data-catalog='${attr(cat)}' data-plots='${attr(plots)}'>
+			<div class="fp-msg">Loading trace…</div>
+		</div>
+	</section>`;
+	return { toggles, blocks };
+}
+
 export function renderOperationReport(d) {
-	const { op: o, qrSvg, recordUrl, publicUrl } = d;
+	const { op: o, qrSvg, recordUrl, publicUrl, fa, fastRun } = d;
 	const shortId = String(o.operation_id).split('-')[0];
 	const sampleUrl = `${publicUrl}/admin/content/physical_samples/${o.sample_id}`;
 	const catLabel = CATEGORY_LABEL[o.process_category] || (o.process_category ? esc(o.process_category) : 'Operation');
@@ -582,7 +868,18 @@ export function renderOperationReport(d) {
 		kvCell('Tool', dash(o.tool_code)),
 		kvCell('Insert / edge', [o.insert_code, o.insert_edge_code].filter(Boolean).map(esc).join(' · ') || '—'),
 		kvCell('Force file', dash(o.force_file_id)),
-	].join('');
+		// The .mat file's own recorded time (metadata.TriggerTime), when present —
+		// distinct from operation_date, which for legacy imports is often just the
+		// sample record's creation time.
+		fa?.trigger_time ? kvCell('Recorded', fmtDateTime(fa.trigger_time)) : '',
+	].filter(Boolean).join('');
+
+	// Machining ops get the force/FFT/FRM appendix; sintering (FAST) ops get the
+	// trace-plot appendix instead (an op is one or the other).
+	const app = o.process_category === 'sintering'
+		? fastAppendix(fastRun)
+		: forceAppendix(fa, publicUrl);
+	const { toggles: extraToggles, blocks: extraBlocks } = app;
 
 	return datasheetHtml({
 		eyebrow: `${catLabel} Operation`,
@@ -593,6 +890,7 @@ export function renderOperationReport(d) {
 		params: paramCells(o, OP_PARAM_GROUPS[o.process_category]),
 		notes: o.outcome_notes ? `<section class="notes"><span class="k">Outcome notes</span><p>${esc(o.outcome_notes)}</p></section>` : '',
 		qrSvg, recordUrl, shortId,
+		extraToggles, extraBlocks,
 	});
 }
 

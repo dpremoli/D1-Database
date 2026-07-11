@@ -25,14 +25,17 @@
 import { inject, ref, computed, watch, type Ref } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 
-const props = defineProps<{ value: string | null }>();
+const props = defineProps<{ value: string | null; primaryKey?: string | number | null }>();
 const emit = defineEmits<{ (e: 'input', value: string | null): void }>();
 
 const values = inject<Ref<Record<string, any>>>('values', ref({}));
 const api = useApi();
 
 // Existing records arrive with a value already set — never auto-clobber those.
-const manual = ref<boolean>(!!props.value);
+// `value` can populate a tick after mount, so also key off the primary key: a
+// real id (not '+') means an existing record we must never dirty on open.
+const isExistingItem = () => props.primaryKey != null && props.primaryKey !== '+';
+const manual = ref<boolean>(!!props.value || isExistingItem());
 
 // --- resolve the input sample's code from sample_id ---
 const sampleCode = ref<string | null>(null);
@@ -64,6 +67,35 @@ function num(v: unknown): string {
 	if (Number.isNaN(n)) return '';
 	return String(parseFloat(n.toPrecision(6)));
 }
+
+// DD-MM-YY for the sintering code (FAST ops carry no sample, so the date + a global
+// counter are what make the code unique). Empty when no date is set yet.
+function dateCode(v: unknown): string {
+	if (!v) return '';
+	const d = new Date(v as string);
+	if (Number.isNaN(d.getTime())) return '';
+	const p = (x: number) => String(x).padStart(2, '0');
+	return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${String(d.getFullYear()).slice(-2)}`;
+}
+
+// Global running counter for a NEW sintering op — the next MF number after all
+// existing ones (mirrors the DD-MM-YY-MF{n} scheme the backfill applied). Fetched
+// once when the form is a new sintering record; null → fall back to the sequence.
+const sinterSeq = ref<number | null>(null);
+watch(
+	() => values.value?.process_category,
+	async (cat) => {
+		if (cat !== 'sintering' || isExistingItem() || sinterSeq.value != null) return;
+		try {
+			const res = await api.get('/items/manufacturing_operations', {
+				params: { filter: { process_category: { _eq: 'sintering' } }, aggregate: { count: '*' } },
+			});
+			const c = Number(res?.data?.data?.[0]?.count ?? 0);
+			sinterSeq.value = (Number.isFinite(c) ? c : 0) + 1;
+		} catch { sinterSeq.value = null; }
+	},
+	{ immediate: true },
+);
 
 // Abbreviation maps for the typed dropdowns.
 const HT_TYPE: Record<string, string> = {
@@ -102,12 +134,17 @@ const autoCode = computed<string>(() => {
 			num(v.machining_axial_depth_of_cut_mm) && `${num(v.machining_axial_depth_of_cut_mm)}DoC`,
 		].filter(Boolean) as string[];
 	} else if (cat === 'sintering') {
-		token = `MF${seqStr}`;
-		parts = [
+		// FAST/sintering ops usually have no sample link, so uniqueness comes from the
+		// date + a global counter:  DD-MM-YY-MF{NNNN}-{params}  (matches the backfill).
+		const dcode = dateCode(v.operation_date);
+		const nStr = sinterSeq.value != null ? String(sinterSeq.value) : seqStr;
+		const mf = `MF${nStr}`;
+		const sparams = [
 			num(v.sintering_max_temp_celsius) && `${num(v.sintering_max_temp_celsius)}C`,
 			num(v.sintering_max_force_kn) && `${num(v.sintering_max_force_kn)}kN`,
 			num(v.sintering_mould_diameter_mm) && `${num(v.sintering_mould_diameter_mm)}dia`,
-		].filter(Boolean) as string[];
+		].filter(Boolean).join('_');
+		return [dcode, mf, sparams].filter(Boolean).join('-');
 	} else if (cat === 'heat_treatment') {
 		token = `HT${HT_TYPE[v.ht_treatment_type] ?? ''}${seqStr}`;
 		parts = [
@@ -143,6 +180,7 @@ const autoCode = computed<string>(() => {
 watch(
 	autoCode,
 	(code) => {
+		if (isExistingItem()) return;   // never auto-emit for saved records
 		if (!manual.value && code && code !== props.value) emit('input', code);
 	},
 	{ immediate: true },
