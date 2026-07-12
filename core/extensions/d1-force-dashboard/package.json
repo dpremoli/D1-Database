@@ -7,7 +7,8 @@
     "dev": "directus-extension build --watch"
   },
   "dependencies": {
-    "three": "^0.160.0"
+    "three": "^0.160.0",
+    "potree-core": "^2.0.4"
   },
   "devDependencies": {
     "@directus/extensions-sdk": "^17",

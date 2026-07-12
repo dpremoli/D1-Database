@@ -4,6 +4,7 @@ import { useApi, useStores } from '@directus/extensions-sdk';
 import { useRoute, useRouter } from 'vue-router';
 import ForceChart from './ForceChart.vue';
 import FrmCloud from './FrmCloud.vue';
+import FrmOctree from './FrmOctree.vue';
 import type { SpeedMode } from './liveCloud';
 
 const api = useApi();
@@ -96,6 +97,37 @@ const colormap = ref('viridis');
 const renderPoints = ref(3000000);   // full-res cut-window cache (host caps ~3M)
 const rendering = ref(false);
 const renderMsg = ref<string | null>(null);
+// ---- Full-resolution octree (Phase 2) ----------------------------------------------
+// For ops too large for the client cache, the host builds a Potree octree from the raw
+// .mat; the browser LOD-streams it (FrmOctree). octreeMode swaps the FRM column to it.
+const octreeMode = ref(false);
+const buildingOctree = ref(false);
+const octreeMsg = ref<string | null>(null);
+const octreeAvailable = computed(() => detail.value?.octree_status === 'done' && !!detail.value?.octree_path);
+const octreeOn = computed(() => octreeMode.value && octreeAvailable.value);
+async function buildOctree() {
+	const d = detail.value;
+	if (!d?.id || buildingOctree.value) return;
+	buildingOctree.value = true; octreeMsg.value = 'Requesting full-res octree build on the host…';
+	try {
+		await api.patch(`/items/machining_force_analysis/${d.id}`, { octree_status: 'pending', octree_requested_at: new Date().toISOString() });
+		octreeMsg.value = 'Building on the host (minutes for large ops)…';
+		const deadline = Date.now() + 15 * 60 * 1000;
+		while (Date.now() < deadline) {
+			await new Promise((r) => setTimeout(r, 3000));
+			const res = await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['octree_status', 'octree_path', 'octree_points', 'octree_error'] } });
+			const row = res.data?.data;
+			if (row?.octree_status === 'done' && row.octree_path) {
+				detail.value = { ...detail.value, octree_status: 'done', octree_path: row.octree_path, octree_points: row.octree_points };
+				octreeMsg.value = null; octreeMode.value = true; return;
+			}
+			if (row?.octree_status === 'error') { octreeMsg.value = `Build failed: ${row.octree_error || 'unknown'}`; return; }
+		}
+		octreeMsg.value = 'Still building — check back shortly (is the force orchestrator running?).';
+	} catch (e: any) {
+		octreeMsg.value = e?.response?.status === 403 ? 'Not permitted (admin only) to request a host build.' : (e?.message || 'octree request failed');
+	} finally { buildingOctree.value = false; }
+}
 // Manual colour-scale limits for the live cloud (null => auto prctile 1/99 in
 // liveCloud). autoClimits mirrors what the cloud actually applied so the fields
 // can display/seed from the current auto values.
@@ -401,7 +433,8 @@ async function selectOp(row: any) {
 					'operation_id.sample_id.form', 'operation_id.sample_id.manufactured_date',
 					'operation_id.sample_id.owner_person_id.full_name',
 					'operation_id.sample_id.material_id.common_name',
-					'directus_files_id.filesize', 'live_cache_file', 'live_render_points', 'pulses_per_rev'],
+					'directus_files_id.filesize', 'live_cache_file', 'live_render_points', 'pulses_per_rev',
+					'octree_status', 'octree_path', 'octree_points'],
 			},
 		});
 		detail.value = res.data.data;
@@ -899,11 +932,15 @@ function fmtDateTime(v: string | null | undefined) {
 						<div v-if="showFRM" class="card col-frm frm-col"
 							:style="(!stacked && showForce) ? { flexBasis: ((1 - rightSplit) * 100) + '%' } : {}">
 							<div class="frm-head">
-								<span class="frm-kicker"><v-icon name="fingerprint" small /> {{ liveOn ? 'Live FRM' : 'FRM plot' }}</span>
+								<span class="frm-kicker"><v-icon name="fingerprint" small /> {{ octreeOn ? 'Full-res FRM' : (liveOn ? 'Live FRM' : 'FRM plot') }}</span>
 								<div class="toggle">
-									<button v-if="liveOn" class="tbtn" :disabled="downloadingView"
+									<button v-if="liveOn && !octreeOn" class="tbtn" :disabled="downloadingView"
 										title="Download this viewport as a full-resolution FRM (host render, pixel-identical to the report PNGs)"
 										@click="downloadViewport"><v-icon :name="downloadingView ? 'hourglass_top' : 'photo_camera'" x-small /></button>
+									<button v-if="detail" class="tbtn" :class="{ on: octreeOn }" :disabled="buildingOctree"
+										:title="octreeAvailable ? 'Full-resolution octree view (LOD-streamed)' : 'Build a full-resolution Potree octree on the host'"
+										:style="octreeOn ? { background: '#0891b2', borderColor: '#0891b2' } : {}"
+										@click="octreeAvailable ? (octreeMode = !octreeMode) : buildOctree()"><v-icon :name="buildingOctree ? 'hourglass_top' : 'blur_on'" x-small /> Full-res</button>
 									<button v-if="detail && detail[`frm_${axis.toLowerCase()}`]" class="tbtn" title="Download this FRM image"
 										@click="downloadFile(detail[`frm_${axis.toLowerCase()}`])"><v-icon name="download" x-small /></button>
 									<button v-for="a in AXES" :key="a" class="tbtn" :class="{ on: axis === a }"
@@ -913,6 +950,8 @@ function fmtDateTime(v: string | null | undefined) {
 							</div>
 							<div class="frm-img">
 								<div v-if="!detail" class="empty">Select an operation</div>
+								<FrmOctree v-else-if="octreeOn" :octree-path="detail.octree_path" :axis="axis"
+									:colormap="colormap" :point-size="pointSize" :cmin="cmin" :cmax="cmax" @climits="onClimits" />
 								<FrmCloud v-else-if="liveOn" ref="frmCloudRef" :cache-file-id="detail.live_cache_file"
 									:axis="axis" :feed="editFeed" :diam="editDiam" :speed-mode="speedMode"
 									:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
@@ -924,6 +963,7 @@ function fmtDateTime(v: string | null | undefined) {
 								<img v-else-if="frmUrl" :src="frmUrl" :alt="`FRM ${axis}`" />
 								<div v-else class="empty">No {{ axis }} fingerprint</div>
 								<div v-if="downloadViewMsg" class="render-msg frm-render-msg">{{ downloadViewMsg }}</div>
+								<div v-if="octreeMsg" class="render-msg frm-render-msg">{{ octreeMsg }}</div>
 							</div>
 						</div>
 					</div>
