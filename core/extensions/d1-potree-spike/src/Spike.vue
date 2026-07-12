@@ -9,14 +9,67 @@
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { Potree, type PointCloudOctree, PointColorType, VIRIDIS } from 'potree-core';
+import { Potree, type PointCloudOctree } from 'potree-core';
 
 // Served same-origin by Caddy (/octrees/*) so Directus's CSP allows streaming it.
-const OCTREE_BASE = `${window.location.origin}/octrees/spiral/`;
+// Real op 9fa1f0e9 octree (1.93M pts, built by the host .mat->octree pipeline).
+const OCTREE_BASE = `${window.location.origin}/octrees/9fa1f0e9-373c-5de6-af48-57f1b4df87bb/`;
 
 const host = ref<HTMLDivElement | null>(null);
 const status = ref<string[]>([]);
 function log(s: string) { status.value.push(s); }
+
+// viridis anchor LUT → a 256×1 gradient texture our custom material samples.
+const VIRIDIS: [number, number, number][] = [
+	[0.267004, 0.004874, 0.329415], [0.282623, 0.140926, 0.457517], [0.253935, 0.265254, 0.529983],
+	[0.206756, 0.371758, 0.553117], [0.163625, 0.471133, 0.558148], [0.127568, 0.566949, 0.550556],
+	[0.134692, 0.658636, 0.517649], [0.266941, 0.748751, 0.440573], [0.477504, 0.821444, 0.318195],
+	[0.741388, 0.873449, 0.149561], [0.993248, 0.906157, 0.143936],
+];
+function viridisTexture(): THREE.DataTexture {
+	const N = 256, data = new Uint8Array(N * 4);
+	for (let i = 0; i < N; i++) {
+		const x = i / (N - 1), s = x * 10, k = Math.min(9, Math.floor(s)), f = s - k;
+		const a = VIRIDIS[k], b = VIRIDIS[k + 1];
+		data[i * 4] = 255 * (a[0] + (b[0] - a[0]) * f);
+		data[i * 4 + 1] = 255 * (a[1] + (b[1] - a[1]) * f);
+		data[i * 4 + 2] = 255 * (a[2] + (b[2] - a[2]) * f);
+		data[i * 4 + 3] = 255;
+	}
+	const t = new THREE.DataTexture(data, N, 1, THREE.RGBAFormat);
+	t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.needsUpdate = true;
+	return t;
+}
+
+// Our own point material: colour by the `intensity` attribute (the force scalar) through
+// the viridis gradient, in-shader. This bypasses potree-core 2.0.15's broken 2.0-octree
+// colour pipeline (new_format hard-codes vColor=rgba + its rgba decoder is buggy). potree
+// stays responsible only for octree LOD/streaming; WE own colour, exactly like Phase 1.
+function makeViridisMaterial(range: [number, number]): THREE.ShaderMaterial {
+	return new THREE.ShaderMaterial({
+		uniforms: {
+			uGradient: { value: viridisTexture() },
+			uRange: { value: new THREE.Vector2(range[0], range[1]) },
+			uSize: { value: 2.0 },
+		},
+		vertexShader: `
+			attribute float intensity;
+			uniform vec2 uRange; uniform float uSize;
+			varying float vT;
+			void main() {
+				vT = clamp((intensity - uRange.x) / max(1.0, uRange.y - uRange.x), 0.0, 1.0);
+				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+				gl_PointSize = uSize;
+			}`,
+		fragmentShader: `
+			precision mediump float;
+			uniform sampler2D uGradient; varying float vT;
+			void main() {
+				vec2 d = gl_PointCoord - vec2(0.5); if (dot(d, d) > 0.25) discard;
+				gl_FragColor = vec4(texture2D(uGradient, vec2(vT, 0.5)).rgb, 1.0);
+			}`,
+	});
+}
 
 let renderer: THREE.WebGLRenderer | null = null;
 let controls: OrbitControls | null = null;
@@ -67,15 +120,15 @@ onMounted(async () => {
 		// Colour by a SCALAR attribute (the force, stored in `intensity`) through a
 		// viridis gradient — the real-build path (recolour/re-range without touching the
 		// octree). Not baked RGB.
-		const m: any = pco.material;
-		m.size = 1.5;
-		m.pointSizeType = 0;                             // FIXED px
-		m.pointColorType = PointColorType.INTENSITY_GRADIENT;
-		m.intensityRange = [0, 65535];                  // spike intensity = fval*65535
-		m.gradient = VIRIDIS;
-		if (typeof m.updateShaderSource === 'function') m.updateShaderSource();
-		m.needsUpdate = true;
-		log(`material: ${m?.constructor?.name} pointColorType=${m.pointColorType} hasUpdateFn=${typeof m.updateShaderSource === 'function'}`);
+		// Replace potree-core's (broken-for-colour) material with our own viridis-by-
+		// intensity material BEFORE the first updatePointClouds, so every streamed node
+		// is created with it. potree keeps doing LOD; we do colour.
+		const viridisMat = makeViridisMaterial([0, 65535]);
+		// potree-core calls material.updateMaterial(...) per frame to push LOD uniforms;
+		// our fixed-size material doesn't need them, so stub it to a no-op.
+		(viridisMat as any).updateMaterial = () => { /* fixed-size: no per-frame LOD uniforms */ };
+		(pco as any).material = viridisMat;
+		log(`custom viridis material installed (colour by intensity)`);
 		log(`octree attrs: ${(pco.pcoGeometry as any)?.pointAttributes?.attributes?.map((a: any) => a.name).join(',') ?? '?'}`);
 		pco.updateMatrixWorld(true);
 		log(`octree loaded: ${pco.pcoGeometry?.root ? 'root node ok' : 'no root'}`);

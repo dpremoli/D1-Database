@@ -55,6 +55,7 @@ import logging
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -73,6 +74,20 @@ MATLAB_SRC = SCRIPT_DIR / "matlab"          # holds process_force.m
 
 ARCHIVE_UNC = os.environ.get("ARCHIVE_UNC", r"\\uosfstore.shef.ac.uk\shared\star_group1")
 DIRECTUS_URL = os.environ.get("DIRECTUS_URL", "http://localhost:8055").rstrip("/")
+
+# Phase 2 Potree octrees: PotreeConverter builds them from a LAS; they are written under
+# OCTREE_DIR (the Caddy-served ./infra/octrees mount) as <op_id>/ and streamed by the
+# browser. POTREE_CONVERTER is auto-detected if unset.
+OCTREE_DIR = Path(os.environ.get("OCTREE_DIR", str(SCRIPT_DIR.parent / "infra" / "octrees")))
+
+
+def detect_potree_converter() -> str | None:
+    env = os.environ.get("POTREE_CONVERTER")
+    if env and Path(env).exists():
+        return env
+    cands = glob.glob(os.path.expanduser(r"~/Downloads/PotreeConverter*/**/PotreeConverter.exe"), recursive=True)
+    cands += glob.glob(r"C:\Program Files\PotreeConverter*\PotreeConverter.exe")
+    return cands[0] if cands else None
 
 # Scalar columns written from summary.json (JSON key == column name).
 SUMMARY_COLS = [
@@ -409,6 +424,127 @@ def handle_renders(conn, exe: str, directus) -> int:
     return len(rows)
 
 
+# ------------------------------------------------------- Potree octree build (Phase 2)
+def claim_octree(conn, limit: int = 2):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("""
+            WITH picked AS (
+                SELECT id FROM machining_force_analysis
+                 WHERE octree_status='pending'
+                 ORDER BY octree_requested_at NULLS FIRST
+                 LIMIT %s FOR UPDATE SKIP LOCKED
+            )
+            UPDATE machining_force_analysis a SET octree_status='processing', updated_at=now()
+              FROM picked WHERE a.id = picked.id
+         RETURNING a.id, a.operation_id, a.pulses_per_rev,
+                   (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
+        """, [limit])
+        rows = cur.fetchall()
+    conn.commit()
+    return rows
+
+
+def _read_octree_bin(path: str):
+    import numpy as np
+    with open(path, "rb") as f:
+        magic, n = struct.unpack("<II", f.read(8))
+        if magic != 0x44314F43:
+            raise RuntimeError(f"bad octree bin magic {magic:#x}")
+        a = np.frombuffer(f.read(n * 5 * 4), dtype="<f4")
+    return n, a[0:n], a[n:2 * n], a[2 * n:3 * n], a[3 * n:4 * n], a[4 * n:5 * n]
+
+
+def process_octree_row(conn, row, exe: str, timeout: int, matlab_opts: dict, potree_exe: str) -> str:
+    """MATLAB emits the full-res cloud -> laspy writes a LAS (force axes as attributes) ->
+    PotreeConverter builds the octree -> publish under OCTREE_DIR/<op_id>/ for Caddy."""
+    import numpy as np
+    import laspy
+    outdir = tempfile.mkdtemp(prefix="octree_", dir=os.environ.get("FORCE_WORKDIR"))
+    try:
+        if not row.get("archive_path"):
+            raise ValueError("no archive .mat linked to this analysis row")
+        binp = str(Path(outdir) / "cloud.bin")
+        opts = {k: int(v) for k, v in matlab_opts.items()}
+        ppr = row.get("pulses_per_rev")
+        if ppr and int(ppr) > 0:
+            opts["pulses_per_rev"] = int(ppr)
+        opts["octree_out"] = binp
+        stmt = (f"addpath('{mlq(str(MATLAB_SRC))}'); "
+                f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})")
+        p = subprocess.run([exe, "-batch", stmt], capture_output=True, text=True, timeout=timeout)
+        if p.returncode != 0 or not Path(binp).exists():
+            tail = (p.stderr or p.stdout or "").strip().splitlines()[-5:]
+            raise RuntimeError("matlab octree emit failed: " + " | ".join(tail))
+        n, x, y, fx, fy, fz = _read_octree_bin(binp)
+        if n == 0:
+            raise RuntimeError("empty cloud")
+
+        las_path = str(Path(outdir) / "cloud.las")
+        h = laspy.LasHeader(point_format=3)
+        h.offsets = [float(x.min()), float(y.min()), 0.0]
+        h.scales = [0.001, 0.001, 0.001]
+        for nm in ("Fx", "Fy", "Fz"):
+            h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.float32))
+        las = laspy.LasData(h)
+        las.x = x.astype(np.float64); las.y = y.astype(np.float64); las.z = np.zeros(n)
+        las.Fx = fx; las.Fy = fy; las.Fz = fz
+        lo, hi = float(fz.min()), float(fz.max())
+        las.intensity = np.clip((fz - lo) / ((hi - lo) or 1.0) * 65535, 0, 65535).astype(np.uint16)
+        las.write(las_path)
+
+        octmp = str(Path(outdir) / "octree")
+        pc = subprocess.run([potree_exe, las_path, "-o", octmp], capture_output=True, text=True, timeout=timeout)
+        if pc.returncode != 0 or not (Path(octmp) / "metadata.json").exists():
+            tail = (pc.stderr or pc.stdout or "").strip().splitlines()[-5:]
+            raise RuntimeError("PotreeConverter failed: " + " | ".join(tail))
+
+        op = str(row["operation_id"])
+        dst = OCTREE_DIR / op
+        if dst.exists():
+            shutil.rmtree(dst, ignore_errors=True)
+        dst.mkdir(parents=True, exist_ok=True)
+        for fn in ("metadata.json", "hierarchy.bin", "octree.bin"):
+            shutil.copy2(Path(octmp) / fn, dst / fn)
+
+        with conn.cursor() as cur:
+            cur.execute("UPDATE machining_force_analysis SET octree_status='done', octree_path=%s, "
+                        "octree_points=%s, octree_error=NULL, updated_at=now() WHERE id=%s",
+                        [op, int(n), row["id"]])
+        conn.commit()
+        log.info("[OCTREE] %s -> %s (%d pts)", Path(row["archive_path"]).stem, op, n)
+        return "done"
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("UPDATE machining_force_analysis SET octree_status='error', octree_error=%s, "
+                        "updated_at=now() WHERE id=%s", [str(e)[:2000], row["id"]])
+        conn.commit()
+        log.error("[OCTREE-ERR] %s", e)
+        return "error"
+    finally:
+        shutil.rmtree(outdir, ignore_errors=True)
+
+
+def handle_octrees(conn, exe: str) -> int:
+    """Build Potree octrees for any pending requests. Needs PotreeConverter + laspy; if
+    either is missing, requests are left pending (logged once)."""
+    potree_exe = detect_potree_converter()
+    if not potree_exe:
+        return 0
+    try:
+        import laspy  # noqa: F401
+    except ImportError:
+        log.warning("laspy not installed (pip install laspy) — octree requests left pending")
+        return 0
+    rows = claim_octree(conn)
+    if not rows:
+        return 0
+    matlab_opts = load_sampling_opts(conn)
+    for r in rows:
+        process_octree_row(conn, r, exe, 3600, matlab_opts, potree_exe)
+    return len(rows)
+
+
 # ----------------------------------------------------------------------- directus
 # Directus File Library folders for generated artifacts.
 FRM_FOLDER_NAME = os.environ.get("FRM_FOLDER_NAME", "Force Fingerprints")
@@ -655,6 +791,7 @@ def run_queue(conn, args, exe, mrelease):
         log.warning("DIRECTUS_ADMIN_EMAIL unset — FRM PNGs will not be uploaded (frm_file stays NULL)")
 
     handle_renders(conn, exe, directus)   # process any pending viewport-download renders
+    handle_octrees(conn, exe)             # build any pending Potree octrees
 
     total = 0
     while True:
@@ -741,6 +878,10 @@ def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
                 nr = handle_renders(conn, exe, directus)
                 if nr:
                     log.info("daemon: processed %d viewport render request(s)", nr)
+
+                no = handle_octrees(conn, exe)
+                if no:
+                    log.info("daemon: built %d Potree octree(s)", no)
 
                 if state["desired_state"] != "running":
                     mark("paused")

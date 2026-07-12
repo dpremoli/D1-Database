@@ -200,6 +200,28 @@ if isfield(opts, 'viewport') && ~isempty(opts.viewport)
     return;                                          % viewport-only: skip full processing
 end
 
+% ---- octree emit (Phase 2): dump the FULL-resolution FRM cloud (x,y + all three
+%      force axes) as a little-endian binary for the host to convert to a Potree
+%      octree (LAS -> PotreeConverter). No stride: every cut-window sample. Then STOP.
+%      Format: uint32 magic 0x44314F43 'D1OC', uint32 N, then float32 x,y,Fx,Fy,Fz [N].
+if isfield(opts, 'octree_out') && ~isempty(opts.octree_out)
+    [ox, oy] = pol2cart(theta, rho);                 % full resolution
+    ofx = axes_cut{1}; ofy = axes_cut{2}; ofz = axes_cut{3};
+    Noc = numel(ox);
+    fid = fopen(char(opts.octree_out), 'w', 'l');
+    if fid < 0; error('process_force:octree', 'cannot open %s', opts.octree_out); end
+    cleaner = onCleanup(@() fclose(fid));
+    fwrite(fid, uint32(hex2dec('44314F43')), 'uint32');
+    fwrite(fid, uint32(Noc), 'uint32');
+    fwrite(fid, single(ox(:)),  'single');
+    fwrite(fid, single(oy(:)),  'single');
+    fwrite(fid, single(ofx(:)), 'single');
+    fwrite(fid, single(ofy(:)), 'single');
+    fwrite(fid, single(ofz(:)), 'single');
+    clear cleaner;                                   % flush+close now
+    return;                                          % octree-only: skip full processing
+end
+
 for k = 1:3
     cc  = axes_cut{k}(1:step:end);
     fig = figure('Visible','off','Position',[0 0 1120 1000],'Color','w');
