@@ -22,6 +22,8 @@ const props = defineProps<{
 	pointSize: number;
 	cmin?: number | null;
 	cmax?: number | null;
+	zSeries?: 'none' | 'Fx' | 'Fy' | 'Fz';    // drive the Z axis from a force series -> true 3D
+	zScale?: number;                          // height exaggeration as a fraction of the x/y span
 }>();
 const emit = defineEmits<{
 	(e: 'climits', v: { cmin: number; cmax: number }): void;
@@ -67,15 +69,25 @@ function makeMaterial(): THREE.ShaderMaterial {
 			uRange: { value: new THREE.Vector2(0, 1) },
 			uAxis: { value: AXIS_IDX[props.axis] ?? 2 },
 			uSize: { value: props.pointSize || 1.5 },
+			uZAxis: { value: -1 },                        // -1 = flat (2D); 0/1/2 = Fx/Fy/Fz drive Z
+			uZRange: { value: new THREE.Vector2(0, 1) },
+			uZScale: { value: 0 },                        // world-unit height for the [0,1]-normalised Z
 		},
 		vertexShader: `
 			attribute float Fx; attribute float Fy; attribute float Fz;
 			uniform vec2 uRange; uniform float uAxis; uniform float uSize;
+			uniform float uZAxis; uniform vec2 uZRange; uniform float uZScale;
 			varying float vT;
+			float pick(float i) { return i < 0.5 ? Fx : (i < 1.5 ? Fy : Fz); }
 			void main() {
-				float v = uAxis < 0.5 ? Fx : (uAxis < 1.5 ? Fy : Fz);
+				float v = pick(uAxis);
 				vT = clamp((v - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
-				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+				float z = 0.0;
+				if (uZAxis >= 0.0) {
+					float zv = pick(uZAxis);
+					z = (clamp((zv - uZRange.x) / max(1e-6, uZRange.y - uZRange.x), 0.0, 1.0) - 0.5) * uZScale;
+				}
+				gl_Position = projectionMatrix * modelViewMatrix * vec4(position.xy, z, 1.0);
 				gl_PointSize = uSize;
 			}`,
 		fragmentShader: `
@@ -97,6 +109,27 @@ function applyRange() {
 	const hi = (props.cmax ?? null) !== null && Number.isFinite(props.cmax as number) ? (props.cmax as number) : auto[1];
 	material.uniforms.uRange.value.set(lo, hi > lo ? hi : lo + 1);
 	emit('climits', { cmin: lo, cmax: hi });
+}
+
+// Drive the Z axis from a chosen force series -> true 3D. 'none' keeps it flat + top-down;
+// otherwise the points are displaced by the (normalised) series value * uZScale, and free
+// rotation is enabled so the height can be inspected.
+let baseSpan = 100;
+function applyZ() {
+	if (!material || !controls) return;
+	const z = props.zSeries || 'none';
+	const idx = z === 'Fx' ? 0 : z === 'Fy' ? 1 : z === 'Fz' ? 2 : -1;
+	material.uniforms.uZAxis.value = idx;
+	if (idx >= 0) {
+		const r = ranges[z] || [0, 1];
+		material.uniforms.uZRange.value.set(r[0], r[1] > r[0] ? r[1] : r[0] + 1);
+		material.uniforms.uZScale.value = baseSpan * (props.zScale ?? 0.35);
+		controls.enableRotate = true;
+	} else {
+		material.uniforms.uZScale.value = 0;
+		controls.enableRotate = false;
+		frameCamera();   // snap back to a clean top-down view when flattening
+	}
 }
 
 async function loadMeta(base: string) {
@@ -125,6 +158,7 @@ async function load() {
 		scene!.add(pco);
 		pco.updateMatrixWorld(true);
 		frameCamera();
+		applyZ();
 		loading.value = false;
 	} catch (e: any) {
 		error.value = e?.message || 'failed to load octree';
@@ -136,7 +170,8 @@ function frameCamera() {
 	if (!pco || !camera || !controls) return;
 	const box = pco.boundingBox.clone().applyMatrix4(pco.matrixWorld);
 	const c = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3());
-	const span = (Math.max(sz.x, sz.y) || 100) * 1.08, aspect = cssW / cssH;
+	baseSpan = Math.max(sz.x, sz.y) || 100;
+	const span = baseSpan * 1.08, aspect = cssW / cssH;
 	camera.left = -span / 2 * aspect; camera.right = span / 2 * aspect; camera.top = span / 2; camera.bottom = -span / 2;
 	camera.position.set(c.x, c.y, c.z + 1e5); camera.up.set(0, 1, 0); camera.lookAt(c.x, c.y, c.z);
 	camera.updateProjectionMatrix();
@@ -192,6 +227,7 @@ watch(() => props.axis, () => { if (material) { material.uniforms.uAxis.value = 
 watch(() => props.colormap, () => { if (material) material.uniforms.uGradient.value = gradientTexture(props.colormap); });
 watch(() => props.pointSize, () => { if (material) material.uniforms.uSize.value = props.pointSize || 1.5; });
 watch(() => [props.cmin, props.cmax], applyRange);
+watch(() => [props.zSeries, props.zScale], applyZ);
 </script>
 
 <template>

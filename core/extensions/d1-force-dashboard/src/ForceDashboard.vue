@@ -104,6 +104,9 @@ const renderMsg = ref<string | null>(null);
 const octreeMode = ref(false);
 const buildingOctree = ref(false);
 const octreeMsg = ref<string | null>(null);
+// Z-series: drive the octree's Z axis from a force series for a true 3D view.
+const zSeries = ref<'none' | 'Fx' | 'Fy' | 'Fz'>('none');
+const zScale = ref(0.35);
 const octreeAvailable = computed(() => detail.value?.octree_status === 'done' && !!detail.value?.octree_path);
 const octreeOn = computed(() => octreeMode.value && octreeAvailable.value);
 async function buildOctree() {
@@ -981,6 +984,12 @@ function fmtDateTime(v: string | null | undefined) {
 										:title="octreeAvailable ? 'Full-resolution octree view (LOD-streamed)' : 'Build a full-resolution Potree octree on the host'"
 										:style="octreeOn ? { background: '#0891b2', borderColor: '#0891b2' } : {}"
 										@click="octreeAvailable ? (octreeMode = !octreeMode) : buildOctree()"><v-icon :name="buildingOctree ? 'hourglass_top' : 'blur_on'" x-small /> Full-res</button>
+									<select v-if="octreeOn" v-model="zSeries" class="zsel" title="Drive the Z axis from a force series (3D view — drag to rotate)">
+										<option value="none">2D</option>
+										<option value="Fx">Z = Fx</option>
+										<option value="Fy">Z = Fy</option>
+										<option value="Fz">Z = Fz</option>
+									</select>
 									<button v-if="detail && detail[`frm_${axis.toLowerCase()}`]" class="tbtn" title="Download this FRM image"
 										@click="downloadFile(detail[`frm_${axis.toLowerCase()}`])"><v-icon name="download" x-small /></button>
 									<button v-for="a in AXES" :key="a" class="tbtn" :class="{ on: axis === a }"
@@ -992,6 +1001,7 @@ function fmtDateTime(v: string | null | undefined) {
 								<div v-if="!detail" class="empty">Select an operation</div>
 								<FrmOctree v-else-if="octreeOn" :octree-path="detail.octree_path" :axis="axis"
 									:colormap="colormap" :point-size="pointSize" :cmin="cmin" :cmax="cmax"
+									:z-series="zSeries" :z-scale="zScale"
 									@climits="onClimits" @points="displayedPoints = $event" />
 								<FrmCloud v-else-if="liveOn" ref="frmCloudRef" :cache-file-id="detail.live_cache_file"
 									:axis="axis" :feed="editFeed" :diam="editDiam" :speed-mode="speedMode"
@@ -1181,6 +1191,8 @@ function fmtDateTime(v: string | null | undefined) {
 .frm-res { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums;
 	color: var(--theme--foreground-subdued, #6b7684); background: var(--theme--background-subdued, #f1f5f9);
 	border: 1px solid var(--theme--border-color-subdued, #e7ebf0); border-radius: 99px; padding: 1px 8px; margin-right: auto; }
+.zsel { font: inherit; font-size: 11px; font-weight: 650; padding: 3px 7px; border-radius: 8px; cursor: pointer;
+	border: 1px solid var(--theme--border-color, #d1d9e6); background: var(--theme--background, #fff); color: var(--theme--foreground, #334155); }
 .frm-img { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 220px; overflow: hidden; }
 .frm-img img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; border-radius: 8px; border: 1px solid var(--theme--border-color-subdued, #e7ebf0); }
 .layout.stacked .frm-img { min-height: 380px; }
