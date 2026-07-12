@@ -94,7 +94,8 @@ const gridN = ref(400);
 const pointSize = ref(1.4);
 const colormap = ref('viridis');
 // Tier-2 host render request.
-const renderPoints = ref(3000000);   // full-res cut-window cache (host caps ~3M)
+const renderPoints = ref(5000000);   // full-res cut-window cache (host caps ~5M; >5M -> octree)
+const OCTREE_AUTO_THRESHOLD = 5_000_000;   // ops with more full-res points auto-route to the octree
 const rendering = ref(false);
 const renderMsg = ref<string | null>(null);
 // ---- Full-resolution octree (Phase 2) ----------------------------------------------
@@ -128,6 +129,41 @@ async function buildOctree() {
 		octreeMsg.value = e?.response?.status === 403 ? 'Not permitted (admin only) to request a host build.' : (e?.message || 'octree request failed');
 	} finally { buildingOctree.value = false; }
 }
+
+// Displayed-vs-full resolution readout. "Full" = the map's native resolution (the octree
+// total when built, else the cut-window sample count); "displayed" = what the active
+// viewer renders right now (the Live rebuild count, or the octree's LOD-visible count).
+const displayedPoints = ref(0);
+const fullResPoints = computed<number | null>(() => {
+	const d = detail.value; if (!d) return null;
+	if (d.octree_points) return Number(d.octree_points);
+	if (d.cut_start_idx != null && d.cut_end_idx != null) return Math.max(0, d.cut_end_idx - d.cut_start_idx);
+	return null;
+});
+const resolutionPct = computed(() => {
+	const f = fullResPoints.value;
+	if (!f || !displayedPoints.value) return null;
+	return Math.min(100, Math.round((displayedPoints.value / f) * 100));
+});
+function fmtPts(n: number | null): string {
+	if (n == null) return '—';
+	if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+	if (n >= 1e3) return `${(n / 1e3).toFixed(0)}k`;
+	return String(n);
+}
+// Auto-route: when a map exceeds the octree threshold, default to the LOD octree view
+// (build it on the host if it isn't ready yet). Smaller maps stay on the Live/PNG path.
+watch(() => detail.value?.id, () => {
+	displayedPoints.value = 0;
+	const f = fullResPoints.value;
+	if (f && f > OCTREE_AUTO_THRESHOLD) {
+		octreeMode.value = true;
+		const st = detail.value?.octree_status;
+		if (!octreeAvailable.value && st !== 'pending' && st !== 'processing') buildOctree();
+	} else {
+		octreeMode.value = false;
+	}
+});
 // Manual colour-scale limits for the live cloud (null => auto prctile 1/99 in
 // liveCloud). autoClimits mirrors what the cloud actually applied so the fields
 // can display/seed from the current auto values.
@@ -933,6 +969,10 @@ function fmtDateTime(v: string | null | undefined) {
 							:style="(!stacked && showForce) ? { flexBasis: ((1 - rightSplit) * 100) + '%' } : {}">
 							<div class="frm-head">
 								<span class="frm-kicker"><v-icon name="fingerprint" small /> {{ octreeOn ? 'Full-res FRM' : (liveOn ? 'Live FRM' : 'FRM plot') }}</span>
+								<span v-if="(octreeOn || liveOn) && fullResPoints" class="frm-res"
+									:title="`Displayed ${displayedPoints.toLocaleString()} of ${fullResPoints.toLocaleString()} full-resolution points`">
+									<v-icon name="grain" x-small /> {{ fmtPts(displayedPoints) }} / {{ fmtPts(fullResPoints) }}<template v-if="resolutionPct != null"> · {{ resolutionPct }}%</template>
+								</span>
 								<div class="toggle">
 									<button v-if="liveOn && !octreeOn" class="tbtn" :disabled="downloadingView"
 										title="Download this viewport as a full-resolution FRM (host render, pixel-identical to the report PNGs)"
@@ -951,14 +991,15 @@ function fmtDateTime(v: string | null | undefined) {
 							<div class="frm-img">
 								<div v-if="!detail" class="empty">Select an operation</div>
 								<FrmOctree v-else-if="octreeOn" :octree-path="detail.octree_path" :axis="axis"
-									:colormap="colormap" :point-size="pointSize" :cmin="cmin" :cmax="cmax" @climits="onClimits" />
+									:colormap="colormap" :point-size="pointSize" :cmin="cmin" :cmax="cmax"
+									@climits="onClimits" @points="displayedPoints = $event" />
 								<FrmCloud v-else-if="liveOn" ref="frmCloudRef" :cache-file-id="detail.live_cache_file"
 									:axis="axis" :feed="editFeed" :diam="editDiam" :speed-mode="speedMode"
 									:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
 									:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
 									:stride="plotStride" :gridding="gridding" :grid-n="gridN"
 									:point-size="pointSize" :colormap="colormap" :cmin="cmin" :cmax="cmax"
-									@loaded="onCloudLoaded" @climits="onClimits" />
+									@loaded="onCloudLoaded" @climits="onClimits" @points="displayedPoints = $event" />
 								<div v-else-if="frmLoading" class="loading"><v-progress-circular indeterminate /></div>
 								<img v-else-if="frmUrl" :src="frmUrl" :alt="`FRM ${axis}`" />
 								<div v-else class="empty">No {{ axis }} fingerprint</div>
@@ -1137,6 +1178,9 @@ function fmtDateTime(v: string | null | undefined) {
 
 .col-frm { display: flex; flex-direction: column; gap: 11px; min-height: 0; }
 .frm-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+.frm-res { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums;
+	color: var(--theme--foreground-subdued, #6b7684); background: var(--theme--background-subdued, #f1f5f9);
+	border: 1px solid var(--theme--border-color-subdued, #e7ebf0); border-radius: 99px; padding: 1px 8px; margin-right: auto; }
 .frm-img { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 220px; overflow: hidden; }
 .frm-img img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; border-radius: 8px; border: 1px solid var(--theme--border-color-subdued, #e7ebf0); }
 .layout.stacked .frm-img { min-height: 380px; }

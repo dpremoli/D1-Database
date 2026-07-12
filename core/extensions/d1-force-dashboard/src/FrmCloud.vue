@@ -37,6 +37,7 @@ const props = defineProps<{
 const emit = defineEmits<{
 	(e: 'loaded', meta: { csSec: number; ceSec: number; feed: number; diam: number; rpm: number; Fs: number; N: number }): void;
 	(e: 'climits', v: { cmin: number; cmax: number }): void;
+	(e: 'points', n: number): void;   // rendered point count (for the resolution readout)
 }>();
 
 const api = useApi();
@@ -44,6 +45,12 @@ const loading = ref(true);
 const error = ref<string | null>(null);
 const cache = ref<Cache | null>(null);
 const pointCount = ref(0);
+// Declared up here (not next to scheduleDraw) because the cacheFileId watch below runs
+// load() with immediate:true; when the cache is already in the LRU (precached), load()
+// runs synchronously during setup and calls resetView()->scheduleDraw(), which reads
+// these — so they must be initialised first (else a "Cannot access 'raf'…" TDZ error).
+let raf = 0;
+let pendingRebuild = false;
 
 async function load(id: string) {
 	loading.value = true; error.value = null;
@@ -199,6 +206,7 @@ function rebuild() {
 		cmin: props.cmin, cmax: props.cmax,
 	});
 	pointCount.value = cloud?.count ?? 0;
+	emit('points', pointCount.value);
 	if (!cloud) { climits.value = null; scaleBar.value = null; return; }
 
 	// data-fit params (used when the view is in auto-fit mode + as reset target)
@@ -241,8 +249,6 @@ function draw() {
 	updateScaleBar();
 }
 
-let raf = 0;
-let pendingRebuild = false;
 function scheduleDraw() {
 	if (raf) return;
 	raf = requestAnimationFrame(() => {

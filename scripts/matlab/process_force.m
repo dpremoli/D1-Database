@@ -40,7 +40,7 @@ opts = withdefault(opts, 'series_points', 3000);
 opts = withdefault(opts, 'fft_points', 3000);
 opts = withdefault(opts, 'frm_downsample_step', 5);
 opts = withdefault(opts, 'frm_dpi', 300);
-opts = withdefault(opts, 'live_cache_points', 3000000);   % cache the cut window ~1:1 up to 3M
+opts = withdefault(opts, 'live_cache_points', 5000000);   % cache the cut window ~1:1 up to 5M (>5M -> octree)
 opts = withdefault(opts, 'pulses_per_rev', 1);
 if ~exist(outdir, 'dir'); mkdir(outdir); end
 

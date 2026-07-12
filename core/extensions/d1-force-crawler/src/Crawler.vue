@@ -262,6 +262,7 @@ function opLabel(r: any) { return r.operation_id?.pass_code || r.operation_id?.s
 							<label>FRM DPI<input v-model.number="draft.frm_dpi" type="number" min="72" step="6" @input="dirty = true" /></label>
 						<label>Live cache points<input v-model.number="draft.live_cache_points" type="number" min="1000" step="1000" @input="dirty = true" /></label>
 						<label>Pulses per rev<input v-model.number="draft.pulses_per_rev" type="number" min="1" step="1" @input="dirty = true" /></label>
+							<p class="setting-note">A map whose cut window has ≤ <b>Live cache points</b> is cached 1:1 and plotted at full resolution in Live mode; larger maps are decimated to this cap. Ops above ~5M points auto-route to a host-built Potree octree (LOD-streamed).</p>
 						</div>
 						<button class="savebtn" :disabled="!dirty || saving" @click="saveSettings">
 							{{ saving ? 'Saving…' : 'Save settings' }}
@@ -385,6 +386,7 @@ function opLabel(r: any) { return r.operation_id?.pass_code || r.operation_id?.s
 	font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 9px;
 	border: 1px solid var(--theme--border-color-subdued, #e7ebf0); background: var(--theme--background, #fff); color: inherit;
 }
+.setting-note { grid-column: 1 / -1; margin: 2px 0 6px; font-size: 11px; line-height: 1.5; color: var(--theme--foreground-subdued, #6b7684); }
 .savebtn {
 	font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; border: 0; border-radius: 9px;
 	padding: 7px 16px; color: #fff; background: var(--theme--primary, #1d4ed8);

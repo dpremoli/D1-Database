@@ -23,7 +23,10 @@ const props = defineProps<{
 	cmin?: number | null;
 	cmax?: number | null;
 }>();
-const emit = defineEmits<{ (e: 'climits', v: { cmin: number; cmax: number }): void }>();
+const emit = defineEmits<{
+	(e: 'climits', v: { cmin: number; cmax: number }): void;
+	(e: 'points', n: number): void;   // LOD-visible point count (for the resolution readout)
+}>();
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 const loading = ref(true);
@@ -159,7 +162,8 @@ function setupGL() {
 		controls!.update();
 		if (pco && potree && renderer && camera) {
 			const r = potree.updatePointClouds([pco], camera, renderer);
-			pointCount.value = (r as any)?.numVisiblePoints ?? pointCount.value;
+			const n = (r as any)?.numVisiblePoints ?? pointCount.value;
+			if (Math.abs(n - pointCount.value) > pointCount.value * 0.02 + 1) { pointCount.value = n; emit('points', n); }
 			renderer.render(scene!, camera);
 		}
 	};
