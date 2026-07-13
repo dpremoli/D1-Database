@@ -200,12 +200,14 @@ if isfield(opts, 'viewport') && ~isempty(opts.viewport)
     return;                                          % viewport-only: skip full processing
 end
 
+[xx0, yy0] = pol2cart(theta, rho);               % full-resolution spiral (shared by octree/grid emit)
+
 % ---- octree emit (Phase 2): dump the FULL-resolution FRM cloud (x,y + all three
 %      force axes) as a little-endian binary for the host to convert to a Potree
 %      octree (LAS -> PotreeConverter). No stride: every cut-window sample. Then STOP.
 %      Format: uint32 magic 0x44314F43 'D1OC', uint32 N, then float32 x,y,Fx,Fy,Fz [N].
 if isfield(opts, 'octree_out') && ~isempty(opts.octree_out)
-    [ox, oy] = pol2cart(theta, rho);                 % full resolution
+    ox = xx0; oy = yy0;                          % full resolution (shared)
     ofx = axes_cut{1}; ofy = axes_cut{2}; ofz = axes_cut{3};
     Noc = numel(ox);
     fid = fopen(char(opts.octree_out), 'w', 'l');
@@ -220,6 +222,40 @@ if isfield(opts, 'octree_out') && ~isempty(opts.octree_out)
     fwrite(fid, single(ofz(:)), 'single');
     clear cleaner;                                   % flush+close now
     return;                                          % octree-only: skip full processing
+end
+
+% ---- interpolated-grid emit: interpolate the FULL-resolution spiral onto a fine N×N grid
+%      (splat/GPU or natural), compute a hold-out-arms fidelity number, and dump the kept
+%      in-support cells as a little-endian D1GR binary for the host to octree-convert. Then STOP.
+%      Format: uint32 magic 0x44314752 'D1GR', uint32 N, float32 fidelity, arm_ratio, cell_mm,
+%      then float32 x,y,Fx,Fy,Fz [N].
+if isfield(opts, 'grid_out') && ~isempty(opts.grid_out)
+    g = struct('n', 2048, 'method', 'splat', 'cv_arm_step', 10);
+    if isfield(opts, 'grid') && isstruct(opts.grid)
+        fn = fieldnames(opts.grid);
+        for ii = 1:numel(fn); g.(fn{ii}) = opts.grid.(fn{ii}); end
+    end
+    theta_cum = cumsum([0; ang_inc]);            % unwrapped cumulative angle (for arm indexing)
+    theta_cum = theta_cum(1:cutend);
+    gfx = axes_cut{1}; gfy = axes_cut{2}; gfz = axes_cut{3};
+    [gx, gy, gFx, gFy, gFz, cellmm] = frm_grid_interp(xx0, yy0, gfx, gfy, gfz, g.n, g.method);
+    [fidelity, arm_ratio] = frm_grid_fidelity(xx0, yy0, theta_cum, gfx, gfy, gfz, g.n, g.method, cellmm, g.cv_arm_step);
+    Ng = numel(gx);
+    fid = fopen(char(opts.grid_out), 'w', 'l');
+    if fid < 0; error('process_force:grid', 'cannot open %s', opts.grid_out); end
+    cleaner = onCleanup(@() fclose(fid));
+    fwrite(fid, uint32(hex2dec('44314752')), 'uint32');
+    fwrite(fid, uint32(Ng), 'uint32');
+    fwrite(fid, single(fidelity), 'single');       % NaN -> reader maps to null
+    fwrite(fid, single(arm_ratio), 'single');
+    fwrite(fid, single(cellmm), 'single');
+    fwrite(fid, single(gx(:)),  'single');
+    fwrite(fid, single(gy(:)),  'single');
+    fwrite(fid, single(gFx(:)), 'single');
+    fwrite(fid, single(gFy(:)), 'single');
+    fwrite(fid, single(gFz(:)), 'single');
+    clear cleaner;                                  % flush+close now
+    return;                                         % grid-only: skip full processing
 end
 
 for k = 1:3
