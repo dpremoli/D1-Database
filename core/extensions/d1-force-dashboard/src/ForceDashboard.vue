@@ -75,7 +75,18 @@ watch([chartMode, selectedRowId], resetZoom);
 // handles, and the operation's plot-driving metadata becomes editable. Everything
 // recomputes client-side from the loaded live cache. A "Process" button (Tier 2)
 // re-renders at a finer resolution on the host (archive is host-only).
-const liveMode = ref(false);
+// Default the point-cloud-vs-image choice by connection speed (a saved preference in
+// the layout localStorage overrides this): fast link -> interactive cloud, slow/metered
+// -> the lighter static image.
+function fastConnection(): boolean {
+	const c = (navigator as any).connection;
+	if (!c) return true;                                   // unknown -> assume fast
+	if (c.saveData) return false;                          // data-saver -> image
+	if (typeof c.effectiveType === 'string') return c.effectiveType === '4g';
+	if (typeof c.downlink === 'number') return c.downlink >= 5;   // Mbps
+	return true;
+}
+const liveMode = ref(fastConnection());
 // Editable geometry (seeded from the cache on load; user edits drive the cloud).
 const cropStartSec = ref(0);
 const cropEndSec = ref(0);
@@ -95,7 +106,12 @@ const pointSize = ref(1.4);
 const colormap = ref('viridis');
 // Tier-2 host render request.
 const renderPoints = ref(5000000);   // full-res cut-window cache (host caps ~5M; >5M -> octree)
-const OCTREE_AUTO_THRESHOLD = 5_000_000;   // ops with more full-res points auto-route to the octree
+// Auto-route threshold = the crawler's live_cache_points setting (fetched on mount): a
+// map with more points than the cache can hold is streamed as an octree instead. Falls
+// back to 5M if the setting can't be read.
+const octreeThreshold = ref(5_000_000);
+const octreeMinNodePx = ref(1);
+const octreeBudgetCap = ref(25_000_000);
 const rendering = ref(false);
 const renderMsg = ref<string | null>(null);
 // ---- Full-resolution octree (Phase 2) ----------------------------------------------
@@ -133,6 +149,45 @@ async function buildOctree() {
 	} finally { buildingOctree.value = false; }
 }
 
+// ---- Interpolated-grid octree (Gridded + Full-res) ---------------------------------
+const gridAvailable = computed(() => detail.value?.grid_octree_status === 'done' && !!detail.value?.grid_octree_path);
+// "Gridded" is a single mode-aware flag: in Live it drives client-side gridCloud binning
+// (the old `gridding`); in Full-res it selects the interpolated-grid octree.
+const gridActive = computed(() => gridding.value && octreeMode.value && gridAvailable.value);
+const gridFidelityPct = computed(() => {
+	const f = detail.value?.grid_fidelity;
+	return (f == null || Number.isNaN(Number(f))) ? null : Math.round(Number(f) * 100);
+});
+async function buildGridOctree() {
+	const d = detail.value;
+	if (!d?.id || buildingOctree.value) return;
+	buildingOctree.value = true; octreeMsg.value = 'Requesting interpolated-grid build on the host…';
+	try {
+		await api.patch(`/items/machining_force_analysis/${d.id}`, { grid_octree_status: 'pending', grid_octree_requested_at: new Date().toISOString() });
+		octreeMsg.value = 'Interpolating grid on the host (minutes for large ops)…';
+		const deadline = Date.now() + 15 * 60 * 1000;
+		while (Date.now() < deadline) {
+			await new Promise((r) => setTimeout(r, 3000));
+			const res = await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['grid_octree_status', 'grid_octree_path', 'grid_octree_points', 'grid_octree_error', 'grid_fidelity', 'grid_arm_ratio', 'grid_cell_mm'] } });
+			const row = res.data?.data;
+			if (row?.grid_octree_status === 'done' && row.grid_octree_path) {
+				detail.value = { ...detail.value, grid_octree_status: 'done', grid_octree_path: row.grid_octree_path,
+					grid_octree_points: row.grid_octree_points, grid_fidelity: row.grid_fidelity,
+					grid_arm_ratio: row.grid_arm_ratio, grid_cell_mm: row.grid_cell_mm };
+				octreeMsg.value = null; return;
+			}
+			if (row?.grid_octree_status === 'error') { octreeMsg.value = `Grid build failed: ${row.grid_octree_error || 'unknown'}`; return; }
+		}
+		octreeMsg.value = 'Still building — check back shortly (is the force orchestrator running?).';
+	} catch (e: any) {
+		octreeMsg.value = e?.response?.status === 403 ? 'Not permitted (admin only) to request a host build.' : (e?.message || 'grid request failed');
+	} finally { buildingOctree.value = false; }
+}
+// When the user turns on Gridded in Full-res and no grid octree exists yet, build it.
+watch(() => [gridding.value, octreeMode.value], () => {
+	if (gridding.value && octreeMode.value && !gridAvailable.value && !buildingOctree.value) buildGridOctree();
+});
+
 // Displayed-vs-full resolution readout. "Full" = the map's native resolution (the octree
 // total when built, else the cut-window sample count); "displayed" = what the active
 // viewer renders right now (the Live rebuild count, or the octree's LOD-visible count).
@@ -154,18 +209,21 @@ function fmtPts(n: number | null): string {
 	if (n >= 1e3) return `${(n / 1e3).toFixed(0)}k`;
 	return String(n);
 }
-// Auto-route: when a map exceeds the octree threshold, default to the LOD octree view
-// (build it on the host if it isn't ready yet). Smaller maps stay on the Live/PNG path.
+// Auto-route: when a map exceeds the octree threshold AND its octree is already built,
+// default to the LOD octree view. We deliberately do NOT auto-trigger a host build here —
+// that needs the daemon and takes minutes, and its progress message was leaking over the
+// live cloud. Building is an explicit action (the Full-res button). Smaller maps, or large
+// ones without an octree yet, stay on the Live/PNG path.
 watch(() => detail.value?.id, () => {
 	displayedPoints.value = 0;
+	octreeMsg.value = null;   // clear any stale build message from the previous op
+	// Reset the Live crop handles to the new op's auto-crop immediately (else the
+	// previous op's crop lines linger until its live cache reloads). onCloudLoaded then
+	// refines these from the cache once it arrives.
+	if (cropWindow.value) { cropStartSec.value = cropWindow.value.start; cropEndSec.value = cropWindow.value.end; }
+	else { cropStartSec.value = 0; cropEndSec.value = 0; }
 	const f = fullResPoints.value;
-	if (f && f > OCTREE_AUTO_THRESHOLD) {
-		octreeMode.value = true;
-		const st = detail.value?.octree_status;
-		if (!octreeAvailable.value && st !== 'pending' && st !== 'processing') buildOctree();
-	} else {
-		octreeMode.value = false;
-	}
+	octreeMode.value = !!(f && f > octreeThreshold.value && octreeAvailable.value);
 });
 // Manual colour-scale limits for the live cloud (null => auto prctile 1/99 in
 // liveCloud). autoClimits mirrors what the cloud actually applied so the fields
@@ -315,6 +373,17 @@ onBeforeUnmount(() => {
 // -------------------------------------------------------------------- data
 onMounted(async () => {
 	try {
+		// Auto-route threshold comes from the crawler's live_cache_points setting.
+		try {
+			const s = await api.get('/items/force_crawler_state', { params: { fields: ['live_cache_points', 'octree_threshold', 'octree_min_node_px', 'octree_budget_cap'], limit: 1 } });
+			const row = s.data?.data?.[0] || s.data?.data;
+			const cap = Number(row?.octree_threshold ?? row?.live_cache_points);
+			if (Number.isFinite(cap) && cap > 0) octreeThreshold.value = cap;
+			const mnp = Number(row?.octree_min_node_px);
+			if (Number.isFinite(mnp) && mnp > 0) octreeMinNodePx.value = mnp;
+			const bc = Number(row?.octree_budget_cap);
+			if (Number.isFinite(bc) && bc > 0) octreeBudgetCap.value = bc;
+		} catch { /* keep the 5M fallback */ }
 		if (!isAdminRole.value) {
 			const uid = (userStore.currentUser as any)?.id;
 			if (uid) {
@@ -473,7 +542,9 @@ async function selectOp(row: any) {
 					'operation_id.sample_id.owner_person_id.full_name',
 					'operation_id.sample_id.material_id.common_name',
 					'directus_files_id.filesize', 'live_cache_file', 'live_render_points', 'pulses_per_rev',
-					'octree_status', 'octree_path', 'octree_points'],
+					'octree_status', 'octree_path', 'octree_points',
+					'grid_octree_status', 'grid_octree_path', 'grid_octree_points',
+					'grid_fidelity', 'grid_arm_ratio', 'grid_cell_mm'],
 			},
 		});
 		detail.value = res.data.data;
@@ -710,43 +781,23 @@ function downloadFile(fileId: string) {
 	document.body.appendChild(a); a.click(); a.remove();
 }
 
-// Download the CURRENT viewport as a pixel-identical FRM: send the visible bounds +
-// colour settings to the host, which re-renders that crop at full resolution in MATLAB
-// (same styling as the prerendered PNGs) and returns a PNG we then download. Mirrors the
-// Tier-2 request/poll pattern on the analysis row's render_* fields.
-const frmCloudRef = ref<any>(null);
-const downloadingView = ref(false);
-const downloadViewMsg = ref<string | null>(null);
-async function downloadViewport() {
+// "Download this FRM image": in an interactive view (live cloud or octree) export the CURRENT
+// viewport — whatever zoom/pan is on screen — straight from the canvas. Only the static image
+// view (no interactive renderer) falls back to the precomputed full-scale PNG.
+const frmOctreeRef = ref<any>(null);
+function downloadFrm() {
 	const d = detail.value;
-	if (!d?.id || downloadingView.value) return;
-	const bounds = frmCloudRef.value?.currentBounds?.();
-	if (!bounds) { downloadViewMsg.value = 'No viewport to render yet.'; return; }
-	downloadingView.value = true; downloadViewMsg.value = 'Requesting host render…';
-	try {
-		await api.patch(`/items/machining_force_analysis/${d.id}`, {
-			render_status: 'pending',
-			render_bounds: bounds,
-			render_axis: axis.value,
-			render_colormap: colormap.value,
-			render_cmin: cauto.value ? null : cminManual.value,
-			render_cmax: cauto.value ? null : cmaxManual.value,
-			render_requested_at: new Date().toISOString(),
-		});
-		downloadViewMsg.value = 'Rendering on the host…';
-		const deadline = Date.now() + 5 * 60 * 1000;
-		while (Date.now() < deadline) {
-			await new Promise((r) => setTimeout(r, 2500));
-			const res = await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['render_status', 'render_file', 'render_error'] } });
-			const row = res.data?.data;
-			if (row?.render_status === 'done' && row.render_file) { downloadFile(row.render_file); downloadViewMsg.value = null; return; }
-			if (row?.render_status === 'error') { downloadViewMsg.value = `Render failed: ${row.render_error || 'unknown'}`; return; }
-		}
-		downloadViewMsg.value = 'Still rendering — is the host force orchestrator running?';
-	} catch (e: any) {
-		downloadViewMsg.value = e?.response?.status === 403 ? 'Not permitted (admin only) to request a host render.' : (e?.message || 'render request failed');
-	} finally { downloadingView.value = false; }
+	if (!d) return;
+	const label = String((opLabel.value && opLabel.value !== '—') ? opLabel.value : (d.operation_code || d.operation_id || d.id));
+	const name = `FRM_${axis.value}_${label}.png`;
+	if (octreeOn.value && frmOctreeRef.value?.exportViewport) { if (frmOctreeRef.value.exportViewport(name, label)) return; }
+	if (liveOn.value && frmCloudRef.value?.exportViewport) { if (frmCloudRef.value.exportViewport(name, label)) return; }
+	const f = d[`frm_${axis.value.toLowerCase()}`];
+	if (f) downloadFile(f);
 }
+
+// Template ref to the live cloud, used by downloadFrm() to export the current viewport.
+const frmCloudRef = ref<any>(null);
 // The .mat file's own metadata.TriggerTime, when present — the actual recording
 // time, as distinct from operation_date (often just the sample record's creation
 // time for legacy imports).
@@ -898,7 +949,7 @@ function fmtDateTime(v: string | null | undefined) {
 									<label>Show every<select v-model.number="plotStride"><option :value="1">all pts</option><option :value="2">2nd</option><option :value="5">5th</option><option :value="10">10th</option><option :value="25">25th</option></select></label>
 									<label>Colour<select v-model="colormap"><option value="viridis">viridis</option><option value="inferno">inferno</option><option value="grayscale">grayscale</option></select></label>
 									<label>Point size<input v-model.number="pointSize" type="number" step="0.2" min="0.4" max="6" /></label>
-									<label class="chk"><input v-model="gridding" type="checkbox" /> Grid binning</label>
+									<label class="chk"><input v-model="gridding" type="checkbox" /> Gridded</label>
 									<label class="chk wide"><input v-model="cauto" type="checkbox" /> Auto colour limits <span class="u">(prctile 1 / 99)</span></label>
 									<label>Colour min <span class="u">N</span><input v-model.number="cminManual" type="number" step="1" :disabled="cauto" /></label>
 									<label>Colour max <span class="u">N</span><input v-model.number="cmaxManual" type="number" step="1" :disabled="cauto" /></label>
@@ -951,10 +1002,6 @@ function fmtDateTime(v: string | null | undefined) {
 									<button class="tbtn" :class="{ on: chartMode === 'fft' }"
 										:style="chartMode === 'fft' ? { background: '#334155', borderColor: '#334155' } : {}"
 										@click="chartMode = 'fft'">FFT</button>
-									<button class="tbtn" :class="{ on: liveMode }" :disabled="!liveAvailable"
-										:title="liveAvailable ? 'Interactive live plotting' : 'No live cache — reprocess to enable'"
-										:style="liveMode ? { background: '#7c3aed', borderColor: '#7c3aed' } : {}"
-										@click="liveMode = !liveMode">Live</button>
 								</div>
 							</div>
 							<div v-if="!detail" class="empty">Select an operation to view its signals</div>
@@ -976,10 +1023,16 @@ function fmtDateTime(v: string | null | undefined) {
 									:title="`Displayed ${displayedPoints.toLocaleString()} of ${fullResPoints.toLocaleString()} full-resolution points`">
 									<v-icon name="grain" x-small /> {{ fmtPts(displayedPoints) }} / {{ fmtPts(fullResPoints) }}<template v-if="resolutionPct != null"> · {{ resolutionPct }}%</template>
 								</span>
+								<span v-if="gridActive && gridFidelityPct != null" class="frm-fid" :class="{ good: gridFidelityPct >= 95 }"
+									:title="`Interpolated-grid fidelity (hold-out-arms CV). Arm/cell ratio ${detail.grid_arm_ratio?.toFixed?.(1) ?? '—'}`">
+									grid · fidelity ~{{ gridFidelityPct }}%
+								</span>
+								<span v-else-if="gridActive" class="frm-fid" title="Fidelity could not be computed (too few arms)">grid · fidelity n/a</span>
 								<div class="toggle">
-									<button v-if="liveOn && !octreeOn" class="tbtn" :disabled="downloadingView"
-										title="Download this viewport as a full-resolution FRM (host render, pixel-identical to the report PNGs)"
-										@click="downloadViewport"><v-icon :name="downloadingView ? 'hourglass_top' : 'photo_camera'" x-small /></button>
+									<button v-if="detail && !octreeOn" class="tbtn" :class="{ on: liveMode }" :disabled="!liveAvailable"
+										:title="liveAvailable ? 'Live interactive point cloud (off = static image)' : 'No live cache — reprocess to enable'"
+										:style="liveMode ? { background: '#7c3aed', borderColor: '#7c3aed' } : {}"
+										@click="liveMode = !liveMode"><v-icon name="blur_linear" x-small /> Live</button>
 									<button v-if="detail" class="tbtn" :class="{ on: octreeOn }" :disabled="buildingOctree"
 										:title="octreeAvailable ? 'Full-resolution octree view (LOD-streamed)' : 'Build a full-resolution Potree octree on the host'"
 										:style="octreeOn ? { background: '#0891b2', borderColor: '#0891b2' } : {}"
@@ -990,8 +1043,9 @@ function fmtDateTime(v: string | null | undefined) {
 										<option value="Fy">Z = Fy</option>
 										<option value="Fz">Z = Fz</option>
 									</select>
-									<button v-if="detail && detail[`frm_${axis.toLowerCase()}`]" class="tbtn" title="Download this FRM image"
-										@click="downloadFile(detail[`frm_${axis.toLowerCase()}`])"><v-icon name="download" x-small /></button>
+									<button v-if="detail && (liveOn || octreeOn || detail[`frm_${axis.toLowerCase()}`])" class="tbtn"
+										:title="(liveOn || octreeOn) ? 'Download the current view (this zoom) as a PNG' : 'Download this FRM image'"
+										@click="downloadFrm"><v-icon name="download" x-small /></button>
 									<button v-for="a in AXES" :key="a" class="tbtn" :class="{ on: axis === a }"
 										:style="axis === a ? { background: AXIS_COLOR[a], borderColor: AXIS_COLOR[a] } : {}"
 										@click="setAxis(a)">{{ a }}</button>
@@ -999,9 +1053,13 @@ function fmtDateTime(v: string | null | undefined) {
 							</div>
 							<div class="frm-img">
 								<div v-if="!detail" class="empty">Select an operation</div>
-								<FrmOctree v-else-if="octreeOn" :octree-path="detail.octree_path" :axis="axis"
+								<FrmOctree v-else-if="octreeOn" ref="frmOctreeRef"
+									:octree-path="gridActive ? detail.grid_octree_path : detail.octree_path" :axis="axis"
 									:colormap="colormap" :point-size="pointSize" :cmin="cmin" :cmax="cmax"
 									:z-series="zSeries" :z-scale="zScale"
+									:total-points="gridActive ? Number(detail.grid_octree_points) : fullResPoints"
+									:fill="gridActive" :cell-size="Number(detail.grid_cell_mm) || 1"
+									:min-node-px="octreeMinNodePx" :budget-cap="octreeBudgetCap"
 									@climits="onClimits" @points="displayedPoints = $event" />
 								<FrmCloud v-else-if="liveOn" ref="frmCloudRef" :cache-file-id="detail.live_cache_file"
 									:axis="axis" :feed="editFeed" :diam="editDiam" :speed-mode="speedMode"
@@ -1013,8 +1071,7 @@ function fmtDateTime(v: string | null | undefined) {
 								<div v-else-if="frmLoading" class="loading"><v-progress-circular indeterminate /></div>
 								<img v-else-if="frmUrl" :src="frmUrl" :alt="`FRM ${axis}`" />
 								<div v-else class="empty">No {{ axis }} fingerprint</div>
-								<div v-if="downloadViewMsg" class="render-msg frm-render-msg">{{ downloadViewMsg }}</div>
-								<div v-if="octreeMsg" class="render-msg frm-render-msg">{{ octreeMsg }}</div>
+								<div v-if="octreeMsg && !liveOn" class="render-msg frm-render-msg">{{ octreeMsg }}</div>
 							</div>
 						</div>
 					</div>
@@ -1191,6 +1248,9 @@ function fmtDateTime(v: string | null | undefined) {
 .frm-res { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums;
 	color: var(--theme--foreground-subdued, #6b7684); background: var(--theme--background-subdued, #f1f5f9);
 	border: 1px solid var(--theme--border-color-subdued, #e7ebf0); border-radius: 99px; padding: 1px 8px; margin-right: auto; }
+.frm-fid { font-size: 10px; padding: 1px 7px; border-radius: 99px; font-weight: 700;
+	color: #b45309; background: color-mix(in srgb, #d97706 14%, transparent); white-space: nowrap; }
+.frm-fid.good { color: #15803d; background: color-mix(in srgb, #16a34a 14%, transparent); }
 .zsel { font: inherit; font-size: 11px; font-weight: 650; padding: 3px 7px; border-radius: 8px; cursor: pointer;
 	border: 1px solid var(--theme--border-color, #d1d9e6); background: var(--theme--background, #fff); color: var(--theme--foreground, #334155); }
 .frm-img { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 220px; overflow: hidden; }
