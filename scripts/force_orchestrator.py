@@ -454,6 +454,45 @@ def _read_octree_bin(path: str):
     return n, a[0:n], a[n:2 * n], a[2 * n:3 * n], a[3 * n:4 * n], a[4 * n:5 * n]
 
 
+def _read_grid_bin(path: str):
+    """Read a D1GR interpolated-grid binary: magic, N, fidelity, arm_ratio, cell_mm header
+    then float32 x,y,Fx,Fy,Fz [N]. NaN fidelity/arm_ratio -> None (stored NULL)."""
+    import numpy as np
+    with open(path, "rb") as f:
+        magic, n = struct.unpack("<II", f.read(8))
+        if magic != 0x44314752:
+            raise RuntimeError(f"bad grid bin magic {magic:#x}")
+        fidelity, arm_ratio, cell_mm = struct.unpack("<fff", f.read(12))
+        a = np.frombuffer(f.read(n * 5 * 4), dtype="<f4")
+    fid = None if fidelity != fidelity else float(fidelity)          # NaN check
+    ratio = None if arm_ratio != arm_ratio else float(arm_ratio)
+    return (n, fid, ratio, float(cell_mm),
+            a[0:n], a[n:2 * n], a[2 * n:3 * n], a[3 * n:4 * n], a[4 * n:5 * n])
+
+
+def _patch_octree_climits(meta_path: Path, fx, fy, fz) -> None:
+    """Rewrite the Fx/Fy/Fz attribute min/max in a PotreeConverter metadata.json to the
+    prctile [1,99] of each series, so the octree viewer's colour scale matches the FRM PNGs
+    and the live cloud (which both clip at 1/99). Best-effort: leaves the file untouched on
+    any error."""
+    import numpy as np
+    try:
+        meta = json.loads(meta_path.read_text())
+        pct = {"Fx": fx, "Fy": fy, "Fz": fz}
+        for a in meta.get("attributes", []):
+            arr = pct.get(a.get("name"))
+            if arr is None or len(arr) == 0:
+                continue
+            lo, hi = (float(v) for v in np.percentile(arr, [1, 99]))
+            if hi <= lo:
+                hi = lo + 1.0
+            a["min"] = [lo]
+            a["max"] = [hi]
+        meta_path.write_text(json.dumps(meta))
+    except Exception as e:  # noqa: BLE001
+        log.warning("[OCTREE] climits patch skipped: %s", e)
+
+
 def process_octree_row(conn, row, exe: str, timeout: int, matlab_opts: dict, potree_exe: str) -> str:
     """MATLAB emits the full-res cloud -> laspy writes a LAS (force axes as attributes) ->
     PotreeConverter builds the octree -> publish under OCTREE_DIR/<op_id>/ for Caddy."""
@@ -497,6 +536,13 @@ def process_octree_row(conn, row, exe: str, timeout: int, matlab_opts: dict, pot
         if pc.returncode != 0 or not (Path(octmp) / "metadata.json").exists():
             tail = (pc.stderr or pc.stdout or "").strip().splitlines()[-5:]
             raise RuntimeError("PotreeConverter failed: " + " | ".join(tail))
+
+        # PotreeConverter records each attribute's TRUE min/max. The FRM PNGs (and the live
+        # cloud) colour by prctile [1,99] to clip force spikes; the octree viewer reads its
+        # colour range straight from these attribute min/max, so without this it would look
+        # washed-out and different from every other view. Overwrite Fx/Fy/Fz min/max with the
+        # same 1/99 percentiles so all three renderers share one colour scale.
+        _patch_octree_climits(Path(octmp) / "metadata.json", fx, fy, fz)
 
         op = str(row["operation_id"])
         dst = OCTREE_DIR / op
@@ -542,6 +588,151 @@ def handle_octrees(conn, exe: str) -> int:
     matlab_opts = load_sampling_opts(conn)
     for r in rows:
         process_octree_row(conn, r, exe, 3600, matlab_opts, potree_exe)
+    return len(rows)
+
+
+# ------------------------------------------------- interpolated-grid octree build
+def load_grid_opts(conn) -> dict:
+    """Grid interpolation settings from force_crawler_state (density capped at 8192)."""
+    opts = {"n": 2048, "method": "splat", "cv_arm_step": 10}
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT grid_density, grid_method FROM force_crawler_state "
+                        "WHERE id='00000000-0000-0000-0000-000000000001'")
+            row = cur.fetchone()
+        if row:
+            opts["n"] = min(8192, max(16, int(row["grid_density"] or 2048)))
+            m = (row["grid_method"] or "splat").lower()
+            opts["method"] = m if m in ("splat", "natural") else "splat"
+    except psycopg2.Error:
+        conn.rollback()
+    return opts
+
+
+def claim_grid(conn, limit: int = 2):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("""
+            WITH picked AS (
+                SELECT id FROM machining_force_analysis
+                 WHERE grid_octree_status='pending'
+                 ORDER BY grid_octree_requested_at NULLS FIRST
+                 LIMIT %s FOR UPDATE SKIP LOCKED
+            )
+            UPDATE machining_force_analysis a SET grid_octree_status='processing', updated_at=now()
+              FROM picked WHERE a.id = picked.id
+         RETURNING a.id, a.operation_id, a.pulses_per_rev,
+                   (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
+        """, [limit])
+        rows = cur.fetchall()
+    conn.commit()
+    return rows
+
+
+def process_grid_row(conn, row, exe: str, timeout: int, matlab_opts: dict,
+                     grid_opts: dict, potree_exe: str) -> str:
+    """MATLAB interpolates the spiral onto a grid + emits D1GR -> laspy LAS (force axes as
+    int16-scaled attrs; force is 12-bit at source so this is lossless) -> PotreeConverter ->
+    publish under OCTREE_DIR/grid/<op_id>/ for Caddy. Records grid_octree_* + grid_fidelity
+    + grid_arm_ratio + grid_cell_mm."""
+    import numpy as np
+    import laspy
+    outdir = tempfile.mkdtemp(prefix="grid_", dir=os.environ.get("FORCE_WORKDIR"))
+    try:
+        if not row.get("archive_path"):
+            raise ValueError("no archive .mat linked to this analysis row")
+        binp = str(Path(outdir) / "grid.bin")
+        opts = {k: int(v) for k, v in matlab_opts.items()}
+        ppr = row.get("pulses_per_rev")
+        if ppr and int(ppr) > 0:
+            opts["pulses_per_rev"] = int(ppr)
+        opts["grid_out"] = binp
+        opts["grid"] = {"n": int(grid_opts["n"]), "method": str(grid_opts["method"]),
+                        "cv_arm_step": int(grid_opts["cv_arm_step"])}
+        stmt = (f"addpath('{mlq(str(MATLAB_SRC))}'); "
+                f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})")
+        p = subprocess.run([exe, "-batch", stmt], capture_output=True, text=True, timeout=timeout)
+        if p.returncode != 0 or not Path(binp).exists():
+            tail = (p.stderr or p.stdout or "").strip().splitlines()[-5:]
+            raise RuntimeError("matlab grid emit failed: " + " | ".join(tail))
+        n, fidelity, arm_ratio, cell_mm, x, y, fx, fy, fz = _read_grid_bin(binp)
+        if n == 0:
+            raise RuntimeError("empty grid (no supported cells)")
+
+        las_path = str(Path(outdir) / "grid.las")
+        h = laspy.LasHeader(point_format=3)
+        h.offsets = [float(x.min()), float(y.min()), 0.0]
+        h.scales = [0.001, 0.001, 0.001]
+        # int16-scaled force extra dims (12-bit source -> lossless); ~halves attribute storage
+        # on the large grid octrees. _patch_octree_climits still gets the float Newton values,
+        # so metadata min/max stay in Newtons and the shader/colorbar are unchanged.
+        arrays = {"Fx": fx, "Fy": fy, "Fz": fz}
+        for nm, arr in arrays.items():
+            lo_a, hi_a = float(np.min(arr)), float(np.max(arr))
+            scale = ((hi_a - lo_a) / 65000.0) or 1.0     # int16 code span with headroom
+            offset = (hi_a + lo_a) / 2.0
+            h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.int16,
+                                                   scales=[scale], offsets=[offset]))
+        las = laspy.LasData(h)
+        las.x = x.astype(np.float64); las.y = y.astype(np.float64); las.z = np.zeros(n)
+        las.Fx = fx; las.Fy = fy; las.Fz = fz
+        lo, hi = float(fz.min()), float(fz.max())
+        las.intensity = np.clip((fz - lo) / ((hi - lo) or 1.0) * 65535, 0, 65535).astype(np.uint16)
+        las.write(las_path)
+
+        octmp = str(Path(outdir) / "octree")
+        pc = subprocess.run([potree_exe, las_path, "-o", octmp], capture_output=True, text=True, timeout=timeout)
+        if pc.returncode != 0 or not (Path(octmp) / "metadata.json").exists():
+            tail = (pc.stderr or pc.stdout or "").strip().splitlines()[-5:]
+            raise RuntimeError("PotreeConverter failed: " + " | ".join(tail))
+        _patch_octree_climits(Path(octmp) / "metadata.json", fx, fy, fz)
+
+        op = str(row["operation_id"])
+        dst = OCTREE_DIR / "grid" / op
+        if dst.exists():
+            shutil.rmtree(dst, ignore_errors=True)
+        dst.mkdir(parents=True, exist_ok=True)
+        for fn in ("metadata.json", "hierarchy.bin", "octree.bin"):
+            shutil.copy2(Path(octmp) / fn, dst / fn)
+
+        with conn.cursor() as cur:
+            cur.execute("UPDATE machining_force_analysis SET grid_octree_status='done', "
+                        "grid_octree_path=%s, grid_octree_points=%s, grid_fidelity=%s, "
+                        "grid_arm_ratio=%s, grid_cell_mm=%s, grid_octree_error=NULL, updated_at=now() "
+                        "WHERE id=%s",
+                        [f"grid/{op}", int(n), fidelity, arm_ratio, cell_mm, row["id"]])
+        conn.commit()
+        log.info("[GRID] %s -> grid/%s (%d cells, fidelity=%s)",
+                 Path(row["archive_path"]).stem, op, n, fidelity)
+        return "done"
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("UPDATE machining_force_analysis SET grid_octree_status='error', "
+                        "grid_octree_error=%s, updated_at=now() WHERE id=%s", [str(e)[:2000], row["id"]])
+        conn.commit()
+        log.error("[GRID-ERR] %s", e)
+        return "error"
+    finally:
+        shutil.rmtree(outdir, ignore_errors=True)
+
+
+def handle_grids(conn, exe: str) -> int:
+    """Build interpolated-grid octrees for any pending requests (needs PotreeConverter + laspy)."""
+    potree_exe = detect_potree_converter()
+    if not potree_exe:
+        return 0
+    try:
+        import laspy  # noqa: F401
+    except ImportError:
+        log.warning("laspy not installed — grid octree requests left pending")
+        return 0
+    rows = claim_grid(conn)
+    if not rows:
+        return 0
+    matlab_opts = load_sampling_opts(conn)
+    grid_opts = load_grid_opts(conn)
+    for r in rows:
+        process_grid_row(conn, r, exe, 3600, matlab_opts, grid_opts, potree_exe)
     return len(rows)
 
 
@@ -792,6 +983,7 @@ def run_queue(conn, args, exe, mrelease):
 
     handle_renders(conn, exe, directus)   # process any pending viewport-download renders
     handle_octrees(conn, exe)             # build any pending Potree octrees
+    handle_grids(conn, exe)               # build any pending interpolated-grid octrees
 
     total = 0
     while True:
@@ -882,6 +1074,10 @@ def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
                 no = handle_octrees(conn, exe)
                 if no:
                     log.info("daemon: built %d Potree octree(s)", no)
+
+                ng = handle_grids(conn, exe)
+                if ng:
+                    log.info("daemon: built %d interpolated-grid octree(s)", ng)
 
                 if state["desired_state"] != "running":
                     mark("paused")
