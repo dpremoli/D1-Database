@@ -662,16 +662,13 @@ def process_grid_row(conn, row, exe: str, timeout: int, matlab_opts: dict,
         h = laspy.LasHeader(point_format=3)
         h.offsets = [float(x.min()), float(y.min()), 0.0]
         h.scales = [0.001, 0.001, 0.001]
-        # int16-scaled force extra dims (12-bit source -> lossless); ~halves attribute storage
-        # on the large grid octrees. _patch_octree_climits still gets the float Newton values,
-        # so metadata min/max stay in Newtons and the shader/colorbar are unchanged.
-        arrays = {"Fx": fx, "Fy": fy, "Fz": fz}
-        for nm, arr in arrays.items():
-            lo_a, hi_a = float(np.min(arr)), float(np.max(arr))
-            scale = ((hi_a - lo_a) / 65000.0) or 1.0     # int16 code span with headroom
-            offset = (hi_a + lo_a) / 2.0
-            h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.int16,
-                                                   scales=[scale], offsets=[offset]))
+        # Force axes as float32 extra dims (identical to the raw octree path). int16-scaled
+        # dims were tried for storage savings, but PotreeConverter 2.1.1 discards the LAS
+        # extra-dim scale/offset and stores raw int16 codes (min/max [-32500,32500]); the
+        # colour pipeline (metadata climits + shader + colorbar) is all in Newtons, so raw
+        # codes would render wrong colours. float32 keeps everything in Newtons and correct.
+        for nm in ("Fx", "Fy", "Fz"):
+            h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.float32))
         las = laspy.LasData(h)
         las.x = x.astype(np.float64); las.y = y.astype(np.float64); las.z = np.zeros(n)
         las.Fx = fx; las.Fy = fy; las.Fz = fz

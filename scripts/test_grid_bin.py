@@ -1,4 +1,4 @@
-"""Unit tests for the D1GR reader + int16 LAS round-trip used by the grid-octree handler."""
+"""Unit tests for the D1GR reader used by the grid-octree handler."""
 import struct
 import numpy as np
 import force_orchestrator as fo
@@ -31,21 +31,3 @@ def test_read_grid_bin_nan_fidelity(tmp_path):
     _write_d1gr(p, [0.0], [0.0], [1.0], [1.0], [1.0], float("nan"), float("nan"), 0.5)
     n, fid, ratio, cell, *_ = fo._read_grid_bin(str(p))
     assert n == 1 and fid is None and ratio is None and abs(cell - 0.5) < 1e-6
-
-
-def test_int16_extra_dim_roundtrip(tmp_path):
-    """laspy int16-scaled extra dim reconstructs Newton values within one quantisation step."""
-    import laspy
-    fz = np.linspace(-120.0, 340.0, 5000).astype(np.float64)
-    lo, hi = float(fz.min()), float(fz.max())
-    scale = (hi - lo) / 65000.0 or 1.0          # int16 spans ~65k codes
-    offset = (hi + lo) / 2.0
-    h = laspy.LasHeader(point_format=3)
-    h.offsets = [0.0, 0.0, 0.0]; h.scales = [0.001, 0.001, 0.001]
-    h.add_extra_dim(laspy.ExtraBytesParams(name="Fz", type=np.int16, scales=[scale], offsets=[offset]))
-    las = laspy.LasData(h)
-    las.x = np.zeros(fz.size); las.y = np.zeros(fz.size); las.z = np.zeros(fz.size)
-    las.Fz = fz
-    p = tmp_path / "q.las"; las.write(str(p))
-    back = laspy.read(str(p)).Fz
-    assert np.max(np.abs(back - fz)) <= scale * 1.5     # within one code
