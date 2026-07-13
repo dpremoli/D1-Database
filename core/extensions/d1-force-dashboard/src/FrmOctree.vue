@@ -14,6 +14,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Potree, type PointCloudOctree } from 'potree-core';
 import { COLORMAPS } from './liveCloud';
+import { exportFrmFigure } from './frmExport';
 
 const props = defineProps<{
 	octreePath: string;                       // served subdir: /octrees/<octreePath>/
@@ -24,6 +25,11 @@ const props = defineProps<{
 	cmax?: number | null;
 	zSeries?: 'none' | 'Fx' | 'Fy' | 'Fz';    // drive the Z axis from a force series -> true 3D
 	zScale?: number;                          // height exaggeration as a fraction of the x/y span
+	totalPoints?: number;                     // octree's full point count -> sizes the LOD budget
+	fill?: boolean;                           // grid octree: size points to tile cells into a surface
+	cellSize?: number;                        // grid cell spacing (mm), for fill sizing
+	minNodePx?: number;                       // Potree LOD cutoff (settings; default 1)
+	budgetCap?: number;                       // Potree point-budget hard cap (settings; default 25M)
 }>();
 const emit = defineEmits<{
 	(e: 'climits', v: { cmin: number; cmax: number }): void;
@@ -72,11 +78,15 @@ function makeMaterial(): THREE.ShaderMaterial {
 			uZAxis: { value: -1 },                        // -1 = flat (2D); 0/1/2 = Fx/Fy/Fz drive Z
 			uZRange: { value: new THREE.Vector2(0, 1) },
 			uZScale: { value: 0 },                        // world-unit height for the [0,1]-normalised Z
+			uFill: { value: props.fill ? 1 : 0 },         // 1 = size points in world units (grid octree)
+			uPxPerMm: { value: 1 },                       // updated each frame from the camera/viewport
+			uCell: { value: props.cellSize || 1 },        // grid cell spacing (mm)
 		},
 		vertexShader: `
 			attribute float Fx; attribute float Fy; attribute float Fz;
 			uniform vec2 uRange; uniform float uAxis; uniform float uSize;
 			uniform float uZAxis; uniform vec2 uZRange; uniform float uZScale;
+			uniform float uFill; uniform float uPxPerMm; uniform float uCell;
 			varying float vT;
 			float pick(float i) { return i < 0.5 ? Fx : (i < 1.5 ? Fy : Fz); }
 			void main() {
@@ -88,7 +98,7 @@ function makeMaterial(): THREE.ShaderMaterial {
 					z = (clamp((zv - uZRange.x) / max(1e-6, uZRange.y - uZRange.x), 0.0, 1.0) - 0.5) * uZScale;
 				}
 				gl_Position = projectionMatrix * modelViewMatrix * vec4(position.xy, z, 1.0);
-				gl_PointSize = uSize;
+				gl_PointSize = uFill > 0.5 ? clamp(uCell * uPxPerMm, 1.0, 24.0) : uSize;
 			}`,
 		fragmentShader: `
 			precision mediump float;
@@ -102,12 +112,14 @@ function makeMaterial(): THREE.ShaderMaterial {
 	return m;
 }
 
+let appliedLo = 0, appliedHi = 1;   // the colour range currently applied (for the figure export)
 function applyRange() {
 	if (!material) return;
 	const auto = ranges[props.axis] || [0, 1];
 	const lo = (props.cmin ?? null) !== null && Number.isFinite(props.cmin as number) ? (props.cmin as number) : auto[0];
 	const hi = (props.cmax ?? null) !== null && Number.isFinite(props.cmax as number) ? (props.cmax as number) : auto[1];
-	material.uniforms.uRange.value.set(lo, hi > lo ? hi : lo + 1);
+	appliedLo = lo; appliedHi = hi > lo ? hi : lo + 1;
+	material.uniforms.uRange.value.set(appliedLo, appliedHi);
 	emit('climits', { cmin: lo, cmax: hi });
 }
 
@@ -134,7 +146,9 @@ function applyZ() {
 
 async function loadMeta(base: string) {
 	try {
-		const res = await fetch(`${base}metadata.json`);
+		// no-store: this metadata drives the colour limits; never risk a stale cached copy
+		// (a pre-repatch metadata.json would show the wrong, un-clipped colour range).
+		const res = await fetch(`${base}metadata.json`, { cache: 'no-store' });
 		const meta = await res.json();
 		for (const a of meta.attributes || []) {
 			if (a.name in ranges && Array.isArray(a.min) && Array.isArray(a.max)) {
@@ -150,8 +164,20 @@ async function load() {
 	try {
 		await loadMeta(base);
 		potree = new Potree();
-		potree.pointBudget = 3_000_000;
+		potree.maxNumNodesLoading = 12;   // parallelise node fetches so full-res streams in faster
+		// "Full-res" must mean full res: budget the LOD to cover the whole octree (a small
+		// headroom factor so the top level isn't shaved off), not a fixed 3M cap that left
+		// large maps showing ~49%. Capped for GPU safety on the biggest maps.
+		potree.pointBudget = props.totalPoints && props.totalPoints > 0
+			? Math.min(Math.ceil(props.totalPoints * 1.05), props.budgetCap || 25_000_000)
+			: 15_000_000;
 		pco = await potree.loadPointCloud('metadata.json', base);
+		// potree culls any octree node projecting smaller than minNodePixelSize (default
+		// 50px) BEFORE the point budget is even considered — so at fit-view every deep
+		// leaf is sub-50px and dropped, leaving only coarse levels (~8-50%). "Full-res"
+		// must actually be full res, so drop the cutoff to ~1px; the budget above then
+		// bounds the total. (Sub-pixel nodes contribute nothing visible anyway.)
+		(pco as any).minNodePixelSize = props.minNodePx || 1;
 		material = makeMaterial();
 		(pco as any).material = material;
 		applyRange();
@@ -199,6 +225,11 @@ function setupGL() {
 			const r = potree.updatePointClouds([pco], camera, renderer);
 			const n = (r as any)?.numVisiblePoints ?? pointCount.value;
 			if (Math.abs(n - pointCount.value) > pointCount.value * 0.02 + 1) { pointCount.value = n; emit('points', n); }
+			if (material && props.fill) {
+				// orthographic: world width shown = (right-left)/zoom; px width = domElement.width.
+				const worldW = (camera.right - camera.left) / (camera.zoom || 1);
+				material.uniforms.uPxPerMm.value = worldW > 0 ? (renderer.domElement.width / worldW) : 1;
+			}
 			renderer.render(scene!, camera);
 		}
 	};
@@ -226,8 +257,37 @@ watch(() => props.octreePath, () => { if (pco) { scene?.remove(pco); pco = null;
 watch(() => props.axis, () => { if (material) { material.uniforms.uAxis.value = AXIS_IDX[props.axis] ?? 2; applyRange(); } });
 watch(() => props.colormap, () => { if (material) material.uniforms.uGradient.value = gradientTexture(props.colormap); });
 watch(() => props.pointSize, () => { if (material) material.uniforms.uSize.value = props.pointSize || 1.5; });
+watch(() => [props.fill, props.cellSize], () => {
+	if (material) {
+		material.uniforms.uFill.value = props.fill ? 1 : 0;
+		material.uniforms.uCell.value = props.cellSize || 1;
+	}
+});
 watch(() => [props.cmin, props.cmax], applyRange);
 watch(() => [props.zSeries, props.zScale], applyZ);
+
+// The world rectangle (mm) the orthographic camera currently shows (pan target ± half the
+// zoom-scaled frustum). Meaningful in the flat 2D view; the export is a 2D figure anyway.
+function currentBounds(): { xmin: number; xmax: number; ymin: number; ymax: number } {
+	if (!camera) return { xmin: -1, xmax: 1, ymin: -1, ymax: 1 };
+	const cx = controls?.target.x ?? camera.position.x;
+	const cy = controls?.target.y ?? camera.position.y;
+	const hw = (camera.right - camera.left) / 2 / (camera.zoom || 1);
+	const hh = (camera.top - camera.bottom) / 2 / (camera.zoom || 1);
+	return { xmin: cx - hw, xmax: cx + hw, ymin: cy - hh, ymax: cy + hh };
+}
+// Export the current view as a formatted FRM figure (client-side, no host round-trip). The
+// render loop paints every frame + preserveDrawingBuffer is on, so the canvas pixels are live.
+function exportViewport(filename: string, subtitle?: string) {
+	const c = canvasEl.value;
+	if (!c) return false;
+	return exportFrmFigure({
+		canvas: c, bounds: currentBounds(),
+		cmin: appliedLo, cmax: appliedHi,
+		colormap: props.colormap, axis: props.axis, subtitle, filename,
+	});
+}
+defineExpose({ currentBounds, exportViewport });
 </script>
 
 <template>
