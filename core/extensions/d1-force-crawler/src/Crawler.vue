@@ -17,6 +17,8 @@ const draft = ref({
 	workers: 2, throttle_seconds: 5, file_like: '', op_code_like: '',
 	series_points: 3000, fft_points: 3000, frm_downsample_step: 5, frm_dpi: 300,
 	live_cache_points: 250000, pulses_per_rev: 1,
+	grid_density: 2048, grid_method: 'splat', octree_threshold: 5000000,
+	octree_min_node_px: 1, octree_budget_cap: 25000000,
 });
 const dirty = ref(false);
 
@@ -37,6 +39,11 @@ async function loadState() {
 			frm_dpi: state.value.frm_dpi,
 			live_cache_points: state.value.live_cache_points,
 			pulses_per_rev: state.value.pulses_per_rev,
+			grid_density: state.value.grid_density ?? 2048,
+			grid_method: state.value.grid_method ?? 'splat',
+			octree_threshold: state.value.octree_threshold ?? state.value.live_cache_points,
+			octree_min_node_px: Number(state.value.octree_min_node_px ?? 1),
+			octree_budget_cap: state.value.octree_budget_cap ?? 25000000,
 		};
 	}
 }
@@ -110,6 +117,11 @@ async function saveSettings() {
 			frm_dpi: Math.max(72, Number(draft.value.frm_dpi) || 300),
 			live_cache_points: Math.max(1000, Number(draft.value.live_cache_points) || 250000),
 			pulses_per_rev: Math.max(1, Number(draft.value.pulses_per_rev) || 1),
+			grid_density: Math.min(8192, Math.max(16, Number(draft.value.grid_density) || 2048)),
+			grid_method: draft.value.grid_method === 'natural' ? 'natural' : 'splat',
+			octree_threshold: Math.max(1000, Number(draft.value.octree_threshold) || 5000000),
+			octree_min_node_px: Math.max(0.1, Number(draft.value.octree_min_node_px) || 1),
+			octree_budget_cap: Math.max(1000000, Number(draft.value.octree_budget_cap) || 25000000),
 		});
 		dirty.value = false;
 		await loadState();
@@ -264,6 +276,20 @@ function opLabel(r: any) { return r.operation_id?.pass_code || r.operation_id?.s
 						<label>Pulses per rev<input v-model.number="draft.pulses_per_rev" type="number" min="1" step="1" @input="dirty = true" /></label>
 							<p class="setting-note">A map whose cut window has ≤ <b>Live cache points</b> is cached 1:1 and plotted at full resolution in Live mode; larger maps are decimated to this cap. Ops above ~5M points auto-route to a host-built Potree octree (LOD-streamed).</p>
 						</div>
+						<div class="form-sep">Gridding &amp; octree (applies to builds after saving)</div>
+						<div class="form">
+							<label>Grid density N (≤ 8192)<input v-model.number="draft.grid_density" type="number" min="16" max="8192" step="128" @input="dirty = true" /></label>
+							<label>Grid method
+								<select v-model="draft.grid_method" @change="dirty = true">
+									<option value="splat">splat (Gaussian, GPU)</option>
+									<option value="natural">natural (Delaunay)</option>
+								</select>
+							</label>
+							<label>Octree auto-route threshold (pts)<input v-model.number="draft.octree_threshold" type="number" min="1000" step="100000" @input="dirty = true" /></label>
+							<label>Octree min node px<input v-model.number="draft.octree_min_node_px" type="number" min="0.1" step="0.5" @input="dirty = true" /></label>
+							<label>Octree budget cap (pts)<input v-model.number="draft.octree_budget_cap" type="number" min="1000000" step="1000000" @input="dirty = true" /></label>
+							<p class="setting-note">The interpolated grid fills the sparse spiral at deep zoom (N×N cells; <b>splat</b> is GPU-accelerated). Maps above the <b>auto-route threshold</b> default to the octree view. Lower <b>min node px</b> streams more detail; the <b>budget cap</b> bounds GPU memory.</p>
+						</div>
 						<button class="savebtn" :disabled="!dirty || saving" @click="saveSettings">
 							{{ saving ? 'Saving…' : 'Save settings' }}
 						</button>
@@ -382,7 +408,7 @@ function opLabel(r: any) { return r.operation_id?.pass_code || r.operation_id?.s
 .form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; margin-bottom: 12px; }
 .form label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 600; color: var(--theme--foreground-subdued, #6b7684); }
 .form label.wide { grid-column: 1 / -1; }
-.form input {
+.form input, .form select {
 	font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 9px;
 	border: 1px solid var(--theme--border-color-subdued, #e7ebf0); background: var(--theme--background, #fff); color: inherit;
 }
