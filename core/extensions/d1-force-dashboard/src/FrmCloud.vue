@@ -20,6 +20,7 @@ const props = defineProps<{
 	axis: Axis;
 	feed: number;
 	diam: number;
+	innerDiam: number;
 	speedMode: SpeedMode;
 	rpm: number;
 	vc: number;
@@ -205,7 +206,7 @@ let cloud: Cloud | null = null;
 function rebuild() {
 	if (!ready || !pointsGeom || !canvasEl.value || !cache.value) return;
 	cloud = buildCloud(cache.value, {
-		axis: props.axis, feed: props.feed, diam: props.diam,
+		axis: props.axis, feed: props.feed, diam: props.diam, innerDiam: props.innerDiam,
 		speedMode: props.speedMode, rpm: props.rpm, vc: props.vc, timeScale: props.timeScale, ppr: props.ppr,
 		cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec,
 		stride: props.stride, gridding: props.gridding, gridN: props.gridN,
@@ -307,7 +308,7 @@ onBeforeUnmount(() => {
 });
 
 // Geometry/colour props → rebuild immediately. pointSize is view-only (a uniform).
-watch(() => [props.axis, props.feed, props.diam, props.speedMode, props.rpm, props.vc, props.timeScale, props.ppr,
+watch(() => [props.axis, props.feed, props.diam, props.innerDiam, props.speedMode, props.rpm, props.vc, props.timeScale, props.ppr,
 	props.stride, props.gridding, props.gridN, props.colormap, props.cmin, props.cmax], scheduleRebuild);
 watch(() => props.pointSize, scheduleDraw);
 

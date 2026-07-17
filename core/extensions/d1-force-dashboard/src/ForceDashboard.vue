@@ -92,6 +92,7 @@ const cropStartSec = ref(0);
 const cropEndSec = ref(0);
 const editFeed = ref(0.1);
 const editDiam = ref(80);
+const editInnerDiam = ref(0);   // donut/diaphragm inner Ø (mm); 0 = solid disc
 const speedMode = ref<SpeedMode>('measured');
 const editRpm = ref(1000);
 const editVc = ref(100);
@@ -231,6 +232,17 @@ watch(() => detail.value?.id, () => {
 	else { cropStartSec.value = 0; cropEndSec.value = 0; }
 	gridFull.value = false;
 	frmMode.value = pickDefaultMode();
+});
+// Persist the inner diameter to the op (debounced) so a reprocess / octree build picks it up
+// (the orchestrator threads inner_diameter into MATLAB). Live reflects it instantly client-side.
+let innerPatchTimer = 0;
+watch(editInnerDiam, (v) => {
+	const d = detail.value; if (!d?.id) return;
+	if (Number(v) === Number(d.inner_diameter || 0)) return;
+	clearTimeout(innerPatchTimer);
+	innerPatchTimer = window.setTimeout(async () => {
+		try { await api.patch(`/items/machining_force_analysis/${d.id}`, { inner_diameter: Number(v) || 0 }); d.inner_diameter = Number(v) || 0; } catch { /* ignore */ }
+	}, 600);
 });
 // Manual colour-scale limits for the live cloud (null => auto prctile 1/99 in
 // liveCloud). autoClimits mirrors what the cloud actually applied so the fields
@@ -548,7 +560,7 @@ async function selectOp(row: any) {
 					'operation_id.sample_id.form', 'operation_id.sample_id.manufactured_date',
 					'operation_id.sample_id.owner_person_id.full_name',
 					'operation_id.sample_id.material_id.common_name',
-					'directus_files_id.filesize', 'live_cache_file', 'live_render_points', 'pulses_per_rev',
+					'directus_files_id.filesize', 'live_cache_file', 'live_render_points', 'pulses_per_rev', 'inner_diameter',
 					'octree_status', 'octree_path', 'octree_points',
 					'grid_octree_status', 'grid_octree_path', 'grid_octree_points',
 					'grid_fidelity', 'grid_arm_ratio', 'grid_cell_mm'],
@@ -710,6 +722,7 @@ function resetLive() {
 	if (d) {
 		editFeed.value = Number(d.feed) || editFeed.value;
 		editDiam.value = Number(d.cut_diameter) || editDiam.value;
+		editInnerDiam.value = Number(d.inner_diameter) || 0;
 		editRate.value = Number(d.sample_rate) || editRate.value;
 		editPpr.value = Number(d.pulses_per_rev) || 1;
 	}
@@ -936,6 +949,7 @@ function fmtDateTime(v: string | null | undefined) {
 								<div class="edit-grid">
 									<label>Feed <span class="u">mm/rev</span><input v-model.number="editFeed" type="number" step="0.01" min="0" /></label>
 									<label>Diameter <span class="u">mm</span><input v-model.number="editDiam" type="number" step="1" min="0" /></label>
+									<label>Inner Ø <span class="u">mm</span><input v-model.number="editInnerDiam" type="number" step="1" min="0" title="Donut/diaphragm inner diameter — the spiral stops here. 0 = solid disc." /></label>
 									<label>Pulses/rev<input v-model.number="editPpr" type="number" step="1" min="1" /></label>
 									<label class="wide">Spindle speed
 										<div class="speed-row">
@@ -1072,7 +1086,7 @@ function fmtDateTime(v: string | null | undefined) {
 									:min-node-px="octreeMinNodePx" :budget-cap="octreeBudgetCap"
 									@climits="onClimits" @points="displayedPoints = $event" @zscale="zScale = $event" />
 								<FrmCloud v-else-if="liveOn" ref="frmCloudRef" :cache-file-id="detail.live_cache_file"
-									:axis="axis" :feed="editFeed" :diam="editDiam" :speed-mode="speedMode"
+									:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
 									:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
 									:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
 									:stride="plotStride" :gridding="gridding" :grid-n="gridN"

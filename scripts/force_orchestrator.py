@@ -273,7 +273,7 @@ def claim_batch(conn, args, limit: int):
              WHERE a.id = picked.id
          RETURNING a.id, a.operation_id, a.directus_files_id,
                    a.frm_fx AS old_fx, a.frm_fy AS old_fy, a.frm_fz AS old_fz,
-                   a.live_cache_file AS old_cache, a.live_render_points, a.pulses_per_rev,
+                   a.live_cache_file AS old_cache, a.live_render_points, a.pulses_per_rev, a.inner_diameter,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path,
                    (SELECT metadata->>'fingerprint'  FROM directus_files WHERE id = a.directus_files_id) AS fingerprint
         """, sparams)
@@ -304,7 +304,7 @@ def load_sampling_opts(conn) -> dict:
 
 def matlab_opts_literal(opts: dict) -> str:
     """A MATLAB struct() literal for process_force's 3rd (opts) argument."""
-    parts = [f"'{k}',{int(v)}" for k, v in opts.items()]
+    parts = [f"'{k}',{v if isinstance(v, float) else int(v)}" for k, v in opts.items()]
     return "struct(" + ",".join(parts) + ")"
 
 
@@ -336,6 +336,9 @@ def process_file(row, exe: str, timeout: int, matlab_opts: dict) -> dict:
         ppr = row.get("pulses_per_rev")
         if ppr and int(ppr) > 0:
             matlab_opts = {**matlab_opts, "pulses_per_rev": int(ppr)}
+        inner = row.get("inner_diameter")
+        if inner and float(inner) > 0:
+            matlab_opts = {**matlab_opts, "inner_diam": float(inner)}
         unc = unc_for(row["archive_path"])
         ok, err = run_matlab(exe, unc, outdir, timeout, matlab_opts)
         if not ok:
@@ -384,7 +387,7 @@ def claim_render(conn, limit: int = 4):
             )
             UPDATE machining_force_analysis a SET render_status='processing', updated_at=now()
               FROM picked WHERE a.id = picked.id
-         RETURNING a.id, a.pulses_per_rev, a.render_bounds, a.render_axis, a.render_colormap,
+         RETURNING a.id, a.pulses_per_rev, a.inner_diameter, a.render_bounds, a.render_axis, a.render_colormap,
                    a.render_cmin, a.render_cmax, a.render_file AS old_render,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
         """, [limit])
@@ -420,6 +423,9 @@ def process_render_row(conn, directus, row, exe: str, timeout: int, matlab_opts:
         ppr = row.get("pulses_per_rev")
         if ppr and int(ppr) > 0:
             opts["pulses_per_rev"] = int(ppr)
+        inner = row.get("inner_diameter")
+        if inner and float(inner) > 0:
+            opts["inner_diam"] = float(inner)
         opts["viewport"] = vp
         stmt = (f"addpath('{mlq(str(MATLAB_SRC))}'); "
                 f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})")
@@ -473,7 +479,7 @@ def claim_octree(conn, limit: int = 2):
             )
             UPDATE machining_force_analysis a SET octree_status='processing', updated_at=now()
               FROM picked WHERE a.id = picked.id
-         RETURNING a.id, a.operation_id, a.pulses_per_rev,
+         RETURNING a.id, a.operation_id, a.pulses_per_rev, a.inner_diameter,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
         """, [limit])
         rows = cur.fetchall()
@@ -544,6 +550,9 @@ def process_octree_row(conn, row, exe: str, timeout: int, matlab_opts: dict, pot
         ppr = row.get("pulses_per_rev")
         if ppr and int(ppr) > 0:
             opts["pulses_per_rev"] = int(ppr)
+        inner = row.get("inner_diameter")
+        if inner and float(inner) > 0:
+            opts["inner_diam"] = float(inner)
         opts["octree_out"] = binp
         stmt = (f"addpath('{mlq(str(MATLAB_SRC))}'); "
                 f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})")
@@ -657,7 +666,7 @@ def claim_grid(conn, limit: int = 2):
             )
             UPDATE machining_force_analysis a SET grid_octree_status='processing', updated_at=now()
               FROM picked WHERE a.id = picked.id
-         RETURNING a.id, a.operation_id, a.pulses_per_rev,
+         RETURNING a.id, a.operation_id, a.pulses_per_rev, a.inner_diameter,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
         """, [limit])
         rows = cur.fetchall()
@@ -682,6 +691,9 @@ def process_grid_row(conn, row, exe: str, timeout: int, matlab_opts: dict,
         ppr = row.get("pulses_per_rev")
         if ppr and int(ppr) > 0:
             opts["pulses_per_rev"] = int(ppr)
+        inner = row.get("inner_diameter")
+        if inner and float(inner) > 0:
+            opts["inner_diam"] = float(inner)
         opts["grid_out"] = binp
         opts["grid"] = {"n": int(grid_opts["n"]), "method": str(grid_opts["method"]),
                         "cv_arm_step": int(grid_opts["cv_arm_step"])}

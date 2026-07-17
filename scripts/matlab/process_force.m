@@ -42,6 +42,7 @@ opts = withdefault(opts, 'frm_downsample_step', 5);
 opts = withdefault(opts, 'frm_dpi', 300);
 opts = withdefault(opts, 'live_cache_points', 5000000);   % cache the cut window ~1:1 up to 5M (>5M -> octree)
 opts = withdefault(opts, 'pulses_per_rev', 1);
+opts = withdefault(opts, 'inner_diam', 0);   % donut/diaphragm inner diameter (mm); 0 = solid disc
 if ~exist(outdir, 'dir'); mkdir(outdir); end
 
 summary = struct('status', 'error', 'message', '', 'source', matpath);
@@ -148,7 +149,8 @@ ang_inc = rpm_c(2:end) * 2*pi/60 * dt;
 rho_inc = -Feed * rpm_c(2:end) / 60 * dt;
 theta   = wrapTo2Pi(cumsum([0; ang_inc]));
 rho     = cumsum([Diam/2; rho_inc]);
-cutend  = find(rho < 0, 1, 'first'); if isempty(cutend); cutend = numel(rho); end
+inner_r = opts.inner_diam / 2;   % donut/diaphragm discs stop at the inner radius, not 0
+cutend  = find(rho < inner_r, 1, 'first'); if isempty(cutend); cutend = numel(rho); end
 theta   = theta(1:cutend); rho = rho(1:cutend);
 step    = max(1, round(opts.frm_downsample_step));   % direct stride: data(1:step:end)
 [xx, yy] = pol2cart(theta(1:step:end), rho(1:step:end));

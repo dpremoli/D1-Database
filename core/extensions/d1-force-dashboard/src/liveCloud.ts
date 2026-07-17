@@ -19,6 +19,7 @@ export interface CloudParams {
 	axis: Axis;
 	feed: number;          // mm/rev
 	diam: number;          // mm
+	innerDiam: number;     // mm — donut/diaphragm inner diameter; spiral stops here (0 = solid disc)
 	speedMode: SpeedMode;
 	rpm: number;           // constant-RPM value
 	vc: number;            // constant-Vc value (m/min)
@@ -61,6 +62,7 @@ export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 	const cs = idxOfTime(t, p.cropStartSec);
 	const ceTime = p.cropEndSec;
 	const F = p.feed, D = p.diam, rho0 = D / 2;
+	const innerR = Math.max(0, (p.innerDiam || 0) / 2);   // donut discs stop here, not at 0
 	const revsCs = revs[cs], tCs = t[cs];
 	const revPerSec = p.rpm / 60;
 	const ts = p.timeScale > 0 ? p.timeScale : 1;  // Rate override time scaling (rpm/vc only)
@@ -81,13 +83,13 @@ export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 		let r: number, rho: number;
 		if (p.speedMode === 'vc') {
 			const under = rho0 * rho0 - 2 * K * (t[i] - tCs) * ts;
-			if (under < 0) break;
+			if (under < innerR * innerR) break;
 			rho = Math.sqrt(under);
 			r = (rho0 - rho) / F;
 		} else {
 			r = p.speedMode === 'rpm' ? revPerSec * (t[i] - tCs) * ts : (revs[i] - revsCs) / ppr;
 			rho = rho0 - F * r;
-			if (rho < 0) break;
+			if (rho < innerR) break;
 		}
 		const theta = 2 * Math.PI * r;
 		const x = rho * Math.cos(theta), y = rho * Math.sin(theta);
