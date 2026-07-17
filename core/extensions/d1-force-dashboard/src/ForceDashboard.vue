@@ -693,23 +693,39 @@ function fmtCutTime(d: any): string {
 	return `${secs.toFixed(1)}s`;
 }
 
-const stats = computed(() => {
+// Cut parameters: how the operation was set up + what it measured. Shown in BOTH view
+// modes (previously they vanished the moment Lite was on — reference data shouldn't
+// depend on an unrelated display toggle).
+const cutParams = computed(() => {
 	const d = detail.value;
 	if (!d) return [];
 	const mrpm = d.mean_rpm != null ? Number(d.mean_rpm).toFixed(0) : '—';
 	return [
-		// Cutting parameters lead (speed, feed, DoC), matching how the operation was set up.
 		{ label: 'Surface speed', value: fmt(d.surface_speed), unit: 'm/min' },
 		{ label: 'Feed', value: fmt(d.feed), unit: 'mm/rev' },
 		{ label: 'Depth of cut', value: fmt(d.depth_of_cut), unit: 'mm' },
 		{ label: 'Diameter', value: fmt(d.cut_diameter), unit: 'mm' },
 		{ label: 'Mean RPM', value: mrpm, unit: '' },
 		{ label: 'Cut time', value: fmtCutTime(d), unit: '' },
-		{ label: 'Dyno gain', value: fmt(d.dyno_gain), unit: 'N/V' },
-		{ label: 'Sample rate', value: d.sample_rate ? `${(d.sample_rate / 1000).toFixed(1)}` : '—', unit: 'kHz' },
-		{ label: 'File size', value: fmtBytes(d.directus_files_id?.filesize), unit: '' },
 	];
 });
+// Capture/technical info: rarely needed at a glance -> its own collapsed accordion.
+const captureInfo = computed(() => {
+	const d = detail.value;
+	if (!d) return [];
+	return [
+		['Sample rate', d.sample_rate ? `${(d.sample_rate / 1000).toFixed(1)} kHz` : '—'],
+		['Dyno gain', d.dyno_gain != null ? `${fmt(d.dyno_gain)} N/V` : '—'],
+		['Pulses/rev', d.pulses_per_rev != null ? String(d.pulses_per_rev) : '—'],
+		['Raw points', d.n_raw != null ? Number(d.n_raw).toLocaleString() : '—'],
+		['File version', d.file_version != null ? String(d.file_version) : '—'],
+		['File size', fmtBytes(d.directus_files_id?.filesize)],
+	].filter(([, v]) => v !== '—') as [string, string][];
+});
+// Accordion state for the reworked op panel (persist nothing; sensible defaults).
+const captureOpen = ref(false);
+const displayOpen = ref(false);
+const hostOpen = ref(false);
 
 const showRpm = ref(false);
 
@@ -988,18 +1004,18 @@ function fmtDateTime(v: string | null | undefined) {
 								<template v-for="m in compactMeta" :key="m[0]"><span>{{ m[0] }}</span><span>{{ m[1] }}</span></template>
 							</div>
 
-							<!-- Static: force metrics grid. Live: editable plot metadata + plotting settings. -->
-							<template v-if="!liveOn">
-								<div class="stat-sep">Force metrics</div>
-								<div class="statgrid">
-									<div v-for="st in stats" :key="st.label" class="stat">
-										<div class="s-top"><span class="s-val">{{ st.value }}</span><span v-if="st.unit" class="s-unit">{{ st.unit }}</span></div>
-										<span class="s-lab">{{ st.label }}</span>
-									</div>
+							<!-- Reworked: stable sections grouped by concern. Cut parameters stay visible in
+							     BOTH modes; technical capture info + display controls are accordions. -->
+							<div class="stat-sep">Cut parameters</div>
+							<div class="statgrid">
+								<div v-for="st in cutParams" :key="st.label" class="stat">
+									<div class="s-top"><span class="s-val">{{ st.value }}</span><span v-if="st.unit" class="s-unit">{{ st.unit }}</span></div>
+									<span class="s-lab">{{ st.label }}</span>
 								</div>
-							</template>
-							<template v-else>
-								<div class="stat-sep">Plot metadata <button class="linkbtn" @click="resetLive">Reset</button></div>
+							</div>
+
+							<template v-if="liveOn">
+								<div class="stat-sep">Plot overrides <span class="u">(what-if — plot only)</span> <button class="linkbtn" @click="resetLive">Reset</button></div>
 								<div class="edit-grid">
 									<label>Feed <span class="u">mm/rev</span><input v-model.number="editFeed" type="number" step="0.01" min="0" /></label>
 									<label>Diameter <span class="u">mm</span><input v-model.number="editDiam" type="number" step="1" min="0" /></label>
@@ -1019,8 +1035,10 @@ function fmtDateTime(v: string | null | undefined) {
 									<label>Rate <span class="u">Hz</span><input v-model.number="editRate" type="number" step="100" min="1" /></label>
 								</div>
 
-								<div class="stat-sep">Plotting settings</div>
-								<div class="edit-grid">
+								<button class="acc-head" @click="displayOpen = !displayOpen">
+									<v-icon :name="displayOpen ? 'expand_more' : 'chevron_right'" x-small /> Display
+								</button>
+								<div v-if="displayOpen" class="edit-grid">
 									<label>Show every<select v-model.number="plotStride"><option :value="1">all pts</option><option :value="2">2nd</option><option :value="5">5th</option><option :value="10">10th</option><option :value="25">25th</option></select></label>
 									<label>Colour<select v-model="colormap"><option value="viridis">viridis</option><option value="inferno">inferno</option><option value="grayscale">grayscale</option></select></label>
 									<label>Point size<input v-model.number="pointSize" type="number" step="0.2" min="0.4" max="6" /></label>
@@ -1029,15 +1047,26 @@ function fmtDateTime(v: string | null | undefined) {
 									<label>Colour max <span class="u">N</span><input v-model.number="cmaxManual" type="number" step="1" :disabled="cauto" /></label>
 								</div>
 
-								<div class="stat-sep">Full-resolution render (host)</div>
-								<div class="render-row">
-									<label>Points<input v-model.number="renderPoints" type="number" step="50000" min="1000" /></label>
-									<button class="processbtn" :disabled="rendering" @click="processFullRes">
-										<v-icon :name="rendering ? 'hourglass_top' : 'memory'" x-small /> {{ rendering ? 'Rendering…' : 'Process' }}
-									</button>
-								</div>
-								<div v-if="renderMsg" class="render-msg">{{ renderMsg }}</div>
+								<button class="acc-head" @click="hostOpen = !hostOpen">
+									<v-icon :name="hostOpen ? 'expand_more' : 'chevron_right'" x-small /> Full-resolution render (host)
+								</button>
+								<template v-if="hostOpen">
+									<div class="render-row">
+										<label>Points<input v-model.number="renderPoints" type="number" step="50000" min="1000" /></label>
+										<button class="processbtn" :disabled="rendering" @click="processFullRes">
+											<v-icon :name="rendering ? 'hourglass_top' : 'memory'" x-small /> {{ rendering ? 'Rendering…' : 'Process' }}
+										</button>
+									</div>
+									<div v-if="renderMsg" class="render-msg">{{ renderMsg }}</div>
+								</template>
 							</template>
+
+							<button class="acc-head" @click="captureOpen = !captureOpen">
+								<v-icon :name="captureOpen ? 'expand_more' : 'chevron_right'" x-small /> Capture
+							</button>
+							<div v-if="captureOpen && captureInfo.length" class="kv">
+								<template v-for="m in captureInfo" :key="m[0]"><span>{{ m[0] }}</span><span>{{ m[1] }}</span></template>
+							</div>
 						</template>
 						<div v-else-if="loadingDetail" class="loading sm"><v-progress-circular indeterminate small /></div>
 						<div v-else class="empty sm">Select an operation</div>
@@ -1380,6 +1409,14 @@ function fmtDateTime(v: string | null | undefined) {
 .stats-win { font-size: 10.5px; color: var(--theme--foreground-subdued, #98a2b3); }
 .stats-rpm { margin-top: 2px; }
 .stats-compute { margin-top: 4px; }
+.acc-head {
+	display: flex; align-items: center; gap: 4px; width: 100%; text-align: left;
+	background: none; border: 0; cursor: pointer; font: inherit;
+	font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+	color: var(--theme--foreground-subdued, #98a2b3); margin: 6px 0 4px; padding: 6px 0 0;
+	border-top: 1px solid var(--theme--border-color-subdued, #eef1f5);
+}
+.acc-head:hover { color: var(--theme--foreground, #1e293b); }
 .zsel { font: inherit; font-size: 11px; font-weight: 650; padding: 3px 7px; border-radius: 8px; cursor: pointer;
 	border: 1px solid var(--theme--border-color, #d1d9e6); background: var(--theme--background, #fff); color: var(--theme--foreground, #334155); }
 .frm-img { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 220px; overflow: hidden; }
