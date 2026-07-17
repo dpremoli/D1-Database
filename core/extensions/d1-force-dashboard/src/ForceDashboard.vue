@@ -253,6 +253,24 @@ watch(editInnerDiam, (v) => {
 	}, 600);
 });
 
+// Same for the outer diameter: persist edits as an override so host rebuilds use them
+// (the .mat metadata CutDiameter is sometimes wrong). Editing back to the metadata value
+// clears the override (NULL = follow metadata again). Seeding on load is guarded out.
+let outerPatchTimer = 0;
+watch(editDiam, (v) => {
+	const d = detail.value; if (!d?.id) return;
+	const nv = Number(v) || 0;
+	const cur = Number(d.outer_diameter || 0);
+	const meta = Number(d.cut_diameter || 0);
+	if (nv === cur) return;                                       // unchanged vs stored override
+	if (cur === 0 && (nv === 0 || Math.abs(nv - meta) < 1e-6)) return;   // just the metadata seed
+	clearTimeout(outerPatchTimer);
+	outerPatchTimer = window.setTimeout(async () => {
+		const store = Math.abs(nv - meta) < 1e-6 ? null : nv;      // back-to-metadata clears it
+		try { await api.patch(`/items/machining_force_analysis/${d.id}`, { outer_diameter: store }); d.outer_diameter = store; } catch { /* ignore */ }
+	}, 600);
+});
+
 // ---- Signal statistics panel (collapsed by default) --------------------------------
 // Post-mortem stats computed client-side from the live cache: mean/RMS/min/max between
 // the crop lines per axis, plus whole-signal effective bit depth and rail/clip analysis
@@ -620,7 +638,7 @@ async function selectOp(row: any) {
 					'operation_id.sample_id.form', 'operation_id.sample_id.manufactured_date',
 					'operation_id.sample_id.owner_person_id.full_name',
 					'operation_id.sample_id.material_id.common_name',
-					'directus_files_id.filesize', 'live_cache_file', 'live_render_points', 'pulses_per_rev', 'inner_diameter',
+					'directus_files_id.filesize', 'live_cache_file', 'live_render_points', 'pulses_per_rev', 'inner_diameter', 'outer_diameter',
 					'octree_status', 'octree_path', 'octree_points',
 					'grid_octree_status', 'grid_octree_path', 'grid_octree_points',
 					'grid_fidelity', 'grid_arm_ratio', 'grid_cell_mm'],
@@ -785,6 +803,8 @@ function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam:
 	cropEndSec.value = meta.ceSec;
 	editFeed.value = cleanFloat(meta.feed);
 	editDiam.value = cleanFloat(meta.diam);
+	const od = Number(detail.value?.outer_diameter);
+	if (od > 0) editDiam.value = od;   // per-op override beats the cache header
 	editRpm.value = meta.rpm;
 	editRate.value = meta.Fs;
 	cacheFs = meta.Fs;
@@ -797,7 +817,7 @@ function resetLive() {
 	if (cropWindow.value) { cropStartSec.value = cropWindow.value.start; cropEndSec.value = cropWindow.value.end; }
 	if (d) {
 		editFeed.value = Number(d.feed) || editFeed.value;
-		editDiam.value = Number(d.cut_diameter) || editDiam.value;
+		editDiam.value = Number(d.outer_diameter) || Number(d.cut_diameter) || editDiam.value;
 		editInnerDiam.value = Number(d.inner_diameter) || 0;
 		editRate.value = Number(d.sample_rate) || editRate.value;
 		editPpr.value = Number(d.pulses_per_rev) || 1;

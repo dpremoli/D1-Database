@@ -43,6 +43,7 @@ opts = withdefault(opts, 'frm_dpi', 300);
 opts = withdefault(opts, 'live_cache_points', 5000000);   % cache the cut window ~1:1 up to 5M (>5M -> octree)
 opts = withdefault(opts, 'pulses_per_rev', 1);
 opts = withdefault(opts, 'inner_diam', 0);   % donut/diaphragm inner diameter (mm); 0 = solid disc
+opts = withdefault(opts, 'outer_diam', 0);   % outer-diameter override (mm); 0 = use metadata CutDiameter
 if ~exist(outdir, 'dir'); mkdir(outdir); end
 
 summary = struct('status', 'error', 'message', '', 'source', matpath);
@@ -83,6 +84,7 @@ if isfield(meta, 'fileVersion'); ver = double(meta.fileVersion); end
 Fs      = getnum(meta, 'Rate', 25600);
 Feed    = getnum(meta, 'Feed', 0.1);
 Diam    = getnum(meta, 'CutDiameter', 80);
+if opts.outer_diam > 0; Diam = opts.outer_diam; end   % per-op override (metadata sometimes wrong)
 SurfSpd = getnum(meta, 'SurfaceSpeed', NaN);
 DoC     = getnum(meta, 'DepthOfCut', NaN);
 MaxRPM  = getnum(meta, 'MaxRPM', 1000);
