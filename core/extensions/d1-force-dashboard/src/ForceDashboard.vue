@@ -218,11 +218,17 @@ function fmtPts(n: number | null): string {
 // live cloud. Building is an explicit action (the Full-res button). Smaller maps, or large
 // ones without an octree yet, stay on the Live/PNG path.
 function pickDefaultMode(): 'figure' | 'lite' | 'full' {
+	// Adjust the CURRENT mode for the new op rather than recomputing from scratch —
+	// recomputing stomped an explicit user click that landed while the detail was still
+	// loading (click "Figure" -> detail arrives -> watch flips back to Lite). Auto-route
+	// UP to Full for big maps (documented behaviour); otherwise only downgrade when the
+	// current mode isn't available for this op.
+	const m = frmMode.value;
 	const f = fullResPoints.value;
 	if (octreeAvailable.value && f && f > octreeThreshold.value) return 'full';
-	if (liveAvailable.value && fastConnection()) return 'lite';
-	if (detail.value && detail.value[`frm_${axis.value.toLowerCase()}`]) return 'figure';
-	return liveAvailable.value ? 'lite' : 'figure';
+	if (m === 'lite') return liveAvailable.value ? 'lite' : 'figure';
+	if (m === 'full') return octreeAvailable.value ? 'full' : (liveAvailable.value && fastConnection() ? 'lite' : 'figure');
+	return 'figure';
 }
 watch(() => detail.value?.id, () => {
 	displayedPoints.value = 0;
@@ -1178,13 +1184,13 @@ function fmtDateTime(v: string | null | undefined) {
 										:title="gridAvailable ? 'Interpolated-grid octree (filled surface)' : 'Build the interpolated grid on the host'"
 										:style="gridFull ? { background: '#0891b2', borderColor: '#0891b2' } : {}"
 										@click="gridFull = !gridFull"><v-icon name="grid_on" x-small /> Gridded</button>
-									<select v-if="octreeOn" v-model="zSeries" class="zsel" title="Drive the Z axis from a force series (3D view — drag to rotate)">
+									<select v-if="octreeOn || liveOn" v-model="zSeries" class="zsel" title="Drive the Z axis from a force series (3D view — drag to rotate)">
 										<option value="none">2D</option>
 										<option value="Fx">Z = Fx</option>
 										<option value="Fy">Z = Fy</option>
 										<option value="Fz">Z = Fz</option>
 									</select>
-									<input v-if="octreeOn && zSeries !== 'none'" type="range" class="zslider"
+									<input v-if="(octreeOn || liveOn) && zSeries !== 'none'" type="range" class="zslider"
 										min="0" max="2" step="0.05" v-model.number="zScale"
 										title="Z exaggeration (or a 3-finger vertical swipe on the plot)" />
 									<button v-if="detail && (liveOn || octreeOn || detail[`frm_${axis.toLowerCase()}`])" class="tbtn"
@@ -1211,7 +1217,9 @@ function fmtDateTime(v: string | null | undefined) {
 									:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
 									:stride="plotStride" :gridding="gridding" :grid-n="gridN"
 									:point-size="pointSize" :colormap="colormap" :cmin="cmin" :cmax="cmax"
-									@loaded="onCloudLoaded" @climits="onClimits" @points="displayedPoints = $event" />
+									:z-series="zSeries" :z-scale="zScale"
+									@loaded="onCloudLoaded" @climits="onClimits" @points="displayedPoints = $event"
+									@zscale="zScale = $event" />
 								<div v-else-if="frmLoading" class="loading"><v-progress-circular indeterminate /></div>
 								<img v-else-if="frmUrl" :src="frmUrl" :alt="`FRM ${axis}`" />
 								<div v-else class="empty">No {{ axis }} fingerprint</div>
@@ -1262,7 +1270,11 @@ function fmtDateTime(v: string | null | undefined) {
 .panel-samples { flex: 0 0 auto; }
 .panel-ops { flex: 1 1 auto; min-height: 0; }
 .panel-ops .list { max-height: none; flex: 1 1 auto; }
+/* The op-detail card is the flexible, scrollable one (NOT :last-child — the signal-stats
+   card now sits after it and silently stole the scroll when this targeted last-child). */
 .col-stack .info:last-child { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.col-stack .info-op { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.col-stack .info-stats { flex: 0 1 auto; min-height: 0; overflow-y: auto; max-height: 45%; }
 .layout.stacked .col-stack .info:last-child { overflow: visible; }
 .layout.stacked .panel-ops .list { max-height: 40vh; flex: none; }
 .layout.stacked .col-charts .chart { flex: none; min-height: 180px; }

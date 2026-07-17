@@ -11,6 +11,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { type Cache, cacheGet, cachePut, parseCache } from './liveCache';
 import { type Axis, type Cloud, type SpeedMode, buildCloud, COLORMAPS } from './liveCloud';
 import { exportFrmFigure } from './frmExport';
@@ -35,11 +36,14 @@ const props = defineProps<{
 	colormap: string;
 	cmin?: number | null;
 	cmax?: number | null;
+	zSeries?: 'none' | 'Fx' | 'Fy' | 'Fz';    // drive Z from a force series -> true 3D (like Full)
+	zScale?: number;                          // height exaggeration as a fraction of the x/y span
 }>();
 const emit = defineEmits<{
 	(e: 'loaded', meta: { csSec: number; ceSec: number; feed: number; diam: number; rpm: number; Fs: number; N: number }): void;
 	(e: 'climits', v: { cmin: number; cmax: number }): void;
 	(e: 'points', n: number): void;   // rendered point count (for the resolution readout)
+	(e: 'zscale', v: number): void;   // 3-finger vertical swipe adjusts the Z exaggeration
 }>();
 
 const api = useApi();
@@ -158,8 +162,13 @@ let scene: THREE.Scene | null = null;
 let camera: THREE.OrthographicCamera | null = null;
 let pointsGeom: THREE.BufferGeometry | null = null;
 let pointsMat: THREE.PointsMaterial | null = null;
+let pointsObj: THREE.Points | null = null;
 let discTex: THREE.CanvasTexture | null = null;
+let controls: OrbitControls | null = null;   // 3D mode only (Z series active)
 let ready = false;
+// 3D when a Z series is selected: the cloud gets a Z displacement and OrbitControls owns
+// the camera; the custom 2D pan/pinch/wheel/rect handlers stand down. Flat is unchanged.
+const is3D = computed(() => !!props.zSeries && props.zSeries !== 'none');
 
 // a soft white disc so points render as filled circles (matching the old fragment
 // shader's round-point discard), not squares. alphaTest keeps them crisp + opaque.
@@ -179,12 +188,13 @@ function setupRenderer() {
 	renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 	renderer.setClearColor(0x000000, 0);
 	scene = new THREE.Scene();
-	camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+	camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1e6);   // far covers 3D orbit distances
 	camera.position.set(0, 0, 10);
 	discTex = makeDisc();
 	pointsGeom = new THREE.BufferGeometry();
 	pointsMat = new THREE.PointsMaterial({ size: 1.4, sizeAttenuation: false, vertexColors: true, map: discTex, alphaTest: 0.5, transparent: false });
-	scene.add(new THREE.Points(pointsGeom, pointsMat));
+	pointsObj = new THREE.Points(pointsGeom, pointsMat);
+	scene.add(pointsObj);
 	canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); error.value = 'WebGL context lost — toggle Live to reload'; ready = false; });
 	ready = true;
 	if (ro) ro.observe(canvas);
@@ -212,6 +222,7 @@ function rebuild() {
 		stride: props.stride, gridding: props.gridding, gridN: props.gridN,
 		colormap: COLORMAPS[props.colormap] || COLORMAPS.viridis,
 		cmin: props.cmin, cmax: props.cmax,
+		zSeries: props.zSeries || 'none',
 	});
 	pointCount.value = cloud?.count ?? 0;
 	emit('points', pointCount.value);
@@ -226,9 +237,14 @@ function rebuild() {
 	const n = cloud.count;
 	const pos3 = new Float32Array(n * 3);
 	for (let k = 0; k < n; k++) { pos3[k * 3] = cloud.pos[k * 2]; pos3[k * 3 + 1] = cloud.pos[k * 2 + 1]; }
+	// Z displacement: stored centred (-0.5..0.5); the Points object's scale.z turns it into
+	// world units, so exaggeration changes (slider / 3-finger swipe) cost no rebuild.
+	if (cloud.zv) for (let k = 0; k < n; k++) pos3[k * 3 + 2] = cloud.zv[k];
 	pointsGeom.setAttribute('position', new THREE.BufferAttribute(pos3, 3));
 	pointsGeom.setAttribute('color', new THREE.BufferAttribute(cloud.col, 3));
 	pointsGeom.setDrawRange(0, n);
+	applyZScale();
+	if (is3D.value && !controls) enter3D();   // mounted straight into 3D (Z picked before Lite)
 
 	// colorbar limits (only changes with the cloud)
 	const cl = { cmin: cloud.cmin, cmax: cloud.cmax };
@@ -237,11 +253,61 @@ function rebuild() {
 	}
 }
 
+// Z exaggeration in world units = fraction of the data span; applied via the Points
+// object's scale.z over the centred (-0.5..0.5) Z attribute (free — no rebuild).
+function applyZScale() {
+	if (!pointsObj) return;
+	pointsObj.scale.z = is3D.value ? Math.max(0.001, fitSpan * (props.zScale ?? 0.35)) : 1;
+}
+
+// Enter 3D: OrbitControls takes the camera (rotate/dolly/pan) framed on the cloud.
+// Exit: reset the camera pose so the 2D per-draw frustum math is authoritative again.
+function enter3D() {
+	if (!canvasEl.value || !camera) return;
+	if (!controls) {
+		controls = new OrbitControls(camera, canvasEl.value);
+		controls.addEventListener('change', scheduleDraw);
+		controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+		controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+		controls.enableDamping = false;
+	}
+	controls.enabled = true;
+	// frame: top-down on the data centre; frustum sized to the fit span
+	const aspect = cssW / cssH || 1;
+	const half = (fitSpan * 1.1) / 2;
+	camera.left = -half * (aspect >= 1 ? aspect : 1); camera.right = -camera.left;
+	camera.top = half / (aspect >= 1 ? 1 : aspect); camera.bottom = -camera.top;
+	camera.zoom = 1;
+	camera.position.set(fitCx, fitCy, fitSpan * 2);
+	camera.up.set(0, 1, 0);
+	camera.lookAt(fitCx, fitCy, 0);
+	camera.updateProjectionMatrix();
+	controls.target.set(fitCx, fitCy, 0);
+	controls.update();
+}
+function exit3D() {
+	if (controls) controls.enabled = false;
+	if (camera) { camera.rotation.set(0, 0, 0); camera.up.set(0, 1, 0); camera.zoom = 1; }
+}
+watch(is3D, (on) => {
+	if (on) enter3D(); else exit3D();
+	applyZScale();
+	scheduleDraw();
+});
+watch(() => props.zScale, () => { applyZScale(); scheduleDraw(); });
+
 // View-only redraw: no recompute, no re-upload — just drive the orthographic camera
 // from the current view and render the resident geometry. Cheap enough per frame.
 function draw() {
 	if (!ready || !renderer || !scene || !camera || !canvasEl.value || !cloud) return;
 	sizeCanvas(canvasEl.value);
+	if (is3D.value) {
+		// OrbitControls owns the camera; just render.
+		if (pointsMat) pointsMat.size = Math.max(1, props.pointSize || 1.4);
+		renderer.render(scene, camera);
+		scaleBar.value = null;   // a rotated view has no single mm-per-px
+		return;
+	}
 	const v = effView();
 	// scaleFor maps world→NDC as ndc = (world-centre)*s; the ortho half-extents are
 	// therefore 1/s, so the camera frustum reproduces the exact same mapping the pointer
@@ -280,6 +346,7 @@ function currentBounds(): { xmin: number; xmax: number; ymin: number; ymax: numb
 // figure — instant, client-side, no host round-trip. Forces a fresh draw first (the renderer
 // keeps preserveDrawingBuffer) and composites the report styling (axes/colorbar/title) around it.
 function exportViewport(filename: string, subtitle?: string) {
+	if (is3D.value) return false;   // a rotated 3D view has no meaningful 2D axes -> fall back
 	const c = canvasEl.value;
 	if (!c || !ready) return false;
 	draw();
@@ -304,12 +371,13 @@ onBeforeUnmount(() => {
 	if (raf) cancelAnimationFrame(raf);
 	ro?.disconnect();
 	if (cropTimer) clearTimeout(cropTimer);
+	controls?.dispose();
 	pointsGeom?.dispose(); pointsMat?.dispose(); discTex?.dispose(); renderer?.dispose();
 });
 
 // Geometry/colour props → rebuild immediately. pointSize is view-only (a uniform).
 watch(() => [props.axis, props.feed, props.diam, props.innerDiam, props.speedMode, props.rpm, props.vc, props.timeScale, props.ppr,
-	props.stride, props.gridding, props.gridN, props.colormap, props.cmin, props.cmax], scheduleRebuild);
+	props.stride, props.gridding, props.gridN, props.colormap, props.cmin, props.cmax, props.zSeries], scheduleRebuild);
 watch(() => props.pointSize, scheduleDraw);
 
 // Crop is DRAGGED, and its rebuild is the full O(N) recompute + percentile sort + GPU
@@ -341,6 +409,7 @@ function localXY(ev: PointerEvent | WheelEvent) {
 }
 function onWheel(ev: WheelEvent) {
 	if (!cache.value) return;
+	if (is3D.value) return;   // OrbitControls owns wheel-zoom in 3D
 	ev.preventDefault();
 	const { px, py } = localXY(ev);
 	const w = screenToWorld(px, py);
@@ -372,11 +441,20 @@ function pointerDist() { const p = pointerList(); return Math.hypot(p[0].px - p[
 function pointerMid() { const p = pointerList(); return { px: (p[0].px + p[1].px) / 2, py: (p[0].py + p[1].py) / 2 }; }
 function seedView() { if (!viewActive.value) { vCx.value = fitCx; vCy.value = fitCy; vSpan.value = fitSpan; viewActive.value = true; } }
 
+// 3-finger vertical drag adjusts the Z exaggeration in 3D (same gesture as Full).
+let zGestureY: number | null = null;
+function avgPy(): number { let s = 0; for (const p of pointers.values()) s += p.py; return s / (pointers.size || 1); }
+
 function onDown(ev: PointerEvent) {
 	if (!cache.value) return;
 	const { px, py } = localXY(ev);
 	(ev.currentTarget as Element).setPointerCapture(ev.pointerId);
 	pointers.set(ev.pointerId, { px, py });
+	if (is3D.value) {
+		// OrbitControls handles 1/2-finger via its own listeners; we only run the 3-finger gesture
+		if (pointers.size === 3 && controls) { controls.enabled = false; zGestureY = avgPy(); }
+		return;
+	}
 	if (pointers.size === 2) {
 		// second finger down -> start a pinch; abandon any pan/rect in progress
 		panning = false; rectDrag = false; rectSel.value = null;
@@ -397,6 +475,14 @@ function onMove(ev: PointerEvent) {
 	if (!cache.value) return;
 	const { px, py } = localXY(ev);
 	if (pointers.has(ev.pointerId)) pointers.set(ev.pointerId, { px, py });
+	if (is3D.value) {
+		if (zGestureY != null && pointers.size >= 3 ) {
+			const y = avgPy(); const dy = zGestureY - y; zGestureY = y;   // up = more separation
+			const cur = Math.max(0.02, props.zScale ?? 0.35);
+			emit('zscale', Number(Math.min(3, Math.max(0, cur * Math.exp(dy * 0.006))).toFixed(4)));
+		}
+		return;
+	}
 	if (pinch && pointers.size >= 2) {
 		// pinch-zoom: keep the world point under the finger midpoint fixed (spread = zoom in)
 		const d = pointerDist();
@@ -424,6 +510,10 @@ function onMove(ev: PointerEvent) {
 function onUp(ev: PointerEvent) {
 	try { (ev.currentTarget as Element).releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
 	pointers.delete(ev.pointerId);
+	if (is3D.value) {
+		if (pointers.size < 3) { zGestureY = null; if (controls) controls.enabled = true; }
+		return;
+	}
 	if (pointers.size < 2) pinch = null;
 	if (rectDrag && rectSel.value) {
 		const s = rectSel.value;

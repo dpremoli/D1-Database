@@ -37,12 +37,14 @@ export interface CloudParams {
 	// for the canonical FRM PNGs).
 	cmin?: number | null;
 	cmax?: number | null;
+	zSeries?: 'none' | Axis;   // when set, also emit a centred (-0.5..0.5) Z array of that axis
 }
 
 export interface Cloud {
 	pos: Float32Array; col: Float32Array; count: number;
 	minX: number; maxX: number; minY: number; maxY: number;
 	cmin: number; cmax: number;   // colour-scale limits actually applied (for the colorbar)
+	zv?: Float32Array;            // centred (-0.5..0.5) Z displacement per point (3D Lite)
 }
 
 // first index with t[i] >= sec (binary search)
@@ -76,6 +78,8 @@ export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 	// of points. `m` is the real count (the loop can break early on rho<0 / t>end).
 	const cap = Math.max(1, Math.ceil((c.N - cs) / stride) + 1);
 	const xs = new Float32Array(cap), ys = new Float32Array(cap), fv = new Float32Array(cap);
+	const Zaxis = p.zSeries && p.zSeries !== 'none' ? c[p.zSeries] : null;
+	const zr = Zaxis ? new Float32Array(cap) : null;
 	let m = 0;
 	let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 	for (let i = cs; i < c.N; i += stride) {
@@ -93,7 +97,9 @@ export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 		}
 		const theta = 2 * Math.PI * r;
 		const x = rho * Math.cos(theta), y = rho * Math.sin(theta);
-		xs[m] = x; ys[m] = y; fv[m] = Faxis[i]; m++;
+		xs[m] = x; ys[m] = y; fv[m] = Faxis[i];
+		if (zr) zr[m] = Zaxis![i];
+		m++;
 		if (x < minX) minX = x; if (x > maxX) maxX = x;
 		if (y < minY) minY = y; if (y > maxY) maxY = y;
 	}
@@ -117,7 +123,18 @@ export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 		const [rr, gg, bb] = p.colormap((fv[k] - lo) / span);
 		col[k * 3] = rr; col[k * 3 + 1] = gg; col[k * 3 + 2] = bb;
 	}
-	return { pos, col, count: m, minX, maxX, minY, maxY, cmin: lo, cmax: hi };
+	// Optional Z series: normalise the chosen axis over the window to a centred -0.5..0.5
+	// displacement. The renderer scales it to world units via the Points object's scale.z,
+	// so changing the exaggeration costs nothing (no rebuild).
+	let zv: Float32Array | undefined;
+	if (zr) {
+		let zlo = Infinity, zhi = -Infinity;
+		for (let k = 0; k < m; k++) { const v = zr[k]; if (v < zlo) zlo = v; if (v > zhi) zhi = v; }
+		const zspan = (zhi - zlo) || 1;
+		zv = new Float32Array(m);
+		for (let k = 0; k < m; k++) zv[k] = (zr[k] - zlo) / zspan - 0.5;
+	}
+	return { pos, col, count: m, minX, maxX, minY, maxY, cmin: lo, cmax: hi, zv };
 }
 
 // Bin the scatter into a gridN×gridN grid; emit one point per non-empty cell at its
