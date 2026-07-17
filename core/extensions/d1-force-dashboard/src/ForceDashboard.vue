@@ -6,6 +6,8 @@ import ForceChart from './ForceChart.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
 import type { SpeedMode } from './liveCloud';
+import { cacheGet, cachePut, parseCache } from './liveCache';
+import { computeSignalStats, type SignalStats } from './signalStats';
 
 const api = useApi();
 const router = useRouter();
@@ -244,6 +246,58 @@ watch(editInnerDiam, (v) => {
 		try { await api.patch(`/items/machining_force_analysis/${d.id}`, { inner_diameter: Number(v) || 0 }); d.inner_diameter = Number(v) || 0; } catch { /* ignore */ }
 	}, 600);
 });
+
+// ---- Signal statistics panel (collapsed by default) --------------------------------
+// Post-mortem stats computed client-side from the live cache: mean/RMS/min/max between
+// the crop lines per axis, plus whole-signal effective bit depth and rail/clip analysis
+// (over-range detection). Reuses the FrmCloud LRU so Lite mode costs nothing extra; if
+// the cache isn't downloaded yet the panel offers an explicit compute (= download).
+const statsOpen = ref(false);
+const STAT_AXES = ['Fx', 'Fy', 'Fz'] as const;
+const sigStats = ref<SignalStats | null>(null);
+const statsBusy = ref(false);
+const statsErr = ref<string | null>(null);
+const statsCacheMb = computed(() => {
+	const d = detail.value; if (!d?.cut_start_idx || !d?.cut_end_idx) return null;
+	const pts = Math.min(d.cut_end_idx - d.cut_start_idx, octreeThreshold.value);
+	return Math.round((pts * 24) / 1e6);   // 6 float32 arrays per sample
+});
+async function computeStats() {
+	const d = detail.value;
+	if (!d?.live_cache_file || statsBusy.value) return;
+	statsBusy.value = true; statsErr.value = null;
+	try {
+		let c = cacheGet(d.live_cache_file);
+		if (!c) {
+			const res = await api.get(`/assets/${d.live_cache_file}`, { responseType: 'arraybuffer' });
+			c = parseCache(res.data as ArrayBuffer);
+			cachePut(d.live_cache_file, c);
+		}
+		const cs = cropStartSec.value || c.csSec, ce = cropEndSec.value || c.ceSec;
+		sigStats.value = computeSignalStats(c, cs, ce);
+	} catch (e: any) {
+		statsErr.value = e?.message || 'failed to compute statistics';
+	} finally { statsBusy.value = false; }
+}
+// Recompute (cheap, cache already local) when the crop moves while the panel is open.
+let statsTimer = 0;
+watch(() => [cropStartSec.value, cropEndSec.value], () => {
+	if (!statsOpen.value || !sigStats.value) return;
+	clearTimeout(statsTimer);
+	statsTimer = window.setTimeout(computeStats, 400);
+});
+watch(() => detail.value?.id, () => { sigStats.value = null; statsErr.value = null; });
+watch(statsOpen, (open) => {
+	// auto-compute on first open when the cache is already local (e.g. Lite was on)
+	if (open && !sigStats.value && detail.value?.live_cache_file && cacheGet(detail.value.live_cache_file)) computeStats();
+});
+function fmtStat(v: number): string {
+	const a = Math.abs(v);
+	if (!Number.isFinite(v)) return '—';
+	if (a >= 1000) return (v / 1000).toFixed(2) + 'k';
+	if (a >= 10) return v.toFixed(1);
+	return v.toFixed(2);
+}
 // Manual colour-scale limits for the live cloud (null => auto prctile 1/99 in
 // liveCloud). autoClimits mirrors what the cloud actually applied so the fields
 // can display/seed from the current auto values.
@@ -988,6 +1042,43 @@ function fmtDateTime(v: string | null | undefined) {
 						<div v-else-if="loadingDetail" class="loading sm"><v-progress-circular indeterminate small /></div>
 						<div v-else class="empty sm">Select an operation</div>
 					</div>
+
+					<!-- Signal statistics: collapsed by default; computed client-side from the live
+					     cache (crop-window force stats + whole-signal bit-depth / clipping analysis). -->
+					<div v-if="detail" class="card info info-stats">
+						<div class="info-head">
+							<span>
+								<button class="chevbtn" title="Collapse/expand" @click="statsOpen = !statsOpen"><v-icon :name="statsOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
+								<v-icon name="query_stats" x-small /> Signal statistics
+							</span>
+							<span v-if="sigStats" class="stats-win mono">{{ sigStats.windowSec[0].toFixed(1) }}–{{ sigStats.windowSec[1].toFixed(1) }} s</span>
+						</div>
+						<template v-if="statsOpen">
+							<div v-if="!detail.live_cache_file" class="empty sm">No signal cache — reprocess this op to enable statistics</div>
+							<div v-else-if="statsBusy" class="loading sm"><v-progress-circular indeterminate small /> computing…</div>
+							<div v-else-if="statsErr" class="render-msg">{{ statsErr }}</div>
+							<template v-else-if="sigStats">
+								<table class="stats-table">
+									<thead><tr><th></th><th>Fx</th><th>Fy</th><th>Fz</th></tr></thead>
+									<tbody>
+										<tr><td>Mean <span class="u">N</span></td><td v-for="a in STAT_AXES" :key="'m'+a">{{ fmtStat(sigStats.axes[a].mean) }}</td></tr>
+										<tr><td>RMS <span class="u">N</span></td><td v-for="a in STAT_AXES" :key="'r'+a">{{ fmtStat(sigStats.axes[a].rms) }}</td></tr>
+										<tr><td>Std <span class="u">N</span></td><td v-for="a in STAT_AXES" :key="'s'+a">{{ fmtStat(sigStats.axes[a].std) }}</td></tr>
+										<tr><td>Min / Max <span class="u">N</span></td><td v-for="a in STAT_AXES" :key="'x'+a">{{ fmtStat(sigStats.axes[a].min) }} / {{ fmtStat(sigStats.axes[a].max) }}</td></tr>
+										<tr><td>Dyn. range <span class="u">bits</span></td><td v-for="a in STAT_AXES" :key="'b'+a">{{ sigStats.axes[a].effBits?.toFixed(1) ?? '—' }}</td></tr>
+										<tr><td>Rail hits <span class="u">lo/hi %</span></td><td v-for="a in STAT_AXES" :key="'c'+a">
+											<span :class="{ 'stat-bad': sigStats.axes[a].clipped }">{{ sigStats.axes[a].railLoPct.toFixed(2) }} / {{ sigStats.axes[a].railHiPct.toFixed(2) }}<template v-if="sigStats.axes[a].clipped"> ⚠ clip</template></span>
+										</td></tr>
+									</tbody>
+								</table>
+								<p class="setting-note">Force stats over the crop window; bits + rails over the whole cached signal. Dyn. range = log2(signal span ÷ noise floor); a clean full-range 12-bit capture sits near ~12–13, well below = under-ranged. Sustained rail hits = clipped / over-ranged.</p>
+								<div class="kv stats-rpm"><span>RPM (window)</span><span>{{ fmtStat(sigStats.rpm.mean) }} ± {{ fmtStat(sigStats.rpm.std) }} <span class="u">({{ fmtStat(sigStats.rpm.min) }}–{{ fmtStat(sigStats.rpm.max) }})</span></span></div>
+							</template>
+							<button v-else class="processbtn stats-compute" :disabled="statsBusy" @click="computeStats">
+								<v-icon name="calculate" x-small /> Compute<template v-if="statsCacheMb"> (downloads ~{{ statsCacheMb }} MB signal cache)</template>
+							</button>
+						</template>
+					</div>
 				</div>
 
 				<div v-if="!stacked && !detailHidden" class="resizer" @pointerdown="startColBResize" title="Drag to resize"></div>
@@ -1281,6 +1372,14 @@ function fmtDateTime(v: string | null | undefined) {
 .segbtn.on { background: #0891b2; color: #fff; }
 .segbtn:disabled { opacity: 0.4; cursor: default; }
 .zslider { width: 70px; accent-color: #0891b2; vertical-align: middle; cursor: pointer; }
+.stats-table { width: 100%; border-collapse: collapse; font-size: 11.5px; margin: 6px 0 4px; }
+.stats-table th { text-align: right; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--theme--foreground-subdued, #6b7684); padding: 2px 6px; }
+.stats-table td { text-align: right; padding: 3px 6px; font-variant-numeric: tabular-nums; border-top: 1px solid var(--theme--border-color-subdued, #eef1f5); }
+.stats-table td:first-child { text-align: left; color: var(--theme--foreground-subdued, #6b7684); font-weight: 600; white-space: nowrap; }
+.stat-bad { color: #dc2626; font-weight: 700; }
+.stats-win { font-size: 10.5px; color: var(--theme--foreground-subdued, #98a2b3); }
+.stats-rpm { margin-top: 2px; }
+.stats-compute { margin-top: 4px; }
 .zsel { font: inherit; font-size: 11px; font-weight: 650; padding: 3px 7px; border-radius: 8px; cursor: pointer;
 	border: 1px solid var(--theme--border-color, #d1d9e6); background: var(--theme--background, #fff); color: var(--theme--foreground, #334155); }
 .frm-img { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 220px; overflow: hidden; }
