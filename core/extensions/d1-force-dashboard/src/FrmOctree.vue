@@ -51,6 +51,12 @@ let pco: PointCloudOctree | null = null;
 let material: THREE.ShaderMaterial | null = null;
 let raf = 0;
 let cssW = 1, cssH = 1;
+// Render-on-demand: the RAF loop still ticks potree's LOD/streaming, but only re-renders
+// when something changed (interaction, appearance, newly streamed nodes). An unconditional
+// render every frame burned CPU/GPU while the view just sat there.
+let needsRender = true;
+let lastVisibleN = -1;
+function invalidate() { needsRender = true; }
 // per-axis value ranges (from the octree metadata) for auto colour limits
 const ranges: Record<string, [number, number]> = { Fx: [0, 1], Fy: [0, 1], Fz: [0, 1] };
 const AXIS_IDX: Record<string, number> = { Fx: 0, Fy: 1, Fz: 2 };
@@ -121,6 +127,7 @@ function applyRange() {
 	const hi = (props.cmax ?? null) !== null && Number.isFinite(props.cmax as number) ? (props.cmax as number) : auto[1];
 	appliedLo = lo; appliedHi = hi > lo ? hi : lo + 1;
 	material.uniforms.uRange.value.set(appliedLo, appliedHi);
+	invalidate();
 	emit('climits', { cmin: lo, cmax: hi });
 }
 
@@ -149,6 +156,7 @@ function applyZ() {
 		controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
 		frameCamera();   // snap back to a clean top-down view when flattening
 	}
+	invalidate();
 }
 
 async function loadMeta(base: string) {
@@ -209,6 +217,7 @@ function frameCamera() {
 	camera.position.set(c.x, c.y, c.z + 1e5); camera.up.set(0, 1, 0); camera.lookAt(c.x, c.y, c.z);
 	camera.updateProjectionMatrix();
 	controls.target.set(c.x, c.y, c.z); controls.update();
+	invalidate();
 }
 
 function setupGL() {
@@ -229,13 +238,17 @@ function setupGL() {
 	canvas.addEventListener('pointermove', onPtrMove);
 	canvas.addEventListener('pointerup', onPtrUp);
 	canvas.addEventListener('pointercancel', onPtrUp);
+	controls.addEventListener('change', invalidate);
 	const loop = () => {
 		raf = requestAnimationFrame(loop);
 		controls!.update();
 		if (pco && potree && renderer && camera) {
 			const r = potree.updatePointClouds([pco], camera, renderer);
 			const n = (r as any)?.numVisiblePoints ?? pointCount.value;
+			if (n !== lastVisibleN) { lastVisibleN = n; needsRender = true; }   // nodes streamed in/out
 			if (Math.abs(n - pointCount.value) > pointCount.value * 0.02 + 1) { pointCount.value = n; emit('points', n); }
+			if (!needsRender) return;
+			needsRender = false;
 			if (material && props.fill) {
 				// orthographic: world width shown = (right-left)/zoom; px width = domElement.width.
 				const worldW = (camera.right - camera.left) / (camera.zoom || 1);
@@ -302,12 +315,13 @@ onBeforeUnmount(() => {
 
 watch(() => props.octreePath, () => { if (pco) { scene?.remove(pco); pco = null; } load(); });
 watch(() => props.axis, () => { if (material) { material.uniforms.uAxis.value = AXIS_IDX[props.axis] ?? 2; applyRange(); } });
-watch(() => props.colormap, () => { if (material) material.uniforms.uGradient.value = gradientTexture(props.colormap); });
-watch(() => props.pointSize, () => { if (material) material.uniforms.uSize.value = props.pointSize || 1.5; });
+watch(() => props.colormap, () => { if (material) { material.uniforms.uGradient.value = gradientTexture(props.colormap); invalidate(); } });
+watch(() => props.pointSize, () => { if (material) { material.uniforms.uSize.value = props.pointSize || 1.5; invalidate(); } });
 watch(() => [props.fill, props.cellSize], () => {
 	if (material) {
 		material.uniforms.uFill.value = props.fill ? 1 : 0;
 		material.uniforms.uCell.value = props.cellSize || 1;
+		invalidate();
 	}
 });
 watch(() => [props.cmin, props.cmax], applyRange);

@@ -49,6 +49,8 @@ const emit = defineEmits<{
 const api = useApi();
 const loading = ref(true);
 const error = ref<string | null>(null);
+const glRenderer = ref('');            // UNMASKED_RENDERER_WEBGL (for the software-GL badge)
+const softwareGL = ref(false);
 const cache = ref<Cache | null>(null);
 const pointCount = ref(0);
 // Declared up here (not next to scheduleDraw) because the cacheFileId watch below runs
@@ -187,6 +189,16 @@ function setupRenderer() {
 	} catch { error.value = 'WebGL unavailable in this browser'; return; }
 	renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 	renderer.setClearColor(0x000000, 0);
+	// Surface software-GL fallback (SwiftShader/llvmpipe — e.g. remote-desktop sessions or a
+	// blocklisted driver): every render then runs on the CPU and pan feels like it burns a
+	// core no matter what we optimise. The badge tells the user WHY, instantly.
+	try {
+		const gl = renderer.getContext();
+		const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+		glRenderer.value = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '';
+		softwareGL.value = /swiftshader|llvmpipe|software|basic render/i.test(glRenderer.value);
+		if (softwareGL.value) console.info('[FrmCloud] software WebGL:', glRenderer.value);
+	} catch { /* extension unavailable — assume hardware */ }
 	scene = new THREE.Scene();
 	camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1e6);   // far covers 3D orbit distances
 	camera.position.set(0, 0, 10);
@@ -200,10 +212,18 @@ function setupRenderer() {
 	if (ro) ro.observe(canvas);
 }
 
+let sizedW = 0, sizedH = 0;   // last size actually applied to the renderer
 function sizeCanvas(canvas: HTMLCanvasElement) {
 	const r = canvas.getBoundingClientRect();
 	cssW = Math.max(1, r.width); cssH = Math.max(1, r.height);
-	renderer?.setSize(cssW, cssH, false);   // three manages the drawing-buffer size + pixel ratio
+	// Only touch the renderer when the size actually changed: three's setSize() assigns
+	// canvas.width unconditionally, and that RESETS the drawing buffer even for the same
+	// value — so calling it from draw() made every pan frame reallocate the framebuffer
+	// (MSAA + preserved buffer included). That was the "high CPU just moving the map" bug.
+	if (renderer && (cssW !== sizedW || cssH !== sizedH)) {
+		renderer.setSize(cssW, cssH, false);   // three manages the drawing-buffer size + pixel ratio
+		sizedW = cssW; sizedH = cssH;
+	}
 }
 
 // The built cloud is the ONLY thing that depends on geometry/colour props. It is
@@ -566,6 +586,9 @@ function onUp(ev: PointerEvent) {
 		</div>
 
 		<span v-if="!loading && !error" class="fc-count">{{ pointCount.toLocaleString() }} pts</span>
+		<span v-if="softwareGL && !loading && !error" class="fc-swgl"
+			:title="`WebGL is running in SOFTWARE (${glRenderer}) — rendering uses the CPU, so pan/zoom will feel heavy. Common causes: remote-desktop session, blocklisted GPU driver, or hardware acceleration disabled in the browser.`">
+			⚠ software WebGL</span>
 	</div>
 </template>
 
@@ -577,6 +600,7 @@ function onUp(ev: PointerEvent) {
 .fc-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: #94a3b8; }
 .fc-msg.err { color: #fca5a5; font-size: 12px; padding: 12px; text-align: center; }
 .fc-count { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,0.6); font-variant-numeric: tabular-nums; }
+.fc-swgl { position: absolute; left: 6px; bottom: 4px; font-size: 10px; font-weight: 700; color: #fbbf24; cursor: help; }
 
 .fc-rect { position: absolute; border: 1px solid #38bdf8; background: rgba(56,189,248,0.14); pointer-events: none; border-radius: 2px; }
 
