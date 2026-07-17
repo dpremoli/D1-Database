@@ -1050,6 +1050,9 @@ function fmtDateTime(v: string | null | undefined) {
 										<option value="Fy">Z = Fy</option>
 										<option value="Fz">Z = Fz</option>
 									</select>
+									<input v-if="octreeOn && zSeries !== 'none'" type="range" class="zslider"
+										min="0" max="2" step="0.05" v-model.number="zScale"
+										title="Z exaggeration (or a 3-finger vertical swipe on the plot)" />
 									<button v-if="detail && (liveOn || octreeOn || detail[`frm_${axis.toLowerCase()}`])" class="tbtn"
 										:title="(liveOn || octreeOn) ? 'Download the current view (this zoom) as a PNG' : 'Download this FRM image'"
 										@click="downloadFrm"><v-icon name="download" x-small /></button>
@@ -1263,6 +1266,7 @@ function fmtDateTime(v: string | null | undefined) {
 .segbtn:last-child { border-right: 0; }
 .segbtn.on { background: #0891b2; color: #fff; }
 .segbtn:disabled { opacity: 0.4; cursor: default; }
+.zslider { width: 70px; accent-color: #0891b2; vertical-align: middle; cursor: pointer; }
 .zsel { font: inherit; font-size: 11px; font-weight: 650; padding: 3px 7px; border-radius: 8px; cursor: pointer;
 	border: 1px solid var(--theme--border-color, #d1d9e6); background: var(--theme--background, #fff); color: var(--theme--foreground, #334155); }
 .frm-img { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 220px; overflow: hidden; }

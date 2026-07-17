@@ -225,10 +225,10 @@ function setupGL() {
 	controls.enableRotate = false;
 	controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
 	controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
-	canvas.addEventListener('touchstart', onTouchStart, { passive: false });
-	canvas.addEventListener('touchmove', onTouchMove, { passive: false });
-	canvas.addEventListener('touchend', onTouchEnd);
-	canvas.addEventListener('touchcancel', onTouchEnd);
+	canvas.addEventListener('pointerdown', onPtrDown);
+	canvas.addEventListener('pointermove', onPtrMove);
+	canvas.addEventListener('pointerup', onPtrUp);
+	canvas.addEventListener('pointercancel', onPtrUp);
 	const loop = () => {
 		raf = requestAnimationFrame(loop);
 		controls!.update();
@@ -248,27 +248,32 @@ function setupGL() {
 }
 
 // 3-finger vertical swipe adjusts the Z exaggeration (only when a Z series is loaded). Swiping
-// up spreads the points apart in Z; down flattens. OrbitControls is paused for the gesture so
-// it doesn't also pan/rotate. The new value is emitted; the parent owns zScale and feeds it back.
-let threeFingerY: number | null = null;
-function avgY(t: TouchList): number { let s = 0; for (let i = 0; i < t.length; i++) s += t[i].clientY; return s / t.length; }
-function onTouchStart(ev: TouchEvent) {
-	if (ev.touches.length === 3) { threeFingerY = avgY(ev.touches); if (controls) controls.enabled = false; ev.preventDefault(); }
+// up spreads the points apart in Z; down flattens. Tracked via POINTER events (not touch) so it
+// coexists with OrbitControls' pointer capture — touch events can be suppressed once a pointer is
+// captured, which is why a touch-based handler didn't fire. OrbitControls is paused for the
+// gesture; the new value is emitted and the parent owns zScale, feeding it back.
+const zPointers = new Map<number, number>();   // pointerId -> clientY
+let zBaseY = 0;
+function avgVals(m: Map<number, number>): number { let s = 0; for (const v of m.values()) s += v; return s / (m.size || 1); }
+function onPtrDown(ev: PointerEvent) {
+	if (ev.pointerType !== 'touch') return;
+	zPointers.set(ev.pointerId, ev.clientY);
+	if (zPointers.size === 3) { if (controls) controls.enabled = false; zBaseY = avgVals(zPointers); }
 }
-function onTouchMove(ev: TouchEvent) {
-	if (threeFingerY === null || ev.touches.length !== 3) return;
-	ev.preventDefault();
-	const y = avgY(ev.touches);
-	const dy = threeFingerY - y;   // swipe up (dy > 0) => more Z separation
-	threeFingerY = y;
-	if (props.zSeries && props.zSeries !== 'none') {
+function onPtrMove(ev: PointerEvent) {
+	if (!zPointers.has(ev.pointerId)) return;
+	zPointers.set(ev.pointerId, ev.clientY);
+	if (zPointers.size >= 3 && props.zSeries && props.zSeries !== 'none') {
+		const y = avgVals(zPointers);
+		const dy = zBaseY - y;   // swipe up (dy > 0) => more Z separation
+		zBaseY = y;
 		const cur = Math.max(0.02, props.zScale ?? 0.35);
-		const next = Math.min(3, Math.max(0, cur * Math.exp(dy * 0.006)));
-		emit('zscale', Number(next.toFixed(4)));
+		emit('zscale', Number(Math.min(3, Math.max(0, cur * Math.exp(dy * 0.006))).toFixed(4)));
 	}
 }
-function onTouchEnd(ev: TouchEvent) {
-	if (ev.touches.length < 3) { threeFingerY = null; if (controls) controls.enabled = true; }
+function onPtrUp(ev: PointerEvent) {
+	zPointers.delete(ev.pointerId);
+	if (zPointers.size < 3 && controls) controls.enabled = true;
 }
 
 function sizeCanvas() {
@@ -287,10 +292,10 @@ onBeforeUnmount(() => {
 	if (raf) cancelAnimationFrame(raf);
 	const c = canvasEl.value;
 	if (c) {
-		c.removeEventListener('touchstart', onTouchStart);
-		c.removeEventListener('touchmove', onTouchMove);
-		c.removeEventListener('touchend', onTouchEnd);
-		c.removeEventListener('touchcancel', onTouchEnd);
+		c.removeEventListener('pointerdown', onPtrDown);
+		c.removeEventListener('pointermove', onPtrMove);
+		c.removeEventListener('pointerup', onPtrUp);
+		c.removeEventListener('pointercancel', onPtrUp);
 	}
 	ro?.disconnect(); controls?.dispose(); material?.dispose(); renderer?.dispose();
 });

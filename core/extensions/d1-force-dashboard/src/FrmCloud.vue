@@ -13,6 +13,7 @@ import { useApi } from '@directus/extensions-sdk';
 import * as THREE from 'three';
 import { type Cache, cacheGet, cachePut, parseCache } from './liveCache';
 import { type Axis, type Cloud, type SpeedMode, buildCloud, COLORMAPS } from './liveCloud';
+import { exportFrmFigure } from './frmExport';
 
 const props = defineProps<{
 	cacheFileId: string;
@@ -75,7 +76,13 @@ async function load(id: string) {
 		loading.value = false;
 	}
 }
-watch(() => props.cacheFileId, (id) => { if (id) load(id); }, { immediate: true });
+// NOT immediate: an immediate watch runs during setup(), and on the precached (cache
+// already in the LRU) path load() runs *synchronously* there — before the view-state
+// refs below (viewActive, vCx…) are initialised — throwing "Cannot access 'viewActive'
+// before initialization". The initial load is kicked off from onMounted instead (after
+// setup completes, so every ref exists); this watch only handles later cacheFileId
+// changes (switching ops while mounted), which already run post-setup.
+watch(() => props.cacheFileId, (id) => { if (id) load(id); });
 
 // ---- interactive view transform (equal-aspect, world = mm) ---------------------
 // The view is a square-ish window on the world, expressed as centre + span (one
@@ -268,22 +275,57 @@ function currentBounds(): { xmin: number; xmax: number; ymin: number; ymax: numb
 	const { sx, sy } = scaleFor(v.span);
 	return { xmin: v.cx - 1 / sx, xmax: v.cx + 1 / sx, ymin: v.cy - 1 / sy, ymax: v.cy + 1 / sy };
 }
-defineExpose({ currentBounds });
+// Export the CURRENT viewport (whatever zoom/pan the user is looking at) as a formatted FRM
+// figure — instant, client-side, no host round-trip. Forces a fresh draw first (the renderer
+// keeps preserveDrawingBuffer) and composites the report styling (axes/colorbar/title) around it.
+function exportViewport(filename: string, subtitle?: string) {
+	const c = canvasEl.value;
+	if (!c || !ready) return false;
+	draw();
+	const cl = climits.value;
+	return exportFrmFigure({
+		canvas: c, bounds: currentBounds(),
+		cmin: cl?.cmin ?? 0, cmax: cl?.cmax ?? 1,
+		colormap: props.colormap, axis: props.axis, subtitle, filename,
+	});
+}
+defineExpose({ currentBounds, exportViewport });
 
 let ro: ResizeObserver | undefined;
-onMounted(() => { ro = new ResizeObserver(() => scheduleDraw()); if (cache.value) nextTick(() => { setupRenderer(); scheduleRebuild(); }); });
+onMounted(() => {
+	ro = new ResizeObserver(() => scheduleDraw());
+	// Kick off the initial cache load here (post-setup) rather than via an immediate
+	// watch, so the synchronous precached path can't touch not-yet-initialised refs.
+	if (props.cacheFileId) load(props.cacheFileId);
+	else if (cache.value) nextTick(() => { setupRenderer(); scheduleRebuild(); });
+});
 onBeforeUnmount(() => {
 	if (raf) cancelAnimationFrame(raf);
 	ro?.disconnect();
+	if (cropTimer) clearTimeout(cropTimer);
 	pointsGeom?.dispose(); pointsMat?.dispose(); discTex?.dispose(); renderer?.dispose();
 });
 
-// Geometry/colour props → rebuild the cloud. pointSize is view-only (a uniform), so
-// it only needs a redraw.
+// Geometry/colour props → rebuild immediately. pointSize is view-only (a uniform).
 watch(() => [props.axis, props.feed, props.diam, props.speedMode, props.rpm, props.vc, props.timeScale, props.ppr,
-	props.cropStartSec, props.cropEndSec, props.stride, props.gridding, props.gridN,
-	props.colormap, props.cmin, props.cmax], scheduleRebuild);
+	props.stride, props.gridding, props.gridN, props.colormap, props.cmin, props.cmax], scheduleRebuild);
 watch(() => props.pointSize, scheduleDraw);
+
+// Crop is DRAGGED, and its rebuild is the full O(N) recompute + percentile sort + GPU
+// re-upload — running that every drag frame is what makes millions-of-points laggy. So
+// throttle it to ~12fps (leading rebuild, then a trailing one so the final crop is
+// exact). The force charts' crop shading stays instant regardless (cheap SVG overlay).
+let cropTimer = 0, cropTrailing = false;
+function onCropChange() {
+	if (cropTimer) { cropTrailing = true; return; }
+	scheduleRebuild();
+	const step = () => {
+		cropTimer = 0;
+		if (cropTrailing) { cropTrailing = false; scheduleRebuild(); cropTimer = window.setTimeout(step, 80); }
+	};
+	cropTimer = window.setTimeout(step, 80);
+}
+watch(() => [props.cropStartSec, props.cropEndSec], onCropChange);
 
 // ---- pointer interaction: wheel-zoom, drag-pan, rectangular zoom ----
 const rectTool = ref(false);                       // when on, drag draws a zoom rectangle
@@ -301,7 +343,16 @@ function onWheel(ev: WheelEvent) {
 	ev.preventDefault();
 	const { px, py } = localXY(ev);
 	const w = screenToWorld(px, py);
-	const f = ev.deltaY < 0 ? 1.2 : 1 / 1.2;
+	// Magnitude-aware zoom. The old code stepped a fixed 1.2x per wheel EVENT (sign only),
+	// so a free-spinning / high-res wheel — which emits a burst of events per physical
+	// notch — multiplied that dozens of times and slammed straight to max zoom. Normalise
+	// the delta across device units (px / lines / pages), clamp a single event's reach,
+	// and scale continuously so one notch ≈ 1.2x regardless of how it's delivered.
+	let dy = ev.deltaY;
+	if (ev.deltaMode === 1) dy *= 16;                       // lines -> ~px
+	else if (ev.deltaMode === 2) dy *= (cssH || 600);       // pages -> ~px
+	dy = Math.max(-100, Math.min(100, dy));                 // cap one event to ~one notch
+	const f = Math.exp(-dy * 0.00182);                      // ~1.2x per 100px notch
 	const v = effView();
 	const newSpan = Math.min(fitSpan * 8, Math.max(fitSpan / 500, v.span / f));
 	const { sx, sy } = scaleFor(newSpan);
@@ -311,21 +362,53 @@ function onWheel(ev: WheelEvent) {
 	viewActive.value = true;
 	scheduleDraw();
 }
+// Active pointers, so touch can pinch-zoom (two fingers) as well as pan (one). Desktop
+// still uses the wheel; mobile had NO zoom before this — a single pointer only panned.
+const pointers = new Map<number, { px: number; py: number }>();
+let pinch: { dist: number; span: number; cx: number; cy: number } | null = null;
+function pointerList() { return [...pointers.values()]; }
+function pointerDist() { const p = pointerList(); return Math.hypot(p[0].px - p[1].px, p[0].py - p[1].py); }
+function pointerMid() { const p = pointerList(); return { px: (p[0].px + p[1].px) / 2, py: (p[0].py + p[1].py) / 2 }; }
+function seedView() { if (!viewActive.value) { vCx.value = fitCx; vCy.value = fitCy; vSpan.value = fitSpan; viewActive.value = true; } }
+
 function onDown(ev: PointerEvent) {
 	if (!cache.value) return;
 	const { px, py } = localXY(ev);
 	(ev.currentTarget as Element).setPointerCapture(ev.pointerId);
+	pointers.set(ev.pointerId, { px, py });
+	if (pointers.size === 2) {
+		// second finger down -> start a pinch; abandon any pan/rect in progress
+		panning = false; rectDrag = false; rectSel.value = null;
+		seedView();
+		const mid = pointerMid(); const w = screenToWorld(mid.px, mid.py);
+		pinch = { dist: pointerDist() || 1, span: vSpan.value, cx: w.x, cy: w.y };
+		return;
+	}
+	if (pointers.size > 2) return;
 	if (rectTool.value) {
 		rectDrag = true; startPx = px; startPy = py; rectSel.value = { x: px, y: py, w: 0, h: 0 };
 	} else {
 		panning = true; grab = { x: screenToWorld(px, py).x, y: screenToWorld(px, py).y };
-		// activate the view (seed from fit) so panning has somewhere to write
-		if (!viewActive.value) { vCx.value = fitCx; vCy.value = fitCy; vSpan.value = fitSpan; viewActive.value = true; }
+		seedView();
 	}
 }
 function onMove(ev: PointerEvent) {
 	if (!cache.value) return;
 	const { px, py } = localXY(ev);
+	if (pointers.has(ev.pointerId)) pointers.set(ev.pointerId, { px, py });
+	if (pinch && pointers.size >= 2) {
+		// pinch-zoom: keep the world point under the finger midpoint fixed (spread = zoom in)
+		const d = pointerDist();
+		if (d > 0) {
+			const newSpan = Math.min(fitSpan * 8, Math.max(fitSpan / 500, pinch.span * (pinch.dist / d)));
+			const mid = pointerMid();
+			const { sx, sy } = scaleFor(newSpan);
+			const ndcX = (mid.px / cssW) * 2 - 1, ndcY = 1 - (mid.py / cssH) * 2;
+			vSpan.value = newSpan; vCx.value = pinch.cx - ndcX / sx; vCy.value = pinch.cy - ndcY / sy;
+			scheduleDraw();
+		}
+		return;
+	}
 	if (rectDrag && rectSel.value) {
 		rectSel.value = { x: Math.min(px, startPx), y: Math.min(py, startPy), w: Math.abs(px - startPx), h: Math.abs(py - startPy) };
 	} else if (panning && grab) {
@@ -339,6 +422,8 @@ function onMove(ev: PointerEvent) {
 }
 function onUp(ev: PointerEvent) {
 	try { (ev.currentTarget as Element).releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
+	pointers.delete(ev.pointerId);
+	if (pointers.size < 2) pinch = null;
 	if (rectDrag && rectSel.value) {
 		const s = rectSel.value;
 		if (s.w > 6 && s.h > 6) {
