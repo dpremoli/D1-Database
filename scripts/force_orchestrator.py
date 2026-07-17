@@ -217,6 +217,43 @@ def discover(conn, args) -> int:
     return inserted + reset
 
 
+def _octree_threshold(conn) -> int:
+    """The point count above which an op is served as an octree (force_crawler_state.
+    octree_threshold, falling back to live_cache_points, then 5M)."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(octree_threshold, live_cache_points, 5000000) "
+                        "FROM force_crawler_state WHERE id='00000000-0000-0000-0000-000000000001'")
+            row = cur.fetchone()
+        if row and row[0]:
+            return int(row[0])
+    except psycopg2.Error:
+        conn.rollback()
+    return 5_000_000
+
+
+def enqueue_pregen_octrees(conn) -> int:
+    """Pre-build the (raw) Potree octree for every processed op whose full-resolution point
+    count exceeds the auto-route threshold and doesn't have one yet — so large maps open in
+    Full mode instantly instead of waiting minutes for an on-demand build. Idempotent: only
+    touches rows with no octree (octree_status IS NULL). The grid octree stays on-demand."""
+    threshold = _octree_threshold(conn)
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE machining_force_analysis
+               SET octree_status='pending', octree_requested_at=now(), updated_at=now()
+             WHERE status='done'
+               AND octree_status IS NULL
+               AND cut_start_idx IS NOT NULL AND cut_end_idx IS NOT NULL
+               AND (cut_end_idx - cut_start_idx) > %s
+        """, [threshold])
+        n = cur.rowcount
+    conn.commit()
+    if n:
+        log.info("pre-gen: enqueued %d octree build(s) for ops over %d points", n, threshold)
+    return n
+
+
 def claim_batch(conn, args, limit: int):
     """Atomically move up to `limit` pending rows to 'processing'; return them."""
     scope, sparams = _scope_exists(args, "a")
@@ -1087,6 +1124,7 @@ def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
                     mark("discovering")
                     reset_stale_processing(conn)
                     n = discover(conn, dargs)
+                    enqueue_pregen_octrees(conn)   # pre-build octrees for big ops
                     last_discover = time.time()
                     with conn.cursor() as cur:
                         cur.execute("UPDATE force_crawler_state SET last_discover_at=now() "
@@ -1183,6 +1221,7 @@ def main() -> int:
         if args.discover:
             reset_stale_processing(conn)
             discover(conn, args)
+            enqueue_pregen_octrees(conn)   # pre-build octrees for big ops
         with conn.cursor() as cur:
             cur.execute("SELECT status, count(*) FROM machining_force_analysis GROUP BY status ORDER BY status")
             log.info("queue: %s", ", ".join(f"{k}={v}" for k, v in cur.fetchall()) or "(empty)")
