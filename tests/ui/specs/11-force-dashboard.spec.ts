@@ -37,15 +37,11 @@ test('force dashboard: drill sample → operation → charts + FRM, with toggles
 	await expect(page.locator('.panel-ops .rowcard.active')).toBeVisible();
 
 	// This test exercises the STATIC view (force-metric stat tiles + FRM image + axis
-	// toggle). Two things can move an op off the static view: the auto-route opens the
-	// octree ("Full-res") for large maps, and the connection-speed default opens the live
-	// cloud. Turn the octree off first (that reveals the Live toggle), then Live off.
-	const fullResBtn = page.locator('.frm-col .toggle .tbtn', { hasText: 'Full-res' });
-	await expect(fullResBtn).toBeVisible({ timeout: 20_000 });
-	if (await fullResBtn.evaluate((el) => el.classList.contains('on')).catch(() => false)) await fullResBtn.click();
-	const liveToggle = page.locator('.frm-col .toggle .tbtn', { hasText: 'Live' });
-	await expect(liveToggle).toBeVisible({ timeout: 20_000 });
-	if (await liveToggle.evaluate((el) => el.classList.contains('on')).catch(() => false)) await liveToggle.click();
+	// toggle). The connection-speed default or the large-map auto-route can open Lite/Full;
+	// the segmented selector's "Figure" is the prerendered PNG we want here.
+	const figureBtn = page.locator('.frm-col .segmode .segbtn', { hasText: 'Figure' });
+	await expect(figureBtn).toBeVisible({ timeout: 20_000 });
+	await figureBtn.click();
 
 	// Operation info tiles.
 	await expect(page.locator('.card.info .stat').first()).toBeVisible({ timeout: 20_000 });
@@ -80,11 +76,11 @@ test('force dashboard: drill sample → operation → charts + FRM, with toggles
 	});
 });
 
-test('force dashboard: F11 op — switch view modes (image ⇄ live cloud) back and forth without TDZ/render errors', async ({ page }) => {
+test('force dashboard: F11 op — switch Figure ⇄ Lite back and forth without TDZ/render errors', async ({ page }) => {
 	// Regression for the "Cannot access 'X' before initialization" TDZ errors that hit
-	// when transitioning between the static image and the live point cloud (and back).
-	// The octree ("Full-res") view needs the same-origin Caddy mount, so it is covered by
-	// the host-side verification, not here; this guards the image⇄cloud path in-app.
+	// when transitioning between the static Figure (PNG) and the Lite point cloud (and back).
+	// The Full (octree) view needs the same-origin Caddy mount, so it is covered by the
+	// host-side verification, not here; this guards the Figure⇄Lite path in-app.
 	const OP = '1e380d8b-bb31-5668-9fb9-30ba5058f68f'; // 122-AA-MM-2025-6-5-F11 (has a live cache)
 
 	const errors: string[] = [];
@@ -96,47 +92,32 @@ test('force dashboard: F11 op — switch view modes (image ⇄ live cloud) back 
 
 	await page.goto(`/admin/d1-force-dashboard?operation=${OP}`, { waitUntil: 'domcontentloaded' });
 
-	// The FRM column renders (either the image or the live cloud, depending on the
-	// connection-speed default). The Live toggle now lives in the FRM header.
-	const liveBtn = page.locator('.frm-col .toggle .tbtn', { hasText: 'Live' });
-	await expect(liveBtn).toBeVisible({ timeout: 30_000 });
-	test.skip(await liveBtn.isDisabled(), 'op has no live cache in this environment');
+	const seg = (label: string) => page.locator('.frm-col .segmode .segbtn', { hasText: label });
+	const figureBtn = seg('Figure'), liteBtn = seg('Lite');
+	await expect(liteBtn).toBeVisible({ timeout: 30_000 });
+	test.skip(await liteBtn.isDisabled(), 'op has no live cache in this environment');
 
-	const img = page.locator('.frm-img img');        // static image mode
-	const cloud = page.locator('.frm-cloud');        // live point-cloud renderer (mounts when Live is on)
+	const img = page.locator('.frm-img img');        // static Figure (PNG)
+	const cloud = page.locator('.frm-cloud');        // Lite point-cloud renderer (mounts in Lite)
 	const cloudError = page.locator('.frm-cloud .error'); // FrmCloud's error overlay (load() catch)
-	const fullResBtn = page.locator('.frm-col .toggle .tbtn', { hasText: 'Full-res' });
 
-	// Enter the live cloud once so its cache is in the module LRU — that's what makes the
-	// *next* entry take load()'s synchronous precached path, which is where the
-	// "Cannot access 'viewActive' before initialization" TDZ used to fire. The error is
-	// caught into the component's error overlay (not thrown to the page), so assert on it.
-	if (!(await liveBtn.evaluate((el) => el.classList.contains('on')))) await liveBtn.click();
+	// Enter Lite once so its cache is in the module LRU — that's what makes the *next* entry
+	// take load()'s synchronous precached path, where the "Cannot access 'viewActive' before
+	// initialization" TDZ used to fire (caught into the overlay, so assert on the overlay).
+	await liteBtn.click();
 	await expect(cloud).toHaveCount(1, { timeout: 20_000 });
 	await expect(cloudError).toHaveCount(0, { timeout: 20_000 });
 
-	// Drive it into image mode as a known starting point, then flip modes 3×.
-	if (await liveBtn.evaluate((el) => el.classList.contains('on'))) await liveBtn.click();
+	// Known starting point: Figure. Then flip Figure⇄Lite 3×.
+	await figureBtn.click();
 	await expect(img).toBeVisible({ timeout: 20_000 });
 
 	for (let i = 0; i < 3; i++) {
-		// image -> live cloud (precached path): must render without the TDZ overlay
-		await liveBtn.click();
+		await liteBtn.click();  // Figure -> Lite (precached path): render without the TDZ overlay
 		await expect(cloud).toHaveCount(1, { timeout: 20_000 });
 		await expect(cloudError).toHaveCount(0, { timeout: 20_000 });
 		await expect(img).toHaveCount(0);
-		// octree (Full-res) -> live cloud, if an octree is available: the exact transition
-		// the user hit. Full-res replaces the cloud; toggling it off returns to the cloud.
-		if (await fullResBtn.evaluate((el) => el.classList.contains('on')).catch(() => false) === false
-			&& await fullResBtn.isEnabled().catch(() => false)) {
-			await fullResBtn.click();
-			if (await fullResBtn.evaluate((el) => el.classList.contains('on')).catch(() => false)) {
-				await fullResBtn.click(); // octree -> back to live cloud
-				await expect(cloud).toHaveCount(1, { timeout: 20_000 });
-				await expect(cloudError).toHaveCount(0, { timeout: 20_000 });
-			}
-		}
-		await liveBtn.click(); // live cloud -> image
+		await figureBtn.click(); // Lite -> Figure
 		await expect(img).toBeVisible({ timeout: 20_000 });
 		await expect(cloud).toHaveCount(0);
 	}
@@ -185,14 +166,14 @@ test('force dashboard: Gridded in Full-res loads the interpolated-grid octree wi
 
 	await page.goto(`/admin/d1-force-dashboard?operation=${OP}`, { waitUntil: 'domcontentloaded' });
 
-	// Enter Full-res (octree mode). The button is available once the raw octree is built.
-	const fullResBtn = page.locator('.frm-col .toggle .tbtn', { hasText: 'Full-res' });
-	await expect(fullResBtn).toBeVisible({ timeout: 30_000 });
-	if (!(await fullResBtn.evaluate((el) => el.classList.contains('on')))) await fullResBtn.click();
+	// Enter Full (octree) via the segmented selector. Available once the raw octree is built.
+	const fullBtn = page.locator('.frm-col .segmode .segbtn', { hasText: 'Full' });
+	await expect(fullBtn).toBeVisible({ timeout: 30_000 });
+	await fullBtn.click();
 	await expect(page.locator('.frm-octree')).toHaveCount(1, { timeout: 20_000 });
 
-	// Turn on Gridded (in the plotting-settings panel) -> the FRM swaps to the grid octree.
-	await page.locator('.chk:has-text("Gridded") input').check();
+	// Turn on the Gridded sub-toggle (header, Full-only) -> the FRM swaps to the grid octree.
+	await page.locator('.frm-col .toggle .tbtn', { hasText: 'Gridded' }).click();
 
 	// The fidelity chip renders (gridActive is data-driven, so this does not depend on WebGL).
 	const fid = page.locator('.frm-fid');

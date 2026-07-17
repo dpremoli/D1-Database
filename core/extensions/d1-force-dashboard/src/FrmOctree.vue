@@ -34,6 +34,7 @@ const props = defineProps<{
 const emit = defineEmits<{
 	(e: 'climits', v: { cmin: number; cmax: number }): void;
 	(e: 'points', n: number): void;   // LOD-visible point count (for the resolution readout)
+	(e: 'zscale', v: number): void;   // 3-finger vertical swipe adjusts the Z exaggeration
 }>();
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
@@ -136,10 +137,16 @@ function applyZ() {
 		const r = ranges[z] || [0, 1];
 		material.uniforms.uZRange.value.set(r[0], r[1] > r[0] ? r[1] : r[0] + 1);
 		material.uniforms.uZScale.value = baseSpan * (props.zScale ?? 0.35);
+		// 3D: drag / one-finger rotates (tilt), two-finger dollies+pans. Height is inspectable.
 		controls.enableRotate = true;
+		controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+		controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
 	} else {
 		material.uniforms.uZScale.value = 0;
+		// 2D (top-down): drag / one-finger pans, two-finger dollies+pans; no rotation.
 		controls.enableRotate = false;
+		controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+		controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
 		frameCamera();   // snap back to a clean top-down view when flattening
 	}
 }
@@ -218,6 +225,10 @@ function setupGL() {
 	controls.enableRotate = false;
 	controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
 	controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
+	canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+	canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+	canvas.addEventListener('touchend', onTouchEnd);
+	canvas.addEventListener('touchcancel', onTouchEnd);
 	const loop = () => {
 		raf = requestAnimationFrame(loop);
 		controls!.update();
@@ -236,6 +247,30 @@ function setupGL() {
 	loop();
 }
 
+// 3-finger vertical swipe adjusts the Z exaggeration (only when a Z series is loaded). Swiping
+// up spreads the points apart in Z; down flattens. OrbitControls is paused for the gesture so
+// it doesn't also pan/rotate. The new value is emitted; the parent owns zScale and feeds it back.
+let threeFingerY: number | null = null;
+function avgY(t: TouchList): number { let s = 0; for (let i = 0; i < t.length; i++) s += t[i].clientY; return s / t.length; }
+function onTouchStart(ev: TouchEvent) {
+	if (ev.touches.length === 3) { threeFingerY = avgY(ev.touches); if (controls) controls.enabled = false; ev.preventDefault(); }
+}
+function onTouchMove(ev: TouchEvent) {
+	if (threeFingerY === null || ev.touches.length !== 3) return;
+	ev.preventDefault();
+	const y = avgY(ev.touches);
+	const dy = threeFingerY - y;   // swipe up (dy > 0) => more Z separation
+	threeFingerY = y;
+	if (props.zSeries && props.zSeries !== 'none') {
+		const cur = Math.max(0.02, props.zScale ?? 0.35);
+		const next = Math.min(3, Math.max(0, cur * Math.exp(dy * 0.006)));
+		emit('zscale', Number(next.toFixed(4)));
+	}
+}
+function onTouchEnd(ev: TouchEvent) {
+	if (ev.touches.length < 3) { threeFingerY = null; if (controls) controls.enabled = true; }
+}
+
 function sizeCanvas() {
 	const canvas = canvasEl.value; if (!canvas) return;
 	const r = canvas.getBoundingClientRect();
@@ -250,6 +285,13 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
 	if (raf) cancelAnimationFrame(raf);
+	const c = canvasEl.value;
+	if (c) {
+		c.removeEventListener('touchstart', onTouchStart);
+		c.removeEventListener('touchmove', onTouchMove);
+		c.removeEventListener('touchend', onTouchEnd);
+		c.removeEventListener('touchcancel', onTouchEnd);
+	}
 	ro?.disconnect(); controls?.dispose(); material?.dispose(); renderer?.dispose();
 });
 
