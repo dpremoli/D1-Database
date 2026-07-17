@@ -12,8 +12,9 @@ import { test, expect } from '../fixtures';
 test('force dashboard: drill sample → operation → charts + FRM, with toggles', async ({ page }, testInfo) => {
 	await page.goto('/admin/d1-force-dashboard', { waitUntil: 'domcontentloaded' });
 
-	// Hero renders (compact badge banner).
-	await expect(page.locator('.hero .hero-badge')).toHaveText(/Force Analysis/i, { timeout: 30_000 });
+	// Hero renders (compact badge banner). Generous timeout: this is usually the first test
+	// to hit Directus after a restart, and cold extension bundling can take >30s.
+	await expect(page.locator('.hero .hero-badge')).toHaveText(/Force Analysis/i, { timeout: 90_000 });
 
 	// Samples + Operations panels populated.
 	const samples = page.locator('.panel-samples .rowcard');

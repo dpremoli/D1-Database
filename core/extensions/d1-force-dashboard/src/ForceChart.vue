@@ -99,7 +99,13 @@ const geom = computed(() => {
 	let lo = Infinity, hi = -Infinity;
 	if (props.kind === 'env') {
 		for (let i = iA; i <= iB; i++) { if (d.min[i] < lo) lo = d.min[i]; if (d.max[i] > hi) hi = d.max[i]; }
-		lo = Math.min(lo, 0); hi = Math.max(hi, 0);       // always include 0
+		// Include 0 only when it's cheap. Unconditionally forcing 0 (the old behaviour)
+		// squashed all-negative signals (e.g. an Fy at −5…−10 N) into half the plot,
+		// with the top half empty — the envelope looked cropped/compressed. Now the axis
+		// extends to 0 only if the gap to 0 costs ≤ half the data's own range.
+		const R = (hi - lo) || 1;
+		if (lo > 0 && lo <= R * 0.5) lo = 0;
+		else if (hi < 0 && -hi <= R * 0.5) hi = 0;
 	} else {
 		lo = 0;
 		for (let i = iA; i <= iB; i++) if (d.amp[i] > hi) hi = d.amp[i];
@@ -358,7 +364,8 @@ function onWheel(ev: WheelEvent) {
 .chart-svg .crop-hit { cursor: ew-resize; }
 .chart-empty { flex: 1; display: grid; place-items: center; color: var(--theme--foreground-subdued, #98a2b3); font-size: 12px; }
 .chart-tip {
-	position: absolute; top: 8px; right: 12px; display: flex; flex-direction: column; align-items: flex-end;
+	/* below the header row so it never covers the "peak … N" readout in the top-right */
+	position: absolute; top: 30px; right: 12px; display: flex; flex-direction: column; align-items: flex-end;
 	background: color-mix(in srgb, var(--theme--background, #fff) 85%, transparent); border-radius: 8px; padding: 2px 7px; pointer-events: none;
 }
 .chart-tip strong { font-size: 12px; font-variant-numeric: tabular-nums; }
