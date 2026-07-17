@@ -12,7 +12,19 @@
     handle_path /octrees/* {
         root * /srv/octrees
         header Access-Control-Allow-Origin "*"
+        # Revalidate on every request (conditional GET via ETag). Without this Caddy sends
+        # only ETag/Last-Modified, so browsers apply HEURISTIC freshness and can keep
+        # serving a stale metadata.json / octree.bin cached from BEFORE a rebuild — which
+        # showed as wrong octree colour limits after the climits repatch. "no-cache" still
+        # allows caching but forces a 304 check, so unchanged files stay cheap.
+        header Cache-Control "no-cache"
         file_server
+    }
+    # FRM filter-service (interactive signal-filter previews). Same-origin so the
+    # dashboard can call it under Directus's CSP; the service forwards the caller's
+    # Directus credentials when fetching the live cache, so auth stays Directus's.
+    handle_path /filter/* {
+        reverse_proxy filter-service:8000
     }
     reverse_proxy directus:8055
 }

@@ -277,6 +277,34 @@ services:
       start_period: 30s
     networks: [d1net]
 
+  # FRM filter-service: interactive signal-filter previews for the force dashboard
+  # (docs/superpowers/specs/2026-07-21-frm-filtering-suite-design.md). Fetches live
+  # caches from Directus forwarding the CALLER'S credentials (no service account),
+  # filters with scipy, returns decimated previews. Served same-origin via Caddy
+  # at /filter/* — no published ports.
+  filter-service:
+    build:
+      context: plugins/filter-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      directus:
+        condition: service_healthy
+    environment:
+      DIRECTUS_URL: http://directus:8055
+      CACHE_LRU: "4"
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [d1net]
+
   # Reverse proxy: single HTTP entry point → Directus admin UI.
   # MinIO console and API remain directly accessible on their own ports.
   proxy:
