@@ -46,11 +46,12 @@ export function chainSummary(c: FilterChain | null | undefined): string {
 
 // ---- filter-service calls (same-origin via Caddy /filter/*; Directus session cookie
 // flows automatically, and the service forwards it when fetching the cache) ----
-export async function fetchFiltered(cacheFileId: string, chain: FilterChain, targetPoints = 1_500_000):
+export async function fetchFiltered(cacheFileId: string, chain: FilterChain, targetPoints = 1_500_000, signal?: AbortSignal):
 	Promise<{ cache: Cache; skipped: string[] }> {
 	const res = await fetch('/filter/run', {
 		method: 'POST',
 		credentials: 'include',
+		signal,
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ cache_file_id: cacheFileId, chain, target_points: targetPoints }),
 	});

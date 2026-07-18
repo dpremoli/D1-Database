@@ -310,7 +310,9 @@ onBeforeUnmount(() => {
 		c.removeEventListener('pointerup', onPtrUp);
 		c.removeEventListener('pointercancel', onPtrUp);
 	}
-	ro?.disconnect(); controls?.dispose(); material?.dispose(); renderer?.dispose();
+	ro?.disconnect(); controls?.dispose(); material?.dispose();
+	try { renderer?.forceContextLoss(); } catch { /* ignore */ }   // release the GL context (not freed by dispose())
+	renderer?.dispose();
 });
 
 watch(() => props.octreePath, () => { if (pco) { scene?.remove(pco); pco = null; } load(); });

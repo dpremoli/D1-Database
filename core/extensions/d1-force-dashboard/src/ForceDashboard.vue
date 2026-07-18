@@ -348,19 +348,24 @@ async function loadProfiles() {
 	try { profiles.value = (await api.get('/items/filter_profiles', { params: { fields: ['id', 'name', 'chain'], sort: 'name', limit: 100 } })).data.data ?? []; }
 	catch { profiles.value = []; }
 }
+let previewAbort: AbortController | null = null;
 async function runPreview() {
 	const d = detail.value;
-	if (!d?.live_cache_file || !chainActive(workChain.value)) { filteredCache.value = null; filterFftOverlay.value = null; return; }
+	previewAbort?.abort();                     // cancel any in-flight preview (stale-result guard)
+	if (!d?.live_cache_file || !chainActive(workChain.value)) { filteredCache.value = null; filterFftOverlay.value = null; filterBusy.value = false; return; }
+	const ac = new AbortController(); previewAbort = ac;
 	filterBusy.value = true; filterErr.value = null;
 	try {
-		const { cache, skipped } = await fetchFiltered(d.live_cache_file, workChain.value);
+		const { cache, skipped } = await fetchFiltered(d.live_cache_file, workChain.value, 1_500_000, ac.signal);
+		if (ac.signal.aborted) return;
 		filteredCache.value = cache; filterSkipped.value = skipped;
 		if (chartMode.value === 'fft') filterFftOverlay.value = await fetchFilteredFft(d.live_cache_file, workChain.value, axis.value);
 	} catch (e: any) {
+		if (e?.name === 'AbortError' || ac.signal.aborted) return;   // superseded — not an error
 		filterErr.value = (e?.message || 'filter service unreachable').includes('Failed to fetch')
 			? 'filter service unreachable — raw only' : e?.message;
 		filteredCache.value = null;
-	} finally { filterBusy.value = false; }
+	} finally { if (previewAbort === ac) filterBusy.value = false; }
 }
 let previewTimer = 0;
 watch([workChain, () => detail.value?.live_cache_file, () => filtersOpen.value, axis, chartMode], () => {

@@ -221,9 +221,23 @@ function setupRenderer() {
 	pointsMat = new THREE.PointsMaterial({ size: 1.4, sizeAttenuation: false, vertexColors: true, map: discTex, alphaTest: 0.5, transparent: false });
 	pointsObj = new THREE.Points(pointsGeom, pointsMat);
 	scene.add(pointsObj);
-	canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); error.value = 'WebGL context lost — toggle Live to reload'; ready = false; });
+	// preventDefault keeps the canvas eligible for a restore event; on restore we re-upload
+	// the resident buffers and resume, so a context the browser reclaimed (e.g. too many
+	// live GL contexts while compare mode holds several clouds) recovers on its own instead
+	// of dead-ending on "toggle Live to reload".
+	canvas.addEventListener('webglcontextlost', onCtxLost, false);
+	canvas.addEventListener('webglcontextrestored', onCtxRestored, false);
 	ready = true;
 	if (ro) ro.observe(canvas);
+}
+function onCtxLost(e: Event) { e.preventDefault(); ready = false; error.value = 'GPU context lost — restoring…'; }
+function onCtxRestored() {
+	error.value = null;
+	// three re-creates its GL state on the restored context; re-flag our resources for
+	// upload and rebuild from the (still-in-memory) cache.
+	if (pointsGeom) { pointsGeom.dispose(); }
+	ready = true;
+	nextTick(() => { if (cache.value) scheduleRebuild(); });
 }
 
 let sizedW = 0, sizedH = 0;   // last size actually applied to the renderer
@@ -408,7 +422,12 @@ onBeforeUnmount(() => {
 	ro?.disconnect();
 	if (cropTimer) clearTimeout(cropTimer);
 	controls?.dispose();
-	pointsGeom?.dispose(); pointsMat?.dispose(); discTex?.dispose(); renderer?.dispose();
+	pointsGeom?.dispose(); pointsMat?.dispose(); discTex?.dispose();
+	// dispose() alone does NOT free the WebGL context; forceContextLoss() releases it so a
+	// mode/filter toggle (which unmounts one cloud and mounts another) can't accumulate live
+	// contexts until the browser reclaims one — the "Lite never recovered" bug on big ops.
+	try { renderer?.forceContextLoss(); } catch { /* ignore */ }
+	renderer?.dispose();
 });
 
 // Geometry/colour props → rebuild immediately. pointSize is view-only (a uniform).
