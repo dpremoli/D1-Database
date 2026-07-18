@@ -39,9 +39,22 @@ def _auth_headers(req: Request) -> dict:
     return h
 
 
+async def _authorize(file_id: str, req: Request) -> None:
+    """Re-check that THIS caller may read the asset, with their own credentials — a cheap
+    HEAD to the same /assets route the real fetch uses (Directus applies the identical file
+    permissions). Guards LRU HITS: without this, an entry warmed by one user's credentials
+    would be served to any other caller who knows the id (IDOR). The MISS path authorizes
+    inherently, because it fetches the bytes with the caller's own credentials."""
+    async with httpx.AsyncClient(timeout=30) as cl:
+        r = await cl.head(f"{DIRECTUS_URL}/assets/{file_id}", headers=_auth_headers(req))
+    if r.status_code not in (200, 206):
+        raise HTTPException(r.status_code if r.status_code >= 400 else 403, "not permitted")
+
+
 async def _get_cache(file_id: str, req: Request) -> Cache:
     c = _lru.get(file_id)
     if c is not None:
+        await _authorize(file_id, req)          # per-request authz on the shared LRU (IDOR guard)
         _lru.move_to_end(file_id)
         return c
     async with httpx.AsyncClient(timeout=120) as cl:
