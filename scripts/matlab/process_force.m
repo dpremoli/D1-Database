@@ -120,6 +120,16 @@ catch ME
 end
 rpm = rpm_raw / opts.pulses_per_rev;
 
+% ---- signal-filter chain (bake): apply the op's saved chain at full resolution BEFORE
+%      any output, so metrics/series/fft/FRM PNGs/live cache/octree emits are all
+%      consistently filtered. opts.filter_chain is the JSON string from the DB; the
+%      notch stage centres on the (PPR-corrected) mean rpm. Twin of the filter-service.
+if isfield(opts, 'filter_chain') && ~isempty(opts.filter_chain)
+    fchain = jsondecode(char(opts.filter_chain));
+    [Fx, Fy, Fz, fapplied] = frm_filters(Fx, Fy, Fz, Fs, mean(rpm, 'omitnan'), fchain);
+    if ~isempty(fapplied); fprintf('  filters applied: %s\n', strjoin(fapplied, ', ')); end
+end
+
 % ---- downsampled envelope series (force axes + RPM, for the interactive plots) ----
 sp = opts.series_points;
 series = struct('t_range', [t(1) t(end)], 'n_raw', N, ...
