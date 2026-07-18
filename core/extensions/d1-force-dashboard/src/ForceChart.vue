@@ -25,6 +25,7 @@ const props = defineProps<{
 	viewStart?: number | null;       // shared x-zoom window (x-units); null = full range
 	viewEnd?: number | null;
 	zoomTool?: boolean;              // when true, drag draws a rectangular zoom box
+	overlay?: { f: number[]; amp: number[] } | null;   // FFT-only: dashed filtered spectrum
 }>();
 const emit = defineEmits<{
 	(e: 'hover', i: number | null): void;
@@ -177,7 +178,20 @@ const geom = computed(() => {
 	const zeroY = (lo < 0 && hi > 0) ? sy(0) : null;
 	const cropStartX = props.cropStart != null ? sx(props.cropStart) : null;
 	const cropEndX = props.cropEnd != null ? sx(props.cropEnd) : null;
-	return { W, Hh, xs, x0, x1, iA, iB, lo, hi, sx, sy, area, line, cropArea, xticks, yticks, zeroY, cropStartX, cropEndX };
+
+	// Filtered-spectrum overlay (FFT charts only): map the overlay's own (f,amp) through the
+	// SAME sx/sy so it lands on the current axes/zoom; clipped to the visible x-window.
+	let overlayLine = '';
+	if (props.kind === 'line' && props.overlay && props.overlay.f.length > 1) {
+		const of = props.overlay.f, oa = props.overlay.amp;
+		let started = false;
+		for (let i = 0; i < of.length; i++) {
+			if (of[i] < x0 || of[i] > x1) { started = false; continue; }
+			overlayLine += `${started ? 'L' : 'M'}${sx(of[i]).toFixed(1)},${sy(oa[i]).toFixed(1)} `;
+			started = true;
+		}
+	}
+	return { W, Hh, xs, x0, x1, iA, iB, lo, hi, sx, sy, area, line, cropArea, xticks, yticks, zeroY, cropStartX, cropEndX, overlayLine };
 });
 
 const hoverPt = computed(() => {
@@ -309,6 +323,7 @@ function onWheel(ev: WheelEvent) {
 			<path v-if="kind === 'env'" :d="geom.area" :fill="stroke" :fill-opacity="geom.cropArea ? 0.09 : 0.2" :stroke="stroke" stroke-opacity="0.35" stroke-width="0.6" />
 			<path v-if="kind === 'env' && geom.cropArea" :d="geom.cropArea" :fill="stroke" fill-opacity="0.28" :stroke="stroke" stroke-width="0.8" />
 			<path v-if="kind === 'line'" :d="geom.line" fill="none" :stroke="stroke" stroke-width="1.1" />
+			<path v-if="geom.overlayLine" :d="geom.overlayLine" fill="none" stroke="#0891b2" stroke-width="1" stroke-dasharray="3 2" opacity="0.9" />
 			<line :x1="ML" :x2="ML" :y1="MT" :y2="geom.Hh - MB" stroke="#94a3b8" stroke-width="0.8" />
 			<line :x1="ML" :x2="geom.W - MR" :y1="geom.Hh - MB" :y2="geom.Hh - MB" stroke="#94a3b8" stroke-width="0.8" />
 			<g v-for="(t, i) in geom.yticks" :key="'y' + i">

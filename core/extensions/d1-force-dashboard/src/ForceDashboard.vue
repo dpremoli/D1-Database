@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useApi, useStores } from '@directus/extensions-sdk';
 import { useRoute, useRouter } from 'vue-router';
 import ForceChart from './ForceChart.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
 import type { SpeedMode } from './liveCloud';
-import { cacheGet, cachePut, parseCache } from './liveCache';
+import { cacheGet, cachePut, parseCache, type Cache } from './liveCache';
 import { computeSignalStats, type SignalStats } from './signalStats';
+import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 
 const api = useApi();
 const router = useRouter();
@@ -322,6 +323,96 @@ function fmtStat(v: number): string {
 	if (a >= 10) return v.toFixed(1);
 	return v.toFixed(2);
 }
+
+// ---- Signal-filter suite -----------------------------------------------------------
+// Interactive: the working chain is previewed by the host filter-service on the live
+// cache; raw + filtered render side-by-side in two linked viewports (compareView shared).
+// Baking patches the op's filter_chain + reprocesses so ALL outputs are filtered.
+const filtersOpen = ref(false);
+const workChain = ref<FilterChain>(defaultChain());
+const filteredCache = ref<Cache | null>(null);
+const filterBusy = ref(false);
+const filterErr = ref<string | null>(null);
+const filterSkipped = ref<string[]>([]);
+const filterFftOverlay = ref<{ f: number[]; amp: number[] } | null>(null);
+const baking = ref(false);
+const profiles = ref<any[]>([]);
+const compareOn = computed(() => liveOn.value && chainActive(workChain.value) && filtersOpen.value);
+// Both live panes share ONE view object so pan/zoom in either drives both.
+const compareView = reactive({ cx: 0, cy: 0, span: 1, active: false });
+const bakedChain = computed<FilterChain | null>(() => (detail.value?.filter_chain
+	? (typeof detail.value.filter_chain === 'string' ? JSON.parse(detail.value.filter_chain) : detail.value.filter_chain)
+	: null));
+
+async function loadProfiles() {
+	try { profiles.value = (await api.get('/items/filter_profiles', { params: { fields: ['id', 'name', 'chain'], sort: 'name', limit: 100 } })).data.data ?? []; }
+	catch { profiles.value = []; }
+}
+async function runPreview() {
+	const d = detail.value;
+	if (!d?.live_cache_file || !chainActive(workChain.value)) { filteredCache.value = null; filterFftOverlay.value = null; return; }
+	filterBusy.value = true; filterErr.value = null;
+	try {
+		const { cache, skipped } = await fetchFiltered(d.live_cache_file, workChain.value);
+		filteredCache.value = cache; filterSkipped.value = skipped;
+		if (chartMode.value === 'fft') filterFftOverlay.value = await fetchFilteredFft(d.live_cache_file, workChain.value, axis.value);
+	} catch (e: any) {
+		filterErr.value = (e?.message || 'filter service unreachable').includes('Failed to fetch')
+			? 'filter service unreachable — raw only' : e?.message;
+		filteredCache.value = null;
+	} finally { filterBusy.value = false; }
+}
+let previewTimer = 0;
+watch([workChain, () => detail.value?.live_cache_file, () => filtersOpen.value, axis, chartMode], () => {
+	if (!filtersOpen.value) return;
+	clearTimeout(previewTimer);
+	previewTimer = window.setTimeout(runPreview, 400);
+}, { deep: true });
+watch(() => detail.value?.id, () => {
+	workChain.value = bakedChain.value ?? defaultChain();
+	filteredCache.value = null; filterErr.value = null; filterFftOverlay.value = null;
+});
+function applyProfile(id: string) {
+	const p = profiles.value.find((x) => x.id === id);
+	if (p?.chain) workChain.value = { ...defaultChain(), ...(typeof p.chain === 'string' ? JSON.parse(p.chain) : p.chain) };
+}
+async function saveProfile() {
+	const name = window.prompt('Save filter profile as:'); if (!name) return;
+	try { await api.post('/items/filter_profiles', { name, chain: workChain.value }); await loadProfiles(); }
+	catch (e: any) { filterErr.value = e?.response?.data?.errors?.[0]?.message || 'save failed (name taken?)'; }
+}
+async function bakeFilters() {
+	const d = detail.value;
+	if (!d?.id || baking.value) return;
+	baking.value = true; filterErr.value = null;
+	try {
+		await api.patch(`/items/machining_force_analysis/${d.id}`, { filter_chain: workChain.value, status: 'pending' });
+		const deadline = Date.now() + 15 * 60 * 1000;
+		while (Date.now() < deadline) {
+			await new Promise((r) => setTimeout(r, 3000));
+			const row = (await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['status', 'filter_chain', 'live_cache_file', 'error_message'] } })).data?.data;
+			if (row?.status === 'done') { detail.value = { ...detail.value, filter_chain: row.filter_chain, live_cache_file: row.live_cache_file }; cachePut(row.live_cache_file, null as any); await loadFrm(); return; }
+			if (row?.status === 'error') { filterErr.value = `Bake failed: ${row.error_message || 'unknown'}`; return; }
+		}
+		filterErr.value = 'Still baking — check back shortly (is the force orchestrator running?).';
+	} catch (e: any) { filterErr.value = e?.response?.status === 403 ? 'Not permitted (admin only) to bake.' : (e?.message || 'bake request failed'); }
+	finally { baking.value = false; }
+}
+async function clearBake() {
+	const d = detail.value; if (!d?.id) return;
+	workChain.value = defaultChain();
+	await api.patch(`/items/machining_force_analysis/${d.id}`, { filter_chain: null, status: 'pending' }).catch(() => {});
+	baking.value = true;
+	try {
+		const deadline = Date.now() + 15 * 60 * 1000;
+		while (Date.now() < deadline) {
+			await new Promise((r) => setTimeout(r, 3000));
+			const row = (await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['status', 'live_cache_file'] } })).data?.data;
+			if (row?.status === 'done') { detail.value = { ...detail.value, filter_chain: null, live_cache_file: row.live_cache_file }; cachePut(row.live_cache_file, null as any); await loadFrm(); return; }
+			if (row?.status === 'error') return;
+		}
+	} finally { baking.value = false; }
+}
 // Manual colour-scale limits for the live cloud (null => auto prctile 1/99 in
 // liveCloud). autoClimits mirrors what the cloud actually applied so the fields
 // can display/seed from the current auto values.
@@ -469,6 +560,7 @@ onBeforeUnmount(() => {
 
 // -------------------------------------------------------------------- data
 onMounted(async () => {
+	loadProfiles();
 	try {
 		// Auto-route threshold comes from the crawler's live_cache_points setting.
 		try {
@@ -638,7 +730,7 @@ async function selectOp(row: any) {
 					'operation_id.sample_id.form', 'operation_id.sample_id.manufactured_date',
 					'operation_id.sample_id.owner_person_id.full_name',
 					'operation_id.sample_id.material_id.common_name',
-					'directus_files_id.filesize', 'live_cache_file', 'live_render_points', 'pulses_per_rev', 'inner_diameter', 'outer_diameter',
+					'directus_files_id.filesize', 'live_cache_file', 'live_render_points', 'pulses_per_rev', 'inner_diameter', 'outer_diameter', 'filter_chain',
 					'octree_status', 'octree_path', 'octree_points',
 					'grid_octree_status', 'grid_octree_path', 'grid_octree_points',
 					'grid_fidelity', 'grid_arm_ratio', 'grid_cell_mm'],
@@ -1134,6 +1226,54 @@ function fmtDateTime(v: string | null | undefined) {
 							</button>
 						</template>
 					</div>
+
+					<!-- Signal filters: interactive preview in Lite (raw|filtered compare), bake to
+					     apply the chain to every output. Collapsed by default. -->
+					<div v-if="detail" class="card info info-filters">
+						<div class="info-head">
+							<span>
+								<button class="chevbtn" title="Collapse/expand" @click="filtersOpen = !filtersOpen"><v-icon :name="filtersOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
+								<v-icon name="filter_alt" x-small /> Signal filters
+							</span>
+							<span v-if="bakedChain" class="frm-fid good" title="This op's outputs are baked with a filter chain">baked</span>
+						</div>
+						<template v-if="filtersOpen">
+							<div v-if="!detail.live_cache_file" class="empty sm">No signal cache — reprocess this op to enable filtering</div>
+							<template v-else>
+								<div v-if="!liveOn" class="setting-note">Switch to <b>Lite</b> to preview filters side-by-side. You can still edit + bake here.</div>
+								<div class="filt-row"><label class="chk"><input v-model="workChain.despike.on" type="checkbox" /> Despike</label>
+									<template v-if="workChain.despike.on"><input v-model.number="workChain.despike.window" type="number" min="3" step="2" title="window (odd)" /><input v-model.number="workChain.despike.sigma" type="number" min="1" step="0.5" title="σ" /></template></div>
+								<div class="filt-row"><label class="chk"><input v-model="workChain.detrend.on" type="checkbox" /> Detrend</label>
+									<template v-if="workChain.detrend.on"><select v-model="workChain.detrend.mode"><option value="highpass">high-pass</option><option value="dc">DC</option></select><input v-if="workChain.detrend.mode==='highpass'" v-model.number="workChain.detrend.cutoff_hz" type="number" min="0.1" step="1" title="cutoff Hz" /></template></div>
+								<div class="filt-row"><label class="chk"><input v-model="workChain.lowpass.on" type="checkbox" /> Low-pass</label>
+									<template v-if="workChain.lowpass.on"><input v-model.number="workChain.lowpass.cutoff_hz" type="number" min="1" step="100" title="cutoff Hz" /><input v-model.number="workChain.lowpass.order" type="number" min="1" max="10" title="order" /></template></div>
+								<div class="filt-row"><label class="chk"><input v-model="workChain.notch.on" type="checkbox" /> Notch ×harmonics</label>
+									<template v-if="workChain.notch.on"><input v-model.number="workChain.notch.q" type="number" min="1" step="5" title="Q" /></template></div>
+								<div v-if="workChain.notch.on" class="filt-harm">
+									<label v-for="h in [1,2,3,4,5]" :key="'h'+h" class="chk">
+										<input type="checkbox" :checked="workChain.notch.harmonics.includes(h)"
+											@change="workChain.notch.harmonics = ($event.target as HTMLInputElement).checked ? [...workChain.notch.harmonics, h].sort() : workChain.notch.harmonics.filter((x)=>x!==h)" /> {{ h }}×
+									</label>
+								</div>
+
+								<div v-if="filterBusy" class="setting-note"><v-progress-circular indeterminate x-small /> previewing…</div>
+								<div v-if="filterErr" class="render-msg">{{ filterErr }}</div>
+								<div v-if="filterSkipped.length" class="setting-note">Preview-only note: {{ filterSkipped.join('; ') }} — bake applies at full rate.</div>
+
+								<div class="filt-actions">
+									<select class="prof-sel" @change="applyProfile(($event.target as HTMLSelectElement).value); ($event.target as HTMLSelectElement).value=''">
+										<option value="">Load profile…</option>
+										<option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</option>
+									</select>
+									<button class="linkbtn" @click="saveProfile">Save…</button>
+								</div>
+								<div class="filt-actions">
+									<button class="processbtn" :disabled="baking || !chainActive(workChain)" @click="bakeFilters"><v-icon :name="baking ? 'hourglass_top' : 'save'" x-small /> {{ baking ? 'Baking…' : 'Bake to outputs' }}</button>
+									<button v-if="bakedChain" class="recrawlbtn" :disabled="baking" @click="clearBake">Clear</button>
+								</div>
+							</template>
+						</template>
+					</div>
 				</div>
 
 				<div v-if="!stacked && !detailHidden" class="resizer" @pointerdown="startColBResize" title="Drag to resize"></div>
@@ -1174,6 +1314,7 @@ function fmtDateTime(v: string | null | undefined) {
 							<div v-else class="charts-col">
 								<ForceChart v-for="c in charts" :key="c.key" v-bind="c" :hover-index="hoverIndex" @hover="hoverIndex = $event"
 									:crop-editable="liveOn && c.kind === 'env'"
+									:overlay="(chartMode === 'fft' && filtersOpen && c.kind === 'line' && c.key === axis) ? filterFftOverlay : null"
 									:view-start="zoomStart" :view-end="zoomEnd" :zoom-tool="rectZoomTool" @zoom="onChartZoom"
 									@update:crop-start="cropStartSec = $event" @update:crop-end="cropEndSec = $event" />
 							</div>
@@ -1194,6 +1335,8 @@ function fmtDateTime(v: string | null | undefined) {
 									grid · fidelity ~{{ gridFidelityPct }}%
 								</span>
 								<span v-else-if="gridActive" class="frm-fid" title="Fidelity could not be computed (too few arms)">grid · fidelity n/a</span>
+								<span v-if="bakedChain" class="frm-fid good" :title="`Baked filters: ${chainSummary(bakedChain)}`">⚙ filtered</span>
+								<span v-else-if="compareOn" class="frm-fid" :title="chainSummary(workChain)">compare · preview</span>
 								<div class="toggle">
 									<div class="segmode">
 										<button class="segbtn" :class="{ on: frmMode==='figure' }" @click="frmMode='figure'" title="Prerendered figure (instant)">Figure</button>
@@ -1231,6 +1374,25 @@ function fmtDateTime(v: string | null | undefined) {
 									:fill="gridActive" :cell-size="Number(detail.grid_cell_mm) || 1"
 									:min-node-px="octreeMinNodePx" :budget-cap="octreeBudgetCap"
 									@climits="onClimits" @points="displayedPoints = $event" @zscale="zScale = $event" />
+								<!-- Compare mode: raw | filtered, sharing one view (linked pan/zoom) + colour scale. -->
+								<div v-else-if="compareOn" class="frm-compare" :class="{ stacked }">
+									<FrmCloud ref="frmCloudRef" :cache-file-id="detail.live_cache_file"
+										:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
+										:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
+										:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
+										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
+										:point-size="pointSize" :colormap="colormap" :cmin="cmin" :cmax="cmax"
+										:shared-view="compareView" pane-label="raw"
+										@loaded="onCloudLoaded" @climits="onClimits" @points="displayedPoints = $event" />
+									<FrmCloud :cache-override="filteredCache" :cache-file-id="detail.live_cache_file"
+										:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
+										:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
+										:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
+										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
+										:point-size="pointSize" :colormap="colormap"
+										:cmin="autoClimits?.cmin ?? cmin" :cmax="autoClimits?.cmax ?? cmax"
+										:shared-view="compareView" pane-label="filtered" />
+								</div>
 								<FrmCloud v-else-if="liveOn" ref="frmCloudRef" :cache-file-id="detail.live_cache_file"
 									:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
 									:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
@@ -1449,6 +1611,18 @@ function fmtDateTime(v: string | null | undefined) {
 	border-top: 1px solid var(--theme--border-color-subdued, #eef1f5);
 }
 .acc-head:hover { color: var(--theme--foreground, #1e293b); }
+.filt-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+.filt-row .chk { flex: 1 1 auto; }
+.filt-row input, .filt-row select { width: 60px; font: inherit; font-size: 12px; padding: 3px 6px; border-radius: 7px; border: 1px solid var(--theme--border-color-subdued, #e7ebf0); background: var(--theme--background, #fff); color: inherit; }
+.filt-row select { width: auto; }
+.filt-harm { display: flex; gap: 8px; margin: 2px 0 6px 20px; }
+.filt-harm .chk { font-size: 11.5px; }
+.filt-actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.prof-sel { flex: 1 1 auto; font: inherit; font-size: 12px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--theme--border-color-subdued, #e7ebf0); background: var(--theme--background, #fff); color: inherit; }
+/* compare: two square viewports sharing the FRM area (side-by-side; stacked on mobile) */
+.frm-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; height: 100%; min-height: 0; }
+.frm-compare.stacked { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+.frm-compare > * { min-width: 0; min-height: 0; }
 .zsel { font: inherit; font-size: 11px; font-weight: 650; padding: 3px 7px; border-radius: 8px; cursor: pointer;
 	border: 1px solid var(--theme--border-color, #d1d9e6); background: var(--theme--background, #fff); color: var(--theme--foreground, #334155); }
 .frm-img { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 220px; overflow: hidden; }

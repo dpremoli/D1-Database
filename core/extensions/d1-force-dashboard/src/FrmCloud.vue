@@ -8,7 +8,7 @@
  * in the parent (ForceDashboard); the interactive VIEW (zoom/pan/rect-zoom) is local to
  * this renderer since it's purely a display transform over the same cloud.
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -38,6 +38,12 @@ const props = defineProps<{
 	cmax?: number | null;
 	zSeries?: 'none' | 'Fx' | 'Fy' | 'Fz';    // drive Z from a force series -> true 3D (like Full)
 	zScale?: number;                          // height exaggeration as a fraction of the x/y span
+	// Compare mode (filtering suite): a parent-owned view object shared by both panes so
+	// pan/zoom in either drives both; a pre-parsed cache that bypasses the network load
+	// (the filtered preview from the filter-service); a small corner label ("raw").
+	sharedView?: { cx: number; cy: number; span: number; active: boolean };
+	cacheOverride?: Cache | null;
+	paneLabel?: string;
 }>();
 const emit = defineEmits<{
 	(e: 'loaded', meta: { csSec: number; ceSec: number; feed: number; diam: number; rpm: number; Fs: number; N: number }): void;
@@ -89,22 +95,30 @@ async function load(id: string) {
 // before initialization". The initial load is kicked off from onMounted instead (after
 // setup completes, so every ref exists); this watch only handles later cacheFileId
 // changes (switching ops while mounted), which already run post-setup.
-watch(() => props.cacheFileId, (id) => { if (id) load(id); });
+watch(() => props.cacheFileId, (id) => { if (id && !props.cacheOverride) load(id); });
+// Compare mode: the filtered pane's data arrives pre-parsed from the filter-service.
+watch(() => props.cacheOverride, (c) => {
+	if (c) { cache.value = c; loading.value = false; error.value = null; nextTick(() => { setupRenderer(); scheduleRebuild(); }); }
+});
 
 // ---- interactive view transform (equal-aspect, world = mm) ---------------------
 // The view is a square-ish window on the world, expressed as centre + span (one
 // span, since aspect is kept equal). viewActive=false means "auto-fit to data",
 // recomputed every draw; any zoom/pan/rect-zoom switches it on. Reset returns to fit.
-const viewActive = ref(false);
-const vCx = ref(0), vCy = ref(0), vSpan = ref(1);
+// When a sharedView is supplied (compare mode) BOTH panes read/write the same object, so
+// pan/zoom/rect-zoom in either drives the other; standalone panes get their own state.
+const view = props.sharedView ?? reactive({ cx: 0, cy: 0, span: 1, active: false });
+// Redraw when the OTHER pane moves the shared view (our own writes also land here — the
+// extra scheduleDraw coalesces into the same RAF, so it costs nothing).
+watch(() => [view.cx, view.cy, view.span, view.active], () => scheduleDraw());
 // updated each draw so the pointer handlers can map screen<->world
 let fitCx = 0, fitCy = 0, fitSpan = 1, cssW = 1, cssH = 1;
-const zoomed = computed(() => viewActive.value);
+const zoomed = computed(() => view.active);
 
-function resetView() { viewActive.value = false; scheduleDraw(); }
+function resetView() { view.active = false; scheduleDraw(); }
 function effView() {
-	return viewActive.value
-		? { cx: vCx.value, cy: vCy.value, span: vSpan.value }
+	return view.active
+		? { cx: view.cx, cy: view.cy, span: view.span }
 		: { cx: fitCx, cy: fitCy, span: fitSpan };
 }
 function scaleFor(span: number) {
@@ -384,7 +398,9 @@ onMounted(() => {
 	ro = new ResizeObserver(() => scheduleDraw());
 	// Kick off the initial cache load here (post-setup) rather than via an immediate
 	// watch, so the synchronous precached path can't touch not-yet-initialised refs.
-	if (props.cacheFileId) load(props.cacheFileId);
+	// cacheOverride (compare mode's filtered pane) bypasses the network entirely.
+	if (props.cacheOverride) { cache.value = props.cacheOverride; loading.value = false; nextTick(() => { setupRenderer(); scheduleRebuild(); }); }
+	else if (props.cacheFileId) load(props.cacheFileId);
 	else if (cache.value) nextTick(() => { setupRenderer(); scheduleRebuild(); });
 });
 onBeforeUnmount(() => {
@@ -446,10 +462,10 @@ function onWheel(ev: WheelEvent) {
 	const v = effView();
 	const newSpan = Math.min(fitSpan * 8, Math.max(fitSpan / 500, v.span / f));
 	const { sx, sy } = scaleFor(newSpan);
-	vCx.value = w.x - w.ndcX / sx;
-	vCy.value = w.y - w.ndcY / sy;
-	vSpan.value = newSpan;
-	viewActive.value = true;
+	view.cx = w.x - w.ndcX / sx;
+	view.cy = w.y - w.ndcY / sy;
+	view.span = newSpan;
+	view.active = true;
 	scheduleDraw();
 }
 // Active pointers, so touch can pinch-zoom (two fingers) as well as pan (one). Desktop
@@ -459,7 +475,7 @@ let pinch: { dist: number; span: number; cx: number; cy: number } | null = null;
 function pointerList() { return [...pointers.values()]; }
 function pointerDist() { const p = pointerList(); return Math.hypot(p[0].px - p[1].px, p[0].py - p[1].py); }
 function pointerMid() { const p = pointerList(); return { px: (p[0].px + p[1].px) / 2, py: (p[0].py + p[1].py) / 2 }; }
-function seedView() { if (!viewActive.value) { vCx.value = fitCx; vCy.value = fitCy; vSpan.value = fitSpan; viewActive.value = true; } }
+function seedView() { if (!view.active) { view.cx = fitCx; view.cy = fitCy; view.span = fitSpan; view.active = true; } }
 
 // 3-finger vertical drag adjusts the Z exaggeration in 3D (same gesture as Full).
 let zGestureY: number | null = null;
@@ -480,7 +496,7 @@ function onDown(ev: PointerEvent) {
 		panning = false; rectDrag = false; rectSel.value = null;
 		seedView();
 		const mid = pointerMid(); const w = screenToWorld(mid.px, mid.py);
-		pinch = { dist: pointerDist() || 1, span: vSpan.value, cx: w.x, cy: w.y };
+		pinch = { dist: pointerDist() || 1, span: view.span, cx: w.x, cy: w.y };
 		return;
 	}
 	if (pointers.size > 2) return;
@@ -511,7 +527,7 @@ function onMove(ev: PointerEvent) {
 			const mid = pointerMid();
 			const { sx, sy } = scaleFor(newSpan);
 			const ndcX = (mid.px / cssW) * 2 - 1, ndcY = 1 - (mid.py / cssH) * 2;
-			vSpan.value = newSpan; vCx.value = pinch.cx - ndcX / sx; vCy.value = pinch.cy - ndcY / sy;
+			view.span = newSpan; view.cx = pinch.cx - ndcX / sx; view.cy = pinch.cy - ndcY / sy;
 			scheduleDraw();
 		}
 		return;
@@ -520,10 +536,10 @@ function onMove(ev: PointerEvent) {
 		rectSel.value = { x: Math.min(px, startPx), y: Math.min(py, startPy), w: Math.abs(px - startPx), h: Math.abs(py - startPy) };
 	} else if (panning && grab) {
 		// keep the grabbed world point glued under the cursor
-		const { sx, sy } = scaleFor(vSpan.value);
+		const { sx, sy } = scaleFor(view.span);
 		const ndcX = (px / cssW) * 2 - 1, ndcY = 1 - (py / cssH) * 2;
-		vCx.value = grab.x - ndcX / sx;
-		vCy.value = grab.y - ndcY / sy;
+		view.cx = grab.x - ndcX / sx;
+		view.cy = grab.y - ndcY / sy;
 		scheduleDraw();
 	}
 }
@@ -539,9 +555,9 @@ function onUp(ev: PointerEvent) {
 		const s = rectSel.value;
 		if (s.w > 6 && s.h > 6) {
 			const a = screenToWorld(s.x, s.y + s.h), b = screenToWorld(s.x + s.w, s.y);
-			vCx.value = (a.x + b.x) / 2; vCy.value = (a.y + b.y) / 2;
-			vSpan.value = Math.max(Math.abs(b.x - a.x), Math.abs(a.y - b.y)) || vSpan.value;
-			viewActive.value = true;
+			view.cx = (a.x + b.x) / 2; view.cy = (a.y + b.y) / 2;
+			view.span = Math.max(Math.abs(b.x - a.x), Math.abs(a.y - b.y)) || view.span;
+			view.active = true;
 		}
 		rectSel.value = null;
 	}
@@ -586,6 +602,7 @@ function onUp(ev: PointerEvent) {
 		</div>
 
 		<span v-if="!loading && !error" class="fc-count">{{ pointCount.toLocaleString() }} pts</span>
+		<span v-if="paneLabel && !loading && !error" class="fc-pane">{{ paneLabel }}</span>
 		<span v-if="softwareGL && !loading && !error" class="fc-swgl"
 			:title="`WebGL is running in SOFTWARE (${glRenderer}) — rendering uses the CPU, so pan/zoom will feel heavy. Common causes: remote-desktop session, blocklisted GPU driver, or hardware acceleration disabled in the browser.`">
 			⚠ software WebGL</span>
@@ -601,6 +618,7 @@ function onUp(ev: PointerEvent) {
 .fc-msg.err { color: #fca5a5; font-size: 12px; padding: 12px; text-align: center; }
 .fc-count { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,0.6); font-variant-numeric: tabular-nums; }
 .fc-swgl { position: absolute; left: 6px; bottom: 4px; font-size: 10px; font-weight: 700; color: #fbbf24; cursor: help; }
+.fc-pane { position: absolute; left: 6px; top: 4px; font-size: 10px; font-weight: 700; color: rgba(255,255,255,0.75); text-transform: uppercase; letter-spacing: 0.06em; }
 
 .fc-rect { position: absolute; border: 1px solid #38bdf8; background: rgba(56,189,248,0.14); pointer-events: none; border-radius: 2px; }
 
