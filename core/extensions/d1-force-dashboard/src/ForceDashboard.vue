@@ -6,7 +6,7 @@ import ForceChart from './ForceChart.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
 import type { SpeedMode } from './liveCloud';
-import { cacheGet, cachePut, parseCache, type Cache } from './liveCache';
+import { cacheGet, cachePut, decimateCache, parseCache, type Cache } from './liveCache';
 import { computeSignalStats, type SignalStats } from './signalStats';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 
@@ -331,6 +331,10 @@ function fmtStat(v: number): string {
 const filtersOpen = ref(false);
 const workChain = ref<FilterChain>(defaultChain());
 const filteredCache = ref<Cache | null>(null);
+// The RAW pane in compare mode plots the SAME decimated samples as the filtered pane
+// (identical spiral positions; only colour differs) — the service's stride applied to the
+// local full cache. Null until the first preview resolves, then the raw pane switches to it.
+const rawDecimatedCache = ref<Cache | null>(null);
 const filterBusy = ref(false);
 const filterErr = ref<string | null>(null);
 const filterSkipped = ref<string[]>([]);
@@ -352,13 +356,17 @@ let previewAbort: AbortController | null = null;
 async function runPreview() {
 	const d = detail.value;
 	previewAbort?.abort();                     // cancel any in-flight preview (stale-result guard)
-	if (!d?.live_cache_file || !chainActive(workChain.value)) { filteredCache.value = null; filterFftOverlay.value = null; filterBusy.value = false; return; }
+	if (!d?.live_cache_file || !chainActive(workChain.value)) { filteredCache.value = null; rawDecimatedCache.value = null; filterFftOverlay.value = null; filterBusy.value = false; return; }
 	const ac = new AbortController(); previewAbort = ac;
 	filterBusy.value = true; filterErr.value = null;
 	try {
-		const { cache, skipped } = await fetchFiltered(d.live_cache_file, workChain.value, 1_500_000, ac.signal);
+		const { cache, skipped, stride } = await fetchFiltered(d.live_cache_file, workChain.value, 1_500_000, ac.signal);
 		if (ac.signal.aborted) return;
 		filteredCache.value = cache; filterSkipped.value = skipped;
+		// Decimate the local full cache by the SAME stride so the raw pane plots the identical
+		// samples (honest side-by-side: same geometry, filtered only changes the colour).
+		const full = cacheGet(d.live_cache_file);
+		rawDecimatedCache.value = full ? decimateCache(full, stride) : null;
 		if (chartMode.value === 'fft') filterFftOverlay.value = await fetchFilteredFft(d.live_cache_file, workChain.value, axis.value);
 	} catch (e: any) {
 		if (e?.name === 'AbortError' || ac.signal.aborted) return;   // superseded — not an error
@@ -1381,7 +1389,7 @@ function fmtDateTime(v: string | null | undefined) {
 									@climits="onClimits" @points="displayedPoints = $event" @zscale="zScale = $event" />
 								<!-- Compare mode: raw | filtered, sharing one view (linked pan/zoom) + colour scale. -->
 								<div v-else-if="compareOn" class="frm-compare" :class="{ stacked }">
-									<FrmCloud ref="frmCloudRef" :cache-file-id="detail.live_cache_file"
+									<FrmCloud ref="frmCloudRef" :cache-file-id="detail.live_cache_file" :cache-override="rawDecimatedCache"
 										:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
 										:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
 										:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"

@@ -47,7 +47,7 @@ export function chainSummary(c: FilterChain | null | undefined): string {
 // ---- filter-service calls (same-origin via Caddy /filter/*; Directus session cookie
 // flows automatically, and the service forwards it when fetching the cache) ----
 export async function fetchFiltered(cacheFileId: string, chain: FilterChain, targetPoints = 1_500_000, signal?: AbortSignal):
-	Promise<{ cache: Cache; skipped: string[] }> {
+	Promise<{ cache: Cache; skipped: string[]; stride: number }> {
 	const res = await fetch('/filter/run', {
 		method: 'POST',
 		credentials: 'include',
@@ -57,7 +57,8 @@ export async function fetchFiltered(cacheFileId: string, chain: FilterChain, tar
 	});
 	if (!res.ok) throw new Error(`filter service: ${res.status} ${(await res.text()).slice(0, 200)}`);
 	const skipped = (res.headers.get('X-Filter-Skipped') || '').split(';').map((s) => s.trim()).filter(Boolean);
-	return { cache: parseCache(await res.arrayBuffer()), skipped };
+	const stride = Math.max(1, parseInt(res.headers.get('X-Filter-Stride') || '1', 10) || 1);
+	return { cache: parseCache(await res.arrayBuffer()), skipped, stride };
 }
 
 export async function fetchFilteredFft(cacheFileId: string, chain: FilterChain, axis: string):

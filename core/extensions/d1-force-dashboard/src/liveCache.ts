@@ -29,6 +29,21 @@ export function parseCache(ab: ArrayBuffer): Cache {
 	return { N, Fs, feed, diam, csSec, ceSec, t, Fx, Fy, Fz, rpm, revs };
 }
 
+// Decimate a cache by keeping every `stride`-th sample (indices 0, stride, 2·stride…),
+// matching the filter-service's slice exactly. Used in compare mode so the raw pane plots
+// the SAME sample set as the service-decimated filtered pane — identical spiral positions,
+// only the force (colour) differs.
+export function decimateCache(c: Cache, stride: number): Cache {
+	if (stride <= 1) return c;
+	const pick = (a: Float32Array) => {
+		const n = Math.ceil(a.length / stride);
+		const o = new Float32Array(n);
+		for (let i = 0, k = 0; i < a.length; i += stride, k++) o[k] = a[i];
+		return o;
+	};
+	return { ...c, N: Math.ceil(c.N / stride), t: pick(c.t), Fx: pick(c.Fx), Fy: pick(c.Fy), Fz: pick(c.Fz), rpm: pick(c.rpm), revs: pick(c.revs) };
+}
+
 // Module-scoped LRU: survives component unmount, so revisiting a recently-viewed
 // operation is instant and issues no network request.
 const MEM = new Map<string, Cache>();
