@@ -419,11 +419,61 @@ def normalize_fast_csv(raw: bytes) -> dict:
             row.append("" if v is None else f"{v:g}")
         out_lines.append(",".join(row))
 
+    # Measured summary (peaks / dwell / ramp) keyed by canonical channel, for
+    # fast_run_data.summary — this is what the dashboard shows as "measured".
+    by_key = {key: series_vals[j] for (j, key, *_rest) in keep}
+    summary = summarize_trace(by_key, time_vals)
+
     return {
         "format": fmt, "plant": plant, "recipe": recipe, "run_start": run_start,
         "n_rows": n_rows, "duration_s": duration_s, "columns": columns,
+        "summary": summary,
         "csv_text": "\n".join(out_lines) + "\n",
     }
+
+
+# Canonical channel key -> summary key for simple peak (max) metrics.
+_PEAK_KEYS = {
+    "pyro_top": "peak_temp_c",
+    "force": "peak_force_kn",
+    "sps_power": "peak_power_kw",
+    "sps_voltage": "peak_voltage_v",
+    "ptc_top": "ptc_top_max_c",
+    "ptc_bot": "ptc_bot_max_c",
+}
+
+
+def summarize_trace(series: dict, time_s: list) -> dict:
+    """Measured run summary from decoded channels.
+
+    `series` maps canonical channel keys (see _CANON) to value lists aligned with `time_s`.
+    Absent channels simply omit their key — every consumer must treat all keys as optional.
+    dwell_s = time spent within 2 % of peak temperature; ramp_c_per_min = mean slope between
+    the first crossings of 10 % and 90 % of peak temperature.
+    """
+    out: dict = {}
+    for chan, key in _PEAK_KEYS.items():
+        vals = [v for v in (series.get(chan) or []) if v is not None]
+        if vals:
+            out[key] = max(vals)
+
+    temps = series.get("pyro_top") or []
+    pairs = [(t, v) for t, v in zip(time_s, temps) if v is not None]
+    if len(pairs) < 2:
+        return out
+    peak = max(v for _t, v in pairs)
+    if peak <= 0:
+        return out
+
+    hot = [t for t, v in pairs if v >= peak * 0.98]
+    if hot:
+        out["dwell_s"] = round(hot[-1] - hot[0], 1)
+
+    lo = next((t for t, v in pairs if v >= peak * 0.10), None)
+    hi = next((t for t, v in pairs if v >= peak * 0.90), None)
+    if lo is not None and hi is not None and hi > lo:
+        out["ramp_c_per_min"] = round((peak * 0.80) / ((hi - lo) / 60.0), 1)
+    return out
 
 
 def _parse_dt_de(s: str):

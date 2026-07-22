@@ -196,12 +196,13 @@ def process_row(conn, directus: Directus, row) -> str:
                 UPDATE fast_run_data SET
                     status='done', error_message=NULL, directus_files_id=%s,
                     machine_format=%s, plant=%s, recipe=%s, run_start=%s,
-                    n_rows=%s, duration_s=%s, series=%s::jsonb,
+                    n_rows=%s, duration_s=%s, series=%s::jsonb, summary=%s::jsonb,
                     staged_file=NULL, import_archive_path=NULL,
                     processed_at=now(), updated_at=now()
                 WHERE id=%s
             """, [new_file, res["format"], res["plant"], res["recipe"], res["run_start"],
-                  res["n_rows"], res["duration_s"], json.dumps(res["columns"]), fid])
+                  res["n_rows"], res["duration_s"], json.dumps(res["columns"]),
+                  json.dumps(res.get("summary") or {}), fid])
         conn.commit()
 
         # tidy: delete superseded normalised file + the staging raw

@@ -41,18 +41,34 @@ WHERE operation_date IS NOT NULL
 def _r(v):
     return None if v is None else round(float(v), 1)
 
-# Fill only where the rebuilt row is currently NULL/empty.
+# Machine data is authoritative for everything except true QA fields. Only CoSHH and the
+# free-text observations come from the sheet logs; mass/mould/PTC/V/P are recoverable as
+# measured values from the trace summary, so they are deliberately NOT written here.
 UPDATE = """
 UPDATE manufacturing_operations SET
-    sintering_coshh_ref        = COALESCE(sintering_coshh_ref, %(coshh)s),
-    sintering_ptc_top_celsius  = COALESCE(sintering_ptc_top_celsius, %(ptc_top)s),
-    sintering_ptc_bot_celsius  = COALESCE(sintering_ptc_bot_celsius, %(ptc_bot)s),
-    sintering_mass_grams       = COALESCE(sintering_mass_grams, %(mass)s),
-    sintering_mould_diameter_mm= COALESCE(sintering_mould_diameter_mm, %(mould)s),
+    sintering_coshh_ref = COALESCE(sintering_coshh_ref, %(coshh)s),
     outcome_notes = CASE WHEN NULLIF(btrim(COALESCE(outcome_notes,'')),'') IS NULL
                          THEN %(notes)s ELSE outcome_notes END,
     updated_at = now()
 WHERE operation_id = %(oid)s
+"""
+
+# One-off correction: the first run of this script filled ANY null machine field from the
+# sheets. Only these four can ONLY have come from the sheets — no machine importer writes
+# them — so nulling them across machine-sourced sintering ops is safe and precise.
+#
+# Deliberately NOT nulled here: sintering_mass_grams and sintering_mould_diameter_mm. Both
+# ARE machine-sourced (FAST 25 Daten9/Daten7, FAST 250 Load), so blanket-nulling them would
+# destroy real MDB data. Re-running the importers restores them from machine truth instead
+# (their upserts already set both columns from EXCLUDED).
+REVERT = """
+UPDATE manufacturing_operations SET
+    sintering_ptc_top_celsius    = NULL,
+    sintering_ptc_bot_celsius    = NULL,
+    sintering_voltage_at_max_t_v = NULL,
+    sintering_power_at_max_t_kw  = NULL,
+    updated_at = now()
+WHERE process_category='sintering' AND source_system IN ('fast_25','fast_250')
 """
 
 
@@ -61,6 +77,12 @@ def main() -> None:
     dsn = os.environ.get("DATABASE_URL") or sys.exit("ERROR: DATABASE_URL required")
     conn = psycopg2.connect(dsn)
     cur = conn.cursor()
+
+    if "--revert" in sys.argv:
+        cur.execute(REVERT)
+        print(f"reverted sheet-written non-QA columns on {cur.rowcount} operations")
+        conn.commit()
+        cur.close(); conn.close(); return
 
     cur.execute(CANDIDATES)
     by_date: dict[object, list] = {}
@@ -92,8 +114,7 @@ def main() -> None:
             else:
                 ambiguous += 1
                 continue
-        updates.append({"oid": oid, "coshh": coshh, "ptc_top": ptc_top, "ptc_bot": ptc_bot,
-                        "mass": mass, "mould": mould, "notes": notes})
+        updates.append({"oid": oid, "coshh": coshh, "notes": notes})
 
     print(f"backup rows: {len(backup)}")
     print(f"  matched by (date,temp,force): {applied_tf}")
