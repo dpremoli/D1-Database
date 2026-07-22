@@ -55,6 +55,17 @@ Complete specifications for FAST 25 and FAST 250 sintering apparatus data archit
    - Performance benchmarks (~10-15 min for 331 runs)
    - Troubleshooting (encoding, locale, memory)
 
+### Directus Integration
+
+7. **[FAST_DIRECTUS_INTEGRATION.md](./FAST_DIRECTUS_INTEGRATION.md)** — Database schema & UI changes
+   - How current Force Dashboard differs from FAST data
+   - New Directus collections for sintering operations
+   - Schema changes needed (measurements table, metadata, indices)
+   - Backend API changes (`/filter/sinter` endpoint)
+   - Frontend plugin updates (measurement selector, dynamic charting)
+   - Migration path and performance optimization
+   - 10-phase implementation checklist
+
 ---
 
 ## 🎯 Quick Start
