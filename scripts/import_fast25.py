@@ -32,6 +32,7 @@ import psycopg2.extras
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fast_mapping as fm
+import fast_recipes as frx
 
 METHOD_MF = "4b13b4f4-7f7e-5356-b93a-937ab527386d"
 EQUIP_25 = "a4e9b161-745a-5532-b72a-71e9e5f33388"
@@ -39,6 +40,7 @@ SOURCE_SYSTEM = "fast_25"
 _NS = uuid.uuid5(uuid.NAMESPACE_DNS, "d1-database.fast-25.v1")
 
 MDB_REL = os.path.join("FAST 25", "ECS2000", "Data", "ECS_Analysis.MDB")
+PROG_REL = os.path.join("FAST 25", "ECS2000", "Recipes", "1001", "ECS_Prog.mdb")
 EMD_PREFIX = "FAST 25/ECS2000/Data"   # + FileName + .EMD (data-root-relative, POSIX)
 
 
@@ -57,13 +59,8 @@ def _s(v) -> str | None:
     return s or None
 
 
-def first_num(v) -> float | None:
-    """First numeric token in a messy string ('13 kN' -> 13, '1325C' -> 1325)."""
-    s = _s(v)
-    if not s:
-        return None
-    m = re.search(r"-?\d+(?:\.\d+)?", s.replace(",", "."))
-    return float(m.group()) if m else None
+# Shared with the FAST 250 importer / recipe parsing (single definition in fast_recipes).
+first_num = frx.first_num
 
 
 def mass_grams(v) -> float | None:
@@ -118,6 +115,37 @@ def emd_rel(filename) -> str | None:
     return f"{EMD_PREFIX}/{s.replace(chr(92), '/')}.EMD"
 
 
+def read_recipes(data_root: str) -> list[dict]:
+    """ECS_Prog.mdb::Rezept -> fast_recipes rows for machine '25'."""
+    from access_parser import AccessParser
+    db = AccessParser(os.path.join(data_root, PROG_REL))
+    r = db.parse_table("Rezept")
+    # Rezept holds more rows than distinct ProgrammNr (variants per Anlage/InstrClass), so
+    # key by recipe id and let the last occurrence win — otherwise the batched upsert hits
+    # "ON CONFLICT DO UPDATE cannot affect row a second time".
+    out: dict[str, dict] = {}
+    for i, pn in enumerate(r["ProgrammNr"]):
+        if pn is None:
+            continue
+        pn = int(pn)
+        name = _s(r["ProgrammText"][i]) or f"Recipe {pn}"
+        daten = [r[f"Daten{n}"][i] for n in range(1, 21)]
+        row = {
+            "id": frx.recipe_id("25", pn, name),
+            "machine": "25",
+            "program_nr": pn,
+            "name": name,
+            "group_name": _s(r["GroupName"][i]),
+            "source_file": _s(r["FileName"][i]),
+            "params": {f"Daten{n}": _s(daten[n - 1]) for n in range(1, 21)},
+            "date_created": parse_dt(r["DateCreate"][i], None),
+            "date_changed": parse_dt(r["DateChange"][i], None),
+        }
+        row.update(frx.rezept_targets(daten))
+        out[row["id"]] = row
+    return list(out.values())
+
+
 def read_versuch(data_root: str) -> list[dict]:
     from access_parser import AccessParser
     db = AccessParser(os.path.join(data_root, MDB_REL))
@@ -144,6 +172,7 @@ def read_versuch(data_root: str) -> list[dict]:
             "material_code": fm.match_material(material_text),
             "material_text": material_text,
             "recipe_title": _s(v["Bezeichnung"][i]),
+            "program_nr": frx.program_nr_from_bezeichnung(_s(v["Bezeichnung"][i])),
             "batch": _s(v["Daten8"][i]),
             "temp_c": first_num(v["Daten2"][i]),
             "force_kn": first_num(v["Daten4"][i]),
@@ -207,11 +236,31 @@ def main() -> None:
     cur.execute("SELECT email, id FROM directus_users")
     email_to_user = {e: i for e, i in cur.fetchall()}
 
+    recipes = read_recipes(args.data_root)
+    psycopg2.extras.execute_values(
+        cur,
+        "INSERT INTO fast_recipes (id, machine, program_nr, name, group_name, source_file, "
+        "target_temp_c, target_force_kn, hold_time_min, params, date_created, date_changed) "
+        "VALUES %s ON CONFLICT (id) DO UPDATE SET "
+        "  name=EXCLUDED.name, group_name=EXCLUDED.group_name, source_file=EXCLUDED.source_file, "
+        "  target_temp_c=EXCLUDED.target_temp_c, target_force_kn=EXCLUDED.target_force_kn, "
+        "  hold_time_min=EXCLUDED.hold_time_min, params=EXCLUDED.params, "
+        "  date_changed=EXCLUDED.date_changed, updated_at=now()",
+        [(r["id"], r["machine"], r["program_nr"], r["name"], r["group_name"], r["source_file"],
+          r.get("target_temp_c"), r.get("target_force_kn"), r.get("hold_time_min"),
+          psycopg2.extras.Json(r["params"]), r["date_created"], r["date_changed"])
+         for r in recipes],
+        page_size=500,
+    )
+    print(f"upserted {len(recipes)} FAST 25 recipes")
+    by_prog = {r["program_nr"]: r["id"] for r in recipes}
+
     cols = [
         "operation_id", "method_id", "equipment_id", "process_category",
         "source_run_uid", "source_system", "operation_date",
         "operator", "operator_name", "owner", "material_id",
-        "sintering_recipe_number", "sintering_batch_number", "sintering_mass_grams",
+        "sintering_recipe_number", "fast_recipe_id",
+        "sintering_batch_number", "sintering_mass_grams",
         "sintering_mould_diameter_mm", "sintering_atmosphere", "sintering_tc_pyro_control",
         "sintering_max_force_kn", "sintering_max_temp_celsius",
         "sintering_material_type_note", "outcome_notes",
@@ -222,7 +271,8 @@ def main() -> None:
         op_to_id.get(o["operator_disp"]), o["operator_name"],
         email_to_user.get(o["owner_email"]) if o["owner_email"] else None,
         code_to_mat.get(o["material_code"]) if o["material_code"] else None,
-        o["recipe_title"], o["batch"], o["mass_g"], o["mould_mm"],
+        o["recipe_title"], by_prog.get(o["program_nr"]),
+        o["batch"], o["mass_g"], o["mould_mm"],
         o["atmosphere"], o["tc_pyro"], o["force_kn"], o["temp_c"],
         o["material_text"], o["notes"],
     ) for o in ops]
