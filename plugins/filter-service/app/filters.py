@@ -46,6 +46,12 @@ def _validate(chain: dict, fs: float) -> None:
     if t.get("on") and t.get("mode", "highpass") == "highpass":
         if not (0 < float(t.get("cutoff_hz", 5)) < nyq):
             raise ChainError(f"detrend.cutoff_hz must be in (0, {nyq:g})")
+    hp = chain.get("highpass") or {}
+    if hp.get("on"):
+        if not (0 < float(hp.get("cutoff_hz", 50)) < nyq):
+            raise ChainError(f"highpass.cutoff_hz must be in (0, {nyq:g})")
+        if not (1 <= int(hp.get("order", 4)) <= 10):
+            raise ChainError("highpass.order must be 1..10")
     lp = chain.get("lowpass") or {}
     if lp.get("on"):
         if not (0 < float(lp.get("cutoff_hz", 2000))):
@@ -92,6 +98,16 @@ def apply_chain(axes: dict[str, np.ndarray], fs: float, mean_rpm: float,
                 sos = signal.butter(2, fc / nyq, btype="highpass", output="sos")
                 for k in out:
                     out[k] = signal.sosfiltfilt(sos, out[k])
+
+    hp = chain.get("highpass") or {}
+    if hp.get("on"):
+        fc = float(hp.get("cutoff_hz", 50)); order = int(hp.get("order", 4))
+        if fc >= nyq:
+            skipped.append(f"highpass {fc:g} Hz >= preview Nyquist {nyq:g} Hz")
+        else:
+            sos = signal.butter(order, fc / nyq, btype="highpass", output="sos")
+            for k in out:
+                out[k] = signal.sosfiltfilt(sos, out[k])
 
     lp = chain.get("lowpass") or {}
     if lp.get("on"):

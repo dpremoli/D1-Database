@@ -13,7 +13,7 @@ import { useApi } from '@directus/extensions-sdk';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { type Cache, cacheGet, cachePut, parseCache } from './liveCache';
-import { type Axis, type Cloud, type SpeedMode, buildCloud, COLORMAPS } from './liveCloud';
+import { type Axis, type Cloud, type SpeedMode, axisAutoLimits, buildCloud, COLORMAPS } from './liveCloud';
 import { exportFrmFigure } from './frmExport';
 
 const props = defineProps<{
@@ -261,15 +261,30 @@ function sizeCanvas(canvas: HTMLCanvasElement) {
 // O(N) recompute + percentile sort + full buffer re-upload on every frame.
 let cloud: Cloud | null = null;
 
+// Auto colour limits computed once per (cache, axis) over the WHOLE cut window, so Live's
+// scale matches Full's baked scale per axis and doesn't drift while cropping. Manual limits
+// (props.cmin/cmax) still win. Cleared when the cache changes.
+const autoLimitsByAxis = new Map<string, [number, number]>();
+watch(cache, () => autoLimitsByAxis.clear());
+function effClimits(): { cmin: number; cmax: number } {
+	let auto = autoLimitsByAxis.get(props.axis);
+	if (!auto && cache.value) { auto = axisAutoLimits(cache.value, props.axis); autoLimitsByAxis.set(props.axis, auto); }
+	auto = auto || [0, 1];
+	return {
+		cmin: Number.isFinite(props.cmin as number) ? (props.cmin as number) : auto[0],
+		cmax: Number.isFinite(props.cmax as number) ? (props.cmax as number) : auto[1],
+	};
+}
 function rebuild() {
 	if (!ready || !pointsGeom || !canvasEl.value || !cache.value) return;
+	const eff = effClimits();
 	cloud = buildCloud(cache.value, {
 		axis: props.axis, feed: props.feed, diam: props.diam, innerDiam: props.innerDiam,
 		speedMode: props.speedMode, rpm: props.rpm, vc: props.vc, timeScale: props.timeScale, ppr: props.ppr,
 		cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec,
 		stride: props.stride, gridding: props.gridding, gridN: props.gridN,
 		colormap: COLORMAPS[props.colormap] || COLORMAPS.viridis,
-		cmin: props.cmin, cmax: props.cmax,
+		cmin: eff.cmin, cmax: eff.cmax,
 		zSeries: props.zSeries || 'none',
 	});
 	pointCount.value = cloud?.count ?? 0;

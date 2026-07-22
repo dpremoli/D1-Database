@@ -40,6 +40,18 @@ if stagen(chain, 'detrend')
     end
 end
 
+% ---- highpass (general; distinct from detrend's drift-removal HP) ----
+if stagen(chain, 'highpass')
+    fc = getf(chain.highpass, 'cutoff_hz', 50);
+    order = geti(chain.highpass, 'order', 4);
+    if fc > 0 && fc < nyq
+        [z, p, k] = butter(order, fc/nyq, 'high');
+        [sos, g] = zp2sos(z, p, k);
+        Fx = filtfilt(sos, g, Fx); Fy = filtfilt(sos, g, Fy); Fz = filtfilt(sos, g, Fz);
+        applied{end+1} = 'highpass';
+    end
+end
+
 % ---- lowpass ----
 if stagen(chain, 'lowpass')
     fc = getf(chain.lowpass, 'cutoff_hz', 2000);

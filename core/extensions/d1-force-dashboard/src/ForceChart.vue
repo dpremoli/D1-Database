@@ -26,6 +26,7 @@ const props = defineProps<{
 	viewEnd?: number | null;
 	zoomTool?: boolean;              // when true, drag draws a rectangular zoom box
 	overlay?: { f: number[]; amp: number[] } | null;   // FFT-only: dashed filtered spectrum
+	active?: boolean;                // the axis currently shown in the FRM cloud -> highlighted
 }>();
 const emit = defineEmits<{
 	(e: 'hover', i: number | null): void;
@@ -305,7 +306,7 @@ function onWheel(ev: WheelEvent) {
 </script>
 
 <template>
-	<div class="chart">
+	<div class="chart" :class="{ active }" :style="active ? { '--accent': stroke } : {}">
 		<div class="chart-head">
 			<span class="chart-title">{{ title }}</span>
 			<span v-if="peakNum != null" class="chart-peak">peak {{ peakNum.toFixed(2) }} {{ yUnit }}</span>
@@ -368,6 +369,9 @@ function onWheel(ev: WheelEvent) {
 	border-radius: 14px; padding: 10px 12px 6px; min-width: 0; min-height: 150px;
 	display: flex; flex-direction: column;
 }
+/* the axis shown in the FRM cloud: coloured left edge + soft ring so it's obvious which
+   signal you're looking at on the fingerprint. */
+.chart.active { border-color: var(--accent); box-shadow: inset 3px 0 0 0 var(--accent), 0 0 0 1px var(--accent); }
 .chart-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 2px; gap: 8px; flex: 0 0 auto; }
 .chart-title { font-size: 12.5px; font-weight: 650; color: var(--theme--foreground, #1e293b); }
 .chart-unit { font-size: 10.5px; color: var(--theme--foreground-subdued, #98a2b3); font-weight: 600; }

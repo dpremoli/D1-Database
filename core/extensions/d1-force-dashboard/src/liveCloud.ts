@@ -59,6 +59,22 @@ function percentile(sorted: Float32Array, p: number): number {
 	return sorted[i];
 }
 
+// Auto colour limits (prctile 1/99) over the WHOLE cached cut window for one axis — NOT the
+// current crop and NOT decimation-dependent. This is the same window + statistic the host
+// bakes into the octree metadata and the FRM PNGs, so Live and Full now share a colour scale
+// per axis, and it no longer shifts while the user drags the crop. Sampled to ~400k for speed.
+export function axisAutoLimits(c: Cache, axis: Axis): [number, number] {
+	const a = c[axis];
+	const stride = Math.max(1, Math.floor(a.length / 400_000));
+	const s = new Float32Array(Math.ceil(a.length / stride));
+	for (let i = 0, k = 0; i < a.length; i += stride, k++) s[k] = a[i];
+	s.sort();
+	const pc = (q: number) => s[Math.min(s.length - 1, Math.max(0, Math.round((q / 100) * (s.length - 1))))];
+	let lo = pc(1), hi = pc(99);
+	if (!(hi > lo)) { lo = s[0]; hi = s[s.length - 1]; if (!(hi > lo)) hi = lo + 1; }
+	return [lo, hi];
+}
+
 export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 	const t = c.t, revs = c.revs;
 	const cs = idxOfTime(t, p.cropStartSec);

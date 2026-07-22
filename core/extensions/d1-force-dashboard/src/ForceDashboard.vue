@@ -96,6 +96,22 @@ const cropEndSec = ref(0);
 const editFeed = ref(0.1);
 const editDiam = ref(80);
 const editInnerDiam = ref(0);   // donut/diaphragm inner Ø (mm); 0 = solid disc
+// Source snapshot of the op's cut params, so the editable boxes can highlight what the user
+// changed vs what was loaded.
+const srcCut = reactive({ feed: 0, diam: 0, inner: 0, ppr: 1 });
+const near = (a: number, b: number) => Math.abs(Number(a) - Number(b)) < 1e-6;
+function seedCutFromDetail() {
+	const d = detail.value; if (!d) return;
+	srcCut.feed = Number(d.feed) || 0;
+	srcCut.diam = Number(d.outer_diameter) || Number(d.cut_diameter) || 0;
+	srcCut.inner = Number(d.inner_diameter) || 0;
+	srcCut.ppr = Number(d.pulses_per_rev) || 1;
+	if (srcCut.feed) editFeed.value = srcCut.feed;
+	if (srcCut.diam) editDiam.value = srcCut.diam;
+	editInnerDiam.value = srcCut.inner;
+	editPpr.value = srcCut.ppr;
+}
+watch(() => detail.value?.id, () => nextTick(seedCutFromDetail));
 const speedMode = ref<SpeedMode>('measured');
 const editRpm = ref(1000);
 const editVc = ref(100);
@@ -277,7 +293,12 @@ watch(editDiam, (v) => {
 // the crop lines per axis, plus whole-signal effective bit depth and rail/clip analysis
 // (over-range detection). Reuses the FrmCloud LRU so Lite mode costs nothing extra; if
 // the cache isn't downloaded yet the panel offers an explicit compute (= download).
-const statsOpen = ref(false);
+// One accordion open at a time in the detail column: Operation detail | Signal statistics
+// | Signal filters are mutually exclusive (opening one folds the others).
+const openPanel = ref<'detail' | 'stats' | 'filters' | null>('detail');
+function togglePanel(p: 'detail' | 'stats' | 'filters') { openPanel.value = openPanel.value === p ? null : p; }
+const opDetailOpen = computed(() => openPanel.value === 'detail');
+const statsOpen = computed(() => openPanel.value === 'stats');
 const STAT_AXES = ['Fx', 'Fy', 'Fz'] as const;
 const sigStats = ref<SignalStats | null>(null);
 const statsBusy = ref(false);
@@ -328,7 +349,7 @@ function fmtStat(v: number): string {
 // Interactive: the working chain is previewed by the host filter-service on the live
 // cache; raw + filtered render side-by-side in two linked viewports (compareView shared).
 // Baking patches the op's filter_chain + reprocesses so ALL outputs are filtered.
-const filtersOpen = ref(false);
+const filtersOpen = computed(() => openPanel.value === 'filters');
 const workChain = ref<FilterChain>(defaultChain());
 const filteredCache = ref<Cache | null>(null);
 // The RAW pane in compare mode plots the SAME decimated samples as the filtered pane
@@ -344,9 +365,24 @@ const profiles = ref<any[]>([]);
 const compareOn = computed(() => liveOn.value && chainActive(workChain.value) && filtersOpen.value);
 // Both live panes share ONE view object so pan/zoom in either drives both.
 const compareView = reactive({ cx: 0, cy: 0, span: 1, active: false });
-const bakedChain = computed<FilterChain | null>(() => (detail.value?.filter_chain
-	? (typeof detail.value.filter_chain === 'string' ? JSON.parse(detail.value.filter_chain) : detail.value.filter_chain)
-	: null));
+function mergeChain(raw: any): FilterChain {
+	const d = defaultChain();
+	if (!raw) return d;
+	// deep-merge each stage over the defaults so chains saved before a stage existed
+	// (e.g. pre-highpass) don't leave undefined stages that crash the template.
+	return {
+		despike: { ...d.despike, ...(raw.despike || {}) },
+		detrend: { ...d.detrend, ...(raw.detrend || {}) },
+		highpass: { ...d.highpass, ...(raw.highpass || {}) },
+		lowpass: { ...d.lowpass, ...(raw.lowpass || {}) },
+		notch: { ...d.notch, ...(raw.notch || {}) },
+	};
+}
+const bakedChain = computed<FilterChain | null>(() => {
+	const fc = detail.value?.filter_chain;
+	if (!fc) return null;
+	return mergeChain(typeof fc === 'string' ? JSON.parse(fc) : fc);
+});
 
 async function loadProfiles() {
 	try { profiles.value = (await api.get('/items/filter_profiles', { params: { fields: ['id', 'name', 'chain'], sort: 'name', limit: 100 } })).data.data ?? []; }
@@ -387,7 +423,7 @@ watch(() => detail.value?.id, () => {
 });
 function applyProfile(id: string) {
 	const p = profiles.value.find((x) => x.id === id);
-	if (p?.chain) workChain.value = { ...defaultChain(), ...(typeof p.chain === 'string' ? JSON.parse(p.chain) : p.chain) };
+	if (p?.chain) workChain.value = mergeChain(typeof p.chain === 'string' ? JSON.parse(p.chain) : p.chain);
 }
 async function saveProfile() {
 	const name = window.prompt('Save filter profile as:'); if (!name) return;
@@ -916,6 +952,8 @@ function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam:
 	speedMode.value = 'measured';
 	// derive a sensible Vc default from the measured mean speed + diameter
 	editVc.value = Math.round(Math.PI * meta.diam * meta.rpm / 1000) || 100;
+	// the cache's feed/diam are the "source" for the modified-highlight in Live
+	srcCut.feed = editFeed.value; srcCut.diam = editDiam.value;
 }
 function resetLive() {
 	const d = detail.value;
@@ -1126,32 +1164,51 @@ function fmtDateTime(v: string | null | undefined) {
 
 					<div class="card info info-op">
 						<div class="info-head">
-							<span><v-icon name="build" x-small /> Operation detail</span>
+							<span>
+								<button class="chevbtn" title="Collapse/expand" @click="togglePanel('detail')"><v-icon :name="opDetailOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
+								<v-icon name="build" x-small /> Operation detail
+							</span>
 							<button v-if="op?.operation_id" class="openbtn" @click="openOpForm">Open <v-icon name="open_in_new" x-small /></button>
 						</div>
-						<template v-if="detail">
+						<template v-if="detail && opDetailOpen">
 							<div class="info-code mono">{{ opLabel }}</div>
 							<div v-if="compactMeta.length" class="kv">
 								<template v-for="m in compactMeta" :key="m[0]"><span>{{ m[0] }}</span><span>{{ m[1] }}</span></template>
 							</div>
 
-							<!-- Reworked: stable sections grouped by concern. Cut parameters stay visible in
-							     BOTH modes; technical capture info + display controls are accordions. -->
-							<div class="stat-sep">Cut parameters</div>
+							<!-- Editable cut-parameter boxes (Feed/Diameter/Inner Ø/PPR): drive the Live plot
+							     and are threaded into any host bake. Measured values stay read-only. A box is
+							     highlighted when its value differs from what the op was loaded with. -->
+							<div class="stat-sep">Cut parameters
+								<button v-if="!near(editFeed, srcCut.feed) || !near(editDiam, srcCut.diam) || !near(editInnerDiam, srcCut.inner) || !near(editPpr, srcCut.ppr)"
+									class="linkbtn" @click="seedCutFromDetail">Reset</button>
+							</div>
 							<div class="statgrid">
-								<div v-for="st in cutParams" :key="st.label" class="stat">
-									<div class="s-top"><span class="s-val">{{ st.value }}</span><span v-if="st.unit" class="s-unit">{{ st.unit }}</span></div>
-									<span class="s-lab">{{ st.label }}</span>
+								<div class="stat edit" :class="{ modified: !near(editFeed, srcCut.feed) }">
+									<div class="s-top"><input class="s-inp" v-model.number="editFeed" type="number" step="0.01" min="0" /><span class="s-unit">mm/rev</span></div>
+									<span class="s-lab">Feed</span>
 								</div>
+								<div class="stat edit" :class="{ modified: !near(editDiam, srcCut.diam) }">
+									<div class="s-top"><input class="s-inp" v-model.number="editDiam" type="number" step="1" min="0" /><span class="s-unit">mm</span></div>
+									<span class="s-lab">Diameter</span>
+								</div>
+								<div class="stat edit" :class="{ modified: !near(editInnerDiam, srcCut.inner) }">
+									<div class="s-top"><input class="s-inp" v-model.number="editInnerDiam" type="number" step="1" min="0" title="Donut/diaphragm inner diameter — the spiral stops here. 0 = solid disc." /><span class="s-unit">mm</span></div>
+									<span class="s-lab">Inner Ø</span>
+								</div>
+								<div class="stat edit" :class="{ modified: !near(editPpr, srcCut.ppr) }">
+									<div class="s-top"><input class="s-inp" v-model.number="editPpr" type="number" step="1" min="1" /></div>
+									<span class="s-lab">Pulses/rev</span>
+								</div>
+								<div class="stat"><div class="s-top"><span class="s-val">{{ fmt(detail.surface_speed) }}</span><span class="s-unit">m/min</span></div><span class="s-lab">Surface speed</span></div>
+								<div class="stat"><div class="s-top"><span class="s-val">{{ fmt(detail.depth_of_cut) }}</span><span class="s-unit">mm</span></div><span class="s-lab">Depth of cut</span></div>
+								<div class="stat"><div class="s-top"><span class="s-val">{{ detail.mean_rpm != null ? Number(detail.mean_rpm).toFixed(0) : '—' }}</span></div><span class="s-lab">Mean RPM</span></div>
+								<div class="stat"><div class="s-top"><span class="s-val">{{ fmtCutTime(detail) }}</span></div><span class="s-lab">Cut time</span></div>
 							</div>
 
 							<template v-if="liveOn">
-								<div class="stat-sep">Plot overrides <span class="u">(what-if — plot only)</span> <button class="linkbtn" @click="resetLive">Reset</button></div>
+								<div class="stat-sep">Plot model <span class="u">(what-if — plot only)</span> <button class="linkbtn" @click="resetLive">Reset</button></div>
 								<div class="edit-grid">
-									<label>Feed <span class="u">mm/rev</span><input v-model.number="editFeed" type="number" step="0.01" min="0" /></label>
-									<label>Diameter <span class="u">mm</span><input v-model.number="editDiam" type="number" step="1" min="0" /></label>
-									<label>Inner Ø <span class="u">mm</span><input v-model.number="editInnerDiam" type="number" step="1" min="0" title="Donut/diaphragm inner diameter — the spiral stops here. 0 = solid disc." /></label>
-									<label>Pulses/rev<input v-model.number="editPpr" type="number" step="1" min="1" /></label>
 									<label class="wide">Spindle speed
 										<div class="speed-row">
 											<select v-model="speedMode">
@@ -1199,8 +1256,8 @@ function fmtDateTime(v: string | null | undefined) {
 								<template v-for="m in captureInfo" :key="m[0]"><span>{{ m[0] }}</span><span>{{ m[1] }}</span></template>
 							</div>
 						</template>
-						<div v-else-if="loadingDetail" class="loading sm"><v-progress-circular indeterminate small /></div>
-						<div v-else class="empty sm">Select an operation</div>
+						<div v-else-if="opDetailOpen && loadingDetail" class="loading sm"><v-progress-circular indeterminate small /></div>
+						<div v-else-if="opDetailOpen && !detail" class="empty sm">Select an operation</div>
 					</div>
 
 					<!-- Signal statistics: collapsed by default; computed client-side from the live
@@ -1208,7 +1265,7 @@ function fmtDateTime(v: string | null | undefined) {
 					<div v-if="detail" class="card info info-stats">
 						<div class="info-head">
 							<span>
-								<button class="chevbtn" title="Collapse/expand" @click="statsOpen = !statsOpen"><v-icon :name="statsOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
+								<button class="chevbtn" title="Collapse/expand" @click="togglePanel('stats')"><v-icon :name="statsOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
 								<v-icon name="query_stats" x-small /> Signal statistics
 							</span>
 							<span v-if="sigStats" class="stats-win mono">{{ sigStats.windowSec[0].toFixed(1) }}–{{ sigStats.windowSec[1].toFixed(1) }} s</span>
@@ -1245,7 +1302,7 @@ function fmtDateTime(v: string | null | undefined) {
 					<div v-if="detail" class="card info info-filters">
 						<div class="info-head">
 							<span>
-								<button class="chevbtn" title="Collapse/expand" @click="filtersOpen = !filtersOpen"><v-icon :name="filtersOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
+								<button class="chevbtn" title="Collapse/expand" @click="togglePanel('filters')"><v-icon :name="filtersOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
 								<v-icon name="filter_alt" x-small /> Signal filters
 							</span>
 							<span v-if="bakedChain" class="frm-fid good" title="This op's outputs are baked with a filter chain">baked</span>
@@ -1258,6 +1315,8 @@ function fmtDateTime(v: string | null | undefined) {
 									<template v-if="workChain.despike.on"><input v-model.number="workChain.despike.window" type="number" min="3" step="2" title="window (odd)" /><input v-model.number="workChain.despike.sigma" type="number" min="1" step="0.5" title="σ" /></template></div>
 								<div class="filt-row"><label class="chk"><input v-model="workChain.detrend.on" type="checkbox" /> Detrend</label>
 									<template v-if="workChain.detrend.on"><select v-model="workChain.detrend.mode"><option value="highpass">high-pass</option><option value="dc">DC</option></select><input v-if="workChain.detrend.mode==='highpass'" v-model.number="workChain.detrend.cutoff_hz" type="number" min="0.1" step="1" title="cutoff Hz" /></template></div>
+								<div class="filt-row"><label class="chk"><input v-model="workChain.highpass.on" type="checkbox" /> High-pass</label>
+									<template v-if="workChain.highpass.on"><input v-model.number="workChain.highpass.cutoff_hz" type="number" min="1" step="10" title="cutoff Hz" /><input v-model.number="workChain.highpass.order" type="number" min="1" max="10" title="order" /></template></div>
 								<div class="filt-row"><label class="chk"><input v-model="workChain.lowpass.on" type="checkbox" /> Low-pass</label>
 									<template v-if="workChain.lowpass.on"><input v-model.number="workChain.lowpass.cutoff_hz" type="number" min="1" step="100" title="cutoff Hz" /><input v-model.number="workChain.lowpass.order" type="number" min="1" max="10" title="order" /></template></div>
 								<div class="filt-row"><label class="chk"><input v-model="workChain.notch.on" type="checkbox" /> Notch ×harmonics</label>
@@ -1326,7 +1385,7 @@ function fmtDateTime(v: string | null | undefined) {
 							<div v-if="!detail" class="empty">Select an operation to view its signals</div>
 							<div v-else class="charts-col">
 								<ForceChart v-for="c in charts" :key="c.key" v-bind="c" :hover-index="hoverIndex" @hover="hoverIndex = $event"
-									:crop-editable="liveOn && c.kind === 'env'"
+									:crop-editable="liveOn && c.kind === 'env'" :active="c.key === axis"
 									:overlay="(chartMode === 'fft' && filtersOpen && c.kind === 'line' && c.key === axis) ? filterFftOverlay : null"
 									:view-start="zoomStart" :view-end="zoomEnd" :zoom-tool="rectZoomTool" @zoom="onChartZoom"
 									@update:crop-start="cropStartSec = $event" @update:crop-end="cropEndSec = $event" />
@@ -1562,6 +1621,16 @@ function fmtDateTime(v: string | null | undefined) {
 .s-val { font-size: 15px; font-weight: 750; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; line-height: 1; }
 .s-unit { font-size: 10px; font-weight: 600; color: var(--theme--foreground-subdued, #94a3b8); letter-spacing: 0.02em; }
 .s-lab { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--theme--foreground-subdued, #6b7684); font-weight: 600; }
+/* editable cut-param boxes: an input styled like the value; modified = accent ring */
+.stat.edit { background: var(--theme--background, #fff); }
+.stat .s-inp {
+	width: 100%; font: inherit; font-size: 15px; font-weight: 750; font-variant-numeric: tabular-nums;
+	border: 0; background: transparent; color: inherit; padding: 0; min-width: 0; line-height: 1;
+}
+.stat .s-inp:focus { outline: none; }
+.stat.edit { transition: border-color 0.12s, box-shadow 0.12s; }
+.stat.modified { border-color: var(--theme--primary, #1d4ed8); box-shadow: inset 0 0 0 1px var(--theme--primary, #1d4ed8); }
+.stat.modified .s-lab { color: var(--theme--primary, #1d4ed8); }
 
 /* Right area: Signals + FRM, independently hideable/resizable against each other. */
 .right-area { display: flex; flex-direction: column; gap: 10px; }
