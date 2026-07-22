@@ -18,7 +18,7 @@ const draft = ref({
 	series_points: 3000, fft_points: 3000, frm_downsample_step: 5, frm_dpi: 300,
 	live_cache_points: 250000, pulses_per_rev: 1,
 	grid_density: 2048, grid_method: 'splat', octree_threshold: 5000000,
-	octree_min_node_px: 1, octree_budget_cap: 25000000,
+	octree_min_node_px: 1, octree_budget_cap: 25000000, grid_pregen: false,
 });
 const dirty = ref(false);
 
@@ -44,6 +44,7 @@ async function loadState() {
 			octree_threshold: state.value.octree_threshold ?? state.value.live_cache_points,
 			octree_min_node_px: Number(state.value.octree_min_node_px ?? 1),
 			octree_budget_cap: state.value.octree_budget_cap ?? 25000000,
+				grid_pregen: !!state.value.grid_pregen,
 		};
 	}
 }
@@ -122,6 +123,7 @@ async function saveSettings() {
 			octree_threshold: Math.max(1000, Number(draft.value.octree_threshold) || 5000000),
 			octree_min_node_px: Math.max(0.1, Number(draft.value.octree_min_node_px) || 1),
 			octree_budget_cap: Math.max(1000000, Number(draft.value.octree_budget_cap) || 25000000),
+				grid_pregen: !!draft.value.grid_pregen,
 		});
 		dirty.value = false;
 		await loadState();
@@ -288,6 +290,7 @@ function opLabel(r: any) { return r.operation_id?.pass_code || r.operation_id?.s
 							<label>Octree auto-route threshold (pts)<input v-model.number="draft.octree_threshold" type="number" min="1000" step="100000" @input="dirty = true" /></label>
 							<label>Octree min node px<input v-model.number="draft.octree_min_node_px" type="number" min="0.1" step="0.5" @input="dirty = true" /></label>
 							<label>Octree budget cap (pts)<input v-model.number="draft.octree_budget_cap" type="number" min="1000000" step="1000000" @input="dirty = true" /></label>
+								<label class="chk wide"><input v-model="draft.grid_pregen" type="checkbox" @change="dirty = true" /> Pre-build gridded octrees for big ops <span class="u">(heavier crawl)</span></label>
 							<p class="setting-note">The interpolated grid fills the sparse spiral at deep zoom (N×N cells; <b>splat</b> is GPU-accelerated). Maps above the <b>auto-route threshold</b> default to the octree view. Lower <b>min node px</b> streams more detail; the <b>budget cap</b> bounds GPU memory.</p>
 						</div>
 						<button class="savebtn" :disabled="!dirty || saving" @click="saveSettings">

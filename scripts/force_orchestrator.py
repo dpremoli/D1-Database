@@ -254,6 +254,39 @@ def enqueue_pregen_octrees(conn) -> int:
     return n
 
 
+def enqueue_pregen_grids(conn) -> int:
+    """When force_crawler_state.grid_pregen is on, pre-build the interpolated-grid octree for
+    every big op that already has a raw octree but no grid yet — so Full+Gridded opens
+    instantly instead of waiting on an on-demand build. Off by default (a grid build is
+    heavier than a raw octree). Idempotent: only rows with grid_octree_status IS NULL."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT grid_pregen FROM force_crawler_state "
+                        "WHERE id='00000000-0000-0000-0000-000000000001'")
+            row = cur.fetchone()
+        if not (row and row[0]):
+            return 0
+    except psycopg2.Error:
+        conn.rollback()
+        return 0
+    threshold = _octree_threshold(conn)
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE machining_force_analysis
+               SET grid_octree_status='pending', grid_octree_requested_at=now(), updated_at=now()
+             WHERE status='done'
+               AND grid_octree_status IS NULL
+               AND octree_status='done'
+               AND cut_start_idx IS NOT NULL AND cut_end_idx IS NOT NULL
+               AND (cut_end_idx - cut_start_idx) > %s
+        """, [threshold])
+        n = cur.rowcount
+    conn.commit()
+    if n:
+        log.info("pre-gen: enqueued %d grid-octree build(s) for ops over %d points", n, threshold)
+    return n
+
+
 def claim_batch(conn, args, limit: int):
     """Atomically move up to `limit` pending rows to 'processing'; return them."""
     scope, sparams = _scope_exists(args, "a")
@@ -1168,6 +1201,7 @@ def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
                     reset_stale_processing(conn)
                     n = discover(conn, dargs)
                     enqueue_pregen_octrees(conn)   # pre-build octrees for big ops
+                    enqueue_pregen_grids(conn)     # + grid octrees when grid_pregen is on
                     last_discover = time.time()
                     with conn.cursor() as cur:
                         cur.execute("UPDATE force_crawler_state SET last_discover_at=now() "
@@ -1265,6 +1299,7 @@ def main() -> int:
             reset_stale_processing(conn)
             discover(conn, args)
             enqueue_pregen_octrees(conn)   # pre-build octrees for big ops
+            enqueue_pregen_grids(conn)     # + grid octrees when grid_pregen is on
         with conn.cursor() as cur:
             cur.execute("SELECT status, count(*) FROM machining_force_analysis GROUP BY status ORDER BY status")
             log.info("queue: %s", ", ".join(f"{k}={v}" for k, v in cur.fetchall()) or "(empty)")
