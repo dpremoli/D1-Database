@@ -1203,7 +1203,6 @@ function fmtDateTime(v: string | null | undefined) {
 								</div>
 								<div class="stat"><div class="s-top"><span class="s-val">{{ fmt(detail.surface_speed) }}</span><span class="s-unit">m/min</span></div><span class="s-lab">Surface speed</span></div>
 								<div class="stat"><div class="s-top"><span class="s-val">{{ fmt(detail.depth_of_cut) }}</span><span class="s-unit">mm</span></div><span class="s-lab">Depth of cut</span></div>
-								<div class="stat"><div class="s-top"><span class="s-val">{{ detail.mean_rpm != null ? Number(detail.mean_rpm).toFixed(0) : '—' }}</span></div><span class="s-lab">Mean RPM</span></div>
 								<div class="stat"><div class="s-top"><span class="s-val">{{ fmtCutTime(detail) }}</span></div><span class="s-lab">Cut time</span></div>
 							</div>
 
