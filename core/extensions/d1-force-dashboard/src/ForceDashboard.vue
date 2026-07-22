@@ -295,9 +295,10 @@ watch(editDiam, (v) => {
 // the cache isn't downloaded yet the panel offers an explicit compute (= download).
 // One accordion open at a time in the detail column: Operation detail | Signal statistics
 // | Signal filters are mutually exclusive (opening one folds the others).
-const openPanel = ref<'detail' | 'stats' | 'filters' | null>('detail');
-function togglePanel(p: 'detail' | 'stats' | 'filters') { openPanel.value = openPanel.value === p ? null : p; }
+const openPanel = ref<'detail' | 'display' | 'stats' | 'filters' | null>('detail');
+function togglePanel(p: 'detail' | 'display' | 'stats' | 'filters') { openPanel.value = openPanel.value === p ? null : p; }
 const opDetailOpen = computed(() => openPanel.value === 'detail');
+const displayPanelOpen = computed(() => openPanel.value === 'display');
 const statsOpen = computed(() => openPanel.value === 'stats');
 const STAT_AXES = ['Fx', 'Fy', 'Fz'] as const;
 const sigStats = ref<SignalStats | null>(null);
@@ -1222,31 +1223,6 @@ function fmtDateTime(v: string | null | undefined) {
 									</label>
 									<label>Rate <span class="u">Hz</span><input v-model.number="editRate" type="number" step="100" min="1" /></label>
 								</div>
-
-								<button class="acc-head" @click="displayOpen = !displayOpen">
-									<v-icon :name="displayOpen ? 'expand_more' : 'chevron_right'" x-small /> Display
-								</button>
-								<div v-if="displayOpen" class="edit-grid">
-									<label>Show every<select v-model.number="plotStride"><option :value="1">all pts</option><option :value="2">2nd</option><option :value="5">5th</option><option :value="10">10th</option><option :value="25">25th</option></select></label>
-									<label>Colour<select v-model="colormap"><option value="viridis">viridis</option><option value="inferno">inferno</option><option value="grayscale">grayscale</option></select></label>
-									<label>Point size<input v-model.number="pointSize" type="number" step="0.2" min="0.4" max="6" /></label>
-									<label class="chk wide"><input v-model="cauto" type="checkbox" /> Auto colour limits <span class="u">(prctile 1 / 99)</span></label>
-									<label>Colour min <span class="u">N</span><input v-model.number="cminManual" type="number" step="1" :disabled="cauto" /></label>
-									<label>Colour max <span class="u">N</span><input v-model.number="cmaxManual" type="number" step="1" :disabled="cauto" /></label>
-								</div>
-
-								<button class="acc-head" @click="hostOpen = !hostOpen">
-									<v-icon :name="hostOpen ? 'expand_more' : 'chevron_right'" x-small /> Full-resolution render (host)
-								</button>
-								<template v-if="hostOpen">
-									<div class="render-row">
-										<label>Points<input v-model.number="renderPoints" type="number" step="50000" min="1000" /></label>
-										<button class="processbtn" :disabled="rendering" @click="processFullRes">
-											<v-icon :name="rendering ? 'hourglass_top' : 'memory'" x-small /> {{ rendering ? 'Rendering…' : 'Process' }}
-										</button>
-									</div>
-									<div v-if="renderMsg" class="render-msg">{{ renderMsg }}</div>
-								</template>
 							</template>
 
 							<button class="acc-head" @click="captureOpen = !captureOpen">
@@ -1258,6 +1234,38 @@ function fmtDateTime(v: string | null | undefined) {
 						</template>
 						<div v-else-if="opDetailOpen && loadingDetail" class="loading sm"><v-progress-circular indeterminate small /></div>
 						<div v-else-if="opDetailOpen && !detail" class="empty sm">Select an operation</div>
+					</div>
+
+					<!-- Display: appearance of the FRM plot (colour map / point size / colour limits /
+					     thinning) + the on-demand host full-res render. Its own accordion so it isn't
+					     buried inside the operation detail. -->
+					<div v-if="detail" class="card info info-display" :class="{ collapsed: !displayPanelOpen }">
+						<div class="info-head">
+							<span>
+								<button class="chevbtn" title="Collapse/expand" @click="togglePanel('display')"><v-icon :name="displayPanelOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
+								<v-icon name="palette" x-small /> Display
+							</span>
+						</div>
+						<template v-if="displayPanelOpen">
+							<div class="edit-grid">
+								<label>Colour<select v-model="colormap"><option value="viridis">viridis</option><option value="inferno">inferno</option><option value="grayscale">grayscale</option></select></label>
+								<label>Point size<input v-model.number="pointSize" type="number" step="0.2" min="0.4" max="6" /></label>
+								<label v-if="liveOn">Show every<select v-model.number="plotStride"><option :value="1">all pts</option><option :value="2">2nd</option><option :value="5">5th</option><option :value="10">10th</option><option :value="25">25th</option></select></label>
+								<label class="chk wide"><input v-model="cauto" type="checkbox" /> Auto colour limits <span class="u">(prctile 1 / 99)</span></label>
+								<label>Colour min <span class="u">N</span><input v-model.number="cminManual" type="number" step="1" :disabled="cauto" /></label>
+								<label>Colour max <span class="u">N</span><input v-model.number="cmaxManual" type="number" step="1" :disabled="cauto" /></label>
+							</div>
+							<template v-if="liveOn">
+								<div class="stat-sep">Full-resolution render (host)</div>
+								<div class="render-row">
+									<label>Points<input v-model.number="renderPoints" type="number" step="50000" min="1000" /></label>
+									<button class="processbtn" :disabled="rendering" @click="processFullRes">
+										<v-icon :name="rendering ? 'hourglass_top' : 'memory'" x-small /> {{ rendering ? 'Rendering…' : 'Process' }}
+									</button>
+								</div>
+								<div v-if="renderMsg" class="render-msg">{{ renderMsg }}</div>
+							</template>
+						</template>
 					</div>
 
 					<!-- Signal statistics: collapsed by default; computed client-side from the live
@@ -1528,8 +1536,9 @@ function fmtDateTime(v: string | null | undefined) {
    / filters, mutually exclusive) takes the remaining height and scrolls. A collapsed card
    must shrink to just its header — otherwise it kept flex:1 and left a big empty box. */
 .col-stack .info { flex: 0 0 auto; min-height: 0; }
-.col-stack .info-op, .col-stack .info-stats, .col-stack .info-filters { overflow-y: auto; }
+.col-stack .info-op, .col-stack .info-display, .col-stack .info-stats, .col-stack .info-filters { overflow-y: auto; }
 .col-stack .info-op:not(.collapsed),
+.col-stack .info-display:not(.collapsed),
 .col-stack .info-stats:not(.collapsed),
 .col-stack .info-filters:not(.collapsed) { flex: 1 1 auto; }
 .col-stack .info.collapsed { flex: 0 0 auto; overflow: visible; }
@@ -1625,14 +1634,19 @@ function fmtDateTime(v: string | null | undefined) {
 .s-val { font-size: 13px; font-weight: 750; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .s-unit { font-size: 9.5px; font-weight: 600; color: var(--theme--foreground-subdued, #94a3b8); letter-spacing: 0.02em; }
 .s-lab { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--theme--foreground-subdued, #6b7684); font-weight: 600; margin-top: 1px; }
-/* editable cut-param boxes: an input styled like the value; modified = accent ring */
-.stat.edit { background: var(--theme--background, #fff); }
+/* editable cut-param boxes: an input styled like the value, with a dashed underline so it
+   reads as editable WITHOUT clicking; the unit sits inline to its right (like the read-only
+   boxes) to save vertical space. Modified = accent ring. */
+.stat.edit { background: var(--theme--background, #fff); transition: border-color 0.12s, box-shadow 0.12s; }
 .stat .s-inp {
-	width: 100%; font: inherit; font-size: 15px; font-weight: 750; font-variant-numeric: tabular-nums;
-	border: 0; background: transparent; color: inherit; padding: 0; min-width: 0; line-height: 1;
+	width: 4.4em; max-width: 100%; font: inherit; font-size: 13px; font-weight: 750; font-variant-numeric: tabular-nums;
+	background: transparent; color: inherit; padding: 0 0 1px; line-height: 1.15;
+	border: 0; border-bottom: 1px dashed var(--theme--border-color, #c7d0da); border-radius: 0;
 }
-.stat .s-inp:focus { outline: none; }
-.stat.edit { transition: border-color 0.12s, box-shadow 0.12s; }
+.stat .s-inp::-webkit-outer-spin-button, .stat .s-inp::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.stat .s-inp { -moz-appearance: textfield; appearance: textfield; }
+.stat .s-inp:hover { border-bottom-color: var(--theme--foreground-subdued, #94a3b8); }
+.stat .s-inp:focus { outline: none; border-bottom: 1px solid var(--theme--primary, #1d4ed8); }
 .stat.modified { border-color: var(--theme--primary, #1d4ed8); box-shadow: inset 0 0 0 1px var(--theme--primary, #1d4ed8); }
 .stat.modified .s-lab { color: var(--theme--primary, #1d4ed8); }
 
