@@ -98,7 +98,7 @@ const editDiam = ref(80);
 const editInnerDiam = ref(0);   // donut/diaphragm inner Ø (mm); 0 = solid disc
 // Source snapshot of the op's cut params, so the editable boxes can highlight what the user
 // changed vs what was loaded.
-const srcCut = reactive({ feed: 0, diam: 0, inner: 0, ppr: 1 });
+const srcCut = reactive({ feed: 0, diam: 0, inner: 0, ppr: 1, rate: 25600 });
 const near = (a: number, b: number) => Math.abs(Number(a) - Number(b)) < 1e-6;
 function seedCutFromDetail() {
 	const d = detail.value; if (!d) return;
@@ -106,11 +106,18 @@ function seedCutFromDetail() {
 	srcCut.diam = Number(d.outer_diameter) || Number(d.cut_diameter) || 0;
 	srcCut.inner = Number(d.inner_diameter) || 0;
 	srcCut.ppr = Number(d.pulses_per_rev) || 1;
+	srcCut.rate = Number(d.sample_rate) || 25600;
 	if (srcCut.feed) editFeed.value = srcCut.feed;
 	if (srcCut.diam) editDiam.value = srcCut.diam;
 	editInnerDiam.value = srcCut.inner;
 	editPpr.value = srcCut.ppr;
+	editRate.value = srcCut.rate;
 }
+// The capture box edits the rate in kHz (Hz under the hood, driving the time-scale model).
+const editRateKHz = computed({
+	get: () => Math.round((editRate.value / 1000) * 100) / 100,
+	set: (v: number) => { editRate.value = Math.max(1, Math.round(Number(v) * 1000)); },
+});
 watch(() => detail.value?.id, () => nextTick(seedCutFromDetail));
 const speedMode = ref<SpeedMode>('measured');
 const editRpm = ref(1000);
@@ -476,6 +483,10 @@ function onClimits(v: { cmin: number; cmax: number }) {
 	autoClimits.value = v;
 	if (cauto.value) { cminManual.value = Number(v.cmin.toFixed(2)); cmaxManual.value = Number(v.cmax.toFixed(2)); }
 }
+// Filtering shifts the force range (e.g. a high-pass strips the DC offset), so any manually
+// locked colour limits become meaningless — auto-unlock so both panes recompute their own
+// scale over the (raw / filtered) data.
+watch(() => chainActive(workChain.value), (active) => { if (active) cauto.value = true; });
 // In-place collapses to free space when live.
 const sampleDetailOpen = ref(true);
 const colStackHidden = ref(false);               // hide the Samples/Operations column
@@ -953,8 +964,8 @@ function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam:
 	speedMode.value = 'measured';
 	// derive a sensible Vc default from the measured mean speed + diameter
 	editVc.value = Math.round(Math.PI * meta.diam * meta.rpm / 1000) || 100;
-	// the cache's feed/diam are the "source" for the modified-highlight in Live
-	srcCut.feed = editFeed.value; srcCut.diam = editDiam.value;
+	// the cache's feed/diam/rate are the "source" for the modified-highlight in Live
+	srcCut.feed = editFeed.value; srcCut.diam = editDiam.value; srcCut.rate = editRate.value;
 }
 function resetLive() {
 	const d = detail.value;
@@ -1203,7 +1214,10 @@ function fmtDateTime(v: string | null | undefined) {
 								</div>
 								<div class="stat"><div class="s-top"><span class="s-val">{{ fmt(detail.surface_speed) }}</span><span class="s-unit">m/min</span></div><span class="s-lab">Surface speed</span></div>
 								<div class="stat"><div class="s-top"><span class="s-val">{{ fmt(detail.depth_of_cut) }}</span><span class="s-unit">mm</span></div><span class="s-lab">Depth of cut</span></div>
-								<div class="stat"><div class="s-top"><span class="s-val">{{ detail.sample_rate ? (detail.sample_rate / 1000).toFixed(1) : '—' }}</span><span class="s-unit">kHz</span></div><span class="s-lab">Capture</span></div>
+								<div class="stat edit" :class="{ modified: !near(editRate, srcCut.rate) }">
+									<div class="s-top"><input class="s-inp" v-model.number="editRateKHz" type="number" step="0.1" min="0.1" /><span class="s-unit">kHz</span></div>
+									<span class="s-lab">Capture</span>
+								</div>
 								<div class="stat"><div class="s-top"><span class="s-val">{{ fmtCutTime(detail) }}</span></div><span class="s-lab">Cut time</span></div>
 							</div>
 
@@ -1221,7 +1235,6 @@ function fmtDateTime(v: string | null | undefined) {
 											<input v-if="speedMode === 'vc'" v-model.number="editVc" type="number" step="1" min="1" title="Vc (m/min)" />
 										</div>
 									</label>
-									<label>Rate <span class="u">Hz</span><input v-model.number="editRate" type="number" step="100" min="1" /></label>
 								</div>
 							</template>
 
@@ -1470,7 +1483,7 @@ function fmtDateTime(v: string | null | undefined) {
 										:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
 										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
 										:point-size="pointSize" :colormap="colormap"
-										:cmin="autoClimits?.cmin ?? cmin" :cmax="autoClimits?.cmax ?? cmax"
+										:cmin="cmin" :cmax="cmax"
 										:shared-view="compareView" pane-label="filtered" />
 								</div>
 								<FrmCloud v-else-if="liveOn" ref="frmCloudRef" :cache-file-id="detail.live_cache_file"
