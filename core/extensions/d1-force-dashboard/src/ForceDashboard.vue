@@ -1162,7 +1162,7 @@ function fmtDateTime(v: string | null | undefined) {
 						</template>
 					</div>
 
-					<div class="card info info-op">
+					<div class="card info info-op" :class="{ collapsed: !opDetailOpen }">
 						<div class="info-head">
 							<span>
 								<button class="chevbtn" title="Collapse/expand" @click="togglePanel('detail')"><v-icon :name="opDetailOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
@@ -1262,7 +1262,7 @@ function fmtDateTime(v: string | null | undefined) {
 
 					<!-- Signal statistics: collapsed by default; computed client-side from the live
 					     cache (crop-window force stats + whole-signal bit-depth / clipping analysis). -->
-					<div v-if="detail" class="card info info-stats">
+					<div v-if="detail" class="card info info-stats" :class="{ collapsed: !statsOpen }">
 						<div class="info-head">
 							<span>
 								<button class="chevbtn" title="Collapse/expand" @click="togglePanel('stats')"><v-icon :name="statsOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
@@ -1299,7 +1299,7 @@ function fmtDateTime(v: string | null | undefined) {
 
 					<!-- Signal filters: interactive preview in Lite (raw|filtered compare), bake to
 					     apply the chain to every output. Collapsed by default. -->
-					<div v-if="detail" class="card info info-filters">
+					<div v-if="detail" class="card info info-filters" :class="{ collapsed: !filtersOpen }">
 						<div class="info-head">
 							<span>
 								<button class="chevbtn" title="Collapse/expand" @click="togglePanel('filters')"><v-icon :name="filtersOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
@@ -1524,11 +1524,15 @@ function fmtDateTime(v: string | null | undefined) {
 .panel-samples { flex: 0 0 auto; }
 .panel-ops { flex: 1 1 auto; min-height: 0; }
 .panel-ops .list { max-height: none; flex: 1 1 auto; }
-/* The op-detail card is the flexible, scrollable one (NOT :last-child — the signal-stats
-   card now sits after it and silently stole the scroll when this targeted last-child). */
-.col-stack .info:last-child { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-.col-stack .info-op { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-.col-stack .info-stats { flex: 0 1 auto; min-height: 0; overflow-y: auto; max-height: 45%; }
+/* Detail column = header-sized cards by default; the ONE open accordion (op detail / stats
+   / filters, mutually exclusive) takes the remaining height and scrolls. A collapsed card
+   must shrink to just its header — otherwise it kept flex:1 and left a big empty box. */
+.col-stack .info { flex: 0 0 auto; min-height: 0; }
+.col-stack .info-op, .col-stack .info-stats, .col-stack .info-filters { overflow-y: auto; }
+.col-stack .info-op:not(.collapsed),
+.col-stack .info-stats:not(.collapsed),
+.col-stack .info-filters:not(.collapsed) { flex: 1 1 auto; }
+.col-stack .info.collapsed { flex: 0 0 auto; overflow: visible; }
 .layout.stacked .col-stack .info:last-child { overflow: visible; }
 .layout.stacked .panel-ops .list { max-height: 40vh; flex: none; }
 .layout.stacked .col-charts .chart { flex: none; min-height: 180px; }
@@ -1612,15 +1616,15 @@ function fmtDateTime(v: string | null | undefined) {
 	margin: 12px 0 9px; font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
 	color: var(--theme--foreground-subdued, #98a2b3); border-top: 1px solid var(--theme--border-color-subdued, #eef1f5); padding-top: 10px;
 }
-.statgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.statgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
 .stat {
 	background: var(--theme--background-subdued, #f7f9fb); border: 1px solid var(--theme--border-color-subdued, #e7ebf0);
-	border-radius: 10px; padding: 9px 11px; display: flex; flex-direction: column; gap: 2px;
+	border-radius: 8px; padding: 5px 9px; display: flex; flex-direction: column; gap: 0;
 }
-.s-top { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
-.s-val { font-size: 15px; font-weight: 750; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; line-height: 1; }
-.s-unit { font-size: 10px; font-weight: 600; color: var(--theme--foreground-subdued, #94a3b8); letter-spacing: 0.02em; }
-.s-lab { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--theme--foreground-subdued, #6b7684); font-weight: 600; }
+.s-top { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
+.s-val { font-size: 13px; font-weight: 750; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.s-unit { font-size: 9.5px; font-weight: 600; color: var(--theme--foreground-subdued, #94a3b8); letter-spacing: 0.02em; }
+.s-lab { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--theme--foreground-subdued, #6b7684); font-weight: 600; margin-top: 1px; }
 /* editable cut-param boxes: an input styled like the value; modified = accent ring */
 .stat.edit { background: var(--theme--background, #fff); }
 .stat .s-inp {
