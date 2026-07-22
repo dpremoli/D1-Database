@@ -266,7 +266,8 @@ def main() -> None:
         "INSERT INTO fast_run_data (operation_id, status, machine_format, import_archive_path) "
         "VALUES %s ON CONFLICT (operation_id) DO UPDATE "
         "SET status='pending', machine_format=EXCLUDED.machine_format, "
-        "    import_archive_path=EXCLUDED.import_archive_path, error_message=NULL, updated_at=now()",
+        "    import_archive_path=EXCLUDED.import_archive_path, error_message=NULL, updated_at=now() "
+        "WHERE fast_run_data.status IS DISTINCT FROM 'done'",   # don't re-drain finished traces
         [(oid, "pending", "250", rel) for oid, rel in enq],
     )
     print(f"enqueued {len(enq)} trace imports (status=pending)")
