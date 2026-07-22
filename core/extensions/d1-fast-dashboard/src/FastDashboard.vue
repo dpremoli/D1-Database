@@ -4,6 +4,7 @@ import { useApi } from '@directus/extensions-sdk';
 import { useRoute, useRouter } from 'vue-router';
 import FastChart from './FastChart.vue';
 import { type SeriesMeta, type Trace, loadTrace } from './fastCache';
+import { buildOpMeta, buildRecipe, buildStats } from './fastMeta';
 
 const api = useApi();
 const route = useRoute();
@@ -143,7 +144,9 @@ async function selectOp(row: any) {
 		const res = await api.get(`/items/manufacturing_operations/${row.operation_id}`, {
 			params: {
 				fields: ['*', 'equipment_id.equipment_name', 'method_id.method_name',
-					'material_id.common_name', 'sample_id.sample_code', 'sample_id.nickname', 'sample_id.sample_id'],
+					'material_id.common_name', 'sample_id.sample_code', 'sample_id.nickname', 'sample_id.sample_id',
+						'fast_recipe_id.id', 'fast_recipe_id.name', 'fast_recipe_id.program_nr',
+						'fast_recipe_id.target_temp_c', 'fast_recipe_id.target_force_kn', 'fast_recipe_id.hold_time_min'],
 			},
 		});
 		detail.value = res.data.data;
@@ -155,7 +158,7 @@ async function loadFastRun(operationId: string) {
 	const res = await api.get('/items/fast_run_data', {
 		params: {
 			filter: { operation_id: { _eq: operationId } },
-			fields: ['id', 'status', 'machine_format', 'recipe', 'run_start', 'n_rows', 'duration_s', 'series', 'directus_files_id', 'error_message', 'updated_at'],
+			fields: ['id', 'status', 'machine_format', 'recipe', 'run_start', 'n_rows', 'duration_s', 'series', 'summary', 'directus_files_id', 'error_message', 'updated_at'],
 			limit: 1,
 		},
 	});
@@ -339,33 +342,9 @@ function fmt(v: any, d = 1): string { if (v == null || v === '') return '—'; c
 function fmtDate(v: string) { return v ? new Date(v).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
 function fmtDur(s: any) { const n = Number(s); if (!Number.isFinite(n)) return '—'; const m = Math.floor(n / 60); return m >= 1 ? `${m}m ${Math.round(n % 60)}s` : `${Math.round(n)}s`; }
 
-const opMeta = computed(() => {
-	const o = detail.value; if (!o) return [];
-	return [
-		['Sample', o.sample_id?.sample_code],
-		['Date', fmtDate(o.operation_date)],
-		['Operator', o.operator_name],
-		['Machine', o.equipment_id?.equipment_name],
-		['Material', o.material_id?.common_name],
-		['Recipe', o.sintering_recipe_number],
-		['Batch', o.sintering_batch_number],
-		['Atmosphere', o.sintering_atmosphere],
-		['TC/Pyro', o.sintering_tc_pyro_control],
-	].filter(([, v]) => v != null && v !== '');
-});
-const stats = computed(() => {
-	const o = detail.value; if (!o) return [];
-	return [
-		{ label: 'Max temp', value: fmt(o.sintering_max_temp_celsius), unit: '°C' },
-		{ label: 'Max force', value: fmt(o.sintering_max_force_kn), unit: 'kN' },
-		{ label: 'Mould Ø', value: fmt(o.sintering_mould_diameter_mm), unit: 'mm' },
-		{ label: 'Mass', value: fmt(o.sintering_mass_grams, 2), unit: 'g' },
-		{ label: 'V @ maxT', value: fmt(o.sintering_voltage_at_max_t_v), unit: 'V' },
-		{ label: 'P @ maxT', value: fmt(o.sintering_power_at_max_t_kw), unit: 'kW' },
-		{ label: 'PTC top', value: fmt(o.sintering_ptc_top_celsius), unit: '°C' },
-		{ label: 'PTC bot', value: fmt(o.sintering_ptc_bot_celsius), unit: '°C' },
-	];
-});
+const opMeta = computed(() => buildOpMeta(detail.value));
+const stats = computed(() => buildStats(detail.value, fastRun.value));
+const recipe = computed(() => buildRecipe(detail.value));
 </script>
 
 <template>
@@ -416,11 +395,19 @@ const stats = computed(() => {
 							<div v-if="opMeta.length" class="kv">
 								<template v-for="m in opMeta" :key="m[0]"><span>{{ m[0] }}</span><span>{{ m[1] }}</span></template>
 							</div>
+							<template v-if="recipe">
+								<div class="stat-sep">Recipe</div>
+								<div class="kv">
+									<span>Name</span><span>{{ recipe.name }}</span>
+									<template v-if="recipe.programNr"><span>Program</span><span>{{ recipe.programNr }}</span></template>
+									<template v-if="recipe.targets"><span>Targets</span><span>{{ recipe.targets }}</span></template>
+								</div>
+							</template>
 							<div class="stat-sep">Sinter cycle</div>
 							<div class="statgrid">
 								<div v-for="st in stats" :key="st.label" class="stat">
 									<div class="s-top"><span class="s-val">{{ st.value }}</span><span class="s-unit">{{ st.unit }}</span></div>
-									<span class="s-lab">{{ st.label }}</span>
+									<span class="s-lab">{{ st.label }}<em class="s-src">{{ st.source }}</em></span>
 								</div>
 							</div>
 						</template>
@@ -563,6 +550,8 @@ const stats = computed(() => {
 .stat { background: var(--theme--background-subdued, #f7f9fb); border: 1px solid var(--theme--border-color-subdued, #e7ebf0); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
 .s-top { display: flex; align-items: baseline; gap: 4px; } .s-val { font-size: 15px; font-weight: 750; font-variant-numeric: tabular-nums; } .s-unit { font-size: 10px; color: var(--theme--foreground-subdued, #94a3b8); }
 .s-lab { font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--theme--foreground-subdued, #6b7684); font-weight: 600; }
+/* Provenance of each stat: measured off the trace, recorded from the machine, or QA log. */
+.s-src { display: block; font-style: normal; font-size: 9px; font-weight: 400; opacity: .55; text-transform: uppercase; letter-spacing: .03em; }
 .trace-meta { font-size: 12px; margin-bottom: 8px; } .trace-meta .ok { color: #15803d; display: inline-flex; align-items: center; gap: 4px; } .trace-meta.muted { color: var(--theme--foreground-subdued, #98a2b3); }
 .trace-meta.warn { color: #b45309; display: inline-flex; align-items: center; gap: 4px; }
 .btn.dl { margin-top: 6px; }
