@@ -386,32 +386,51 @@ function mergeChain(raw: any): FilterChain {
 		notch: { ...d.notch, ...(raw.notch || {}) },
 	};
 }
-const bakedChain = computed<FilterChain | null>(() => {
+// savedChain = the op's persisted filter_chain (from the DB), regardless of how it was applied.
+// filterBaked = every derived output has been reprocessed with it (heavy bake); otherwise it's a
+// LIGHT apply — the chain is the op's default but only Lite recomputes it live (Full/PNG stay raw).
+const savedChain = computed<FilterChain | null>(() => {
 	const fc = detail.value?.filter_chain;
 	if (!fc) return null;
 	return mergeChain(typeof fc === 'string' ? JSON.parse(fc) : fc);
 });
+const filterBaked = computed(() => detail.value?.filter_baked === true);
+const bakedChain = computed<FilterChain | null>(() => (filterBaked.value ? savedChain.value : null));
+const appliedLight = computed<boolean>(() => !!savedChain.value && !filterBaked.value);
+// The single filtered pane: a light-applied op renders one Lite cloud recomputed from filteredCache
+// (the compare panes only appear while the Filters panel is open for tuning). Baked ops need no solo
+// pane — their loaded cache is already filtered, so the normal Lite pane shows the filtered signal.
+const filteredSoloOn = computed(() => liveOn.value && !filtersOpen.value && appliedLight.value && filteredCache.value != null);
 
 async function loadProfiles() {
 	try { profiles.value = (await api.get('/items/filter_profiles', { params: { fields: ['id', 'name', 'chain'], sort: 'name', limit: 100 } })).data.data ?? []; }
 	catch { profiles.value = []; }
 }
+// Which chain the Lite filtered preview reflects: the editable workChain while the Filters panel is
+// open (live tuning + raw|filtered compare), else the op's saved chain when it's light-applied (the
+// single filtered pane persists after leaving the panel). Null => nothing to preview.
+function previewChain(): FilterChain | null {
+	if (filtersOpen.value) return workChain.value;
+	if (appliedLight.value && liveOn.value) return savedChain.value;
+	return null;
+}
 let previewAbort: AbortController | null = null;
 async function runPreview() {
 	const d = detail.value;
 	previewAbort?.abort();                     // cancel any in-flight preview (stale-result guard)
-	if (!d?.live_cache_file || !chainActive(workChain.value)) { filteredCache.value = null; rawDecimatedCache.value = null; filterFftOverlay.value = null; filterBusy.value = false; return; }
+	const chain = previewChain();
+	if (!d?.live_cache_file || !chain || !chainActive(chain)) { filteredCache.value = null; rawDecimatedCache.value = null; filterFftOverlay.value = null; filterBusy.value = false; return; }
 	const ac = new AbortController(); previewAbort = ac;
 	filterBusy.value = true; filterErr.value = null;
 	try {
-		const { cache, skipped, stride } = await fetchFiltered(d.live_cache_file, workChain.value, 1_500_000, ac.signal);
+		const { cache, skipped, stride } = await fetchFiltered(d.live_cache_file, chain, 1_500_000, ac.signal);
 		if (ac.signal.aborted) return;
 		filteredCache.value = cache; filterSkipped.value = skipped;
 		// Decimate the local full cache by the SAME stride so the raw pane plots the identical
 		// samples (honest side-by-side: same geometry, filtered only changes the colour).
 		const full = cacheGet(d.live_cache_file);
 		rawDecimatedCache.value = full ? decimateCache(full, stride) : null;
-		if (chartMode.value === 'fft') filterFftOverlay.value = await fetchFilteredFft(d.live_cache_file, workChain.value, axis.value);
+		if (chartMode.value === 'fft') filterFftOverlay.value = await fetchFilteredFft(d.live_cache_file, chain, axis.value);
 	} catch (e: any) {
 		if (e?.name === 'AbortError' || ac.signal.aborted) return;   // superseded — not an error
 		filterErr.value = (e?.message || 'filter service unreachable').includes('Failed to fetch')
@@ -420,13 +439,17 @@ async function runPreview() {
 	} finally { if (previewAbort === ac) filterBusy.value = false; }
 }
 let previewTimer = 0;
-watch([workChain, () => detail.value?.live_cache_file, () => filtersOpen.value, axis, chartMode], () => {
-	if (!filtersOpen.value) return;
+watch([workChain, () => detail.value?.live_cache_file, () => filtersOpen.value, () => appliedLight.value, () => liveOn.value, axis, chartMode], () => {
+	// Preview whenever we're tuning (panel open) OR the op is light-applied and Lite is showing it.
+	if (!filtersOpen.value && !(appliedLight.value && liveOn.value)) {
+		if (!compareOn.value) filteredCache.value = null;   // drop the stale filtered cloud
+		return;
+	}
 	clearTimeout(previewTimer);
 	previewTimer = window.setTimeout(runPreview, 400);
 }, { deep: true });
 watch(() => detail.value?.id, () => {
-	workChain.value = bakedChain.value ?? defaultChain();
+	workChain.value = savedChain.value ?? defaultChain();
 	filteredCache.value = null; filterErr.value = null; filterFftOverlay.value = null;
 });
 function applyProfile(id: string) {
@@ -438,6 +461,19 @@ async function saveProfile() {
 	try { await api.post('/items/filter_profiles', { name, chain: workChain.value }); await loadProfiles(); }
 	catch (e: any) { filterErr.value = e?.response?.data?.errors?.[0]?.message || 'save failed (name taken?)'; }
 }
+// Light apply: save the chain as the op's default WITHOUT reprocessing. Lite recomputes it live
+// (single filtered pane persists once the Filters panel closes); Full octree & FRM PNGs stay raw
+// until an explicit Bake (or the crawler rebuilds). No host daemon needed, not admin-gated.
+async function applyFilter() {
+	const d = detail.value;
+	if (!d?.id || !chainActive(workChain.value)) return;
+	const chain = JSON.parse(JSON.stringify(workChain.value));
+	filterErr.value = null;
+	detail.value = { ...detail.value, filter_chain: chain, filter_baked: false };   // optimistic — solo pane shows now
+	try { await api.patch(`/items/machining_force_analysis/${d.id}`, { filter_chain: chain, filter_baked: false }); }
+	catch (e: any) { filterErr.value = e?.response?.status === 403 ? 'Not permitted to save this filter.' : (e?.message || 'save failed'); }
+	openPanel.value = null;   // close the Filters panel → collapse compare down to the single filtered pane
+}
 async function bakeFilters() {
 	const d = detail.value;
 	if (!d?.id || baking.value) return;
@@ -448,24 +484,41 @@ async function bakeFilters() {
 		while (Date.now() < deadline) {
 			await new Promise((r) => setTimeout(r, 3000));
 			const row = (await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['status', 'filter_chain', 'live_cache_file', 'error_message'] } })).data?.data;
-			if (row?.status === 'done') { detail.value = { ...detail.value, filter_chain: row.filter_chain, live_cache_file: row.live_cache_file }; cachePut(row.live_cache_file, null as any); await loadFrm(); return; }
+			if (row?.status === 'done') {
+				await api.patch(`/items/machining_force_analysis/${d.id}`, { filter_baked: true }).catch(() => {});   // outputs now reprocessed
+				detail.value = { ...detail.value, filter_chain: row.filter_chain, filter_baked: true, live_cache_file: row.live_cache_file };
+				cachePut(row.live_cache_file, null as any); await loadFrm(); return;
+			}
 			if (row?.status === 'error') { filterErr.value = `Bake failed: ${row.error_message || 'unknown'}`; return; }
 		}
 		filterErr.value = 'Still baking — check back shortly (is the force orchestrator running?).';
 	} catch (e: any) { filterErr.value = e?.response?.status === 403 ? 'Not permitted (admin only) to bake.' : (e?.message || 'bake request failed'); }
 	finally { baking.value = false; }
 }
+// Clear routes by state: a light apply just drops the saved chain (no host); a bake must reprocess
+// the outputs back to raw (status='pending', admin-only), so it keeps the polling path.
+async function clearFilter() {
+	const d = detail.value; if (!d?.id) return;
+	if (!filterBaked.value) {
+		workChain.value = defaultChain();
+		filteredCache.value = null;
+		detail.value = { ...detail.value, filter_chain: null, filter_baked: false };
+		await api.patch(`/items/machining_force_analysis/${d.id}`, { filter_chain: null, filter_baked: false }).catch(() => {});
+		return;
+	}
+	await clearBake();
+}
 async function clearBake() {
 	const d = detail.value; if (!d?.id) return;
 	workChain.value = defaultChain();
-	await api.patch(`/items/machining_force_analysis/${d.id}`, { filter_chain: null, status: 'pending' }).catch(() => {});
+	await api.patch(`/items/machining_force_analysis/${d.id}`, { filter_chain: null, filter_baked: false, status: 'pending' }).catch(() => {});
 	baking.value = true;
 	try {
 		const deadline = Date.now() + 15 * 60 * 1000;
 		while (Date.now() < deadline) {
 			await new Promise((r) => setTimeout(r, 3000));
 			const row = (await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['status', 'live_cache_file'] } })).data?.data;
-			if (row?.status === 'done') { detail.value = { ...detail.value, filter_chain: null, live_cache_file: row.live_cache_file }; cachePut(row.live_cache_file, null as any); await loadFrm(); return; }
+			if (row?.status === 'done') { detail.value = { ...detail.value, filter_chain: null, filter_baked: false, live_cache_file: row.live_cache_file }; cachePut(row.live_cache_file, null as any); await loadFrm(); return; }
 			if (row?.status === 'error') return;
 		}
 	} finally { baking.value = false; }
@@ -791,7 +844,7 @@ async function selectOp(row: any) {
 					'operation_id.sample_id.form', 'operation_id.sample_id.manufactured_date',
 					'operation_id.sample_id.owner_person_id.full_name',
 					'operation_id.sample_id.material_id.common_name',
-					'directus_files_id.filesize', 'live_cache_file', 'live_render_points', 'pulses_per_rev', 'inner_diameter', 'outer_diameter', 'filter_chain',
+					'directus_files_id.filesize', 'live_cache_file', 'live_render_points', 'pulses_per_rev', 'inner_diameter', 'outer_diameter', 'filter_chain', 'filter_baked',
 					'octree_status', 'octree_path', 'octree_points',
 					'grid_octree_status', 'grid_octree_path', 'grid_octree_points',
 					'grid_fidelity', 'grid_arm_ratio', 'grid_cell_mm'],
@@ -1327,6 +1380,7 @@ function fmtDateTime(v: string | null | undefined) {
 								<v-icon name="filter_alt" x-small /> Signal filters
 							</span>
 							<span v-if="bakedChain" class="frm-fid good" title="This op's outputs are baked with a filter chain">baked</span>
+							<span v-else-if="appliedLight" class="frm-fid" title="Saved as this op's default — Lite recomputes it live; Full & FRM PNG stay raw until you Bake">applied · Lite</span>
 						</div>
 						<template v-if="filtersOpen">
 							<div v-if="!detail.live_cache_file" class="empty sm">No signal cache — reprocess this op to enable filtering</div>
@@ -1361,8 +1415,11 @@ function fmtDateTime(v: string | null | undefined) {
 									<button class="linkbtn" @click="saveProfile">Save…</button>
 								</div>
 								<div class="filt-actions">
-									<button class="processbtn" :disabled="baking || !chainActive(workChain)" @click="bakeFilters"><v-icon :name="baking ? 'hourglass_top' : 'save'" x-small /> {{ baking ? 'Baking…' : 'Bake to outputs' }}</button>
-									<button v-if="bakedChain" class="recrawlbtn" :disabled="baking" @click="clearBake">Clear</button>
+									<button class="applybtn" :disabled="baking || !chainActive(workChain)" @click="applyFilter"
+										title="Keep this filtered version as the op's default. Lite recomputes it live; Full & FRM PNG stay raw until you Bake."><v-icon name="done" x-small /> Apply (Lite)</button>
+									<button class="processbtn" :disabled="baking || !chainActive(workChain)" @click="bakeFilters"
+										title="Reprocess the op on the host so ALL outputs (Lite, Full, FRM PNG) are filtered. Heavier; needs the orchestrator; admin-only."><v-icon :name="baking ? 'hourglass_top' : 'save'" x-small /> {{ baking ? 'Baking…' : 'Bake all' }}</button>
+									<button v-if="savedChain" class="recrawlbtn" :disabled="baking" @click="clearFilter">Clear</button>
 								</div>
 							</template>
 						</template>
@@ -1430,6 +1487,7 @@ function fmtDateTime(v: string | null | undefined) {
 								<span v-else-if="gridActive" class="frm-fid" title="Fidelity could not be computed (too few arms)">grid · fidelity n/a</span>
 								<span v-if="bakedChain" class="frm-fid good" :title="`Baked filters: ${chainSummary(bakedChain)}`">⚙ filtered</span>
 								<span v-else-if="compareOn" class="frm-fid" :title="chainSummary(workChain)">compare · preview</span>
+								<span v-else-if="filteredSoloOn" class="frm-fid" :title="`Lite live-filtered: ${chainSummary(savedChain)} — Full & FRM PNG still raw until baked`">filtered · Lite</span>
 								<div class="toggle">
 									<div class="segmode">
 										<button class="segbtn" :class="{ on: frmMode==='figure' }" @click="frmMode='figure'" title="Prerendered figure (instant)">Figure</button>
@@ -1486,7 +1544,16 @@ function fmtDateTime(v: string | null | undefined) {
 										:cmin="cmin" :cmax="cmax"
 										:shared-view="compareView" pane-label="filtered" />
 								</div>
-								<FrmCloud v-else-if="liveOn" ref="frmCloudRef" :cache-file-id="detail.live_cache_file"
+								<FrmCloud v-else-if="filteredSoloOn" ref="frmCloudRef" :cache-override="filteredCache" :cache-file-id="detail.live_cache_file"
+										:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
+										:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
+										:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
+										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
+										:point-size="pointSize" :colormap="colormap" :cmin="cmin" :cmax="cmax"
+										:z-series="zSeries" :z-scale="zScale"
+										@loaded="onCloudLoaded" @climits="onClimits" @points="displayedPoints = $event"
+										@zscale="zScale = $event" />
+									<FrmCloud v-else-if="liveOn" ref="frmCloudRef" :cache-file-id="detail.live_cache_file"
 									:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
 									:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
 									:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
@@ -1790,5 +1857,10 @@ function fmtDateTime(v: string | null | undefined) {
 	padding: 7px 14px; border-radius: 9px; color: #fff; background: #7c3aed; border: 0; white-space: nowrap;
 }
 .processbtn:disabled { opacity: 0.6; cursor: progress; }
+.applybtn {
+	display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer;
+	padding: 7px 14px; border-radius: 9px; color: #6d28d9; background: transparent; border: 1.5px solid #7c3aed; white-space: nowrap;
+}
+.applybtn:disabled { opacity: 0.5; cursor: not-allowed; }
 .render-msg { margin-top: 7px; font-size: 11px; color: var(--theme--foreground-subdued, #6b7684); font-style: italic; }
 </style>
