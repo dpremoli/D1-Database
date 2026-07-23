@@ -1675,14 +1675,15 @@ function fmtDateTime(v: string | null | undefined) {
 }
 .search:focus { border-color: var(--theme--primary, #1d4ed8); }
 .list { overflow-y: auto; padding: 7px 11px 12px; display: flex; flex-direction: column; gap: 9px; }
-/* Data-quality stoplight dot inline before the op code (green ready · blue processing ·
+/* Data-quality stoplight dot in the row's top-right corner (green ready · blue processing ·
    yellow octree-only · red none). */
-.qdot { display: inline-block; width: 9px; height: 9px; border-radius: 99px; margin-right: 6px; vertical-align: middle; }
+.qdot { position: absolute; top: 8px; right: 9px; width: 6px; height: 6px; border-radius: 99px; }
 .qdot.green { background: #16a34a; }
 .qdot.yellow { background: #f59e0b; }
 .qdot.blue { background: #3b82f6; }
 .qdot.red { background: #ef4444; }
 .rowcard {
+	position: relative;
 	text-align: left; font: inherit; cursor: pointer; color: inherit;
 	background: var(--theme--background, #fff); border: 1px solid var(--theme--border-color-subdued, #e7ebf0);
 	border-radius: 12px; padding: 11px 13px; display: flex; flex-direction: column; gap: 4px;

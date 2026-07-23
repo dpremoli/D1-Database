@@ -503,8 +503,10 @@ const recipe = computed(() => buildRecipe(detail.value));
 .rowcard.active { border-color: #ea580c; background: color-mix(in srgb, #ea580c 8%, transparent); }
 .rowcard .mono { font-family: 'SF Mono', Menlo, Consolas, monospace; font-weight: 650; font-size: 12.5px; }
 .rowcard .sub { grid-column: 1; color: var(--theme--foreground-subdued, #6b7684); font-size: 11px; }
-/* Data-quality stoplight dot (green complete · yellow partial · blue importing · red none). */
-.rowcard .dot { grid-column: 2; grid-row: 1 / span 2; align-self: center; width: 11px; height: 11px; border-radius: 99px; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent); }
+/* Data-quality stoplight dot (green complete · yellow partial · blue importing · red none),
+   small, in the top-right corner of the row. */
+.rowcard { position: relative; }
+.rowcard .dot { position: absolute; top: 7px; right: 8px; width: 6px; height: 6px; border-radius: 99px; }
 .rowcard .dot.green { color: #16a34a; background: #16a34a; }
 .rowcard .dot.yellow { color: #d97706; background: #f59e0b; }
 .rowcard .dot.blue { color: #2563eb; background: #3b82f6; }
