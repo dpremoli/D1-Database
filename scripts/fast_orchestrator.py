@@ -46,6 +46,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fast_mapping import normalize_fast_csv  # noqa: E402
+from fast_his import decode_emd  # noqa: E402
 
 log = logging.getLogger("fast_orchestrator")
 
@@ -180,14 +181,16 @@ def process_row(conn, directus: Directus, row) -> str:
     """Normalise + upload one claimed row. Returns 'done' | 'error'."""
     fid = row["id"]
     try:
+        archive_path = row.get("import_archive_path") or ""
         if row.get("staged_file"):
             raw = directus.download(row["staged_file"])
-        elif row.get("import_archive_path"):
-            raw = Path(unc_for(row["import_archive_path"])).read_bytes()
+        elif archive_path:
+            raw = Path(unc_for(archive_path)).read_bytes()
         else:
             raise ValueError("no staged_file or import_archive_path to import from")
 
-        res = normalize_fast_csv(raw)
+        # FAST 25 traces are binary .EMD archives (.HIS inside); FAST 250 are raw CSVs.
+        res = decode_emd(raw) if archive_path.lower().endswith(".emd") else normalize_fast_csv(raw)
         code = op_code(conn, row["operation_id"])
         new_file = directus.upload_csv(safe_filename(code), res["csv_text"].encode("utf-8"))
 

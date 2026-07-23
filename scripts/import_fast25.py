@@ -287,9 +287,21 @@ def main() -> None:
         f"DO UPDATE SET {set_clause}, updated_at=now()",
         values, page_size=500,
     )
+    # Enqueue the per-run EMD trace for decoding by fast_orchestrator (fast_his.decode_emd).
+    # Guard IS DISTINCT FROM 'done' so re-runs don't re-drain finished traces.
+    enq = [(o["operation_id"], o["emd_rel"]) for o in ops if o["emd_rel"]]
+    psycopg2.extras.execute_values(
+        cur,
+        "INSERT INTO fast_run_data (operation_id, status, machine_format, import_archive_path) "
+        "VALUES %s ON CONFLICT (operation_id) DO UPDATE "
+        "SET status='pending', machine_format=EXCLUDED.machine_format, "
+        "    import_archive_path=EXCLUDED.import_archive_path, error_message=NULL, updated_at=now() "
+        "WHERE fast_run_data.status IS DISTINCT FROM 'done'",
+        [(oid, "pending", "25", rel) for oid, rel in enq],
+        page_size=500,
+    )
     conn.commit()
-    print(f"upserted {len(values)} FAST 25 operations "
-          f"(EMD trace paths handled later by fast_his.py / Step 5)")
+    print(f"upserted {len(values)} FAST 25 operations; enqueued {len(enq)} EMD traces (pending)")
     cur.close()
     conn.close()
 
