@@ -179,6 +179,42 @@ def parse_user(raw: Optional[str]) -> tuple[Optional[str], Optional[str], Option
     return operator, owner_email, raw
 
 
+def owner_from_names(raw_operator: Optional[str], name_to_uid: dict) -> Optional[str]:
+    """Link an owner by matching any name token in the raw operator string to a Directus user.
+
+    `name_to_uid` maps normalised full names (and unambiguous first names) to user ids. Used
+    to auto-link owners beyond the hardcoded RESEARCHER_USERS dict — safe here because the
+    instance has few, uniquely-named users. Returns a user id or None.
+    """
+    if not raw_operator:
+        return None
+    toks = _split_names(raw_operator)
+    for t in toks:
+        n = _norm(t)
+        if n in name_to_uid:
+            return name_to_uid[n]
+    return None
+
+
+def user_name_index(user_rows) -> dict:
+    """Build {normalised name -> user_id} from (id, first_name, last_name) rows.
+
+    Includes full names always, and first names only when unambiguous, so a lone 'Nick'
+    still links but a shared first name never mis-links.
+    """
+    from collections import Counter
+    fn_count = Counter(_norm(fn) for _uid, fn, _ln in user_rows if fn)
+    idx: dict = {}
+    for uid, fn, ln in user_rows:
+        full = _norm(f"{fn or ''} {ln or ''}")
+        if full:
+            idx[full] = uid
+        f = _norm(fn or "")
+        if f and fn_count[f] == 1:
+            idx[f] = uid
+    return idx
+
+
 # ── Run identity ─────────────────────────────────────────────────────────────
 def run_uid(machine: str, date_str: str, time_str: str, batch: str) -> str:
     """Deterministic dedup key — a press cycle is unique by machine + timestamp."""

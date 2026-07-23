@@ -235,6 +235,13 @@ def main() -> None:
 
     cur.execute("SELECT email, id FROM directus_users")
     email_to_user = {e: i for e, i in cur.fetchall()}
+    cur.execute("SELECT id, first_name, last_name FROM directus_users")
+    name_to_uid = fm.user_name_index(cur.fetchall())
+
+    def resolve_owner(o):
+        if o["owner_email"] and o["owner_email"] in email_to_user:
+            return email_to_user[o["owner_email"]]
+        return fm.owner_from_names(o["operator_name"], name_to_uid)
 
     recipes = read_recipes(args.data_root)
     psycopg2.extras.execute_values(
@@ -269,7 +276,7 @@ def main() -> None:
         o["operation_id"], METHOD_MF, EQUIP_25, "sintering",
         o["source_run_uid"], SOURCE_SYSTEM, o["operation_date"],
         op_to_id.get(o["operator_disp"]), o["operator_name"],
-        email_to_user.get(o["owner_email"]) if o["owner_email"] else None,
+        resolve_owner(o),
         code_to_mat.get(o["material_code"]) if o["material_code"] else None,
         o["recipe_title"], by_prog.get(o["program_nr"]),
         o["batch"], o["mass_g"], o["mould_mm"],
