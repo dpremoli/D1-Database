@@ -4,7 +4,7 @@ import { useApi } from '@directus/extensions-sdk';
 import { useRoute, useRouter } from 'vue-router';
 import FastChart from './FastChart.vue';
 import { type SeriesMeta, type Trace, loadTrace } from './fastCache';
-import { buildOpMeta, buildRecipe, buildStats } from './fastMeta';
+import { buildOpMeta, buildRecipe, buildStats, dataQuality } from './fastMeta';
 
 const api = useApi();
 const route = useRoute();
@@ -12,6 +12,7 @@ const router = useRouter();
 
 // Open the selected operation's record form (mirrors the force dashboard's "Open").
 function openOpForm() { if (selectedId.value) router.push(`/content/manufacturing_operations/${selectedId.value}`); }
+function openRecipe() { const r = recipe.value; if (r?.id) router.push(`/content/fast_recipes/${r.id}`); }
 
 // ---------------------------------------------------------------- state
 const loading = ref(true);
@@ -21,13 +22,12 @@ const selectedId = ref<string | null>(null);
 const detail = ref<any | null>(null);
 const loadingDetail = ref(false);
 
-// numeric-aware sort so "10" comes after "2" (Directus sorts strings) — same idea as
-// the force dashboard's helpers.
-function leadingInt(s: string): number { const m = /^(\d+)/.exec(s || ''); return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER; }
-function byCode(a: any, b: any): number {
-	const ca = a.pass_code || '', cb = b.pass_code || '';
-	const na = leadingInt(ca), nb = leadingInt(cb);
-	return na !== nb ? na - nb : ca.localeCompare(cb);
+// Newest run first. operation_date is the real chronology; the pass_code starts with the
+// day-of-month, so sorting by the code would scramble the order across months.
+function byDateDesc(a: any, b: any): number {
+	const ta = a.operation_date ? Date.parse(a.operation_date) : 0;
+	const tb = b.operation_date ? Date.parse(b.operation_date) : 0;
+	return tb - ta;
 }
 
 const filteredOps = computed(() => {
@@ -36,7 +36,7 @@ const filteredOps = computed(() => {
 	if (q) list = list.filter((o) => (o.pass_code || '').toLowerCase().includes(q)
 		|| (o.sample_id?.sample_code || '').toLowerCase().includes(q)
 		|| (o.sintering_recipe_number || '').toLowerCase().includes(q));
-	return [...list].sort(byCode);
+	return [...list].sort(byDateDesc);
 });
 
 // ---------------------------------------------------------------- layout (resizable + persisted)
@@ -118,8 +118,8 @@ onMounted(async () => {
 				fields: ['operation_id', 'pass_code', 'operation_date', 'operator_name',
 					'sintering_max_temp_celsius', 'sintering_max_force_kn', 'sintering_recipe_number',
 					'sample_id.sample_code', 'equipment_id.equipment_name',
-					'fast_run.status'],
-				sort: ['-operation_date'], limit: 500,
+					'fast_run.status', 'fast_run.n_rows'],
+				sort: ['-operation_date'], limit: -1,
 			},
 		});
 		rows.value = (res.data?.data ?? []).map((o: any) => ({ ...o, id: o.operation_id }));
@@ -370,9 +370,7 @@ const recipe = computed(() => buildRecipe(detail.value));
 						<button v-for="o in filteredOps" :key="o.id" class="rowcard" :class="{ active: selectedId === o.id }" @click="selectOp(o)">
 							<span class="mono sm">{{ o.pass_code || '—' }}</span>
 							<span class="sub">{{ o.sample_id?.sample_code || '—' }} · {{ fmtDate(o.operation_date) }}</span>
-							<span class="badge" :class="{ has: o.fast_run && o.fast_run.length }">
-								{{ o.fast_run && o.fast_run.length ? 'trace' : 'no data' }}
-							</span>
+							<span class="dot" :class="dataQuality(o).level" :title="dataQuality(o).label"></span>
 						</button>
 						<div v-if="!filteredOps.length" class="empty">No operations</div>
 					</div>
@@ -395,14 +393,14 @@ const recipe = computed(() => buildRecipe(detail.value));
 							<div v-if="opMeta.length" class="kv">
 								<template v-for="m in opMeta" :key="m[0]"><span>{{ m[0] }}</span><span>{{ m[1] }}</span></template>
 							</div>
-							<template v-if="recipe">
-								<div class="stat-sep">Recipe</div>
+							<details v-if="recipe" class="recipe">
+								<summary><v-icon name="science" x-small /> Recipe · <b>{{ recipe.name }}</b></summary>
 								<div class="kv">
-									<span>Name</span><span>{{ recipe.name }}</span>
 									<template v-if="recipe.programNr"><span>Program</span><span>{{ recipe.programNr }}</span></template>
 									<template v-if="recipe.targets"><span>Targets</span><span>{{ recipe.targets }}</span></template>
 								</div>
-							</template>
+								<button class="openbtn recipe-link" @click="openRecipe">Open recipe <v-icon name="open_in_new" x-small /></button>
+							</details>
 							<div class="stat-sep">Sinter cycle</div>
 							<div class="statgrid">
 								<div v-for="st in stats" :key="st.label" class="stat">
@@ -415,26 +413,6 @@ const recipe = computed(() => buildRecipe(detail.value));
 						<div v-else class="empty sm">Select an operation</div>
 					</div>
 
-					<div v-if="detail" class="card info">
-						<div class="info-head"><span><v-icon name="upload_file" x-small /> Trace data</span></div>
-						<div v-if="fastRun?.status === 'done'" class="trace-meta">
-							<span class="ok"><v-icon name="check_circle" x-small /> {{ fastRun.machine_format }}-machine · {{ fastRun.n_rows }} rows · {{ fmtDur(fastRun.duration_s) }} · {{ (fastRun.series || []).length }} series</span>
-							<button v-if="fastRun.directus_files_id" class="btn dl" @click="downloadFile(fastRun.directus_files_id)"><v-icon name="download" x-small /> Download CSV</button>
-						</div>
-						<div v-else-if="importStalled" class="trace-meta warn"><v-icon name="warning" x-small /> Import stalled — is the host FAST importer running? (fast_orchestrator.py --daemon)</div>
-						<div v-else-if="fastRun?.status === 'pending' || fastRun?.status === 'processing'" class="trace-meta"><v-progress-circular indeterminate x-small /> importing…</div>
-						<div v-else class="trace-meta muted">No trace imported yet.</div>
-
-						<div class="import-row">
-							<input ref="fileInput" type="file" accept=".csv,.CSV" style="display:none" @change="onUpload" />
-							<button class="btn" :disabled="importing" @click="fileInput?.click()"><v-icon name="upload" x-small /> Upload CSV</button>
-						</div>
-						<div class="import-row">
-							<input v-model="archivePath" class="search" placeholder="archive path…" />
-							<button class="btn" :disabled="importing || !archivePath.trim()" @click="onArchiveImport"><v-icon name="folder_open" x-small /> Archive</button>
-						</div>
-						<div v-if="importMsg" class="import-msg">{{ importMsg }}</div>
-					</div>
 				</div>
 
 				<div v-if="!stacked && !detailHidden" class="resizer" @pointerdown="startColAResize"></div>
@@ -525,8 +503,20 @@ const recipe = computed(() => buildRecipe(detail.value));
 .rowcard.active { border-color: #ea580c; background: color-mix(in srgb, #ea580c 8%, transparent); }
 .rowcard .mono { font-family: 'SF Mono', Menlo, Consolas, monospace; font-weight: 650; font-size: 12.5px; }
 .rowcard .sub { grid-column: 1; color: var(--theme--foreground-subdued, #6b7684); font-size: 11px; }
-.rowcard .badge { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: 9.5px; font-weight: 700; padding: 2px 7px; border-radius: 99px; background: var(--theme--background, #eef1f5); color: #94a3b8; }
-.rowcard .badge.has { background: color-mix(in srgb, #16a34a 15%, transparent); color: #15803d; }
+/* Data-quality stoplight dot (green complete · yellow partial · blue importing · red none). */
+.rowcard .dot { grid-column: 2; grid-row: 1 / span 2; align-self: center; width: 11px; height: 11px; border-radius: 99px; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent); }
+.rowcard .dot.green { color: #16a34a; background: #16a34a; }
+.rowcard .dot.yellow { color: #d97706; background: #f59e0b; }
+.rowcard .dot.blue { color: #2563eb; background: #3b82f6; }
+.rowcard .dot.red { color: #dc2626; background: #ef4444; }
+/* Cheap virtualisation so the full (10k+) list scrolls smoothly without windowing JS. */
+.rowcard { content-visibility: auto; contain-intrinsic-size: auto 46px; }
+/* Recipe dropdown in the detail panel. */
+.recipe { margin: 8px 0 2px; border: 1px solid var(--theme--border-color-subdued, #e2e8f0); border-radius: 8px; padding: 6px 9px; }
+.recipe summary { cursor: pointer; font-size: 12px; color: var(--theme--foreground, #1f2733); list-style: revert; }
+.recipe summary b { font-weight: 700; }
+.recipe .kv { margin-top: 6px; }
+.recipe-link { margin-top: 8px; }
 .mono.sm { font-size: 12px; } .empty { color: var(--theme--foreground-subdued, #98a2b3); font-size: 12px; padding: 12px; text-align: center; } .empty.sm { padding: 8px; }
 
 .col-stack { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; }

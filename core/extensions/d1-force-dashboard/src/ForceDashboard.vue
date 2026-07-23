@@ -718,7 +718,7 @@ onMounted(async () => {
 				filter,
 				limit: -1,
 				fields: [
-					'id', 'peak_fx', 'peak_fy', 'peak_fz',
+					'id', 'peak_fx', 'peak_fy', 'peak_fz', 'status', 'live_cache_file', 'octree_status',
 					'operation_id.operation_id', 'operation_id.pass_code', 'operation_id.operation_date',
 					'operation_id.sample_id.sample_id', 'operation_id.sample_id.sample_code',
 					'operation_id.sample_id.nickname', 'operation_id.sample_id.material_id.common_name',
@@ -795,6 +795,17 @@ const filteredSamples = computed(() => {
 		(s.sample_code || '').toLowerCase().includes(q) || (s.nickname || '').toLowerCase().includes(q)
 		|| (s.material || '').toLowerCase().includes(q)) : samples.value;
 });
+
+// Data-quality stoplight for an operation row (mirrors the FAST dashboard). Green = a
+// plottable FRM cache exists · Blue = processing · Yellow = octree-only (no live cache) ·
+// Red = failed or no plot data.
+function frmQuality(o: any): { level: string; label: string } {
+	if (o?.status === 'pending' || o?.status === 'processing') return { level: 'blue', label: 'Processing…' };
+	if (o?.live_cache_file) return { level: 'green', label: 'FRM plot ready' };
+	if (o?.octree_status === 'done') return { level: 'yellow', label: 'Octree only (no live cache)' };
+	if (o?.status === 'error') return { level: 'red', label: 'Processing failed' };
+	return { level: 'red', label: 'No plot data' };
+}
 
 const displayedOps = computed(() => {
 	let list = filterSampleId.value
@@ -1184,7 +1195,7 @@ function fmtDateTime(v: string | null | undefined) {
 						<div class="list">
 							<button v-for="o in displayedOps" :key="o.id"
 								class="rowcard" :class="{ active: selectedRowId === o.id }" @click="selectOp(o)">
-								<span class="mono sm">{{ o.operation_id?.pass_code || '—' }}</span>
+								<span class="mono sm"><span class="qdot" :class="frmQuality(o).level" :title="frmQuality(o).label"></span>{{ o.operation_id?.pass_code || '—' }}</span>
 								<span class="sub">
 									<template v-if="!filterSampleId">{{ sampleOf(o)?.sample_code }} · </template>
 									{{ fmtDate(o.operation_id?.operation_date) }}
@@ -1664,6 +1675,13 @@ function fmtDateTime(v: string | null | undefined) {
 }
 .search:focus { border-color: var(--theme--primary, #1d4ed8); }
 .list { overflow-y: auto; padding: 7px 11px 12px; display: flex; flex-direction: column; gap: 9px; }
+/* Data-quality stoplight dot inline before the op code (green ready · blue processing ·
+   yellow octree-only · red none). */
+.qdot { display: inline-block; width: 9px; height: 9px; border-radius: 99px; margin-right: 6px; vertical-align: middle; }
+.qdot.green { background: #16a34a; }
+.qdot.yellow { background: #f59e0b; }
+.qdot.blue { background: #3b82f6; }
+.qdot.red { background: #ef4444; }
 .rowcard {
 	text-align: left; font: inherit; cursor: pointer; color: inherit;
 	background: var(--theme--background, #fff); border: 1px solid var(--theme--border-color-subdued, #e7ebf0);

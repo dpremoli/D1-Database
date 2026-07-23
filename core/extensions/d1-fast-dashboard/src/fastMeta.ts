@@ -34,16 +34,28 @@ export function buildOpMeta(detail: any): MetaRow[] {
 		.map(([k, v]) => [k, String(v)] as MetaRow);
 }
 
+// Human-scaled dwell: seconds under 2 min, minutes up to an hour, hours beyond.
+function fmtDwell(s: number): { value: string; unit: string } {
+	if (!Number.isFinite(s)) return { value: '—', unit: 's' };
+	if (s < 120) return { value: String(Math.round(s)), unit: 's' };
+	if (s < 3600) return { value: (s / 60).toFixed(1).replace(/\.0$/, ''), unit: 'min' };
+	return { value: (s / 3600).toFixed(2).replace(/\.?0+$/, ''), unit: 'h' };
+}
+
 // Each stat: prefer the measured trace summary, else the recorded machine metadata.
-// A stat with neither source is omitted entirely rather than rendered empty.
-const STAT_DEFS: Array<{ label: string; unit: string; sum?: string; rec?: string; dp?: number }> = [
+// A stat with neither source is omitted entirely rather than rendered empty. `fmt` lets a
+// stat scale its own unit (e.g. dwell) instead of using the fixed `unit`/`dp`.
+const STAT_DEFS: Array<{
+	label: string; unit: string; sum?: string; rec?: string; dp?: number;
+	fmt?: (n: number) => { value: string; unit: string };
+}> = [
 	{ label: 'Peak temp',  unit: '°C', sum: 'peak_temp_c',    rec: 'sintering_max_temp_celsius' },
 	{ label: 'Peak force', unit: 'kN', sum: 'peak_force_kn',  rec: 'sintering_max_force_kn' },
 	{ label: 'Peak power', unit: 'kW', sum: 'peak_power_kw' },
 	{ label: 'Peak volts', unit: 'V',  sum: 'peak_voltage_v' },
 	{ label: 'PTC top',    unit: '°C', sum: 'ptc_top_max_c' },
 	{ label: 'PTC bot',    unit: '°C', sum: 'ptc_bot_max_c' },
-	{ label: 'Dwell',      unit: 's',  sum: 'dwell_s',        dp: 0 },
+	{ label: 'Dwell',      unit: 's',  sum: 'dwell_s', fmt: fmtDwell },
 	{ label: 'Ramp',       unit: '°C/min', sum: 'ramp_c_per_min' },
 	{ label: 'Mould Ø',    unit: 'mm', rec: 'sintering_mould_diameter_mm' },
 	{ label: 'Mass',       unit: 'g',  rec: 'sintering_mass_grams', dp: 2 },
@@ -53,9 +65,10 @@ export function buildStats(detail: any, fastRun: any): Stat[] {
 	const summary = fastRun?.summary || {};
 	const out: Stat[] = [];
 	for (const d of STAT_DEFS) {
-		const measured = d.sum ? num(summary[d.sum], d.dp ?? 1) : null;
-		if (measured !== null) {
-			out.push({ label: d.label, value: measured, unit: d.unit, source: 'measured' });
+		const rawMeasured = d.sum ? summary[d.sum] : undefined;
+		if (rawMeasured !== undefined && rawMeasured !== null && Number.isFinite(Number(rawMeasured))) {
+			const f = d.fmt ? d.fmt(Number(rawMeasured)) : { value: num(rawMeasured, d.dp ?? 1)!, unit: d.unit };
+			out.push({ label: d.label, value: f.value, unit: f.unit, source: 'measured' });
 			continue;
 		}
 		const recorded = d.rec && detail ? num(detail[d.rec], d.dp ?? 1) : null;
@@ -64,6 +77,23 @@ export function buildStats(detail: any, fastRun: any): Stat[] {
 		}
 	}
 	return out;
+}
+
+// Data-quality stoplight for an operation row. `fast_run` is the o2m array from the list
+// query (status + n_rows). Green = full trace, Yellow = short/partial, Blue = importing,
+// Red = none or failed.
+export type Quality = 'green' | 'yellow' | 'blue' | 'red';
+const SHORT_RUN_ROWS = 100;   // below this a trace is an aborted/partial run
+
+export function dataQuality(op: any): { level: Quality; label: string } {
+	const fr = Array.isArray(op?.fast_run) ? op.fast_run[0] : null;
+	if (!fr) return { level: 'red', label: 'No trace data' };
+	if (fr.status === 'done') {
+		if ((fr.n_rows ?? 0) >= SHORT_RUN_ROWS) return { level: 'green', label: 'Trace complete' };
+		return { level: 'yellow', label: 'Trace short / partial run' };
+	}
+	if (fr.status === 'pending' || fr.status === 'processing') return { level: 'blue', label: 'Importing…' };
+	return { level: 'red', label: fr.status === 'error' ? 'Import failed' : 'No trace data' };
 }
 
 export function buildRecipe(detail: any) {
