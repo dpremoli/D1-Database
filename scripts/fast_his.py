@@ -121,6 +121,8 @@ def _keep_column(col: np.ndarray) -> bool:
 def decode_emd(raw: bytes) -> dict:
     """Decode a FAST 25 .EMD -> canonical trace dict (same shape as normalize_fast_csv)."""
     his = read_his_bytes(raw)
+    if len(his) < HEADER_BYTES + 4 * 20:   # empty / truncated .HIS (a handful of aborted runs)
+        raise ValueError(f"empty or truncated .HIS ({len(his)} bytes)")
     off, C = detect_layout(his)
     a = _matrix(his, off, C)
     n = a.shape[0]
