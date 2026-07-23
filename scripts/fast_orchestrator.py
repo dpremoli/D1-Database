@@ -37,6 +37,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -66,66 +67,83 @@ def safe_filename(code: str) -> str:
 
 # --------------------------------------------------------------------- directus
 class Directus:
+    """Thread-safe Directus client. Token and traces-folder id are shared across all worker
+    threads (class-level, lock-guarded) so N parallel workers cause ONE login, not N — Directus
+    invalidates a user's older sessions on each fresh login, which under many workers produced a
+    storm of 401s. On a 401 the token is invalidated once and re-fetched."""
+    _lock = threading.RLock()   # reentrant: _folder() holds it and calls _hdr()->_login()
+    _token = None
+    _folder_id = None
+
     def __init__(self):
         self.enabled = bool(os.environ.get("DIRECTUS_ADMIN_EMAIL"))
-        self._token = None
-        self._folder_id = None
 
-    def _login(self):
-        r = requests.post(f"{DIRECTUS_URL}/auth/login", json={
-            "email": os.environ["DIRECTUS_ADMIN_EMAIL"],
-            "password": os.environ.get("DIRECTUS_ADMIN_PASSWORD", ""),
-        }, timeout=30)
-        r.raise_for_status()
-        self._token = r.json()["data"]["access_token"]
+    def _login(self, stale=None):
+        with Directus._lock:
+            if Directus._token not in (None, stale):   # another thread already refreshed
+                return Directus._token
+            # Directus rate-limits /auth/login; back off and retry rather than failing a row.
+            for attempt in range(5):
+                r = requests.post(f"{DIRECTUS_URL}/auth/login", json={
+                    "email": os.environ["DIRECTUS_ADMIN_EMAIL"],
+                    "password": os.environ.get("DIRECTUS_ADMIN_PASSWORD", ""),
+                }, timeout=30)
+                if r.status_code in (401, 429) and attempt < 4:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                r.raise_for_status()
+                Directus._token = r.json()["data"]["access_token"]
+                return Directus._token
 
     def _hdr(self):
-        if self._token is None:
-            self._login()
-        return {"Authorization": f"Bearer {self._token}"}
+        tok = Directus._token or self._login()
+        return {"Authorization": f"Bearer {tok}"}
 
     def _folder(self):
-        if self._folder_id:
-            return self._folder_id
-        q = requests.get(f"{DIRECTUS_URL}/folders", headers=self._hdr(),
-                         params={"filter[name][_eq]": TRACES_FOLDER_NAME, "limit": 1}, timeout=30)
-        q.raise_for_status()
-        found = q.json().get("data") or []
-        if found:
-            self._folder_id = found[0]["id"]
-        else:
-            c = requests.post(f"{DIRECTUS_URL}/folders", headers=self._hdr(),
-                              json={"name": TRACES_FOLDER_NAME}, timeout=30)
-            c.raise_for_status()
-            self._folder_id = c.json()["data"]["id"]
-        return self._folder_id
+        if Directus._folder_id:
+            return Directus._folder_id
+        with Directus._lock:
+            if Directus._folder_id:
+                return Directus._folder_id
+            q = requests.get(f"{DIRECTUS_URL}/folders", headers=self._hdr(),
+                             params={"filter[name][_eq]": TRACES_FOLDER_NAME, "limit": 1}, timeout=30)
+            q.raise_for_status()
+            found = q.json().get("data") or []
+            if found:
+                Directus._folder_id = found[0]["id"]
+            else:
+                c = requests.post(f"{DIRECTUS_URL}/folders", headers=self._hdr(),
+                                  json={"name": TRACES_FOLDER_NAME}, timeout=30)
+                c.raise_for_status()
+                Directus._folder_id = c.json()["data"]["id"]
+            return Directus._folder_id
 
-    def download(self, file_id: str) -> bytes:
+    def _request(self, method, url, **kw):
+        """Issue a request, re-authenticating once on a 401."""
         for attempt in (1, 2):
-            r = requests.get(f"{DIRECTUS_URL}/assets/{file_id}", headers=self._hdr(), timeout=120)
+            tok = Directus._token or self._login()
+            r = requests.request(method, url, headers={"Authorization": f"Bearer {tok}"}, **kw)
             if r.status_code == 401 and attempt == 1:
-                self._token = None
+                self._login(stale=tok)   # refresh only if nobody else already did
                 continue
             r.raise_for_status()
-            return r.content
+            return r
+
+    def download(self, file_id: str) -> bytes:
+        return self._request("GET", f"{DIRECTUS_URL}/assets/{file_id}", timeout=120).content
 
     def upload_csv(self, name: str, data: bytes) -> str:
         folder = self._folder()
-        for attempt in (1, 2):
-            r = requests.post(f"{DIRECTUS_URL}/files", headers=self._hdr(),
-                              data={"title": name, "folder": folder},
-                              files={"file": (name, data, "text/csv")}, timeout=120)
-            if r.status_code == 401 and attempt == 1:
-                self._token = None
-                continue
-            r.raise_for_status()
-            return r.json()["data"]["id"]
+        r = self._request("POST", f"{DIRECTUS_URL}/files",
+                          data={"title": name, "folder": folder},
+                          files={"file": (name, data, "text/csv")}, timeout=120)
+        return r.json()["data"]["id"]
 
     def delete_file(self, file_id):
         if not file_id:
             return
         try:
-            requests.delete(f"{DIRECTUS_URL}/files/{file_id}", headers=self._hdr(), timeout=30)
+            self._request("DELETE", f"{DIRECTUS_URL}/files/{file_id}", timeout=30)
         except requests.RequestException:
             pass
 
@@ -240,6 +258,51 @@ def run_once(conn, directus: Directus, limit: int) -> int:
     return total
 
 
+def _worker(worker_id: int, daemon: bool, poll: float, counter: list, lock) -> None:
+    """One drain thread: its OWN db connection + Directus session (neither is thread-safe),
+    claiming one row at a time via FOR UPDATE SKIP LOCKED so workers never collide. The work
+    is upload-bound, so many threads scale near-linearly even under the GIL (it releases
+    during the HTTP upload and the file read)."""
+    conn = connect()
+    directus = Directus()
+    idle = 0
+    while True:
+        try:
+            rows = claim_pending(conn, 1)
+        except psycopg2.Error as e:
+            log.error("[w%d] db error: %s", worker_id, e)
+            conn.rollback()
+            time.sleep(1.0)
+            continue
+        if not rows:
+            if daemon:
+                time.sleep(poll)
+                continue
+            idle += 1
+            if idle >= 2:          # two empty claims in a row => queue drained
+                break
+            time.sleep(0.2)
+            continue
+        idle = 0
+        for r in rows:
+            process_row(conn, directus, r)
+            with lock:
+                counter[0] += 1
+    conn.close()
+
+
+def run_parallel(workers: int, daemon: bool, poll: float) -> int:
+    """Drain with N worker threads. Returns total processed (for --run; daemon never returns)."""
+    counter, lock, threads = [0], threading.Lock(), []
+    for i in range(workers):
+        t = threading.Thread(target=_worker, args=(i, daemon, poll, counter, lock), daemon=True)
+        t.start()
+        threads.append(t)
+    for t in threads:
+        t.join()
+    return counter[0]
+
+
 # --------------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser()
@@ -250,6 +313,7 @@ def main():
     ap.add_argument("--daemon", action="store_true", help="poll pending imports forever")
     ap.add_argument("--poll", type=float, default=5.0, help="daemon poll seconds (default 5)")
     ap.add_argument("--limit", type=int, default=0, help="max rows this run (0 = all)")
+    ap.add_argument("--workers", type=int, default=1, help="parallel drain threads (upload-bound; try 16-32)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -272,7 +336,10 @@ def main():
         return
 
     if args.daemon:
-        log.info("daemon started (pid=%d); polling fast_run_data", os.getpid())
+        log.info("daemon started (pid=%d, workers=%d); polling fast_run_data", os.getpid(), args.workers)
+        if args.workers > 1:
+            run_parallel(args.workers, daemon=True, poll=args.poll)   # never returns
+            return
         while True:
             try:
                 run_once(conn, directus, 0)
@@ -282,7 +349,10 @@ def main():
             time.sleep(args.poll)
 
     # default: --run
-    n = run_once(conn, directus, args.limit)
+    if args.workers > 1 and not args.limit:
+        n = run_parallel(args.workers, daemon=False, poll=args.poll)
+    else:
+        n = run_once(conn, directus, args.limit)
     log.info("run: processed %d row(s)", n)
 
 
