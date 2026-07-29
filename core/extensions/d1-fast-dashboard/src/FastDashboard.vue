@@ -30,14 +30,18 @@ function byDateDesc(a: any, b: any): number {
 	return tb - ta;
 }
 
+// rows.value is already sorted (once, at load), so filtering is a cheap pass with no re-sort.
 const filteredOps = computed(() => {
 	const q = opSearch.value.trim().toLowerCase();
-	let list = rows.value;
-	if (q) list = list.filter((o) => (o.pass_code || '').toLowerCase().includes(q)
+	if (!q) return rows.value;
+	return rows.value.filter((o) => (o.pass_code || '').toLowerCase().includes(q)
 		|| (o.sample_id?.sample_code || '').toLowerCase().includes(q)
 		|| (o.sintering_recipe_number || '').toLowerCase().includes(q));
-	return [...list].sort(byDateDesc);
 });
+// Debounce the search so the 10k-row filter runs after typing settles, not per keystroke.
+const searchRaw = ref('');
+let searchTimer = 0;
+watch(searchRaw, (v) => { clearTimeout(searchTimer); searchTimer = window.setTimeout(() => { opSearch.value = v; }, 160); });
 
 // ---------------------------------------------------------------- layout (resizable + persisted)
 const LAYOUT_KEY = 'd1-fast-dashboard-v1';
@@ -122,7 +126,12 @@ onMounted(async () => {
 				sort: ['-operation_date'], limit: -1,
 			},
 		});
-		rows.value = (res.data?.data ?? []).map((o: any) => ({ ...o, id: o.operation_id }));
+		// Precompute the stoplight once per row and sort by date ONCE here (not in the
+		// filteredOps hot path) — with 10k+ rows, re-sorting/recomputing on every keystroke
+		// or selection is what makes the list feel heavy.
+		const mapped = (res.data?.data ?? []).map((o: any) => ({ ...o, id: o.operation_id, quality: dataQuality(o) }));
+		mapped.sort(byDateDesc);
+		rows.value = mapped;
 	} finally {
 		loading.value = false;
 		await nextTick(); measure();
@@ -146,6 +155,7 @@ async function selectOp(row: any) {
 				fields: ['*', 'equipment_id.equipment_name', 'method_id.method_name',
 					'material_id.common_name', 'sample_id.sample_code', 'sample_id.nickname', 'sample_id.sample_id',
 						'fast_recipe_id.id', 'fast_recipe_id.name', 'fast_recipe_id.program_nr',
+						'fast_recipe_id.machine', 'fast_recipe_id.group_name', 'fast_recipe_id.source_file',
 						'fast_recipe_id.target_temp_c', 'fast_recipe_id.target_force_kn', 'fast_recipe_id.hold_time_min'],
 			},
 		});
@@ -365,12 +375,13 @@ const recipe = computed(() => buildRecipe(detail.value));
 					<div class="panel-head"><v-icon name="whatshot" small /><span>FAST operations</span><span class="chip">{{ filteredOps.length }}</span>
 						<button v-if="!stacked" class="collapsebtn" title="Hide the operations column" @click="opsHidden = true"><v-icon name="chevron_left" x-small /></button>
 					</div>
-					<input v-model="opSearch" class="search" placeholder="Search code / sample / recipe…" />
+					<input v-model="searchRaw" class="search" placeholder="Search code / sample / recipe…" />
 					<div class="list">
-						<button v-for="o in filteredOps" :key="o.id" class="rowcard" :class="{ active: selectedId === o.id }" @click="selectOp(o)">
+						<button v-for="o in filteredOps" :key="o.id" v-memo="[o.id === selectedId]"
+							class="rowcard" :class="{ active: selectedId === o.id }" @click="selectOp(o)">
 							<span class="mono sm">{{ o.pass_code || '—' }}</span>
 							<span class="sub">{{ o.sample_id?.sample_code || '—' }} · {{ fmtDate(o.operation_date) }}</span>
-							<span class="dot" :class="dataQuality(o).level" :title="dataQuality(o).label"></span>
+							<span class="dot" :class="o.quality.level" :title="o.quality.label"></span>
 						</button>
 						<div v-if="!filteredOps.length" class="empty">No operations</div>
 					</div>
@@ -393,14 +404,6 @@ const recipe = computed(() => buildRecipe(detail.value));
 							<div v-if="opMeta.length" class="kv">
 								<template v-for="m in opMeta" :key="m[0]"><span>{{ m[0] }}</span><span>{{ m[1] }}</span></template>
 							</div>
-							<details v-if="recipe" class="recipe">
-								<summary><v-icon name="science" x-small /> Recipe · <b>{{ recipe.name }}</b></summary>
-								<div class="kv">
-									<template v-if="recipe.programNr"><span>Program</span><span>{{ recipe.programNr }}</span></template>
-									<template v-if="recipe.targets"><span>Targets</span><span>{{ recipe.targets }}</span></template>
-								</div>
-								<button class="openbtn recipe-link" @click="openRecipe">Open recipe <v-icon name="open_in_new" x-small /></button>
-							</details>
 							<div class="stat-sep">Sinter cycle</div>
 							<div class="statgrid">
 								<div v-for="st in stats" :key="st.label" class="stat">
@@ -412,6 +415,24 @@ const recipe = computed(() => buildRecipe(detail.value));
 						<div v-else-if="loadingDetail" class="loading sm"><v-progress-circular indeterminate small /></div>
 						<div v-else class="empty sm">Select an operation</div>
 					</div>
+
+						<!-- Recipe: a major, open-by-default dropdown card in the detail column. -->
+						<details v-if="recipe" class="card recipe-card" open>
+							<summary>
+								<span class="rc-head"><v-icon name="science" small /> Recipe</span>
+								<button class="openbtn" title="Open the recipe record" @click.stop="openRecipe">Open <v-icon name="open_in_new" x-small /></button>
+							</summary>
+							<div class="rc-name mono">{{ recipe.name }}</div>
+							<div class="kv">
+								<template v-if="recipe.machine"><span>Machine</span><span>FCT HP D {{ recipe.machine }}</span></template>
+								<template v-if="recipe.programNr"><span>Program #</span><span>{{ recipe.programNr }}</span></template>
+								<template v-if="recipe.tempC"><span>Target temp</span><span>{{ recipe.tempC }} °C</span></template>
+								<template v-if="recipe.forceKn"><span>Target force</span><span>{{ recipe.forceKn }} kN</span></template>
+								<template v-if="recipe.holdMin"><span>Hold time</span><span>{{ recipe.holdMin }} min</span></template>
+								<template v-if="recipe.group"><span>Group</span><span>{{ recipe.group }}</span></template>
+								<template v-if="recipe.source"><span>Source</span><span class="rc-src">{{ recipe.source }}</span></template>
+							</div>
+						</details>
 
 				</div>
 
@@ -514,11 +535,15 @@ const recipe = computed(() => buildRecipe(detail.value));
 /* Cheap virtualisation so the full (10k+) list scrolls smoothly without windowing JS. */
 .rowcard { content-visibility: auto; contain-intrinsic-size: auto 46px; }
 /* Recipe dropdown in the detail panel. */
-.recipe { margin: 8px 0 2px; border: 1px solid var(--theme--border-color-subdued, #e2e8f0); border-radius: 8px; padding: 6px 9px; }
-.recipe summary { cursor: pointer; font-size: 12px; color: var(--theme--foreground, #1f2733); list-style: revert; }
-.recipe summary b { font-weight: 700; }
-.recipe .kv { margin-top: 6px; }
-.recipe-link { margin-top: 8px; }
+/* Recipe: a major dropdown card in the detail column (open by default). */
+.recipe-card { padding: 12px 14px; }
+.recipe-card > summary { display: flex; align-items: center; justify-content: space-between; cursor: pointer; list-style: none; font-weight: 750; font-size: 13px; color: var(--theme--foreground, #1f2733); }
+.recipe-card > summary::-webkit-details-marker { display: none; }
+.recipe-card > summary::after { content: '▾'; margin-left: auto; opacity: .5; transition: transform .15s; }
+.recipe-card:not([open]) > summary::after { transform: rotate(-90deg); }
+.recipe-card .rc-head { display: inline-flex; align-items: center; gap: 7px; }
+.recipe-card .rc-name { margin: 10px 0 8px; font-size: 12.5px; font-weight: 650; color: var(--theme--primary, #ea580c); word-break: break-word; }
+.recipe-card .rc-src { font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 10px; word-break: break-all; }
 .mono.sm { font-size: 12px; } .empty { color: var(--theme--foreground-subdued, #98a2b3); font-size: 12px; padding: 12px; text-align: center; } .empty.sm { padding: 8px; }
 
 .col-stack { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; }

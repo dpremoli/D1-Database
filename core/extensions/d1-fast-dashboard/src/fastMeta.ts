@@ -103,6 +103,12 @@ export function buildRecipe(detail: any) {
 		id: r.id,
 		name: r.name,
 		programNr: r.program_nr,
+		machine: r.machine,
+		group: r.group_name,
+		source: r.source_file,
+		tempC: num(r.target_temp_c, 0),
+		forceKn: num(r.target_force_kn, 1),
+		holdMin: num(r.hold_time_min, 0),
 		targets: [
 			r.target_temp_c ? `${num(r.target_temp_c, 0)} °C` : null,
 			r.target_force_kn ? `${num(r.target_force_kn, 1)} kN` : null,
