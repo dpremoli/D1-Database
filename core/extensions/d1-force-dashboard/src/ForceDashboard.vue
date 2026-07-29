@@ -341,6 +341,13 @@ watch(() => [cropStartSec.value, cropEndSec.value], () => {
 	statsTimer = window.setTimeout(computeStats, 400);
 });
 watch(() => detail.value?.id, () => { sigStats.value = null; statsErr.value = null; });
+// The crop handles show on the envelope charts in every mode, but the crop only affects the
+// Lite recompute (Figure is a static PNG; Full is a baked octree). So the moment the user drags
+// a handle, jump to Lite so they see the effect — provided this op has a live cache.
+function onCropEdit(which: 'start' | 'end', v: number) {
+	if (which === 'start') cropStartSec.value = v; else cropEndSec.value = v;
+	if (frmMode.value !== 'lite' && liveAvailable.value) frmMode.value = 'lite';
+}
 watch(statsOpen, (open) => {
 	// auto-compute on first open when the cache is already local (e.g. Lite was on)
 	if (open && !sigStats.value && detail.value?.live_cache_file && cacheGet(detail.value.live_cache_file)) computeStats();
@@ -370,6 +377,11 @@ const filterSkipped = ref<string[]>([]);
 const filterFftOverlay = ref<{ f: number[]; amp: number[] } | null>(null);
 const baking = ref(false);
 const profiles = ref<any[]>([]);
+// Live needs a loaded cache; if this op has none, fall back to the static view. Declared here
+// (above the filter-preview watch) so the watch's eager source `() => liveOn.value` doesn't hit a
+// temporal-dead-zone ReferenceError at setup — which silently half-wired Lite reactivity.
+const liveAvailable = computed(() => !!detail.value?.live_cache_file);
+const liveOn = computed(() => frmMode.value === 'lite' && liveAvailable.value);
 const compareOn = computed(() => liveOn.value && chainActive(workChain.value) && filtersOpen.value);
 // Both live panes share ONE view object so pan/zoom in either drives both.
 const compareView = reactive({ cx: 0, cy: 0, span: 1, active: false });
@@ -973,9 +985,6 @@ const showRpm = ref(false);
 // Entering Live collapses the sample detail + the op's date/coolant rows to free
 // vertical space for the crop plots, cloud, and plotting-settings panel.
 watch(frmMode, (m) => { sampleDetailOpen.value = m !== 'lite'; if (m === 'lite') chartMode.value = 'force'; });
-// Live needs a loaded cache; if this op has none, fall back to the static view.
-const liveAvailable = computed(() => !!detail.value?.live_cache_file);
-const liveOn = computed(() => frmMode.value === 'lite' && liveAvailable.value);
 
 // The window that actually feeds the FRM map (cut_start_idx..cut_end_idx into
 // the raw signal); converted to seconds so ForceChart can shade it in vs. the
@@ -1474,10 +1483,10 @@ function fmtDateTime(v: string | null | undefined) {
 							<div v-if="!detail" class="empty">Select an operation to view its signals</div>
 							<div v-else class="charts-col">
 								<ForceChart v-for="c in charts" :key="c.key" v-bind="c" :hover-index="hoverIndex" @hover="hoverIndex = $event"
-									:crop-editable="liveOn && c.kind === 'env'" :active="c.key === axis"
+									:crop-editable="c.kind === 'env'" :active="c.key === axis"
 									:overlay="(chartMode === 'fft' && filtersOpen && c.kind === 'line' && c.key === axis) ? filterFftOverlay : null"
 									:view-start="zoomStart" :view-end="zoomEnd" :zoom-tool="rectZoomTool" @zoom="onChartZoom"
-									@update:crop-start="cropStartSec = $event" @update:crop-end="cropEndSec = $event" />
+									@update:crop-start="onCropEdit('start', $event)" @update:crop-end="onCropEdit('end', $event)" />
 							</div>
 						</div>
 

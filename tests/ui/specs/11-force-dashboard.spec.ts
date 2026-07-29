@@ -87,8 +87,11 @@ test('force dashboard: F11 op — switch Figure ⇄ Lite back and forth without 
 	const errors: string[] = [];
 	page.on('pageerror', (e) => errors.push(String(e.stack || e.message)));
 	page.on('console', (m) => {
-		if (m.type() === 'error' && /before initialization|is not defined|Cannot access|ReferenceError/i.test(m.text()))
-			errors.push(m.text());
+		// Catch TDZ/reference errors at ANY level: Vue's app error handler swallows setup-time
+		// ReferenceErrors and re-logs them as WARNINGS, so an `error`-only filter misses a real
+		// "Cannot access X before initialization" that half-wires Lite reactivity.
+		if (/before initialization|is not defined|Cannot access|ReferenceError/i.test(m.text()))
+			errors.push(`[${m.type()}] ${m.text()}`);
 	});
 
 	await page.goto(`/admin/d1-force-dashboard?operation=${OP}`, { waitUntil: 'domcontentloaded' });
