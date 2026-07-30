@@ -28,6 +28,9 @@ export class RecordClient {
 	});
 	// bump each frame so widgets can watch cheaply
 	frameSeq = ref(0);
+	// latest live FFT (published a few times a second by the backend); fftSeq bumps on update
+	fft: { axis: string; f: number[]; amp: number[] } | null = null;
+	fftSeq = ref(0);
 
 	// rolling trace envelope (min/max per axis), capped to windowSec of wall-time
 	trace = { t: [] as number[], fx: [] as [number, number][], fy: [] as [number, number][], fz: [] as [number, number][] };
@@ -62,6 +65,9 @@ export class RecordClient {
 			this.status.error = msg.error ?? null;
 			this.status.captureId = msg.id ?? this.status.captureId;
 			this.status.summary = msg.summary ?? null;
+		} else if (msg.type === 'fft') {
+			this.fft = { axis: msg.axis, f: msg.f, amp: msg.amp };
+			this.fftSeq.value++;
 		}
 	}
 
@@ -131,6 +137,24 @@ export class RecordClient {
 		this.status.captureId = j.id;
 	}
 
+	// Replay a real recorded cut: upload its D1LC cache bytes to the backend, which reconstructs
+	// the raw channels and streams them through the identical live pipeline.
+	async startReplay(cacheBytes: ArrayBuffer, opts: { sample_name: string; axis: string; ppr: number; speed: number; extra_metadata?: Record<string, any> }) {
+		this.reset();
+		const fd = new FormData();
+		fd.append('file', new Blob([cacheBytes], { type: 'application/octet-stream' }), 'live_cache.bin');
+		fd.append('sample_name', opts.sample_name);
+		fd.append('axis', opts.axis);
+		fd.append('ppr', String(opts.ppr));
+		fd.append('speed', String(opts.speed));
+		fd.append('extra_metadata', JSON.stringify(opts.extra_metadata ?? {}));
+		const res = await fetch(this.base + '/record/start_replay', { method: 'POST', headers: { ...authHeaders() }, body: fd });
+		if (!res.ok) throw new Error(`replay failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+		const j = await res.json();
+		this.status.state = 'recording';
+		this.status.captureId = j.id;
+	}
+
 	async stop() {
 		const res = await fetch(this.base + '/record/stop', { method: 'POST', headers: { ...authHeaders() } });
 		if (res.ok) {
@@ -144,6 +168,7 @@ export class RecordClient {
 	reset() {
 		this.trace = { t: [], fx: [], fy: [], fz: [] };
 		this.frm = { xy: new Float32Array(this.cap * 2), c: new Float32Array(this.cap), count: 0, cAbsMax: 1 };
+		this.fft = null; this.fftSeq.value++;
 		this.status.state = 'idle'; this.status.error = null; this.status.summary = null;
 		this.status.captureId = null; this.status.nTotal = 0; this.status.tSec = 0;
 		this.status.peaks = { Fx: 0, Fy: 0, Fz: 0 };

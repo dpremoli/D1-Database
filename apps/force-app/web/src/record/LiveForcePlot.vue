@@ -10,6 +10,7 @@ const props = defineProps<{ client: RecordClient }>();
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 let raf = 0;
 let ctx: CanvasRenderingContext2D | null = null;
+let ro: ResizeObserver | null = null;
 
 function resize() {
 	const c = canvasEl.value;
@@ -80,8 +81,8 @@ function drawGrid(W: number, H: number, _n: number) {
 	for (let i = 1; i < 4; i++) { const y = (H * i) / 4; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
 }
 
-onMounted(() => { resize(); window.addEventListener('resize', resize); draw(); });
-onBeforeUnmount(() => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize); });
+onMounted(() => { resize(); window.addEventListener('resize', resize); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); draw(); });
+onBeforeUnmount(() => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize); ro?.disconnect(); });
 </script>
 
 <template>

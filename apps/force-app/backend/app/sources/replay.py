@@ -18,10 +18,19 @@ from ..d1lc import parse_d1lc
 
 class ReplaySource:
     def __init__(self, cache_bytes: bytes, ppr: int = 1, realtime: bool = True, speed: float = 1.0,
-                 chunk_sec: float = 0.02):
+                 chunk_sec: float = 0.02, max_samples: int = 300_000):
         c = parse_d1lc(cache_bytes)
+        # A real cut's cache can be millions of points; decimate to a representative resolution so
+        # the live view stays smooth and finalize doesn't write a giant .mat. Effective rate drops
+        # with the stride, keeping the FRM geometry (revs = ∫rpm dt) consistent.
+        n0 = int(c["t"].size)
+        stride = max(1, -(-n0 // max_samples)) if n0 > max_samples else 1
+        fs0 = float(c["fs"]) if c["fs"] > 0 else 1000.0
+        if stride > 1:
+            for k in ("t", "fx", "fy", "fz", "rpm", "revs"):
+                c[k] = c[k][::stride]
         self.channels = list(SIGNAL_CHANNELS)
-        self.rate = float(c["fs"]) if c["fs"] > 0 else 1000.0
+        self.rate = fs0 / stride
         self.feed = float(c["feed"])
         self.diam = float(c["diam"])
         self.ppr = max(1, int(ppr))
@@ -29,8 +38,11 @@ class ReplaySource:
         # possible. realtime=False also disables pacing (used by tests).
         self.realtime = realtime and speed > 0
         self.speed = speed if speed > 0 else 1.0
-        self.chunk = max(1, int(round(self.rate * chunk_sec)))
         self.total = int(c["t"].size)
+        # Size chunks so a replay is ~a few hundred frames regardless of length — big enough to
+        # avoid per-chunk Python overhead dominating, small enough for a smooth live view. Pacing
+        # is by cut time (below), so chunk size only sets granularity.
+        self.chunk = max(int(round(self.rate * chunk_sec)), self.total // 400 or 1)
 
         # Reconstruct the 9 raw channels (n, 9) in SIGNAL_CHANNELS order.
         n = self.total
