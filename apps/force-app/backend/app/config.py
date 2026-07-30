@@ -6,6 +6,8 @@ exact code slice 2b reuses with a real `nidaqmx` source — only the source swap
 """
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 # 9 signal channels (Time is carried separately as the raw file's column 0).
@@ -40,3 +42,7 @@ class RecordConfig(BaseModel):
     mean_fy: float = 60.0
     mean_fz: float = 120.0
     noise: float = 6.0  # gaussian noise std (N) on the summed axes
+
+    # Free-form metadata compiled in the UI (sample/insert/tool/etc.), stamped into the .mat +
+    # summary. Directus write-back of a run row is a later slice (2d); this just persists it locally.
+    extra_metadata: dict[str, Any] = Field(default_factory=dict)

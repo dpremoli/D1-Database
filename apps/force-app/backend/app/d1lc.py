@@ -43,3 +43,12 @@ def read_d1lc_header(buf: bytes) -> dict:
         raise ValueError(f"bad D1LC magic {magic:#x}")
     fs, feed, diam, cs, ce = struct.unpack_from("<fffff", buf, 12)
     return {"version": version, "n": n, "fs": fs, "feed": feed, "diam": diam, "cs_sec": cs, "ce_sec": ce}
+
+
+def parse_d1lc(buf: bytes) -> dict:
+    """Full parse: header + the six float32[N] arrays (t, Fx, Fy, Fz, rpm, revs)."""
+    h = read_d1lc_header(buf)
+    n = h["n"]
+    a = np.frombuffer(buf, dtype="<f4", count=n * 6, offset=32).reshape(6, n)
+    return {**h, "t": a[0].copy(), "fx": a[1].copy(), "fy": a[2].copy(),
+            "fz": a[3].copy(), "rpm": a[4].copy(), "revs": a[5].copy()}

@@ -13,13 +13,16 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from .config import RecordConfig
+from .d1lc import read_d1lc_header
 from .session import RecordingSession
+from .sources.replay import ReplaySource
+from .sources.sim import SimSource
 from .stream.broadcast import Broadcaster
 
 CAPTURES_ROOT = os.environ.get(
@@ -51,12 +54,52 @@ async def health() -> dict:
     return {"ok": True, "state": _session.state if _session else "idle"}
 
 
+def _busy() -> bool:
+    return bool(_session and _session.state in ("recording", "finalizing"))
+
+
 @app.post("/record/start")
 async def record_start(cfg: RecordConfig) -> dict:
     global _session
-    if _session and _session.state in ("recording", "finalizing"):
+    if _busy():
         raise HTTPException(409, "a recording is already in progress")
-    _session = RecordingSession(cfg, CAPTURES_ROOT, broadcaster=_broadcaster)
+    source = SimSource(cfg, realtime=True)
+    _session = RecordingSession(cfg, CAPTURES_ROOT, source, broadcaster=_broadcaster)
+    _session.start()
+    return _session.status()
+
+
+@app.post("/record/start_replay")
+async def record_start_replay(
+    file: UploadFile = File(...),
+    sample_name: str = Form("REPLAY"),
+    axis: str = Form("Fz"),
+    ppr: int = Form(1),
+    speed: float = Form(1.0),
+    extra_metadata: str = Form("{}"),
+) -> dict:
+    """Replay a real recorded cut (an uploaded D1LC live_cache.bin) through the live pipeline."""
+    global _session
+    if _busy():
+        raise HTTPException(409, "a recording is already in progress")
+    cache_bytes = await file.read()
+    try:
+        h = read_d1lc_header(cache_bytes)
+    except ValueError as e:
+        raise HTTPException(422, f"not a D1LC cache: {e}") from e
+    try:
+        meta = json.loads(extra_metadata) if extra_metadata else {}
+    except json.JSONDecodeError:
+        meta = {}
+    n, fs = h["n"], (h["fs"] or 1000.0)
+    cfg = RecordConfig(
+        sample_name=sample_name, axis=axis if axis in ("Fx", "Fy", "Fz") else "Fz",
+        feed=max(1e-6, h["feed"]), diam=max(1e-6, h["diam"]),
+        sample_rate=fs, duration_sec=max(0.1, n / fs), ppr=max(1, ppr),
+        extra_metadata=meta,
+    )
+    source = ReplaySource(cache_bytes, ppr=cfg.ppr, realtime=True, speed=speed)
+    _session = RecordingSession(cfg, CAPTURES_ROOT, source, broadcaster=_broadcaster)
     _session.start()
     return _session.status()
 

@@ -10,6 +10,7 @@ import uuid
 from typing import Optional
 
 import numpy as np
+from scipy import signal as ssig
 
 from .acquisition.consumers import Decimator, FrmIntegrator
 from .acquisition.ring import Ring
@@ -17,14 +18,13 @@ from .config import RecordConfig
 from .d1rw import RawWriter
 from .dsp import sum_axes, tacho_column
 from .finalize import finalize
-from .sources.sim import SimSource
 from .stream.broadcast import Broadcaster
 from .stream.frame import encode_frame
 
 
 class RecordingSession:
-    def __init__(self, cfg: RecordConfig, captures_root: str, broadcaster: Optional[Broadcaster] = None,
-                 realtime: bool = True):
+    def __init__(self, cfg: RecordConfig, captures_root: str, source,
+                 broadcaster: Optional[Broadcaster] = None):
         self.cfg = cfg
         self.id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
         self.dir = os.path.join(captures_root, self.id)
@@ -37,15 +37,21 @@ class RecordingSession:
         self.peaks = [0.0, 0.0, 0.0]
         self._t_last = 0.0
 
-        self.source = SimSource(cfg, realtime=realtime)
+        self.source = source  # SimSource or ReplaySource (any AcquisitionSource)
         self.ring = Ring(maxsize=128)
         self.raw = RawWriter(os.path.join(self.dir, "raw.d1raw"),
-                             n_cols=1 + len(self.source.channels), rate=cfg.sample_rate,
+                             n_cols=1 + len(self.source.channels), rate=self.source.rate,
                              start_unix=time.time())
         self.decimator = Decimator(bins=2)
         self.frm = FrmIntegrator(cfg)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+
+        # Rolling window of the FRM axis (summed) for a live FFT, plus a wall-clock throttle.
+        self._fft_axis = cfg.axis if cfg.axis in ("Fx", "Fy", "Fz") else "Fz"
+        self._fft_buf = np.zeros(0, dtype=np.float64)
+        self._fft_cap = int(max(2048, min(200_000, self.source.rate)))  # ~1 s, bounded
+        self._fft_last = 0.0
 
     # ---- lifecycle ----
     def start(self) -> None:
@@ -106,7 +112,29 @@ class RecordingSession:
             if self.broadcaster is not None:
                 frame = encode_frame(seq, self._t_last, rpm, tuple(self.peaks), self.n_total, trace, pts)
                 self.broadcaster.publish(frame)
+            self._update_fft(axes)
             seq += 1
+
+    def _update_fft(self, axes: dict) -> None:
+        """Maintain a rolling window of the FRM axis and publish a Welch spectrum a few times a
+        second (a JSON control message) for the live FFT view."""
+        if self.broadcaster is None:
+            return
+        y = axes.get(self._fft_axis)
+        if y is None:
+            return
+        self._fft_buf = np.concatenate([self._fft_buf, y])[-self._fft_cap:]
+        now = time.perf_counter()
+        if now - self._fft_last < 0.3 or self._fft_buf.size < 256:
+            return
+        self._fft_last = now
+        fs = float(self.source.rate)
+        nper = int(min(self._fft_buf.size, 4096))
+        f, p = ssig.welch(self._fft_buf, fs=fs, nperseg=nper)
+        amp = np.sqrt(p)
+        step = max(1, f.size // 240)
+        self._publish_control({"type": "fft", "axis": self._fft_axis,
+                               "f": f[::step].round(2).tolist(), "amp": amp[::step].tolist()})
 
     def _publish_control(self, msg: dict) -> None:
         if self.broadcaster is not None:

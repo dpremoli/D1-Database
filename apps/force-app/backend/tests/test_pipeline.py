@@ -9,11 +9,13 @@ from scipy.io import loadmat
 from app import d1lc
 from app.config import RecordConfig
 from app.session import RecordingSession
+from app.sources.sim import SimSource
 
 
 def test_session_end_to_end(tmp_path):
-    cfg = RecordConfig(sample_rate=4000, duration_sec=1.0, rpm=1200, feed=0.05, diam=80)
-    sess = RecordingSession(cfg, str(tmp_path), broadcaster=None, realtime=False)
+    cfg = RecordConfig(sample_rate=4000, duration_sec=1.0, rpm=1200, feed=0.05, diam=80,
+                       extra_metadata={"Insert": "CNMG-1204", "Tool": "PCLNR"})
+    sess = RecordingSession(cfg, str(tmp_path), SimSource(cfg, realtime=False), broadcaster=None)
     sess.start()
     sess._thread.join(30)  # runs to natural completion (finite sim), then finalizes
     assert sess.state == "done", sess.error
@@ -38,11 +40,13 @@ def test_session_end_to_end(tmp_path):
     # Fz (index 3) should show real cutting force; revs (index 5) increases
     assert np.max(np.abs(arr[3])) > 10.0
     assert arr[5][-1] > arr[5][0]
+    # extra metadata was stamped into the .mat struct (scipy nests strings in arrays)
+    assert "CNMG-1204" in str(m["metadata"]["Insert"])
 
 
 def test_start_writes_raw_header(tmp_path):
     cfg = RecordConfig(sample_rate=2000, duration_sec=0.5)
-    sess = RecordingSession(cfg, str(tmp_path), broadcaster=None, realtime=False)
+    sess = RecordingSession(cfg, str(tmp_path), SimSource(cfg, realtime=False), broadcaster=None)
     sess.start()
     sess._thread.join(30)
     with open(os.path.join(sess.dir, "raw.d1raw"), "rb") as f:

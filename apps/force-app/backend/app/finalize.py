@@ -65,8 +65,12 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         "MaxRPM": cfg.rpm,
         "SurfaceSpeed": np.pi * cfg.diam * cfg.rpm / 1000.0,  # m/min
         "PulsesPerRev": cfg.ppr,
-        "Source": "force-app sim (2a)",
+        "Source": "force-app 2a",
     }
+    # Stamp any UI-compiled metadata (sample/insert/tool/etc.) into the .mat struct.
+    for k, v in (cfg.extra_metadata or {}).items():
+        if k not in metadata and v not in (None, ""):
+            metadata[str(k)] = v
     savemat(
         os.path.join(capture_dir, "capture.mat"),
         {"DATA": data, "metadata": metadata, "VariableNames": np.array(VAR_NAMES, dtype=object)},
@@ -93,6 +97,7 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         "channels": VAR_NAMES,
         "peaks": {ax: float(np.max(np.abs(axes[ax]))) for ax in ("Fx", "Fy", "Fz")},
         "cut_window_sec": [cs_sec, ce_sec],
+        "metadata": cfg.extra_metadata or {},
         "config": cfg.model_dump(),
         "files": {"mat": "capture.mat", "live_cache": "live_cache.bin", "raw": "raw.d1raw"},
     }
