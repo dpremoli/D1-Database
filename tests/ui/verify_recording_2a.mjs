@@ -1,21 +1,20 @@
-// End-to-end for recording slice 2a: log in → Recording → configure a short sim run → START →
-// live frames stream (FRM point count grows, elapsed advances) → run completes → finished cut
-// renders via FrmCloud. Requires the recorder backend (:8200) + web dev server + live Directus.
+// Recording (sim source) in the modular workspace: configure a short simulated cut, START,
+// confirm the live FRM streams and the captured fingerprint renders. Complements
+// verify_recording_workspace.mjs (which covers the real-file replay path).
 //   FORCE_APP_EMAIL=… FORCE_APP_PASSWORD=… node tests/ui/verify_recording_2a.mjs
 import { chromium } from '@playwright/test';
 
 const BASE = process.env.FORCE_APP_BASE_URL || 'http://localhost:5180';
-const EMAIL = process.env.FORCE_APP_EMAIL || process.env.DIRECTUS_ADMIN_EMAIL || 'admin@example.com';
-const PASS = process.env.FORCE_APP_PASSWORD || process.env.DIRECTUS_ADMIN_PASSWORD || '';
+const EMAIL = process.env.FORCE_APP_EMAIL || 'admin@example.com';
+const PASS = process.env.FORCE_APP_PASSWORD || '';
 
 async function setNum(p, labelText, value) {
-	const inp = p.locator('label', { hasText: labelText }).locator('input');
-	await inp.fill(String(value));
+	await p.locator('label', { hasText: labelText }).locator('input').fill(String(value));
 }
 
 (async () => {
 	const b = await chromium.launch();
-	const c = await b.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1600, height: 1000 } });
+	const c = await b.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1720, height: 1040 } });
 	const p = await c.newPage();
 	const errs = [];
 	p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
@@ -26,38 +25,34 @@ async function setNum(p, labelText, value) {
 	await p.fill('input[type="password"]', PASS);
 	await p.click('button[type="submit"]');
 	await p.waitForTimeout(2500);
-
 	await p.locator('.card', { hasText: 'Recording' }).click();
 	await p.waitForTimeout(1200);
-	const onRecord = /\/record/.test(p.url());
-	const connected = await p.locator('.conn.ok').count();
-	console.log('reached /record:', onRecord, '| stream connected:', connected === 1);
 
-	// short, light run
+	const panels = await p.locator('.panel-frame').count();
+	const connected = await p.locator('.conn.ok').count();
+	console.log('panels:', panels, '| stream connected:', connected === 1);
+
+	// Simulated source (default). Short, light run.
 	await setNum(p, 'Duration', 3);
 	await setNum(p, 'Sample rate', 8000);
 	await setNum(p, 'Spindle', 1500);
-	await p.click('.btn.start');
+	await p.locator('.btn.start').click();
 
-	// watch live streaming: FRM points should climb and elapsed advance
 	await p.waitForTimeout(1500);
-	const pts1 = parseInt((await p.locator('.pts').first().innerText()).replace(/\D/g, '') || '0', 10);
-	const live = await p.locator('.live-badge').count();
+	const pts1 = parseInt((await p.locator('.pts').first().innerText().catch(() => '0')).replace(/\D/g, '') || '0', 10);
 	await p.waitForTimeout(1200);
-	const pts2 = parseInt((await p.locator('.pts').first().innerText()).replace(/\D/g, '') || '0', 10);
-	console.log('live badge:', live === 1, '| FRM pts', pts1, '->', pts2);
+	const pts2 = parseInt((await p.locator('.pts').first().innerText().catch(() => '0')).replace(/\D/g, '') || '0', 10);
+	console.log('FRM pts', pts1, '->', pts2);
 	await p.screenshot({ path: 'tests/ui/recording_live.png', fullPage: true });
 
-	// wait for the run to finish and the captured view to render
-	await p.locator('text=Captured fingerprint').waitFor({ timeout: 15000 }).catch(() => {});
+	await p.locator('.ro b.done').waitFor({ timeout: 15000 }).catch(() => {});
 	await p.waitForTimeout(3500);
-	const captured = await p.locator('text=Captured fingerprint').count();
-	const canvas = await p.locator('.finished-frm canvas').count();
-	const summary = await p.locator('.summary').count();
-	console.log('captured view:', captured === 1, '| finished canvas:', canvas, '| summary:', summary === 1);
+	const done = await p.locator('.ro b.done').count();
+	const captured = await p.locator('.fc-pane', { hasText: /captured/i }).count();
+	console.log('state done:', done === 1, '| captured fingerprint:', captured >= 1);
 	await p.screenshot({ path: 'tests/ui/recording_finished.png', fullPage: true });
 
-	ok = onRecord && connected === 1 && live === 1 && pts2 > pts1 && pts1 > 0 && captured === 1 && canvas >= 1;
+	ok = panels === 5 && connected === 1 && pts1 > 0 && pts2 > pts1 && done === 1 && captured >= 1;
 	if (errs.length) console.log('page console errors:', JSON.stringify(errs.slice(0, 8), null, 2));
 	await b.close();
 	console.log(ok ? 'PASS' : 'FAIL');
