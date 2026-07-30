@@ -7,6 +7,8 @@ const routes: RouteRecordRaw[] = [
 	// The extracted plotting explorer. Ported verbatim from the Directus module; it reads
 	// ?operation= for deep-linking and otherwise manages its own in-view navigation.
 	{ path: '/plot', name: 'plot', component: () => import('./force/ForceDashboard.vue') },
+	// Recording/acquisition (Phase 2). Streams live frames from the local recorder backend.
+	{ path: '/record', name: 'record', component: () => import('./record/RecordPage.vue') },
 	{ path: '/', redirect: '/select' },
 	{ path: '/:pathMatch(.*)*', redirect: '/select' },
 ];

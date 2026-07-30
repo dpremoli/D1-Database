@@ -12,8 +12,7 @@ const userName = computed(() => {
 });
 
 function go(section: 'plot' | 'record') {
-	if (section === 'record') return; // Phase 2 — disabled
-	router.push('/plot');
+	router.push(section === 'record' ? '/record' : '/plot');
 }
 
 async function signOut() {
@@ -45,12 +44,12 @@ async function signOut() {
 					<span class="card-go">Open<span class="material-symbols-rounded">arrow_forward</span></span>
 				</button>
 
-				<button class="card disabled" disabled aria-disabled="true">
-					<span class="badge">Coming soon</span>
+				<button class="card active" @click="go('record')">
+					<span class="badge">Preview</span>
 					<span class="card-icon recording"><span class="material-symbols-rounded">fiber_manual_record</span></span>
 					<span class="card-title">Recording &amp; Acquisition</span>
-					<span class="card-desc">Set up data streams, control the lab amplifier, live-plot the cut, and log runs to the database.</span>
-					<span class="card-go muted">Phase 2</span>
+					<span class="card-desc">Set up a data stream, live-plot the cut and its FRM fingerprint, then save the capture. (Simulated source for now.)</span>
+					<span class="card-go">Open<span class="material-symbols-rounded">arrow_forward</span></span>
 				</button>
 			</div>
 		</main>

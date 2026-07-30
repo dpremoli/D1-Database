@@ -39,18 +39,18 @@ const PASS = process.env.FORCE_APP_PASSWORD || process.env.D1_ADMIN_PASSWORD || 
     await p.waitForTimeout(2500);
     const onSelect = /\/select/.test(p.url());
     const cards = await p.locator('.card').count();
-    const recordingDisabled = await p.locator('.card.disabled').count();
-    console.log('reached /select:', onSelect, '| cards:', cards, '| recording disabled:', recordingDisabled);
+    const activeCards = await p.locator('.card.active').count();
+    console.log('reached /select:', onSelect, '| cards:', cards, '| active cards:', activeCards);
     await p.screenshot({ path: 'tests/ui/force_app_select.png', fullPage: true });
 
-    await p.locator('.card.active').click();
+    await p.locator('.card.active').first().click();
     await p.waitForTimeout(4000);
     const onPlot = /\/plot/.test(p.url());
     // The dashboard mounts a sample/operation list; assert the explorer chrome is present.
     const explorer = await p.locator('.charts-col, .rowcard, .empty').count();
     console.log('reached /plot:', onPlot, '| explorer nodes:', explorer);
     await p.screenshot({ path: 'tests/ui/force_app_plot.png', fullPage: true });
-    ok = ok && onSelect && cards === 2 && recordingDisabled === 1 && onPlot;
+    ok = ok && onSelect && cards === 2 && activeCards === 2 && onPlot;
   } else {
     console.log('(no FORCE_APP_EMAIL/PASSWORD — skipping authed tier; ran login-render checks only)');
   }

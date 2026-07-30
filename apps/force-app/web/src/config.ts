@@ -12,6 +12,8 @@ export interface AppConfig {
 	filterUrl: string;
 	/** Octree static server base. No trailing slash; the app appends /<octreePath>/. */
 	octreeUrl: string;
+	/** Local recording backend (Phase 2). No trailing slash. */
+	recorderUrl: string;
 }
 
 const stripSlash = (s: string) => s.replace(/\/+$/, '');
@@ -21,6 +23,7 @@ const config: AppConfig = {
 	directusUrl: stripSlash(import.meta.env.VITE_DIRECTUS_URL ?? ''),
 	filterUrl: stripSlash(import.meta.env.VITE_FILTER_URL ?? '/filter'),
 	octreeUrl: stripSlash(import.meta.env.VITE_OCTREE_URL ?? '/octrees'),
+	recorderUrl: stripSlash(import.meta.env.VITE_RECORDER_URL ?? 'http://localhost:8200'),
 };
 
 // Fetch /config.json once at boot (optional). Any keys present override the env defaults.
@@ -32,6 +35,7 @@ export async function loadRuntimeConfig(): Promise<void> {
 		if (j.directusUrl) config.directusUrl = stripSlash(j.directusUrl);
 		if (j.filterUrl) config.filterUrl = stripSlash(j.filterUrl);
 		if (j.octreeUrl) config.octreeUrl = stripSlash(j.octreeUrl);
+		if (j.recorderUrl) config.recorderUrl = stripSlash(j.recorderUrl);
 	} catch {
 		/* no runtime config file — env defaults stand */
 	}
