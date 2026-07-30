@@ -1,0 +1,22 @@
+[project]
+name = "force-app-backend"
+version = "0.1.0"
+description = "Standalone force app — local recording/acquisition backend (Phase 2, slice 2a: sim + live streaming)."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "websockets>=12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
