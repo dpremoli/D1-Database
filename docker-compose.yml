@@ -85,6 +85,11 @@ services:
       ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD:-change_me_admin}
       # Public URL used for link generation; override in .env for production.
       PUBLIC_URL: ${DIRECTUS_PUBLIC_URL:-http://localhost:80}
+      # CORS for the standalone Force App (apps/force-app/web). It runs on its OWN origin and
+      # calls Directus (/items, /assets, /auth) cross-origin with Bearer tokens, so Directus
+      # must echo CORS headers for that origin. Comma-separate multiple origins in .env.
+      CORS_ENABLED: "true"
+      CORS_ORIGIN: ${FORCE_APP_ORIGIN:-http://localhost:5180}
       # Auto-load local extensions (the actor-identity audit hook).
       EXTENSIONS_AUTO_RELOAD: "true"
       # NOTE: we deliberately do NOT declare a `star` storage location. The
@@ -293,6 +298,9 @@ services:
     environment:
       DIRECTUS_URL: http://directus:8055
       CACHE_LRU: "4"
+      # CORS for the standalone Force App: it calls /filter/* cross-origin with a Bearer token
+      # (forwarded to Directus for asset authz) and reads the X-Filter-* response headers.
+      FILTER_CORS_ORIGINS: ${FORCE_APP_ORIGIN:-http://localhost:5180}
     healthcheck:
       test:
         - "CMD"

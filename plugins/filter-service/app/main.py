@@ -18,6 +18,7 @@ from collections import OrderedDict
 import httpx
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from scipy import signal as ssig
 
 from .d1lc import Cache, parse, serialise
@@ -27,6 +28,21 @@ DIRECTUS_URL = os.environ.get("DIRECTUS_URL", "http://directus:8055").rstrip("/"
 LRU_CAP = int(os.environ.get("CACHE_LRU", "4"))
 
 app = FastAPI(title="d1-filter-service")
+
+# CORS for the standalone Force App (apps/force-app/web), which calls this service from its
+# own origin. `expose_headers` is essential: the browser reads X-Filter-Skipped / X-Filter-
+# Stride off the response, and cross-origin those are hidden unless explicitly exposed.
+# (Same-origin embedding in Directus needed none of this.)
+_cors_origins = [o.strip() for o in os.environ.get("FILTER_CORS_ORIGINS", "").split(",") if o.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+        expose_headers=["X-Filter-Skipped", "X-Filter-Ms", "X-Filter-Stride"],
+    )
+
 _lru: OrderedDict[str, Cache] = OrderedDict()
 
 

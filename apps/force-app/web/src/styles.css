@@ -1,0 +1,61 @@
+/* Global base + design tokens. The palette matches the plotting components (deep-navy canvas,
+   cyan accent, Fx/Fy/Fz red/green/blue) so the shell and the explorer read as one product. */
+:root {
+	--bg: #0b1020;
+	--bg-2: #111a33;
+	--surface: rgba(255, 255, 255, 0.04);
+	--surface-2: rgba(255, 255, 255, 0.07);
+	--border: rgba(255, 255, 255, 0.12);
+	--text: #e2e8f0;
+	--text-dim: #94a3b8;
+	--accent: #38bdf8;
+	--accent-ink: #0b1020;
+	--danger: #fca5a5;
+	--fx: #dc2626;
+	--fy: #16a34a;
+	--fz: #2563eb;
+	--radius: 14px;
+	--font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+	--mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+
+	/* --- Directus theme-variable compatibility layer ---
+	   The plotting components (ForceDashboard.vue, ForceChart.vue) were authored for the
+	   Directus admin shell and reference its `--theme--*` tokens. Directus provides these
+	   from the active admin theme; standalone we supply a dark mapping consistent with the
+	   login/select palette so the explorer reads as one product. Flip these to light values
+	   if a light chrome is ever preferred — the components need no change. */
+	--theme--foreground: var(--text);
+	--theme--foreground-subdued: var(--text-dim);
+	--theme--primary: var(--accent);
+	--theme--background: #0e162c;
+	--theme--background-subdued: rgba(255, 255, 255, 0.045);
+	--theme--border-color: rgba(255, 255, 255, 0.16);
+	--theme--border-color-subdued: rgba(255, 255, 255, 0.09);
+	--theme--fonts--sans--font-family: var(--font);
+	--theme--fonts--monospace--font-family: var(--mono);
+}
+
+* {
+	box-sizing: border-box;
+}
+html,
+body {
+	margin: 0;
+	padding: 0;
+}
+body {
+	font-family: var(--font);
+	color: var(--text);
+	background: var(--bg);
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+#app {
+	min-height: 100vh;
+}
+a {
+	color: var(--accent);
+}
+button {
+	font-family: inherit;
+}
