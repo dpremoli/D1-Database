@@ -1,8 +1,18 @@
 <script setup lang="ts">
-import { onMounted, watch } from 'vue';
+import { computed, onMounted, watch } from 'vue';
 import { useWorkspace } from '../workspace';
 
 const w = useWorkspace();
+const ss = w.syncStatus;
+const syncText = computed(() => {
+	if (ss.syncing) return 'Syncing…';
+	if (ss.pending > 0) return `Queued offline · ${ss.pending} pending`;
+	if (ss.lastError) return ss.lastError;
+	if (ss.lastSyncedAt) return 'Synced to database';
+	return '';
+});
+const syncClass = computed(() => (ss.pending > 0 ? 'warn' : ss.lastError ? 'err' : ss.lastSyncedAt ? 'ok' : ''));
+const syncIcon = computed(() => (ss.pending > 0 ? 'cloud_queue' : ss.lastError ? 'error' : ss.lastSyncedAt ? 'cloud_done' : 'cloud'));
 let t: any = null;
 function onSearch() { clearTimeout(t); t = setTimeout(() => w.searchCuts(w.replay.query), 300); }
 watch(() => w.source.value, (s) => { if (s === 'replay' && w.replay.options.length === 0) w.searchCuts(''); });
@@ -53,6 +63,14 @@ onMounted(() => { if (w.source.value === 'replay') w.searchCuts(''); });
 			<button v-if="w.isDone.value" class="btn ghost" @click="w.newRun()">New</button>
 		</div>
 		<p v-if="w.errMsg.value" class="err">{{ w.errMsg.value }}</p>
+
+		<div v-if="w.isDone.value" class="logrun">
+			<button class="btn save" :disabled="!w.link.sampleId || w.logged.value" @click="w.logRunNow()">
+				<span class="material-symbols-rounded">cloud_upload</span> {{ w.logged.value ? 'Logged' : 'Log run to database' }}
+			</button>
+			<p v-if="!w.link.sampleId" class="hint">Pick a Sample in Metadata to enable logging.</p>
+			<p v-if="syncText" class="sync" :class="syncClass"><span class="material-symbols-rounded">{{ syncIcon }}</span>{{ syncText }}</p>
+		</div>
 	</div>
 </template>
 
@@ -77,7 +95,15 @@ input:disabled { opacity: 0.55; }
 .btn .material-symbols-rounded { font-size: 18px; }
 .btn.start { background: #22c55e; color: #05210f; }
 .btn.stop { background: #ef4444; color: #2a0808; }
+.btn.save { background: var(--accent); color: var(--accent-ink); }
 .btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .err { color: var(--danger); font-size: 12px; margin: 4px 0 0; }
+.logrun { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.hint { font-size: 11.5px; color: var(--text-dim); margin: 0; }
+.sync { display: flex; align-items: center; gap: 5px; font-size: 12px; margin: 0; }
+.sync .material-symbols-rounded { font-size: 16px; }
+.sync.ok { color: #4ade80; }
+.sync.warn { color: #fbbf24; }
+.sync.err { color: var(--danger); }
 </style>

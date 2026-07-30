@@ -6,6 +6,7 @@ import { onMounted, onBeforeUnmount, provide, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import { createWorkspace, WORKSPACE } from './workspace';
+import { startSync, syncStatus } from './directusSync';
 import PanelFrame from './panels/PanelFrame.vue';
 import RecordingOptions from './panels/RecordingOptions.vue';
 import MetadataPanel from './panels/MetadataPanel.vue';
@@ -49,7 +50,7 @@ function resetLayout() { layout.value = DEFAULT_LAYOUT.map((x) => ({ ...x })); }
 // Load the finished cut on manual stop OR natural completion.
 watch(() => st.state, (s) => { if (s === 'done' && !w.finishedCache.value) w.loadFinished(); });
 
-onMounted(() => w.client.connect());
+onMounted(() => { w.client.connect(); startSync(); });
 onBeforeUnmount(() => w.client.disconnect());
 </script>
 
@@ -69,6 +70,11 @@ onBeforeUnmount(() => w.client.disconnect());
 				<div class="ro"><span>Fz</span><b class="fz">{{ st.peaks.Fz.toFixed(1) }}</b></div>
 			</div>
 
+			<div v-if="syncStatus.pending > 0 || syncStatus.lastError" class="syncchip" :class="syncStatus.pending > 0 ? 'warn' : 'err'"
+				:title="syncStatus.lastError || `${syncStatus.pending} run record(s) queued offline`">
+				<span class="material-symbols-rounded">{{ syncStatus.pending > 0 ? 'cloud_queue' : 'error' }}</span>
+				<span v-if="syncStatus.pending > 0">{{ syncStatus.pending }}</span>
+			</div>
 			<button class="reset" title="Reset panel layout" @click="resetLayout"><span class="material-symbols-rounded">grid_view</span></button>
 			<div class="conn" :class="{ ok: st.connected }">
 				<span class="material-symbols-rounded">{{ st.connected ? 'sensors' : 'sensors_off' }}</span>
@@ -107,6 +113,10 @@ onBeforeUnmount(() => w.client.disconnect());
 .ro b { font-size: 13px; font-variant-numeric: tabular-nums; }
 .ro b.recording { color: #fbbf24; } .ro b.done { color: #4ade80; } .ro b.error { color: var(--danger); }
 .ro b.fx { color: #f87171; } .ro b.fy { color: #4ade80; } .ro b.fz { color: #60a5fa; }
+.syncchip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 8px; font-size: 12px; font-weight: 600; border: 1px solid var(--border); }
+.syncchip .material-symbols-rounded { font-size: 16px; }
+.syncchip.warn { color: #fbbf24; background: rgba(251,191,36,0.1); }
+.syncchip.err { color: var(--danger); background: rgba(252,165,165,0.1); }
 .conn { display: inline-flex; align-items: center; color: var(--text-dim); }
 .conn.ok { color: #4ade80; }
 .vgl-layout { margin: 8px 10px 0; }

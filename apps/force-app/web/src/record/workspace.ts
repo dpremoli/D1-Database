@@ -5,6 +5,8 @@ import { computed, inject, reactive, ref, shallowRef, type InjectionKey } from '
 import { RecordClient } from './liveClient';
 import { api } from '../directusClient';
 import { parseCache, type Cache } from '../force/liveCache';
+import { searchSamples, searchOperators, searchEquipment, getMethods, resolveMachiningMethodId, type LookupItem } from './directusLookups';
+import { logRun, syncStatus } from './directusSync';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 
@@ -33,6 +35,18 @@ export function createWorkspace() {
 	const errMsg = ref<string | null>(null);
 	const finishedCache = shallowRef<Cache | null>(null);
 	const st = client.status;
+
+	// Directus links for the run write-back (2d)
+	const link = reactive({ sampleId: '', sampleLabel: '', operatorId: '', operatorLabel: '', equipmentId: '', equipmentLabel: '' });
+	const logged = ref(false);
+
+	function onSelectSample(it: LookupItem) {
+		link.sampleLabel = it.label;
+		meta.sample_name = it.label;
+		meta.sample_code = it.label;
+		const d = Number(it.extra?.diameter_mm);
+		if (Number.isFinite(d) && d > 0) cfg.diam = d;  // auto-fill Ø from the sample
+	}
 
 	const isIdle = computed(() => st.state === 'idle');
 	const isRecording = computed(() => st.state === 'recording');
@@ -82,7 +96,46 @@ export function createWorkspace() {
 		} catch { /* best-effort */ }
 	}
 
-	function newRun() { client.reset(); finishedCache.value = null; errMsg.value = null; }
+	function newRun() { client.reset(); finishedCache.value = null; errMsg.value = null; logged.value = false; }
+
+	// Build + enqueue the manufacturing_operations run record (offline-queued in directusSync).
+	function buildRunPayload(): Record<string, any> {
+		const surface = Math.PI * cfg.diam * cfg.rpm / 1000;
+		return {
+			sample_id: link.sampleId || null,
+			operator_person_id: link.operatorId || null,
+			equipment_id: link.equipmentId || null,
+			operation_date: new Date().toISOString(),
+			pass_code: (meta.operation && meta.operation.trim()) || `${meta.sample_code || meta.sample_name || 'REC'}-${Date.now()}`,
+			process_category: 'machining',
+			machining_operation_subtype: meta.op_type || null,
+			machining_spindle_speed_rpm: cfg.rpm,
+			machining_feed_mm_per_rev: cfg.feed,
+			machining_workpiece_diameter_mm: cfg.diam,
+			machining_cutting_speed_m_per_min: Number(surface.toFixed(2)),
+			machining_force_captured: true,
+			machining_tacho_used: true,
+			machining_coolant_used: !!(meta.coolant && meta.coolant.trim()),
+			capture_software: 'force-app',
+			capture_frequency_khz: Number((cfg.sample_rate / 1000).toFixed(3)),
+			outcome_notes: meta.notes || null,
+			recorded_metadata: {
+				...metaObj(), capture_id: st.captureId, peaks: st.summary?.peaks,
+				source: source.value, replay_of: source.value === 'replay' ? replay.label : undefined,
+			},
+		};
+	}
+	async function logRunNow(): Promise<void> {
+		const payload = buildRunPayload();
+		// method_id is required on manufacturing_operations; resolve from the cached method list
+		// (warmed at load, so this works even offline).
+		payload.method_id = await resolveMachiningMethodId(meta.op_type).catch(() => null);
+		await logRun(payload);
+		logged.value = true;
+	}
+
+	// Warm the methods cache so the required method_id resolves even if we're offline at log time.
+	getMethods().catch(() => {});
 
 	// Directus-backed cut picker for replay: search done analyses by operation pass code.
 	async function searchCuts(q: string) {
@@ -103,6 +156,9 @@ export function createWorkspace() {
 		client, source, cfg, meta, plot, replay, st, busy, errMsg, finishedCache,
 		isIdle, isRecording, isFinalizing, isDone, locked,
 		start, stop, newRun, loadFinished, searchCuts, metaObj,
+		// 2d: Directus links + run write-back
+		link, logged, onSelectSample, logRunNow, syncStatus,
+		searchSamples, searchOperators, searchEquipment,
 	};
 }
 
