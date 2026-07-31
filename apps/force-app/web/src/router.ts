@@ -15,6 +15,8 @@ const routes: RouteRecordRaw[] = [
 			{ path: 'settings', name: 'settings', component: () => import('./settings/SettingsPage.vue') },
 		],
 	},
+	// Detached single-panel live view for a second monitor (no shell). Same recorder stream.
+	{ path: '/live/:panel', name: 'live', component: () => import('./record/LivePanelWindow.vue') },
 	{ path: '/:pathMatch(.*)*', redirect: '/record' },
 ];
 

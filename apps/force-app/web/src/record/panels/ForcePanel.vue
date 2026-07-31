@@ -4,6 +4,7 @@ import { useWorkspace } from '../workspace';
 import LiveForcePlot from '../LiveForcePlot.vue';
 import LiveFft from '../LiveFft.vue';
 const w = useWorkspace();
+function openLive(panel: string) { window.open(`${location.origin}/live/${panel}`, '_blank', 'noopener,width=1400,height=900'); }
 </script>
 
 <template>
@@ -18,6 +19,10 @@ const w = useWorkspace();
 				<button class="segbtn fy" :class="{ on: w.plot.frmAxis === 'Fy' }" @click="w.plot.frmAxis = 'Fy'">Fy</button>
 				<button class="segbtn fz" :class="{ on: w.plot.frmAxis === 'Fz' }" @click="w.plot.frmAxis = 'Fz'">Fz</button>
 			</div>
+			<button class="popout" title="Pop out to a new window (second monitor) — open before Start"
+				@click="openLive(w.plot.forceMode === 'fft' ? 'fft' : 'force')">
+				<span class="material-symbols-rounded">open_in_new</span>
+			</button>
 		</div>
 		<div class="plot">
 			<LiveForcePlot v-show="w.plot.forceMode === 'time'" :client="w.client" />
@@ -29,6 +34,9 @@ const w = useWorkspace();
 <style scoped>
 .force-panel { display: flex; flex-direction: column; height: 100%; gap: 8px; }
 .controls { display: flex; gap: 8px; align-items: center; }
+.popout { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
+.popout:hover { color: var(--accent); background: var(--surface-2); }
+.popout .material-symbols-rounded { font-size: 15px; }
 .plot { flex: 1; min-height: 0; position: relative; }
 .plot > * { position: absolute; inset: 0; }
 </style>
