@@ -3,4 +3,5 @@ __pycache__/
 *.egg-info/
 captures/
 *.d1raw
+labamp.json
 .pytest_cache/

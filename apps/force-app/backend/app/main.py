@@ -20,6 +20,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .config import RecordConfig
 from .d1lc import read_d1lc_header
+from .labamp import LabAmpClient, LabAmpError, MockLabAmp
 from .session import RecordingSession
 from .sources.replay import ReplaySource
 from .sources.sim import SimSource
@@ -32,6 +33,37 @@ os.makedirs(CAPTURES_ROOT, exist_ok=True)
 
 _broadcaster: Optional[Broadcaster] = None
 _session: Optional[RecordingSession] = None
+
+# ---- LabAmp (2c) config + instance ----
+# The amp is link-local (reachable only from the acquisition PC) so the backend owns the HTTP
+# conversation. Defaults to a mock (no hardware here); switch mode=real on the rig.
+LABAMP_CONFIG_PATH = os.path.join(CAPTURES_ROOT, "labamp.json")
+
+
+def _load_labamp_config() -> dict:
+    cfg = {
+        "base_url": os.environ.get("LABAMP_URL", "http://169.254.143.59"),
+        "channels": int(os.environ.get("LABAMP_CHANNELS", "8")),
+        "mode": os.environ.get("LABAMP_MODE", "mock"),  # "mock" | "real"
+    }
+    try:
+        with open(LABAMP_CONFIG_PATH) as f:
+            cfg.update(json.load(f))
+    except (OSError, ValueError):
+        pass
+    return cfg
+
+
+_labamp_cfg = _load_labamp_config()
+_labamp = None  # type: ignore[assignment]
+
+
+def _rebuild_labamp() -> None:
+    global _labamp
+    _labamp = MockLabAmp() if _labamp_cfg.get("mode") == "mock" else LabAmpClient(_labamp_cfg["base_url"])
+
+
+_rebuild_labamp()
 
 
 @asynccontextmanager
@@ -149,6 +181,67 @@ async def capture_cache(cid: str) -> FileResponse:
 async def capture_mat(cid: str) -> FileResponse:
     return FileResponse(_capture_file(cid, "capture.mat"), media_type="application/octet-stream",
                         filename=f"{cid}.mat")
+
+
+@app.get("/labamp/status")
+async def labamp_status() -> dict:
+    amp = _labamp
+    reachable = await run_in_threadpool(amp.ping)
+    mode = None
+    if reachable:
+        try:
+            mode = await run_in_threadpool(amp.get_operation_mode)
+        except LabAmpError:
+            pass
+    return {"reachable": reachable, "mode": mode, "base_url": amp.base_url, "mock": amp.mock,
+            "channels": _labamp_cfg["channels"], "config_mode": _labamp_cfg["mode"]}
+
+
+@app.post("/labamp/mode")
+async def labamp_set_mode(body: dict) -> dict:
+    mode = str(body.get("mode", ""))
+    try:
+        await run_in_threadpool(_labamp.set_operation_mode, mode)
+        current = await run_in_threadpool(_labamp.get_operation_mode)
+    except LabAmpError as e:
+        raise HTTPException(400, str(e))
+    return {"mode": current}
+
+
+@app.get("/labamp/sensors")
+async def labamp_sensors() -> dict:
+    try:
+        rows = await run_in_threadpool(_labamp.sensor_table, _labamp_cfg["channels"])
+    except LabAmpError as e:
+        raise HTTPException(502, str(e))
+    return {"sensors": rows}
+
+
+@app.get("/labamp/export")
+async def labamp_export() -> JSONResponse:
+    try:
+        return JSONResponse(await run_in_threadpool(_labamp.export_params))
+    except LabAmpError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.get("/labamp/config")
+async def labamp_get_config() -> dict:
+    return _labamp_cfg
+
+
+@app.post("/labamp/config")
+async def labamp_post_config(body: dict) -> dict:
+    for k in ("base_url", "channels", "mode"):
+        if k in body:
+            _labamp_cfg[k] = body[k]
+    try:
+        with open(LABAMP_CONFIG_PATH, "w") as f:
+            json.dump(_labamp_cfg, f)
+    except OSError:
+        pass
+    _rebuild_labamp()
+    return _labamp_cfg
 
 
 @app.websocket("/record/stream")

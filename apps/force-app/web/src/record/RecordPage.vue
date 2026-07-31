@@ -14,6 +14,7 @@ import ForcePanel from './panels/ForcePanel.vue';
 import FrmPanel from './panels/FrmPanel.vue';
 import PlotOptions from './panels/PlotOptions.vue';
 import AlarmsPanel from './panels/AlarmsPanel.vue';
+import LabAmpPanel from './panels/LabAmpPanel.vue';
 
 const router = useRouter();
 const w = createWorkspace();
@@ -27,10 +28,12 @@ const PANELS: Record<string, { title: string; icon: string }> = {
 	frm: { title: 'FRM Map', icon: 'fingerprint' },
 	plotopts: { title: 'Plot Options', icon: 'palette' },
 	alarms: { title: 'Safety Alarms', icon: 'warning' },
+	labamp: { title: 'Lab Amplifier', icon: 'memory' },
 };
 const DEFAULT_LAYOUT = [
 	{ i: 'options', x: 0, y: 0, w: 3, h: 11 },
 	{ i: 'metadata', x: 0, y: 11, w: 3, h: 13 },
+	{ i: 'labamp', x: 0, y: 24, w: 3, h: 10 },
 	{ i: 'force', x: 3, y: 0, w: 5, h: 10 },
 	{ i: 'plotopts', x: 3, y: 10, w: 5, h: 7 },
 	{ i: 'alarms', x: 3, y: 17, w: 5, h: 7 },
@@ -105,6 +108,7 @@ onBeforeUnmount(() => w.client.disconnect());
 					<FrmPanel v-else-if="item.i === 'frm'" />
 					<PlotOptions v-else-if="item.i === 'plotopts'" />
 					<AlarmsPanel v-else-if="item.i === 'alarms'" />
+					<LabAmpPanel v-else-if="item.i === 'labamp'" />
 				</PanelFrame>
 			</GridItem>
 		</GridLayout>
