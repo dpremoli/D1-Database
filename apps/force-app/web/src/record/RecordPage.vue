@@ -13,6 +13,7 @@ import MetadataPanel from './panels/MetadataPanel.vue';
 import ForcePanel from './panels/ForcePanel.vue';
 import FrmPanel from './panels/FrmPanel.vue';
 import PlotOptions from './panels/PlotOptions.vue';
+import AlarmsPanel from './panels/AlarmsPanel.vue';
 
 const router = useRouter();
 const w = createWorkspace();
@@ -25,13 +26,15 @@ const PANELS: Record<string, { title: string; icon: string }> = {
 	force: { title: 'Force Plot', icon: 'show_chart' },
 	frm: { title: 'FRM Map', icon: 'fingerprint' },
 	plotopts: { title: 'Plot Options', icon: 'palette' },
+	alarms: { title: 'Safety Alarms', icon: 'warning' },
 };
 const DEFAULT_LAYOUT = [
 	{ i: 'options', x: 0, y: 0, w: 3, h: 11 },
-	{ i: 'metadata', x: 0, y: 11, w: 3, h: 9 },
+	{ i: 'metadata', x: 0, y: 11, w: 3, h: 13 },
 	{ i: 'force', x: 3, y: 0, w: 5, h: 10 },
-	{ i: 'plotopts', x: 3, y: 10, w: 5, h: 10 },
-	{ i: 'frm', x: 8, y: 0, w: 4, h: 20 },
+	{ i: 'plotopts', x: 3, y: 10, w: 5, h: 7 },
+	{ i: 'alarms', x: 3, y: 17, w: 5, h: 7 },
+	{ i: 'frm', x: 8, y: 0, w: 4, h: 24 },
 ];
 const LS_KEY = 'force-app.record.layout';
 
@@ -56,6 +59,16 @@ onBeforeUnmount(() => w.client.disconnect());
 
 <template>
 	<div class="rec-wrap">
+		<!-- Global safety-alarm overlay (2e): prominent, blocks nothing but demands acknowledgement. -->
+		<div v-if="w.alarms.tripped" class="alarm-overlay">
+			<span class="material-symbols-rounded">warning</span>
+			<div class="ao-text">
+				<b>SAFETY ALARM</b>
+				<span v-for="al in w.alarms.active" :key="al.key" class="ao-item">{{ al.label }} {{ al.value.toFixed(al.kind === 'rpm' ? 0 : 1) }}{{ al.kind === 'rpm' ? '' : ' N' }}</span>
+			</div>
+			<button class="ao-ack" @click="w.alarms.acknowledge()">Acknowledge</button>
+		</div>
+
 		<header class="topbar">
 			<button class="back" @click="router.push('/select')"><span class="material-symbols-rounded">arrow_back</span></button>
 			<div class="brand"><span class="rec-dot" :class="{ live: w.isRecording.value }"></span><span class="brand-name">Recording &amp; Acquisition</span></div>
@@ -91,6 +104,7 @@ onBeforeUnmount(() => w.client.disconnect());
 					<ForcePanel v-else-if="item.i === 'force'" />
 					<FrmPanel v-else-if="item.i === 'frm'" />
 					<PlotOptions v-else-if="item.i === 'plotopts'" />
+					<AlarmsPanel v-else-if="item.i === 'alarms'" />
 				</PanelFrame>
 			</GridItem>
 		</GridLayout>
@@ -99,6 +113,14 @@ onBeforeUnmount(() => w.client.disconnect());
 
 <style scoped>
 .rec-wrap { min-height: 100vh; background: radial-gradient(1200px 600px at 50% -10%, var(--bg-2), var(--bg)); padding-bottom: 24px; }
+.alarm-overlay { position: fixed; top: 0; left: 0; right: 0; z-index: 100; display: flex; align-items: center; gap: 14px; padding: 12px 20px;
+	color: #fff; background: #dc2626; box-shadow: 0 6px 24px rgba(220,38,38,0.5); animation: alarmpulse 0.9s ease-in-out infinite; }
+@keyframes alarmpulse { 0%,100% { background: #dc2626; } 50% { background: #991b1b; } }
+.alarm-overlay > .material-symbols-rounded { font-size: 28px; }
+.ao-text { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.ao-text b { font-size: 15px; letter-spacing: 0.04em; }
+.ao-item { font-size: 13px; font-variant-numeric: tabular-nums; background: rgba(0,0,0,0.2); padding: 2px 8px; border-radius: 6px; }
+.ao-ack { margin-left: auto; padding: 8px 18px; font-size: 14px; font-weight: 700; color: #dc2626; background: #fff; border: none; border-radius: 8px; cursor: pointer; }
 .topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--border); background: rgba(11,16,32,0.82); backdrop-filter: blur(8px); }
 .back, .reset { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; background: var(--surface); border: 1px solid var(--border); color: var(--text); cursor: pointer; }
 .back:hover, .reset:hover { background: var(--surface-2); }

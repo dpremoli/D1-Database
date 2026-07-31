@@ -1,12 +1,13 @@
 // Shared state for the modular Recording workspace. Created once in RecordPage and provided to
 // every panel via inject(), so panels stay small and independent while sharing one RecordClient,
 // config, metadata, plot options, and the start/stop/replay actions.
-import { computed, inject, reactive, ref, shallowRef, type InjectionKey } from 'vue';
+import { computed, inject, reactive, ref, shallowRef, watch, type InjectionKey } from 'vue';
 import { RecordClient } from './liveClient';
 import { api } from '../directusClient';
 import { parseCache, type Cache } from '../force/liveCache';
 import { searchSamples, searchOperators, searchEquipment, getMethods, resolveMachiningMethodId, type LookupItem } from './directusLookups';
 import { logRun, syncStatus } from './directusSync';
+import { AlarmController } from './alarms';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 
@@ -40,6 +41,10 @@ export function createWorkspace() {
 	const link = reactive({ sampleId: '', sampleLabel: '', operatorId: '', operatorLabel: '', equipmentId: '', equipmentLabel: '' });
 	const logged = ref(false);
 
+	// Safety alarms (2e) — evaluated on every live frame while recording.
+	const alarms = new AlarmController();
+	watch(() => client.frameSeq.value, () => { if (st.state === 'recording') alarms.evaluate(st.peaks, st.rpm, cfg.rpm); });
+
 	function onSelectSample(it: LookupItem) {
 		link.sampleLabel = it.label;
 		meta.sample_name = it.label;
@@ -63,6 +68,7 @@ export function createWorkspace() {
 	async function start() {
 		if (busy.value) return;
 		busy.value = true; errMsg.value = null; finishedCache.value = null;
+		alarms.reset();
 		try {
 			if (source.value === 'replay') {
 				if (!replay.cacheId) throw new Error('pick a cut to replay');
@@ -159,6 +165,8 @@ export function createWorkspace() {
 		// 2d: Directus links + run write-back
 		link, logged, onSelectSample, logRunNow, syncStatus,
 		searchSamples, searchOperators, searchEquipment,
+		// 2e: safety alarms
+		alarms,
 	};
 }
 
