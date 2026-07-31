@@ -20,6 +20,9 @@ const nav = [
 	{ to: '/settings', icon: 'settings', label: 'Settings' },
 ];
 async function signOut() { await authStore.logout(); router.replace('/login'); }
+// Multi-monitor: pop a section into its own window (e.g. Plot while recording). Same origin, so the
+// new window shares the login; the recording backend is a single session but plotting is read-only.
+function openWindow(to: string) { window.open(location.origin + to, '_blank', 'noopener,width=1500,height=950'); }
 </script>
 
 <template>
@@ -29,12 +32,17 @@ async function signOut() { await authStore.logout(); router.replace('/login'); }
 				<span class="brand-mark"><i class="dot fx"></i><i class="dot fy"></i><i class="dot fz"></i></span>
 				<span class="brand-name">Force</span>
 			</div>
-			<router-link v-for="n in nav" :key="n.to" :to="n.to" class="navitem" active-class="active">
-				<span class="material-symbols-rounded">{{ n.icon }}</span>
-				<span class="lbl">{{ n.label }}</span>
-				<span v-if="n.to === '/settings' && syncStatus.pending > 0" class="badge warn">{{ syncStatus.pending }}</span>
-				<span v-if="n.to === '/record' && alarmController.tripped" class="badge alarm">!</span>
-			</router-link>
+			<div v-for="n in nav" :key="n.to" class="navrow">
+				<router-link :to="n.to" class="navitem" active-class="active">
+					<span class="material-symbols-rounded">{{ n.icon }}</span>
+					<span class="lbl">{{ n.label }}</span>
+					<span v-if="n.to === '/settings' && syncStatus.pending > 0" class="badge warn">{{ syncStatus.pending }}</span>
+					<span v-if="n.to === '/record' && alarmController.tripped" class="badge alarm">!</span>
+				</router-link>
+				<button class="popout" title="Open in a new window (for a second monitor)" @click="openWindow(n.to)">
+					<span class="material-symbols-rounded">open_in_new</span>
+				</button>
+			</div>
 			<div class="spacer"></div>
 			<div class="user">
 				<span class="who">{{ userName }}</span>
@@ -53,6 +61,11 @@ async function signOut() { await authStore.logout(); router.replace('/login'); }
 .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
 .dot.fx { background: var(--fx); } .dot.fy { background: var(--fy); } .dot.fz { background: var(--fz); }
 .brand-name { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--text-dim); text-transform: uppercase; }
+.navrow { position: relative; }
+.popout { position: absolute; top: 4px; right: 4px; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; opacity: 0; transition: opacity 0.14s; }
+.popout .material-symbols-rounded { font-size: 13px; }
+.navrow:hover .popout { opacity: 1; }
+.popout:hover { color: var(--accent); }
 .navitem { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 4px; border-radius: 10px; color: var(--text-dim); text-decoration: none; transition: background 0.14s, color 0.14s; }
 .navitem .material-symbols-rounded { font-size: 22px; }
 .navitem .lbl { font-size: 10.5px; font-weight: 600; }

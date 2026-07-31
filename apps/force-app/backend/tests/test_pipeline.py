@@ -7,9 +7,30 @@ import numpy as np
 from scipy.io import loadmat
 
 from app import d1lc
-from app.config import RecordConfig
+from app.config import RecordConfig, SIGNAL_CHANNELS
 from app.session import RecordingSession
 from app.sources.sim import SimSource
+
+
+def test_session_source_start_failure(tmp_path):
+    """A source whose start() raises (e.g. an invalid NI-DAQ device) must end in state=error, not
+    hang or crash the worker (regression: consumer.join before start)."""
+    class BoomSource:
+        channels = list(SIGNAL_CHANNELS)
+        rate = 1000.0
+        def start(self):
+            raise RuntimeError("Device identifier is invalid")
+        def read(self):
+            return None
+        def stop(self):
+            pass
+
+    cfg = RecordConfig(sample_rate=1000, duration_sec=0.1)
+    sess = RecordingSession(cfg, str(tmp_path), BoomSource(), broadcaster=None)
+    sess.start()
+    sess._thread.join(15)
+    assert sess.state == "error"
+    assert "Device identifier is invalid" in (sess.error or "")
 
 
 def test_session_end_to_end(tmp_path):

@@ -15,7 +15,13 @@ export interface ReplayOption { label: string; cacheId: string; opId: string; }
 
 export function createWorkspace() {
 	const client = new RecordClient();
-	const source = ref<'sim' | 'replay'>('sim');
+	const source = ref<'sim' | 'replay' | 'nidaq'>('sim');
+	// NI-DAQ physical channels (2b), one per SIGNAL_CHANNEL, edited as newline text. Placeholders —
+	// the operator sets the real device/channel strings on the rig.
+	const nidaqChannels = ref(
+		['cDAQ1Mod1/ai0', 'cDAQ1Mod1/ai1', 'cDAQ1Mod1/ai2', 'cDAQ1Mod1/ai3',
+			'cDAQ1Mod2/ai0', 'cDAQ1Mod2/ai1', 'cDAQ1Mod2/ai2', 'cDAQ1Mod2/ai3', 'cDAQ1Mod3/ai0'].join('\n'),
+	);
 
 	const cfg = reactive({
 		rpm: 1200, feed: 0.05, diam: 80, inner_diam: 0,
@@ -82,8 +88,11 @@ export function createWorkspace() {
 					sample_name: meta.sample_name || replay.label || 'REPLAY',
 					axis: plot.frmAxis, ppr: cfg.ppr, speed: replay.speed, extra_metadata: metaObj(),
 				});
+			} else if (source.value === 'nidaq') {
+				const chans = nidaqChannels.value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+				await client.start({ ...cfg, source: 'nidaq', nidaq_channels: chans, axis: plot.frmAxis, extra_metadata: metaObj() } as any);
 			} else {
-				await client.start({ ...cfg, axis: plot.frmAxis, extra_metadata: metaObj() } as any);
+				await client.start({ ...cfg, source: 'sim', axis: plot.frmAxis, extra_metadata: metaObj() } as any);
 			}
 		} catch (e: any) {
 			errMsg.value = e?.message || 'failed to start';
@@ -174,7 +183,7 @@ export function createWorkspace() {
 	}
 
 	return {
-		client, source, cfg, meta, machining, plot, replay, st, busy, errMsg, finishedCache,
+		client, source, nidaqChannels, cfg, meta, machining, plot, replay, st, busy, errMsg, finishedCache,
 		isIdle, isRecording, isFinalizing, isDone, locked,
 		start, stop, newRun, loadFinished, searchCuts, metaObj,
 		// 2d: Directus links + run write-back

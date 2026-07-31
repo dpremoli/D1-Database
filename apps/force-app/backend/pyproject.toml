@@ -15,6 +15,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Real NI-DAQ acquisition (slice 2b). Needs the NI-DAQmx runtime installed on the host; only
+# required on the acquisition PC. Install with:  pip install -e ".[nidaq]"
+nidaq = ["nidaqmx>=1.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

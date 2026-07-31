@@ -15,6 +15,15 @@ DYNO_CHANNELS: list[str] = ["Fx1", "Fx2", "Fy1", "Fy2", "Fz1", "Fz2", "Fz3", "Fz
 TACHO_CHANNEL = "Tacho"
 SIGNAL_CHANNELS: list[str] = DYNO_CHANNELS + [TACHO_CHANNEL]
 
+# Default NI-DAQ physical channel mapping for SIGNAL_CHANNELS (2b). Mirrors the MATLAB app's layout
+# — the 8 Kistler charge channels across the first two modules + the tacho on a third module's ai0.
+# These are PLACEHOLDERS; the operator sets the real device/channel strings for the rig.
+DEFAULT_NIDAQ_CHANNELS: list[str] = [
+    "cDAQ1Mod1/ai0", "cDAQ1Mod1/ai1", "cDAQ1Mod1/ai2", "cDAQ1Mod1/ai3",
+    "cDAQ1Mod2/ai0", "cDAQ1Mod2/ai1", "cDAQ1Mod2/ai2", "cDAQ1Mod2/ai3",
+    "cDAQ1Mod3/ai0",
+]
+
 # Summed-axis definitions (Fx = Fx1+Fx2, Fy = Fy1+Fy2, Fz = Fz1+Fz2+Fz3+Fz4) — the layout the
 # .mat v1.0 format and process_force.m assume.
 AXIS_SUM: dict[str, list[str]] = {
@@ -46,3 +55,8 @@ class RecordConfig(BaseModel):
     # Free-form metadata compiled in the UI (sample/insert/tool/etc.), stamped into the .mat +
     # summary. Directus write-back of a run row is a later slice (2d); this just persists it locally.
     extra_metadata: dict[str, Any] = Field(default_factory=dict)
+
+    # Acquisition source (2b): "sim" (default), or "nidaq" for real NI-DAQ hardware.
+    source: str = "sim"
+    # NI-DAQ physical channel strings mapped 1:1 onto SIGNAL_CHANNELS (source="nidaq").
+    nidaq_channels: list[str] = Field(default_factory=lambda: list(DEFAULT_NIDAQ_CHANNELS))

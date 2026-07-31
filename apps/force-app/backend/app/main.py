@@ -95,7 +95,16 @@ async def record_start(cfg: RecordConfig) -> dict:
     global _session
     if _busy():
         raise HTTPException(409, "a recording is already in progress")
-    source = SimSource(cfg, realtime=True)
+    if cfg.source == "nidaq":
+        from .sources.nidaq import NidaqSource, NidaqUnavailable, nidaq_available
+        if not nidaq_available():
+            raise HTTPException(503, "NI-DAQmx runtime not available on this host — run on the acquisition PC.")
+        try:
+            source = NidaqSource(cfg, physical_channels=cfg.nidaq_channels or None)
+        except (ValueError, NidaqUnavailable) as e:
+            raise HTTPException(400, str(e))
+    else:
+        source = SimSource(cfg, realtime=True)
     _session = RecordingSession(cfg, CAPTURES_ROOT, source, broadcaster=_broadcaster)
     _session.start()
     return _session.status()

@@ -67,10 +67,12 @@ class RecordingSession:
 
     # ---- worker ----
     def _run(self) -> None:
+        # Start the consumer FIRST so it's always joinable — if source.start() raises (e.g. an
+        # invalid NI-DAQ device), ring.close() below unblocks it cleanly.
         consumer = threading.Thread(target=self._consume, name=f"rec-consume-{self.id}", daemon=True)
+        consumer.start()
         try:
             self.source.start()
-            consumer.start()
             while not self._stop.is_set():
                 chunk = self.source.read()
                 if chunk is None:
@@ -78,19 +80,23 @@ class RecordingSession:
                 if not self.ring.put(chunk[0], chunk[1], timeout=5.0):
                     self.error = "consumer overrun"
                     break
-        except Exception as e:  # pragma: no cover - defensive
+        except Exception as e:
             self.error = f"acquisition error: {e}"
         finally:
             self.ring.close()
             consumer.join(timeout=10.0)
             self.raw.close()
-            try:
-                self.state = "finalizing"
-                self.summary = finalize(self.dir, self.cfg)
+            if self.n_total > 0:
+                try:
+                    self.state = "finalizing"
+                    self.summary = finalize(self.dir, self.cfg)
+                    self.state = "error" if self.error else "done"
+                except Exception as e:
+                    self.error = self.error or f"finalize error: {e}"  # keep the original cause
+                    self.state = "error"
+            else:
+                # Nothing captured (e.g. the source failed to start) — don't finalize an empty file.
                 self.state = "error" if self.error else "done"
-            except Exception as e:
-                self.error = f"finalize error: {e}"
-                self.state = "error"
             self._publish_control({"type": "done", "id": self.id, "state": self.state,
                                    "error": self.error, "summary": self.summary})
 

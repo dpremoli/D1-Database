@@ -23,22 +23,30 @@ onMounted(() => { if (w.source.value === 'replay') w.searchCuts(''); });
 	<div class="opts">
 		<div class="seg">
 			<button :class="{ on: w.source.value === 'sim' }" :disabled="w.locked.value" @click="w.source.value = 'sim'">Simulated</button>
-			<button :class="{ on: w.source.value === 'replay' }" :disabled="w.locked.value" @click="w.source.value = 'replay'">Replay real file</button>
+			<button :class="{ on: w.source.value === 'replay' }" :disabled="w.locked.value" @click="w.source.value = 'replay'">Replay file</button>
+			<button :class="{ on: w.source.value === 'nidaq' }" :disabled="w.locked.value" @click="w.source.value = 'nidaq'">NI-DAQ</button>
 		</div>
 
-		<template v-if="w.source.value === 'sim'">
+		<template v-if="w.source.value === 'sim' || w.source.value === 'nidaq'">
 			<div class="grid2">
 				<label>Spindle (RPM)<input type="number" v-model.number="w.cfg.rpm" :disabled="w.locked.value" /></label>
 				<label>Feed (mm/rev)<input type="number" step="0.01" v-model.number="w.cfg.feed" :disabled="w.locked.value" /></label>
 				<label>Outer Ø (mm)<input type="number" v-model.number="w.cfg.diam" :disabled="w.locked.value" /></label>
 				<label>Inner Ø (mm)<input type="number" v-model.number="w.cfg.inner_diam" :disabled="w.locked.value" /></label>
 				<label>Sample rate (Hz)<input type="number" v-model.number="w.cfg.sample_rate" :disabled="w.locked.value" /></label>
-				<label>Duration (s)<input type="number" v-model.number="w.cfg.duration_sec" :disabled="w.locked.value" /></label>
+				<label v-if="w.source.value === 'sim'">Duration (s)<input type="number" v-model.number="w.cfg.duration_sec" :disabled="w.locked.value" /></label>
 				<label>Pulses/rev<input type="number" v-model.number="w.cfg.ppr" :disabled="w.locked.value" /></label>
 			</div>
 		</template>
 
-		<template v-else>
+		<template v-if="w.source.value === 'nidaq'">
+			<label>NI-DAQ channels <span class="sub">(Fx1,Fx2,Fy1,Fy2,Fz1,Fz2,Fz3,Fz4,Tacho)</span>
+				<textarea v-model="w.nidaqChannels.value" rows="9" spellcheck="false" :disabled="w.locked.value"></textarea>
+			</label>
+			<p class="hint warn"><span class="material-symbols-rounded">warning</span> Hardware acquisition — records until you press Stop. Set your rig's real device/channel strings; this path is built from the MATLAB method but untested against hardware (validate on the rig).</p>
+		</template>
+
+		<template v-if="w.source.value === 'replay'">
 			<label>Find a cut
 				<input v-model="w.replay.query" placeholder="e.g. 10-AA-MF" :disabled="w.locked.value" @input="onSearch" />
 			</label>
@@ -63,6 +71,7 @@ onMounted(() => { if (w.source.value === 'replay') w.searchCuts(''); });
 			<button v-if="w.isDone.value" class="btn ghost" @click="w.newRun()">New</button>
 		</div>
 		<p v-if="w.errMsg.value" class="err">{{ w.errMsg.value }}</p>
+		<p v-if="w.st.state === 'error' && w.st.error" class="err">{{ w.st.error.split('\n')[0] }}</p>
 
 		<div v-if="w.isDone.value" class="logrun">
 			<button class="btn save" :disabled="!w.link.sampleId || w.logged.value" @click="w.logRunNow()">
@@ -82,9 +91,13 @@ onMounted(() => { if (w.source.value === 'replay') w.searchCuts(''); });
 .seg button:disabled { opacity: 0.5; cursor: not-allowed; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
 label { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px; }
-input { display: block; width: 100%; margin-top: 3px; padding: 7px 9px; font-size: 13px; color: var(--text); background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 7px; outline: none; }
-input:focus { border-color: var(--accent); }
-input:disabled { opacity: 0.55; }
+input, textarea { display: block; width: 100%; margin-top: 3px; padding: 7px 9px; font-size: 13px; color: var(--text); background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 7px; outline: none; font-family: inherit; }
+textarea { font-family: var(--mono); font-size: 12px; resize: vertical; }
+input:focus, textarea:focus { border-color: var(--accent); }
+input:disabled, textarea:disabled { opacity: 0.55; }
+.sub { color: var(--text-dim); font-weight: 400; font-size: 10.5px; }
+.hint.warn { display: flex; align-items: flex-start; gap: 5px; color: #fbbf24; }
+.hint.warn .material-symbols-rounded { font-size: 15px; margin-top: 1px; }
 .cutlist { max-height: 160px; overflow: auto; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: 8px; padding: 5px; }
 .cut { text-align: left; padding: 6px 8px; font-size: 12px; font-family: var(--mono); color: var(--text); background: transparent; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
 .cut:hover { background: var(--surface); }
