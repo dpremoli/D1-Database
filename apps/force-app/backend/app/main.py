@@ -230,8 +230,30 @@ async def labamp_get_config() -> dict:
     return _labamp_cfg
 
 
+from urllib.parse import urlparse
+
+# The amp is legitimately on a link-local/private address, so we can't block those ranges (that IS
+# the target). We do reject non-http(s) schemes and the cloud-metadata address — the one dangerous
+# SSRF target inside link-local. The recorder is otherwise a loopback-bound, single-user local
+# hardware controller (bind 127.0.0.1), which is the mitigation for the lack of endpoint auth.
+_BLOCKED_AMP_HOSTS = {"169.254.169.254", "metadata.google.internal", "fd00:ec2::254"}
+
+
+def _validate_amp_url(url: str) -> str:
+    u = urlparse(url)
+    if u.scheme not in ("http", "https"):
+        raise HTTPException(400, "amp URL must use http or https")
+    if not u.hostname:
+        raise HTTPException(400, "amp URL must include a host")
+    if u.hostname.strip("[]").lower() in _BLOCKED_AMP_HOSTS:
+        raise HTTPException(400, "amp URL host is not allowed")
+    return url
+
+
 @app.post("/labamp/config")
 async def labamp_post_config(body: dict) -> dict:
+    if "base_url" in body:
+        body["base_url"] = _validate_amp_url(str(body["base_url"]))
     for k in ("base_url", "channels", "mode"):
         if k in body:
             _labamp_cfg[k] = body[k]

@@ -63,6 +63,17 @@ def test_unreachable_ping_false():
     assert c.ping() is False
 
 
+def test_amp_url_validation():
+    from fastapi import HTTPException
+    from app.main import _validate_amp_url
+    # link-local amp address is allowed (that's the legitimate target)
+    assert _validate_amp_url("http://169.254.143.59") == "http://169.254.143.59"
+    assert _validate_amp_url("http://192.168.1.50:80").startswith("http://")
+    for bad in ("file:///etc/passwd", "gopher://x", "http://", "http://169.254.169.254", "http://metadata.google.internal"):
+        with pytest.raises(HTTPException):
+            _validate_amp_url(bad)
+
+
 def test_mock_labamp():
     m = MockLabAmp()
     assert m.mock is True and m.ping() is True
