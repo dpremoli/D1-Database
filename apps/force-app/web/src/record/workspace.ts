@@ -7,7 +7,7 @@ import { api } from '../directusClient';
 import { parseCache, type Cache } from '../force/liveCache';
 import { searchSamples, searchOperators, searchEquipment, getMethods, resolveMachiningMethodId, type LookupItem } from './directusLookups';
 import { logRun, syncStatus } from './directusSync';
-import { AlarmController } from './alarms';
+import { alarmController } from './alarms';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 
@@ -25,6 +25,10 @@ export function createWorkspace() {
 		sample_name: 'SIM-CUT-001', sample_code: '', operation: '', op_type: '',
 		insert: '', edge_id: '', tool: '', machine: '', coolant: '', notes: '',
 	});
+	// Extra machining fields mirroring the Directus manufacturing_operations form (folded section).
+	const machining = reactive<{ axial_doc: string; radial_doc: string; cutting_length: string; coolant_pressure: string; operation_sequence: string; chips_ref: string; new_edge: boolean; chips_collected: boolean }>(
+		{ axial_doc: '', radial_doc: '', cutting_length: '', coolant_pressure: '', operation_sequence: '', chips_ref: '', new_edge: false, chips_collected: false },
+	);
 	const plot = reactive<{ forceMode: 'time' | 'fft'; frmAxis: Axis; colormap: string; pointSize: number }>({
 		forceMode: 'time', frmAxis: 'Fz', colormap: 'viridis', pointSize: 1.8,
 	});
@@ -41,8 +45,9 @@ export function createWorkspace() {
 	const link = reactive({ sampleId: '', sampleLabel: '', operatorId: '', operatorLabel: '', equipmentId: '', equipmentLabel: '' });
 	const logged = ref(false);
 
-	// Safety alarms (2e) — evaluated on every live frame while recording.
-	const alarms = new AlarmController();
+	// Safety alarms (2e) — the app-wide controller (config lives in Settings > Alarms), evaluated
+	// here on every live frame while recording.
+	const alarms = alarmController;
 	watch(() => client.frameSeq.value, () => { if (st.state === 'recording') alarms.evaluate(st.peaks, st.rpm, cfg.rpm); });
 
 	function onSelectSample(it: LookupItem) {
@@ -107,6 +112,7 @@ export function createWorkspace() {
 	// Build + enqueue the manufacturing_operations run record (offline-queued in directusSync).
 	function buildRunPayload(): Record<string, any> {
 		const surface = Math.PI * cfg.diam * cfg.rpm / 1000;
+		const num = (s: string) => (s !== '' && Number.isFinite(Number(s)) ? Number(s) : null);
 		return {
 			sample_id: link.sampleId || null,
 			operator_person_id: link.operatorId || null,
@@ -125,6 +131,15 @@ export function createWorkspace() {
 			capture_software: 'force-app',
 			capture_frequency_khz: Number((cfg.sample_rate / 1000).toFixed(3)),
 			outcome_notes: meta.notes || null,
+			// Machining details (folded Directus form section)
+			machining_axial_depth_of_cut_mm: num(machining.axial_doc),
+			machining_radial_depth_of_cut_mm: num(machining.radial_doc),
+			machining_cutting_length_mm: num(machining.cutting_length),
+			machining_coolant_pressure_bar: num(machining.coolant_pressure),
+			operation_sequence: num(machining.operation_sequence),
+			machining_new_edge: machining.new_edge,
+			machining_chips_collected: machining.chips_collected,
+			machining_chips_ref_code: machining.chips_ref || null,
 			recorded_metadata: {
 				...metaObj(), capture_id: st.captureId, peaks: st.summary?.peaks,
 				source: source.value, replay_of: source.value === 'replay' ? replay.label : undefined,
@@ -159,7 +174,7 @@ export function createWorkspace() {
 	}
 
 	return {
-		client, source, cfg, meta, plot, replay, st, busy, errMsg, finishedCache,
+		client, source, cfg, meta, machining, plot, replay, st, busy, errMsg, finishedCache,
 		isIdle, isRecording, isFinalizing, isDone, locked,
 		start, stop, newRun, loadFinished, searchCuts, metaObj,
 		// 2d: Directus links + run write-back

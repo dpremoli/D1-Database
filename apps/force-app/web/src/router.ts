@@ -3,14 +3,19 @@ import { authStore } from './authStore';
 
 const routes: RouteRecordRaw[] = [
 	{ path: '/login', name: 'login', component: () => import('./LoginPage.vue'), meta: { public: true } },
-	{ path: '/select', name: 'select', component: () => import('./SelectPage.vue') },
-	// The extracted plotting explorer. Ported verbatim from the Directus module; it reads
-	// ?operation= for deep-linking and otherwise manages its own in-view navigation.
-	{ path: '/plot', name: 'plot', component: () => import('./force/ForceDashboard.vue') },
-	// Recording/acquisition (Phase 2). Streams live frames from the local recorder backend.
-	{ path: '/record', name: 'record', component: () => import('./record/RecordPage.vue') },
-	{ path: '/', redirect: '/select' },
-	{ path: '/:pathMatch(.*)*', redirect: '/select' },
+	// Authenticated app: a persistent left-sidebar shell with the sections rendered inside it.
+	{
+		path: '/',
+		component: () => import('./AppShell.vue'),
+		children: [
+			{ path: '', redirect: '/record' },
+			{ path: 'record', name: 'record', component: () => import('./record/RecordPage.vue') },
+			{ path: 'plot', name: 'plot', component: () => import('./force/ForceDashboard.vue') },
+			{ path: 'labamp', name: 'labamp', component: () => import('./labamp/LabAmpPage.vue') },
+			{ path: 'settings', name: 'settings', component: () => import('./settings/SettingsPage.vue') },
+		],
+	},
+	{ path: '/:pathMatch(.*)*', redirect: '/record' },
 ];
 
 export const router = createRouter({

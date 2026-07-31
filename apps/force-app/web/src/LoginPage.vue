@@ -18,7 +18,7 @@ async function submit() {
 	busy.value = true;
 	try {
 		await authStore.login(email.value.trim(), password.value);
-		const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/select';
+		const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/record';
 		router.replace(redirect);
 	} catch (e: any) {
 		const status = e?.response?.status;

@@ -21,7 +21,7 @@ const PASS = process.env.FORCE_APP_PASSWORD || '';
 	await p.fill('input[type="password"]', PASS);
 	await p.click('button[type="submit"]');
 	await p.waitForTimeout(2500);
-	await p.locator('.card', { hasText: 'Recording' }).click();
+	await p.locator('.sidebar .navitem', { hasText: 'Record' }).click();
 	await p.waitForTimeout(1500);
 
 	// 5 modular panels
@@ -43,7 +43,7 @@ const PASS = process.env.FORCE_APP_PASSWORD || '';
 	// live: FRM points grow, FFT tab shows a spectrum
 	await p.waitForTimeout(2000);
 	const pts1 = parseInt((await p.locator('.pts').first().innerText().catch(() => '0')).replace(/\D/g, '') || '0', 10);
-	await p.locator('.force-panel .toggle button', { hasText: 'FFT' }).click();
+	await p.locator('.force-panel .segbtn', { hasText: 'FFT' }).click();
 	await p.waitForTimeout(1500);
 	const fftCanvas = await p.locator('.live-fft canvas').count();
 	const pts2 = parseInt((await p.locator('.pts').first().innerText().catch(() => '0')).replace(/\D/g, '') || '0', 10);

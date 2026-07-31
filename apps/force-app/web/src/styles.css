@@ -59,3 +59,46 @@ a {
 button {
 	font-family: inherit;
 }
+
+/* Segmented toggle — carried over from the Directus force-analysis controls (Fx/Fy/Fz, Force/FFT),
+   so the recording plot controls read the same. Global (unscoped) so any panel can use it. */
+.segmode {
+	display: inline-flex;
+	border-radius: 8px;
+	overflow: hidden;
+	border: 1px solid var(--border);
+}
+.segbtn {
+	font: inherit;
+	font-size: 11px;
+	font-weight: 700;
+	cursor: pointer;
+	border: 0;
+	padding: 5px 12px;
+	background: var(--surface);
+	color: var(--text-dim);
+	border-right: 1px solid var(--border);
+}
+.segbtn:last-child {
+	border-right: 0;
+}
+.segbtn.on {
+	background: var(--accent);
+	color: var(--accent-ink);
+}
+.segbtn:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+.segbtn.fx.on {
+	background: var(--fx);
+	color: #fff;
+}
+.segbtn.fy.on {
+	background: var(--fy);
+	color: #fff;
+}
+.segbtn.fz.on {
+	background: var(--fz);
+	color: #fff;
+}

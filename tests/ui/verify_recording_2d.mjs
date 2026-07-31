@@ -44,7 +44,7 @@ async function runShortSim(p) {
 	await p.fill('input[type="password"]', PASS);
 	await p.click('button[type="submit"]');
 	await p.waitForTimeout(2500);
-	await p.locator('.card', { hasText: 'Recording' }).click();
+	await p.locator('.sidebar .navitem', { hasText: 'Record' }).click();
 	await p.waitForTimeout(1000);
 
 	// pick a real sample (typeahead) — auto-fills Ø

@@ -37,20 +37,17 @@ const PASS = process.env.FORCE_APP_PASSWORD || process.env.D1_ADMIN_PASSWORD || 
     await p.fill('input[type="password"]', PASS);
     await p.click('button[type="submit"]');
     await p.waitForTimeout(2500);
-    const onSelect = /\/select/.test(p.url());
-    const cards = await p.locator('.card').count();
-    const activeCards = await p.locator('.card.active').count();
-    console.log('reached /select:', onSelect, '| cards:', cards, '| active cards:', activeCards);
-    await p.screenshot({ path: 'tests/ui/force_app_select.png', fullPage: true });
-
-    await p.locator('.card.active').first().click();
+    // Lands in the sidebar shell; navigate to Plot.
+    const navItems = await p.locator('.sidebar .navitem').count();
+    console.log('sidebar nav items:', navItems);
+    await p.locator('.sidebar .navitem', { hasText: 'Plot' }).click();
     await p.waitForTimeout(4000);
     const onPlot = /\/plot/.test(p.url());
     // The dashboard mounts a sample/operation list; assert the explorer chrome is present.
     const explorer = await p.locator('.charts-col, .rowcard, .empty').count();
     console.log('reached /plot:', onPlot, '| explorer nodes:', explorer);
     await p.screenshot({ path: 'tests/ui/force_app_plot.png', fullPage: true });
-    ok = ok && onSelect && cards === 2 && activeCards === 2 && onPlot;
+    ok = ok && navItems === 4 && onPlot && explorer > 0;
   } else {
     console.log('(no FORCE_APP_EMAIL/PASSWORD — skipping authed tier; ran login-render checks only)');
   }

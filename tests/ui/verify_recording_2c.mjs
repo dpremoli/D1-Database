@@ -20,23 +20,22 @@ const PASS = process.env.FORCE_APP_PASSWORD || '';
 	await p.fill('input[type="password"]', PASS);
 	await p.click('button[type="submit"]');
 	await p.waitForTimeout(2500);
-	await p.locator('.card', { hasText: 'Recording' }).click();
+	await p.locator('.sidebar .navitem', { hasText: 'Lab Amp' }).click();
 	await p.waitForTimeout(1500);
 
-	const panel = await p.locator('.panel-frame', { hasText: 'Lab Amplifier' }).count();
-	const connected = await p.locator('.labamp .conn.ok').count();
-	const mock = await p.locator('.labamp .mock').count();
-	const rows = await p.locator('.labamp .sensors tbody tr').count();
-	console.log('labamp panel:', panel === 1, '| connected:', connected === 1, '| mock:', mock === 1, '| sensor rows:', rows);
-	ok = ok && panel === 1 && connected === 1 && mock === 1 && rows === 8;
+	const connected = await p.locator('.labamp-page .conn.ok').count();
+	const mock = await p.locator('.labamp-page .mock').count();
+	const rows = await p.locator('.labamp-page table tbody tr').count();
+	console.log('labamp page connected:', connected === 1, '| mock:', mock === 1, '| sensor rows:', rows);
+	ok = ok && connected === 1 && mock === 1 && rows === 8;
 
 	// mode round-trip
-	await p.locator('.labamp .seg button', { hasText: 'MEASURE' }).click();
+	await p.locator('.labamp-page .seg.big button', { hasText: 'MEASURE' }).click();
 	await p.waitForTimeout(500);
-	const measureOn = await p.locator('.labamp .seg button.on', { hasText: 'MEASURE' }).count();
-	await p.locator('.labamp .seg button', { hasText: 'RESET' }).click();
+	const measureOn = await p.locator('.labamp-page .seg.big button.on', { hasText: 'MEASURE' }).count();
+	await p.locator('.labamp-page .seg.big button', { hasText: 'RESET' }).click();
 	await p.waitForTimeout(500);
-	const resetOn = await p.locator('.labamp .seg button.on', { hasText: 'RESET' }).count();
+	const resetOn = await p.locator('.labamp-page .seg.big button.on', { hasText: 'RESET' }).count();
 	console.log('MEASURE set:', measureOn === 1, '| RESET set:', resetOn === 1);
 	ok = ok && measureOn === 1 && resetOn === 1;
 	await p.screenshot({ path: 'tests/ui/recording_2c_labamp.png', fullPage: true });

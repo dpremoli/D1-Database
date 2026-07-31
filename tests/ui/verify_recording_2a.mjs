@@ -25,7 +25,7 @@ async function setNum(p, labelText, value) {
 	await p.fill('input[type="password"]', PASS);
 	await p.click('button[type="submit"]');
 	await p.waitForTimeout(2500);
-	await p.locator('.card', { hasText: 'Recording' }).click();
+	await p.locator('.sidebar .navitem', { hasText: 'Record' }).click();
 	await p.waitForTimeout(1200);
 
 	const panels = await p.locator('.panel-frame').count();

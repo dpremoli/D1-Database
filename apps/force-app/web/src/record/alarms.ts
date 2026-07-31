@@ -101,3 +101,7 @@ export class AlarmController {
 		if (this.gain) this.gain.gain.value = 0;
 	}
 }
+
+// App-wide singleton: the Record page evaluates it on the live stream + shows the overlay, while
+// Settings > Alarms edits the same config.
+export const alarmController = new AlarmController();

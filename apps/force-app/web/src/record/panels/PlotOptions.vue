@@ -7,11 +7,6 @@ const maps = ['viridis', 'inferno', 'grayscale'];
 
 <template>
 	<div class="plot-opts">
-		<label>FRM / FFT axis
-			<div class="seg">
-				<button v-for="a in axes" :key="a" :class="{ on: w.plot.frmAxis === a }" @click="w.plot.frmAxis = a">{{ a }}</button>
-			</div>
-		</label>
 		<label>Colormap
 			<select v-model="w.plot.colormap"><option v-for="m in maps" :key="m">{{ m }}</option></select>
 		</label>

@@ -8,9 +8,16 @@ const w = useWorkspace();
 
 <template>
 	<div class="force-panel">
-		<div class="toggle">
-			<button :class="{ on: w.plot.forceMode === 'time' }" @click="w.plot.forceMode = 'time'">Force</button>
-			<button :class="{ on: w.plot.forceMode === 'fft' }" @click="w.plot.forceMode = 'fft'">FFT</button>
+		<div class="controls">
+			<div class="segmode">
+				<button class="segbtn" :class="{ on: w.plot.forceMode === 'time' }" @click="w.plot.forceMode = 'time'">Force</button>
+				<button class="segbtn" :class="{ on: w.plot.forceMode === 'fft' }" @click="w.plot.forceMode = 'fft'">FFT</button>
+			</div>
+			<div v-if="w.plot.forceMode === 'fft'" class="segmode">
+				<button class="segbtn fx" :class="{ on: w.plot.frmAxis === 'Fx' }" @click="w.plot.frmAxis = 'Fx'">Fx</button>
+				<button class="segbtn fy" :class="{ on: w.plot.frmAxis === 'Fy' }" @click="w.plot.frmAxis = 'Fy'">Fy</button>
+				<button class="segbtn fz" :class="{ on: w.plot.frmAxis === 'Fz' }" @click="w.plot.frmAxis = 'Fz'">Fz</button>
+			</div>
 		</div>
 		<div class="plot">
 			<LiveForcePlot v-show="w.plot.forceMode === 'time'" :client="w.client" />
@@ -21,9 +28,7 @@ const w = useWorkspace();
 
 <style scoped>
 .force-panel { display: flex; flex-direction: column; height: 100%; gap: 8px; }
-.toggle { display: flex; gap: 4px; }
-.toggle button { padding: 5px 12px; font-size: 12px; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
-.toggle button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; border-color: var(--accent); }
+.controls { display: flex; gap: 8px; align-items: center; }
 .plot { flex: 1; min-height: 0; position: relative; }
 .plot > * { position: absolute; inset: 0; }
 </style>
