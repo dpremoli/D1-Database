@@ -9,6 +9,7 @@ then interleaved float32 rows of n_cols columns. Column 0 is Time (s); columns 1
 signal channels in SIGNAL_CHANNELS order. Channel names + n_rows live in summary.json (kept out of
 the header to keep it fixed-size and memmap-friendly).
 """
+
 from __future__ import annotations
 
 import os

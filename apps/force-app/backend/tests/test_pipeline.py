@@ -1,13 +1,13 @@
 """End-to-end: run a short non-realtime session, then assert the finalized artifacts are correct
 and that the live_cache.bin parses back through the shared D1LC format."""
+
 import os
-import struct
 
 import numpy as np
 from scipy.io import loadmat
 
 from app import d1lc
-from app.config import RecordConfig, SIGNAL_CHANNELS
+from app.config import SIGNAL_CHANNELS, RecordConfig
 from app.session import RecordingSession
 from app.sources.sim import SimSource
 
@@ -15,13 +15,17 @@ from app.sources.sim import SimSource
 def test_session_source_start_failure(tmp_path):
     """A source whose start() raises (e.g. an invalid NI-DAQ device) must end in state=error, not
     hang or crash the worker (regression: consumer.join before start)."""
+
     class BoomSource:
         channels = list(SIGNAL_CHANNELS)
         rate = 1000.0
+
         def start(self):
             raise RuntimeError("Device identifier is invalid")
+
         def read(self):
             return None
+
         def stop(self):
             pass
 
@@ -34,8 +38,14 @@ def test_session_source_start_failure(tmp_path):
 
 
 def test_session_end_to_end(tmp_path):
-    cfg = RecordConfig(sample_rate=4000, duration_sec=1.0, rpm=1200, feed=0.05, diam=80,
-                       extra_metadata={"Insert": "CNMG-1204", "Tool": "PCLNR"})
+    cfg = RecordConfig(
+        sample_rate=4000,
+        duration_sec=1.0,
+        rpm=1200,
+        feed=0.05,
+        diam=80,
+        extra_metadata={"Insert": "CNMG-1204", "Tool": "PCLNR"},
+    )
     sess = RecordingSession(cfg, str(tmp_path), SimSource(cfg, realtime=False), broadcaster=None)
     sess.start()
     sess._thread.join(30)  # runs to natural completion (finite sim), then finalizes

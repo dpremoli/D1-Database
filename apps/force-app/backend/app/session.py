@@ -1,5 +1,6 @@
 """RecordingSession — owns one run's lifecycle: source → ring → consumers → live frames, then
 finalize on stop/completion. State machine: idle → recording → finalizing → done (or error)."""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +8,6 @@ import os
 import threading
 import time
 import uuid
-from typing import Optional
 
 import numpy as np
 from scipy import signal as ssig
@@ -23,31 +23,35 @@ from .stream.frame import encode_frame
 
 
 class RecordingSession:
-    def __init__(self, cfg: RecordConfig, captures_root: str, source,
-                 broadcaster: Optional[Broadcaster] = None):
+    def __init__(
+        self, cfg: RecordConfig, captures_root: str, source, broadcaster: Broadcaster | None = None
+    ):
         self.cfg = cfg
         self.id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
         self.dir = os.path.join(captures_root, self.id)
         os.makedirs(self.dir, exist_ok=True)
         self.broadcaster = broadcaster
         self.state = "idle"
-        self.error: Optional[str] = None
-        self.summary: Optional[dict] = None
+        self.error: str | None = None
+        self.summary: dict | None = None
         self.n_total = 0
         self.peaks = [0.0, 0.0, 0.0]
         self._t_last = 0.0
 
         self.source = source  # SimSource or ReplaySource (any AcquisitionSource)
         self.ring = Ring(maxsize=128)
-        self.raw = RawWriter(os.path.join(self.dir, "raw.d1raw"),
-                             n_cols=1 + len(self.source.channels), rate=self.source.rate,
-                             start_unix=time.time())
+        self.raw = RawWriter(
+            os.path.join(self.dir, "raw.d1raw"),
+            n_cols=1 + len(self.source.channels),
+            rate=self.source.rate,
+            start_unix=time.time(),
+        )
         self.decimator = Decimator(bins=2)
         self.frm = FrmIntegrator(cfg)
         self.cut = CutDetector(cfg, self.source.rate)
-        self.cut_started_t: Optional[float] = None
+        self.cut_started_t: float | None = None
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
         # Rolling window of the FRM axis (summed) for a live FFT, plus a wall-clock throttle.
         self._fft_axis = cfg.axis if cfg.axis in ("Fx", "Fy", "Fz") else "Fz"
@@ -71,7 +75,9 @@ class RecordingSession:
     def _run(self) -> None:
         # Start the consumer FIRST so it's always joinable — if source.start() raises (e.g. an
         # invalid NI-DAQ device), ring.close() below unblocks it cleanly.
-        consumer = threading.Thread(target=self._consume, name=f"rec-consume-{self.id}", daemon=True)
+        consumer = threading.Thread(
+            target=self._consume, name=f"rec-consume-{self.id}", daemon=True
+        )
         consumer.start()
         try:
             self.source.start()
@@ -99,8 +105,15 @@ class RecordingSession:
             else:
                 # Nothing captured (e.g. the source failed to start) — don't finalize an empty file.
                 self.state = "error" if self.error else "done"
-            self._publish_control({"type": "done", "id": self.id, "state": self.state,
-                                   "error": self.error, "summary": self.summary})
+            self._publish_control(
+                {
+                    "type": "done",
+                    "id": self.id,
+                    "state": self.state,
+                    "error": self.error,
+                    "summary": self.summary,
+                }
+            )
 
     def _consume(self) -> None:
         seq = 0
@@ -109,11 +122,11 @@ class RecordingSession:
             if item is None:
                 break
             t, data = item
-            self.raw.append(t, data)                  # never dropped — source of truth
+            self.raw.append(t, data)  # never dropped — source of truth
             axes = sum_axes(data)
             for i, ax in enumerate(("Fx", "Fy", "Fz")):
                 self.peaks[i] = max(self.peaks[i], float(np.max(np.abs(axes[ax]))))
-            # Causal cut-start detection: reset the FRM spiral origin + tell the UI when the cut begins.
+            # Causal cut-start detection: reset the FRM spiral origin + tell the UI when it begins.
             ct = self.cut.update(t, np.abs(axes["Fz"]))
             if ct is not None:
                 self.cut_started_t = ct
@@ -124,7 +137,9 @@ class RecordingSession:
             self.n_total += t.size
             self._t_last = float(t[-1])
             if self.broadcaster is not None:
-                frame = encode_frame(seq, self._t_last, rpm, tuple(self.peaks), self.n_total, trace, pts)
+                frame = encode_frame(
+                    seq, self._t_last, rpm, tuple(self.peaks), self.n_total, trace, pts
+                )
                 self.broadcaster.publish(frame)
             self._update_fft(axes)
             seq += 1
@@ -137,7 +152,7 @@ class RecordingSession:
         y = axes.get(self._fft_axis)
         if y is None:
             return
-        self._fft_buf = np.concatenate([self._fft_buf, y])[-self._fft_cap:]
+        self._fft_buf = np.concatenate([self._fft_buf, y])[-self._fft_cap :]
         now = time.perf_counter()
         if now - self._fft_last < 0.3 or self._fft_buf.size < 256:
             return
@@ -147,8 +162,14 @@ class RecordingSession:
         f, p = ssig.welch(self._fft_buf, fs=fs, nperseg=nper)
         amp = np.sqrt(p)
         step = max(1, f.size // 240)
-        self._publish_control({"type": "fft", "axis": self._fft_axis,
-                               "f": f[::step].round(2).tolist(), "amp": amp[::step].tolist()})
+        self._publish_control(
+            {
+                "type": "fft",
+                "axis": self._fft_axis,
+                "f": f[::step].round(2).tolist(),
+                "amp": amp[::step].tolist(),
+            }
+        )
 
     def _publish_control(self, msg: dict) -> None:
         if self.broadcaster is not None:
@@ -157,8 +178,11 @@ class RecordingSession:
     # ---- status ----
     def status(self) -> dict:
         return {
-            "id": self.id, "state": self.state, "error": self.error,
-            "elapsed_sec": round(self._t_last, 3), "n_total": self.n_total,
+            "id": self.id,
+            "state": self.state,
+            "error": self.error,
+            "elapsed_sec": round(self._t_last, 3),
+            "n_total": self.n_total,
             "peaks": {"Fx": self.peaks[0], "Fy": self.peaks[1], "Fz": self.peaks[2]},
             "config": self.cfg.model_dump(),
         }

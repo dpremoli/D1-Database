@@ -1,4 +1,5 @@
 """Binary format round-trips: D1LC, D1RW, D1LF."""
+
 import numpy as np
 
 from app import d1lc, d1rw
@@ -8,11 +9,17 @@ from app.stream.frame import decode_frame, encode_frame
 def test_d1lc_roundtrip(tmp_path):
     n = 1000
     t = np.linspace(0, 1, n).astype(np.float32)
-    fx, fy, fz = (np.sin(t) * 10).astype(np.float32), (np.cos(t) * 20).astype(np.float32), (t * 30).astype(np.float32)
+    fx, fy, fz = (
+        (np.sin(t) * 10).astype(np.float32),
+        (np.cos(t) * 20).astype(np.float32),
+        (t * 30).astype(np.float32),
+    )
     rpm = np.full(n, 1200.0, np.float32)
     revs = np.cumsum(rpm / 60.0 / n).astype(np.float32)
     p = tmp_path / "lc.bin"
-    d1lc.write_d1lc(str(p), t, fx, fy, fz, rpm, revs, fs=1000, feed=0.05, diam=80, cs_sec=0.1, ce_sec=0.9)
+    d1lc.write_d1lc(
+        str(p), t, fx, fy, fz, rpm, revs, fs=1000, feed=0.05, diam=80, cs_sec=0.1, ce_sec=0.9
+    )
     buf = p.read_bytes()
     hdr = d1lc.read_d1lc_header(buf)
     assert hdr["n"] == n and hdr["version"] == 1
@@ -45,7 +52,9 @@ def test_d1rw_roundtrip(tmp_path):
 def test_d1lf_roundtrip():
     trace = np.arange(2 * 7, dtype=np.float32).reshape(2, 7)
     pts = np.arange(5 * 3, dtype=np.float32).reshape(5, 3)
-    buf = encode_frame(seq=7, t_sec=1.5, rpm=1200.0, peaks=(1, 2, 3), n_total=999, trace=trace, pts=pts)
+    buf = encode_frame(
+        seq=7, t_sec=1.5, rpm=1200.0, peaks=(1, 2, 3), n_total=999, trace=trace, pts=pts
+    )
     d = decode_frame(buf)
     assert d["seq"] == 7 and d["n_total"] == 999 and abs(d["rpm"] - 1200) < 1e-3
     assert d["peaks"] == (1, 2, 3)

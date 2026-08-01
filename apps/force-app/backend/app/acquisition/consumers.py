@@ -1,9 +1,8 @@
 """Streaming consumers: min/max decimation for the rolling plot, and the stateful FRM spiral
 integrator for the live fingerprint. Both operate per chunk; the RawWriter (app/d1rw.py) is the
 third consumer and is driven directly by the session so raw data is never dropped."""
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 import numpy as np
 
@@ -14,22 +13,28 @@ from ..dsp import rpm_from_tacho
 class CutDetector:
     """Causal (real-time) cut-start detection on |Fz|. Unlike the offline detector (which uses a
     fraction of the FULL-signal peak), this can't see the future — so it uses a short leading
-    baseline (assumed air-cut) to set an adaptive threshold, or an absolute force floor. Fires once."""
+    baseline (assumed air-cut) to set an adaptive threshold, or an absolute force floor. Once."""
 
-    def __init__(self, cfg: RecordConfig, fs: float, baseline_sec: float = 0.15,
-                 margin_std: float = 6.0, margin_abs: float = 8.0):
-        self.floor = float(cfg.cut_detect_force)          # >0 => absolute threshold
+    def __init__(
+        self,
+        cfg: RecordConfig,
+        fs: float,
+        baseline_sec: float = 0.15,
+        margin_std: float = 6.0,
+        margin_abs: float = 8.0,
+    ):
+        self.floor = float(cfg.cut_detect_force)  # >0 => absolute threshold
         self.baseline_target = int(max(1, baseline_sec * fs))
         self.margin_std = margin_std
         self.margin_abs = margin_abs
         self._bn = 0
         self._bsum = 0.0
         self._bsq = 0.0
-        self._thr: Optional[float] = None
+        self._thr: float | None = None
         self.detected = False
-        self.cut_t: Optional[float] = None
+        self.cut_t: float | None = None
 
-    def update(self, t: np.ndarray, fz_abs: np.ndarray) -> Optional[float]:
+    def update(self, t: np.ndarray, fz_abs: np.ndarray) -> float | None:
         """Feed one chunk; returns the cut time (s) if detected this call, else None."""
         if self.detected or fz_abs.size == 0:
             return None
@@ -45,7 +50,7 @@ class CutDetector:
                 mean = self._bsum / self._bn
                 std = (max(0.0, self._bsq / self._bn - mean * mean)) ** 0.5
                 self._thr = mean + max(self.margin_abs, self.margin_std * std)
-            return None                                    # don't detect while/just as baseline forms
+            return None  # don't detect while/just as baseline forms
         exceed = np.flatnonzero(fz_abs > thr)
         if exceed.size:
             self.detected = True
@@ -58,7 +63,7 @@ class Decimator:
     """Min/max envelope of the summed axes, so the rolling plot shows peaks regardless of Fs.
 
     Per chunk, split into `bins` windows and emit, per window, the min and max of Fx/Fy/Fz plus the
-    window centre time. Output is a (bins, 7) float32 array: [t, fxmin,fxmax, fymin,fymax, fzmin,fzmax].
+    window centre time. Output is a (bins, 7) float32 array: [t, fxminmax, fyminmax, fzminmax].
     """
 
     def __init__(self, bins: int = 2):
@@ -90,15 +95,15 @@ class FrmIntegrator:
         self.fs = float(cfg.sample_rate)
         self.r_outer = cfg.diam / 2.0
         self.r_inner = cfg.inner_diam / 2.0 if cfg.inner_diam > 0 else 0.0
-        self._theta = 0.0     # accumulated spindle angle (rad)
-        self._rho_off = 0.0   # accumulated inward wind (mm, negative)
+        self._theta = 0.0  # accumulated spindle angle (rad)
+        self._rho_off = 0.0  # accumulated inward wind (mm, negative)
         self._last_rpm = cfg.rpm
         # When frm_from_cut, the spiral is held at the origin until the cut start is detected, so
         # air-cut revolutions don't offset the geometry (the FRM assumes the cut starts at the rim).
         self._active = not cfg.frm_from_cut
 
     def mark_cut_start(self) -> None:
-        """Reset the spiral origin (θ=0, ρ=r_outer) at the detected cut start and begin accumulating."""
+        """Reset the spiral origin (θ=0, ρ=r_outer) at the detected cut start, then accumulate."""
         self._theta = 0.0
         self._rho_off = 0.0
         self._active = True

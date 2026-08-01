@@ -1,15 +1,17 @@
 """Signal math: channel summing, tacho→RPM, FRM spiral."""
+
 import numpy as np
 
 from app.config import SIGNAL_CHANNELS
-from app.dsp import frm_spiral, rpm_from_tacho, sum_axes, tacho_column
+from app.dsp import frm_spiral, rpm_from_tacho, sum_axes
 
 
 def test_sum_axes():
     n = 100
     sig = np.zeros((n, len(SIGNAL_CHANNELS)))
     col = {c: i for i, c in enumerate(SIGNAL_CHANNELS)}
-    sig[:, col["Fx1"]] = 1.0; sig[:, col["Fx2"]] = 2.0
+    sig[:, col["Fx1"]] = 1.0
+    sig[:, col["Fx2"]] = 2.0
     sig[:, col["Fz1"]] = sig[:, col["Fz2"]] = sig[:, col["Fz3"]] = sig[:, col["Fz4"]] = 5.0
     axes = sum_axes(sig)
     assert np.allclose(axes["Fx"], 3.0) and np.allclose(axes["Fz"], 20.0)

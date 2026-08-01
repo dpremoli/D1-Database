@@ -1,5 +1,6 @@
 """REST wiring: start → run to completion → captures endpoints serve the artifacts.
 (WebSocket streaming is covered by the frontend end-to-end test.)"""
+
 import time
 
 from fastapi.testclient import TestClient
@@ -12,7 +13,9 @@ from app.main import app as fastapi_app
 def test_start_run_and_serve(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
     with TestClient(fastapi_app) as client:
-        r = client.post("/record/start", json={"sample_rate": 2000, "duration_sec": 0.4, "rpm": 1200})
+        r = client.post(
+            "/record/start", json={"sample_rate": 2000, "duration_sec": 0.4, "rpm": 1200}
+        )
         assert r.status_code == 200, r.text
         cid = r.json()["id"]
 

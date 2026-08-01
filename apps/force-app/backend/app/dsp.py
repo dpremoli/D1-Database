@@ -3,6 +3,7 @@ spiral geometry. Mirrors scripts/matlab/process_force.m and the MATLAB app's Liv
 live spiral and the finalized live_cache use identical geometry. Pure NumPy (2a); the hot paths
 can move to abfp_core later without changing these signatures.
 """
+
 from __future__ import annotations
 
 import numpy as np

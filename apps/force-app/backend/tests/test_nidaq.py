@@ -1,8 +1,9 @@
 """NidaqSource logic with a fake DAQ task/reader (real hardware is validated on the rig)."""
+
 import numpy as np
 import pytest
 
-from app.config import RecordConfig, SIGNAL_CHANNELS
+from app.config import SIGNAL_CHANNELS, RecordConfig
 from app.sources.nidaq import NidaqSource, nidaq_available
 
 
@@ -44,8 +45,8 @@ def test_shape_and_index_advance():
     assert data.shape == (src.chunk, len(SIGNAL_CHANNELS))  # (n, 9)
     assert t.size == src.chunk
     t2, _ = src.read()
-    assert t2[0] > t[-1]                                   # sample index advances
-    assert np.allclose(np.diff(t), 1.0 / src.rate)         # uniform at the configured rate
+    assert t2[0] > t[-1]  # sample index advances
+    assert np.allclose(np.diff(t), 1.0 / src.rate)  # uniform at the configured rate
 
 
 def test_stop_ends_stream_and_closes_task():
@@ -53,13 +54,15 @@ def test_stop_ends_stream_and_closes_task():
     src.start()
     src.read()
     src.stop()
-    assert src.read() is None                              # no more data after stop
+    assert src.read() is None  # no more data after stop
 
 
 def test_channel_count_mismatch_rejected():
     cfg = RecordConfig(sample_rate=1000, source="nidaq")
     with pytest.raises(ValueError):
-        NidaqSource(cfg, physical_channels=["Dev1/ai0", "Dev1/ai1"], _task=FakeTask(), _reader=FakeReader())
+        NidaqSource(
+            cfg, physical_channels=["Dev1/ai0", "Dev1/ai1"], _task=FakeTask(), _reader=FakeReader()
+        )
 
 
 def test_nidaq_available_is_bool():
