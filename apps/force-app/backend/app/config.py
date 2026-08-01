@@ -60,3 +60,13 @@ class RecordConfig(BaseModel):
     source: str = "sim"
     # NI-DAQ physical channel strings mapped 1:1 onto SIGNAL_CHANNELS (source="nidaq").
     nidaq_channels: list[str] = Field(default_factory=lambda: list(DEFAULT_NIDAQ_CHANNELS))
+
+    # Optional linear drift compensation applied to the .mat + live_cache outputs (like the MATLAB
+    # app). The raw .d1raw is ALWAYS saved un-compensated (source of truth).
+    drift_comp: bool = False
+    # Live FRM: begin the spiral at the detected cut start (so air-cut revolutions don't offset the
+    # geometry). Cut start is detected causally on the live stream; the SAVED cut window is detected
+    # on the full signal in finalize.
+    frm_from_cut: bool = True
+    # Absolute cut-detect force threshold (N) on |Fz|; 0 = adaptive (baseline mean + margin).
+    cut_detect_force: float = 0.0

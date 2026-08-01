@@ -12,6 +12,7 @@ import os
 
 import numpy as np
 from scipy.io import savemat
+from scipy.signal import detrend
 
 from .config import RecordConfig, SIGNAL_CHANNELS
 from .d1lc import write_d1lc
@@ -43,6 +44,11 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     signals = signals.copy()
     # Apply dyno gain to the 8 charge channels (Tacho is the last column — leave it).
     signals[:, :8] *= gain
+
+    # Optional linear drift compensation on the 8 dyno channels (like the MATLAB app's driftComp).
+    # Only affects the derived outputs (.mat DATA + live_cache); the raw .d1raw is never touched.
+    if cfg.drift_comp and n > 1:
+        signals[:, :8] = detrend(signals[:, :8], axis=0, type="linear")
 
     axes = sum_axes(signals)
     tacho = tacho_column(signals)
@@ -97,6 +103,7 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         "channels": VAR_NAMES,
         "peaks": {ax: float(np.max(np.abs(axes[ax]))) for ax in ("Fx", "Fy", "Fz")},
         "cut_window_sec": [cs_sec, ce_sec],
+        "drift_comp": bool(cfg.drift_comp),
         "metadata": cfg.extra_metadata or {},
         "config": cfg.model_dump(),
         "files": {"mat": "capture.mat", "live_cache": "live_cache.bin", "raw": "raw.d1raw"},

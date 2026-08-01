@@ -61,6 +61,11 @@ onMounted(() => { if (w.source.value === 'replay') w.searchCuts(''); });
 			<label>Replay speed ×<input type="number" v-model.number="w.replay.speed" min="1" :disabled="w.locked.value" /></label>
 		</template>
 
+		<div v-if="w.source.value !== 'replay'" class="proc">
+			<label class="chk"><input type="checkbox" v-model="w.cfg.frm_from_cut" :disabled="w.locked.value" /> Detect cut start (live FRM begins at the cut)</label>
+			<label class="chk"><input type="checkbox" v-model="w.cfg.drift_comp" :disabled="w.locked.value" /> Drift compensation <span class="sub">(saved outputs only — raw stays raw)</span></label>
+		</div>
+
 		<div class="actions">
 			<button v-if="!w.locked.value" class="btn start" :disabled="w.busy.value || !w.st.connected" @click="w.start()">
 				<span class="material-symbols-rounded">fiber_manual_record</span> Start
@@ -98,6 +103,9 @@ input:disabled, textarea:disabled { opacity: 0.55; }
 .sub { color: var(--text-dim); font-weight: 400; font-size: 10.5px; }
 .hint.warn { display: flex; align-items: flex-start; gap: 5px; color: #fbbf24; }
 .hint.warn .material-symbols-rounded { font-size: 15px; margin-top: 1px; }
+.proc { display: flex; flex-direction: column; gap: 7px; padding: 8px 0 2px; border-top: 1px solid var(--border); }
+.proc .chk { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); cursor: pointer; }
+.proc .chk input { accent-color: var(--accent); }
 .cutlist { max-height: 160px; overflow: auto; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: 8px; padding: 5px; }
 .cut { text-align: left; padding: 6px 8px; font-size: 12px; font-family: var(--mono); color: var(--text); background: transparent; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
 .cut:hover { background: var(--surface); }

@@ -70,6 +70,7 @@ onBeforeUnmount(() => w.client.disconnect());
 			<div class="readouts">
 				<div class="ro"><span>State</span><b :class="st.state">{{ st.state }}</b></div>
 				<div class="ro"><span>Elapsed</span><b>{{ st.tSec.toFixed(2) }}s</b></div>
+				<div class="ro"><span>Cut</span><b :class="{ cut: st.cutStartSec !== null }">{{ st.cutStartSec !== null ? st.cutStartSec.toFixed(2) + 's' : '—' }}</b></div>
 				<div class="ro"><span>RPM</span><b>{{ Math.round(st.rpm) }}</b></div>
 				<div class="ro"><span>Samples</span><b>{{ st.nTotal.toLocaleString() }}</b></div>
 				<div class="ro"><span>Fx</span><b class="fx">{{ st.peaks.Fx.toFixed(1) }}</b></div>
@@ -127,6 +128,7 @@ onBeforeUnmount(() => w.client.disconnect());
 .ro span { font-size: 9.5px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
 .ro b { font-size: 13px; font-variant-numeric: tabular-nums; }
 .ro b.recording { color: #fbbf24; } .ro b.done { color: #4ade80; } .ro b.error { color: var(--danger); }
+.ro b.cut { color: #4ade80; }
 .ro b.fx { color: #f87171; } .ro b.fy { color: #4ade80; } .ro b.fz { color: #60a5fa; }
 .syncchip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 8px; font-size: 12px; font-weight: 600; border: 1px solid var(--border); }
 .syncchip .material-symbols-rounded { font-size: 16px; }

@@ -19,12 +19,13 @@ export interface LiveStatus {
 	error: string | null;
 	captureId: string | null;
 	summary: any | null;
+	cutStartSec: number | null;   // detected cut start (2f) — null until the cut begins
 }
 
 export class RecordClient {
 	status = reactive<LiveStatus>({
 		connected: false, state: 'idle', seq: 0, tSec: 0, rpm: 0,
-		peaks: { Fx: 0, Fy: 0, Fz: 0 }, nTotal: 0, error: null, captureId: null, summary: null,
+		peaks: { Fx: 0, Fy: 0, Fz: 0 }, nTotal: 0, error: null, captureId: null, summary: null, cutStartSec: null,
 	});
 	// bump each frame so widgets can watch cheaply
 	frameSeq = ref(0);
@@ -68,6 +69,8 @@ export class RecordClient {
 		} else if (msg.type === 'fft') {
 			this.fft = { axis: msg.axis, f: msg.f, amp: msg.amp };
 			this.fftSeq.value++;
+		} else if (msg.type === 'cutstart') {
+			this.status.cutStartSec = msg.t;
 		}
 	}
 
@@ -171,7 +174,7 @@ export class RecordClient {
 		this.fft = null; this.fftSeq.value++;
 		this.status.state = 'idle'; this.status.error = null; this.status.summary = null;
 		this.status.captureId = null; this.status.nTotal = 0; this.status.tSec = 0;
-		this.status.peaks = { Fx: 0, Fy: 0, Fz: 0 };
+		this.status.peaks = { Fx: 0, Fy: 0, Fz: 0 }; this.status.cutStartSec = null;
 		this.frameSeq.value++;
 	}
 

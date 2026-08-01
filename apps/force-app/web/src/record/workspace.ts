@@ -26,6 +26,8 @@ export function createWorkspace() {
 	const cfg = reactive({
 		rpm: 1200, feed: 0.05, diam: 80, inner_diam: 0,
 		sample_rate: 25000, duration_sec: 8, ppr: 1,
+		drift_comp: false,   // optional drift compensation on the saved .mat/live_cache (raw stays raw)
+		frm_from_cut: true,  // live FRM begins at the detected cut start
 	});
 	const meta = reactive<Record<string, string>>({
 		sample_name: 'SIM-CUT-001', sample_code: '', operation: '', op_type: '',

@@ -12,7 +12,7 @@ from typing import Optional
 import numpy as np
 from scipy import signal as ssig
 
-from .acquisition.consumers import Decimator, FrmIntegrator
+from .acquisition.consumers import CutDetector, Decimator, FrmIntegrator
 from .acquisition.ring import Ring
 from .config import RecordConfig
 from .d1rw import RawWriter
@@ -44,6 +44,8 @@ class RecordingSession:
                              start_unix=time.time())
         self.decimator = Decimator(bins=2)
         self.frm = FrmIntegrator(cfg)
+        self.cut = CutDetector(cfg, self.source.rate)
+        self.cut_started_t: Optional[float] = None
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -111,6 +113,12 @@ class RecordingSession:
             axes = sum_axes(data)
             for i, ax in enumerate(("Fx", "Fy", "Fz")):
                 self.peaks[i] = max(self.peaks[i], float(np.max(np.abs(axes[ax]))))
+            # Causal cut-start detection: reset the FRM spiral origin + tell the UI when the cut begins.
+            ct = self.cut.update(t, np.abs(axes["Fz"]))
+            if ct is not None:
+                self.cut_started_t = ct
+                self.frm.mark_cut_start()
+                self._publish_control({"type": "cutstart", "t": ct})
             trace = self.decimator.process(t, axes)
             pts, rpm = self.frm.process(t, axes, tacho_column(data))
             self.n_total += t.size

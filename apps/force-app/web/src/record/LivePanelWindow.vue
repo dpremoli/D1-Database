@@ -36,6 +36,7 @@ onBeforeUnmount(() => client.disconnect());
 				<span class="material-symbols-rounded">{{ st.connected ? 'sensors' : 'sensors_off' }}</span>
 			</span>
 			<div class="readouts">
+				<template v-if="st.cutStartSec !== null"><b class="cut">✓ cut</b><span>{{ st.cutStartSec.toFixed(2) }}s</span></template>
 				<b>{{ Math.round(st.rpm) }}</b><span>rpm</span>
 				<b class="fz">{{ st.peaks.Fz.toFixed(0) }}</b><span>Fz peak</span>
 			</div>
@@ -64,6 +65,7 @@ onBeforeUnmount(() => client.disconnect());
 .readouts { margin-left: auto; display: flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .readouts b { font-size: 15px; color: var(--text); }
 .readouts b.fz { color: #60a5fa; }
+.readouts b.cut { color: #4ade80; font-size: 13px; }
 .body { flex: 1; min-height: 0; padding: 12px; }
 .body > * { height: 100%; }
 </style>

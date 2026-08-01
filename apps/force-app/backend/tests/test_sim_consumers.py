@@ -42,7 +42,8 @@ def test_decimator_minmax():
 
 
 def test_frm_integrator_continuity():
-    cfg = RecordConfig(sample_rate=5000, duration_sec=2.0, rpm=1500, feed=0.05)
+    # frm_from_cut=False integrates from t=0 (this test checks the continuous integration itself).
+    cfg = RecordConfig(sample_rate=5000, duration_sec=2.0, rpm=1500, feed=0.05, frm_from_cut=False)
     src = SimSource(cfg, realtime=False)
     frm = FrmIntegrator(cfg)
     total_pts = 0
