@@ -3,14 +3,31 @@
 // settings reference explaining each parameter with recommended values. Talks to the backend
 // /labamp/* (which proxies the link-local amp; mock by default so this works without hardware).
 import { onMounted, reactive, ref } from 'vue';
-import { labamp, type LabAmpStatus, type SensorRow } from '../record/labampApi';
+import { labamp, type AutoRangeRec, type LabAmpStatus, type SensorRow } from '../record/labampApi';
 
 const status = ref<LabAmpStatus | null>(null);
 const sensors = ref<SensorRow[]>([]);
 const busy = ref(false);
 const err = ref<string | null>(null);
-const cfg = reactive({ base_url: '', channels: 8, mode: 'mock' });
+const cfg = reactive({ base_url: '', channels: 8, mode: 'mock', autorange_headroom: 1.5 });
 const savedCfg = ref(false);
+
+// Auto-range
+const headroom = ref(1.5);
+const recs = ref<AutoRangeRec[] | null>(null);
+const arStatus = ref<Record<string, string> | null>(null);
+const arBusy = ref(false);
+async function measure() {
+	arBusy.value = true; err.value = null; arStatus.value = null;
+	try { recs.value = (await labamp.autorange(headroom.value)).recommendations; }
+	catch (e: any) { err.value = e?.message || 'measure failed'; } finally { arBusy.value = false; }
+}
+async function applyRanges() {
+	arBusy.value = true; err.value = null;
+	try { const r = await labamp.autorangeApply(headroom.value); recs.value = r.applied; arStatus.value = r.status; await refresh(); }
+	catch (e: any) { err.value = e?.message || 'apply failed'; } finally { arBusy.value = false; }
+}
+function fmtRes(x: number) { return x >= 1 ? x.toFixed(2) : x >= 0.001 ? x.toFixed(4) : x.toExponential(1); }
 
 async function refresh() {
 	busy.value = true; err.value = null;
@@ -93,6 +110,34 @@ onMounted(refresh);
 			</section>
 
 			<section class="card wide">
+				<h2>Auto-range</h2>
+				<p class="hint">Pick the smallest measuring range that clears the measured peak with headroom — this
+					maximises the ADC bits the signal uses (the 5167A is 24-bit, so resolution ≈ range / 2²³). Too large a
+					range wastes resolution; too small clips (the amp reports <code>OR_INPUT</code>/<code>OR_ADC</code>).
+					<b>Workflow:</b> RESET → MEASURE, run a representative test cut, then Measure &amp; recommend.</p>
+				<div class="ar-controls">
+					<label>Headroom ×<input type="number" step="0.1" min="1" v-model.number="headroom" /></label>
+					<button class="btn ghost" :disabled="arBusy || !status?.reachable" @click="measure">Measure &amp; recommend</button>
+					<button class="btn save" :disabled="arBusy || !recs" @click="applyRanges">Apply recommended ranges</button>
+				</div>
+				<table v-if="recs">
+					<thead><tr><th>Ch</th><th>Peak (N)</th><th>Current</th><th>Recommended</th><th>Resolution (N/LSB)</th><th>Bits used</th><th></th></tr></thead>
+					<tbody>
+						<tr v-for="r in recs" :key="r.channel" :class="{ clip: r.would_clip }">
+							<td>{{ r.channel }}</td><td>{{ r.peak.toFixed(1) }}</td><td>{{ r.current ?? '—' }}</td>
+							<td><b>{{ r.recommended }}</b></td><td>{{ fmtRes(r.resolution) }}</td>
+							<td>{{ r.bits_used }} / 24</td>
+							<td>
+								<span v-if="r.would_clip" class="tag clip">clips now</span>
+								<span v-else-if="arStatus && arStatus[r.channel] && arStatus[r.channel] !== 'OK'" class="tag or">{{ arStatus[r.channel] }}</span>
+								<span v-else-if="arStatus" class="tag ok">OK</span>
+							</td>
+						</tr>
+					</tbody>
+				</table>
+			</section>
+
+			<section class="card wide">
 				<h2>Settings reference</h2>
 				<div v-for="r in reference" :key="r.name" class="ref">
 					<div class="ref-name">{{ r.name }}</div>
@@ -133,6 +178,13 @@ input, select { display: block; width: 100%; margin-top: 4px; padding: 8px 10px;
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
 th { color: var(--text-dim); font-weight: 600; }
+.ar-controls { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 12px; }
+.ar-controls label { margin: 0; }
+.ar-controls input { width: 90px; }
+tr.clip td { background: rgba(239,68,68,0.08); }
+.tag { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 10px; }
+.tag.ok { color: #4ade80; background: rgba(74,222,128,0.12); }
+.tag.clip, .tag.or { color: #fca5a5; background: rgba(252,165,165,0.12); }
 .ref { padding: 10px 0; border-bottom: 1px solid var(--border); }
 .ref:last-child { border-bottom: 0; }
 .ref-name { font-size: 13.5px; font-weight: 640; color: var(--text); }

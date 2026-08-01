@@ -30,6 +30,8 @@ class LabAmp(Protocol):
     def sensor_table(self, channels: int) -> list[dict]: ...
     def export_params(self) -> dict: ...
     def signal_get(self, channels: list[int]) -> list[dict]: ...
+    def set_range(self, channel: int, value: float) -> None: ...
+    def channel_status(self, channels: int) -> dict[int, str]: ...
 
 
 class LabAmpClient:
@@ -100,14 +102,31 @@ class LabAmpClient:
         data = self._post("/api/$/signal/get", {"type": "SENSOR", "channels": channels})
         return data.get("items", [])
 
+    def set_range(self, channel: int, value: float) -> None:
+        self.set_params({f"/sensor/{channel}/range": value})
+
+    def channel_status(self, channels: int) -> dict[int, str]:
+        """Per-channel status (OK / OR_ADC / OR_INPUT …) via /api/$/status/channel."""
+        data = self._post("/api/$/status/channel", {"type": "SENSOR", "channels": list(range(1, channels + 1))})
+        out: dict[int, str] = {}
+        for it in data.get("items", data.get("channels", [])):
+            if isinstance(it, dict) and "channel" in it:
+                out[int(it["channel"])] = str(it.get("status", "OK"))
+        return out
+
 
 class MockLabAmp:
     """In-memory stand-in returning realistic canned data, so the UI works without hardware."""
+
+    # Per-channel simulated cut peaks (N) so the auto-range demo is realistic (Fx/Fy sub-channels
+    # ~40 N, Fz sub-channels ~90 N). Default ranges start deliberately over-ranged (10000 N).
+    _PEAKS = {1: 41.0, 2: 39.0, 3: 55.0, 4: 53.0, 5: 92.0, 6: 88.0, 7: 90.0, 8: 91.0}
 
     def __init__(self, base_url: str = "mock://labamp"):
         self.base_url = base_url
         self.mock = True
         self._mode = "RESET"
+        self._ranges: dict[int, float] = {i: 10000.0 for i in range(1, 9)}
 
     def ping(self) -> bool:
         return True
@@ -132,13 +151,31 @@ class MockLabAmp:
                 "serialNumber": f"KIS{4200 + i}",
                 "physicalQuantity": "Force",
                 "sensitivity": sens.get(i, -5.0),
-                "range": 10000,
+                "range": self._ranges.get(i, 10000.0),
             })
         return rows
 
     def export_params(self) -> dict:
-        return {"device": {"model": "5167A81", "firmware": "1.2.5 (mock)"}, "operationMode": self._mode}
+        return {"device": {"model": "5167A81", "firmware": "1.2.5 (mock)"}, "operationMode": self._mode,
+                "ranges": dict(self._ranges)}
 
     def signal_get(self, channels: list[int]) -> list[dict]:
-        import random
-        return [{"channel": ch, "live": [round(random.uniform(-5, 5), 3)], "max": [5.0], "min": [-5.0], "rms": [2.5], "type": "SENSOR"} for ch in channels]
+        out = []
+        for ch in channels:
+            pk = self._PEAKS.get(ch, 50.0)
+            out.append({"channel": ch, "live": [round(0.6 * pk, 3)], "max": [pk], "min": [-pk],
+                        "rms": [round(0.5 * pk, 3)], "type": "SENSOR"})
+        return out
+
+    def set_range(self, channel: int, value: float) -> None:
+        self._ranges[int(channel)] = float(value)
+
+    def set_params(self, values: dict) -> None:
+        for k, v in values.items():
+            if k.startswith("/sensor/") and k.endswith("/range"):
+                self._ranges[int(k.split("/")[2])] = float(v)
+
+    def channel_status(self, channels: int) -> dict[int, str]:
+        # OR_INPUT if the (simulated) peak exceeds the currently-set range.
+        return {i: ("OR_INPUT" if self._PEAKS.get(i, 0) > self._ranges.get(i, 1e9) else "OK")
+                for i in range(1, channels + 1)}

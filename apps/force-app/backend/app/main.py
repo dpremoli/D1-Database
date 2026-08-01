@@ -21,6 +21,7 @@ from starlette.concurrency import run_in_threadpool
 from .config import RecordConfig
 from .d1lc import read_d1lc_header
 from .labamp import LabAmpClient, LabAmpError, MockLabAmp
+from .labamp_autorange import ADC_BITS, recommend_ranges
 from .session import RecordingSession
 from .sources.replay import ReplaySource
 from .sources.sim import SimSource
@@ -45,6 +46,7 @@ def _load_labamp_config() -> dict:
         "base_url": os.environ.get("LABAMP_URL", "http://169.254.143.59"),
         "channels": int(os.environ.get("LABAMP_CHANNELS", "8")),
         "mode": os.environ.get("LABAMP_MODE", "mock"),  # "mock" | "real"
+        "autorange_headroom": float(os.environ.get("LABAMP_AUTORANGE_HEADROOM", "1.5")),
     }
     try:
         with open(LABAMP_CONFIG_PATH) as f:
@@ -234,6 +236,53 @@ async def labamp_export() -> JSONResponse:
         raise HTTPException(502, str(e))
 
 
+# ---- Auto-range: drive the amp's measuring range from the measured signal ----
+def _measure_peaks(amp, channels: int) -> list[float]:
+    """Per-channel peak magnitude (N) from the amp's live max/min (run a representative cut first)."""
+    items = amp.signal_get(list(range(1, channels + 1)))
+    by_ch: dict[int, float] = {}
+    for it in items:
+        ch = int(it.get("channel", 0))
+        mx = abs(float((it.get("max") or [0])[0]))
+        mn = abs(float((it.get("min") or [0])[0]))
+        by_ch[ch] = max(mx, mn)
+    return [by_ch.get(i, 0.0) for i in range(1, channels + 1)]
+
+
+def _current_ranges(amp, channels: int) -> list:
+    rows = amp.sensor_table(channels)
+    r = {int(x["channel"]): x.get("range") for x in rows}
+    return [float(r[i]) if r.get(i) is not None else None for i in range(1, channels + 1)]
+
+
+@app.get("/labamp/autorange")
+async def labamp_autorange(headroom: Optional[float] = None) -> dict:
+    hr = float(headroom) if headroom else float(_labamp_cfg.get("autorange_headroom", 1.5))
+    ch = int(_labamp_cfg["channels"])
+    try:
+        peaks = await run_in_threadpool(_measure_peaks, _labamp, ch)
+        currents = await run_in_threadpool(_current_ranges, _labamp, ch)
+    except LabAmpError as e:
+        raise HTTPException(502, str(e))
+    return {"headroom": hr, "adc_bits": ADC_BITS, "recommendations": recommend_ranges(peaks, currents, headroom=hr)}
+
+
+@app.post("/labamp/autorange/apply")
+async def labamp_autorange_apply(body: dict) -> dict:
+    hr = float(body.get("headroom") or _labamp_cfg.get("autorange_headroom", 1.5))
+    ch = int(_labamp_cfg["channels"])
+    try:
+        peaks = await run_in_threadpool(_measure_peaks, _labamp, ch)
+        currents = await run_in_threadpool(_current_ranges, _labamp, ch)
+        recs = recommend_ranges(peaks, currents, headroom=hr)
+        for r in recs:
+            await run_in_threadpool(_labamp.set_range, r["channel"], r["recommended"])
+        status = await run_in_threadpool(_labamp.channel_status, ch)
+    except LabAmpError as e:
+        raise HTTPException(502, str(e))
+    return {"applied": recs, "status": status}
+
+
 @app.get("/labamp/config")
 async def labamp_get_config() -> dict:
     return _labamp_cfg
@@ -263,7 +312,7 @@ def _validate_amp_url(url: str) -> str:
 async def labamp_post_config(body: dict) -> dict:
     if "base_url" in body:
         body["base_url"] = _validate_amp_url(str(body["base_url"]))
-    for k in ("base_url", "channels", "mode"):
+    for k in ("base_url", "channels", "mode", "autorange_headroom"):
         if k in body:
             _labamp_cfg[k] = body[k]
     try:
