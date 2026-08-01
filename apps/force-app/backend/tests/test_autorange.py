@@ -18,13 +18,16 @@ def test_round_up_nice():
 
 
 def test_recommend_range_shrinks_and_reports_bits():
-    # peak 90 N, over-ranged at 10000 -> recommend ~200 (nice), much finer resolution
-    r = recommend_range(90.0, headroom=1.5, current=10000.0)
+    # peak 90 N, over-ranged at 10000 -> recommend ~200 (nice), finer resolution
+    r = recommend_range(90.0, headroom=1.5, current=10000.0)  # default 16-bit NI-DAQ, ±10 V
     assert r["recommended"] == 200                       # round_up_nice(135)
     assert r["would_clip"] is False                      # 90 < 10000
-    # bipolar 24-bit: LSB = 200 / 2**23 ; bits used by 90 N ≈ log2(90/LSB) ~ 22
-    assert 20.0 < r["bits_used"] <= 24.0
-    assert r["resolution"] < 0.001                       # fine resolution at the small range
+    # NI-DAQ 16-bit bipolar: LSB = 200 / 2**15 ; bits used by 90 N ≈ log2(90/LSB)
+    assert abs(r["resolution"] - 200 / 2 ** 15) < 1e-9
+    assert 12.0 < r["bits_used"] <= 16.0
+    # V->N mapping: N/V = range / 10 V ; peak uses ~45% of the ±10 V output
+    assert abs(r["gain_n_per_v"] - 20.0) < 1e-6
+    assert 40 <= r["output_pct"] <= 50
 
 
 def test_recommend_range_flags_clipping():
@@ -56,7 +59,7 @@ def test_autorange_endpoints(monkeypatch, tmp_path):
     main._rebuild_labamp()                               # fresh mock
     with TestClient(fastapi_app) as client:
         rec = client.get("/labamp/autorange").json()
-        assert rec["adc_bits"] == 24 and len(rec["recommendations"]) == 8
+        assert rec["nidaq_bits"] == 16 and rec["fullscale_v"] == 10.0 and len(rec["recommendations"]) == 8
         # all recommended ranges are far below the over-ranged 10000 default
         assert all(r["recommended"] < 1000 for r in rec["recommendations"])
 

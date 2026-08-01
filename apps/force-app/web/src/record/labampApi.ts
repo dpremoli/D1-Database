@@ -6,9 +6,9 @@ function base() { return getConfig().recorderUrl; }
 
 export interface LabAmpStatus { reachable: boolean; mode: string | null; base_url: string; mock: boolean; channels: number; config_mode: string; }
 export interface SensorRow { channel: number; name?: string; serialNumber?: string; physicalQuantity?: string; sensitivity?: number; range?: number; }
-export interface LabAmpConfig { base_url: string; channels: number; mode: string; autorange_headroom?: number; }
-export interface AutoRangeRec { channel: number; peak: number; current: number | null; recommended: number; resolution: number; bits_used: number; would_clip: boolean; headroom: number; }
-export interface AutoRangeResult { headroom: number; adc_bits: number; recommendations: AutoRangeRec[]; }
+export interface LabAmpConfig { base_url: string; channels: number; mode: string; autorange_headroom?: number; nidaq_bits?: number; analog_fullscale_v?: number; }
+export interface AutoRangeRec { channel: number; peak: number; current: number | null; recommended: number; resolution: number; bits_used: number; gain_n_per_v: number; output_pct: number; would_clip: boolean; headroom: number; }
+export interface AutoRangeResult { headroom: number; nidaq_bits: number; fullscale_v: number; recommendations: AutoRangeRec[]; }
 
 async function j<T>(res: Response): Promise<T> {
 	if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 160)}`);

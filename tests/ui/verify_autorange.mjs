@@ -23,7 +23,7 @@ const PASS = process.env.FORCE_APP_PASSWORD || '';
 	await p.locator('.sidebar .navitem', { hasText: 'Lab Amp' }).click();
 	await p.waitForTimeout(1500);
 
-	const card = p.locator('section.card', { hasText: 'Auto-range' });
+	const card = p.locator('section.card').filter({ has: p.locator('h2', { hasText: 'Auto-range' }) });
 	console.log('auto-range card:', await card.count() === 1);
 	ok = ok && (await card.count()) === 1;
 

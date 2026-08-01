@@ -12,19 +12,23 @@ const err = ref<string | null>(null);
 const cfg = reactive({ base_url: '', channels: 8, mode: 'mock', autorange_headroom: 1.5 });
 const savedCfg = ref(false);
 
-// Auto-range
+// Auto-range (analog-output path: amp analog out -> NI-DAQ)
 const headroom = ref(1.5);
+const daq = reactive({ nidaq_bits: 16, analog_fullscale_v: 10 });
 const recs = ref<AutoRangeRec[] | null>(null);
 const arStatus = ref<Record<string, string> | null>(null);
 const arBusy = ref(false);
+async function persistDaq() {
+	await labamp.setConfig({ autorange_headroom: headroom.value, nidaq_bits: Number(daq.nidaq_bits), analog_fullscale_v: Number(daq.analog_fullscale_v) });
+}
 async function measure() {
 	arBusy.value = true; err.value = null; arStatus.value = null;
-	try { recs.value = (await labamp.autorange(headroom.value)).recommendations; }
+	try { await persistDaq(); recs.value = (await labamp.autorange(headroom.value)).recommendations; }
 	catch (e: any) { err.value = e?.message || 'measure failed'; } finally { arBusy.value = false; }
 }
 async function applyRanges() {
 	arBusy.value = true; err.value = null;
-	try { const r = await labamp.autorangeApply(headroom.value); recs.value = r.applied; arStatus.value = r.status; await refresh(); }
+	try { await persistDaq(); const r = await labamp.autorangeApply(headroom.value); recs.value = r.applied; arStatus.value = r.status; await refresh(); }
 	catch (e: any) { err.value = e?.message || 'apply failed'; } finally { arBusy.value = false; }
 }
 function fmtRes(x: number) { return x >= 1 ? x.toFixed(2) : x >= 0.001 ? x.toFixed(4) : x.toExponential(1); }
@@ -34,6 +38,10 @@ async function refresh() {
 	try {
 		status.value = await labamp.status();
 		Object.assign(cfg, { base_url: status.value.base_url, channels: status.value.channels, mode: status.value.config_mode });
+		const conf = await labamp.getConfig();
+		if (conf.autorange_headroom) headroom.value = conf.autorange_headroom;
+		if (conf.nidaq_bits) daq.nidaq_bits = conf.nidaq_bits;
+		if (conf.analog_fullscale_v) daq.analog_fullscale_v = conf.analog_fullscale_v;
 		sensors.value = status.value.reachable ? (await labamp.sensors()).sensors : [];
 	} catch (e: any) { err.value = e?.message || 'status failed'; } finally { busy.value = false; }
 }
@@ -51,7 +59,7 @@ async function setMode(mode: 'MEASURE' | 'RESET') {
 const reference = [
 	{ name: 'Operation mode', what: 'MEASURE actively integrates sensor charge into a force signal; RESET short-circuits the input and zeroes the integrator (drift reset).', rec: 'RESET between cuts to zero drift, MEASURE for the duration of a cut. The app sets RESET→MEASURE on start and RESET on stop.' },
 	{ name: 'Sensitivity (pC/N)', what: 'Charge sensitivity of each dynamometer channel — how much charge the sensor produces per newton.', rec: 'Enter the exact value from the Kistler calibration certificate for your dynamometer (Fx/Fy and Fz usually differ, e.g. ≈ −7.9 and ≈ −3.7 pC/N).' },
-	{ name: 'Measuring range', what: 'Full-scale force the channel resolves. A smaller range gives finer resolution but clips sooner.', rec: 'Pick the smallest range that clears your expected peak force with ~1.5× headroom.' },
+	{ name: 'Measuring range', what: 'Full-scale force that maps to the amp’s ±10 V analog output. Since we digitise that voltage with the NI-DAQ, the range sets the V→N gain (range/10 V) and how much of the NI-DAQ’s codes the signal uses — smaller range = larger swing = finer effective resolution, but clips sooner.', rec: 'Use Auto-range, or pick the smallest range that clears your expected peak force with ~1.5× headroom.' },
 	{ name: 'Physical quantity', what: 'The measured quantity for the channel.', rec: 'Force for a dynamometer channel.' },
 	{ name: 'Low-pass filter', what: 'Rejects noise/vibration above the mechanical bandwidth of interest.', rec: 'Set above your highest force frequency of interest (tooth-passing + a margin), below the noise floor.' },
 ];
@@ -111,22 +119,26 @@ onMounted(refresh);
 
 			<section class="card wide">
 				<h2>Auto-range</h2>
-				<p class="hint">Pick the smallest measuring range that clears the measured peak with headroom — this
-					maximises the ADC bits the signal uses (the 5167A is 24-bit, so resolution ≈ range / 2²³). Too large a
-					range wastes resolution; too small clips (the amp reports <code>OR_INPUT</code>/<code>OR_ADC</code>).
+				<p class="hint">We digitise the amp's <b>analog output</b> (±{{ daq.analog_fullscale_v }} V full scale) with the
+					<b>NI-DAQ</b>, so the range sets the V→N mapping (<code>N/V = range / {{ daq.analog_fullscale_v }} V</code>) and
+					the effective resolution is the <b>NI-DAQ's</b> ({{ daq.nidaq_bits }}-bit → ≈ range / 2<sup>{{ daq.nidaq_bits - 1 }}</sup>),
+					not the amp's internal 24-bit. Pick the smallest range that clears the peak with headroom: a smaller range
+					swings more of the ±{{ daq.analog_fullscale_v }} V → more NI-DAQ codes used. Too small clips (<code>OR_INPUT</code>).
 					<b>Workflow:</b> RESET → MEASURE, run a representative test cut, then Measure &amp; recommend.</p>
 				<div class="ar-controls">
 					<label>Headroom ×<input type="number" step="0.1" min="1" v-model.number="headroom" /></label>
+					<label>NI-DAQ bits<input type="number" step="1" v-model.number="daq.nidaq_bits" /></label>
+					<label>Analog full-scale (±V)<input type="number" step="0.5" v-model.number="daq.analog_fullscale_v" /></label>
 					<button class="btn ghost" :disabled="arBusy || !status?.reachable" @click="measure">Measure &amp; recommend</button>
 					<button class="btn save" :disabled="arBusy || !recs" @click="applyRanges">Apply recommended ranges</button>
 				</div>
 				<table v-if="recs">
-					<thead><tr><th>Ch</th><th>Peak (N)</th><th>Current</th><th>Recommended</th><th>Resolution (N/LSB)</th><th>Bits used</th><th></th></tr></thead>
+					<thead><tr><th>Ch</th><th>Peak (N)</th><th>Current</th><th>Recommended</th><th>Gain (N/V)</th><th>Res. (N/LSB)</th><th>Bits used</th><th>Output</th><th></th></tr></thead>
 					<tbody>
 						<tr v-for="r in recs" :key="r.channel" :class="{ clip: r.would_clip }">
 							<td>{{ r.channel }}</td><td>{{ r.peak.toFixed(1) }}</td><td>{{ r.current ?? '—' }}</td>
-							<td><b>{{ r.recommended }}</b></td><td>{{ fmtRes(r.resolution) }}</td>
-							<td>{{ r.bits_used }} / 24</td>
+							<td><b>{{ r.recommended }}</b></td><td>{{ r.gain_n_per_v }}</td><td>{{ fmtRes(r.resolution) }}</td>
+							<td>{{ r.bits_used }} / {{ daq.nidaq_bits }}</td><td>{{ r.output_pct }}%</td>
 							<td>
 								<span v-if="r.would_clip" class="tag clip">clips now</span>
 								<span v-else-if="arStatus && arStatus[r.channel] && arStatus[r.channel] !== 'OK'" class="tag or">{{ arStatus[r.channel] }}</span>
