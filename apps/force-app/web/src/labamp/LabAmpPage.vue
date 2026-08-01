@@ -191,7 +191,11 @@ input, select { display: block; width: 100%; margin-top: 4px; padding: 8px 10px;
 .seg.big button:disabled { opacity: 0.5; cursor: not-allowed; }
 .export { display: inline-flex; align-items: center; gap: 5px; margin-top: 12px; font-size: 12.5px; color: var(--accent); text-decoration: none; }
 .export .material-symbols-rounded { font-size: 16px; }
-.btn.save { padding: 9px 16px; font-size: 13px; font-weight: 600; color: var(--accent-ink); background: var(--accent); border: none; border-radius: 8px; cursor: pointer; }
+.btn { padding: 9px 16px; font-size: 13px; font-weight: 600; border-radius: 8px; cursor: pointer; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.save { color: var(--accent-ink); background: var(--accent); border: none; }
+.btn.ghost { color: var(--text); background: var(--surface); border: 1px solid var(--border); }
+.btn.ghost:hover:not(:disabled) { background: var(--surface-2); }
 .err { color: var(--danger); font-size: 12px; margin: 8px 0 0; }
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
