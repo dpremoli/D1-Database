@@ -86,6 +86,39 @@ run_eq "generate_force_file_id" \
     "SELECT generate_force_file_id('9-AA-MR-2023-03-23-F9', 20, 0.05, 0.1)" \
     "9-AA-MR-2023-03-23-F9-20MPM_0.05feed_0.1DoC"
 
+echo "== Directus group-detail accordions are renderable =="
+# Regression guard for the "Unexpected Error" (TypeError: ...reading 'map') that the
+# interface-group-detail throws at render time when a group field lacks the 'group'
+# special. Directus needs special to include 'group' (alongside alias,no-data) to
+# resolve the group's child fields; without it the accordion crashes when shown.
+# This affected EVERY accordion on manufacturing_operations and test_sessions.
+run_eq "every group-detail field carries the 'group' special" \
+    "SELECT count(*) FROM directus_fields
+     WHERE interface = 'group-detail'
+       AND (special IS NULL OR special NOT LIKE '%group%')" \
+    "0"
+
+echo "== Campaigns layer (trials + testing campaigns) =="
+run "campaigns table exists" \
+    "SELECT to_regclass('public.campaigns')::TEXT"
+run "manufacturing_operations.campaign_id column exists" \
+    "SELECT column_name FROM information_schema.columns
+     WHERE table_name='manufacturing_operations' AND column_name='campaign_id'"
+run "test_sessions.campaign_id column exists" \
+    "SELECT column_name FROM information_schema.columns
+     WHERE table_name='test_sessions' AND column_name='campaign_id'"
+run_eq "campaign_type CHECK restricts to the two kinds" \
+    "SELECT count(*) FROM information_schema.check_constraints
+     WHERE constraint_name LIKE '%campaign_type%'
+       AND check_clause LIKE '%machining_trial%'
+       AND check_clause LIKE '%testing_campaign%'" \
+    "1"
+run_eq "Directus relations for campaigns are registered (6)" \
+    "SELECT count(*) FROM directus_relations
+     WHERE one_collection='campaigns' OR many_collection='campaigns'
+        OR (many_collection IN ('manufacturing_operations','test_sessions') AND many_field='campaign_id')" \
+    "6"
+
 echo "== Audit trigger fires on INSERT =="
 # Insert a test sample and verify audit_logs captured it.
 $PSQL -c "

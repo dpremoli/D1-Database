@@ -55,6 +55,57 @@ Supporting durable-core objects (same migration):
 The NL→SQL **evaluation set** (`eval/questions.json`) pins curated gold queries;
 `tests/test_eval_golds.py` asserts every gold still passes the guard in CI.
 
+## Update (2026-07-01) — broadened read surface, deny-list guard
+
+The original allow-list of eight `v_*` views was too narrow in practice: detailed
+process parameters (machining feed/speed/depth, additive laser power, sintering
+force, …) live on the **base tables**, not the views, so questions about them
+could not be answered. We widened the read surface while keeping the two-layer
+boundary and its intent (no writes, no credentials, no unbounded scans):
+
+- **Both layers flipped from allow-list to deny-list.** The read-only role now has
+  `SELECT` on **all lab/domain tables** and benign Directus metadata
+  (`db/migrations/20260701000052_llm_readonly_broad_read.sql`), and the guard
+  (`sql_guard.py`) permits any relation **except** a deny-list:
+  credential/secret tables (`directus_users`, `directus_sessions`,
+  `directus_settings`, `directus_shares`, `directus_deployments`), the
+  secret-bearing JSON-config tables (`directus_flows`, `directus_operations`),
+  the auth model (`directus_policies`/`permissions`/`access`/`roles`),
+  `schema_migrations`, any **unknown `directus_*`** table (deny-by-default, so a
+  future Directus release can't silently expose a secret table), and the
+  `pg_catalog` / `information_schema` system catalogs.
+- **Deny-by-default for system tables** is the key safety property: benign
+  Directus metadata is an explicit allow-list; everything else matching
+  `directus_*` is rejected by name at both the grant and guard layers.
+- The read role remains read-only + statement-timeout; the guard still enforces a
+  single read-only SELECT with an injected LIMIT. Only the *breadth* of readable
+  relations changed, not the safety guarantees.
+- The prompt (`schema_context.py`) is now built from every readable object in
+  `v_schema_dictionary`, so the model sees base-table columns (with units in
+  their names) and is told detailed parameters live on the base tables.
+
+Verified: the read-only login role can `SELECT` base tables but gets *permission
+denied* on `directus_users` / `directus_settings`; the guard's allow/deny matrix
+(`tests/test_sql_guard.py`) covers base-table reads, credential/auth/system
+denials, comment-hidden and join/CTE evasion, and catalog schemas.
+
+**Accuracy hardening (same date).** With a wider surface a small local model
+sometimes wrote SQL referencing a column on the *other* relation (e.g. a
+view-only `method_name` against a base table, or a base-table-only
+`process_category` against the view). Two standard text-to-SQL techniques address
+this:
+
+- **Execution-feedback self-correction** (`api.py`, `MAX_SQL_ATTEMPTS`, default 3):
+  a guard rejection or a run-time error (e.g. `UndefinedColumn`) is fed back to the
+  model with a corrective hint, and it retries — the well-established fix for local
+  models hallucinating columns. Bounded, so a persistent failure still returns one
+  graceful 422.
+- **View enrichment** (migration `…053_enrich_manufacturing_ops_view`):
+  `v_manufacturing_operations_full` now also carries `process_category` and the
+  inline machining/AM/sintering/deformation/heat-treatment parameters, so operation
+  questions resolve against a single relation instead of splitting columns across
+  the view and the base table.
+
 ## Rationale
 
 - **Two independent layers.** The guard can be bypassed by a parser edge case;

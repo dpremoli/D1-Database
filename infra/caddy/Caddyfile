@@ -5,5 +5,37 @@
 # For TLS in production, replace ":80" with your domain name — Caddy will
 # automatically provision a Let's Encrypt certificate.
 :80 {
+    # Potree octrees (Phase 2): served same-origin so Directus's CSP (connect-src
+    # 'self') allows the browser to stream them. handle_path strips the /octrees
+    # prefix, mapping /octrees/<op>/octree.bin -> /srv/octrees/<op>/octree.bin.
+    # file_server supports HTTP range reads, which potree-core relies on.
+    handle_path /octrees/* {
+        root * /srv/octrees
+        # CORS for the standalone Force App (cross-origin, network-trusted — no auth on the
+        # octree bytes). ACAO "*" (no credentials are sent). Potree streams nodes with a Range
+        # header, which is NOT CORS-safelisted, so the browser fires an OPTIONS preflight that
+        # must be answered, and the range/length response headers must be EXPOSED for the LOD
+        # loader to read them.
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+        header Access-Control-Allow-Headers "Range, If-None-Match, Content-Type"
+        header Access-Control-Expose-Headers "Accept-Ranges, Content-Range, Content-Length, Content-Encoding, ETag"
+        # Revalidate on every request (conditional GET via ETag). Without this Caddy sends
+        # only ETag/Last-Modified, so browsers apply HEURISTIC freshness and can keep
+        # serving a stale metadata.json / octree.bin cached from BEFORE a rebuild — which
+        # showed as wrong octree colour limits after the climits repatch. "no-cache" still
+        # allows caching but forces a 304 check, so unchanged files stay cheap.
+        header Cache-Control "no-cache"
+        # Short-circuit the CORS preflight (the headers above are already applied).
+        @preflight method OPTIONS
+        respond @preflight 204
+        file_server
+    }
+    # FRM filter-service (interactive signal-filter previews). Same-origin so the
+    # dashboard can call it under Directus's CSP; the service forwards the caller's
+    # Directus credentials when fetching the live cache, so auth stays Directus's.
+    handle_path /filter/* {
+        reverse_proxy filter-service:8000
+    }
     reverse_proxy directus:8055
 }

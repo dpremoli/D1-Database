@@ -62,3 +62,18 @@ desktop.ini
 *.log
 .cache/
 tmp/
+infra/octrees
+
+# ---- Local / not-for-repo ----
+# local Claude config, memory, plans
+.claude/
+# local dev override (temporary SMB-mount workaround)
+docker-compose.override.yml
+# TLS certs (e.g. the Tailscale serve cert)
+*.crt
+# example log sheets / trace CSVs — belong in MinIO, not git
+FAST Data/
+# scratch reference dumps
+for llm *
+# verification screenshots
+tests/ui/*.png

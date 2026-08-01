@@ -1,0 +1,25 @@
+{
+  "name": "directus-extension-d1-ask-db",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "directus-extension build",
+    "dev": "directus-extension build --watch"
+  },
+  "keywords": ["directus", "directus-extension", "directus-custom-module"],
+  "devDependencies": {
+    "@directus/extensions-sdk": "^17",
+    "@vue/compiler-sfc": "^3",
+    "typescript": "^5",
+    "vue": "^3"
+  },
+  "dependencies": {
+    "plotly.js-dist-min": "^2.35.2"
+  },
+  "directus:extension": {
+    "type": "module",
+    "path": "dist/index.js",
+    "source": "src/index.ts",
+    "host": "^11.0.0"
+  }
+}

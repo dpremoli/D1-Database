@@ -1,0 +1,69 @@
+// Service endpoints for the standalone app. The app runs on its OWN origin and talks to
+// Directus + the filter/octree sidecars cross-origin (CORS + Bearer). Because the SPA is a
+// static bundle, we support two configuration styles:
+//   1. Build-time: VITE_* env vars (baked in). Good for a fixed deployment.
+//   2. Runtime: an optional /config.json served next to index.html, so the SAME bundle can be
+//      pointed at different Directus instances without a rebuild. Runtime wins when present.
+
+export interface AppConfig {
+	/** Directus REST base (items + assets + auth). No trailing slash. */
+	directusUrl: string;
+	/** Filter sidecar base (/run, /fft). No trailing slash. */
+	filterUrl: string;
+	/** Octree static server base. No trailing slash; the app appends /<octreePath>/. */
+	octreeUrl: string;
+	/** Local recording backend (Phase 2). No trailing slash. */
+	recorderUrl: string;
+}
+
+const stripSlash = (s: string) => s.replace(/\/+$/, '');
+const LS_OVERRIDE = 'force-app.config.override';
+const KEYS: (keyof AppConfig)[] = ['directusUrl', 'filterUrl', 'octreeUrl', 'recorderUrl'];
+
+// Build-time defaults from env (fall back to same-origin relative paths for a co-hosted setup).
+const defaults: AppConfig = {
+	directusUrl: stripSlash(import.meta.env.VITE_DIRECTUS_URL ?? ''),
+	filterUrl: stripSlash(import.meta.env.VITE_FILTER_URL ?? '/filter'),
+	octreeUrl: stripSlash(import.meta.env.VITE_OCTREE_URL ?? '/octrees'),
+	recorderUrl: stripSlash(import.meta.env.VITE_RECORDER_URL ?? 'http://localhost:8200'),
+};
+const config: AppConfig = { ...defaults };
+
+function applyPartial(j: Partial<AppConfig> | null | undefined) {
+	if (!j) return;
+	for (const k of KEYS) if (j[k]) config[k] = stripSlash(j[k] as string);
+}
+
+// Precedence: env defaults < /config.json < localStorage override (Settings > General).
+export async function loadRuntimeConfig(): Promise<void> {
+	try {
+		const res = await fetch('/config.json', { cache: 'no-store' });
+		if (res.ok) applyPartial((await res.json()) as Partial<AppConfig>);
+	} catch {
+		/* no runtime config file — env defaults stand */
+	}
+	try {
+		applyPartial(JSON.parse(localStorage.getItem(LS_OVERRIDE) || 'null'));
+	} catch {
+		/* no local override */
+	}
+}
+
+export function getConfig(): Readonly<AppConfig> {
+	return config;
+}
+export function getConfigDefaults(): Readonly<AppConfig> {
+	return defaults;
+}
+
+// Edit service URLs at runtime (Settings > General). Persists a localStorage override and updates
+// the live config in place, so subsequent requests use the new endpoints without a rebuild.
+export function setConfigOverride(partial: Partial<AppConfig>): void {
+	applyPartial(partial);
+	const existing = (() => { try { return JSON.parse(localStorage.getItem(LS_OVERRIDE) || '{}'); } catch { return {}; } })();
+	localStorage.setItem(LS_OVERRIDE, JSON.stringify({ ...existing, ...partial }));
+}
+export function resetConfigOverride(): void {
+	localStorage.removeItem(LS_OVERRIDE);
+	for (const k of KEYS) config[k] = defaults[k];
+}

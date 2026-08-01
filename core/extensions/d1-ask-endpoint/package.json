@@ -1,0 +1,13 @@
+{
+  "name": "directus-extension-d1-ask-endpoint",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Server-side proxy from the Ask-the-Database chat page to the guarded text-to-SQL plugin. Requires a logged-in user and injects the worker secret so it never reaches the browser.",
+  "keywords": ["directus", "directus-extension", "directus-custom-endpoint"],
+  "directus:extension": {
+    "type": "endpoint",
+    "path": "index.js",
+    "source": "index.js",
+    "host": "^11.0.0"
+  }
+}

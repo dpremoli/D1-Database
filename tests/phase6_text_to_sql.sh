@@ -2,8 +2,8 @@
 # Phase 6 AI-readiness test: verifies the durable-core half of the text-to-SQL
 # capability — the semantic dictionary view, the LLM query-target menu, the
 # pgvector embedding store, and the read-only role's grant isolation (the LLM
-# login role can read the allow-listed views but NOT base tables, the audit log,
-# or write anything).
+# login role can read lab/domain tables + views but NOT credential/auth tables
+# such as directus_users/directus_settings, and cannot write anything).
 # Requires a running Postgres with DATABASE_URL set (superuser, to create roles),
 # or a local stack via `make up`.
 #
@@ -101,12 +101,18 @@ allow "LLM role reads an allow-listed view" \
     "SELECT count(*) FROM v_complete_sample_history"
 allow "LLM role reads the schema dictionary" \
     "SELECT count(*) FROM v_schema_dictionary"
-deny  "LLM role cannot read base table physical_samples" \
+# Read surface widened 2026-07-01 (migration …052): base tables are readable...
+allow "LLM role reads a base table (broad read surface)" \
     "SELECT count(*) FROM physical_samples"
-deny  "LLM role cannot read the audit log" \
+allow "LLM role reads machining params on manufacturing_operations" \
+    "SELECT count(machining_feed_mm_per_rev) FROM manufacturing_operations"
+allow "LLM role reads the audit log" \
     "SELECT count(*) FROM audit_logs"
-deny  "LLM role cannot read the embeddings backfill source" \
-    "SELECT count(*) FROM v_embeddings_source_notes"
+# ...but credential/auth tables stay denied.
+deny  "LLM role cannot read Directus credentials (directus_users)" \
+    "SELECT count(*) FROM directus_users"
+deny  "LLM role cannot read Directus settings (holds API keys)" \
+    "SELECT count(*) FROM directus_settings"
 deny  "LLM role cannot write a core table" \
     "INSERT INTO physical_samples (sample_code, form) VALUES ('PHASE6-X','coupon')"
 deny  "LLM role is read-only (no temp table create)" \
