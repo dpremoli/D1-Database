@@ -61,6 +61,11 @@ class RecordConfig(BaseModel):
     # NI-DAQ physical channel strings mapped 1:1 onto SIGNAL_CHANNELS (source="nidaq").
     nidaq_channels: list[str] = Field(default_factory=lambda: list(DEFAULT_NIDAQ_CHANNELS))
 
+    # Per-channel volts→N gain for the 8 dyno channels (source="nidaq"): N/V = range / analog_fs.
+    # Auto-populated from the amp's (auto-ranged) per-channel ranges at record start. Empty => the
+    # scalar `gain` in finalize is used instead (sim/replay data is already in N, so gain 1).
+    dyno_gains: list[float] = Field(default_factory=list)
+
     # Optional linear drift compensation applied to the .mat + live_cache outputs (like the MATLAB
     # app). The raw .d1raw is ALWAYS saved un-compensated (source of truth).
     drift_comp: bool = False

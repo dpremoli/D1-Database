@@ -21,7 +21,7 @@ from starlette.concurrency import run_in_threadpool
 from .config import RecordConfig
 from .d1lc import read_d1lc_header
 from .labamp import LabAmpClient, LabAmpError, MockLabAmp
-from .labamp_autorange import recommend_ranges
+from .labamp_autorange import effective_bits, recommend_ranges
 from .session import RecordingSession
 from .sources.replay import ReplaySource
 from .sources.sim import SimSource
@@ -50,6 +50,9 @@ def _load_labamp_config() -> dict:
         # We digitise the amp's ANALOG OUTPUT with the NI-DAQ, so the auto-range resolution/bits use
         # the NI-DAQ ADC bit depth + the analog full-scale voltage (set these for your rig).
         "nidaq_bits": int(os.environ.get("NIDAQ_BITS", "16")),
+        # The amp's analog-output DAC is limited to 12-bit without the recording licence — this is
+        # the bottleneck of the chain (effective bits = min(dac, nidaq)).
+        "labamp_dac_bits": int(os.environ.get("LABAMP_DAC_BITS", "12")),
         "analog_fullscale_v": float(os.environ.get("ANALOG_FULLSCALE_V", "10.0")),
     }
     try:
@@ -109,6 +112,16 @@ async def record_start(cfg: RecordConfig) -> dict:
             source = NidaqSource(cfg, physical_channels=cfg.nidaq_channels or None)
         except (ValueError, NidaqUnavailable) as e:
             raise HTTPException(400, str(e))
+        # Per-channel volts→N gains from the amp's (auto-ranged) ranges: N/V = range / analog_fs.
+        if not cfg.dyno_gains:
+            try:
+                vfs = float(_labamp_cfg.get("analog_fullscale_v", 10.0))
+                rows = sorted(_labamp.sensor_table(8), key=lambda x: x["channel"])
+                gains = [float(r.get("range") or vfs) / vfs for r in rows][:8]
+                if len(gains) == 8:
+                    cfg.dyno_gains = gains
+            except LabAmpError:
+                pass  # amp unreachable — fall back to the scalar gain
     else:
         source = SimSource(cfg, realtime=True)
     _session = RecordingSession(cfg, CAPTURES_ROOT, source, broadcaster=_broadcaster)
@@ -259,33 +272,37 @@ def _current_ranges(amp, channels: int) -> list:
     return [float(r[i]) if r.get(i) is not None else None for i in range(1, channels + 1)]
 
 
-def _daq() -> tuple[int, float]:
-    return int(_labamp_cfg.get("nidaq_bits", 16)), float(_labamp_cfg.get("analog_fullscale_v", 10.0))
+def _daq() -> tuple[int, int, int, float]:
+    """(nidaq_bits, dac_bits, effective_bits, analog_fullscale_v). Effective = the chain bottleneck."""
+    nidaq = int(_labamp_cfg.get("nidaq_bits", 16))
+    dac = int(_labamp_cfg.get("labamp_dac_bits", 12))
+    vfs = float(_labamp_cfg.get("analog_fullscale_v", 10.0))
+    return nidaq, dac, effective_bits(dac, nidaq), vfs
 
 
 @app.get("/labamp/autorange")
 async def labamp_autorange(headroom: Optional[float] = None) -> dict:
     hr = float(headroom) if headroom else float(_labamp_cfg.get("autorange_headroom", 1.5))
     ch = int(_labamp_cfg["channels"])
-    bits, vfs = _daq()
+    nidaq, dac, eff, vfs = _daq()
     try:
         peaks = await run_in_threadpool(_measure_peaks, _labamp, ch)
         currents = await run_in_threadpool(_current_ranges, _labamp, ch)
     except LabAmpError as e:
         raise HTTPException(502, str(e))
-    return {"headroom": hr, "nidaq_bits": bits, "fullscale_v": vfs,
-            "recommendations": recommend_ranges(peaks, currents, headroom=hr, nidaq_bits=bits, fullscale_v=vfs)}
+    return {"headroom": hr, "nidaq_bits": nidaq, "dac_bits": dac, "effective_bits": eff, "fullscale_v": vfs,
+            "recommendations": recommend_ranges(peaks, currents, headroom=hr, bits=eff, fullscale_v=vfs)}
 
 
 @app.post("/labamp/autorange/apply")
 async def labamp_autorange_apply(body: dict) -> dict:
     hr = float(body.get("headroom") or _labamp_cfg.get("autorange_headroom", 1.5))
     ch = int(_labamp_cfg["channels"])
-    bits, vfs = _daq()
+    nidaq, dac, eff, vfs = _daq()
     try:
         peaks = await run_in_threadpool(_measure_peaks, _labamp, ch)
         currents = await run_in_threadpool(_current_ranges, _labamp, ch)
-        recs = recommend_ranges(peaks, currents, headroom=hr, nidaq_bits=bits, fullscale_v=vfs)
+        recs = recommend_ranges(peaks, currents, headroom=hr, bits=eff, fullscale_v=vfs)
         for r in recs:
             await run_in_threadpool(_labamp.set_range, r["channel"], r["recommended"])
         status = await run_in_threadpool(_labamp.channel_status, ch)
@@ -323,7 +340,7 @@ def _validate_amp_url(url: str) -> str:
 async def labamp_post_config(body: dict) -> dict:
     if "base_url" in body:
         body["base_url"] = _validate_amp_url(str(body["base_url"]))
-    for k in ("base_url", "channels", "mode", "autorange_headroom", "nidaq_bits", "analog_fullscale_v"):
+    for k in ("base_url", "channels", "mode", "autorange_headroom", "nidaq_bits", "labamp_dac_bits", "analog_fullscale_v"):
         if k in body:
             _labamp_cfg[k] = body[k]
     try:

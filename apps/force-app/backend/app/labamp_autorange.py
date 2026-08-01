@@ -21,12 +21,18 @@ from __future__ import annotations
 
 import math
 
-# The digitiser in the analog-output path is the NI-DAQ (default 16-bit; set to your module).
+# The effective resolution is the BOTTLENECK of the analog-output chain: the LabAmp's analog-output
+# DAC (limited to 12-bit without the recording licence) feeding the NI-DAQ (e.g. 16-bit). The NI-DAQ
+# can't recover more than the 12-bit DAC provides, so the true bit depth = min(dac_bits, nidaq_bits).
+LABAMP_DAC_BITS = 12
 NIDAQ_BITS = 16
-ADC_BITS = NIDAQ_BITS  # kept for backwards-compat imports
 ANALOG_FULLSCALE_V = 10.0  # amp analog output full scale (±V), matched by the NI-DAQ input range
 RANGE_MIN = 1.0
 RANGE_MAX = 100_000.0
+
+
+def effective_bits(dac_bits: int = LABAMP_DAC_BITS, nidaq_bits: int = NIDAQ_BITS) -> int:
+    return int(min(dac_bits, nidaq_bits))
 
 
 def round_up_nice(x: float) -> float:
@@ -42,19 +48,19 @@ def round_up_nice(x: float) -> float:
 
 
 def recommend_range(peak: float, headroom: float = 1.5, range_min: float = RANGE_MIN,
-                    range_max: float = RANGE_MAX, nidaq_bits: int = NIDAQ_BITS,
+                    range_max: float = RANGE_MAX, bits: int = LABAMP_DAC_BITS,
                     fullscale_v: float = ANALOG_FULLSCALE_V, current: float | None = None) -> dict:
     """Recommend a measuring range for one channel from its measured peak magnitude, accounting for
-    the analog-output → NI-DAQ path (V→N mapping + NI-DAQ bit depth)."""
+    the analog-output chain: V→N mapping + the EFFECTIVE bit depth (min of the amp DAC & NI-DAQ)."""
     peak = abs(float(peak))
     headroom = max(1.0, float(headroom))
     rec = round_up_nice(peak * headroom)
     rec = min(max(rec, range_min), range_max)
-    full = 2 ** (nidaq_bits - 1)             # NI-DAQ bipolar full-scale in codes
-    resolution = rec / full                  # N per LSB at the NI-DAQ (input range matched to ±V_fs)
+    full = 2 ** (bits - 1)                   # bipolar full-scale in codes at the effective bit depth
+    resolution = rec / full                  # N per LSB (input range matched to ±V_fs)
     bits_used = 0.0
     if peak > 0 and resolution > 0:
-        bits_used = max(0.0, min(float(nidaq_bits), math.log2(peak / resolution)))
+        bits_used = max(0.0, min(float(bits), math.log2(peak / resolution)))
     gain_n_per_v = rec / fullscale_v if fullscale_v > 0 else 0.0   # DynoGain (N/V) at this range
     output_pct = min(100.0, peak / rec * 100.0) if rec > 0 else 0.0  # % of ±V_fs the peak uses
     return {
@@ -73,11 +79,11 @@ def recommend_range(peak: float, headroom: float = 1.5, range_min: float = RANGE
 
 def recommend_ranges(peaks: list[float], currents: list[float | None] | None = None,
                      headroom: float = 1.5, range_min: float = RANGE_MIN,
-                     range_max: float = RANGE_MAX, nidaq_bits: int = NIDAQ_BITS,
+                     range_max: float = RANGE_MAX, bits: int = LABAMP_DAC_BITS,
                      fullscale_v: float = ANALOG_FULLSCALE_V) -> list[dict]:
     currents = currents or [None] * len(peaks)
     return [
-        {"channel": i + 1, **recommend_range(p, headroom, range_min, range_max, nidaq_bits, fullscale_v,
+        {"channel": i + 1, **recommend_range(p, headroom, range_min, range_max, bits, fullscale_v,
                                              currents[i] if i < len(currents) else None)}
         for i, p in enumerate(peaks)
     ]

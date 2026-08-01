@@ -77,6 +77,18 @@ def test_cut_detector_adaptive():
     assert ct is not None
 
 
+def test_per_channel_gain(tmp_path):
+    # Raw Fz sub-channels carry 1.0 V each -> summed Fz = 4 V. With per-channel gain 25 N/V on the
+    # Fz channels, the finalized Fz = 4 V × 25 = 100 N (Fx/Fy gains here are 0 so those sum to 0).
+    fs, n = 4000, 4000
+    d = _write_raw(tmp_path, n, fs, np.ones(n))          # Fz1..Fz4 = 1.0 each
+    gains = [0.0, 0.0, 0.0, 0.0, 25.0, 25.0, 25.0, 25.0]  # only Fz channels calibrated here
+    cfg = RecordConfig(sample_rate=fs, feed=0.05, diam=80, dyno_gains=gains)
+    finalize(d, cfg)
+    fz = d1lc.parse_d1lc(open(f"{d}/live_cache.bin", "rb").read())["fz"]
+    assert abs(float(np.median(fz)) - 100.0) < 1e-3       # 4 channels × 1 V × 25 N/V
+
+
 def test_frm_defer_until_cut():
     cfg = RecordConfig(sample_rate=4000, feed=0.05, diam=80, frm_from_cut=True)
     frm = FrmIntegrator(cfg)

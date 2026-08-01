@@ -42,8 +42,15 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     t = np.asarray(rows[:, 0], dtype=np.float64)
     signals = np.asarray(rows[:, 1:], dtype=np.float64)  # (n, 9) in SIGNAL_CHANNELS order
     signals = signals.copy()
-    # Apply dyno gain to the 8 charge channels (Tacho is the last column — leave it).
-    signals[:, :8] *= gain
+    # Apply volts→N gain to the 8 charge channels (Tacho is the last column — leave it). Per-channel
+    # gains (from the amp's auto-ranged ranges) calibrate each channel independently; otherwise the
+    # scalar gain applies (sim/replay data is already in N, so gain 1).
+    gains = list(cfg.dyno_gains or [])
+    if len(gains) >= 8:
+        for i in range(8):
+            signals[:, i] *= float(gains[i])
+    else:
+        signals[:, :8] *= gain
 
     # Optional linear drift compensation on the 8 dyno channels (like the MATLAB app's driftComp).
     # Only affects the derived outputs (.mat DATA + live_cache); the raw .d1raw is never touched.
