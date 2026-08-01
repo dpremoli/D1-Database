@@ -7,8 +7,12 @@ function base() { return getConfig().recorderUrl; }
 export interface LabAmpStatus { reachable: boolean; mode: string | null; base_url: string; mock: boolean; channels: number; config_mode: string; }
 export interface SensorRow { channel: number; name?: string; serialNumber?: string; physicalQuantity?: string; sensitivity?: number; range?: number; }
 export interface LabAmpConfig { base_url: string; channels: number; mode: string; autorange_headroom?: number; nidaq_bits?: number; labamp_dac_bits?: number; analog_fullscale_v?: number; }
-export interface AutoRangeRec { channel: number; peak: number; current: number | null; recommended: number; resolution: number; bits_used: number; gain_n_per_v: number; output_pct: number; would_clip: boolean; headroom: number; }
+export interface AutoRangeRec { channel: number; peak: number; current: number | null; recommended: number; resolution: number; bits_used: number; gain_n_per_v: number; output_pct: number; would_clip: boolean; headroom: number; clipped?: boolean; }
 export interface AutoRangeResult { headroom: number; nidaq_bits: number; dac_bits: number; effective_bits: number; fullscale_v: number; recommendations: AutoRangeRec[]; }
+// Converging between-cuts auto-range: recommend (and optionally apply) the NEXT-pass ranges from the
+// last recorded cut's per-channel peaks (summary.channels_ranging), not a live amp poll.
+export interface ChannelsRanging { peaks_n: number[]; clipped: boolean[]; gains_n_per_v: number[]; ranges_n: number[]; fullscale_v: number; }
+export interface ConvergeResult extends AutoRangeResult { applied: boolean; status: Record<string, string>; }
 
 async function j<T>(res: Response): Promise<T> {
 	if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 160)}`);
@@ -24,4 +28,6 @@ export const labamp = {
 	exportUrl: () => `${base()}/labamp/export`,
 	autorange: (headroom?: number) => fetch(`${base()}/labamp/autorange${headroom ? `?headroom=${headroom}` : ''}`).then(j<AutoRangeResult>),
 	autorangeApply: (headroom: number) => fetch(`${base()}/labamp/autorange/apply`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ headroom }) }).then(j<{ applied: AutoRangeRec[]; status: Record<string, string> }>),
+	converge: (body: { peaks: number[]; clipped?: boolean[]; currents?: number[]; headroom?: number; apply?: boolean }) =>
+		fetch(`${base()}/labamp/autorange/converge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(j<ConvergeResult>),
 };

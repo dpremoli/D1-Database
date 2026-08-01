@@ -64,6 +64,9 @@ onMounted(() => { if (w.source.value === 'replay') w.searchCuts(''); });
 		<div v-if="w.source.value !== 'replay'" class="proc">
 			<label class="chk"><input type="checkbox" v-model="w.cfg.frm_from_cut" :disabled="w.locked.value" /> Detect cut start (live FRM begins at the cut)</label>
 			<label class="chk"><input type="checkbox" v-model="w.cfg.drift_comp" :disabled="w.locked.value" /> Drift compensation <span class="sub">(saved outputs only — raw stays raw)</span></label>
+			<label class="chk"><input type="checkbox" v-model="w.converge.enabled" :disabled="w.locked.value" /> Converging auto-range <span class="sub">(tune per-channel ranges between cuts)</span></label>
+			<p v-if="w.converge.enabled && w.source.value !== 'nidaq'" class="hint">Applies live only with the NI-DAQ source; on sim/replay it just previews the recommendation.</p>
+			<p v-if="w.converge.status" class="sync" :class="w.converge.busy ? 'warn' : 'ok'"><span class="material-symbols-rounded">tune</span>{{ w.converge.status }}</p>
 		</div>
 
 		<div class="actions">

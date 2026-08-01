@@ -87,3 +87,37 @@ def recommend_ranges(peaks: list[float], currents: list[float | None] | None = N
                                              currents[i] if i < len(currents) else None)}
         for i, p in enumerate(peaks)
     ]
+
+
+def converge_ranges(peaks: list[float], clipped: list[bool] | None = None,
+                    currents: list[float | None] | None = None, headroom: float = 1.5,
+                    clip_factor: float = 2.0, range_min: float = RANGE_MIN,
+                    range_max: float = RANGE_MAX, bits: int = LABAMP_DAC_BITS,
+                    fullscale_v: float = ANALOG_FULLSCALE_V) -> list[dict]:
+    """Recommend the NEXT-pass range per channel from the LAST recorded cut's per-channel peaks.
+
+    This is the converging between-cuts auto-range: it runs on the peaks measured from OUR recording
+    (not a live amp poll), so it's a between-cuts step, not a mid-cut gain-follower.
+
+    A channel that RAILED (clipped) recorded a peak ≈ its current range, so its true peak is unknown
+    (only a lower bound). For those we range up by `clip_factor` off the current range (a deliberate
+    over-shoot that converges down over the next pass or two), rather than the gentle `headroom` bump
+    a non-clipped, trustworthy peak gets. Channels using little of their range converge downward.
+    """
+    n = len(peaks)
+    clipped = (clipped or [False] * n) + [False] * max(0, n - len(clipped or []))
+    currents = (currents or [None] * n)
+    out: list[dict] = []
+    for i, peak in enumerate(peaks):
+        cur = currents[i] if i < len(currents) else None
+        rec = recommend_range(peak, headroom, range_min, range_max, bits, fullscale_v, cur)
+        if clipped[i] and cur:
+            # railed — true peak unknown; over-shoot off the (too-small) current range.
+            bumped = min(max(round_up_nice(float(cur) * clip_factor), range_min), range_max)
+            rec["recommended"] = max(rec["recommended"], bumped)
+            rec["resolution"] = rec["recommended"] / (2 ** (bits - 1))
+            rec["gain_n_per_v"] = round(rec["recommended"] / fullscale_v, 4) if fullscale_v > 0 else 0.0
+            rec["output_pct"] = 100.0  # it railed
+        rec["clipped"] = bool(clipped[i])
+        out.append({"channel": i + 1, **rec})
+    return out

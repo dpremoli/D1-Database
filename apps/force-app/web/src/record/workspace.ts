@@ -8,6 +8,7 @@ import { parseCache, type Cache } from '../force/liveCache';
 import { searchSamples, searchOperators, searchEquipment, getMethods, resolveMachiningMethodId, type LookupItem } from './directusLookups';
 import { logRun, syncStatus } from './directusSync';
 import { alarmController } from './alarms';
+import { labamp, type AutoRangeRec } from './labampApi';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 
@@ -57,6 +58,33 @@ export function createWorkspace() {
 	// here on every live frame while recording.
 	const alarms = alarmController;
 	watch(() => client.frameSeq.value, () => { if (st.state === 'recording') alarms.evaluate(st.peaks, st.rpm, cfg.rpm); });
+
+	// Converging between-cuts auto-range: after each cut, recommend + apply the next-pass per-channel
+	// ranges from THIS cut's recorded per-channel peaks (summary.channels_ranging). Applying them to
+	// the amp is enough — the next nidaq run re-derives its N/V gains from the amp's ranges. Range
+	// changes only ever happen here, between cuts, never mid-cut (which the charge amp can't do
+	// cleanly). Clipped channels over-shoot upward and converge back down over the next pass or two.
+	const converge = reactive<{ enabled: boolean; busy: boolean; status: string | null; recs: AutoRangeRec[] | null }>(
+		{ enabled: false, busy: false, status: null, recs: null },
+	);
+	async function convergeAfterCut() {
+		const cr = st.summary?.channels_ranging;
+		if (!cr || !Array.isArray(cr.peaks_n)) { converge.status = 'no per-channel peaks in this capture'; return; }
+		converge.busy = true;
+		try {
+			const res = await labamp.converge({ peaks: cr.peaks_n, clipped: cr.clipped, currents: cr.ranges_n, apply: true });
+			converge.recs = res.recommendations;
+			const clipped = res.recommendations.filter((r) => r.clipped).map((r) => r.channel);
+			const over = Object.entries(res.status || {}).filter(([, s]) => s !== 'OK').map(([c]) => c);
+			converge.status = clipped.length
+				? `ranged up ch ${clipped.join(', ')} (railed) — set for next pass`
+				: over.length ? `applied; ch ${over.join(', ')} still over-range` : 'ranges converged for next pass';
+		} catch (e: any) {
+			converge.status = `converge failed: ${e?.message || e}`;
+		} finally { converge.busy = false; }
+	}
+	// Fire once per completed cut (covers both manual stop and self-terminating duration runs).
+	watch(() => st.state, (s, prev) => { if (s === 'done' && prev !== 'done' && converge.enabled) convergeAfterCut(); });
 
 	function onSelectSample(it: LookupItem) {
 		link.sampleLabel = it.label;
@@ -193,6 +221,8 @@ export function createWorkspace() {
 		searchSamples, searchOperators, searchEquipment,
 		// 2e: safety alarms
 		alarms,
+		// converging between-cuts auto-range
+		converge, convergeAfterCut,
 	};
 }
 

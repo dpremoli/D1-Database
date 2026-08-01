@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 import app.main as main
 from app.labamp import MockLabAmp
-from app.labamp_autorange import recommend_range, recommend_ranges, round_up_nice
+from app.labamp_autorange import converge_ranges, recommend_range, recommend_ranges, round_up_nice
 from app.main import app as fastapi_app
 
 
@@ -41,6 +41,33 @@ def test_recommend_ranges_channels():
     recs = recommend_ranges([40.0, 90.0], currents=[10000.0, 10000.0], headroom=1.5)
     assert [x["channel"] for x in recs] == [1, 2]
     assert recs[0]["recommended"] < recs[1]["recommended"]
+
+
+def test_converge_clipped_ranges_up_non_clipped_down():
+    # ch1 railed at its 200 N range (true peak unknown) -> range UP off current, not the gentle
+    # headroom bump; ch2 saw 40 N inside a 10000 N range -> converge DOWN.
+    recs = converge_ranges(peaks=[200.0, 40.0], clipped=[True, False],
+                           currents=[200.0, 10000.0], headroom=1.5, clip_factor=2.0)
+    assert recs[0]["clipped"] is True
+    assert recs[0]["recommended"] >= 400                 # over-shoots the clipped range
+    assert recs[1]["clipped"] is False
+    assert recs[1]["recommended"] < 10000                # converges the over-ranged channel down
+    # resolution stays consistent with the (possibly bumped) recommended range at 12-bit
+    assert abs(recs[0]["resolution"] - recs[0]["recommended"] / 2 ** 11) < 1e-9
+
+
+def test_converge_endpoint_applies(monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    main._rebuild_labamp()
+    with TestClient(fastapi_app) as client:
+        out = client.post("/labamp/autorange/converge", json={
+            "peaks": [40, 39, 55, 53, 500, 88, 90, 91],   # ch5 spiked
+            "clipped": [False] * 4 + [True] + [False] * 3,
+            "currents": [200] * 8, "headroom": 1.5, "apply": True,
+        }).json()
+        assert out["applied"] is True and out["effective_bits"] == 12
+        assert out["recommendations"][4]["clipped"] is True
+        assert all(s == "OK" for s in out["status"].values())
 
 
 def test_mock_range_roundtrip():

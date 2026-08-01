@@ -52,6 +52,16 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     else:
         signals[:, :8] *= gain
 
+    # Per-channel ranging info (for the converging between-cuts auto-range): the peak force each
+    # sensor channel saw, whether it railed (clipped), and the per-cut N/V + range that produced it.
+    vfs = float(cfg.analog_fullscale_v or 10.0)
+    chan_gains = [float(g) for g in gains[:8]] if len(gains) >= 8 else [float(gain)] * 8
+    chan_ranges = [g * vfs for g in chan_gains]
+    chan_peaks = [float(np.max(np.abs(signals[:, i]))) if n else 0.0 for i in range(8)]
+    # Clipping only meaningful with real per-channel gains (nidaq path); sim/replay never rails.
+    chan_clipped = [bool(len(gains) >= 8 and chan_ranges[i] > 0 and chan_peaks[i] >= 0.99 * chan_ranges[i])
+                    for i in range(8)]
+
     # Optional linear drift compensation on the 8 dyno channels (like the MATLAB app's driftComp).
     # Only affects the derived outputs (.mat DATA + live_cache); the raw .d1raw is never touched.
     if cfg.drift_comp and n > 1:
@@ -111,6 +121,11 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         "peaks": {ax: float(np.max(np.abs(axes[ax]))) for ax in ("Fx", "Fy", "Fz")},
         "cut_window_sec": [cs_sec, ce_sec],
         "drift_comp": bool(cfg.drift_comp),
+        # Per-channel ranging (drives converging between-cuts auto-range + records the per-cut N/V).
+        "channels_ranging": {
+            "peaks_n": chan_peaks, "clipped": chan_clipped,
+            "gains_n_per_v": chan_gains, "ranges_n": chan_ranges, "fullscale_v": vfs,
+        },
         "metadata": cfg.extra_metadata or {},
         "config": cfg.model_dump(),
         "files": {"mat": "capture.mat", "live_cache": "live_cache.bin", "raw": "raw.d1raw"},

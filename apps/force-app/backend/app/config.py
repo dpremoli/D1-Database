@@ -65,6 +65,9 @@ class RecordConfig(BaseModel):
     # Auto-populated from the amp's (auto-ranged) per-channel ranges at record start. Empty => the
     # scalar `gain` in finalize is used instead (sim/replay data is already in N, so gain 1).
     dyno_gains: list[float] = Field(default_factory=list)
+    # Amp analog-output full scale (±V) — used to detect per-channel clipping (railing) for the
+    # converging between-cuts auto-range, and to record each cut's per-channel range with its data.
+    analog_fullscale_v: float = 10.0
 
     # Optional linear drift compensation applied to the .mat + live_cache outputs (like the MATLAB
     # app). The raw .d1raw is ALWAYS saved un-compensated (source of truth).

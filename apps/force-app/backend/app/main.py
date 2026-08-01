@@ -21,7 +21,7 @@ from starlette.concurrency import run_in_threadpool
 from .config import RecordConfig
 from .d1lc import read_d1lc_header
 from .labamp import LabAmpClient, LabAmpError, MockLabAmp
-from .labamp_autorange import effective_bits, recommend_ranges
+from .labamp_autorange import converge_ranges, effective_bits, recommend_ranges
 from .session import RecordingSession
 from .sources.replay import ReplaySource
 from .sources.sim import SimSource
@@ -309,6 +309,34 @@ async def labamp_autorange_apply(body: dict) -> dict:
     except LabAmpError as e:
         raise HTTPException(502, str(e))
     return {"applied": recs, "status": status}
+
+
+@app.post("/labamp/autorange/converge")
+async def labamp_autorange_converge(body: dict) -> dict:
+    """Converging between-cuts auto-range: recommend the NEXT-pass ranges from the LAST cut's
+    per-channel peaks (from OUR recording — summary.channels_ranging), not a live amp poll.
+
+    Body: {peaks:[8], clipped?:[8], currents?:[8], headroom?, apply?:bool}. With apply=true the
+    recommended ranges are written to the amp (for the RESET window before the next cut)."""
+    peaks = [float(x) for x in (body.get("peaks") or [])]
+    if not peaks:
+        raise HTTPException(400, "peaks required")
+    clipped = [bool(x) for x in (body.get("clipped") or [])]
+    currents = body.get("currents")
+    hr = float(body.get("headroom") or _labamp_cfg.get("autorange_headroom", 1.5))
+    nidaq, dac, eff, vfs = _daq()
+    recs = converge_ranges(peaks, clipped, currents, headroom=hr, bits=eff, fullscale_v=vfs)
+    status: dict[str, str] = {}
+    if body.get("apply"):
+        try:
+            for r in recs:
+                await run_in_threadpool(_labamp.set_range, r["channel"], r["recommended"])
+            status = await run_in_threadpool(_labamp.channel_status, int(_labamp_cfg["channels"]))
+        except LabAmpError as e:
+            raise HTTPException(502, str(e))
+    return {"headroom": hr, "nidaq_bits": nidaq, "dac_bits": dac, "effective_bits": eff,
+            "fullscale_v": vfs, "recommendations": recs, "applied": bool(body.get("apply")),
+            "status": status}
 
 
 @app.get("/labamp/config")
