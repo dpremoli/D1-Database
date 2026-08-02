@@ -4,9 +4,10 @@
 // per-sample — it reads the plain buffers each frame.
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import type { RecordClient } from './liveClient';
-import { AXIS_COLOR } from './types';
+import { AXIS_COLOR, type Axis } from './types';
 
-const props = defineProps<{ client: RecordClient }>();
+// `axes` selects which summed axes to draw (channel selection); defaults to all three.
+const props = defineProps<{ client: RecordClient; axes?: Axis[] }>();
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 let raf = 0;
 let ctx: CanvasRenderingContext2D | null = null;
@@ -38,9 +39,11 @@ function draw() {
 
 	const t0 = tr.t[0], t1 = tr.t[n - 1];
 	const span = Math.max(1e-3, t1 - t0);
-	// Y range across all axes in the window
+	// Only the selected axes are drawn / autoscaled (channel selection).
+	const sel = props.axes ?? ['Fx', 'Fy', 'Fz'];
+	const series = ([['Fx', tr.fx], ['Fy', tr.fy], ['Fz', tr.fz]] as const).filter(([a]) => sel.includes(a));
 	let lo = Infinity, hi = -Infinity;
-	for (const arr of [tr.fx, tr.fy, tr.fz]) for (const [mn, mx] of arr) { if (mn < lo) lo = mn; if (mx > hi) hi = mx; }
+	for (const [, arr] of series) for (const [mn, mx] of arr) { if (mn < lo) lo = mn; if (mx > hi) hi = mx; }
 	if (!isFinite(lo) || !isFinite(hi)) { lo = -1; hi = 1; }
 	const pad = 0.1 * (hi - lo || 1);
 	lo -= pad; hi += pad;
@@ -50,18 +53,18 @@ function draw() {
 	const xOf = (t: number) => ((t - t0) / span) * (W - 8) + 4;
 	const yOf = (v: number) => H - ((v - lo) / yr) * (H - 8) - 4;
 
-	for (const [axis, arr] of [['Fx', tr.fx], ['Fy', tr.fy], ['Fz', tr.fz]] as const) {
-		ctx.strokeStyle = AXIS_COLOR[axis];
-		ctx.globalAlpha = 0.95;
-		ctx.lineWidth = 1;
-		// max line
+	// One filled band (min→max envelope) per axis + a crisp top edge — so it reads as one band
+	// per axis, not two lines. The band keeps the peak envelope regardless of sample rate.
+	for (const [axis, arr] of series) {
+		const col = AXIS_COLOR[axis];
 		ctx.beginPath();
 		for (let i = 0; i < n; i++) { const x = xOf(tr.t[i]); const y = yOf(arr[i][1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-		ctx.stroke();
-		// min line, lighter
-		ctx.globalAlpha = 0.5;
+		for (let i = n - 1; i >= 0; i--) { ctx.lineTo(xOf(tr.t[i]), yOf(arr[i][0])); }
+		ctx.closePath();
+		ctx.globalAlpha = 0.16; ctx.fillStyle = col; ctx.fill();
+		ctx.globalAlpha = 0.9; ctx.strokeStyle = col; ctx.lineWidth = 1.4;
 		ctx.beginPath();
-		for (let i = 0; i < n; i++) { const x = xOf(tr.t[i]); const y = yOf(arr[i][0]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+		for (let i = 0; i < n; i++) { const x = xOf(tr.t[i]); const y = yOf(arr[i][1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
 		ctx.stroke();
 	}
 	ctx.globalAlpha = 1;

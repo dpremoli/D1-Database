@@ -12,6 +12,8 @@ export interface RecordConfig {
 	axis?: 'Fx' | 'Fy' | 'Fz';
 }
 
+export type Axis = 'Fx' | 'Fy' | 'Fz';
+
 export const AXIS_COLOR: Record<'Fx' | 'Fy' | 'Fz', string> = {
 	Fx: '#dc2626',
 	Fy: '#16a34a',

@@ -114,7 +114,7 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 							</div>
 							<div v-else class="mod empty" @click.stop="catalogFor = slot">
 								<span class="slotno">SLOT {{ slot }}</span>
-								<span class="plus">+</span>
+								<div class="plus-wrap"><span class="plus">+</span></div>
 							</div>
 						</template>
 					</div>
@@ -203,9 +203,11 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .port-row.terminal .pid, .ports.terminal .pid { width: 20px; }
 .chip { margin-left: auto; font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 5px; color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); }
 .chip.none { color: #5f6f92; background: transparent; }
-.mod.empty { align-items: center; justify-content: center; gap: 10px; border-style: dashed; color: #4a5878; cursor: pointer; }
+.mod.empty { align-items: stretch; justify-content: flex-start; border-style: dashed; color: #4a5878; cursor: pointer; }
 .mod.empty:hover { border-color: #38bdf8; background: rgba(56,189,248,.05); }
+.plus-wrap { flex: 1; display: flex; align-items: center; justify-content: center; }
 .mod.empty .plus { width: 34px; height: 34px; border-radius: 9px; background: #12305a; border: 1px solid #38bdf8; color: #7dd3fc; font-size: 22px; display: flex; align-items: center; justify-content: center; }
+.mod.empty:hover .plus { background: #1a3f6e; }
 .hint { font-size: 12px; color: var(--text-dim); margin: 4px 2px 0; }
 /* channel list */
 .channels { flex: 0 0 300px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
