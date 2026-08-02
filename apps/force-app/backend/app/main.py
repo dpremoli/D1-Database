@@ -19,7 +19,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from .config import RecordConfig
+from . import channels as chan
+from . import nidaq_catalog, nidaq_enum
+from .config import DEFAULT_NIDAQ_CHANNELS, RecordConfig
 from .d1lc import read_d1lc_header
 from .labamp import LabAmpClient, LabAmpError, MockLabAmp
 from .labamp_autorange import converge_ranges, effective_bits, recommend_ranges
@@ -121,6 +123,15 @@ async def record_start(cfg: RecordConfig) -> dict:
             raise HTTPException(
                 503, "NI-DAQmx runtime not available on this host — run on the acquisition PC."
             )
+        # The NI-DAQ page's channel model is the source of truth for physical channels + per-channel
+        # gains. A request may still override with an explicit non-default channel list.
+        cc = _channel_config()
+        if not cfg.nidaq_channels or cfg.nidaq_channels == list(DEFAULT_NIDAQ_CHANNELS):
+            cfg.nidaq_channels = chan.to_record_channels(cc)
+        if not cfg.dyno_gains:
+            g = chan.dyno_gains(cc)
+            if g:
+                cfg.dyno_gains = g
         try:
             source = NidaqSource(cfg, physical_channels=cfg.nidaq_channels or None)
         except (ValueError, NidaqUnavailableError) as e:
@@ -432,6 +443,102 @@ async def labamp_post_config(body: dict) -> dict:
         pass
     _rebuild_labamp()
     return _labamp_cfg
+
+
+# ---- NI-DAQ configuration (channel model + simulated chassis) ----
+# On dev machines with no DAQmx runtime the chassis is simulated (editable, persisted); on the rig
+# it enumerates real hardware. The channel model (roles + physical bindings) is persisted and, when
+# source="nidaq", feeds the recorder's channel list + per-channel gains at record start.
+NIDAQ_SIM_PATH = os.path.join(CAPTURES_ROOT, "nidaq_sim.json")
+NIDAQ_CHANNELS_PATH = os.path.join(CAPTURES_ROOT, "nidaq_channels.json")
+
+
+def _load_json(path: str, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def _save_json(path: str, data) -> None:
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    except OSError:
+        pass
+
+
+def _sim_layout() -> dict:
+    return _load_json(NIDAQ_SIM_PATH, dict(nidaq_enum.DEFAULT_SIM_LAYOUT))
+
+
+def _devices() -> dict:
+    return nidaq_enum.enumerate_devices(sim_layout=_sim_layout())
+
+
+def _channel_config() -> list[dict]:
+    cfg = _load_json(NIDAQ_CHANNELS_PATH, None)
+    if isinstance(cfg, dict) and isinstance(cfg.get("channels"), list):
+        return cfg["channels"]
+    # First run: auto-assign force-first from whatever devices are present.
+    channels = chan.autoassign(_devices())
+    _save_json(NIDAQ_CHANNELS_PATH, {"channels": channels})
+    return channels
+
+
+@app.get("/nidaq/devices")
+async def nidaq_devices() -> dict:
+    return _devices()
+
+
+@app.get("/nidaq/catalog")
+async def nidaq_catalog_list() -> dict:
+    return {"cards": nidaq_catalog.gallery()}
+
+
+@app.post("/nidaq/sim/card")
+async def nidaq_add_card(body: dict) -> dict:
+    """Add a card to a simulated slot (the '+' on an empty slot → card catalog)."""
+    layout = _sim_layout()
+    slot = int(body.get("slot", 0))
+    product_type = str(body.get("product_type", "")).strip()
+    if not product_type or slot < 1 or slot > int(layout.get("slots", 8)):
+        raise HTTPException(400, "slot (1..slots) and product_type required")
+    cards = [c for c in layout.get("cards", []) if int(c["slot"]) != slot]
+    cards.append({"slot": slot, "product_type": product_type})
+    layout["cards"] = cards
+    _save_json(NIDAQ_SIM_PATH, layout)
+    return nidaq_enum.enumerate_simulated(layout)
+
+
+@app.delete("/nidaq/sim/card")
+async def nidaq_remove_card(slot: int) -> dict:
+    layout = _sim_layout()
+    layout["cards"] = [c for c in layout.get("cards", []) if int(c["slot"]) != int(slot)]
+    _save_json(NIDAQ_SIM_PATH, layout)
+    return nidaq_enum.enumerate_simulated(layout)
+
+
+@app.get("/nidaq/channels")
+async def nidaq_get_channels() -> dict:
+    return {"channels": _channel_config(), "roles": chan.ROLES, "colors": chan.ROLE_COLOR}
+
+
+@app.put("/nidaq/channels")
+async def nidaq_put_channels(body: dict) -> dict:
+    channels = body.get("channels")
+    if not isinstance(channels, list):
+        raise HTTPException(400, "channels list required")
+    _save_json(NIDAQ_CHANNELS_PATH, {"channels": channels})
+    return {"channels": channels}
+
+
+@app.post("/nidaq/channels/autoassign")
+async def nidaq_autoassign() -> dict:
+    channels = chan.autoassign(_devices())
+    _save_json(NIDAQ_CHANNELS_PATH, {"channels": channels})
+    return {"channels": channels}
 
 
 @app.websocket("/record/stream")

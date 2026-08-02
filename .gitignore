@@ -77,3 +77,9 @@ FAST Data/
 for llm *
 # verification screenshots
 tests/ui/*.png
+
+# Local daemon logs (force/fast orchestrators)
+logs/
+
+# Superpowers brainstorming visual-companion artifacts
+.superpowers/

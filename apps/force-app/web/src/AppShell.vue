@@ -17,6 +17,7 @@ const nav = [
 	{ to: '/record', icon: 'fiber_manual_record', label: 'Record' },
 	{ to: '/plot', icon: 'insights', label: 'Plot' },
 	{ to: '/labamp', icon: 'memory', label: 'Lab Amp' },
+	{ to: '/nidaq', icon: 'cable', label: 'NI-DAQ' },
 	{ to: '/settings', icon: 'settings', label: 'Settings' },
 ];
 async function signOut() { await authStore.logout(); router.replace('/login'); }
