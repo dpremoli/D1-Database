@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { GridLayout, GridItem } from 'grid-layout-plus';
 import { useApi, useStores } from '@directus/extensions-sdk';
 import { useRoute, useRouter } from 'vue-router';
 import ForceChart from './ForceChart.vue';
@@ -694,6 +695,44 @@ onBeforeUnmount(() => {
 	window.removeEventListener('resize', measureLayout);
 });
 
+// ---- Flexible plot-panel grid (Signals + FRM, add/close/rearrange) ----------
+// The plot area is a grid-layout-plus grid of panels (like the recording view). The
+// Samples/Operations + detail stay as the docked left rail; only the plots are flexible.
+type RPanel = { i: string; type: 'signals' | 'frm'; x: number; y: number; w: number; h: number };
+const RIGHT_KEY = 'd1-force-right-layout-v1';
+const RIGHT_DEFAULT: RPanel[] = [
+	{ i: 'signals', type: 'signals', x: 0, y: 0, w: 6, h: 20 },
+	{ i: 'frm', type: 'frm', x: 6, y: 0, w: 6, h: 20 },
+];
+const R_META: Record<string, { title: string; icon: string }> = {
+	signals: { title: 'Signals', icon: 'insights' },
+	frm: { title: 'FRM map', icon: 'fingerprint' },
+};
+function loadRight(): RPanel[] {
+	try {
+		const v = JSON.parse(localStorage.getItem(RIGHT_KEY) || 'null');
+		if (Array.isArray(v) && v.length && v.every((p) => p && R_META[p.type])) return v;
+	} catch { /* ignore */ }
+	return RIGHT_DEFAULT.map((p) => ({ ...p }));
+}
+const rightLayout = ref<RPanel[]>(loadRight());
+watch(rightLayout, (v) => localStorage.setItem(RIGHT_KEY, JSON.stringify(v)), { deep: true });
+// Row height so the default (h:20) panels fill the measured area; grid margins subtracted.
+const rightRowH = computed(() => Math.max(16, Math.floor((availableHeight.value - 24) / 20)));
+const rightAddOpen = ref(false);
+const hasPanel = (t: string) => rightLayout.value.some((p) => p.type === t);
+function addRightPanel(type: 'signals' | 'frm') {
+	rightAddOpen.value = false;
+	const maxY = rightLayout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0);
+	rightLayout.value = [...rightLayout.value, { i: `${type}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 4)}`, type, x: 0, y: maxY, w: 6, h: 20 }];
+}
+function closeRightPanel(i: string) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.i !== i); }
+function toggleRightType(type: 'signals' | 'frm') {
+	if (hasPanel(type)) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.type !== type); }
+	else addRightPanel(type);
+}
+function resetRightLayout() { rightLayout.value = RIGHT_DEFAULT.map((p) => ({ ...p })); }
+
 // -------------------------------------------------------------------- data
 onMounted(async () => {
 	loadProfiles();
@@ -1172,21 +1211,27 @@ function fmtDateTime(v: string | null | undefined) {
 
 <template>
 	<private-view title="Force Analysis">
-		<div class="fd">
+		<div class="fd" @click="rightAddOpen = false">
 			<section class="hero">
 				<span class="hero-badge"><v-icon name="insights" x-small /> Force Analysis</span>
 				<span class="hero-stat">{{ rows.length }} op{{ rows.length === 1 ? '' : 's' }} · {{ samples.length }} sample{{ samples.length === 1 ? '' : 's' }}</span>
 				<div class="hero-spacer"></div>
-				<div class="panel-toggles">
+				<div class="panel-toggles" @click.stop>
 					<span class="pt-label">Panels</span>
-					<button class="pt-chip" :class="{ on: showForce }" :disabled="showForce && !showFRM"
-						@click="showForce = !showForce">
-						<v-icon :name="showForce ? 'visibility' : 'visibility_off'" x-small /> Force / FFT
+					<button class="pt-chip" :class="{ on: hasPanel('signals') }" @click="toggleRightType('signals')">
+						<v-icon :name="hasPanel('signals') ? 'visibility' : 'visibility_off'" x-small /> Signals
 					</button>
-					<button class="pt-chip" :class="{ on: showFRM }" :disabled="showFRM && !showForce"
-						@click="showFRM = !showFRM">
-						<v-icon :name="showFRM ? 'visibility' : 'visibility_off'" x-small /> FRM map
+					<button class="pt-chip" :class="{ on: hasPanel('frm') }" @click="toggleRightType('frm')">
+						<v-icon :name="hasPanel('frm') ? 'visibility' : 'visibility_off'" x-small /> FRM map
 					</button>
+					<div class="pt-add">
+						<button class="pt-chip" title="Add a panel" @click.stop="rightAddOpen = !rightAddOpen"><v-icon name="add" x-small /> Add</button>
+						<div v-if="rightAddOpen" class="pt-menu" @click.stop>
+							<button @click="addRightPanel('signals')"><v-icon name="insights" x-small /> Signals</button>
+							<button @click="addRightPanel('frm')"><v-icon name="fingerprint" x-small /> FRM map</button>
+						</div>
+					</div>
+					<button class="pt-chip" title="Reset panel layout" @click="resetRightLayout"><v-icon name="grid_view" x-small /></button>
 				</div>
 			</section>
 
@@ -1476,9 +1521,13 @@ function fmtDateTime(v: string | null | undefined) {
 						</button>
 					</div>
 
-					<div class="right-row" :class="{ stacked }">
-						<div v-if="showForce" class="card col-charts"
-							:style="(!stacked && showFRM) ? { flexBasis: (rightSplit * 100) + '%' } : {}">
+					<GridLayout v-model:layout="rightLayout" class="right-grid" :col-num="stacked ? 1 : 12"
+						:row-height="rightRowH" :margin="[10, 10]" :is-draggable="!stacked" :is-resizable="!stacked"
+						:vertical-compact="true" :use-css-transforms="true">
+						<GridItem v-for="item in rightLayout" :key="item.i" :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i"
+							drag-allow-from=".pg-grip" :min-w="3" :min-h="7">
+						<div v-if="item.type === 'signals'" class="card col-charts pg-card">
+							<div class="pg-bar"><span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span><button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button></div>
 							<div class="graphs-head">
 								<span class="graphs-title"><v-icon name="insights" small /> Signals<span v-if="liveOn" class="live-badge">LIVE · drag to crop</span></span>
 								<div class="toggle">
@@ -1510,10 +1559,8 @@ function fmtDateTime(v: string | null | undefined) {
 							</div>
 						</div>
 
-						<div v-if="!stacked && showForce && showFRM" class="resizer" @pointerdown="startSplitResize" title="Drag to resize"></div>
-
-						<div v-if="showFRM" class="card col-frm frm-col"
-							:style="(!stacked && showForce) ? { flexBasis: ((1 - rightSplit) * 100) + '%' } : {}">
+						<div v-else-if="item.type === 'frm'" class="card col-frm frm-col pg-card">
+							<div class="pg-bar"><span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span><button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button></div>
 							<div class="frm-head">
 								<span class="frm-kicker"><v-icon name="fingerprint" small /> {{ octreeOn ? (gridActive ? 'Full FRM · gridded' : 'Full FRM') : (liveOn ? 'Lite FRM' : 'FRM figure') }}</span>
 								<span v-if="(octreeOn || liveOn) && fullResPoints" class="frm-res"
@@ -1608,7 +1655,8 @@ function fmtDateTime(v: string | null | undefined) {
 								<div v-if="octreeMsg && !liveOn" class="render-msg frm-render-msg">{{ octreeMsg }}</div>
 							</div>
 						</div>
-					</div>
+						</GridItem>
+					</GridLayout>
 				</div>
 			</div>
 		</div>
@@ -1793,6 +1841,21 @@ function fmtDateTime(v: string | null | undefined) {
 .right-row { display: flex; gap: 0; flex: 1 1 auto; min-height: 0; align-items: stretch; }
 .right-row.stacked { flex-direction: column; }
 .right-row > .card { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+
+/* Flexible plot-panel grid (Signals / FRM as draggable, resizable, closeable panels). */
+.right-grid { width: 100%; }
+.right-grid :deep(.vgl-item__resizer) { z-index: 3; }
+.right-grid :deep(.vgl-item--placeholder) { background: color-mix(in srgb, var(--theme--primary, #1d4ed8) 18%, transparent); border-radius: 12px; }
+.pg-card { height: 100%; display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+.pg-bar { display: flex; align-items: center; gap: 6px; padding: 2px 4px 4px; flex: 0 0 auto; }
+.pg-grip { cursor: move; display: inline-flex; color: var(--theme--foreground-subdued, #98a2b3); }
+.pg-grip:hover { color: var(--theme--foreground, #1e293b); }
+.pg-x { margin-left: auto; display: inline-flex; background: transparent; border: none; cursor: pointer; color: var(--theme--foreground-subdued, #98a2b3); border-radius: 5px; padding: 2px; }
+.pg-x:hover { color: #dc2626; background: color-mix(in srgb, #dc2626 12%, transparent); }
+.pt-add { position: relative; }
+.pt-menu { position: absolute; top: 32px; right: 0; z-index: 40; min-width: 150px; padding: 4px; border-radius: 9px; background: var(--theme--background, #fff); border: 1px solid var(--theme--border-color-subdued, #e7ebf0); box-shadow: 0 14px 34px rgba(0,0,0,0.2); }
+.pt-menu button { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 8px; font: inherit; font-size: 12px; color: var(--theme--foreground, #1e293b); background: transparent; border: none; border-radius: 6px; cursor: pointer; text-align: left; }
+.pt-menu button:hover { background: var(--theme--background-subdued, #f1f5f9); }
 
 .graphs-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; flex-wrap: wrap; gap: 6px; }
 .graphs-title, .frm-kicker {
