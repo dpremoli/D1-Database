@@ -7,8 +7,9 @@
     "dev": "directus-extension build --watch"
   },
   "dependencies": {
-    "three": "^0.160.0",
-    "potree-core": "^2.0.4"
+    "grid-layout-plus": "^1.1.1",
+    "potree-core": "^2.0.4",
+    "three": "^0.160.0"
   },
   "devDependencies": {
     "@directus/extensions-sdk": "^17",
