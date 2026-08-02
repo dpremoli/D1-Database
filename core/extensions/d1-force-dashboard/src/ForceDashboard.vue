@@ -697,10 +697,12 @@ onBeforeUnmount(() => {
 // ---- Flexible plot-panel grid (Signals + FRM, add/close/rearrange) ----------
 // The plot area is a grid-layout-plus grid of panels (like the recording view). The
 // Samples/Operations + detail stay as the docked left rail; only the plots are flexible.
-type RPanel = { i: string; type: 'signals' | 'frm'; x: number; y: number; w: number; h: number };
-const RIGHT_KEY = 'd1-force-right-layout-v1';
+// Per-instance panel state: a Signals panel carries its own selected channels + RPM toggle so
+// duplicated panels can differ (e.g. one showing only Fz next to one showing Fx/Fy).
+type RPanel = { i: string; type: 'signals' | 'frm'; x: number; y: number; w: number; h: number; channels?: Axis[]; rpm?: boolean };
+const RIGHT_KEY = 'd1-force-right-layout-v2';
 const RIGHT_DEFAULT: RPanel[] = [
-	{ i: 'signals', type: 'signals', x: 0, y: 0, w: 6, h: 20 },
+	{ i: 'signals', type: 'signals', x: 0, y: 0, w: 6, h: 20, channels: ['Fx', 'Fy', 'Fz'], rpm: false },
 	{ i: 'frm', type: 'frm', x: 6, y: 0, w: 6, h: 20 },
 ];
 const R_META: Record<string, { title: string; icon: string }> = {
@@ -723,7 +725,9 @@ const hasPanel = (t: string) => rightLayout.value.some((p) => p.type === t);
 function addRightPanel(type: 'signals' | 'frm') {
 	rightAddOpen.value = false;
 	const maxY = rightLayout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0);
-	rightLayout.value = [...rightLayout.value, { i: `${type}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 4)}`, type, x: 0, y: maxY, w: 6, h: 20 }];
+	const base: RPanel = { i: `${type}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 4)}`, type, x: 0, y: maxY, w: 6, h: 20 };
+	if (type === 'signals') { base.channels = ['Fx', 'Fy', 'Fz']; base.rpm = false; }
+	rightLayout.value = [...rightLayout.value, base];
 }
 function closeRightPanel(i: string) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.i !== i); }
 function toggleRightType(type: 'signals' | 'frm') {
@@ -1055,20 +1059,29 @@ const HIDE_WHEN_LIVE = new Set(['Date', 'Recorded', 'Coolant', 'New edge', 'Sequ
 const compactMeta = computed(() => (liveOn.value ? opMeta.value.filter((m) => !HIDE_WHEN_LIVE.has(m[0] as string)) : opMeta.value));
 
 const PEAK_FIELD: Record<string, string> = { Fx: 'peak_fx', Fy: 'peak_fy', Fz: 'peak_fz' };
-const charts = computed(() => {
+// Charts for one Signals panel instance — its own selected channels + RPM toggle (Force/FFT mode
+// stays shared, since it's tied to the filter preview + FRM). At least one axis is kept on.
+function chartsFor(item: RPanel) {
 	const d = detail.value;
-	const base = AXES.filter((a) => visAxes.value[a]).map((a) => (
+	const sel = (item.channels && item.channels.length ? item.channels : AXES) as readonly Axis[];
+	const base = AXES.filter((a) => sel.includes(a)).map((a) => (
 		effectiveMode.value === 'force'
 			? { key: a, title: `${a} · force`, kind: 'env' as const, data: d?.series?.[a], color: AXIS_COLOR[a], xUnit: 's', yUnit: 'N',
 				cropStart: activeCrop.value?.start, cropEnd: activeCrop.value?.end, peak: d?.[PEAK_FIELD[a]] }
 			: { key: a, title: `${a} · spectrum`, kind: 'line' as const, data: d?.fft?.[a], color: AXIS_COLOR[a], xUnit: 'Hz', yUnit: '', logY: true }
 	));
-	if (effectiveMode.value === 'force' && showRpm.value) {
+	if (effectiveMode.value === 'force' && item.rpm) {
 		base.push({ key: 'RPM', title: 'RPM', kind: 'env', data: detail.value?.series?.RPM, color: '#a855f7', xUnit: 's', yUnit: 'rpm',
 			cropStart: activeCrop.value?.start, cropEnd: activeCrop.value?.end } as any);
 	}
 	return base;
-});
+}
+function toggleItemAxis(item: RPanel, a: Axis) {
+	const cur = (item.channels && item.channels.length ? [...item.channels] : [...AXES]);
+	const i = cur.indexOf(a);
+	if (i >= 0) { if (cur.length > 1) cur.splice(i, 1); } else cur.push(a);
+	item.channels = AXES.filter((x) => cur.includes(x));
+}
 
 // Seed the editable controls from the loaded cache (FrmCloud emits this once the
 // binary is parsed). User edits thereafter drive the cloud; Reset restores these.
@@ -1527,12 +1540,12 @@ function fmtDateTime(v: string | null | undefined) {
 										:style="rectZoomTool ? { background: '#0ea5e9', borderColor: '#0ea5e9' } : {}"
 										@click="rectZoomTool = !rectZoomTool"><v-icon name="crop_free" x-small /></button>
 									<button class="tbtn icobtn" title="Reset zoom" :disabled="!zoomed" @click="resetZoom"><v-icon name="restart_alt" x-small /></button>
-									<button v-for="a in AXES" :key="a" class="tbtn axchip" :class="{ on: visAxes[a] }"
-										:style="visAxes[a] ? { color: AXIS_COLOR[a], borderColor: AXIS_COLOR[a] } : {}"
-										:title="`Show ${a} in the graphs`" @click="toggleAxis(a)">{{ a }}</button>
-									<button v-if="effectiveMode === 'force'" class="tbtn rpmbtn" :class="{ on: showRpm }"
-										:style="showRpm ? { background: '#a855f7', borderColor: '#a855f7' } : {}"
-										@click="showRpm = !showRpm">RPM</button>
+									<button v-for="a in AXES" :key="a" class="tbtn axchip" :class="{ on: (item.channels || AXES).includes(a) }"
+										:style="(item.channels || AXES).includes(a) ? { color: AXIS_COLOR[a], borderColor: AXIS_COLOR[a] } : {}"
+										:title="`Show ${a} in this panel`" @click="toggleItemAxis(item, a)">{{ a }}</button>
+									<button v-if="effectiveMode === 'force'" class="tbtn rpmbtn" :class="{ on: item.rpm }"
+										:style="item.rpm ? { background: '#a855f7', borderColor: '#a855f7' } : {}"
+										@click="item.rpm = !item.rpm">RPM</button>
 									<button class="tbtn" :class="{ on: chartMode === 'force' }"
 										:style="chartMode === 'force' ? { background: '#334155', borderColor: '#334155' } : {}"
 										@click="chartMode = 'force'">Force</button>
@@ -1543,7 +1556,7 @@ function fmtDateTime(v: string | null | undefined) {
 							</div>
 							<div v-if="!detail" class="empty">Select an operation to view its signals</div>
 							<div v-else class="charts-col">
-								<ForceChart v-for="c in charts" :key="c.key" v-bind="c" :hover-index="hoverIndex" @hover="hoverIndex = $event"
+								<ForceChart v-for="c in chartsFor(item)" :key="c.key" v-bind="c" :hover-index="hoverIndex" @hover="hoverIndex = $event"
 									:crop-editable="c.kind === 'env'" :active="c.key === axis"
 									:overlay="(chartMode === 'fft' && filtersOpen && c.kind === 'line' && c.key === axis) ? filterFftOverlay : null"
 									:view-start="zoomStart" :view-end="zoomEnd" :zoom-tool="rectZoomTool" @zoom="onChartZoom"
