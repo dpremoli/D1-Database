@@ -572,6 +572,14 @@ const rightSplit = ref(0.46);   // fraction of the right area given to Signals v
 const showForce = ref(true);
 const showFRM = ref(true);
 const dragging = ref(false);
+// Per-channel selection for the Signals graphs — pick which summed axes to plot (matches the
+// recording view's channel chips). At least one axis stays on.
+const visAxes = ref<Record<Axis, boolean>>({ Fx: true, Fy: true, Fz: true });
+function toggleAxis(a: Axis) {
+	const on = AXES.filter((x) => visAxes.value[x]);
+	if (visAxes.value[a] && on.length <= 1) return;  // keep at least one visible
+	visAxes.value = { ...visAxes.value, [a]: !visAxes.value[a] };  // reassign so the layout watch fires
+}
 
 (function loadLayout() {
 	try {
@@ -586,12 +594,13 @@ const dragging = ref(false);
 		if (typeof v.colStackHidden === 'boolean') colStackHidden.value = v.colStackHidden;
 		if (typeof v.detailHidden === 'boolean') detailHidden.value = v.detailHidden;
 		if (v.frmMode === 'figure' || v.frmMode === 'lite' || v.frmMode === 'full') frmMode.value = v.frmMode;
+		if (v.visAxes && typeof v.visAxes === 'object') for (const a of AXES) if (typeof v.visAxes[a] === 'boolean') visAxes.value[a] = v.visAxes[a];
 	} catch { /* ignore malformed/absent saved layout */ }
 })();
-watch([colA, colB, rightSplit, showForce, showFRM, colStackHidden, detailHidden, frmMode], () => {
+watch([colA, colB, rightSplit, showForce, showFRM, colStackHidden, detailHidden, frmMode, visAxes], () => {
 	localStorage.setItem(LAYOUT_KEY, JSON.stringify({
 		colA: colA.value, colB: colB.value, rightSplit: rightSplit.value,
-		showForce: showForce.value, showFRM: showFRM.value,
+		showForce: showForce.value, showFRM: showFRM.value, visAxes: visAxes.value,
 		colStackHidden: colStackHidden.value, detailHidden: detailHidden.value,
 		// Persist Live so returning to the dashboard keeps the interactive FRM cloud
 		// instead of silently dropping back to the static PNG. (liveOn still requires a
@@ -1010,7 +1019,7 @@ const compactMeta = computed(() => (liveOn.value ? opMeta.value.filter((m) => !H
 const PEAK_FIELD: Record<string, string> = { Fx: 'peak_fx', Fy: 'peak_fy', Fz: 'peak_fz' };
 const charts = computed(() => {
 	const d = detail.value;
-	const base = AXES.map((a) => (
+	const base = AXES.filter((a) => visAxes.value[a]).map((a) => (
 		effectiveMode.value === 'force'
 			? { key: a, title: `${a} · force`, kind: 'env' as const, data: d?.series?.[a], color: AXIS_COLOR[a], xUnit: 's', yUnit: 'N',
 				cropStart: activeCrop.value?.start, cropEnd: activeCrop.value?.end, peak: d?.[PEAK_FIELD[a]] }
@@ -1477,6 +1486,9 @@ function fmtDateTime(v: string | null | undefined) {
 										:style="rectZoomTool ? { background: '#0ea5e9', borderColor: '#0ea5e9' } : {}"
 										@click="rectZoomTool = !rectZoomTool"><v-icon name="crop_free" x-small /></button>
 									<button class="tbtn icobtn" title="Reset zoom" :disabled="!zoomed" @click="resetZoom"><v-icon name="restart_alt" x-small /></button>
+									<button v-for="a in AXES" :key="a" class="tbtn axchip" :class="{ on: visAxes[a] }"
+										:style="visAxes[a] ? { color: AXIS_COLOR[a], borderColor: AXIS_COLOR[a] } : {}"
+										:title="`Show ${a} in the graphs`" @click="toggleAxis(a)">{{ a }}</button>
 									<button v-if="effectiveMode === 'force'" class="tbtn rpmbtn" :class="{ on: showRpm }"
 										:style="showRpm ? { background: '#a855f7', borderColor: '#a855f7' } : {}"
 										@click="showRpm = !showRpm">RPM</button>
