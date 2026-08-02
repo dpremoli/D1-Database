@@ -133,12 +133,15 @@ class RecordingSession:
                 self.frm.mark_cut_start()
                 self._publish_control({"type": "cutstart", "t": ct})
             trace = self.decimator.process(t, axes)
+            # Per-sub-channel envelopes (the 8 dyno columns) so the client can plot any single
+            # sensor live, not just the summed axes.
+            sub = self.decimator.process_cols(t, np.asarray(data[:, :8], dtype=np.float64))
             pts, rpm = self.frm.process(t, axes, tacho_column(data))
             self.n_total += t.size
             self._t_last = float(t[-1])
             if self.broadcaster is not None:
                 frame = encode_frame(
-                    seq, self._t_last, rpm, tuple(self.peaks), self.n_total, trace, pts
+                    seq, self._t_last, rpm, tuple(self.peaks), self.n_total, trace, pts, sub=sub
                 )
                 self.broadcaster.publish(frame)
             self._update_fft(axes)

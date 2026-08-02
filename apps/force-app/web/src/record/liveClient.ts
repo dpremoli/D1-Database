@@ -7,6 +7,15 @@ import { authHeaders } from '../directusClient';
 import type { RecordConfig } from './types';
 
 const MAGIC = 0x46_4c_31_44; // 'D1LF' bytes D,1,L,F read little-endian as a u32
+// The 8 dyno sub-channels the frame streams (min/max envelope), in raw-file column order.
+export const SUB_NAMES = ['Fx1', 'Fx2', 'Fy1', 'Fy2', 'Fz1', 'Fz2', 'Fz3', 'Fz4'] as const;
+export type SubName = (typeof SUB_NAMES)[number];
+type Env = [number, number][];
+function emptyTrace() {
+	const sub: Record<string, Env> = {};
+	for (const n of SUB_NAMES) sub[n] = [];
+	return { t: [] as number[], fx: [] as Env, fy: [] as Env, fz: [] as Env, sub };
+}
 
 export interface LiveStatus {
 	connected: boolean;
@@ -33,8 +42,8 @@ export class RecordClient {
 	fft: { axis: string; f: number[]; amp: number[] } | null = null;
 	fftSeq = ref(0);
 
-	// rolling trace envelope (min/max per axis), capped to windowSec of wall-time
-	trace = { t: [] as number[], fx: [] as [number, number][], fy: [] as [number, number][], fz: [] as [number, number][] };
+	// rolling trace envelope (min/max per axis + per dyno sub-channel), capped to windowSec.
+	trace = emptyTrace();
 	windowSec = 12;
 
 	// FRM points, preallocated; filled incrementally. count = live points; cCap for colour scaling
@@ -83,23 +92,31 @@ export class RecordClient {
 		const pfx = dv.getFloat32(20, true), pfy = dv.getFloat32(24, true), pfz = dv.getFloat32(28, true);
 		const nTotal = dv.getUint32(32, true);
 		const nTrace = dv.getUint32(36, true);
-		const nPts = dv.getUint32(40, true);
+		const nSub = dv.getUint32(40, true);
+		const nPts = dv.getUint32(44, true);
 
 		this.status.seq = seq; this.status.tSec = tSec; this.status.rpm = rpm;
 		this.status.peaks = { Fx: pfx, Fy: pfy, Fz: pfz }; this.status.nTotal = nTotal;
 		if (this.status.state === 'idle') this.status.state = 'recording';
 
-		let off = 44;
+		let off = 48;
 		const trace = new Float32Array(buf, off, nTrace * 7);
 		off += nTrace * 7 * 4;
+		const sub = nSub ? new Float32Array(buf, off, nTrace * nSub * 2) : null;
+		off += nSub ? nTrace * nSub * 2 * 4 : 0;
 		const pts = new Float32Array(buf, off, nPts * 3);
 
+		const nSubUse = Math.min(nSub, SUB_NAMES.length);
 		for (let i = 0; i < nTrace; i++) {
 			const b = i * 7;
 			this.trace.t.push(trace[b]);
 			this.trace.fx.push([trace[b + 1], trace[b + 2]]);
 			this.trace.fy.push([trace[b + 3], trace[b + 4]]);
 			this.trace.fz.push([trace[b + 5], trace[b + 6]]);
+			if (sub) {
+				const sb = i * nSub * 2;
+				for (let j = 0; j < nSubUse; j++) this.trace.sub[SUB_NAMES[j]].push([sub[sb + j * 2], sub[sb + j * 2 + 1]]);
+			}
 		}
 		// drop points older than the window
 		const tMin = tSec - this.windowSec;
@@ -108,6 +125,7 @@ export class RecordClient {
 		if (drop > 0) {
 			this.trace.t.splice(0, drop); this.trace.fx.splice(0, drop);
 			this.trace.fy.splice(0, drop); this.trace.fz.splice(0, drop);
+			for (const n of SUB_NAMES) this.trace.sub[n].splice(0, drop);
 		}
 
 		const start = this.frm.count;
@@ -169,7 +187,7 @@ export class RecordClient {
 	}
 
 	reset() {
-		this.trace = { t: [], fx: [], fy: [], fz: [] };
+		this.trace = emptyTrace();
 		this.frm = { xy: new Float32Array(this.cap * 2), c: new Float32Array(this.cap), count: 0, cAbsMax: 1 };
 		this.fft = null; this.fftSeq.value++;
 		this.status.state = 'idle'; this.status.error = null; this.status.summary = null;

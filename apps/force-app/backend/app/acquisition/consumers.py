@@ -83,6 +83,21 @@ class Decimator:
                 out[i, 2 + 2 * j] = seg.max()
         return out
 
+    def process_cols(self, t: np.ndarray, cols: np.ndarray) -> np.ndarray:
+        """Per-column min/max envelope over the same bins as `process` — used to stream each dyno
+        sub-channel live. `cols` is (n, k); returns (bins, k*2) as [min0,max0, min1,max1, …]."""
+        n = t.size
+        b = min(self.bins, n)
+        edges = np.linspace(0, n, b + 1).astype(int)
+        k = cols.shape[1]
+        out = np.empty((b, k * 2), dtype=np.float32)
+        for i in range(b):
+            s, e = edges[i], max(edges[i] + 1, edges[i + 1])
+            seg = cols[s:e]
+            out[i, 0::2] = seg.min(axis=0)
+            out[i, 1::2] = seg.max(axis=0)
+        return out
+
 
 class FrmIntegrator:
     """Accumulate the FRM spiral across chunks. Carries θ/ρ between calls so the fingerprint winds

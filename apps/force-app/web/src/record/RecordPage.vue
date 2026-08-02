@@ -26,11 +26,11 @@ const PANEL_TYPES: Record<string, { title: string; icon: string; single?: boolea
 	rpm: { title: 'RPM', icon: 'speed', w: 5, h: 7 },
 	frm: { title: 'FRM Map', icon: 'fingerprint', w: 4, h: 19 },
 };
-type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: 'time' | 'fft'; axes?: ('Fx' | 'Fy' | 'Fz')[] };
+type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: 'time' | 'fft'; channels?: string[] };
 const DEFAULT_LAYOUT: Inst[] = [
 	{ i: 'options', type: 'options', x: 0, y: 0, w: 3, h: 12 },
 	{ i: 'metadata', type: 'metadata', x: 0, y: 12, w: 3, h: 14 },
-	{ i: 'force', type: 'force', x: 3, y: 0, w: 5, h: 12, mode: 'time', axes: ['Fx', 'Fy', 'Fz'] },
+	{ i: 'force', type: 'force', x: 3, y: 0, w: 5, h: 12, mode: 'time', channels: ['Fx', 'Fy', 'Fz'] },
 	{ i: 'rpm', type: 'rpm', x: 3, y: 12, w: 5, h: 7 },
 	{ i: 'frm', type: 'frm', x: 8, y: 0, w: 4, h: 19 },
 ];
@@ -51,7 +51,7 @@ function resetLayout() { layout.value = DEFAULT_LAYOUT.map((x) => ({ ...x })); }
 const addOpen = ref(false);
 const hasType = (t: string) => layout.value.some((p) => p.type === t);
 function panelTitle(p: Inst) {
-	if (p.type === 'force' && p.axes && p.axes.length < 3) return `Force · ${p.axes.join(' ')}`;
+	if (p.type === 'force' && p.channels && p.channels.join() !== 'Fx,Fy,Fz') return `Force · ${p.channels.join(' ')}`;
 	return PANEL_TYPES[p.type].title;
 }
 function addPanel(type: string) {
@@ -60,7 +60,7 @@ function addPanel(type: string) {
 	if (meta.single && hasType(type)) return;
 	const maxY = layout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0);
 	const inst: Inst = { i: `${type}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, type, x: 0, y: maxY, w: meta.w, h: meta.h };
-	if (type === 'force') { inst.mode = 'time'; inst.axes = ['Fx', 'Fy', 'Fz']; }
+	if (type === 'force') { inst.mode = 'time'; inst.channels = ['Fx', 'Fy', 'Fz']; }
 	layout.value = [...layout.value, inst];
 }
 function closePanel(i: string) { layout.value = layout.value.filter((p) => p.i !== i); }

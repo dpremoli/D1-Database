@@ -56,6 +56,19 @@ def test_d1lf_roundtrip():
         seq=7, t_sec=1.5, rpm=1200.0, peaks=(1, 2, 3), n_total=999, trace=trace, pts=pts
     )
     d = decode_frame(buf)
-    assert d["seq"] == 7 and d["n_total"] == 999 and abs(d["rpm"] - 1200) < 1e-3
-    assert d["peaks"] == (1, 2, 3)
+    assert d["version"] == 2 and d["seq"] == 7 and d["n_total"] == 999
+    assert abs(d["rpm"] - 1200) < 1e-3 and d["peaks"] == (1, 2, 3)
+    assert np.allclose(d["trace"], trace) and np.allclose(d["pts"], pts)
+    assert d["sub"].shape == (2, 0)  # no sub block when not supplied
+
+
+def test_d1lf_roundtrip_with_sub():
+    trace = np.arange(2 * 7, dtype=np.float32).reshape(2, 7)
+    pts = np.arange(5 * 3, dtype=np.float32).reshape(5, 3)
+    sub = np.arange(2 * 16, dtype=np.float32).reshape(2, 16)  # 8 sub-channels × (min,max)
+    buf = encode_frame(
+        seq=1, t_sec=0.0, rpm=0.0, peaks=(0, 0, 0), n_total=1, trace=trace, pts=pts, sub=sub
+    )
+    d = decode_frame(buf)
+    assert d["sub"].shape == (2, 16) and np.allclose(d["sub"], sub)
     assert np.allclose(d["trace"], trace) and np.allclose(d["pts"], pts)
