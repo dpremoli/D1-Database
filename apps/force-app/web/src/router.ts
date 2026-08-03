@@ -22,7 +22,9 @@ const routes: RouteRecordRaw[] = [
 ];
 
 export const router = createRouter({
-	history: createWebHistory(),
+	// BASE_URL is '/' in dev and '/app/' in the production build (see vite.config base), so the
+	// router works both at the dev root and behind Caddy's /app/ path over Tailscale.
+	history: createWebHistory(import.meta.env.BASE_URL),
 	routes,
 });
 

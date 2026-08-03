@@ -326,6 +326,7 @@ services:
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./infra/octrees:/srv/octrees:ro          # Potree octrees, served same-origin (Phase 2)
+      - ./apps/force-app/web/dist:/srv/force-app:ro   # standalone Force App SPA, served at /app/
       - caddy-data:/data
       - caddy-config:/config
     networks: [d1net]

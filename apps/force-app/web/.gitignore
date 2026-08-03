@@ -3,3 +3,8 @@ dist/
 .env.local
 .env.*.local
 *.log
+
+# Committed, non-secret build config (dev localhost URLs + prod same-origin URLs). These
+# override the root .gitignore's broad `.env.*` so dev + `npm run build` are reproducible.
+!.env.development
+!.env.production
