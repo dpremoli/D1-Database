@@ -26,7 +26,7 @@ const PANEL_TYPES: Record<string, { title: string; icon: string; single?: boolea
 	rpm: { title: 'RPM', icon: 'speed', w: 5, h: 7 },
 	frm: { title: 'FRM Map', icon: 'fingerprint', w: 4, h: 19 },
 };
-type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: 'time' | 'fft'; channels?: string[] };
+type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: 'time' | 'fft' | 'psd' | 'spectrogram' | 'waterfall'; channels?: string[] };
 const DEFAULT_LAYOUT: Inst[] = [
 	// Metadata is a tall full-height left column so every field — including the machining-details
 	// section — is visible without hunting; Recording Options (source + Start/Stop) sits compact above.

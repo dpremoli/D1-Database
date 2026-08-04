@@ -7,20 +7,29 @@ import { computed, ref } from 'vue';
 import { useWorkspace } from '../workspace';
 import LiveForcePlot from '../LiveForcePlot.vue';
 import LiveFft from '../LiveFft.vue';
+import LiveSpectrogram from '../LiveSpectrogram.vue';
+import LiveWaterfall from '../LiveWaterfall.vue';
 import { SUB_NAMES } from '../liveClient';
 import { CH_COLOR } from '../types';
 import { appUrl } from '../../appUrl';
 
-const props = defineProps<{ inst?: { mode?: 'time' | 'fft'; channels?: string[]; axes?: string[] } }>();
+type PlotMode = 'time' | 'fft' | 'psd' | 'spectrogram' | 'waterfall';
+const MODES: { key: PlotMode; label: string }[] = [
+	{ key: 'time', label: 'Force' }, { key: 'fft', label: 'FFT' }, { key: 'psd', label: 'Power' },
+	{ key: 'spectrogram', label: 'Spectrogram' }, { key: 'waterfall', label: 'Waterfall' },
+];
+const props = defineProps<{ inst?: { mode?: PlotMode; channels?: string[]; axes?: string[] } }>();
 const w = useWorkspace();
 const SUMMED = ['Fx', 'Fy', 'Fz'];
 const ORDER = [...SUMMED, ...SUB_NAMES];
 
-const localMode = ref<'time' | 'fft'>('time');
-const mode = computed<'time' | 'fft'>({
+const localMode = ref<PlotMode>('time');
+const mode = computed<PlotMode>({
 	get: () => props.inst?.mode ?? localMode.value,
 	set: (v) => { if (props.inst) props.inst.mode = v; else localMode.value = v; },
 });
+// Spectrogram/waterfall render a single channel; hint the user which one is shown.
+const singleChannelMode = computed(() => mode.value === 'spectrogram' || mode.value === 'waterfall');
 const localCh = ref<string[]>([...SUMMED]);
 const selected = computed<string[]>(() => props.inst?.channels ?? props.inst?.axes ?? localCh.value);
 function setSel(next: string[]) {
@@ -42,39 +51,34 @@ function openLive(panel: string) { window.open(appUrl(`/live/${panel}`), '_blank
 	<div class="force-panel">
 		<div class="controls">
 			<div class="segmode">
-				<button class="segbtn" :class="{ on: mode === 'time' }" @click="mode = 'time'">Force</button>
-				<button class="segbtn" :class="{ on: mode === 'fft' }" @click="mode = 'fft'">FFT</button>
+				<button v-for="m in MODES" :key="m.key" class="segbtn" :class="{ on: mode === m.key }" @click="mode = m.key">{{ m.label }}</button>
 			</div>
-			<template v-if="mode === 'time'">
-				<div class="chips">
-					<button v-for="a in SUMMED" :key="a" class="chip" :style="selected.includes(a) ? { '--c': CH_COLOR[a] } : {}"
-						:class="{ on: selected.includes(a) }" @click="toggle(a)">{{ a }}</button>
-				</div>
-				<div class="subwrap">
-					<button class="chip sub-btn" :class="{ on: subCount > 0 }" @click.stop="subsOpen = !subsOpen">
-						Sub<span v-if="subCount"> · {{ subCount }}</span> <span class="material-symbols-rounded">expand_more</span>
+			<div class="chips">
+				<button v-for="a in SUMMED" :key="a" class="chip" :style="selected.includes(a) ? { '--c': CH_COLOR[a] } : {}"
+					:class="{ on: selected.includes(a) }" @click="toggle(a)">{{ a }}</button>
+			</div>
+			<div class="subwrap">
+				<button class="chip sub-btn" :class="{ on: subCount > 0 }" @click.stop="subsOpen = !subsOpen">
+					Sub<span v-if="subCount"> · {{ subCount }}</span> <span class="material-symbols-rounded">expand_more</span>
+				</button>
+				<div v-if="subsOpen" class="subpop" @click.stop>
+					<button v-for="s in SUB_NAMES" :key="s" class="subopt" :class="{ on: selected.includes(s) }" @click="toggle(s)">
+						<span class="dot" :style="{ background: CH_COLOR[s] }"></span>{{ s }}
+						<span v-if="selected.includes(s)" class="material-symbols-rounded tick">check</span>
 					</button>
-					<div v-if="subsOpen" class="subpop" @click.stop>
-						<button v-for="s in SUB_NAMES" :key="s" class="subopt" :class="{ on: selected.includes(s) }" @click="toggle(s)">
-							<span class="dot" :style="{ background: CH_COLOR[s] }"></span>{{ s }}
-							<span v-if="selected.includes(s)" class="material-symbols-rounded tick">check</span>
-						</button>
-					</div>
 				</div>
-			</template>
-			<div v-else class="segmode">
-				<button class="segbtn fx" :class="{ on: w.plot.frmAxis === 'Fx' }" @click="w.plot.frmAxis = 'Fx'">Fx</button>
-				<button class="segbtn fy" :class="{ on: w.plot.frmAxis === 'Fy' }" @click="w.plot.frmAxis = 'Fy'">Fy</button>
-				<button class="segbtn fz" :class="{ on: w.plot.frmAxis === 'Fz' }" @click="w.plot.frmAxis = 'Fz'">Fz</button>
 			</div>
+			<span v-if="singleChannelMode" class="mono-hint" title="Spectrogram/waterfall show one channel">{{ selected[0] }} only</span>
 			<button class="popout" title="Pop out to a new window (second monitor) — open before Start"
-				@click="openLive(mode === 'fft' ? 'fft' : 'force')">
+				@click="openLive(mode === 'time' ? 'force' : 'fft')">
 				<span class="material-symbols-rounded">open_in_new</span>
 			</button>
 		</div>
 		<div class="plot" @click="subsOpen = false">
 			<LiveForcePlot v-show="mode === 'time'" :client="w.client" :channels="selected" />
-			<LiveFft v-show="mode === 'fft'" :client="w.client" />
+			<LiveFft v-if="mode === 'fft' || mode === 'psd'" :client="w.client" :channels="selected" :scale="mode === 'psd' ? 'psd' : 'amp'" />
+			<LiveSpectrogram v-else-if="mode === 'spectrogram'" :client="w.client" :channels="selected" />
+			<LiveWaterfall v-else-if="mode === 'waterfall'" :client="w.client" :channels="selected" />
 		</div>
 	</div>
 </template>
@@ -100,6 +104,7 @@ function openLive(panel: string) { window.open(appUrl(`/live/${panel}`), '_blank
 .subopt.on { color: #fff; }
 .subopt .dot { width: 9px; height: 9px; border-radius: 50%; }
 .subopt .tick { margin-left: auto; font-size: 14px; color: #4ade80; }
+.mono-hint { font-family: var(--mono); font-size: 11px; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px; }
 .popout { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
 .popout:hover { color: var(--accent); background: var(--surface-2); }
 .popout .material-symbols-rounded { font-size: 15px; }

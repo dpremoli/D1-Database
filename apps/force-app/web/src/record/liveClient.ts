@@ -38,8 +38,14 @@ export class RecordClient {
 	});
 	// bump each frame so widgets can watch cheaply
 	frameSeq = ref(0);
-	// latest live FFT (published a few times a second by the backend); fftSeq bumps on update
-	fft: { axis: string; f: number[]; amp: number[] } | null = null;
+	// latest live spectra (published a few times a second by the backend); fftSeq bumps on update.
+	// `spectra` holds an amplitude spectrum per channel (Fx/Fy/Fz + the 8 dyno subs); `amp`/`axis`
+	// stay for the single-axis fallback. `fftHistory` is a rolling stack of recent spectra frames
+	// the spectrogram/waterfall views draw from (accumulated client-side; only current frames cross).
+	fft: { axis: string; f: number[]; amp: number[]; fs: number; spectra: Record<string, number[]> } | null = null;
+	fftFreq: number[] = [];
+	fftHistory: { t: number; spectra: Record<string, number[]> }[] = [];
+	fftHistCap = 220;
 	fftSeq = ref(0);
 
 	// rolling trace envelope (min/max per axis + per dyno sub-channel), capped to windowSec.
@@ -86,7 +92,11 @@ export class RecordClient {
 			this.status.captureId = msg.id ?? this.status.captureId;
 			this.status.summary = msg.summary ?? null;
 		} else if (msg.type === 'fft') {
-			this.fft = { axis: msg.axis, f: msg.f, amp: msg.amp };
+			const spectra: Record<string, number[]> = msg.spectra ?? (msg.axis ? { [msg.axis]: msg.amp ?? [] } : {});
+			this.fft = { axis: msg.axis, f: msg.f, amp: msg.amp ?? spectra[msg.axis] ?? [], fs: msg.fs ?? 0, spectra };
+			this.fftFreq = msg.f ?? this.fftFreq;
+			this.fftHistory.push({ t: this.status.tSec, spectra });
+			if (this.fftHistory.length > this.fftHistCap) this.fftHistory.shift();
 			this.fftSeq.value++;
 		} else if (msg.type === 'cutstart') {
 			this.status.cutStartSec = msg.t;
@@ -199,7 +209,7 @@ export class RecordClient {
 	reset() {
 		this.trace = emptyTrace();
 		this.frm = { xy: new Float32Array(this.cap * 2), c: new Float32Array(this.cap), count: 0, cAbsMax: 1 };
-		this.fft = null; this.fftSeq.value++;
+		this.fft = null; this.fftHistory = []; this.fftSeq.value++;
 		this.status.state = 'idle'; this.status.error = null; this.status.summary = null;
 		this.status.captureId = null; this.status.nTotal = 0; this.status.tSec = 0;
 		this.status.peaks = { Fx: 0, Fy: 0, Fz: 0 }; this.status.cutStartSec = null;
