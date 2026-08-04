@@ -2,16 +2,23 @@
 // authenticated `api` client. Each returns [{ id, label, extra? }].
 import { api } from '../directusClient';
 
-export interface LookupItem { id: string; label: string; extra?: Record<string, any>; }
+export interface LookupItem { id: string; label: string; sublabel?: string; extra?: Record<string, any>; }
 
 export async function searchSamples(q: string): Promise<LookupItem[]> {
+	// Match either the human-readable code OR the nickname, so a search finds a sample even when its
+	// only "code" is a legacy hex id (some imported/rig items have no generated sample_code).
 	const filter: any = {};
-	if (q?.trim()) filter.sample_code = { _icontains: q.trim() };
+	if (q?.trim()) filter._or = [{ sample_code: { _icontains: q.trim() } }, { nickname: { _icontains: q.trim() } }];
 	const res = await api.get('/items/physical_samples', {
-		params: { filter, limit: 20, sort: 'code_sort', fields: ['sample_id', 'sample_code', 'diameter_mm', 'nickname'] },
+		// Descending code_sort surfaces the numbered human codes (…-AA-MF-…) first and pushes the
+		// legacy hex-coded rig/equipment items (code_sort '00000000…') to the bottom of the default list.
+		params: { filter, limit: 20, sort: '-code_sort', fields: ['sample_id', 'sample_code', 'diameter_mm', 'nickname'] },
 	});
 	return (res.data?.data ?? []).map((r: any) => ({
-		id: r.sample_id, label: r.sample_code || r.sample_id, extra: { diameter_mm: r.diameter_mm, nickname: r.nickname },
+		id: r.sample_id,
+		label: r.sample_code || r.sample_id,
+		sublabel: r.nickname || undefined,   // human context, shown under the code in the dropdown
+		extra: { diameter_mm: r.diameter_mm, nickname: r.nickname },
 	}));
 }
 

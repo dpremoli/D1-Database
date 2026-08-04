@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router';
 import { authStore } from './authStore';
 import { syncStatus } from './record/directusSync';
 import { alarmController } from './record/alarms';
+import { appUrl } from './appUrl';
 
 const router = useRouter();
 const userName = computed(() => {
@@ -23,7 +24,7 @@ const nav = [
 async function signOut() { await authStore.logout(); router.replace('/login'); }
 // Multi-monitor: pop a section into its own window (e.g. Plot while recording). Same origin, so the
 // new window shares the login; the recording backend is a single session but plotting is read-only.
-function openWindow(to: string) { window.open(location.origin + to, '_blank', 'noopener,width=1500,height=950'); }
+function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,width=1500,height=950'); }
 </script>
 
 <template>

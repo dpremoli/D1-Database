@@ -125,7 +125,12 @@ export function createWorkspace() {
 				await client.start({ ...cfg, source: 'sim', axis: plot.frmAxis, extra_metadata: metaObj() } as any);
 			}
 		} catch (e: any) {
-			errMsg.value = e?.message || 'failed to start';
+			const m = e?.message || 'failed to start';
+			// A bare "Failed to fetch"/"Load failed" is a transport failure reaching the recorder
+			// (backend down, or blocked by CORS / HTTPS mixed-content) — spell that out.
+			errMsg.value = /failed to fetch|load failed|networkerror/i.test(m)
+				? `${m} — can't reach the recording backend. Is it running on this machine?`
+				: m;
 		} finally {
 			busy.value = false;
 		}

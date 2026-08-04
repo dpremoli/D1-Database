@@ -4,8 +4,9 @@
 import { useWorkspace } from '../workspace';
 import LiveFrm from '../LiveFrm.vue';
 import FrmCloud from '../../force/FrmCloud.vue';
+import { appUrl } from '../../appUrl';
 const w = useWorkspace();
-function openLive() { window.open(`${location.origin}/live/frm`, '_blank', 'noopener,width=1200,height=1000'); }
+function openLive() { window.open(appUrl('/live/frm'), '_blank', 'noopener,width=1200,height=1000'); }
 </script>
 
 <template>

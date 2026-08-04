@@ -717,17 +717,37 @@ function loadRight(): RPanel[] {
 	return RIGHT_DEFAULT.map((p) => ({ ...p }));
 }
 const rightLayout = ref<RPanel[]>(loadRight());
-watch(rightLayout, (v) => localStorage.setItem(RIGHT_KEY, JSON.stringify(v)), { deep: true });
+// Persist debounced: the deep watch fires on every drag/resize tick, and a synchronous
+// localStorage write per tick is what made dragging janky (worst in the heavier Directus shell).
+let persistT: ReturnType<typeof setTimeout> | null = null;
+watch(rightLayout, (v) => {
+	if (persistT) clearTimeout(persistT);
+	const snapshot = JSON.stringify(v);
+	persistT = setTimeout(() => localStorage.setItem(RIGHT_KEY, snapshot), 250);
+}, { deep: true });
 // Row height so the default (h:20) panels fill the measured area; grid margins subtracted.
 const rightRowH = computed(() => Math.max(16, Math.floor((availableHeight.value - 24) / 20)));
 const rightAddOpen = ref(false);
 const hasPanel = (t: string) => rightLayout.value.some((p) => p.type === t);
 function addRightPanel(type: 'signals' | 'frm') {
 	rightAddOpen.value = false;
+	// Place a new panel beside the shortest existing column when there's room on the top row,
+	// otherwise start a fresh row below. Half-height (h:10) so a stacked pair fits one screen and
+	// the panel lands within (or just at the edge of) view rather than a full screen down.
+	const topRowW = rightLayout.value.filter((p) => p.y === 0).reduce((s, p) => s + p.w, 0);
 	const maxY = rightLayout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0);
-	const base: RPanel = { i: `${type}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 4)}`, type, x: 0, y: maxY, w: 6, h: 20 };
+	const fitsTop = topRowW <= 6;
+	const base: RPanel = {
+		i: `${type}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 4)}`,
+		type, x: fitsTop ? topRowW : 0, y: fitsTop ? 0 : maxY, w: 6, h: fitsTop ? 20 : 10,
+	};
 	if (type === 'signals') { base.channels = ['Fx', 'Fy', 'Fz']; base.rpm = false; }
 	rightLayout.value = [...rightLayout.value, base];
+	// Bring the freshly added panel into view (it may extend below the fold).
+	nextTick(() => {
+		const el = rightAreaEl.value?.querySelector(`[data-panel-id="${base.i}"]`);
+		el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+	});
 }
 function closeRightPanel(i: string) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.i !== i); }
 function toggleRightType(type: 'signals' | 'frm') {
@@ -1530,12 +1550,12 @@ function fmtDateTime(v: string | null | undefined) {
 						:row-height="rightRowH" :margin="[10, 10]" :is-draggable="!stacked" :is-resizable="!stacked"
 						:vertical-compact="true" :use-css-transforms="true">
 						<GridItem v-for="item in rightLayout" :key="item.i" :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i"
-							drag-allow-from=".pg-grip" :min-w="3" :min-h="7">
+							:data-panel-id="item.i" drag-allow-from=".pg-grip" :min-w="3" :min-h="7">
 						<div v-if="item.type === 'signals'" class="card col-charts pg-card">
-							<div class="pg-bar"><span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span><button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button></div>
-							<div class="graphs-head">
-								<span class="graphs-title"><v-icon name="insights" small /> Signals<span v-if="liveOn" class="live-badge">LIVE · drag to crop</span></span>
-								<div class="toggle">
+							<div class="pg-bar">
+								<span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span>
+								<span class="pg-title"><v-icon name="insights" x-small /> Signals<span v-if="liveOn" class="live-badge">LIVE · drag to crop</span></span>
+								<div class="toggle pg-tools">
 									<button class="tbtn icobtn" :class="{ on: rectZoomTool }" title="Rectangular zoom — drag a box on any graph"
 										:style="rectZoomTool ? { background: '#0ea5e9', borderColor: '#0ea5e9' } : {}"
 										@click="rectZoomTool = !rectZoomTool"><v-icon name="crop_free" x-small /></button>
@@ -1553,6 +1573,7 @@ function fmtDateTime(v: string | null | undefined) {
 										:style="chartMode === 'fft' ? { background: '#334155', borderColor: '#334155' } : {}"
 										@click="chartMode = 'fft'">FFT</button>
 								</div>
+								<button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button>
 							</div>
 							<div v-if="!detail" class="empty">Select an operation to view its signals</div>
 							<div v-else class="charts-col">
@@ -1565,9 +1586,9 @@ function fmtDateTime(v: string | null | undefined) {
 						</div>
 
 						<div v-else-if="item.type === 'frm'" class="card col-frm frm-col pg-card">
-							<div class="pg-bar"><span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span><button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button></div>
-							<div class="frm-head">
-								<span class="frm-kicker"><v-icon name="fingerprint" small /> {{ octreeOn ? (gridActive ? 'Full FRM · gridded' : 'Full FRM') : (liveOn ? 'Lite FRM' : 'FRM figure') }}</span>
+							<div class="frm-head pg-headbar">
+								<span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span>
+								<span class="frm-kicker"><v-icon name="fingerprint" x-small /> {{ octreeOn ? (gridActive ? 'Full FRM · gridded' : 'Full FRM') : (liveOn ? 'Lite FRM' : 'FRM figure') }}</span>
 								<span v-if="(octreeOn || liveOn) && fullResPoints" class="frm-res"
 									:title="`Displayed ${displayedPoints.toLocaleString()} of ${fullResPoints.toLocaleString()} full-resolution points`">
 									<v-icon name="grain" x-small /> {{ fmtPts(displayedPoints) }} / {{ fmtPts(fullResPoints) }}<template v-if="resolutionPct != null"> · {{ resolutionPct }}%</template>
@@ -1606,6 +1627,7 @@ function fmtDateTime(v: string | null | undefined) {
 										:style="axis === a ? { background: AXIS_COLOR[a], borderColor: AXIS_COLOR[a] } : {}"
 										@click="setAxis(a)">{{ a }}</button>
 								</div>
+								<button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button>
 							</div>
 							<div class="frm-img">
 								<div v-if="!detail" class="empty">Select an operation</div>
@@ -1831,8 +1853,10 @@ function fmtDateTime(v: string | null | undefined) {
 .stat.modified { border-color: var(--theme--primary, #1d4ed8); box-shadow: inset 0 0 0 1px var(--theme--primary, #1d4ed8); }
 .stat.modified .s-lab { color: var(--theme--primary, #1d4ed8); }
 
-/* Right area: Signals + FRM, independently hideable/resizable against each other. */
-.right-area { display: flex; flex-direction: column; gap: 10px; }
+/* Right area: Signals + FRM, independently hideable/resizable against each other. The grid can grow
+   taller than the viewport (adding/moving panels), so this is the scroll container — min-height:0 lets
+   it shrink inside the fixed-height layout cell and overflow-y makes off-screen panels reachable. */
+.right-area { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .panel-toggles { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
 .pt-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--theme--foreground-subdued, #98a2b3); margin-right: 2px; }
 .pt-chip {
@@ -1847,16 +1871,24 @@ function fmtDateTime(v: string | null | undefined) {
 .right-row.stacked { flex-direction: column; }
 .right-row > .card { flex: 1 1 auto; min-width: 0; overflow: hidden; }
 
-/* Flexible plot-panel grid (Signals / FRM as draggable, resizable, closeable panels). */
-.right-grid { width: 100%; }
+/* Flexible plot-panel grid (Signals / FRM as draggable, resizable, closeable panels). Pull the grid
+   up by its top margin so row-0 panels align with the top of the samples/detail columns (the empty
+   margin strip above row 0 is what gets clipped, not content). */
+.right-grid { width: 100%; margin-top: -10px; }
 .right-grid :deep(.vgl-item__resizer) { z-index: 3; }
 .right-grid :deep(.vgl-item--placeholder) { background: color-mix(in srgb, var(--theme--primary, #1d4ed8) 18%, transparent); border-radius: 12px; }
 .pg-card { height: 100%; display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
-.pg-bar { display: flex; align-items: center; gap: 6px; padding: 2px 4px 4px; flex: 0 0 auto; }
+/* One-line panel bar: drag grip · title · inline tools · close — no separate title row. */
+.pg-bar { display: flex; align-items: center; gap: 6px; padding: 2px 4px 6px; flex: 0 0 auto; flex-wrap: wrap; }
+.pg-title { display: inline-flex; align-items: center; gap: 5px; margin-right: auto; font-size: 11px; font-weight: 700;
+	text-transform: uppercase; letter-spacing: 0.05em; color: var(--theme--foreground-subdued, #6b7684); white-space: nowrap; }
+.pg-tools { flex: 0 1 auto; }
 .pg-grip { cursor: move; display: inline-flex; color: var(--theme--foreground-subdued, #98a2b3); }
 .pg-grip:hover { color: var(--theme--foreground, #1e293b); }
-.pg-x { margin-left: auto; display: inline-flex; background: transparent; border: none; cursor: pointer; color: var(--theme--foreground-subdued, #98a2b3); border-radius: 5px; padding: 2px; }
+.pg-x { margin-left: 4px; display: inline-flex; background: transparent; border: none; cursor: pointer; color: var(--theme--foreground-subdued, #98a2b3); border-radius: 5px; padding: 2px; }
 .pg-x:hover { color: #dc2626; background: color-mix(in srgb, #dc2626 12%, transparent); }
+/* FRM reuses its head row as the bar (grip prepended, close appended). */
+.pg-headbar { padding-bottom: 6px; }
 .pt-add { position: relative; }
 .pt-menu { position: absolute; top: 32px; right: 0; z-index: 40; min-width: 150px; padding: 4px; border-radius: 9px; background: var(--theme--background, #fff); border: 1px solid var(--theme--border-color-subdued, #e7ebf0); box-shadow: 0 14px 34px rgba(0,0,0,0.2); }
 .pt-menu button { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 8px; font: inherit; font-size: 12px; color: var(--theme--foreground, #1e293b); background: transparent; border: none; border-radius: 6px; cursor: pointer; text-align: left; }
@@ -1875,7 +1907,9 @@ function fmtDateTime(v: string | null | undefined) {
 }
 .tbtn.on { color: #fff; }
 .tbtn.icobtn { padding: 5px 9px; display: inline-flex; align-items: center; }
-.charts-col { display: flex; flex-direction: column; gap: 13px; }
+/* Signals plots scroll INSIDE the panel (min-height:0 + overflow) instead of overflowing the card
+   and pushing past the page bottom when a panel is short or several charts stack. */
+.charts-col { display: flex; flex-direction: column; gap: 13px; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 
 .col-frm { display: flex; flex-direction: column; gap: 11px; min-height: 0; }
 .frm-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; }

@@ -9,6 +9,7 @@ import LiveForcePlot from '../LiveForcePlot.vue';
 import LiveFft from '../LiveFft.vue';
 import { SUB_NAMES } from '../liveClient';
 import { CH_COLOR } from '../types';
+import { appUrl } from '../../appUrl';
 
 const props = defineProps<{ inst?: { mode?: 'time' | 'fft'; channels?: string[]; axes?: string[] } }>();
 const w = useWorkspace();
@@ -34,7 +35,7 @@ function toggle(key: string) {
 }
 const subsOpen = ref(false);
 const subCount = computed(() => selected.value.filter((k) => (SUB_NAMES as readonly string[]).includes(k)).length);
-function openLive(panel: string) { window.open(`${location.origin}/live/${panel}`, '_blank', 'noopener,width=1400,height=900'); }
+function openLive(panel: string) { window.open(appUrl(`/live/${panel}`), '_blank', 'noopener,width=1400,height=900'); }
 </script>
 
 <template>

@@ -53,9 +53,19 @@ export class RecordClient {
 	private ws: WebSocket | null = null;
 	private base = getConfig().recorderUrl;
 
+	// Build the absolute ws(s):// stream URL. `base` may be an absolute http(s) URL (dev, e.g.
+	// http://localhost:8200) or a same-origin relative path (deploy, /recorder proxied by Caddy).
+	// WebSocket() rejects relative URLs, so resolve a relative base against the page origin.
+	private streamUrl(): string {
+		const path = this.base + '/record/stream';
+		if (/^wss?:/.test(path)) return path;
+		if (/^https?:/.test(path)) return path.replace(/^http/, 'ws');
+		const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+		return `${scheme}://${location.host}${path.startsWith('/') ? '' : '/'}${path}`;
+	}
+
 	connect() {
-		const url = this.base.replace(/^http/, 'ws') + '/record/stream';
-		const ws = new WebSocket(url);
+		const ws = new WebSocket(this.streamUrl());
 		ws.binaryType = 'arraybuffer';
 		ws.onopen = () => { this.status.connected = true; };
 		ws.onclose = () => { this.status.connected = false; };
