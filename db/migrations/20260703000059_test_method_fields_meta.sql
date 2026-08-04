@@ -3,8 +3,6 @@
 -- test_type so each method's panel appears only for that test. Idempotent: clears
 -- any previously-inserted rows for these prefixes before re-inserting.
 
-BEGIN;
-
 DELETE FROM directus_fields WHERE collection='test_sessions' AND (field LIKE 'tribology\_%' OR field LIKE 'optical_microscopy\_%' OR field LIKE 'tem\_%' OR field LIKE 'alicona\_%' OR field LIKE 'clemx\_%' OR field LIKE 'dct\_%' OR field LIKE 'ct_scan\_%' OR field LIKE 'fatigue\_%' OR field LIKE 'creep\_%' OR field LIKE 'dma\_%');
 
 -- ── tribology → test_sessions (inline, shows when test_type=tribology) ──
@@ -101,8 +99,6 @@ INSERT INTO directus_fields (collection, field, special, interface, options, dis
 INSERT INTO directus_fields (collection, field, special, interface, options, display, display_options, readonly, hidden, sort, width, required, translations, note, conditions) VALUES ('test_sessions', 'dma_loss_modulus_mpa', NULL, 'input', '{"step": 0.001, "suffix": "MPa"}', 'raw', NULL, FALSE, TRUE, 586, 'half', FALSE, '[{"language": "en-US", "translation": "Loss Modulus (E'''')"}]', NULL, '[{"name": "show when dma", "rule": {"_and": [{"test_type": {"_eq": "dma"}}]}, "hidden": false, "readonly": false, "required": false}]');
 INSERT INTO directus_fields (collection, field, special, interface, options, display, display_options, readonly, hidden, sort, width, required, translations, note, conditions) VALUES ('test_sessions', 'dma_tan_delta', NULL, 'input', '{"step": 1e-05}', 'raw', NULL, FALSE, TRUE, 587, 'half', FALSE, '[{"language": "en-US", "translation": "tan \u03b4"}]', NULL, '[{"name": "show when dma", "rule": {"_and": [{"test_type": {"_eq": "dma"}}]}, "hidden": false, "readonly": false, "required": false}]');
 INSERT INTO directus_fields (collection, field, special, interface, options, display, display_options, readonly, hidden, sort, width, required, translations, note, conditions) VALUES ('test_sessions', 'dma_glass_transition_celsius', NULL, 'input', '{"step": 0.01, "suffix": "\u00b0C"}', 'raw', NULL, FALSE, TRUE, 588, 'half', FALSE, '[{"language": "en-US", "translation": "Glass Transition (Tg)"}]', NULL, '[{"name": "show when dma", "rule": {"_and": [{"test_type": {"_eq": "dma"}}]}, "hidden": false, "readonly": false, "required": false}]');
-
-COMMIT;
 
 -- migrate:down
 DELETE FROM directus_fields WHERE collection='test_sessions' AND (field LIKE 'tribology\_%' OR field LIKE 'optical_microscopy\_%' OR field LIKE 'tem\_%' OR field LIKE 'alicona\_%' OR field LIKE 'clemx\_%' OR field LIKE 'dct\_%' OR field LIKE 'ct_scan\_%' OR field LIKE 'fatigue\_%' OR field LIKE 'creep\_%' OR field LIKE 'dma\_%');
