@@ -5,7 +5,7 @@
 -- The researcher junctions (project_investigators, sample_co_owners) keep their
 -- user_id M2M for now; their backfilled person_id column is hidden.
 
-BEGIN;
+
 
 -- People collection ----------------------------------------------------------
 INSERT INTO directus_collections (collection, icon, note, display_template, hidden, sort)
@@ -61,10 +61,10 @@ UPDATE directus_fields SET hidden = TRUE WHERE (collection, field) IN (('manufac
 INSERT INTO directus_fields (collection, field, hidden, readonly, note) VALUES ('project_investigators','person_id',TRUE,TRUE,'Backfilled people link; M2M UI uses user_id.') ON CONFLICT DO NOTHING;
 INSERT INTO directus_fields (collection, field, hidden, readonly, note) VALUES ('sample_co_owners','person_id',TRUE,TRUE,'Backfilled people link; M2M UI uses user_id.') ON CONFLICT DO NOTHING;
 
-COMMIT;
+
 
 -- migrate:down
-BEGIN;
+
 DELETE FROM directus_relations WHERE many_field IN ('owner_person_id','operator_person_id','principal_investigator_person') OR (many_collection='people' AND many_field='user_id');
 DELETE FROM directus_fields WHERE field IN ('owner_person_id','operator_person_id','principal_investigator_person');
 DELETE FROM directus_fields WHERE collection='people';
@@ -72,4 +72,4 @@ DELETE FROM directus_collections WHERE collection='people';
 UPDATE directus_fields SET hidden = FALSE WHERE (collection, field) IN (('physical_samples','owner'),('manufacturing_operations','owner'),('test_sessions','owner'),('campaigns','owner'),('etchants','owner'),('prep_recipes','owner'),('tool_boxes','owner'),('cutting_inserts','owner'),('insert_edges','owner'));
 UPDATE directus_fields SET hidden = FALSE WHERE (collection, field) IN (('manufacturing_operations','operator'),('test_sessions','operator'),('projects','principal_investigator'));
 DELETE FROM directus_fields WHERE (collection,field) IN (('project_investigators','person_id'),('sample_co_owners','person_id'));
-COMMIT;
+

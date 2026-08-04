@@ -3,7 +3,7 @@
 -- the two relation legs (parent + polymorphic item), the `subject` alias field on
 -- test_sessions, and hides the old sample_id / insert_edge_id fields.
 
-BEGIN;
+
 
 -- Junction collection (hidden system collection).
 INSERT INTO directus_collections (collection, icon, hidden, note)
@@ -36,13 +36,13 @@ VALUES ('test_sessions', 'subject', 'm2a', 'list-m2a', '{"enableCreate":false,"e
 -- Hide the old single-target fields (kept as backup columns).
 UPDATE directus_fields SET hidden = TRUE WHERE collection='test_sessions' AND field IN ('sample_id','insert_edge_id');
 
-COMMIT;
+
 
 -- migrate:down
-BEGIN;
+
 UPDATE directus_fields SET hidden = FALSE WHERE collection='test_sessions' AND field IN ('sample_id','insert_edge_id');
 DELETE FROM directus_fields WHERE collection='test_sessions' AND field='subject';
 DELETE FROM directus_relations WHERE many_collection='test_sessions_subject';
 DELETE FROM directus_fields WHERE collection='test_sessions_subject';
 DELETE FROM directus_collections WHERE collection='test_sessions_subject';
-COMMIT;
+
