@@ -103,7 +103,7 @@ def fmt_date(v):
 
 
 def fmt_time(v):
-    if isinstance(v, (time, datetime)):
+    if isinstance(v, time | datetime):
         return v.strftime("%H:%M")
     s = clean_str(v)
     return s or ""

@@ -65,7 +65,7 @@ def read_his_bytes(emd_path_or_bytes) -> bytes:
     """Return the .HIS member bytes from an .EMD zip (path or raw bytes)."""
     src = (
         emd_path_or_bytes
-        if isinstance(emd_path_or_bytes, (bytes, bytearray))
+        if isinstance(emd_path_or_bytes, bytes | bytearray)
         else open(emd_path_or_bytes, "rb").read()
     )
     with zipfile.ZipFile(BytesIO(src)) as zf:

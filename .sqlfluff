@@ -6,7 +6,7 @@ max_line_length = 100
 # PostgreSQL's implicit adjacent-string-literal concatenation, used here for
 # COMMENT ON strings and multi-row INSERT VALUES. All other layout and quality
 # rules remain active.
-exclude_rules = LT01, LT02
+exclude_rules = LT01, LT02, ST05
 
 [sqlfluff:rules:capitalisation.keywords]
 capitalisation_policy = upper

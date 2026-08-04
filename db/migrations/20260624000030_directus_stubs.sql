@@ -19,6 +19,13 @@ CREATE TABLE IF NOT EXISTS "Machine_Operators" (
     "Name" TEXT
 );
 
+-- manufacturing_operations.operator is a Directus-managed column (INTEGER FK to
+-- Machine_Operators) that was added via the admin UI, not a migration. Later
+-- migrations (0038, 0061) UPDATE it, so it must exist in CI.
+ALTER TABLE manufacturing_operations
+    ADD COLUMN IF NOT EXISTS operator INTEGER
+        REFERENCES "Machine_Operators"(id) ON DELETE SET NULL;
+
 -- migrate:down
 -- Don't drop — Directus may own the real table. The IF NOT EXISTS in :up is
 -- idempotent against both the stub and the real table.
