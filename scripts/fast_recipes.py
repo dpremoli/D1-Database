@@ -11,6 +11,7 @@ Rezept.Daten[N+1] corresponds to Kopfdaten.Nr = N (Daten1 is unused). Verified o
 Daten10='20 min holding'. Note this differs from Versuch, whose DataCaption legend maps
 Daten1..20 directly.
 """
+
 from __future__ import annotations
 
 import re
@@ -94,6 +95,9 @@ def rcp_targets_from_name(name: str) -> dict:
 
 def recipe_id(machine: str, program_nr: int | None, name: str) -> str:
     """Deterministic UUID: FAST 25 keyed by ProgrammNr, FAST 250 by lower(name)."""
-    key = f"fast{machine}|{program_nr}" if program_nr is not None \
+    key = (
+        f"fast{machine}|{program_nr}"
+        if program_nr is not None
         else f"fast{machine}|{str(name).strip().lower()}"
+    )
     return str(uuid.uuid5(_NS, key))

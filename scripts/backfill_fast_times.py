@@ -15,11 +15,16 @@ the (already date-corrected) date is preserved.
 
 Usage: DATABASE_URL=… python /scripts/backfill_fast_times.py /data [--dry-run]
 """
+
 from __future__ import annotations
-import os, sys
+
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import psycopg2, psycopg2.extras
-from import_fast_logs import read_runs, fmt_date, fmt_time, clean_code, clean_float
+import psycopg2
+import psycopg2.extras
+from import_fast_logs import clean_code, clean_float, fmt_date, fmt_time, read_runs
 
 
 def rnum(v):
@@ -66,8 +71,10 @@ def main():
     updates, t1, t2 = [], 0, 0
     for oid, d, recipe, batch, temp, force in cur.fetchall():
         recipe, batch = recipe or "", batch or ""
-        temp, force = (f"{round(float(temp),1)}" if temp is not None else None), \
-                      (f"{round(float(force),1)}" if force is not None else None)
+        temp, force = (
+            (f"{round(float(temp), 1)}" if temp is not None else None),
+            (f"{round(float(force), 1)}" if force is not None else None),
+        )
         t = None
         if temp and force:
             t = m_uni.get(f"{recipe}|{batch}|{temp}|{force}")
@@ -84,7 +91,9 @@ def main():
     if dry:
         for oid, ts in updates[:5]:
             print("   e.g.", oid, "->", ts)
-        cur.close(); conn.close(); return
+        cur.close()
+        conn.close()
+        return
 
     psycopg2.extras.execute_values(
         cur,
@@ -94,7 +103,8 @@ def main():
     )
     print(f"updated: {cur.rowcount}")
     conn.commit()
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
 
 
 if __name__ == "__main__":

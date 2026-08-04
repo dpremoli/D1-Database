@@ -6,6 +6,7 @@ independently enabled. All IIR stages run ZERO-PHASE
 phase-shifts. Must stay in lock-step with the MATLAB twin
 (scripts/matlab/frm_filters.m); test_parity.py guards the pair.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -27,10 +28,10 @@ def _hampel(x: np.ndarray, window: int, sigma: float) -> np.ndarray:
     med = np.median(sw, axis=1)
     mad = np.median(np.abs(sw - med[:, None]), axis=1)
     thr = sigma * 1.4826 * mad
-    centre = x[half:n - half]
+    centre = x[half : n - half]
     out = x.copy()
     bad = np.abs(centre - med) > thr
-    out[half:n - half] = np.where(bad, med, centre)
+    out[half : n - half] = np.where(bad, med, centre)
     return out
 
 
@@ -67,8 +68,9 @@ def _validate(chain: dict, fs: float) -> None:
             raise ChainError("notch.harmonics must be a non-empty list")
 
 
-def apply_chain(axes: dict[str, np.ndarray], fs: float, mean_rpm: float,
-                chain: dict) -> tuple[dict[str, np.ndarray], list[str]]:
+def apply_chain(
+    axes: dict[str, np.ndarray], fs: float, mean_rpm: float, chain: dict
+) -> tuple[dict[str, np.ndarray], list[str]]:
     """Apply the chain to each axis array (float64 in, float64 out).
 
     Returns (filtered axes, skipped-stage notes). Stages whose frequency exceeds the

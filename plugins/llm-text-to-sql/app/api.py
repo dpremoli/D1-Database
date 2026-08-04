@@ -43,6 +43,7 @@ def _correction_hint(error: str) -> str:
         "Output ONLY the corrected SQL."
     )
 
+
 app = Flask(__name__)
 app.before_request(check_secret)
 

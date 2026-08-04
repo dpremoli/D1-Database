@@ -11,6 +11,7 @@ Usage:
   ADMIN_PASSWORD=change_me_admin \\
       python scripts/transfer_images.py "<path to Sample_Data.xlsx>"
 """
+
 from __future__ import annotations
 
 import os
@@ -45,14 +46,23 @@ def main():
     xlsx = sys.argv[1]
     wb = openpyxl.load_workbook(xlsx, read_only=True, data_only=True)
     s = requests.Session()
-    tok = s.post(f"{BASE}/auth/login", json={"email": EMAIL, "password": PASSWORD}).json()["data"]["access_token"]
+    tok = s.post(
+        f"{BASE}/auth/login", json={"email": EMAIL, "password": PASSWORD}
+    ).json()["data"]["access_token"]
     s.headers["Authorization"] = f"Bearer {tok}"
 
     # (sheet, image-url column, key column, collection, db match field, pk)
     plans = [
-        ("Machines",     "Image", "Machine",   "equipment",    "equipment_name", "equipment_id"),
-        ("Tools",        "Image", "Unique ID", "tools",        "tool_code",      "tool_id"),
-        ("Insert Types", "Image", "Name",      "insert_types", "type_code",      "insert_type_id"),
+        ("Machines", "Image", "Machine", "equipment", "equipment_name", "equipment_id"),
+        ("Tools", "Image", "Unique ID", "tools", "tool_code", "tool_id"),
+        (
+            "Insert Types",
+            "Image",
+            "Name",
+            "insert_types",
+            "type_code",
+            "insert_type_id",
+        ),
     ]
 
     for sheet, url_col, key_col, coll, match_field, pk in plans:
@@ -67,9 +77,18 @@ def main():
             if not url or not key or not url.lower().startswith("http"):
                 continue
             # find matching DB record
-            res = s.get(f"{BASE}/items/{coll}", params={
-                "filter[" + match_field + "][_eq]": key, "fields": pk + ",image", "limit": 1,
-            }).json().get("data", [])
+            res = (
+                s.get(
+                    f"{BASE}/items/{coll}",
+                    params={
+                        "filter[" + match_field + "][_eq]": key,
+                        "fields": pk + ",image",
+                        "limit": 1,
+                    },
+                )
+                .json()
+                .get("data", [])
+            )
             if not res:
                 skipped += 1
                 continue
@@ -77,9 +96,13 @@ def main():
             if rec.get("image"):
                 continue  # already has an image
             # import the URL into the File Library (MinIO)
-            imp = s.post(f"{BASE}/files/import", json={
-                "url": url, "data": {"title": f"{coll} {key}"},
-            })
+            imp = s.post(
+                f"{BASE}/files/import",
+                json={
+                    "url": url,
+                    "data": {"title": f"{coll} {key}"},
+                },
+            )
             if imp.status_code not in (200, 201):
                 skipped += 1
                 continue

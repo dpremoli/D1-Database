@@ -44,13 +44,14 @@ _LEGACY_NS = uuid.uuid5(uuid.NAMESPACE_DNS, "d1-database.legacy-migration.v1")
 
 LEGACY_NOTE = "Imported from legacy AppSheet/Sheets export (Phase 8 migration)."
 
-_LAB_ADMIN_ROLE_ID  = "10000001-0000-0000-0000-000000000001"
+_LAB_ADMIN_ROLE_ID = "10000001-0000-0000-0000-000000000001"
 _LAB_MEMBER_ROLE_ID = "10000001-0000-0000-0000-000000000002"
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def legacy_uuid(raw_id: Any) -> uuid.UUID:
     """Deterministic UUID from any AppSheet legacy ID (hex, float-str, etc.)."""
@@ -102,8 +103,9 @@ def clean_bool(v: Any) -> bool:
     return bool(v) if v is not None else False
 
 
-def sheet_rows(wb: openpyxl.Workbook, name: str,
-               required: bool = True) -> tuple[list[str], list[dict]]:
+def sheet_rows(
+    wb: openpyxl.Workbook, name: str, required: bool = True
+) -> tuple[list[str], list[dict]]:
     """Return (headers, list_of_dicts) for a sheet, skipping blank rows.
 
     If required=False and the sheet is absent, returns ([], []) instead of
@@ -137,6 +139,7 @@ def extract_tool_uuid(tool_field: str | None) -> str | None:
 # Loaders — one function per target table
 # ---------------------------------------------------------------------------
 
+
 def load_alloying_elements(cur, rows: list[dict], dry: bool) -> int:
     data = []
     for r in rows:
@@ -145,15 +148,19 @@ def load_alloying_elements(cur, rows: list[dict], dry: bool) -> int:
         num = r.get("Atomic Number")
         if not (sym and name and num):
             continue
-        data.append((
-            sym, name, int(float(num)),
-            clean_float(r.get("Atomic Weight")),
-            clean_float(r.get("Density (g/cm3)")),
-            clean_float(r.get("Melting Point (K)")),
-            clean_float(r.get("Boiling Point (K)")),
-            clean_float(r.get("Electronegativity")),
-            clean_float(r.get("Atomic Radius (pm)")),
-        ))
+        data.append(
+            (
+                sym,
+                name,
+                int(float(num)),
+                clean_float(r.get("Atomic Weight")),
+                clean_float(r.get("Density (g/cm3)")),
+                clean_float(r.get("Melting Point (K)")),
+                clean_float(r.get("Boiling Point (K)")),
+                clean_float(r.get("Electronegativity")),
+                clean_float(r.get("Atomic Radius (pm)")),
+            )
+        )
     if not dry:
         psycopg2.extras.execute_values(
             cur,
@@ -186,11 +193,17 @@ def load_materials(cur, rows: list[dict], dry: bool) -> int:
         datasheet = clean_str(r.get("Link"))
         overview = clean_str(r.get("Overview"))
         notes = f"{LEGACY_NOTE} Overview: {overview}" if overview else LEGACY_NOTE
-        data.append((
-            str(legacy_uuid(code)),  # stable material_id
-            code, name, density, export_ctrl, datasheet,
-            notes[:2000] if notes else LEGACY_NOTE,
-        ))
+        data.append(
+            (
+                str(legacy_uuid(code)),  # stable material_id
+                code,
+                name,
+                density,
+                export_ctrl,
+                datasheet,
+                notes[:2000] if notes else LEGACY_NOTE,
+            )
+        )
     # Deduplicate by alloy_code (index 1) — keep first occurrence
     seen: set[str] = set()
     deduped = []
@@ -267,10 +280,21 @@ def load_material_elements(cur, rows: list[dict], dry: bool) -> int:
             continue
         seen_syms: set[str] = set()
         for token in str(raw).split(","):
-            sym = _extract_symbol(token.strip(), known_symbols) if known_symbols else token.strip()
+            sym = (
+                _extract_symbol(token.strip(), known_symbols)
+                if known_symbols
+                else token.strip()
+            )
             if not sym:
-                if known_symbols and token.strip().lower() not in ("n/a", "na", "others", ""):
-                    log.debug("material_elements: no match for %r, skipping", token.strip())
+                if known_symbols and token.strip().lower() not in (
+                    "n/a",
+                    "na",
+                    "others",
+                    "",
+                ):
+                    log.debug(
+                        "material_elements: no match for %r, skipping", token.strip()
+                    )
                 continue
             if sym not in seen_syms:
                 seen_syms.add(sym)
@@ -295,10 +319,16 @@ def load_equipment(cur, rows: list[dict], dry: bool) -> int:
         code = re.sub(r"[^A-Za-z0-9_\-]", "-", name).strip("-")
         eq_type = clean_str(r.get("Type")) or "Unknown"
         mfr = clean_str(r.get("Manufacturer"))
-        data.append((
-            str(legacy_uuid(name)),
-            code, name, eq_type, mfr, LEGACY_NOTE,
-        ))
+        data.append(
+            (
+                str(legacy_uuid(name)),
+                code,
+                name,
+                eq_type,
+                mfr,
+                LEGACY_NOTE,
+            )
+        )
     if not dry:
         psycopg2.extras.execute_values(
             cur,
@@ -323,18 +353,29 @@ def load_tools(cur, rows: list[dict], dry: bool) -> int:
         mfr = clean_str(r.get("Manufacturer"))
         datasheet = clean_str(r.get("Datasheet")) or clean_str(r.get("Link"))
         op_type = clean_str(r.get("Op Type")) or clean_str(r.get("Operation Type"))
-        data.append((
-            str(legacy_uuid(uid)),
-            uid, name, tool_type, mfr, datasheet, op_type,
-            clean_float(r.get("Cutter Diameter [mm]") or r.get("Cutter Diameter (mm)")),
-            clean_float(r.get("Shank Width [mm]") or r.get("Shank Width (mm)")),
-            clean_float(r.get("Shank Length [mm]") or r.get("Shank Length (mm)")),
-            clean_float(r.get("Overall Length [mm]") or r.get("Overall Length (mm)")),
-            clean_str(r.get("Shank Type")),
-            clean_str(r.get("Cutting Direction")),
-            clean_str(r.get("Insert Clamping System") or r.get("Clamping System")),
-            LEGACY_NOTE,
-        ))
+        data.append(
+            (
+                str(legacy_uuid(uid)),
+                uid,
+                name,
+                tool_type,
+                mfr,
+                datasheet,
+                op_type,
+                clean_float(
+                    r.get("Cutter Diameter [mm]") or r.get("Cutter Diameter (mm)")
+                ),
+                clean_float(r.get("Shank Width [mm]") or r.get("Shank Width (mm)")),
+                clean_float(r.get("Shank Length [mm]") or r.get("Shank Length (mm)")),
+                clean_float(
+                    r.get("Overall Length [mm]") or r.get("Overall Length (mm)")
+                ),
+                clean_str(r.get("Shank Type")),
+                clean_str(r.get("Cutting Direction")),
+                clean_str(r.get("Insert Clamping System") or r.get("Clamping System")),
+                LEGACY_NOTE,
+            )
+        )
     if not dry:
         psycopg2.extras.execute_values(
             cur,
@@ -370,7 +411,9 @@ def load_insert_types(cur, rows: list[dict], dry: bool) -> int:
         # OP Type is a Ref to OP Types table — store the display name as text
         op_type = clean_str(r.get("OP Type")) or clean_str(r.get("Op Type"))
         # Mounting style code may come as a number or short text
-        msc_raw = r.get("Insert mounting Style Code (IFS)") or r.get("Mounting Style Code")
+        msc_raw = r.get("Insert mounting Style Code (IFS)") or r.get(
+            "Mounting Style Code"
+        )
         mounting_style = clean_str(msc_raw)
         per_box_raw = r.get("# Per Box") or r.get("Per Box")
         edge_raw = r.get("Edge #") or r.get("Edge Number")
@@ -380,17 +423,34 @@ def load_insert_types(cur, rows: list[dict], dry: bool) -> int:
             or r.get("Material Classification (TMC1ISO)")
         )
         mat_cls = mat_cls_raw.split(",")[0].strip() if mat_cls_raw else None
-        data.append((
-            str(legacy_uuid(name)),
-            name, mfr, LEGACY_NOTE, op_type, mounting_style,
-            int(float(per_box_raw)) if per_box_raw is not None else None,
-            int(float(edge_raw)) if edge_raw is not None else None,
-            clean_float(r.get("Nose Radius (RE) [mm]") or r.get("Nose Radius (RE)(mm)")),
-            clean_float(r.get("Cutting edge length (L) [mm]") or r.get("Cutting edge length (L)(mm)")),
-            clean_float(r.get("Included angle ESPR [deg]") or r.get("Included angle (ESPR)(deg)")),
-            clean_float(r.get("Fixing Hole Diameter [mm]") or r.get("Fixing Hole Diameter (mm)")),
-            mat_cls,
-        ))
+        data.append(
+            (
+                str(legacy_uuid(name)),
+                name,
+                mfr,
+                LEGACY_NOTE,
+                op_type,
+                mounting_style,
+                int(float(per_box_raw)) if per_box_raw is not None else None,
+                int(float(edge_raw)) if edge_raw is not None else None,
+                clean_float(
+                    r.get("Nose Radius (RE) [mm]") or r.get("Nose Radius (RE)(mm)")
+                ),
+                clean_float(
+                    r.get("Cutting edge length (L) [mm]")
+                    or r.get("Cutting edge length (L)(mm)")
+                ),
+                clean_float(
+                    r.get("Included angle ESPR [deg]")
+                    or r.get("Included angle (ESPR)(deg)")
+                ),
+                clean_float(
+                    r.get("Fixing Hole Diameter [mm]")
+                    or r.get("Fixing Hole Diameter (mm)")
+                ),
+                mat_cls,
+            )
+        )
     if not dry:
         psycopg2.extras.execute_values(
             cur,
@@ -416,8 +476,9 @@ def load_insert_types(cur, rows: list[dict], dry: bool) -> int:
     return len(data)
 
 
-def load_manufacturing_methods(cur, op_rows: list[dict], code_rows: list[dict],
-                                dry: bool) -> int:
+def load_manufacturing_methods(
+    cur, op_rows: list[dict], code_rows: list[dict], dry: bool
+) -> int:
     # Seed already covers FAST/MF, Forged/MO etc.  Add any missing from sheets.
     method_map = {
         "Turning": ("MC", "CNC Turning"),
@@ -442,10 +503,14 @@ def load_manufacturing_methods(cur, op_rows: list[dict], code_rows: list[dict],
 
     data = []
     for method_name, (code, display) in method_map.items():
-        data.append((
-            str(legacy_uuid(f"method:{code}")),
-            code, display, LEGACY_NOTE,
-        ))
+        data.append(
+            (
+                str(legacy_uuid(f"method:{code}")),
+                code,
+                display,
+                LEGACY_NOTE,
+            )
+        )
     if not dry:
         psycopg2.extras.execute_values(
             cur,
@@ -464,8 +529,9 @@ def load_method_parameters(cur, dry: bool) -> int:
     return 0
 
 
-def load_tool_boxes(cur, rows: list[dict], insert_rows: list[dict],
-                    itype_map: dict, dry: bool) -> tuple[int, dict]:
+def load_tool_boxes(
+    cur, rows: list[dict], insert_rows: list[dict], itype_map: dict, dry: bool
+) -> tuple[int, dict]:
     """Returns (count, box_id_to_uuid_map)."""
     # Find insert types by name
     if not dry:
@@ -494,22 +560,35 @@ def load_tool_boxes(cur, rows: list[dict], insert_rows: list[dict],
         pkg_qty_raw = r.get("Package Quantity") or r.get("Qty")
         pkg_qty = int(float(pkg_qty_raw)) if pkg_qty_raw is not None else None
         owner = clean_str(r.get("Owner"))
-        data.append((
-            box_uuid, box_code,
-            itype_name or "Unknown",  # description = insert type name
-            clean_str(r.get("Location")),
-            itype_id, pkg_qty, owner, LEGACY_NOTE,
-        ))
+        data.append(
+            (
+                box_uuid,
+                box_code,
+                itype_name or "Unknown",  # description = insert type name
+                clean_str(r.get("Location")),
+                itype_id,
+                pkg_qty,
+                owner,
+                LEGACY_NOTE,
+            )
+        )
 
     # Synthetic placeholder for orphan boxes referenced by inserts but missing from inventory
     for oid in orphan_ids:
         box_uuid = str(legacy_uuid(f"box:{oid}"))
         box_uuid_map[oid] = box_uuid
-        data.append((
-            box_uuid, oid, "Unknown (not in inventory)",
-            None, None, None, None,
-            f"{LEGACY_NOTE} WARNING: box referenced by inserts but missing from Insert Boxes Inventory.",
-        ))
+        data.append(
+            (
+                box_uuid,
+                oid,
+                "Unknown (not in inventory)",
+                None,
+                None,
+                None,
+                None,
+                f"{LEGACY_NOTE} WARNING: box referenced by inserts but missing from Insert Boxes Inventory.",
+            )
+        )
 
     if not dry:
         psycopg2.extras.execute_values(
@@ -526,8 +605,9 @@ def load_tool_boxes(cur, rows: list[dict], insert_rows: list[dict],
     return len(data), box_uuid_map
 
 
-def load_cutting_inserts(cur, rows: list[dict], box_uuid_map: dict,
-                          itype_map: dict, dry: bool) -> tuple[int, dict]:
+def load_cutting_inserts(
+    cur, rows: list[dict], box_uuid_map: dict, itype_map: dict, dry: bool
+) -> tuple[int, dict]:
     """Returns (count, insert_uid_to_uuid_map)."""
     if not dry:
         cur.execute("SELECT insert_type_id, type_code FROM insert_types")
@@ -546,14 +626,18 @@ def load_cutting_inserts(cur, rows: list[dict], box_uuid_map: dict,
         box_hex = clean_str(r.get("Insert Box"))
         box_uuid = box_uuid_map.get(box_hex) if box_hex else None
         if not box_uuid:
-            log.warning("Cutting insert %s: parent box %s not found, skipping", uid, box_hex)
+            log.warning(
+                "Cutting insert %s: parent box %s not found, skipping", uid, box_hex
+            )
             continue
         itype_name = clean_str(r.get("Insert Type"))
         itype_id = itype_uuid.get(itype_name) if itype_name else None
         pos = r.get("Position In Box")
         insert_number = int(float(pos)) if pos is not None else None
         # insert_code: box_code-#position
-        insert_code = f"{box_hex}-#{insert_number}" if insert_number else f"{box_hex}-{uid[:4]}"
+        insert_code = (
+            f"{box_hex}-#{insert_number}" if insert_number else f"{box_hex}-{uid[:4]}"
+        )
         if insert_code in seen_codes:
             insert_code = f"{insert_code}-{uid[:4]}"
         seen_codes.add(insert_code)
@@ -563,10 +647,19 @@ def load_cutting_inserts(cur, rows: list[dict], box_uuid_map: dict,
         owner = clean_str(r.get("Owner"))
         insert_uuid = str(legacy_uuid(f"insert:{uid}"))
         insert_uuid_map[uid] = insert_uuid
-        data.append((
-            insert_uuid, insert_code, box_uuid,
-            itype_id, insert_number, location, owner, is_depleted, LEGACY_NOTE,
-        ))
+        data.append(
+            (
+                insert_uuid,
+                insert_code,
+                box_uuid,
+                itype_id,
+                insert_number,
+                location,
+                owner,
+                is_depleted,
+                LEGACY_NOTE,
+            )
+        )
 
     if not dry:
         psycopg2.extras.execute_values(
@@ -583,8 +676,9 @@ def load_cutting_inserts(cur, rows: list[dict], box_uuid_map: dict,
     return len(data), insert_uuid_map
 
 
-def load_insert_edges(cur, rows: list[dict], insert_uuid_map: dict,
-                      box_uuid_map: dict, dry: bool) -> tuple[int, dict]:
+def load_insert_edges(
+    cur, rows: list[dict], insert_uuid_map: dict, box_uuid_map: dict, dry: bool
+) -> tuple[int, dict]:
     """Returns (count, edge_uid_to_uuid_map).
 
     edge_code = {box_hex}-#{insert_position}-f{letter}
@@ -600,9 +694,9 @@ def load_insert_edges(cur, rows: list[dict], insert_uuid_map: dict,
             "SELECT ci.insert_code, ci.insert_number, tb.tool_box_code "
             "FROM cutting_inserts ci JOIN tool_boxes tb ON ci.tool_box_id=tb.tool_box_id"
         )
-        insert_info: dict[str, tuple] = {r[0]: (r[2], r[1]) for r in cur.fetchall()}
+        insert_info: dict[str, tuple] = {r[0]: (r[2], r[1]) for r in cur.fetchall()}  # noqa: F841
     else:
-        insert_info = {}
+        insert_info = {}  # noqa: F841
 
     for r in rows:
         eid = clean_str(r.get("Edge ID"))
@@ -611,7 +705,9 @@ def load_insert_edges(cur, rows: list[dict], insert_uuid_map: dict,
         parent_uid = clean_str(r.get("Parent Insert"))
         insert_uuid = insert_uuid_map.get(parent_uid) if parent_uid else None
         if not insert_uuid:
-            log.warning("Insert edge %s: parent insert %s not found, skipping", eid, parent_uid)
+            log.warning(
+                "Insert edge %s: parent insert %s not found, skipping", eid, parent_uid
+            )
             continue
 
         number = r.get("Number")
@@ -625,7 +721,7 @@ def load_insert_edges(cur, rows: list[dict], insert_uuid_map: dict,
         box_code = parent_box_hex or "UNK"
         # find insert number: look at insert_uuid_map to get the insert code
         # which was: f"{box_hex}-#{insert_number}"
-        insert_number = None
+        insert_number = None  # noqa: F841
         for k, v in insert_uuid_map.items():
             if v == insert_uuid:
                 # k is the original uid; look at data to get position
@@ -639,10 +735,16 @@ def load_insert_edges(cur, rows: list[dict], insert_uuid_map: dict,
         is_used = clean_bool(r.get("Status"))
         edge_uuid = str(legacy_uuid(f"edge:{eid}"))
         edge_uuid_map[eid] = edge_uuid
-        data.append((
-            edge_uuid, edge_code, insert_uuid,
-            edge_identifier, is_used, LEGACY_NOTE,
-        ))
+        data.append(
+            (
+                edge_uuid,
+                edge_code,
+                insert_uuid,
+                edge_identifier,
+                is_used,
+                LEGACY_NOTE,
+            )
+        )
 
     if not dry:
         psycopg2.extras.execute_values(
@@ -655,9 +757,9 @@ def load_insert_edges(cur, rows: list[dict], insert_uuid_map: dict,
     return len(data), edge_uuid_map
 
 
-def load_physical_samples(cur, rows: list[dict], material_map: dict,
-                           email_to_uuid_map: dict,
-                           dry: bool) -> tuple[int, dict, dict]:
+def load_physical_samples(
+    cur, rows: list[dict], material_map: dict, email_to_uuid_map: dict, dry: bool
+) -> tuple[int, dict, dict]:
     """Returns (count, legacy_uid_to_uuid_map, sample_code_to_uuid_map).
 
     Imports all Inventory rows (both 'Sample' and 'Equipment' item types).
@@ -688,7 +790,11 @@ def load_physical_samples(cur, rows: list[dict], material_map: dict,
         extra_notes_parts = []
         if alloy_name and not mat_id:
             extra_notes_parts.append(f"Legacy alloy (unresolved): {alloy_name}")
-        notes = " | ".join([LEGACY_NOTE] + extra_notes_parts) if extra_notes_parts else LEGACY_NOTE
+        notes = (
+            " | ".join([LEGACY_NOTE] + extra_notes_parts)
+            if extra_notes_parts
+            else LEGACY_NOTE
+        )
 
         # Manufacturing Route: stored as a Ref display name in AppSheet
         mfg_route = clean_str(r.get("Manufacturing Route"))
@@ -701,31 +807,33 @@ def load_physical_samples(cur, rows: list[dict], material_map: dict,
         sample_uuid_map[uid] = s_uuid
         if code:
             sample_code_map[code] = s_uuid
-        data.append((
-            s_uuid,
-            code,
-            mat_id,
-            geo.lower(),
-            item_type,
-            clean_float(r.get("Weight [g]")),
-            clean_float(r.get("⌀ [mm]")),
-            clean_float(r.get("x [mm]")),   # x = width
-            clean_float(r.get("z [mm]")),
-            clean_float(r.get("y [mm]")),
-            "active",
-            mfg_date,
-            export_ctrl,
-            notes,
-            clean_str(r.get("Nickname")),
-            clean_str(r.get("Location")),
-            clean_str(r.get("Surface Finish")),
-            email_to_uuid_map.get((clean_str(r.get("Owner")) or "").lower()),
-            co_owners,
-            mfg_route,
-            clean_bool(r.get("Mounted")),
-            clean_str(r.get("Mounting_Method") or r.get("Mounting Method")),
-            clean_str(r.get("Notes")),
-        ))
+        data.append(
+            (
+                s_uuid,
+                code,
+                mat_id,
+                geo.lower(),
+                item_type,
+                clean_float(r.get("Weight [g]")),
+                clean_float(r.get("⌀ [mm]")),
+                clean_float(r.get("x [mm]")),  # x = width
+                clean_float(r.get("z [mm]")),
+                clean_float(r.get("y [mm]")),
+                "active",
+                mfg_date,
+                export_ctrl,
+                notes,
+                clean_str(r.get("Nickname")),
+                clean_str(r.get("Location")),
+                clean_str(r.get("Surface Finish")),
+                email_to_uuid_map.get((clean_str(r.get("Owner")) or "").lower()),
+                co_owners,
+                mfg_route,
+                clean_bool(r.get("Mounted")),
+                clean_str(r.get("Mounting_Method") or r.get("Mounting Method")),
+                clean_str(r.get("Notes")),
+            )
+        )
 
     if not dry:
         psycopg2.extras.execute_values(
@@ -764,6 +872,7 @@ def load_users(cur, rows: list[dict], dry: bool) -> dict[str, str]:
     Carolina Guerra is seeded unconditionally — she appears in co_owners data
     but is absent from the Users sheet.
     """
+
     def _user_uuid(email: str) -> str:
         return str(legacy_uuid(f"d1_user:{email.lower()}"))
 
@@ -775,11 +884,12 @@ def load_users(cur, rows: list[dict], dry: bool) -> dict[str, str]:
             r.get("First Name") or r.get("FirstName") or r.get("first_name")
         )
         last = clean_str(
-            r.get("Last Name") or r.get("LastName") or r.get("Surname") or r.get("last_name")
+            r.get("Last Name")
+            or r.get("LastName")
+            or r.get("Surname")
+            or r.get("last_name")
         )
-        email = clean_str(
-            r.get("Email") or r.get("Email Address") or r.get("email")
-        )
+        email = clean_str(r.get("Email") or r.get("Email Address") or r.get("email"))
         role_name = clean_str(r.get("Role") or r.get("role"))
         if not email:
             continue
@@ -791,14 +901,18 @@ def load_users(cur, rows: list[dict], dry: bool) -> dict[str, str]:
             if role_name and "admin" in role_name.lower()
             else _LAB_MEMBER_ROLE_ID
         )
-        rows_to_insert.append((u_uuid, first or "Unknown", last or "Unknown", email_lc, role_id))
+        rows_to_insert.append(
+            (u_uuid, first or "Unknown", last or "Unknown", email_lc, role_id)
+        )
 
     # Carolina Guerra: found in co_owners but not in Users sheet
     _cg_email = "carolina.guerra@nottingham.ac.uk"
     if _cg_email not in email_to_uuid:
         cg_uuid = _user_uuid(_cg_email)
         email_to_uuid[_cg_email] = cg_uuid
-        rows_to_insert.append((cg_uuid, "Carolina", "Guerra", _cg_email, _LAB_MEMBER_ROLE_ID))
+        rows_to_insert.append(
+            (cg_uuid, "Carolina", "Guerra", _cg_email, _LAB_MEMBER_ROLE_ID)
+        )
 
     if not dry and rows_to_insert:
         psycopg2.extras.execute_values(
@@ -855,8 +969,9 @@ def load_co_owners(cur, email_to_uuid_map: dict[str, str], dry: bool) -> int:
     return len(data)
 
 
-def load_sample_genealogy(cur, rows: list[dict], sample_uuid_map: dict,
-                           dry: bool) -> tuple[int, list[str]]:
+def load_sample_genealogy(
+    cur, rows: list[dict], sample_uuid_map: dict, dry: bool
+) -> tuple[int, list[str]]:
     """Insert parent→child genealogy from Inventory[Parent] field.
 
     Returns (inserted, [skipped_reasons]).
@@ -970,39 +1085,45 @@ def load_fast_runs(
         outcome = notes_text or ""
         outcome = f"{LEGACY_NOTE} {outcome}".strip()
 
-        material_note = metadata.get("material_type") or metadata.get("legacy_material_text")
+        material_note = metadata.get("material_type") or metadata.get(
+            "legacy_material_text"
+        )
 
         for sample_uid in sample_uids:
             s_uuid = sample_uuid_map.get(sample_uid) or sample_code_map.get(sample_uid)
             if not s_uuid:
                 continue
             op_uuid = str(legacy_uuid(f"fast_op:{uid}:{sample_uid}"))
-            data.append((
-                op_uuid,
-                s_uuid,
-                fast_method_id,
-                equipment_id,
-                operator,
-                op_date,
-                json.dumps(metadata),
-                outcome,
-            ))
-            sintering_data.append((
-                op_uuid,
-                metadata.get("recipe_number"),
-                metadata.get("batch_number"),
-                metadata.get("mould_diameter_mm"),
-                metadata.get("atmosphere"),
-                metadata.get("tc_pyro_control"),
-                metadata.get("max_temp_celsius"),
-                metadata.get("max_force_kn"),
-                metadata.get("voltage_at_max_t_v"),
-                metadata.get("power_at_max_t_kw"),
-                metadata.get("ptc_top_celsius"),
-                metadata.get("ptc_bot_celsius"),
-                metadata.get("coshh_ref"),
-                material_note,
-            ))
+            data.append(
+                (
+                    op_uuid,
+                    s_uuid,
+                    fast_method_id,
+                    equipment_id,
+                    operator,
+                    op_date,
+                    json.dumps(metadata),
+                    outcome,
+                )
+            )
+            sintering_data.append(
+                (
+                    op_uuid,
+                    metadata.get("recipe_number"),
+                    metadata.get("batch_number"),
+                    metadata.get("mould_diameter_mm"),
+                    metadata.get("atmosphere"),
+                    metadata.get("tc_pyro_control"),
+                    metadata.get("max_temp_celsius"),
+                    metadata.get("max_force_kn"),
+                    metadata.get("voltage_at_max_t_v"),
+                    metadata.get("power_at_max_t_kw"),
+                    metadata.get("ptc_top_celsius"),
+                    metadata.get("ptc_bot_celsius"),
+                    metadata.get("coshh_ref"),
+                    material_note,
+                )
+            )
 
     if not dry:
         psycopg2.extras.execute_values(
@@ -1030,9 +1151,14 @@ def load_fast_runs(
 
 
 _OP_SUBTYPE_MAP = {
-    "turning": "turning", "facing": "facing", "boring": "boring",
-    "threading": "threading", "grooving": "grooving", "parting": "parting",
-    "milling": "milling", "drilling": "drilling",
+    "turning": "turning",
+    "facing": "facing",
+    "boring": "boring",
+    "threading": "threading",
+    "grooving": "grooving",
+    "parting": "parting",
+    "milling": "milling",
+    "drilling": "drilling",
 }
 
 
@@ -1056,7 +1182,11 @@ def load_machining_ops(
         if not uid:
             continue
         workpiece_uid = clean_str(r.get("Workpiece ID"))
-        s_uuid = (sample_uuid_map.get(workpiece_uid) or sample_code_map.get(workpiece_uid)) if workpiece_uid else None
+        s_uuid = (
+            (sample_uuid_map.get(workpiece_uid) or sample_code_map.get(workpiece_uid))
+            if workpiece_uid
+            else None
+        )
         if not s_uuid:
             warnings_out.append(
                 f"Machining op {uid}: workpiece {workpiece_uid} not found — skipped"
@@ -1140,13 +1270,25 @@ def load_machining_ops(
         pass_code = clean_str(r.get("Operation Code"))
 
         op_uuid = str(legacy_uuid(f"machining_op:{uid}"))
-        data.append((
-            op_uuid, s_uuid, method_id, equipment_id, tool_uuid,
-            clean_str(r.get("User")), op_seq, pass_code, op_date,
-            json.dumps(metadata),
-            capture_sw, freq_khz, force_link,
-            nc_prog, outcome,
-        ))
+        data.append(
+            (
+                op_uuid,
+                s_uuid,
+                method_id,
+                equipment_id,
+                tool_uuid,
+                clean_str(r.get("User")),
+                op_seq,
+                pass_code,
+                op_date,
+                json.dumps(metadata),
+                capture_sw,
+                freq_khz,
+                force_link,
+                nc_prog,
+                outcome,
+            )
+        )
 
         # Back-fill machining_params from extracted metadata
         subtype_raw = operation_type.lower().strip()
@@ -1154,28 +1296,32 @@ def load_machining_ops(
         rpm_val = metadata.get("rpm") or metadata.get("max_rpm")
         axial_val = metadata.get("axial_mm") or metadata.get("ap_mm")
         coolant_p_raw = metadata.get("coolant_pressure")
-        coolant_p = clean_float(str(coolant_p_raw)) if coolant_p_raw is not None else None
-        param_data.append((
-            op_uuid,
-            subtype,
-            rpm_val,
-            metadata.get("vc_m_per_min"),
-            metadata.get("feed_mm_per_rev"),
-            axial_val,
-            None,  # radial_depth_of_cut_mm — not in legacy data
-            metadata.get("cut_length_mm"),
-            metadata.get("diameter_mm"),
-            metadata.get("new_edge"),
-            metadata.get("coolant_used"),
-            coolant_p,
-            metadata.get("tacho_used"),
-            metadata.get("force_captured"),
-            metadata.get("chips_collected"),
-            metadata.get("chips_ref_code"),
-            metadata.get("experiment_sheet"),
-            metadata.get("legacy_insert_edge_id"),
-            uid,  # legacy_machining_uid
-        ))
+        coolant_p = (
+            clean_float(str(coolant_p_raw)) if coolant_p_raw is not None else None
+        )
+        param_data.append(
+            (
+                op_uuid,
+                subtype,
+                rpm_val,
+                metadata.get("vc_m_per_min"),
+                metadata.get("feed_mm_per_rev"),
+                axial_val,
+                None,  # radial_depth_of_cut_mm — not in legacy data
+                metadata.get("cut_length_mm"),
+                metadata.get("diameter_mm"),
+                metadata.get("new_edge"),
+                metadata.get("coolant_used"),
+                coolant_p,
+                metadata.get("tacho_used"),
+                metadata.get("force_captured"),
+                metadata.get("chips_collected"),
+                metadata.get("chips_ref_code"),
+                metadata.get("experiment_sheet"),
+                metadata.get("legacy_insert_edge_id"),
+                uid,  # legacy_machining_uid
+            )
+        )
 
     if not dry:
         psycopg2.extras.execute_values(
@@ -1209,6 +1355,7 @@ def load_machining_ops(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def build_lookup_maps(cur, dry: bool) -> tuple[dict, dict, dict, dict]:
     """Return (material_map, equipment_map, tool_map, method_map) from DB."""
@@ -1244,7 +1391,7 @@ def print_report(stats: dict, warnings: list[str]) -> None:
     print("-" * 56)
     print(f"  {'TOTAL':<38} {total:>15}")
     if warnings:
-        print(f"\n{'─'*60}")
+        print(f"\n{'─' * 60}")
         print(f"WARNINGS / SKIPPED ({len(warnings)}):")
         for w in warnings[:50]:
             print(f"  ⚠ {w}")
@@ -1257,8 +1404,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--xlsx", required=True, help="Path to Sample_Data.xlsx")
-    p.add_argument("--dry-run", action="store_true",
-                   help="Print counts only; make no DB changes")
+    p.add_argument(
+        "--dry-run", action="store_true", help="Print counts only; make no DB changes"
+    )
     args = p.parse_args()
 
     xlsx_path = Path(args.xlsx)
@@ -1371,8 +1519,14 @@ def main() -> None:
 
         log.info("Loading FAST Run operations …")
         n_fast, fast_skipped = load_fast_runs(
-            cur, fast_rows, inv_rows, sample_uuid_map, sample_code_map,
-            equipment_map, method_map, args.dry_run,
+            cur,
+            fast_rows,
+            inv_rows,
+            sample_uuid_map,
+            sample_code_map,
+            equipment_map,
+            method_map,
+            args.dry_run,
         )
         stats["manufacturing_operations (FAST)"] = n_fast
         if fast_skipped:
@@ -1383,8 +1537,14 @@ def main() -> None:
 
         log.info("Loading Machining Operations …")
         n_mop, mop_warn = load_machining_ops(
-            cur, mop_rows, sample_uuid_map, sample_code_map, equipment_map,
-            tool_map, method_map, args.dry_run,
+            cur,
+            mop_rows,
+            sample_uuid_map,
+            sample_code_map,
+            equipment_map,
+            tool_map,
+            method_map,
+            args.dry_run,
         )
         stats["manufacturing_operations (Machining)"] = n_mop
         all_warnings.extend(mop_warn)

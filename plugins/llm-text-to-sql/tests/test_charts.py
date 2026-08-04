@@ -38,7 +38,8 @@ def test_histogram_without_y_is_allowed():
 
 
 def test_x_not_in_columns_rejected():
-    assert validate_chart_spec({"type": "bar", "x": "nope", "y": "sample_count"}, COLUMNS) is None
+    spec = {"type": "bar", "x": "nope", "y": "sample_count"}
+    assert validate_chart_spec(spec, COLUMNS) is None
 
 
 def test_y_not_in_columns_rejected():
@@ -47,7 +48,8 @@ def test_y_not_in_columns_rejected():
 
 
 def test_unknown_chart_type_rejected():
-    assert validate_chart_spec({"type": "sankey", "x": "material", "y": "sample_count"}, COLUMNS) is None
+    spec = {"type": "sankey", "x": "material", "y": "sample_count"}
+    assert validate_chart_spec(spec, COLUMNS) is None
 
 
 def test_non_histogram_needs_a_y():
@@ -83,7 +85,11 @@ def test_default_chart_picks_categorical_x_and_numeric_y():
 
 
 def test_default_chart_honours_requested_pie():
-    out = default_chart_for(["material_name", "count"], FALLBACK_ROWS, "make a pie chart")
+    out = default_chart_for(
+        ["material_name", "count"],
+        FALLBACK_ROWS,
+        "make a pie chart",
+    )
     assert out["type"] == "pie"
     assert out["x"] == "material_name"
     assert out["y"] == ["count"]

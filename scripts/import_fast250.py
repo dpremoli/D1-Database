@@ -17,6 +17,7 @@ canonical DD-MM-YY-MF{n} codes across all sintering ops.
 Usage:
     DATABASE_URL=… python scripts/import_fast250.py "…/FAST Machines Data" [--dry-run]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -100,9 +101,15 @@ def read_export(data_root: str) -> dict[int, dict]:
             continue
         no = int(r[0])
         out[no] = {
-            "status": g(r, "status"), "start": g(r, "start"), "end": g(r, "end"),
-            "name": g(r, "name"), "customer": g(r, "customer"), "load": g(r, "load"),
-            "material": g(r, "material"), "remark": g(r, "remark"), "recipe": g(r, "recipe"),
+            "status": g(r, "status"),
+            "start": g(r, "start"),
+            "end": g(r, "end"),
+            "name": g(r, "name"),
+            "customer": g(r, "customer"),
+            "load": g(r, "load"),
+            "material": g(r, "material"),
+            "remark": g(r, "remark"),
+            "recipe": g(r, "recipe"),
         }
     return out
 
@@ -110,7 +117,9 @@ def read_export(data_root: str) -> dict[int, dict]:
 def trace_files(data_root: str) -> dict[int, str]:
     """{No: data-root-relative POSIX path} for every CSV/**/<No>_*.csv."""
     out: dict[int, str] = {}
-    for f in glob.glob(os.path.join(data_root, REL_ROOT, "CSV", "**", "*.csv"), recursive=True):
+    for f in glob.glob(
+        os.path.join(data_root, REL_ROOT, "CSV", "**", "*.csv"), recursive=True
+    ):
         base = os.path.basename(f)
         head = base.split("_", 1)[0]
         if head.isdigit():
@@ -148,7 +157,9 @@ def read_recipes(data_root: str) -> dict[str, dict]:
         segments = [ln.split(";") for ln in text.splitlines() if ln.strip()]
         row = {
             "id": frx.recipe_id("250", None, name),
-            "machine": "250", "program_nr": None, "name": name,
+            "machine": "250",
+            "program_nr": None,
+            "name": name,
             "group_name": None,
             "source_file": os.path.relpath(path, data_root).replace("\\", "/"),
             "params": {"segments": segments[:40]},
@@ -183,25 +194,37 @@ def build_ops(data_root: str) -> tuple[list[dict], dict[int, str]]:
             # No usable timestamp anywhere — skip (can't date the op).
             continue
         operator_name, owner_email, raw_user = fm.parse_user(customer)
-        notes = " ".join(filter(None, [
-            remark,
-            f"Status: {status}" if status and status.lower() != "ready" else None,
-        ])) or None
-        ops.append({
-            "run_no": no,
-            "source_run_uid": uid_for(no),
-            "operation_id": op_id_for(no),
-            "operation_date": start,
-            "operator_disp": operator_name,
-            "operator_name": raw_user,
-            "owner_email": owner_email,
-            "material_code": fm.match_material(material_text),
-            "material_text": material_text,
-            "recipe": recipe,
-            "mass_grams": parse_mass_grams(e["load"]) if e else None,
-            "outcome_notes": notes,
-            "trace_rel": rel,
-        })
+        notes = (
+            " ".join(
+                filter(
+                    None,
+                    [
+                        remark,
+                        f"Status: {status}"
+                        if status and status.lower() != "ready"
+                        else None,
+                    ],
+                )
+            )
+            or None
+        )
+        ops.append(
+            {
+                "run_no": no,
+                "source_run_uid": uid_for(no),
+                "operation_id": op_id_for(no),
+                "operation_date": start,
+                "operator_disp": operator_name,
+                "operator_name": raw_user,
+                "owner_email": owner_email,
+                "material_code": fm.match_material(material_text),
+                "material_text": material_text,
+                "recipe": recipe,
+                "mass_grams": parse_mass_grams(e["load"]) if e else None,
+                "outcome_notes": notes,
+                "trace_rel": rel,
+            }
+        )
     return ops, traces
 
 
@@ -223,8 +246,13 @@ def main() -> None:
         key = nm.lower()
         if key not in recipes:
             recipes[key] = {
-                "id": frx.recipe_id("250", None, nm), "machine": "250", "program_nr": None,
-                "name": nm, "group_name": None, "source_file": None, "params": None,
+                "id": frx.recipe_id("250", None, nm),
+                "machine": "250",
+                "program_nr": None,
+                "name": nm,
+                "group_name": None,
+                "source_file": None,
+                "params": None,
                 **frx.rcp_targets_from_name(nm),
             }
         o["fast_recipe_id"] = recipes[key]["id"]
@@ -232,16 +260,30 @@ def main() -> None:
     with_trace = sum(1 for o in ops if o["trace_rel"])
     linked_mat = sum(1 for o in ops if o["material_code"])
     linked_owner = sum(1 for o in ops if o["owner_email"])
-    print(f"FAST 250: {len(ops)} operations "
-          f"({with_trace} with a local trace, {len(traces)} trace files seen)")
+    print(
+        f"FAST 250: {len(ops)} operations "
+        f"({with_trace} with a local trace, {len(traces)} trace files seen)"
+    )
     print(f"  material linked: {linked_mat}   owner linked: {linked_owner}")
 
     if args.dry_run:
         print("\n[dry-run] sample of 3:")
         for o in ops[:3]:
-            print("   ", {k: o[k] for k in ("run_no", "operation_date", "recipe",
-                                            "material_code", "operator_name", "mass_grams",
-                                            "trace_rel")})
+            print(
+                "   ",
+                {
+                    k: o[k]
+                    for k in (
+                        "run_no",
+                        "operation_date",
+                        "recipe",
+                        "material_code",
+                        "operator_name",
+                        "mass_grams",
+                        "trace_rel",
+                    )
+                },
+            )
         return
 
     dsn = os.environ.get("DATABASE_URL") or sys.exit("ERROR: DATABASE_URL required")
@@ -264,7 +306,10 @@ def main() -> None:
     op_to_id = {n: i for n, i in cur.fetchall()}
     for name in sorted({o["operator_disp"] for o in ops if o["operator_disp"]}):
         if name not in op_to_id:
-            cur.execute('INSERT INTO "Machine_Operators" ("Name") VALUES (%s) RETURNING id', (name,))
+            cur.execute(
+                'INSERT INTO "Machine_Operators" ("Name") VALUES (%s) RETURNING id',
+                (name,),
+            )
             op_to_id[name] = cur.fetchone()[0]
 
     cur.execute("SELECT email, id FROM directus_users")
@@ -284,33 +329,78 @@ def main() -> None:
         "ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, source_file=EXCLUDED.source_file, "
         "  target_temp_c=EXCLUDED.target_temp_c, target_force_kn=EXCLUDED.target_force_kn, "
         "  hold_time_min=EXCLUDED.hold_time_min, params=EXCLUDED.params, updated_at=now()",
-        [(r["id"], r["machine"], r["program_nr"], r["name"], r["group_name"], r["source_file"],
-          r.get("target_temp_c"), r.get("target_force_kn"), r.get("hold_time_min"),
-          psycopg2.extras.Json(r["params"]) if r.get("params") else None)
-         for r in recipes.values()],
+        [
+            (
+                r["id"],
+                r["machine"],
+                r["program_nr"],
+                r["name"],
+                r["group_name"],
+                r["source_file"],
+                r.get("target_temp_c"),
+                r.get("target_force_kn"),
+                r.get("hold_time_min"),
+                psycopg2.extras.Json(r["params"]) if r.get("params") else None,
+            )
+            for r in recipes.values()
+        ],
         page_size=500,
     )
     print(f"upserted {len(recipes)} FAST 250 recipes")
 
     cols = [
-        "operation_id", "method_id", "equipment_id", "process_category",
-        "source_run_uid", "source_system", "operation_date",
-        "operator", "operator_name", "owner", "material_id",
-        "sintering_recipe_number", "fast_recipe_id", "sintering_mass_grams",
-        "sintering_material_type_note", "outcome_notes",
+        "operation_id",
+        "method_id",
+        "equipment_id",
+        "process_category",
+        "source_run_uid",
+        "source_system",
+        "operation_date",
+        "operator",
+        "operator_name",
+        "owner",
+        "material_id",
+        "sintering_recipe_number",
+        "fast_recipe_id",
+        "sintering_mass_grams",
+        "sintering_material_type_note",
+        "outcome_notes",
     ]
-    values = [(
-        o["operation_id"], METHOD_MF, EQUIP_250, "sintering",
-        o["source_run_uid"], SOURCE_SYSTEM, o["operation_date"],
-        op_to_id.get(o["operator_disp"]), o["operator_name"],
-        resolve_owner(o),
-        code_to_mat.get(o["material_code"]) if o["material_code"] else None,
-        o["recipe"], o.get("fast_recipe_id"), o["mass_grams"], o["material_text"], o["outcome_notes"],
-    ) for o in ops]
+    values = [
+        (
+            o["operation_id"],
+            METHOD_MF,
+            EQUIP_250,
+            "sintering",
+            o["source_run_uid"],
+            SOURCE_SYSTEM,
+            o["operation_date"],
+            op_to_id.get(o["operator_disp"]),
+            o["operator_name"],
+            resolve_owner(o),
+            code_to_mat.get(o["material_code"]) if o["material_code"] else None,
+            o["recipe"],
+            o.get("fast_recipe_id"),
+            o["mass_grams"],
+            o["material_text"],
+            o["outcome_notes"],
+        )
+        for o in ops
+    ]
 
     # Upsert: refresh mutable metadata but never touch pass_code (finalized separately).
-    update_cols = [c for c in cols if c not in ("operation_id", "source_run_uid", "method_id",
-                                                "process_category", "source_system")]
+    update_cols = [
+        c
+        for c in cols
+        if c
+        not in (
+            "operation_id",
+            "source_run_uid",
+            "method_id",
+            "process_category",
+            "source_system",
+        )
+    ]
     set_clause = ", ".join(f"{c}=EXCLUDED.{c}" for c in update_cols)
     psycopg2.extras.execute_values(
         cur,
@@ -329,7 +419,7 @@ def main() -> None:
         "VALUES %s ON CONFLICT (operation_id) DO UPDATE "
         "SET status='pending', machine_format=EXCLUDED.machine_format, "
         "    import_archive_path=EXCLUDED.import_archive_path, error_message=NULL, updated_at=now() "
-        "WHERE fast_run_data.status IS DISTINCT FROM 'done'",   # don't re-drain finished traces
+        "WHERE fast_run_data.status IS DISTINCT FROM 'done'",  # don't re-drain finished traces
         [(oid, "pending", "250", rel) for oid, rel in enq],
     )
     print(f"enqueued {len(enq)} trace imports (status=pending)")

@@ -18,12 +18,36 @@ def _row(obj, comment, col, dtype, col_comment, pos):
 
 def test_build_system_prompt_lists_views_and_base_tables():
     dictionary = [
-        _row("v_complete_sample_history", "Flat sample profile.", "sample_code", "text", "Human-readable sample label.", 1),
-        _row("v_complete_sample_history", "Flat sample profile.", "mass_grams", "numeric", "Sample mass in grams.", 2),
-        # A base table's columns are now included (broad read surface).
-        _row("manufacturing_operations", "Ops.", "machining_feed_mm_per_rev", "numeric", "Feed per revolution.", 1),
+        _row(
+            "v_complete_sample_history",
+            "Flat sample profile.",
+            "sample_code",
+            "text",
+            "Human-readable sample label.",
+            1,
+        ),
+        _row(
+            "v_complete_sample_history",
+            "Flat sample profile.",
+            "mass_grams",
+            "numeric",
+            "Sample mass in grams.",
+            2,
+        ),
+        _row(
+            "manufacturing_operations",
+            "Ops.",
+            "machining_feed_mm_per_rev",
+            "numeric",
+            "Feed per revolution.",
+            1,
+        ),
     ]
-    with patch.object(schema_context.db, "fetch_dictionary_all", return_value=dictionary):
+    with patch.object(
+        schema_context.db,
+        "fetch_dictionary_all",
+        return_value=dictionary,
+    ):
         prompt = schema_context.build_system_prompt()
 
     assert "SELECT queries only" in prompt
@@ -38,9 +62,11 @@ def test_build_system_prompt_excludes_denied_and_directus_tables():
         _row("physical_samples", "", "sample_code", "text", "", 1),
         _row("directus_users", "", "password", "text", "", 1),
         _row("directus_settings", "", "ai_openai_api_key", "text", "", 1),
-        _row("directus_activity", "", "action", "text", "", 1),  # benign, but kept out of prompt
+        _row("directus_activity", "", "action", "text", "", 1),
     ]
-    with patch.object(schema_context.db, "fetch_dictionary_all", return_value=dictionary):
+    with patch.object(
+        schema_context.db, "fetch_dictionary_all", return_value=dictionary
+    ):
         prompt = schema_context.build_system_prompt()
 
     assert "physical_samples" in prompt
@@ -61,7 +87,9 @@ def test_build_system_prompt_includes_known_values_legend():
         return {"method_name": ["Turning", "Milling"]}.get(col)
 
     with (
-        patch.object(schema_context.db, "fetch_dictionary_all", return_value=dictionary),
+        patch.object(
+            schema_context.db, "fetch_dictionary_all", return_value=dictionary
+        ),
         patch.object(schema_context.db, "distinct_values", side_effect=fake_distinct),
     ):
         prompt = schema_context.build_system_prompt()

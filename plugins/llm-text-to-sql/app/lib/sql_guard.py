@@ -110,6 +110,7 @@ def is_denied_relation(name: str) -> bool:
         return True
     return False
 
+
 # Expression classes that must never appear anywhere in the tree.
 _FORBIDDEN_NODES: tuple[type[exp.Expression], ...] = (
     exp.Insert,

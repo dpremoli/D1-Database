@@ -61,8 +61,9 @@ def encode_frame(
 
 def decode_frame(buf: bytes) -> dict:
     """Reference decoder (mirrors the client) — used by tests."""
-    (magic, version, seq, t_sec, rpm, pfx, pfy, pfz,
-     n_total, n_trace, n_sub, n_pts) = struct.unpack_from(_HEADER, buf, 0)
+    (magic, version, seq, t_sec, rpm, pfx, pfy, pfz, n_total, n_trace, n_sub, n_pts) = (
+        struct.unpack_from(_HEADER, buf, 0)
+    )
     if magic != MAGIC:
         raise ValueError(f"bad D1LF magic {magic!r}")
     off = HEADER_SIZE

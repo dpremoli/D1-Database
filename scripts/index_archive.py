@@ -48,7 +48,7 @@ import os
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import PurePosixPath
 
 # psycopg2 is imported lazily inside main() so --dry-run needs no DB driver.
@@ -61,17 +61,41 @@ _NS = uuid.uuid5(uuid.NAMESPACE_DNS, "d1-database.archive-index.v1")
 
 # Link-worthy extensions.
 ALLOWED_EXT = {
-    ".mat", ".m", ".fig", ".mlx",                       # MATLAB
-    ".doc", ".docx",                                     # Word
-    ".pdf",                                               # PDF
-    ".xls", ".xlsx", ".csv",                            # Excel / CSV
-    ".pptx",                                              # PowerPoint
-    ".tif", ".tiff",                                     # TIFF
-    ".jpg", ".jpeg", ".png", ".bmp", ".nef", ".psd",   # images (incl. Nikon RAW, Photoshop)
-    ".h5oina", ".ctf", ".ang", ".cpr", ".crc",          # EBSD
-    ".h5", ".dat", ".sef", ".dm3", ".dwd", ".mst", ".out", ".cfg",  # instrument / raw data
-    ".stl", ".ply",                                     # 3D meshes
-    ".mp4",                                               # video
+    ".mat",
+    ".m",
+    ".fig",
+    ".mlx",  # MATLAB
+    ".doc",
+    ".docx",  # Word
+    ".pdf",  # PDF
+    ".xls",
+    ".xlsx",
+    ".csv",  # Excel / CSV
+    ".pptx",  # PowerPoint
+    ".tif",
+    ".tiff",  # TIFF
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+    ".nef",
+    ".psd",  # images (incl. Nikon RAW, Photoshop)
+    ".h5oina",
+    ".ctf",
+    ".ang",
+    ".cpr",
+    ".crc",  # EBSD
+    ".h5",
+    ".dat",
+    ".sef",
+    ".dm3",
+    ".dwd",
+    ".mst",
+    ".out",
+    ".cfg",  # instrument / raw data
+    ".stl",
+    ".ply",  # 3D meshes
+    ".mp4",  # video
 }
 
 # mimetypes doesn't know the science/office formats on Windows; be explicit so
@@ -133,7 +157,7 @@ def fingerprint(path: str, size: int) -> str | None:
     """size + sha256(head 64KB)+sha256(tail 64KB). None on read error."""
     try:
         h = hashlib.sha256()
-        with open(path, "rb") as f:          # read-only; never mutates the file
+        with open(path, "rb") as f:  # read-only; never mutates the file
             if size <= 2 * _FP_CHUNK:
                 h.update(f.read())
             else:
@@ -155,24 +179,47 @@ def file_id(relpath: str) -> uuid.UUID:
 
 def guess_type(name: str) -> str:
     ext = PurePosixPath(name).suffix.lower()
-    return _EXTRA_MIME.get(ext) or mimetypes.guess_type(name)[0] or "application/octet-stream"
+    return (
+        _EXTRA_MIME.get(ext)
+        or mimetypes.guess_type(name)[0]
+        or "application/octet-stream"
+    )
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    )
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true", help="count only; no DB writes")
-    ap.add_argument("--root", default=os.environ.get("ARCHIVE_ROOT", "/mnt/archive/star_group1"),
-                    help="the star_group1 root; all archive_path values are relative to this")
-    ap.add_argument("--subdir", default="",
-                    help="scan only this subpath under --root (paths stay relative to --root). For test runs.")
-    ap.add_argument("--limit", type=int, default=0,
-                    help="stop after N files (0 = no limit). For test runs.")
-    ap.add_argument("--fingerprint", action="store_true",
-                    help="compute a light head/tail fingerprint per file so links survive "
-                         "moves/renames (reads up to 128 KB/file; cached across runs).")
-    ap.add_argument("--fp-workers", type=int, default=16,
-                    help="parallel threads for fingerprint reads (SMB is latency-bound).")
+    ap.add_argument(
+        "--root",
+        default=os.environ.get("ARCHIVE_ROOT", "/mnt/archive/star_group1"),
+        help="the star_group1 root; all archive_path values are relative to this",
+    )
+    ap.add_argument(
+        "--subdir",
+        default="",
+        help="scan only this subpath under --root (paths stay relative to --root). For test runs.",
+    )
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="stop after N files (0 = no limit). For test runs.",
+    )
+    ap.add_argument(
+        "--fingerprint",
+        action="store_true",
+        help="compute a light head/tail fingerprint per file so links survive "
+        "moves/renames (reads up to 128 KB/file; cached across runs).",
+    )
+    ap.add_argument(
+        "--fp-workers",
+        type=int,
+        default=16,
+        help="parallel threads for fingerprint reads (SMB is latency-bound).",
+    )
     args = ap.parse_args()
 
     root = args.root
@@ -193,6 +240,7 @@ def main() -> int:
     if not args.dry_run:
         import psycopg2
         import psycopg2.extras
+
         dsn = os.environ.get("DATABASE_URL")
         if not dsn:
             log.error("DATABASE_URL is required (omit only with --dry-run)")
@@ -200,12 +248,14 @@ def main() -> int:
         conn = psycopg2.connect(dsn)
         conn.autocommit = False
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # Folders we've already ensured this run (memoised) → avoid redundant upserts.
     seen_folders: set[str] = set()
-    seen_ids: set[str] = set()   # every file id touched this run (for missing sweep)
-    seen_fp: dict[str, tuple] = {}   # fingerprint -> (file id, rel path), for move detection
-    pending: list[tuple] = []        # files awaiting (parallel) fingerprint + insert
+    seen_ids: set[str] = set()  # every file id touched this run (for missing sweep)
+    seen_fp: dict[
+        str, tuple
+    ] = {}  # fingerprint -> (file id, rel path), for move detection
+    pending: list[tuple] = []  # files awaiting (parallel) fingerprint + insert
     folder_rows: list[tuple] = []
     file_rows: list[tuple] = []
     n_files = 0
@@ -222,12 +272,15 @@ def main() -> int:
             cur.execute(
                 "SELECT id::text, filesize, metadata::jsonb->>'modified', "
                 "metadata::jsonb->>'fingerprint' FROM directus_files WHERE storage=%s",
-                (storage,))
+                (storage,),
+            )
             for fid_, sz_, mod_, fp_ in cur.fetchall():
                 if fp_:
                     fp_cache[fid_] = (sz_, mod_, fp_)
-        log.info("fingerprint cache: %d prior fingerprints loaded (unchanged files skip the read).",
-                 len(fp_cache))
+        log.info(
+            "fingerprint cache: %d prior fingerprints loaded (unchanged files skip the read).",
+            len(fp_cache),
+        )
 
     def flush_folders() -> None:
         if not folder_rows or conn is None:
@@ -281,12 +334,17 @@ def main() -> int:
                 fid_, size_, mtime_ = e[0], e[7], e[8]
                 cached = fp_cache.get(fid_)
                 if cached and cached[0] == size_ and cached[1] == mtime_.isoformat():
-                    fps[i] = cached[2]                       # unchanged → reuse, no read
+                    fps[i] = cached[2]  # unchanged → reuse, no read
                 else:
                     to_compute.append((i, e[2], size_))
             if to_compute:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=args.fp_workers) as ex:
-                    futs = {ex.submit(fingerprint, path, sz): idx for idx, path, sz in to_compute}
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=args.fp_workers
+                ) as ex:
+                    futs = {
+                        ex.submit(fingerprint, path, sz): idx
+                        for idx, path, sz in to_compute
+                    }
                     for fut in concurrent.futures.as_completed(futs):
                         r = fut.result()
                         if r:
@@ -294,7 +352,19 @@ def main() -> int:
                 n_fp_computed += len(to_compute)
 
         for i, e in enumerate(pending):
-            fid_, rel_, _full, name_, title_, disk_, dirfid_, size_, mtime_, ctime_, ext_ = e
+            (
+                fid_,
+                rel_,
+                _full,
+                name_,
+                title_,
+                disk_,
+                dirfid_,
+                size_,
+                mtime_,
+                ctime_,
+                ext_,
+            ) = e
             fp = fps.get(i)
             if fp:
                 seen_fp.setdefault(fp, (fid_, rel_))
@@ -309,12 +379,24 @@ def main() -> int:
             }
             if fp:
                 meta["fingerprint"] = fp
-            file_rows.append((
-                fid_, storage, disk_, name_, title_, guess_type(name_), dirfid_,
-                size_, json.dumps(meta), ctime_, mtime_, now,
-            ))
+            file_rows.append(
+                (
+                    fid_,
+                    storage,
+                    disk_,
+                    name_,
+                    title_,
+                    guess_type(name_),
+                    dirfid_,
+                    size_,
+                    json.dumps(meta),
+                    ctime_,
+                    mtime_,
+                    now,
+                )
+            )
         pending.clear()
-        flush_folders()   # parents before children (FK-free, but keeps order sane)
+        flush_folders()  # parents before children (FK-free, but keeps order sane)
         flush_files()
         if conn is not None:
             conn.commit()
@@ -341,7 +423,13 @@ def main() -> int:
         # Skip dedup quarantine folders (identical duplicates moved aside).
         _dirnames[:] = [d for d in _dirnames if d != "_dedup_removed"]
         rel_dir_os = os.path.relpath(dirpath, root)
-        rel_dir = "" if rel_dir_os == "." else PurePosixPath(*PurePosixPath(rel_dir_os.replace(os.sep, "/")).parts).as_posix()
+        rel_dir = (
+            ""
+            if rel_dir_os == "."
+            else PurePosixPath(
+                *PurePosixPath(rel_dir_os.replace(os.sep, "/")).parts
+            ).as_posix()
+        )
         dir_fid = None  # resolved lazily, only if this dir has an allowed file
 
         for name in filenames:
@@ -359,9 +447,9 @@ def main() -> int:
                 continue
 
             size = st.st_size
-            mtime = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)
+            mtime = datetime.fromtimestamp(st.st_mtime, tz=UTC)
             # On Windows (host indexing) st_ctime is the file CREATION time.
-            ctime = datetime.fromtimestamp(st.st_ctime, tz=timezone.utc)
+            ctime = datetime.fromtimestamp(st.st_ctime, tz=UTC)
 
             if dir_fid is None:
                 dir_fid = ensure_folder(rel_dir)
@@ -373,8 +461,21 @@ def main() -> int:
             # Defer fingerprint + row build to flush_batch, which reads files in
             # parallel (SMB is latency-bound). created_on/modified_on there carry
             # the file's real timestamps.
-            pending.append((fid, rel, os.path.join(dirpath, name), name, title,
-                            filename_disk, str(dir_fid), size, mtime, ctime, ext))
+            pending.append(
+                (
+                    fid,
+                    rel,
+                    os.path.join(dirpath, name),
+                    name,
+                    title,
+                    filename_disk,
+                    str(dir_fid),
+                    size,
+                    mtime,
+                    ctime,
+                    ext,
+                )
+            )
             seen_ids.add(fid)
             n_files += 1
 
@@ -393,13 +494,19 @@ def main() -> int:
         t = time.monotonic()
         if t - last_log >= 10:
             el = t - start_t
-            log.info("progress: %d dirs, %d files indexed, %d skipped, %.0fs (%.0f files/s)…",
-                     n_dirs, n_files, n_skipped, el, (n_files / el if el > 0 else 0))
+            log.info(
+                "progress: %d dirs, %d files indexed, %d skipped, %.0fs (%.0f files/s)…",
+                n_dirs,
+                n_files,
+                n_skipped,
+                el,
+                (n_files / el if el > 0 else 0),
+            )
             last_log = t
         if stop:
             break
 
-    flush_batch()   # remaining pending files
+    flush_batch()  # remaining pending files
 
     # Broken-link detection. Only on a FULL run — a scoped/limited run doesn't see
     # the whole tree, so it can't tell what's genuinely gone. Flag star rows whose
@@ -409,16 +516,22 @@ def main() -> int:
     if conn is not None and not subdir and args.limit == 0:
         n_moved = 0
         with conn.cursor() as cur:
-            cur.execute("CREATE TEMP TABLE _seen_ids (id uuid PRIMARY KEY) ON COMMIT DROP")
+            cur.execute(
+                "CREATE TEMP TABLE _seen_ids (id uuid PRIMARY KEY) ON COMMIT DROP"
+            )
             psycopg2.extras.execute_values(
-                cur, "INSERT INTO _seen_ids (id) VALUES %s ON CONFLICT DO NOTHING",
-                [(i,) for i in seen_ids], page_size=1000)
+                cur,
+                "INSERT INTO _seen_ids (id) VALUES %s ON CONFLICT DO NOTHING",
+                [(i,) for i in seen_ids],
+                page_size=1000,
+            )
 
             # Candidates = star rows NOT seen this run (moved, renamed, or deleted).
             cur.execute(
                 "SELECT df.id::text, df.metadata::jsonb->>'fingerprint' FROM directus_files df "
                 "WHERE df.storage=%s AND NOT EXISTS (SELECT 1 FROM _seen_ids s WHERE s.id = df.id)",
-                (storage,))
+                (storage,),
+            )
             candidates = cur.fetchall()
 
             missing_ids = []
@@ -434,10 +547,13 @@ def main() -> int:
                         cur.execute(
                             f"DELETE FROM {tbl} d WHERE d.directus_files_id=%s AND EXISTS "
                             f"(SELECT 1 FROM {tbl} e WHERE e.{parent}=d.{parent} "
-                            f"AND e.directus_files_id=%s)", (old_id, new_id))
+                            f"AND e.directus_files_id=%s)",
+                            (old_id, new_id),
+                        )
                         cur.execute(
                             f"UPDATE {tbl} SET directus_files_id=%s WHERE directus_files_id=%s",
-                            (new_id, old_id))
+                            (new_id, old_id),
+                        )
                     cur.execute("DELETE FROM directus_files WHERE id=%s", (old_id,))
                     n_moved += 1
                 else:
@@ -453,25 +569,37 @@ def main() -> int:
                     "'{missing_since}',to_jsonb(COALESCE(df.metadata::jsonb->>'missing_since',%s)),true))::json "
                     "WHERE df.id = ANY(%s::uuid[]) "
                     "AND COALESCE(df.metadata::jsonb->>'missing','false') <> 'true'",
-                    (now.isoformat(), missing_ids))
+                    (now.isoformat(), missing_ids),
+                )
                 newly_missing = cur.rowcount
 
             cur.execute(
                 "SELECT count(*) FROM directus_files "
                 "WHERE storage = %s AND (metadata::jsonb->>'missing') = 'true'",
-                (storage,))
+                (storage,),
+            )
             total_missing = cur.fetchone()[0]
         conn.commit()
-        log.info("sweep: %d moved (links re-pointed), %d newly missing, %d total missing (kept, not deleted).",
-                 n_moved, newly_missing, total_missing)
+        log.info(
+            "sweep: %d moved (links re-pointed), %d newly missing, %d total missing (kept, not deleted).",
+            n_moved,
+            newly_missing,
+            total_missing,
+        )
 
     if conn is not None:
         conn.close()
 
     verb = "would index" if args.dry_run else "indexed"
     fp_note = f" | {n_fp_computed} fingerprints computed" if args.fingerprint else ""
-    log.info("Done: %s %d files into %d folders (%d non-matching skipped)%s.",
-             verb, n_files, len(seen_folders), n_skipped, fp_note)
+    log.info(
+        "Done: %s %d files into %d folders (%d non-matching skipped)%s.",
+        verb,
+        n_files,
+        len(seen_folders),
+        n_skipped,
+        fp_note,
+    )
     return 0
 
 

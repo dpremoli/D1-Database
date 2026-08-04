@@ -316,6 +316,7 @@ FAST Machines Data/
 Always use `defusedxml` (protects against XXE attacks):
 ```python
 from defusedxml import ElementTree as ET
+
 tree = ET.parse("schema.xsd")
 ```
 
@@ -323,8 +324,9 @@ tree = ET.parse("schema.xsd")
 Verify structure before interpreting as floats:
 ```python
 import struct
+
 # Verify header: 01 00 23 00
-value = struct.unpack('<f', data[4:8])[0]  # '<' = little-endian
+value = struct.unpack("<f", data[4:8])[0]  # '<' = little-endian
 ```
 
 ### Database Security

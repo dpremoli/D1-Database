@@ -10,6 +10,7 @@ Usage:
   DATABASE_URL=postgres://d1:change_me@localhost:5432/d1_database \\
       python scripts/transfer_sample_ownership.py "<path to Sample_Data.xlsx>"
 """
+
 from __future__ import annotations
 
 import os

@@ -522,6 +522,7 @@ Create `scripts/test_grid_bin.py`:
 
 ```python
 """Unit tests for the D1GR reader in force_orchestrator."""
+
 import struct
 import numpy as np
 import force_orchestrator as fo
@@ -538,8 +539,11 @@ def _write_d1gr(path, x, y, fx, fy, fz, fidelity, arm_ratio, cell_mm):
 
 def test_read_grid_bin_roundtrip(tmp_path):
     p = tmp_path / "grid.bin"
-    x = [0.0, 1.0, 2.0]; y = [3.0, 4.0, 5.0]
-    fx = [10.0, 11.0, 12.0]; fy = [1.0, 2.0, 3.0]; fz = [20.0, 21.0, 22.0]
+    x = [0.0, 1.0, 2.0]
+    y = [3.0, 4.0, 5.0]
+    fx = [10.0, 11.0, 12.0]
+    fy = [1.0, 2.0, 3.0]
+    fz = [20.0, 21.0, 22.0]
     _write_d1gr(p, x, y, fx, fy, fz, 0.97, 4.2, 0.031)
     n, fid, ratio, cell, rx, ry, rfx, rfy, rfz = fo._read_grid_bin(str(p))
     assert n == 3
@@ -570,16 +574,26 @@ def _read_grid_bin(path: str):
     """Read a D1GR interpolated-grid binary: magic, N, fidelity, arm_ratio, cell_mm header
     then float32 x,y,Fx,Fy,Fz [N]. NaN fidelity/arm_ratio -> None (stored NULL)."""
     import numpy as np
+
     with open(path, "rb") as f:
         magic, n = struct.unpack("<II", f.read(8))
         if magic != 0x44314752:
             raise RuntimeError(f"bad grid bin magic {magic:#x}")
         fidelity, arm_ratio, cell_mm = struct.unpack("<fff", f.read(12))
         a = np.frombuffer(f.read(n * 5 * 4), dtype="<f4")
-    fid = None if fidelity != fidelity else float(fidelity)          # NaN check
+    fid = None if fidelity != fidelity else float(fidelity)  # NaN check
     ratio = None if arm_ratio != arm_ratio else float(arm_ratio)
-    return (n, fid, ratio, float(cell_mm),
-            a[0:n], a[n:2 * n], a[2 * n:3 * n], a[3 * n:4 * n], a[4 * n:5 * n])
+    return (
+        n,
+        fid,
+        ratio,
+        float(cell_mm),
+        a[0:n],
+        a[n : 2 * n],
+        a[2 * n : 3 * n],
+        a[3 * n : 4 * n],
+        a[4 * n : 5 * n],
+    )
 ```
 
 - [ ] **Step 4: Run the reader test to verify it passes**
@@ -598,8 +612,10 @@ def load_grid_opts(conn) -> dict:
     opts = {"n": 2048, "method": "splat", "cv_arm_step": 10}
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT grid_density, grid_method FROM force_crawler_state "
-                        "WHERE id='00000000-0000-0000-0000-000000000001'")
+            cur.execute(
+                "SELECT grid_density, grid_method FROM force_crawler_state "
+                "WHERE id='00000000-0000-0000-0000-000000000001'"
+            )
             row = cur.fetchone()
         if row:
             opts["n"] = min(8192, max(16, int(row["grid_density"] or 2048)))
@@ -612,7 +628,8 @@ def load_grid_opts(conn) -> dict:
 
 def claim_grid(conn, limit: int = 2):
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("""
+        cur.execute(
+            """
             WITH picked AS (
                 SELECT id FROM machining_force_analysis
                  WHERE grid_octree_status='pending'
@@ -623,19 +640,29 @@ def claim_grid(conn, limit: int = 2):
               FROM picked WHERE a.id = picked.id
          RETURNING a.id, a.operation_id, a.pulses_per_rev,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
-        """, [limit])
+        """,
+            [limit],
+        )
         rows = cur.fetchall()
     conn.commit()
     return rows
 
 
-def process_grid_row(conn, row, exe: str, timeout: int, matlab_opts: dict,
-                     grid_opts: dict, potree_exe: str) -> str:
+def process_grid_row(
+    conn,
+    row,
+    exe: str,
+    timeout: int,
+    matlab_opts: dict,
+    grid_opts: dict,
+    potree_exe: str,
+) -> str:
     """MATLAB interpolates the spiral onto a grid + emits D1GR -> laspy LAS (force axes as
     float32 attrs) -> PotreeConverter -> publish under OCTREE_DIR/grid/<op_id>/ for Caddy.
     Records grid_octree_* + grid_fidelity + grid_arm_ratio + grid_cell_mm."""
     import numpy as np
     import laspy
+
     outdir = tempfile.mkdtemp(prefix="grid_", dir=os.environ.get("FORCE_WORKDIR"))
     try:
         if not row.get("archive_path"):
@@ -646,11 +673,18 @@ def process_grid_row(conn, row, exe: str, timeout: int, matlab_opts: dict,
         if ppr and int(ppr) > 0:
             opts["pulses_per_rev"] = int(ppr)
         opts["grid_out"] = binp
-        opts["grid"] = {"n": int(grid_opts["n"]), "method": str(grid_opts["method"]),
-                        "cv_arm_step": int(grid_opts["cv_arm_step"])}
-        stmt = (f"addpath('{mlq(str(MATLAB_SRC))}'); "
-                f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})")
-        p = subprocess.run([exe, "-batch", stmt], capture_output=True, text=True, timeout=timeout)
+        opts["grid"] = {
+            "n": int(grid_opts["n"]),
+            "method": str(grid_opts["method"]),
+            "cv_arm_step": int(grid_opts["cv_arm_step"]),
+        }
+        stmt = (
+            f"addpath('{mlq(str(MATLAB_SRC))}'); "
+            f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})"
+        )
+        p = subprocess.run(
+            [exe, "-batch", stmt], capture_output=True, text=True, timeout=timeout
+        )
         if p.returncode != 0 or not Path(binp).exists():
             tail = (p.stderr or p.stdout or "").strip().splitlines()[-5:]
             raise RuntimeError("matlab grid emit failed: " + " | ".join(tail))
@@ -665,14 +699,25 @@ def process_grid_row(conn, row, exe: str, timeout: int, matlab_opts: dict,
         for nm in ("Fx", "Fy", "Fz"):
             h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.float32))
         las = laspy.LasData(h)
-        las.x = x.astype(np.float64); las.y = y.astype(np.float64); las.z = np.zeros(n)
-        las.Fx = fx; las.Fy = fy; las.Fz = fz
+        las.x = x.astype(np.float64)
+        las.y = y.astype(np.float64)
+        las.z = np.zeros(n)
+        las.Fx = fx
+        las.Fy = fy
+        las.Fz = fz
         lo, hi = float(fz.min()), float(fz.max())
-        las.intensity = np.clip((fz - lo) / ((hi - lo) or 1.0) * 65535, 0, 65535).astype(np.uint16)
+        las.intensity = np.clip(
+            (fz - lo) / ((hi - lo) or 1.0) * 65535, 0, 65535
+        ).astype(np.uint16)
         las.write(las_path)
 
         octmp = str(Path(outdir) / "octree")
-        pc = subprocess.run([potree_exe, las_path, "-o", octmp], capture_output=True, text=True, timeout=timeout)
+        pc = subprocess.run(
+            [potree_exe, las_path, "-o", octmp],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
         if pc.returncode != 0 or not (Path(octmp) / "metadata.json").exists():
             tail = (pc.stderr or pc.stdout or "").strip().splitlines()[-5:]
             raise RuntimeError("PotreeConverter failed: " + " | ".join(tail))
@@ -687,20 +732,30 @@ def process_grid_row(conn, row, exe: str, timeout: int, matlab_opts: dict,
             shutil.copy2(Path(octmp) / fn, dst / fn)
 
         with conn.cursor() as cur:
-            cur.execute("UPDATE machining_force_analysis SET grid_octree_status='done', "
-                        "grid_octree_path=%s, grid_octree_points=%s, grid_fidelity=%s, "
-                        "grid_arm_ratio=%s, grid_cell_mm=%s, grid_octree_error=NULL, updated_at=now() "
-                        "WHERE id=%s",
-                        [f"grid/{op}", int(n), fidelity, arm_ratio, cell_mm, row["id"]])
+            cur.execute(
+                "UPDATE machining_force_analysis SET grid_octree_status='done', "
+                "grid_octree_path=%s, grid_octree_points=%s, grid_fidelity=%s, "
+                "grid_arm_ratio=%s, grid_cell_mm=%s, grid_octree_error=NULL, updated_at=now() "
+                "WHERE id=%s",
+                [f"grid/{op}", int(n), fidelity, arm_ratio, cell_mm, row["id"]],
+            )
         conn.commit()
-        log.info("[GRID] %s -> grid/%s (%d cells, fidelity=%s)",
-                 Path(row["archive_path"]).stem, op, n, fidelity)
+        log.info(
+            "[GRID] %s -> grid/%s (%d cells, fidelity=%s)",
+            Path(row["archive_path"]).stem,
+            op,
+            n,
+            fidelity,
+        )
         return "done"
     except Exception as e:  # noqa: BLE001
         conn.rollback()
         with conn.cursor() as cur:
-            cur.execute("UPDATE machining_force_analysis SET grid_octree_status='error', "
-                        "grid_octree_error=%s, updated_at=now() WHERE id=%s", [str(e)[:2000], row["id"]])
+            cur.execute(
+                "UPDATE machining_force_analysis SET grid_octree_status='error', "
+                "grid_octree_error=%s, updated_at=now() WHERE id=%s",
+                [str(e)[:2000], row["id"]],
+            )
         conn.commit()
         log.error("[GRID-ERR] %s", e)
         return "error"
@@ -735,8 +790,8 @@ Note: `grid_octree_path` is stored as `grid/<op_id>` so the dashboard's `octree-
 In `run_queue` (line 823), after `handle_octrees(conn, exe)`:
 
 ```python
-    handle_octrees(conn, exe)             # build any pending Potree octrees
-    handle_grids(conn, exe)               # build any pending interpolated-grid octrees
+handle_octrees(conn, exe)  # build any pending Potree octrees
+handle_grids(conn, exe)  # build any pending interpolated-grid octrees
 ```
 
 In `run_daemon` (line 912), after the `handle_octrees` block:
@@ -783,20 +838,29 @@ Append to `scripts/test_grid_bin.py`:
 ```python
 def test_int16_extra_dim_roundtrip(tmp_path):
     """laspy int16-scaled extra dim reconstructs Newton values within one quantisation step."""
-    laspy = __import__("laspy"); np = __import__("numpy")
+    laspy = __import__("laspy")
+    np = __import__("numpy")
     fz = np.linspace(-120.0, 340.0, 5000).astype(np.float64)
     lo, hi = float(fz.min()), float(fz.max())
-    scale = (hi - lo) / 65000.0 or 1.0          # int16 spans ~65k codes
+    scale = (hi - lo) / 65000.0 or 1.0  # int16 spans ~65k codes
     offset = (hi + lo) / 2.0
     h = laspy.LasHeader(point_format=3)
-    h.offsets = [0.0, 0.0, 0.0]; h.scales = [0.001, 0.001, 0.001]
-    h.add_extra_dim(laspy.ExtraBytesParams(name="Fz", type=np.int16, scales=[scale], offsets=[offset]))
+    h.offsets = [0.0, 0.0, 0.0]
+    h.scales = [0.001, 0.001, 0.001]
+    h.add_extra_dim(
+        laspy.ExtraBytesParams(
+            name="Fz", type=np.int16, scales=[scale], offsets=[offset]
+        )
+    )
     las = laspy.LasData(h)
-    las.x = np.zeros(fz.size); las.y = np.zeros(fz.size); las.z = np.zeros(fz.size)
+    las.x = np.zeros(fz.size)
+    las.y = np.zeros(fz.size)
+    las.z = np.zeros(fz.size)
     las.Fz = fz
-    p = tmp_path / "q.las"; las.write(str(p))
+    p = tmp_path / "q.las"
+    las.write(str(p))
     back = laspy.read(str(p)).Fz
-    assert np.max(np.abs(back - fz)) <= scale * 1.5     # within one code
+    assert np.max(np.abs(back - fz)) <= scale * 1.5  # within one code
 ```
 
 - [ ] **Step 2: Run to confirm it passes at the laspy level**
@@ -809,26 +873,35 @@ Expected: PASS (this validates laspy's scaled-extra-dim contract before we rely 
 In `process_grid_row`, replace the float32 extra-dim block:
 
 ```python
-        for nm in ("Fx", "Fy", "Fz"):
-            h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.float32))
-        las = laspy.LasData(h)
-        las.x = x.astype(np.float64); las.y = y.astype(np.float64); las.z = np.zeros(n)
-        las.Fx = fx; las.Fy = fy; las.Fz = fz
+for nm in ("Fx", "Fy", "Fz"):
+    h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.float32))
+las = laspy.LasData(h)
+las.x = x.astype(np.float64)
+las.y = y.astype(np.float64)
+las.z = np.zeros(n)
+las.Fx = fx
+las.Fy = fy
+las.Fz = fz
 ```
 
 with int16-scaled dims (force is 12-bit at source → lossless):
 
 ```python
-        arrays = {"Fx": fx, "Fy": fy, "Fz": fz}
-        for nm, arr in arrays.items():
-            lo_a, hi_a = float(np.min(arr)), float(np.max(arr))
-            scale = ((hi_a - lo_a) / 65000.0) or 1.0     # int16 code span with headroom
-            offset = (hi_a + lo_a) / 2.0
-            h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.int16,
-                                                   scales=[scale], offsets=[offset]))
-        las = laspy.LasData(h)
-        las.x = x.astype(np.float64); las.y = y.astype(np.float64); las.z = np.zeros(n)
-        las.Fx = fx; las.Fy = fy; las.Fz = fz
+arrays = {"Fx": fx, "Fy": fy, "Fz": fz}
+for nm, arr in arrays.items():
+    lo_a, hi_a = float(np.min(arr)), float(np.max(arr))
+    scale = ((hi_a - lo_a) / 65000.0) or 1.0  # int16 code span with headroom
+    offset = (hi_a + lo_a) / 2.0
+    h.add_extra_dim(
+        laspy.ExtraBytesParams(name=nm, type=np.int16, scales=[scale], offsets=[offset])
+    )
+las = laspy.LasData(h)
+las.x = x.astype(np.float64)
+las.y = y.astype(np.float64)
+las.z = np.zeros(n)
+las.Fx = fx
+las.Fy = fy
+las.Fz = fz
 ```
 
 `_patch_octree_climits` still receives the original float `fx/fy/fz` (Newtons), so the metadata min/max stay in Newtons and the shader/colorbar are unchanged.
