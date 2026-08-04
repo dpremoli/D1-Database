@@ -76,3 +76,16 @@ export async function fetchFilteredFft(cacheFileId: string, chain: FilterChain, 
 	if (!res.ok) throw new Error(`filter service: ${res.status}`);
 	return res.json();
 }
+
+// STFT of one axis for the spectrogram / waterfall / power-spectrum views. S is [freq][time] in dB.
+export async function fetchSpectrogram(cacheFileId: string, chain: FilterChain, axis: string):
+	Promise<{ f: number[]; t: number[]; S: number[][]; fmax: number }> {
+	const res = await fetch('/filter/spectrogram', {
+		method: 'POST',
+		credentials: 'include',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ cache_file_id: cacheFileId, chain, axis }),
+	});
+	if (!res.ok) throw new Error(`filter service: ${res.status}`);
+	return res.json();
+}

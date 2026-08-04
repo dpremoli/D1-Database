@@ -4,6 +4,7 @@ import { GridLayout, GridItem } from 'grid-layout-plus';
 import { useApi, useStores } from '@directus/extensions-sdk';
 import { useRoute, useRouter } from 'vue-router';
 import ForceChart from './ForceChart.vue';
+import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
 import type { SpeedMode } from './liveCloud';
@@ -53,7 +54,9 @@ const selectedRowId = ref<string | null>(null);
 const detail = ref<any | null>(null);
 const loadingDetail = ref(false);
 
-const chartMode = ref<'force' | 'fft'>('force');
+const chartMode = ref<'force' | 'fft' | 'psd' | 'spectrogram' | 'waterfall'>('force');
+const SPECTRAL_MODES = ['psd', 'spectrogram', 'waterfall'] as const;
+const isSpectral = computed(() => (SPECTRAL_MODES as readonly string[]).includes(chartMode.value));
 const hoverIndex = ref<number | null>(null);   // shared across the 3 charts
 const axis = ref<Axis>('Fz');
 
@@ -1097,6 +1100,13 @@ function chartsFor(item: RPanel) {
 	}
 	return base;
 }
+// Selected axes for a panel (spectral views render one SpectrumView per axis, like the force plot).
+function axesFor(item: RPanel): Axis[] {
+	const sel = (item.channels && item.channels.length ? item.channels : AXES) as readonly Axis[];
+	return AXES.filter((a) => sel.includes(a));
+}
+// Chain the spectral views reflect: the live-tuned/applied filter when present, else raw.
+const specChain = computed<FilterChain>(() => previewChain() ?? savedChain.value ?? defaultChain());
 function toggleItemAxis(item: RPanel, a: Axis) {
 	const cur = (item.channels && item.channels.length ? [...item.channels] : [...AXES]);
 	const i = cur.indexOf(a);
@@ -1580,10 +1590,23 @@ function fmtDateTime(v: string | null | undefined) {
 									<button class="tbtn" :class="{ on: chartMode === 'fft' }"
 										:style="chartMode === 'fft' ? { background: '#334155', borderColor: '#334155' } : {}"
 										@click="chartMode = 'fft'">FFT</button>
+									<button class="tbtn" :class="{ on: chartMode === 'psd' }"
+										:style="chartMode === 'psd' ? { background: '#334155', borderColor: '#334155' } : {}"
+										title="Power spectrum (dB)" @click="chartMode = 'psd'">Power</button>
+									<button class="tbtn" :class="{ on: chartMode === 'spectrogram' }"
+										:style="chartMode === 'spectrogram' ? { background: '#334155', borderColor: '#334155' } : {}"
+										title="Time × frequency heatmap" @click="chartMode = 'spectrogram'">Spectro</button>
+									<button class="tbtn" :class="{ on: chartMode === 'waterfall' }"
+										:style="chartMode === 'waterfall' ? { background: '#334155', borderColor: '#334155' } : {}"
+										title="Stacked spectra over time" @click="chartMode = 'waterfall'">Waterfall</button>
 								</div>
 								<button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button>
 							</div>
 							<div v-if="!detail" class="empty">Select an operation to view its signals</div>
+							<div v-else-if="isSpectral" class="charts-col">
+								<SpectrumView v-for="a in axesFor(item)" :key="a" :cache-file-id="detail.live_cache_file"
+									:chain="specChain" :axis="a" :mode="(chartMode as 'psd' | 'spectrogram' | 'waterfall')" :color="AXIS_COLOR[a]" />
+							</div>
 							<div v-else class="charts-col">
 								<ForceChart v-for="c in chartsFor(item)" :key="c.key" v-bind="c" :hover-index="hoverIndex" @hover="hoverIndex = $event"
 									:crop-editable="c.kind === 'env'" :active="c.key === axis"

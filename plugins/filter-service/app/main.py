@@ -7,6 +7,7 @@ LRU-kept in memory so repeated tweaks only pay the filter maths. Filtering runs 
 cache's real sample rate; preview decimation (target_points) happens AFTER filtering.
 Served same-origin by Caddy at /filter/*.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -33,7 +34,9 @@ app = FastAPI(title="d1-filter-service")
 # own origin. `expose_headers` is essential: the browser reads X-Filter-Skipped / X-Filter-
 # Stride off the response, and cross-origin those are hidden unless explicitly exposed.
 # (Same-origin embedding in Directus needed none of this.)
-_cors_origins = [o.strip() for o in os.environ.get("FILTER_CORS_ORIGINS", "").split(",") if o.strip()]
+_cors_origins = [
+    o.strip() for o in os.environ.get("FILTER_CORS_ORIGINS", "").split(",") if o.strip()
+]
 if _cors_origins:
     app.add_middleware(
         CORSMiddleware,
@@ -62,15 +65,21 @@ async def _authorize(file_id: str, req: Request) -> None:
     would be served to any other caller who knows the id (IDOR). The MISS path authorizes
     inherently, because it fetches the bytes with the caller's own credentials."""
     async with httpx.AsyncClient(timeout=30) as cl:
-        r = await cl.head(f"{DIRECTUS_URL}/assets/{file_id}", headers=_auth_headers(req))
+        r = await cl.head(
+            f"{DIRECTUS_URL}/assets/{file_id}", headers=_auth_headers(req)
+        )
     if r.status_code not in (200, 206):
-        raise HTTPException(r.status_code if r.status_code >= 400 else 403, "not permitted")
+        raise HTTPException(
+            r.status_code if r.status_code >= 400 else 403, "not permitted"
+        )
 
 
 async def _get_cache(file_id: str, req: Request) -> Cache:
     c = _lru.get(file_id)
     if c is not None:
-        await _authorize(file_id, req)          # per-request authz on the shared LRU (IDOR guard)
+        await _authorize(
+            file_id, req
+        )  # per-request authz on the shared LRU (IDOR guard)
         _lru.move_to_end(file_id)
         return c
     async with httpx.AsyncClient(timeout=120) as cl:
@@ -97,10 +106,22 @@ def _effective_fs(c: Cache) -> float:
 def _filtered(c: Cache, chain: dict) -> tuple[Cache, list[str]]:
     fs = _effective_fs(c)
     mean_rpm = float(np.mean(c.rpm)) if c.n else 0.0
-    axes, skipped = apply_chain({"Fx": c.fx, "Fy": c.fy, "Fz": c.fz}, fs, mean_rpm, chain)
-    fc = Cache(c.fs, c.feed, c.diam, c.cs_sec, c.ce_sec, c.t,
-               axes["Fx"].astype(np.float32), axes["Fy"].astype(np.float32),
-               axes["Fz"].astype(np.float32), c.rpm, c.revs)
+    axes, skipped = apply_chain(
+        {"Fx": c.fx, "Fy": c.fy, "Fz": c.fz}, fs, mean_rpm, chain
+    )
+    fc = Cache(
+        c.fs,
+        c.feed,
+        c.diam,
+        c.cs_sec,
+        c.ce_sec,
+        c.t,
+        axes["Fx"].astype(np.float32),
+        axes["Fy"].astype(np.float32),
+        axes["Fz"].astype(np.float32),
+        c.rpm,
+        c.revs,
+    )
     return fc, skipped
 
 
@@ -123,14 +144,18 @@ async def filter_cache(req: Request):
         fc, skipped = _filtered(c, chain)
     except ChainError as e:
         raise HTTPException(422, str(e)) from e
-    stride = max(1, -(-c.n // max(1, target)))          # ceil-div: decimate AFTER filtering
+    stride = max(1, -(-c.n // max(1, target)))  # ceil-div: decimate AFTER filtering
     buf = serialise(fc, stride)
-    return Response(content=buf, media_type="application/octet-stream", headers={
-        "X-Filter-Skipped": "; ".join(skipped),
-        "X-Filter-Ms": f"{(time.perf_counter() - t0) * 1000:.0f}",
-        "X-Filter-Stride": str(stride),
-        "Cache-Control": "no-store",
-    })
+    return Response(
+        content=buf,
+        media_type="application/octet-stream",
+        headers={
+            "X-Filter-Skipped": "; ".join(skipped),
+            "X-Filter-Ms": f"{(time.perf_counter() - t0) * 1000:.0f}",
+            "X-Filter-Stride": str(stride),
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @app.post("/fft")
@@ -154,8 +179,52 @@ async def filter_fft(req: Request):
     nper = min(y.size, 1 << 14)
     f, p = ssig.welch(y, fs=fs, nperseg=nper)
     amp = np.sqrt(p)
-    step = max(1, f.size // 3000)                      # ~3k points, full Nyquist span
+    step = max(1, f.size // 3000)  # ~3k points, full Nyquist span
     return {"f": f[::step].tolist(), "amp": amp[::step].tolist()}
+
+
+@app.post("/spectrogram")
+async def filter_spectrogram(req: Request):
+    """STFT of one filtered axis for the dashboard's spectrogram/waterfall/power views.
+
+    Returns a time x frequency magnitude grid in dB (S[freq][time], 0 dB = global peak),
+    decimated small enough to ship as JSON. The client draws the heatmap, the stacked
+    waterfall, and the time-averaged power spectrum from this one payload.
+    """
+    body = await req.json()
+    file_id = body.get("cache_file_id")
+    axis = str(body.get("axis") or "Fz")
+    chain = body.get("chain") or {}
+    if not file_id:
+        raise HTTPException(422, "cache_file_id required")
+    if axis not in ("Fx", "Fy", "Fz"):
+        raise HTTPException(422, "axis must be Fx|Fy|Fz")
+    c = await _get_cache(str(file_id), req)
+    try:
+        fc, _ = _filtered(c, chain)
+    except ChainError as e:
+        raise HTTPException(422, str(e)) from e
+    fs = _effective_fs(c)
+    y = {"Fx": fc.fx, "Fy": fc.fy, "Fz": fc.fz}[axis].astype(np.float64)
+    if y.size < 128:
+        return {"f": [], "t": [], "S": [], "fmax": 0.0}
+    nper = int(min(2048, max(128, 1 << int(np.log2(max(128, y.size // 200))))))
+    noverlap = nper // 2
+    f, t, sxx = ssig.spectrogram(
+        y, fs=fs, nperseg=nper, noverlap=noverlap, mode="magnitude"
+    )
+    fstep = max(1, f.size // 180)  # ~180 frequency bins
+    tstep = max(1, t.size // 260)  # ~260 time columns
+    f_o, t_o, s_o = f[::fstep], t[::tstep], sxx[::fstep, ::tstep]
+    mx = float(s_o.max()) or 1.0
+    # magnitude → dB relative to the global peak, floored at -80 dB
+    s_db = 20.0 * np.log10(np.maximum(s_o, mx * 1e-4) / mx)
+    return {
+        "f": f_o.round(2).tolist(),
+        "t": t_o.round(3).tolist(),
+        "S": s_db.round(1).tolist(),
+        "fmax": float(f_o[-1]) if f_o.size else 0.0,
+    }
 
 
 def _chain_hash(chain: dict) -> str:
