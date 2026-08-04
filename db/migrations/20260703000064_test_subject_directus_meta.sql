@@ -45,4 +45,3 @@ DELETE FROM directus_fields WHERE collection='test_sessions' AND field='subject'
 DELETE FROM directus_relations WHERE many_collection='test_sessions_subject';
 DELETE FROM directus_fields WHERE collection='test_sessions_subject';
 DELETE FROM directus_collections WHERE collection='test_sessions_subject';
-

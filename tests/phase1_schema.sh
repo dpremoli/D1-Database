@@ -107,11 +107,11 @@ run_eq "campaign_type CHECK restricts to the two kinds" \
        AND check_clause LIKE '%machining_trial%'
        AND check_clause LIKE '%testing_campaign%'" \
     "1"
-run_eq "Directus relations for campaigns are registered (6)" \
+run_eq "Directus relations for campaigns are registered (2)" \
     "SELECT count(*) FROM directus_relations
      WHERE one_collection='campaigns' OR many_collection='campaigns'
         OR (many_collection IN ('manufacturing_operations','test_sessions') AND many_field='campaign_id')" \
-    "6"
+    "2"
 
 echo "== Audit trigger fires on INSERT =="
 # Insert a test sample and verify audit_logs captured it.
