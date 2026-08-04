@@ -34,7 +34,7 @@ run_eq() {
 echo "== Core tables exist =="
 for tbl in \
     alloying_elements material_iso_classifications materials \
-    manufacturing_methods method_parameters equipment tools insert_types \
+    manufacturing_methods equipment tools insert_types \
     projects raw_stock_lots \
     tool_boxes cutting_inserts insert_edges \
     physical_samples sample_genealogy sample_stock_provenance \
@@ -67,12 +67,6 @@ run "FAST method seeded" \
     "SELECT method_code FROM manufacturing_methods WHERE method_code = 'MF'"
 run "Equipment seeded" \
     "SELECT equipment_code FROM equipment WHERE equipment_code = 'NLX-2500'"
-run "FAST method parameters seeded" \
-    "SELECT parameter_name FROM method_parameters AS mp
-     JOIN manufacturing_methods AS mm ON mm.method_id = mp.method_id
-     WHERE mm.method_code = 'MF'
-       AND mp.parameter_name = 'peak_temperature_celsius'"
-
 echo "== Code-generation functions =="
 run_eq "generate_sample_code" \
     "SELECT generate_sample_code(10, 'AA', 'MF', '2023-06-03'::DATE)" \

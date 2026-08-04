@@ -72,4 +72,3 @@ DELETE FROM directus_collections WHERE collection='people';
 UPDATE directus_fields SET hidden = FALSE WHERE (collection, field) IN (('physical_samples','owner'),('manufacturing_operations','owner'),('test_sessions','owner'),('campaigns','owner'),('etchants','owner'),('prep_recipes','owner'),('tool_boxes','owner'),('cutting_inserts','owner'),('insert_edges','owner'));
 UPDATE directus_fields SET hidden = FALSE WHERE (collection, field) IN (('manufacturing_operations','operator'),('test_sessions','operator'),('projects','principal_investigator'));
 DELETE FROM directus_fields WHERE (collection,field) IN (('project_investigators','person_id'),('sample_co_owners','person_id'));
-
