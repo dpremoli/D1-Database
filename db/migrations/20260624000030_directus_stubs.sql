@@ -286,5 +286,21 @@ ALTER TABLE manufacturing_operations
         REFERENCES "Machine_Operators"(id) ON DELETE SET NULL;
 
 -- migrate:down
--- Don't drop — Directus may own the real tables. IF NOT EXISTS
--- in :up is idempotent against both the stub and the real table.
+ALTER TABLE manufacturing_operations DROP COLUMN IF EXISTS operator;
+DROP TABLE IF EXISTS "Machine_Operators";
+DROP TABLE IF EXISTS directus_deployments;
+DROP TABLE IF EXISTS directus_operations;
+DROP TABLE IF EXISTS directus_flows;
+DROP TABLE IF EXISTS directus_settings;
+DROP TABLE IF EXISTS directus_presets;
+DROP TABLE IF EXISTS directus_relations;
+DROP TABLE IF EXISTS directus_fields;
+DROP TABLE IF EXISTS directus_collections;
+DROP TABLE IF EXISTS directus_shares;
+DROP TABLE IF EXISTS directus_sessions;
+DROP TABLE IF EXISTS directus_permissions;
+DROP TABLE IF EXISTS directus_access;
+DROP TABLE IF EXISTS directus_files;
+DROP TABLE IF EXISTS directus_users;
+DROP TABLE IF EXISTS directus_policies;
+DROP TABLE IF EXISTS directus_roles;
