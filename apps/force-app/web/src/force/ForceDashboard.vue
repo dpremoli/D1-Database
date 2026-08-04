@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { GridLayout, GridItem } from 'grid-layout-plus';
 import { useApi, useStores } from '@directus/extensions-sdk';
 import { useRoute, useRouter } from 'vue-router';
 import ForceChart from './ForceChart.vue';
+import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
 import type { SpeedMode } from './liveCloud';
@@ -52,7 +54,9 @@ const selectedRowId = ref<string | null>(null);
 const detail = ref<any | null>(null);
 const loadingDetail = ref(false);
 
-const chartMode = ref<'force' | 'fft'>('force');
+const chartMode = ref<'force' | 'fft' | 'psd' | 'spectrogram' | 'waterfall'>('force');
+const SPECTRAL_MODES = ['psd', 'spectrogram', 'waterfall'] as const;
+const isSpectral = computed(() => (SPECTRAL_MODES as readonly string[]).includes(chartMode.value));
 const hoverIndex = ref<number | null>(null);   // shared across the 3 charts
 const axis = ref<Axis>('Fz');
 
@@ -572,6 +576,14 @@ const rightSplit = ref(0.46);   // fraction of the right area given to Signals v
 const showForce = ref(true);
 const showFRM = ref(true);
 const dragging = ref(false);
+// Per-channel selection for the Signals graphs — pick which summed axes to plot (matches the
+// recording view's channel chips). At least one axis stays on.
+const visAxes = ref<Record<Axis, boolean>>({ Fx: true, Fy: true, Fz: true });
+function toggleAxis(a: Axis) {
+	const on = AXES.filter((x) => visAxes.value[x]);
+	if (visAxes.value[a] && on.length <= 1) return;  // keep at least one visible
+	visAxes.value = { ...visAxes.value, [a]: !visAxes.value[a] };  // reassign so the layout watch fires
+}
 
 (function loadLayout() {
 	try {
@@ -586,12 +598,13 @@ const dragging = ref(false);
 		if (typeof v.colStackHidden === 'boolean') colStackHidden.value = v.colStackHidden;
 		if (typeof v.detailHidden === 'boolean') detailHidden.value = v.detailHidden;
 		if (v.frmMode === 'figure' || v.frmMode === 'lite' || v.frmMode === 'full') frmMode.value = v.frmMode;
+		if (v.visAxes && typeof v.visAxes === 'object') for (const a of AXES) if (typeof v.visAxes[a] === 'boolean') visAxes.value[a] = v.visAxes[a];
 	} catch { /* ignore malformed/absent saved layout */ }
 })();
-watch([colA, colB, rightSplit, showForce, showFRM, colStackHidden, detailHidden, frmMode], () => {
+watch([colA, colB, rightSplit, showForce, showFRM, colStackHidden, detailHidden, frmMode, visAxes], () => {
 	localStorage.setItem(LAYOUT_KEY, JSON.stringify({
 		colA: colA.value, colB: colB.value, rightSplit: rightSplit.value,
-		showForce: showForce.value, showFRM: showFRM.value,
+		showForce: showForce.value, showFRM: showFRM.value, visAxes: visAxes.value,
 		colStackHidden: colStackHidden.value, detailHidden: detailHidden.value,
 		// Persist Live so returning to the dashboard keeps the interactive FRM cloud
 		// instead of silently dropping back to the static PNG. (liveOn still requires a
@@ -684,6 +697,68 @@ onBeforeUnmount(() => {
 	layoutRO?.disconnect();
 	window.removeEventListener('resize', measureLayout);
 });
+
+// ---- Flexible plot-panel grid (Signals + FRM, add/close/rearrange) ----------
+// The plot area is a grid-layout-plus grid of panels (like the recording view). The
+// Samples/Operations + detail stay as the docked left rail; only the plots are flexible.
+// Per-instance panel state: a Signals panel carries its own selected channels + RPM toggle so
+// duplicated panels can differ (e.g. one showing only Fz next to one showing Fx/Fy).
+type RPanel = { i: string; type: 'signals' | 'frm'; x: number; y: number; w: number; h: number; channels?: Axis[]; rpm?: boolean };
+const RIGHT_KEY = 'd1-force-right-layout-v2';
+const RIGHT_DEFAULT: RPanel[] = [
+	{ i: 'signals', type: 'signals', x: 0, y: 0, w: 6, h: 20, channels: ['Fx', 'Fy', 'Fz'], rpm: false },
+	{ i: 'frm', type: 'frm', x: 6, y: 0, w: 6, h: 20 },
+];
+const R_META: Record<string, { title: string; icon: string }> = {
+	signals: { title: 'Signals', icon: 'insights' },
+	frm: { title: 'FRM map', icon: 'fingerprint' },
+};
+function loadRight(): RPanel[] {
+	try {
+		const v = JSON.parse(localStorage.getItem(RIGHT_KEY) || 'null');
+		if (Array.isArray(v) && v.length && v.every((p) => p && R_META[p.type])) return v;
+	} catch { /* ignore */ }
+	return RIGHT_DEFAULT.map((p) => ({ ...p }));
+}
+const rightLayout = ref<RPanel[]>(loadRight());
+// Persist debounced: the deep watch fires on every drag/resize tick, and a synchronous
+// localStorage write per tick is what made dragging janky (worst in the heavier Directus shell).
+let persistT: ReturnType<typeof setTimeout> | null = null;
+watch(rightLayout, (v) => {
+	if (persistT) clearTimeout(persistT);
+	const snapshot = JSON.stringify(v);
+	persistT = setTimeout(() => localStorage.setItem(RIGHT_KEY, snapshot), 250);
+}, { deep: true });
+// Row height so the default (h:20) panels fill the measured area; grid margins subtracted.
+const rightRowH = computed(() => Math.max(16, Math.floor((availableHeight.value - 24) / 20)));
+const rightAddOpen = ref(false);
+const hasPanel = (t: string) => rightLayout.value.some((p) => p.type === t);
+function addRightPanel(type: 'signals' | 'frm') {
+	rightAddOpen.value = false;
+	// Place a new panel beside the shortest existing column when there's room on the top row,
+	// otherwise start a fresh row below. Half-height (h:10) so a stacked pair fits one screen and
+	// the panel lands within (or just at the edge of) view rather than a full screen down.
+	const topRowW = rightLayout.value.filter((p) => p.y === 0).reduce((s, p) => s + p.w, 0);
+	const maxY = rightLayout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0);
+	const fitsTop = topRowW <= 6;
+	const base: RPanel = {
+		i: `${type}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 4)}`,
+		type, x: fitsTop ? topRowW : 0, y: fitsTop ? 0 : maxY, w: 6, h: fitsTop ? 20 : 10,
+	};
+	if (type === 'signals') { base.channels = ['Fx', 'Fy', 'Fz']; base.rpm = false; }
+	rightLayout.value = [...rightLayout.value, base];
+	// Bring the freshly added panel into view (it may extend below the fold).
+	nextTick(() => {
+		const el = rightAreaEl.value?.querySelector(`[data-panel-id="${base.i}"]`);
+		el?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+	});
+}
+function closeRightPanel(i: string) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.i !== i); }
+function toggleRightType(type: 'signals' | 'frm') {
+	if (hasPanel(type)) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.type !== type); }
+	else addRightPanel(type);
+}
+function resetRightLayout() { rightLayout.value = RIGHT_DEFAULT.map((p) => ({ ...p })); }
 
 // -------------------------------------------------------------------- data
 onMounted(async () => {
@@ -1008,20 +1083,36 @@ const HIDE_WHEN_LIVE = new Set(['Date', 'Recorded', 'Coolant', 'New edge', 'Sequ
 const compactMeta = computed(() => (liveOn.value ? opMeta.value.filter((m) => !HIDE_WHEN_LIVE.has(m[0] as string)) : opMeta.value));
 
 const PEAK_FIELD: Record<string, string> = { Fx: 'peak_fx', Fy: 'peak_fy', Fz: 'peak_fz' };
-const charts = computed(() => {
+// Charts for one Signals panel instance — its own selected channels + RPM toggle (Force/FFT mode
+// stays shared, since it's tied to the filter preview + FRM). At least one axis is kept on.
+function chartsFor(item: RPanel) {
 	const d = detail.value;
-	const base = AXES.map((a) => (
+	const sel = (item.channels && item.channels.length ? item.channels : AXES) as readonly Axis[];
+	const base = AXES.filter((a) => sel.includes(a)).map((a) => (
 		effectiveMode.value === 'force'
 			? { key: a, title: `${a} · force`, kind: 'env' as const, data: d?.series?.[a], color: AXIS_COLOR[a], xUnit: 's', yUnit: 'N',
 				cropStart: activeCrop.value?.start, cropEnd: activeCrop.value?.end, peak: d?.[PEAK_FIELD[a]] }
 			: { key: a, title: `${a} · spectrum`, kind: 'line' as const, data: d?.fft?.[a], color: AXIS_COLOR[a], xUnit: 'Hz', yUnit: '', logY: true }
 	));
-	if (effectiveMode.value === 'force' && showRpm.value) {
+	if (effectiveMode.value === 'force' && item.rpm) {
 		base.push({ key: 'RPM', title: 'RPM', kind: 'env', data: detail.value?.series?.RPM, color: '#a855f7', xUnit: 's', yUnit: 'rpm',
 			cropStart: activeCrop.value?.start, cropEnd: activeCrop.value?.end } as any);
 	}
 	return base;
-});
+}
+// Selected axes for a panel (spectral views render one SpectrumView per axis, like the force plot).
+function axesFor(item: RPanel): Axis[] {
+	const sel = (item.channels && item.channels.length ? item.channels : AXES) as readonly Axis[];
+	return AXES.filter((a) => sel.includes(a));
+}
+// Chain the spectral views reflect: the live-tuned/applied filter when present, else raw.
+const specChain = computed<FilterChain>(() => previewChain() ?? savedChain.value ?? defaultChain());
+function toggleItemAxis(item: RPanel, a: Axis) {
+	const cur = (item.channels && item.channels.length ? [...item.channels] : [...AXES]);
+	const i = cur.indexOf(a);
+	if (i >= 0) { if (cur.length > 1) cur.splice(i, 1); } else cur.push(a);
+	item.channels = AXES.filter((x) => cur.includes(x));
+}
 
 // Seed the editable controls from the loaded cache (FrmCloud emits this once the
 // binary is parsed). User edits thereafter drive the cloud; Reset restores these.
@@ -1163,21 +1254,27 @@ function fmtDateTime(v: string | null | undefined) {
 
 <template>
 	<private-view title="Force Analysis">
-		<div class="fd">
+		<div class="fd" @click="rightAddOpen = false">
 			<section class="hero">
 				<span class="hero-badge"><v-icon name="insights" x-small /> Force Analysis</span>
 				<span class="hero-stat">{{ rows.length }} op{{ rows.length === 1 ? '' : 's' }} · {{ samples.length }} sample{{ samples.length === 1 ? '' : 's' }}</span>
 				<div class="hero-spacer"></div>
-				<div class="panel-toggles">
+				<div class="panel-toggles" @click.stop>
 					<span class="pt-label">Panels</span>
-					<button class="pt-chip" :class="{ on: showForce }" :disabled="showForce && !showFRM"
-						@click="showForce = !showForce">
-						<v-icon :name="showForce ? 'visibility' : 'visibility_off'" x-small /> Force / FFT
+					<button class="pt-chip" :class="{ on: hasPanel('signals') }" @click="toggleRightType('signals')">
+						<v-icon :name="hasPanel('signals') ? 'visibility' : 'visibility_off'" x-small /> Signals
 					</button>
-					<button class="pt-chip" :class="{ on: showFRM }" :disabled="showFRM && !showForce"
-						@click="showFRM = !showFRM">
-						<v-icon :name="showFRM ? 'visibility' : 'visibility_off'" x-small /> FRM map
+					<button class="pt-chip" :class="{ on: hasPanel('frm') }" @click="toggleRightType('frm')">
+						<v-icon :name="hasPanel('frm') ? 'visibility' : 'visibility_off'" x-small /> FRM map
 					</button>
+					<div class="pt-add">
+						<button class="pt-chip" title="Add a panel" @click.stop="rightAddOpen = !rightAddOpen"><v-icon name="add" x-small /> Add</button>
+						<div v-if="rightAddOpen" class="pt-menu" @click.stop>
+							<button @click="addRightPanel('signals')"><v-icon name="insights" x-small /> Signals</button>
+							<button @click="addRightPanel('frm')"><v-icon name="fingerprint" x-small /> FRM map</button>
+						</div>
+					</div>
+					<button class="pt-chip" title="Reset panel layout" @click="resetRightLayout"><v-icon name="grid_view" x-small /></button>
 				</div>
 			</section>
 
@@ -1467,30 +1564,51 @@ function fmtDateTime(v: string | null | undefined) {
 						</button>
 					</div>
 
-					<div class="right-row" :class="{ stacked }">
-						<div v-if="showForce" class="card col-charts"
-							:style="(!stacked && showFRM) ? { flexBasis: (rightSplit * 100) + '%' } : {}">
-							<div class="graphs-head">
-								<span class="graphs-title"><v-icon name="insights" small /> Signals<span v-if="liveOn" class="live-badge">LIVE · drag to crop</span></span>
-								<div class="toggle">
+					<GridLayout v-model:layout="rightLayout" class="right-grid" :col-num="stacked ? 1 : 12"
+						:row-height="rightRowH" :margin="[10, 10]" :is-draggable="!stacked" :is-resizable="!stacked"
+						:vertical-compact="true" :use-css-transforms="true">
+						<GridItem v-for="item in rightLayout" :key="item.i" :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i"
+							:data-panel-id="item.i" drag-allow-from=".pg-grip" :min-w="3" :min-h="7">
+						<div v-if="item.type === 'signals'" class="card col-charts pg-card">
+							<div class="pg-bar">
+								<span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span>
+								<span class="pg-title"><v-icon name="insights" x-small /> Signals<span v-if="liveOn" class="live-badge">LIVE · drag to crop</span></span>
+								<div class="toggle pg-tools">
 									<button class="tbtn icobtn" :class="{ on: rectZoomTool }" title="Rectangular zoom — drag a box on any graph"
 										:style="rectZoomTool ? { background: '#0ea5e9', borderColor: '#0ea5e9' } : {}"
 										@click="rectZoomTool = !rectZoomTool"><v-icon name="crop_free" x-small /></button>
 									<button class="tbtn icobtn" title="Reset zoom" :disabled="!zoomed" @click="resetZoom"><v-icon name="restart_alt" x-small /></button>
-									<button v-if="effectiveMode === 'force'" class="tbtn rpmbtn" :class="{ on: showRpm }"
-										:style="showRpm ? { background: '#a855f7', borderColor: '#a855f7' } : {}"
-										@click="showRpm = !showRpm">RPM</button>
+									<button v-for="a in AXES" :key="a" class="tbtn axchip" :class="{ on: (item.channels || AXES).includes(a) }"
+										:style="(item.channels || AXES).includes(a) ? { color: AXIS_COLOR[a], borderColor: AXIS_COLOR[a] } : {}"
+										:title="`Show ${a} in this panel`" @click="toggleItemAxis(item, a)">{{ a }}</button>
+									<button v-if="effectiveMode === 'force'" class="tbtn rpmbtn" :class="{ on: item.rpm }"
+										:style="item.rpm ? { background: '#a855f7', borderColor: '#a855f7' } : {}"
+										@click="item.rpm = !item.rpm">RPM</button>
 									<button class="tbtn" :class="{ on: chartMode === 'force' }"
 										:style="chartMode === 'force' ? { background: '#334155', borderColor: '#334155' } : {}"
 										@click="chartMode = 'force'">Force</button>
 									<button class="tbtn" :class="{ on: chartMode === 'fft' }"
 										:style="chartMode === 'fft' ? { background: '#334155', borderColor: '#334155' } : {}"
 										@click="chartMode = 'fft'">FFT</button>
+									<button class="tbtn" :class="{ on: chartMode === 'psd' }"
+										:style="chartMode === 'psd' ? { background: '#334155', borderColor: '#334155' } : {}"
+										title="Power spectrum (dB)" @click="chartMode = 'psd'">Power</button>
+									<button class="tbtn" :class="{ on: chartMode === 'spectrogram' }"
+										:style="chartMode === 'spectrogram' ? { background: '#334155', borderColor: '#334155' } : {}"
+										title="Time × frequency heatmap" @click="chartMode = 'spectrogram'">Spectro</button>
+									<button class="tbtn" :class="{ on: chartMode === 'waterfall' }"
+										:style="chartMode === 'waterfall' ? { background: '#334155', borderColor: '#334155' } : {}"
+										title="Stacked spectra over time" @click="chartMode = 'waterfall'">Waterfall</button>
 								</div>
+								<button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button>
 							</div>
 							<div v-if="!detail" class="empty">Select an operation to view its signals</div>
+							<div v-else-if="isSpectral" class="charts-col">
+								<SpectrumView v-for="a in axesFor(item)" :key="a" :cache-file-id="detail.live_cache_file"
+									:chain="specChain" :axis="a" :mode="(chartMode as 'psd' | 'spectrogram' | 'waterfall')" :color="AXIS_COLOR[a]" />
+							</div>
 							<div v-else class="charts-col">
-								<ForceChart v-for="c in charts" :key="c.key" v-bind="c" :hover-index="hoverIndex" @hover="hoverIndex = $event"
+								<ForceChart v-for="c in chartsFor(item)" :key="c.key" v-bind="c" :hover-index="hoverIndex" @hover="hoverIndex = $event"
 									:crop-editable="c.kind === 'env'" :active="c.key === axis"
 									:overlay="(chartMode === 'fft' && filtersOpen && c.kind === 'line' && c.key === axis) ? filterFftOverlay : null"
 									:view-start="zoomStart" :view-end="zoomEnd" :zoom-tool="rectZoomTool" @zoom="onChartZoom"
@@ -1498,12 +1616,10 @@ function fmtDateTime(v: string | null | undefined) {
 							</div>
 						</div>
 
-						<div v-if="!stacked && showForce && showFRM" class="resizer" @pointerdown="startSplitResize" title="Drag to resize"></div>
-
-						<div v-if="showFRM" class="card col-frm frm-col"
-							:style="(!stacked && showForce) ? { flexBasis: ((1 - rightSplit) * 100) + '%' } : {}">
-							<div class="frm-head">
-								<span class="frm-kicker"><v-icon name="fingerprint" small /> {{ octreeOn ? (gridActive ? 'Full FRM · gridded' : 'Full FRM') : (liveOn ? 'Lite FRM' : 'FRM figure') }}</span>
+						<div v-else-if="item.type === 'frm'" class="card col-frm frm-col pg-card">
+							<div class="frm-head pg-headbar">
+								<span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span>
+								<span class="frm-kicker"><v-icon name="fingerprint" x-small /> {{ octreeOn ? (gridActive ? 'Full FRM · gridded' : 'Full FRM') : (liveOn ? 'Lite FRM' : 'FRM figure') }}</span>
 								<span v-if="(octreeOn || liveOn) && fullResPoints" class="frm-res"
 									:title="`Displayed ${displayedPoints.toLocaleString()} of ${fullResPoints.toLocaleString()} full-resolution points`">
 									<v-icon name="grain" x-small /> {{ fmtPts(displayedPoints) }} / {{ fmtPts(fullResPoints) }}<template v-if="resolutionPct != null"> · {{ resolutionPct }}%</template>
@@ -1542,6 +1658,7 @@ function fmtDateTime(v: string | null | undefined) {
 										:style="axis === a ? { background: AXIS_COLOR[a], borderColor: AXIS_COLOR[a] } : {}"
 										@click="setAxis(a)">{{ a }}</button>
 								</div>
+								<button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button>
 							</div>
 							<div class="frm-img">
 								<div v-if="!detail" class="empty">Select an operation</div>
@@ -1596,7 +1713,8 @@ function fmtDateTime(v: string | null | undefined) {
 								<div v-if="octreeMsg && !liveOn" class="render-msg frm-render-msg">{{ octreeMsg }}</div>
 							</div>
 						</div>
-					</div>
+						</GridItem>
+					</GridLayout>
 				</div>
 			</div>
 		</div>
@@ -1766,8 +1884,10 @@ function fmtDateTime(v: string | null | undefined) {
 .stat.modified { border-color: var(--theme--primary, #1d4ed8); box-shadow: inset 0 0 0 1px var(--theme--primary, #1d4ed8); }
 .stat.modified .s-lab { color: var(--theme--primary, #1d4ed8); }
 
-/* Right area: Signals + FRM, independently hideable/resizable against each other. */
-.right-area { display: flex; flex-direction: column; gap: 10px; }
+/* Right area: Signals + FRM, independently hideable/resizable against each other. The grid can grow
+   taller than the viewport (adding/moving panels), so this is the scroll container — min-height:0 lets
+   it shrink inside the fixed-height layout cell and overflow-y makes off-screen panels reachable. */
+.right-area { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .panel-toggles { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
 .pt-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--theme--foreground-subdued, #98a2b3); margin-right: 2px; }
 .pt-chip {
@@ -1782,6 +1902,29 @@ function fmtDateTime(v: string | null | undefined) {
 .right-row.stacked { flex-direction: column; }
 .right-row > .card { flex: 1 1 auto; min-width: 0; overflow: hidden; }
 
+/* Flexible plot-panel grid (Signals / FRM as draggable, resizable, closeable panels). Pull the grid
+   up by its top margin so row-0 panels align with the top of the samples/detail columns (the empty
+   margin strip above row 0 is what gets clipped, not content). */
+.right-grid { width: 100%; margin-top: -10px; }
+.right-grid :deep(.vgl-item__resizer) { z-index: 3; }
+.right-grid :deep(.vgl-item--placeholder) { background: color-mix(in srgb, var(--theme--primary, #1d4ed8) 18%, transparent); border-radius: 12px; }
+.pg-card { height: 100%; display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+/* One-line panel bar: drag grip · title · inline tools · close — no separate title row. */
+.pg-bar { display: flex; align-items: center; gap: 6px; padding: 2px 4px 6px; flex: 0 0 auto; flex-wrap: wrap; }
+.pg-title { display: inline-flex; align-items: center; gap: 5px; margin-right: auto; font-size: 11px; font-weight: 700;
+	text-transform: uppercase; letter-spacing: 0.05em; color: var(--theme--foreground-subdued, #6b7684); white-space: nowrap; }
+.pg-tools { flex: 0 1 auto; }
+.pg-grip { cursor: move; display: inline-flex; color: var(--theme--foreground-subdued, #98a2b3); }
+.pg-grip:hover { color: var(--theme--foreground, #1e293b); }
+.pg-x { margin-left: 4px; display: inline-flex; background: transparent; border: none; cursor: pointer; color: var(--theme--foreground-subdued, #98a2b3); border-radius: 5px; padding: 2px; }
+.pg-x:hover { color: #dc2626; background: color-mix(in srgb, #dc2626 12%, transparent); }
+/* FRM reuses its head row as the bar (grip prepended, close appended). */
+.pg-headbar { padding-bottom: 6px; }
+.pt-add { position: relative; }
+.pt-menu { position: absolute; top: 32px; right: 0; z-index: 40; min-width: 150px; padding: 4px; border-radius: 9px; background: var(--theme--background, #fff); border: 1px solid var(--theme--border-color-subdued, #e7ebf0); box-shadow: 0 14px 34px rgba(0,0,0,0.2); }
+.pt-menu button { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 8px; font: inherit; font-size: 12px; color: var(--theme--foreground, #1e293b); background: transparent; border: none; border-radius: 6px; cursor: pointer; text-align: left; }
+.pt-menu button:hover { background: var(--theme--background-subdued, #f1f5f9); }
+
 .graphs-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; flex-wrap: wrap; gap: 6px; }
 .graphs-title, .frm-kicker {
 	display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700;
@@ -1795,7 +1938,9 @@ function fmtDateTime(v: string | null | undefined) {
 }
 .tbtn.on { color: #fff; }
 .tbtn.icobtn { padding: 5px 9px; display: inline-flex; align-items: center; }
-.charts-col { display: flex; flex-direction: column; gap: 13px; }
+/* Signals plots scroll INSIDE the panel (min-height:0 + overflow) instead of overflowing the card
+   and pushing past the page bottom when a panel is short or several charts stack. */
+.charts-col { display: flex; flex-direction: column; gap: 13px; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 
 .col-frm { display: flex; flex-direction: column; gap: 11px; min-height: 0; }
 .frm-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; }

@@ -185,7 +185,10 @@ def test_chat_falls_back_to_default_chart_when_model_declines():
     from app.api import app
 
     client = app.test_client()
-    fake_rows = [{"material_name": "Ti-64", "count": 59}, {"material_name": "Al", "count": 3}]
+    fake_rows = [
+        {"material_name": "Ti-64", "count": 59},
+        {"material_name": "Al", "count": 3},
+    ]
     with (
         patch("app.api.schema_context.build_system_prompt", return_value="prompt"),
         patch(
@@ -236,7 +239,11 @@ def test_chat_self_corrects_after_query_error():
     ):
         resp = client.post(
             "/api/chat",
-            json={"messages": [{"role": "user", "content": "most common operation type"}]},
+            json={
+                "messages": [
+                    {"role": "user", "content": "most common operation type"},
+                ],
+            },
         )
 
     assert resp.status_code == 200

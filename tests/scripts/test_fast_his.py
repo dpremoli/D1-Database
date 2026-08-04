@@ -13,7 +13,7 @@ import fast_his as fh
 
 def _make_emd(matrix: np.ndarray) -> bytes:
     """Build a fake .EMD zip whose .HIS holds a 14-byte header + row-major float32 matrix."""
-    n, C = matrix.shape
+    n, C = matrix.shape  # noqa: N806
     body = bytes([1, 0, C, 0]) + b"\x00" * 10  # 14-byte header like the real files
     body += struct.pack(f"<{n * C}f", *matrix.astype("<f4").ravel().tolist())
     buf = BytesIO()
@@ -25,13 +25,18 @@ def _make_emd(matrix: np.ndarray) -> bytes:
 
 def _canonical_71(nsamples=300) -> np.ndarray:
     a = np.zeros((nsamples, 71), dtype=np.float64)
-    ramp = np.concatenate([np.linspace(20, 1500, nsamples // 2), np.linspace(1500, 800, nsamples - nsamples // 2)])
-    a[:, 0] = ramp                                   # pyrometer -> peak 1500
-    a[:, 8] = np.clip(ramp / 30, 0, 50)              # force -> peak 50
-    a[:, 13] = 1013.0                                # pressure abs (constant-ish, still kept via map)
-    a[:, 20] = 1500.0                                # temp setpoint
-    a[:, 23] = 50.0                                  # force setpoint
-    a[:, 40] = 8.6e5                                 # uninitialised-memory garbage column
+    ramp = np.concatenate(
+        [
+            np.linspace(20, 1500, nsamples // 2),
+            np.linspace(1500, 800, nsamples - nsamples // 2),
+        ]
+    )
+    a[:, 0] = ramp  # pyrometer -> peak 1500
+    a[:, 8] = np.clip(ramp / 30, 0, 50)  # force -> peak 50
+    a[:, 13] = 1013.0  # pressure abs
+    a[:, 20] = 1500.0  # temp setpoint
+    a[:, 23] = 50.0  # force setpoint
+    a[:, 40] = 8.6e5  # uninitialised-memory garbage column
     return a
 
 

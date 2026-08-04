@@ -7,7 +7,10 @@ import vue from '@vitejs/plugin-vue';
 // specifier to a local shim (src/shims/directus-sdk.ts) that provides drop-in useApi()/
 // useStores() backed by our own axios client + auth store. This keeps the ported components
 // byte-for-byte identical to the Directus module, so future upstream fixes port cleanly.
-export default defineConfig({
+// Served at a sub-path (/app/) behind Caddy in production so it shares the Directus origin over
+// Tailscale; at root ('/') in dev. `base` flows into import.meta.env.BASE_URL, which the router uses.
+export default defineConfig(({ mode }) => ({
+	base: mode === 'production' ? '/app/' : '/',
 	plugins: [vue()],
 	resolve: {
 		alias: {
@@ -16,4 +19,4 @@ export default defineConfig({
 		},
 	},
 	server: { port: 5180 },
-});
+}));

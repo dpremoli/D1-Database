@@ -15,8 +15,18 @@ def test_program_nr_from_bezeichnung():
 
 def test_rezept_targets_uses_offset_by_one():
     # Rezept.Daten[N+1] <-> Kopfdaten.Nr = N. Real values from recipe 1248.
-    daten = ["", "Affaan", "1200", "Ti64-20V", "44kN", "vac", "pyro",
-             "40mm", "42 g", "20 min holding"] + [""] * 10
+    daten = [
+        "",
+        "Affaan",
+        "1200",
+        "Ti64-20V",
+        "44kN",
+        "vac",
+        "pyro",
+        "40mm",
+        "42 g",
+        "20 min holding",
+    ] + [""] * 10
     t = fr.rezept_targets(daten)
     assert t["target_temp_c"] == 1200
     assert t["target_force_kn"] == 44
@@ -36,9 +46,9 @@ def test_rcp_targets_from_name():
 
 def test_recipe_id_is_deterministic_and_machine_scoped():
     a = fr.recipe_id("25", 1248, "Ti64")
-    assert a == fr.recipe_id("25", 1248, "different name")   # 25 keyed by program_nr
+    assert a == fr.recipe_id("25", 1248, "different name")  # 25 keyed by program_nr
     b = fr.recipe_id("250", None, "D105_IN718")
-    assert b == fr.recipe_id("250", None, "d105_in718")      # 250 keyed by lower(name)
+    assert b == fr.recipe_id("250", None, "d105_in718")  # 250 keyed by lower(name)
     assert a != b
 
 

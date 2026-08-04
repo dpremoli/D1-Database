@@ -4,11 +4,11 @@ summed axes + rpm (splits Fx/Fy/Fz back across their sub-channels, synthesises a
 from the per-sample rpm), so it satisfies the same AcquisitionSource contract as SimSource and
 everything downstream is unchanged. Great as a real-data test / demo of the acquisition path.
 """
+
 from __future__ import annotations
 
 import threading
 import time
-from typing import Optional
 
 import numpy as np
 
@@ -17,8 +17,15 @@ from ..d1lc import parse_d1lc
 
 
 class ReplaySource:
-    def __init__(self, cache_bytes: bytes, ppr: int = 1, realtime: bool = True, speed: float = 1.0,
-                 chunk_sec: float = 0.02, max_samples: int = 300_000):
+    def __init__(
+        self,
+        cache_bytes: bytes,
+        ppr: int = 1,
+        realtime: bool = True,
+        speed: float = 1.0,
+        chunk_sec: float = 0.02,
+        max_samples: int = 300_000,
+    ):
         c = parse_d1lc(cache_bytes)
         # A real cut's cache can be millions of points; decimate to a representative resolution so
         # the live view stays smooth and finalize doesn't write a giant .mat. Effective rate drops
@@ -72,13 +79,13 @@ class ReplaySource:
     def stop(self) -> None:
         self._stop.set()
 
-    def read(self) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    def read(self) -> tuple[np.ndarray, np.ndarray] | None:
         if self._stop.is_set() or self._i >= self.total:
             return None
         n = min(self.chunk, self.total - self._i)
         # Re-base time to start at 0 so live readouts read elapsed seconds.
-        t = (self._t[self._i:self._i + n] - self._t[0])
-        data = self._data[self._i:self._i + n]
+        t = self._t[self._i : self._i + n] - self._t[0]
+        data = self._data[self._i : self._i + n]
         self._i += n
         if self.realtime:
             target = self._t0 + float(t[-1]) / self.speed

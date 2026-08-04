@@ -23,6 +23,7 @@ dashboard treat FAST 25 traces exactly like the FAST 250 ones.
 Run as a script to dump the structural analysis / a decode preview for an EMD:
     py scripts/fast_his.py path/to/V01_XXXX.EMD
 """
+
 from __future__ import annotations
 
 import os
@@ -41,37 +42,42 @@ HEADER_BYTES = 14
 # Fixed channel map for the 71-wide layout: column -> (key, label, unit, group).
 # Keys match fast_mapping._CANON so FAST 25 and FAST 250 series share axes.
 POS71 = {
-    0:  ("pyro_top",     "Pyrometer (top)",     "C",      "temp"),
-    2:  ("tc1",          "Thermocouple 1",      "C",      "temp"),
-    3:  ("tc2",          "Thermocouple 2",      "C",      "temp"),
-    4:  ("tc3",          "Thermocouple 3",      "C",      "temp"),
-    5:  ("tc4",          "Thermocouple 4",      "C",      "temp"),
-    6:  ("tc5",          "Thermocouple 5",      "C",      "temp"),
-    7:  ("tc6",          "Thermocouple 6",      "C",      "temp"),
-    8:  ("force",        "Force",               "kN",     "force"),
-    10: ("piston_abs",   "Piston travel (abs)", "mm",     "position"),
-    11: ("speed",        "Ram speed",           "mm/min", "speed"),
-    13: ("pressure_abs", "Pressure (abs)",      "mbar",   "pressure"),
-    14: ("pressure_rel", "Pressure (rel)",      "mbar",   "pressure"),
-    19: ("heating_pct",  "Heating power",       "%",      "percent"),
-    20: ("heating_sp",   "Temp setpoint",       "C",      "temp"),
-    23: ("force_sv",     "Force (setpoint)",    "kN",     "force"),
+    0: ("pyro_top", "Pyrometer (top)", "C", "temp"),
+    2: ("tc1", "Thermocouple 1", "C", "temp"),
+    3: ("tc2", "Thermocouple 2", "C", "temp"),
+    4: ("tc3", "Thermocouple 3", "C", "temp"),
+    5: ("tc4", "Thermocouple 4", "C", "temp"),
+    6: ("tc5", "Thermocouple 5", "C", "temp"),
+    7: ("tc6", "Thermocouple 6", "C", "temp"),
+    8: ("force", "Force", "kN", "force"),
+    10: ("piston_abs", "Piston travel (abs)", "mm", "position"),
+    11: ("speed", "Ram speed", "mm/min", "speed"),
+    13: ("pressure_abs", "Pressure (abs)", "mbar", "pressure"),
+    14: ("pressure_rel", "Pressure (rel)", "mbar", "pressure"),
+    19: ("heating_pct", "Heating power", "%", "percent"),
+    20: ("heating_sp", "Temp setpoint", "C", "temp"),
+    23: ("force_sv", "Force (setpoint)", "kN", "force"),
 }
-POS31_PYRO = 0   # oldest layout: col 0 is still the pyrometer (validated by signature)
+POS31_PYRO = 0  # oldest layout: col 0 is still the pyrometer (validated by signature)
 
 
 def read_his_bytes(emd_path_or_bytes) -> bytes:
     """Return the .HIS member bytes from an .EMD zip (path or raw bytes)."""
-    src = emd_path_or_bytes if isinstance(emd_path_or_bytes, (bytes, bytearray)) \
+    src = (
+        emd_path_or_bytes
+        if isinstance(emd_path_or_bytes, bytes | bytearray)
         else open(emd_path_or_bytes, "rb").read()
+    )
     with zipfile.ZipFile(BytesIO(src)) as zf:
         name = next(n for n in zf.namelist() if n.upper().endswith(".HIS"))
         return zf.read(name)
 
 
-def _matrix(his: bytes, off: int, C: int) -> np.ndarray:
-    with np.errstate(all="ignore"):   # uninitialised-memory columns decode to inf/huge
-        fl = np.frombuffer(his, dtype="<f4", count=(len(his) - off) // 4, offset=off).astype(np.float64)
+def _matrix(his: bytes, off: int, C: int) -> np.ndarray:  # noqa: N803
+    with np.errstate(all="ignore"):  # uninitialised-memory columns decode to inf/huge
+        fl = np.frombuffer(
+            his, dtype="<f4", count=(len(his) - off) // 4, offset=off
+        ).astype(np.float64)
     fl = fl.copy()
     fl[~np.isfinite(fl)] = np.nan
     m = (len(fl) // C) * C
@@ -89,14 +95,14 @@ def _looks_like_pyro(col: np.ndarray) -> bool:
 
 def detect_layout(his: bytes) -> tuple[int, int]:
     """Return (offset, channel_count). Prefers the known 71-wide record at offset 14."""
-    for off, C in ((HEADER_BYTES, 71), (HEADER_BYTES, 31)):
+    for off, C in ((HEADER_BYTES, 71), (HEADER_BYTES, 31)):  # noqa: N806
         a = _matrix(his, off, C)
         if a.shape[0] >= 30 and _looks_like_pyro(a[:, 0]):
             return off, C
     # Fallback: search offset/period for any layout whose column 0 reads as a pyrometer.
     best = None
     for off in range(0, 20, 2):
-        for C in range(20, 100):
+        for C in range(20, 100):  # noqa: N806
             a = _matrix(his, off, C)
             if a.shape[0] < 30:
                 continue
@@ -121,14 +127,18 @@ def _keep_column(col: np.ndarray) -> bool:
 def decode_emd(raw: bytes) -> dict:
     """Decode a FAST 25 .EMD -> canonical trace dict (same shape as normalize_fast_csv)."""
     his = read_his_bytes(raw)
-    if len(his) < HEADER_BYTES + 4 * 20:   # empty / truncated .HIS (a handful of aborted runs)
+    if (
+        len(his) < HEADER_BYTES + 4 * 20
+    ):  # empty / truncated .HIS (a handful of aborted runs)
         raise ValueError(f"empty or truncated .HIS ({len(his)} bytes)")
-    off, C = detect_layout(his)
+    off, C = detect_layout(his)  # noqa: N806
     a = _matrix(his, off, C)
     n = a.shape[0]
     time_s = np.arange(n) * SAMPLE_INTERVAL_S
 
-    pos_map = POS71 if C == 71 else {POS31_PYRO: ("pyro_top", "Pyrometer (top)", "C", "temp")}
+    pos_map = (
+        POS71 if C == 71 else {POS31_PYRO: ("pyro_top", "Pyrometer (top)", "C", "temp")}
+    )
 
     columns, series_by_key, seen = [], {}, set()
     for c in range(C):
@@ -147,12 +157,22 @@ def decode_emd(raw: bytes) -> dict:
         finite = [v for v in vals if v is not None]
         if not finite:
             continue
-        columns.append({"key": key, "label": label, "unit": unit, "group": group,
-                        "min": min(finite), "max": max(finite)})
+        columns.append(
+            {
+                "key": key,
+                "label": label,
+                "unit": unit,
+                "group": group,
+                "min": min(finite),
+                "max": max(finite),
+            }
+        )
         series_by_key[key] = vals
 
     # Canonical CSV: time_s first, then each kept channel (US decimals, blank for gaps).
-    header = ["time_s [s]"] + [f"{c['label']} [{c['unit']}]" if c["unit"] else c["label"] for c in columns]
+    header = ["time_s [s]"] + [
+        f"{c['label']} [{c['unit']}]" if c["unit"] else c["label"] for c in columns
+    ]
     keys = [c["key"] for c in columns]
     lines = [",".join(header)]
     for r in range(n):
@@ -164,9 +184,14 @@ def decode_emd(raw: bytes) -> dict:
 
     summary = summarize_trace(series_by_key, list(time_s))
     return {
-        "format": "25", "plant": None, "recipe": None, "run_start": None,
-        "n_rows": n, "duration_s": float(time_s[-1] - time_s[0]) if n > 1 else 0.0,
-        "columns": columns, "summary": summary,
+        "format": "25",
+        "plant": None,
+        "recipe": None,
+        "run_start": None,
+        "n_rows": n,
+        "duration_s": float(time_s[-1] - time_s[0]) if n > 1 else 0.0,
+        "columns": columns,
+        "summary": summary,
         "csv_text": "\n".join(lines) + "\n",
     }
 
@@ -176,7 +201,11 @@ if __name__ == "__main__":
         sys.exit("usage: py scripts/fast_his.py path/to/V01_XXXX.EMD")
     res = decode_emd(open(sys.argv[1], "rb").read())
     off, C = detect_layout(read_his_bytes(open(sys.argv[1], "rb").read()))
-    print(f"layout: offset={off} channels={C}  samples={res['n_rows']}  duration={res['duration_s']:.0f}s")
+    print(
+        f"layout: offset={off} channels={C}  samples={res['n_rows']}  duration={res['duration_s']:.0f}s"
+    )
     print(f"kept {len(res['columns'])} channels; summary={res['summary']}")
     for c in res["columns"][:20]:
-        print(f"  {c['key']:14s} {c['label']:22s} [{c['unit']:6s}] {c['group']:8s} {c['min']:.2f}..{c['max']:.2f}")
+        print(
+            f"  {c['key']:14s} {c['label']:22s} [{c['unit']:6s}] {c['group']:8s} {c['min']:.2f}..{c['max']:.2f}"
+        )

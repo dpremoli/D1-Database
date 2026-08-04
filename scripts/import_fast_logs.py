@@ -13,6 +13,7 @@ Usage:
     DATABASE_URL=postgres://d1:change_me@localhost:5432/d1_database \
         python scripts/import_fast_logs.py "FAST Data" [--dry-run]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,24 +25,33 @@ import uuid
 from collections import Counter
 from datetime import date, datetime, time
 
+import fast_mapping as fm
 import openpyxl
 import psycopg2
 import psycopg2.extras
-
-import fast_mapping as fm
 
 LEGACY_NOTE = "Imported from FAST/SPS log sheets (FCT HP D 250)."
 _NS = uuid.uuid5(uuid.NAMESPACE_DNS, "d1-database.fast-log.v1")
 
 # Normalised source header → canonical field key (strips the ° so encoding can't bite).
 CANON_HEADERS = {
-    "date": "date", "time": "time", "user": "user", "batch #": "batch",
-    "recipe #": "recipe", "material": "material", "mass (g)": "mass",
-    "mould diameter (mm)": "mould", "atmosphere": "atmosphere",
-    "tc/pyro control": "tcpyro", "max force (kn)": "maxforce",
-    "max temp (c)": "maxtemp", "voltage at max t (v)": "voltage",
-    "power at max t (kw)": "power", "ptc top (c)": "ptctop",
-    "ptc bot (c)": "ptcbot", "comments, failures, alarms": "comments",
+    "date": "date",
+    "time": "time",
+    "user": "user",
+    "batch #": "batch",
+    "recipe #": "recipe",
+    "material": "material",
+    "mass (g)": "mass",
+    "mould diameter (mm)": "mould",
+    "atmosphere": "atmosphere",
+    "tc/pyro control": "tcpyro",
+    "max force (kn)": "maxforce",
+    "max temp (c)": "maxtemp",
+    "voltage at max t (v)": "voltage",
+    "power at max t (kw)": "power",
+    "ptc top (c)": "ptctop",
+    "ptc bot (c)": "ptcbot",
+    "comments, failures, alarms": "comments",
 }
 
 
@@ -93,7 +103,7 @@ def fmt_date(v):
 
 
 def fmt_time(v):
-    if isinstance(v, (time, datetime)):
+    if isinstance(v, time | datetime):
         return v.strftime("%H:%M")
     s = clean_str(v)
     return s or ""
@@ -122,7 +132,10 @@ def read_runs(folder: str) -> list[dict]:
                 rec = {ck: (r[i] if i < len(r) else None) for i, ck in colmap.items()}
                 if rec.get("date") is None:
                     continue
-                if not any(clean_str(rec.get(c)) for c in ("batch", "recipe", "material", "mass")):
+                if not any(
+                    clean_str(rec.get(c))
+                    for c in ("batch", "recipe", "material", "mass")
+                ):
                     continue
                 runs.append(rec)
     return runs
@@ -142,9 +155,11 @@ def _numstr(v) -> str | None:
 def sinter_params(b: dict) -> str:
     """Compose the {temp}C_{force}kN_{dia}dia parameter tail (only the set ones)."""
     parts = []
-    for key, suf in (("sintering_max_temp_celsius", "C"),
-                     ("sintering_max_force_kn", "kN"),
-                     ("sintering_mould_diameter_mm", "dia")):
+    for key, suf in (
+        ("sintering_max_temp_celsius", "C"),
+        ("sintering_max_force_kn", "kN"),
+        ("sintering_mould_diameter_mm", "dia"),
+    ):
         s = _numstr(b.get(key))
         if s:
             parts.append(s + suf)
@@ -172,8 +187,8 @@ def build(run: dict) -> dict | None:
         "source_run_uid": uid,
         "operation_id": str(uuid.uuid5(_NS, uid)),
         "operation_date": d,
-        "operator_name": raw_user,           # raw User string preserved
-        "operator_disp": operator_name,      # resolved → Machine_Operators
+        "operator_name": raw_user,  # raw User string preserved
+        "operator_disp": operator_name,  # resolved → Machine_Operators
         "owner_email": owner_email,
         "material_code": fm.match_material(material_text),
         "sintering_recipe_number": clean_code(run.get("recipe")),
@@ -189,7 +204,9 @@ def build(run: dict) -> dict | None:
         "sintering_ptc_top_celsius": clean_float(run.get("ptctop")),
         "sintering_ptc_bot_celsius": clean_float(run.get("ptcbot")),
         "sintering_material_type_note": material_text,
-        "outcome_notes": " ".join(filter(None, [LEGACY_NOTE, clean_str(run.get("comments"))])),
+        "outcome_notes": " ".join(
+            filter(None, [LEGACY_NOTE, clean_str(run.get("comments"))])
+        ),
     }
 
 
@@ -211,29 +228,58 @@ def main():
     no_material = sum(1 for b in ops if not b["material_code"])
 
     print(f"Parsed {len(runs)} run-rows → {len(ops)} unique operations")
-    print(f"  material linked: {len(ops) - no_material}   free-text only: {no_material}")
+    print(
+        f"  material linked: {len(ops) - no_material}   free-text only: {no_material}"
+    )
     print(f"  owner matched to app user: {owners_matched}   no owner: {no_owner}")
     print(f"  distinct operators (Machine_Operators): {len(operators_needed)}")
     print(f"  new materials to create: {len(fm.NEW_MATERIALS)}")
-    print("  top linked material codes:",
-          ", ".join(f"{c}×{n}" for c, n in mats_needed.most_common(12)))
-    print("  operators:", ", ".join(operators_needed[:25]), "…" if len(operators_needed) > 25 else "")
+    print(
+        "  top linked material codes:",
+        ", ".join(f"{c}×{n}" for c, n in mats_needed.most_common(12)),
+    )
+    print(
+        "  operators:",
+        ", ".join(operators_needed[:25]),
+        "…" if len(operators_needed) > 25 else "",
+    )
 
     # Sanity-flag implausible dates (almost always a source-sheet typo, e.g. "17/08/0225").
     # Imported faithfully, but surfaced so the maintainer can correct the log sheet / DB.
     this_year = date.today().year
-    bad_dates = [b for b in ops if b["operation_date"] and not (2015 <= b["operation_date"].year <= this_year + 1)]
+    bad_dates = [
+        b
+        for b in ops
+        if b["operation_date"]
+        and not (2015 <= b["operation_date"].year <= this_year + 1)
+    ]
     if bad_dates:
-        print(f"  WARNING: {len(bad_dates)} run(s) have an implausible date (likely a source typo) — review:")
+        print(
+            f"  WARNING: {len(bad_dates)} run(s) have an implausible date (likely a source typo) — review:"
+        )
         for b in bad_dates[:20]:
-            print(f"     {b['operation_date']}  recipe={b['sintering_recipe_number']}  {b['sintering_material_type_note']}")
+            print(
+                f"     {b['operation_date']}  recipe={b['sintering_recipe_number']}  {b['sintering_material_type_note']}"
+            )
 
     if args.dry_run:
         print("\n[dry-run] no writes. Sample of 3 mapped operations:")
         for b in ops[:3]:
-            print("   ", {k: b[k] for k in ("operation_date", "operator_disp", "owner_email",
-                                            "material_code", "sintering_recipe_number",
-                                            "sintering_max_temp_celsius", "sintering_mass_grams")})
+            print(
+                "   ",
+                {
+                    k: b[k]
+                    for k in (
+                        "operation_date",
+                        "operator_disp",
+                        "owner_email",
+                        "material_code",
+                        "sintering_recipe_number",
+                        "sintering_max_temp_celsius",
+                        "sintering_mass_grams",
+                    )
+                },
+            )
         return
 
     db = os.environ.get("DATABASE_URL")
@@ -248,7 +294,10 @@ def main():
         cur,
         "INSERT INTO materials (material_id, alloy_code, common_name, notes) VALUES %s "
         "ON CONFLICT DO NOTHING",
-        [(fm.material_id(code), code, name, "FAST log import") for code, name in fm.NEW_MATERIALS],
+        [
+            (fm.material_id(code), code, name, "FAST log import")
+            for code, name in fm.NEW_MATERIALS
+        ],
     )
     # 2) resolve every code → material_id (existing + new)
     cur.execute("SELECT alloy_code, material_id FROM materials")
@@ -259,50 +308,93 @@ def main():
     op_to_id = {n: i for n, i in cur.fetchall()}
     for name in operators_needed:
         if name not in op_to_id:
-            cur.execute('INSERT INTO "Machine_Operators" ("Name") VALUES (%s) RETURNING id', (name,))
+            cur.execute(
+                'INSERT INTO "Machine_Operators" ("Name") VALUES (%s) RETURNING id',
+                (name,),
+            )
             op_to_id[name] = cur.fetchone()[0]
 
     # 4) owner email → directus_users id
     cur.execute("SELECT email, id FROM directus_users")
     email_to_user = {e: i for e, i in cur.fetchall()}
 
-    method_id = "4b13b4f4-7f7e-5356-b93a-937ab527386d"   # MF
+    method_id = "4b13b4f4-7f7e-5356-b93a-937ab527386d"  # MF
     equipment_id = "27f468ae-5e5b-532d-bf33-e9cfc939b524"  # FCT HP D 250
 
     # 5) assign globally-unique DD-MM-YY-MF{n}-{params} pass codes, continuing the
     # counter from the current max so existing codes stay stable and new imports never
     # collide (FAST ops carry no sample, so the date + running number carry uniqueness).
-    cur.execute("SELECT COALESCE(MAX((regexp_match(pass_code,'MF([0-9]+)'))[1]::int),0) "
-                "FROM manufacturing_operations WHERE process_category='sintering'")
+    cur.execute(
+        "SELECT COALESCE(MAX((regexp_match(pass_code,'MF([0-9]+)'))[1]::int),0) "
+        "FROM manufacturing_operations WHERE process_category='sintering'"
+    )
     counter = cur.fetchone()[0] or 0
-    for b in sorted(ops, key=lambda x: (x["operation_date"] is None, str(x["operation_date"]))):
+    for b in sorted(
+        ops, key=lambda x: (x["operation_date"] is None, str(x["operation_date"]))
+    ):
         counter += 1
         b["pass_code"] = fast_pass_code(b["operation_date"], counter, sinter_params(b))
 
     cols = [
-        "operation_id", "method_id", "equipment_id", "process_category", "pass_code",
-        "source_run_uid", "source_system", "operation_date",
-        "operator", "operator_name", "owner", "material_id",
-        "sintering_recipe_number", "sintering_batch_number", "sintering_mass_grams",
-        "sintering_mould_diameter_mm", "sintering_atmosphere", "sintering_tc_pyro_control",
-        "sintering_max_force_kn", "sintering_max_temp_celsius", "sintering_voltage_at_max_t_v",
-        "sintering_power_at_max_t_kw", "sintering_ptc_top_celsius", "sintering_ptc_bot_celsius",
-        "sintering_material_type_note", "outcome_notes",
+        "operation_id",
+        "method_id",
+        "equipment_id",
+        "process_category",
+        "pass_code",
+        "source_run_uid",
+        "source_system",
+        "operation_date",
+        "operator",
+        "operator_name",
+        "owner",
+        "material_id",
+        "sintering_recipe_number",
+        "sintering_batch_number",
+        "sintering_mass_grams",
+        "sintering_mould_diameter_mm",
+        "sintering_atmosphere",
+        "sintering_tc_pyro_control",
+        "sintering_max_force_kn",
+        "sintering_max_temp_celsius",
+        "sintering_voltage_at_max_t_v",
+        "sintering_power_at_max_t_kw",
+        "sintering_ptc_top_celsius",
+        "sintering_ptc_bot_celsius",
+        "sintering_material_type_note",
+        "outcome_notes",
     ]
     values = []
     for b in ops:
-        values.append((
-            b["operation_id"], method_id, equipment_id, "sintering", b["pass_code"],
-            b["source_run_uid"], fm.SOURCE_SYSTEM, b["operation_date"],
-            op_to_id.get(b["operator_disp"]), b["operator_name"],
-            email_to_user.get(b["owner_email"]) if b["owner_email"] else None,
-            code_to_mat.get(b["material_code"]) if b["material_code"] else None,
-            b["sintering_recipe_number"], b["sintering_batch_number"], b["sintering_mass_grams"],
-            b["sintering_mould_diameter_mm"], b["sintering_atmosphere"], b["sintering_tc_pyro_control"],
-            b["sintering_max_force_kn"], b["sintering_max_temp_celsius"], b["sintering_voltage_at_max_t_v"],
-            b["sintering_power_at_max_t_kw"], b["sintering_ptc_top_celsius"], b["sintering_ptc_bot_celsius"],
-            b["sintering_material_type_note"], b["outcome_notes"],
-        ))
+        values.append(
+            (
+                b["operation_id"],
+                method_id,
+                equipment_id,
+                "sintering",
+                b["pass_code"],
+                b["source_run_uid"],
+                fm.SOURCE_SYSTEM,
+                b["operation_date"],
+                op_to_id.get(b["operator_disp"]),
+                b["operator_name"],
+                email_to_user.get(b["owner_email"]) if b["owner_email"] else None,
+                code_to_mat.get(b["material_code"]) if b["material_code"] else None,
+                b["sintering_recipe_number"],
+                b["sintering_batch_number"],
+                b["sintering_mass_grams"],
+                b["sintering_mould_diameter_mm"],
+                b["sintering_atmosphere"],
+                b["sintering_tc_pyro_control"],
+                b["sintering_max_force_kn"],
+                b["sintering_max_temp_celsius"],
+                b["sintering_voltage_at_max_t_v"],
+                b["sintering_power_at_max_t_kw"],
+                b["sintering_ptc_top_celsius"],
+                b["sintering_ptc_bot_celsius"],
+                b["sintering_material_type_note"],
+                b["outcome_notes"],
+            )
+        )
     col_sql = ", ".join(cols)
     psycopg2.extras.execute_values(
         cur,
@@ -312,8 +404,10 @@ def main():
     )
     inserted = cur.rowcount
     conn.commit()
-    print(f"\nInserted {inserted} new FAST operations "
-          f"({len(ops) - inserted} already present / skipped).")
+    print(
+        f"\nInserted {inserted} new FAST operations "
+        f"({len(ops) - inserted} already present / skipped)."
+    )
     cur.close()
     conn.close()
 

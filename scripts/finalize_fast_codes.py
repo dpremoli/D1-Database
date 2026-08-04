@@ -19,6 +19,7 @@ under the real op code).
 
 Usage: DATABASE_URL=… python scripts/finalize_fast_codes.py
 """
+
 from __future__ import annotations
 
 import os

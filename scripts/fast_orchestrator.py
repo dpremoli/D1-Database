@@ -29,6 +29,7 @@ Environment: DATABASE_URL, DIRECTUS_URL, DIRECTUS_ADMIN_EMAIL/PASSWORD, ARCHIVE_
 NOTE: like force_orchestrator, a running --daemon does NOT reload edited source —
 restart it after changing this script or fast_mapping.py.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -46,12 +47,14 @@ import psycopg2.extras
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fast_mapping import normalize_fast_csv  # noqa: E402
 from fast_his import decode_emd  # noqa: E402
+from fast_mapping import normalize_fast_csv  # noqa: E402
 
 log = logging.getLogger("fast_orchestrator")
 
-ARCHIVE_UNC = os.environ.get("ARCHIVE_UNC", r"\\uosfstore.shef.ac.uk\shared\star_group1")
+ARCHIVE_UNC = os.environ.get(
+    "ARCHIVE_UNC", r"\\uosfstore.shef.ac.uk\shared\star_group1"
+)
 DIRECTUS_URL = os.environ.get("DIRECTUS_URL", "http://localhost:8055").rstrip("/")
 TRACES_FOLDER_NAME = os.environ.get("FAST_TRACES_FOLDER_NAME", "FAST Traces")
 
@@ -67,11 +70,18 @@ def safe_filename(code: str) -> str:
 
 # --------------------------------------------------------------------- directus
 class Directus:
-    """Thread-safe Directus client. Token and traces-folder id are shared across all worker
-    threads (class-level, lock-guarded) so N parallel workers cause ONE login, not N — Directus
-    invalidates a user's older sessions on each fresh login, which under many workers produced a
-    storm of 401s. On a 401 the token is invalidated once and re-fetched."""
-    _lock = threading.RLock()   # reentrant: _folder() holds it and calls _hdr()->_login()
+    """Thread-safe Directus client.
+
+    Token and traces-folder id are shared across all worker
+    threads (class-level, lock-guarded) so N parallel workers
+    cause ONE login, not N — Directus invalidates older
+    sessions on each login. On a 401 the token is invalidated
+    once and re-fetched.
+    """
+
+    _lock = (
+        threading.RLock()
+    )  # reentrant: _folder() holds it and calls _hdr()->_login()
     _token = None
     _folder_id = None
 
@@ -80,14 +90,18 @@ class Directus:
 
     def _login(self, stale=None):
         with Directus._lock:
-            if Directus._token not in (None, stale):   # another thread already refreshed
-                return Directus._token
-            # Directus rate-limits /auth/login; back off and retry rather than failing a row.
+            if Directus._token not in (None, stale):
+                return Directus._token  # another thread refreshed
+            # Rate-limits /auth/login; back off and retry.
             for attempt in range(5):
-                r = requests.post(f"{DIRECTUS_URL}/auth/login", json={
-                    "email": os.environ["DIRECTUS_ADMIN_EMAIL"],
-                    "password": os.environ.get("DIRECTUS_ADMIN_PASSWORD", ""),
-                }, timeout=30)
+                r = requests.post(
+                    f"{DIRECTUS_URL}/auth/login",
+                    json={
+                        "email": os.environ["DIRECTUS_ADMIN_EMAIL"],
+                        "password": os.environ.get("DIRECTUS_ADMIN_PASSWORD", ""),
+                    },
+                    timeout=30,
+                )
                 if r.status_code in (401, 429) and attempt < 4:
                     time.sleep(1.5 * (attempt + 1))
                     continue
@@ -105,15 +119,23 @@ class Directus:
         with Directus._lock:
             if Directus._folder_id:
                 return Directus._folder_id
-            q = requests.get(f"{DIRECTUS_URL}/folders", headers=self._hdr(),
-                             params={"filter[name][_eq]": TRACES_FOLDER_NAME, "limit": 1}, timeout=30)
+            q = requests.get(
+                f"{DIRECTUS_URL}/folders",
+                headers=self._hdr(),
+                params={"filter[name][_eq]": TRACES_FOLDER_NAME, "limit": 1},
+                timeout=30,
+            )
             q.raise_for_status()
             found = q.json().get("data") or []
             if found:
                 Directus._folder_id = found[0]["id"]
             else:
-                c = requests.post(f"{DIRECTUS_URL}/folders", headers=self._hdr(),
-                                  json={"name": TRACES_FOLDER_NAME}, timeout=30)
+                c = requests.post(
+                    f"{DIRECTUS_URL}/folders",
+                    headers=self._hdr(),
+                    json={"name": TRACES_FOLDER_NAME},
+                    timeout=30,
+                )
                 c.raise_for_status()
                 Directus._folder_id = c.json()["data"]["id"]
             return Directus._folder_id
@@ -122,21 +144,29 @@ class Directus:
         """Issue a request, re-authenticating once on a 401."""
         for attempt in (1, 2):
             tok = Directus._token or self._login()
-            r = requests.request(method, url, headers={"Authorization": f"Bearer {tok}"}, **kw)
+            r = requests.request(
+                method, url, headers={"Authorization": f"Bearer {tok}"}, **kw
+            )
             if r.status_code == 401 and attempt == 1:
-                self._login(stale=tok)   # refresh only if nobody else already did
+                self._login(stale=tok)  # refresh only if nobody else already did
                 continue
             r.raise_for_status()
             return r
 
     def download(self, file_id: str) -> bytes:
-        return self._request("GET", f"{DIRECTUS_URL}/assets/{file_id}", timeout=120).content
+        return self._request(
+            "GET", f"{DIRECTUS_URL}/assets/{file_id}", timeout=120
+        ).content
 
     def upload_csv(self, name: str, data: bytes) -> str:
         folder = self._folder()
-        r = self._request("POST", f"{DIRECTUS_URL}/files",
-                          data={"title": name, "folder": folder},
-                          files={"file": (name, data, "text/csv")}, timeout=120)
+        r = self._request(
+            "POST",
+            f"{DIRECTUS_URL}/files",
+            data={"title": name, "folder": folder},
+            files={"file": (name, data, "text/csv")},
+            timeout=120,
+        )
         return r.json()["data"]["id"]
 
     def delete_file(self, file_id):
@@ -159,14 +189,18 @@ def connect():
 
 def op_code(conn, operation_id: str) -> str:
     with conn.cursor() as cur:
-        cur.execute("SELECT pass_code FROM manufacturing_operations WHERE operation_id=%s", [operation_id])
+        cur.execute(
+            "SELECT pass_code FROM manufacturing_operations WHERE operation_id=%s",
+            [operation_id],
+        )
         row = cur.fetchone()
-    return (row[0] if row and row[0] else str(operation_id)[:8])
+    return row[0] if row and row[0] else str(operation_id)[:8]
 
 
 def claim_pending(conn, limit: int):
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("""
+        cur.execute(
+            """
             WITH picked AS (
                 SELECT id FROM fast_run_data WHERE status='pending'
                 ORDER BY created_at LIMIT %s FOR UPDATE SKIP LOCKED
@@ -175,22 +209,31 @@ def claim_pending(conn, limit: int):
               FROM picked WHERE f.id = picked.id
          RETURNING f.id, f.operation_id, f.staged_file, f.import_archive_path,
                    f.directus_files_id AS old_file
-        """, [limit])
+        """,
+            [limit],
+        )
         rows = cur.fetchall()
     conn.commit()
     return rows
 
 
 def ensure_row(conn, operation_id: str, *, archive_path=None, staged_file=None):
-    """Create or reset a fast_run_data row to pending for an operation (upsert)."""
+    """Upsert a fast_run_data row to pending."""
     with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO fast_run_data (operation_id, status, import_archive_path, staged_file)
+        cur.execute(
+            """
+            INSERT INTO fast_run_data
+                (operation_id, status, import_archive_path,
+                 staged_file)
             VALUES (%s, 'pending', %s, %s)
-            ON CONFLICT (operation_id) DO UPDATE
-               SET status='pending', import_archive_path=EXCLUDED.import_archive_path,
-                   staged_file=EXCLUDED.staged_file, error_message=NULL, updated_at=now()
-        """, [operation_id, archive_path, staged_file])
+            ON CONFLICT (operation_id) DO UPDATE SET
+                status='pending',
+                import_archive_path=EXCLUDED.import_archive_path,
+                staged_file=EXCLUDED.staged_file,
+                error_message=NULL, updated_at=now()
+        """,
+            [operation_id, archive_path, staged_file],
+        )
     conn.commit()
 
 
@@ -208,12 +251,19 @@ def process_row(conn, directus: Directus, row) -> str:
             raise ValueError("no staged_file or import_archive_path to import from")
 
         # FAST 25 traces are binary .EMD archives (.HIS inside); FAST 250 are raw CSVs.
-        res = decode_emd(raw) if archive_path.lower().endswith(".emd") else normalize_fast_csv(raw)
+        res = (
+            decode_emd(raw)
+            if archive_path.lower().endswith(".emd")
+            else normalize_fast_csv(raw)
+        )
         code = op_code(conn, row["operation_id"])
-        new_file = directus.upload_csv(safe_filename(code), res["csv_text"].encode("utf-8"))
+        new_file = directus.upload_csv(
+            safe_filename(code), res["csv_text"].encode("utf-8")
+        )
 
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 UPDATE fast_run_data SET
                     status='done', error_message=NULL, directus_files_id=%s,
                     machine_format=%s, plant=%s, recipe=%s, run_start=%s,
@@ -221,9 +271,20 @@ def process_row(conn, directus: Directus, row) -> str:
                     staged_file=NULL, import_archive_path=NULL,
                     processed_at=now(), updated_at=now()
                 WHERE id=%s
-            """, [new_file, res["format"], res["plant"], res["recipe"], res["run_start"],
-                  res["n_rows"], res["duration_s"], json.dumps(res["columns"]),
-                  json.dumps(res.get("summary") or {}), fid])
+            """,
+                [
+                    new_file,
+                    res["format"],
+                    res["plant"],
+                    res["recipe"],
+                    res["run_start"],
+                    res["n_rows"],
+                    res["duration_s"],
+                    json.dumps(res["columns"]),
+                    json.dumps(res.get("summary") or {}),
+                    fid,
+                ],
+            )
         conn.commit()
 
         # tidy: delete superseded normalised file + the staging raw
@@ -231,14 +292,24 @@ def process_row(conn, directus: Directus, row) -> str:
             directus.delete_file(row["old_file"])
         if row.get("staged_file"):
             directus.delete_file(row["staged_file"])
-        log.info("[DONE] %s -> %s (%d rows, %d series)", code, safe_filename(code), res["n_rows"], len(res["columns"]))
+        log.info(
+            "[DONE] %s -> %s (%d rows, %d series)",
+            code,
+            safe_filename(code),
+            res["n_rows"],
+            len(res["columns"]),
+        )
         return "done"
     except Exception as e:  # noqa: BLE001
         conn.rollback()
         with conn.cursor() as cur:
-            cur.execute("UPDATE fast_run_data SET status='error', error_message=%s, "
-                        "staged_file=NULL, import_archive_path=NULL, updated_at=now() WHERE id=%s",
-                        [str(e)[:2000], fid])
+            cur.execute(
+                "UPDATE fast_run_data SET status='error',"
+                " error_message=%s, staged_file=NULL,"
+                " import_archive_path=NULL,"
+                " updated_at=now() WHERE id=%s",
+                [str(e)[:2000], fid],
+            )
         conn.commit()
         log.error("[ERROR] row %s: %s", fid, e)
         return "error"
@@ -259,10 +330,12 @@ def run_once(conn, directus: Directus, limit: int) -> int:
 
 
 def _worker(worker_id: int, daemon: bool, poll: float, counter: list, lock) -> None:
-    """One drain thread: its OWN db connection + Directus session (neither is thread-safe),
-    claiming one row at a time via FOR UPDATE SKIP LOCKED so workers never collide. The work
-    is upload-bound, so many threads scale near-linearly even under the GIL (it releases
-    during the HTTP upload and the file read)."""
+    """One drain thread: own db + Directus session.
+
+    Claims one row at a time via FOR UPDATE SKIP LOCKED so
+    workers never collide. Upload-bound, so many threads
+    scale near-linearly even under the GIL.
+    """
     conn = connect()
     directus = Directus()
     idle = 0
@@ -279,7 +352,7 @@ def _worker(worker_id: int, daemon: bool, poll: float, counter: list, lock) -> N
                 time.sleep(poll)
                 continue
             idle += 1
-            if idle >= 2:          # two empty claims in a row => queue drained
+            if idle >= 2:  # two empty claims in a row => queue drained
                 break
             time.sleep(0.2)
             continue
@@ -292,10 +365,15 @@ def _worker(worker_id: int, daemon: bool, poll: float, counter: list, lock) -> N
 
 
 def run_parallel(workers: int, daemon: bool, poll: float) -> int:
-    """Drain with N worker threads. Returns total processed (for --run; daemon never returns)."""
+    """Drain with N worker threads.
+
+    Returns total processed (--run); daemon never returns.
+    """
     counter, lock, threads = [0], threading.Lock(), []
     for i in range(workers):
-        t = threading.Thread(target=_worker, args=(i, daemon, poll, counter, lock), daemon=True)
+        t = threading.Thread(
+            target=_worker, args=(i, daemon, poll, counter, lock), daemon=True
+        )
         t.start()
         threads.append(t)
     for t in threads:
@@ -307,18 +385,35 @@ def run_parallel(workers: int, daemon: bool, poll: float) -> int:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", action="store_true", help="process all pending rows once")
-    ap.add_argument("--import", dest="do_import", action="store_true", help="enqueue one archive import (needs --archive-path + --operation)")
+    ap.add_argument(
+        "--import",
+        dest="do_import",
+        action="store_true",
+        help="enqueue one archive import (needs --archive-path + --operation)",
+    )
     ap.add_argument("--archive-path", help="archive path (POSIX-relative) to normalise")
     ap.add_argument("--operation", help="operation_id (uuid) for --import")
-    ap.add_argument("--daemon", action="store_true", help="poll pending imports forever")
-    ap.add_argument("--poll", type=float, default=5.0, help="daemon poll seconds (default 5)")
+    ap.add_argument(
+        "--daemon", action="store_true", help="poll pending imports forever"
+    )
+    ap.add_argument(
+        "--poll", type=float, default=5.0, help="daemon poll seconds (default 5)"
+    )
     ap.add_argument("--limit", type=int, default=0, help="max rows this run (0 = all)")
-    ap.add_argument("--workers", type=int, default=1, help="parallel drain threads (upload-bound; try 16-32)")
+    ap.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="parallel drain threads (upload-bound; try 16-32)",
+    )
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
-                        format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
     conn = connect()
     directus = Directus()
     if not directus.enabled:
@@ -336,9 +431,13 @@ def main():
         return
 
     if args.daemon:
-        log.info("daemon started (pid=%d, workers=%d); polling fast_run_data", os.getpid(), args.workers)
+        log.info(
+            "daemon started (pid=%d, workers=%d); polling fast_run_data",
+            os.getpid(),
+            args.workers,
+        )
         if args.workers > 1:
-            run_parallel(args.workers, daemon=True, poll=args.poll)   # never returns
+            run_parallel(args.workers, daemon=True, poll=args.poll)  # never returns
             return
         while True:
             try:

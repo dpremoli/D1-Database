@@ -2,12 +2,12 @@
 
 The acquisition consumer runs in a worker thread; WebSocket sends must happen on the event loop.
 `publish` is thread-safe (schedules the fan-out via `call_soon_threadsafe`); each subscriber has a
-small bounded queue and we drop the oldest frame under backpressure (display frames are best-effort).
+small bounded queue and we drop the oldest frame under backpressure (display frames best-effort).
 """
+
 from __future__ import annotations
 
 import asyncio
-from typing import Union
 
 
 class Broadcaster:
@@ -23,11 +23,11 @@ class Broadcaster:
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._subs.discard(q)
 
-    def publish(self, message: Union[bytes, str]) -> None:
+    def publish(self, message: bytes | str) -> None:
         """Call from any thread."""
         self._loop.call_soon_threadsafe(self._fanout, message)
 
-    def _fanout(self, message: Union[bytes, str]) -> None:
+    def _fanout(self, message: bytes | str) -> None:
         for q in self._subs:
             if q.full():
                 try:

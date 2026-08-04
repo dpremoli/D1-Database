@@ -513,7 +513,7 @@ export function renderSampleReport(d) {
 				<div class="uid">ID ${esc(shortId)}</div>
 			</div>
 		</div>
-	</header>			
+	</header>
 	<section class="grid">${details}</section>
 
 	<h2>Sample Life</h2>

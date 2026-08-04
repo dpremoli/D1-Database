@@ -12,6 +12,7 @@ const routes: RouteRecordRaw[] = [
 			{ path: 'record', name: 'record', component: () => import('./record/RecordPage.vue') },
 			{ path: 'plot', name: 'plot', component: () => import('./force/ForceDashboard.vue') },
 			{ path: 'labamp', name: 'labamp', component: () => import('./labamp/LabAmpPage.vue') },
+			{ path: 'nidaq', name: 'nidaq', component: () => import('./nidaq/NidaqPage.vue') },
 			{ path: 'settings', name: 'settings', component: () => import('./settings/SettingsPage.vue') },
 		],
 	},
@@ -21,7 +22,9 @@ const routes: RouteRecordRaw[] = [
 ];
 
 export const router = createRouter({
-	history: createWebHistory(),
+	// BASE_URL is '/' in dev and '/app/' in the production build (see vite.config base), so the
+	// router works both at the dev root and behind Caddy's /app/ path over Tailscale.
+	history: createWebHistory(import.meta.env.BASE_URL),
 	routes,
 });
 

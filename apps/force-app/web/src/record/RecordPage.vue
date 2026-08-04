@@ -2,7 +2,7 @@
 // Modular Recording workspace: a draggable/resizable grid of panels (Recording Options, Metadata,
 // Force Plot w/ FFT, FRM Map, Plot Options), mirroring the Directus force-analysis feel. Layout is
 // persisted to localStorage; panels share one workspace store via provide/inject.
-import { onMounted, onBeforeUnmount, provide, ref, watch } from 'vue';
+import { onMounted, onBeforeUnmount, provide, ref, watch, computed } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import { createWorkspace, WORKSPACE } from './workspace';
 import { startSync, syncStatus } from './directusSync';
@@ -11,39 +11,63 @@ import RecordingOptions from './panels/RecordingOptions.vue';
 import MetadataPanel from './panels/MetadataPanel.vue';
 import ForcePanel from './panels/ForcePanel.vue';
 import FrmPanel from './panels/FrmPanel.vue';
-import PlotOptions from './panels/PlotOptions.vue';
+import RpmPanel from './panels/RpmPanel.vue';
 
 const w = createWorkspace();
 provide(WORKSPACE, w);
 const st = w.st;
 
-const PANELS: Record<string, { title: string; icon: string }> = {
-	options: { title: 'Recording Options', icon: 'tune' },
-	metadata: { title: 'Metadata', icon: 'description' },
-	force: { title: 'Force Plot', icon: 'show_chart' },
-	frm: { title: 'FRM Map', icon: 'fingerprint' },
-	plotopts: { title: 'Plot Options', icon: 'palette' },
+// Panel types. `single` types exist at most once; the rest can be added multiple times (e.g. two
+// Force panels each isolating a different axis, or a second FRM). `w/h` seed a newly-added panel.
+const PANEL_TYPES: Record<string, { title: string; icon: string; single?: boolean; w: number; h: number }> = {
+	options: { title: 'Recording Options', icon: 'tune', single: true, w: 3, h: 11 },
+	metadata: { title: 'Metadata', icon: 'description', single: true, w: 3, h: 23 },
+	force: { title: 'Force Plot', icon: 'show_chart', w: 5, h: 11 },
+	rpm: { title: 'RPM', icon: 'speed', w: 5, h: 7 },
+	frm: { title: 'FRM Map', icon: 'fingerprint', w: 4, h: 19 },
 };
-const DEFAULT_LAYOUT = [
-	{ i: 'options', x: 0, y: 0, w: 3, h: 12 },
-	{ i: 'metadata', x: 0, y: 12, w: 3, h: 14 },
-	{ i: 'force', x: 3, y: 0, w: 5, h: 11 },
-	{ i: 'plotopts', x: 3, y: 11, w: 5, h: 8 },
-	{ i: 'frm', x: 8, y: 0, w: 4, h: 19 },
+type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: 'time' | 'fft' | 'psd' | 'spectrogram' | 'waterfall'; channels?: string[] };
+const DEFAULT_LAYOUT: Inst[] = [
+	// Metadata is a tall full-height left column so every field — including the machining-details
+	// section — is visible without hunting; Recording Options (source + Start/Stop) sits compact above.
+	{ i: 'options', type: 'options', x: 0, y: 0, w: 3, h: 11 },
+	{ i: 'metadata', type: 'metadata', x: 0, y: 11, w: 3, h: 23 },
+	{ i: 'force', type: 'force', x: 3, y: 0, w: 5, h: 12, mode: 'time', channels: ['Fx', 'Fy', 'Fz'] },
+	{ i: 'rpm', type: 'rpm', x: 3, y: 12, w: 5, h: 7 },
+	{ i: 'frm', type: 'frm', x: 8, y: 0, w: 4, h: 19 },
 ];
-const LS_KEY = 'force-app.record.layout';
+// Bumped to v3 so existing users pick up the taller metadata column (v2 layouts are discarded).
+const LS_KEY = 'force-app.record.layout.v3';
 
-function loadLayout() {
+function loadLayout(): Inst[] {
 	try {
 		const s = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
-		if (Array.isArray(s) && s.length === DEFAULT_LAYOUT.length) return s;
+		if (Array.isArray(s) && s.every((x) => x.type && PANEL_TYPES[x.type])) return s;
 	} catch { /* fall through */ }
 	return DEFAULT_LAYOUT.map((x) => ({ ...x }));
 }
-const layout = ref(loadLayout());
+const layout = ref<Inst[]>(loadLayout());
 let saveT: any = null;
 watch(layout, (l) => { clearTimeout(saveT); saveT = setTimeout(() => localStorage.setItem(LS_KEY, JSON.stringify(l)), 400); }, { deep: true });
 function resetLayout() { layout.value = DEFAULT_LAYOUT.map((x) => ({ ...x })); }
+
+const addOpen = ref(false);
+const hasType = (t: string) => layout.value.some((p) => p.type === t);
+function panelTitle(p: Inst) {
+	if (p.type === 'force' && p.channels && p.channels.join() !== 'Fx,Fy,Fz') return `Force · ${p.channels.join(' ')}`;
+	return PANEL_TYPES[p.type].title;
+}
+function addPanel(type: string) {
+	addOpen.value = false;
+	const meta = PANEL_TYPES[type];
+	if (meta.single && hasType(type)) return;
+	const maxY = layout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0);
+	const inst: Inst = { i: `${type}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, type, x: 0, y: maxY, w: meta.w, h: meta.h };
+	if (type === 'force') { inst.mode = 'time'; inst.channels = ['Fx', 'Fy', 'Fz']; }
+	layout.value = [...layout.value, inst];
+}
+function closePanel(i: string) { layout.value = layout.value.filter((p) => p.i !== i); }
+const addable = computed(() => Object.entries(PANEL_TYPES).map(([type, m]) => ({ type, ...m, disabled: !!m.single && hasType(type) })));
 
 // Load the finished cut on manual stop OR natural completion.
 watch(() => st.state, (s) => { if (s === 'done' && !w.finishedCache.value) w.loadFinished(); });
@@ -53,7 +77,7 @@ onBeforeUnmount(() => w.client.disconnect());
 </script>
 
 <template>
-	<div class="rec-wrap">
+	<div class="rec-wrap" @click="addOpen = false">
 		<!-- Global safety-alarm overlay (2e): prominent, blocks nothing but demands acknowledgement. -->
 		<div v-if="w.alarms.tripped" class="alarm-overlay">
 			<span class="material-symbols-rounded">warning</span>
@@ -83,6 +107,14 @@ onBeforeUnmount(() => w.client.disconnect());
 				<span class="material-symbols-rounded">{{ syncStatus.pending > 0 ? 'cloud_queue' : 'error' }}</span>
 				<span v-if="syncStatus.pending > 0">{{ syncStatus.pending }}</span>
 			</div>
+			<div class="addwrap">
+				<button class="reset" title="Add a panel" @click.stop="addOpen = !addOpen"><span class="material-symbols-rounded">add</span></button>
+				<div v-if="addOpen" class="addmenu" @click.stop>
+					<button v-for="a in addable" :key="a.type" :disabled="a.disabled" @click="addPanel(a.type)">
+						<span class="material-symbols-rounded">{{ a.icon }}</span>{{ a.title }}<span v-if="a.disabled" class="added">added</span>
+					</button>
+				</div>
+			</div>
 			<button class="reset" title="Reset panel layout" @click="resetLayout"><span class="material-symbols-rounded">grid_view</span></button>
 			<div class="conn" :class="{ ok: st.connected }">
 				<span class="material-symbols-rounded">{{ st.connected ? 'sensors' : 'sensors_off' }}</span>
@@ -93,12 +125,12 @@ onBeforeUnmount(() => w.client.disconnect());
 			:is-draggable="true" :is-resizable="true" :use-css-transforms="true" :vertical-compact="true">
 			<GridItem v-for="item in layout" :key="item.i" :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i"
 				drag-allow-from=".panel-handle" :min-w="2" :min-h="5">
-				<PanelFrame :title="PANELS[item.i].title" :icon="PANELS[item.i].icon">
-					<RecordingOptions v-if="item.i === 'options'" />
-					<MetadataPanel v-else-if="item.i === 'metadata'" />
-					<ForcePanel v-else-if="item.i === 'force'" />
-					<FrmPanel v-else-if="item.i === 'frm'" />
-					<PlotOptions v-else-if="item.i === 'plotopts'" />
+				<PanelFrame :title="panelTitle(item)" :icon="PANEL_TYPES[item.type].icon" closable @close="closePanel(item.i)">
+					<RecordingOptions v-if="item.type === 'options'" />
+					<MetadataPanel v-else-if="item.type === 'metadata'" />
+					<ForcePanel v-else-if="item.type === 'force'" :inst="item" />
+					<RpmPanel v-else-if="item.type === 'rpm'" />
+					<FrmPanel v-else-if="item.type === 'frm'" />
 				</PanelFrame>
 			</GridItem>
 		</GridLayout>
@@ -118,6 +150,13 @@ onBeforeUnmount(() => w.client.disconnect());
 .topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--border); background: rgba(11,16,32,0.82); backdrop-filter: blur(8px); }
 .back, .reset { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; background: var(--surface); border: 1px solid var(--border); color: var(--text); cursor: pointer; }
 .back:hover, .reset:hover { background: var(--surface-2); }
+.addwrap { position: relative; }
+.addmenu { position: absolute; top: 40px; right: 0; z-index: 30; min-width: 190px; background: #0f1730; border: 1px solid var(--border); border-radius: 10px; padding: 5px; box-shadow: 0 14px 40px rgba(0,0,0,0.5); }
+.addmenu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 9px; font-size: 12.5px; color: var(--text); background: transparent; border: none; border-radius: 7px; cursor: pointer; text-align: left; }
+.addmenu button:hover:not(:disabled) { background: #16203c; }
+.addmenu button:disabled { opacity: 0.45; cursor: default; }
+.addmenu button .material-symbols-rounded { font-size: 17px; color: var(--text-dim); }
+.addmenu .added { margin-left: auto; font-size: 9.5px; color: var(--text-dim); }
 .brand { display: flex; align-items: center; gap: 9px; }
 .brand-name { font-weight: 600; white-space: nowrap; }
 .rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #64748b; }

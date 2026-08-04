@@ -13,6 +13,7 @@ The backup table is never modified, so unmatched QA stays available for later re
 
 Usage: DATABASE_URL=… python scripts/apply_fast_qa_backup.py [--dry-run]
 """
+
 from __future__ import annotations
 
 import os
@@ -40,6 +41,7 @@ WHERE operation_date IS NOT NULL
 
 def _r(v):
     return None if v is None else round(float(v), 1)
+
 
 # Machine data is authoritative for everything except true QA fields. Only CoSHH and the
 # free-text observations come from the sheet logs; mass/mould/PTC/V/P are recoverable as
@@ -82,7 +84,9 @@ def main() -> None:
         cur.execute(REVERT)
         print(f"reverted sheet-written non-QA columns on {cur.rowcount} operations")
         conn.commit()
-        cur.close(); conn.close(); return
+        cur.close()
+        conn.close()
+        return
 
     cur.execute(CANDIDATES)
     by_date: dict[object, list] = {}
@@ -108,7 +112,7 @@ def main() -> None:
             elif len(tf) > 1:
                 ambiguous += 1
                 continue
-        if oid is None:                       # no temp/force match — fall back to unique day
+        if oid is None:  # no temp/force match — fall back to unique day
             if len(cands) == 1:
                 oid, applied_day = cands[0][0], applied_day + 1
             else:
@@ -124,7 +128,9 @@ def main() -> None:
 
     if dry:
         print("[dry-run] no writes.")
-        cur.close(); conn.close(); return
+        cur.close()
+        conn.close()
+        return
 
     for u in updates:
         cur.execute(UPDATE, u)

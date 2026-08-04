@@ -6,9 +6,10 @@ Transport: POST http://<ampIP>/api/… with a JSON body; responses are {"result"
 on the backend (not the browser). A MockLabAmp with the same interface lets the UI be exercised
 without hardware; the real client is validated on the rig.
 """
+
 from __future__ import annotations
 
-from typing import Optional, Protocol
+from typing import Protocol
 
 import httpx
 
@@ -25,7 +26,7 @@ class LabAmp(Protocol):
     mock: bool
 
     def ping(self) -> bool: ...
-    def get_operation_mode(self) -> Optional[str]: ...
+    def get_operation_mode(self) -> str | None: ...
     def set_operation_mode(self, mode: str) -> None: ...
     def sensor_table(self, channels: int) -> list[dict]: ...
     def export_params(self) -> dict: ...
@@ -37,7 +38,9 @@ class LabAmp(Protocol):
 class LabAmpClient:
     """Real HTTP client against a physical LabAmp."""
 
-    def __init__(self, base_url: str, timeout: float = 10.0, transport: Optional[httpx.BaseTransport] = None):
+    def __init__(
+        self, base_url: str, timeout: float = 10.0, transport: httpx.BaseTransport | None = None
+    ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.mock = False
@@ -66,7 +69,7 @@ class LabAmpClient:
         except LabAmpError:
             return False
 
-    def get_operation_mode(self) -> Optional[str]:
+    def get_operation_mode(self) -> str | None:
         data = self._post("/api/$/operationMode/get", {})
         return data.get("mode")
 
@@ -85,14 +88,18 @@ class LabAmpClient:
         return out
 
     def set_params(self, values: dict[str, object]) -> None:
-        self._post("/api/param/set", {"params": [{"name": k, "value": v} for k, v in values.items()]})
+        self._post(
+            "/api/param/set", {"params": [{"name": k, "value": v} for k, v in values.items()]}
+        )
 
     def sensor_table(self, channels: int) -> list[dict]:
         paths = [f"/sensor/{i}/{leaf}" for i in range(1, channels + 1) for leaf in SENSOR_LEAVES]
         vals = self.get_params(paths)
         rows = []
         for i in range(1, channels + 1):
-            rows.append({"channel": i, **{leaf: vals.get(f"/sensor/{i}/{leaf}") for leaf in SENSOR_LEAVES}})
+            rows.append(
+                {"channel": i, **{leaf: vals.get(f"/sensor/{i}/{leaf}") for leaf in SENSOR_LEAVES}}
+            )
         return rows
 
     def export_params(self) -> dict:
@@ -107,7 +114,9 @@ class LabAmpClient:
 
     def channel_status(self, channels: int) -> dict[int, str]:
         """Per-channel status (OK / OR_ADC / OR_INPUT …) via /api/$/status/channel."""
-        data = self._post("/api/$/status/channel", {"type": "SENSOR", "channels": list(range(1, channels + 1))})
+        data = self._post(
+            "/api/$/status/channel", {"type": "SENSOR", "channels": list(range(1, channels + 1))}
+        )
         out: dict[int, str] = {}
         for it in data.get("items", data.get("channels", [])):
             if isinstance(it, dict) and "channel" in it:
@@ -131,7 +140,7 @@ class MockLabAmp:
     def ping(self) -> bool:
         return True
 
-    def get_operation_mode(self) -> Optional[str]:
+    def get_operation_mode(self) -> str | None:
         return self._mode
 
     def set_operation_mode(self, mode: str) -> None:
@@ -145,26 +154,39 @@ class MockLabAmp:
         sens = {1: -7.87, 2: -7.87, 3: -7.87, 4: -7.87, 5: -3.71, 6: -3.71, 7: -3.71, 8: -3.71}
         rows = []
         for i in range(1, channels + 1):
-            rows.append({
-                "channel": i,
-                "name": f"Dyno-{quant.get(i, 'F')}{i}",
-                "serialNumber": f"KIS{4200 + i}",
-                "physicalQuantity": "Force",
-                "sensitivity": sens.get(i, -5.0),
-                "range": self._ranges.get(i, 10000.0),
-            })
+            rows.append(
+                {
+                    "channel": i,
+                    "name": f"Dyno-{quant.get(i, 'F')}{i}",
+                    "serialNumber": f"KIS{4200 + i}",
+                    "physicalQuantity": "Force",
+                    "sensitivity": sens.get(i, -5.0),
+                    "range": self._ranges.get(i, 10000.0),
+                }
+            )
         return rows
 
     def export_params(self) -> dict:
-        return {"device": {"model": "5167A81", "firmware": "1.2.5 (mock)"}, "operationMode": self._mode,
-                "ranges": dict(self._ranges)}
+        return {
+            "device": {"model": "5167A81", "firmware": "1.2.5 (mock)"},
+            "operationMode": self._mode,
+            "ranges": dict(self._ranges),
+        }
 
     def signal_get(self, channels: list[int]) -> list[dict]:
         out = []
         for ch in channels:
             pk = self._PEAKS.get(ch, 50.0)
-            out.append({"channel": ch, "live": [round(0.6 * pk, 3)], "max": [pk], "min": [-pk],
-                        "rms": [round(0.5 * pk, 3)], "type": "SENSOR"})
+            out.append(
+                {
+                    "channel": ch,
+                    "live": [round(0.6 * pk, 3)],
+                    "max": [pk],
+                    "min": [-pk],
+                    "rms": [round(0.5 * pk, 3)],
+                    "type": "SENSOR",
+                }
+            )
         return out
 
     def set_range(self, channel: int, value: float) -> None:
@@ -177,5 +199,7 @@ class MockLabAmp:
 
     def channel_status(self, channels: int) -> dict[int, str]:
         # OR_INPUT if the (simulated) peak exceeds the currently-set range.
-        return {i: ("OR_INPUT" if self._PEAKS.get(i, 0) > self._ranges.get(i, 1e9) else "OK")
-                for i in range(1, channels + 1)}
+        return {
+            i: ("OR_INPUT" if self._PEAKS.get(i, 0) > self._ranges.get(i, 1e9) else "OK")
+            for i in range(1, channels + 1)
+        }

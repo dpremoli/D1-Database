@@ -18,6 +18,7 @@ const text = ref(props.displayLabel || '');
 const open = ref(false);
 const items = ref<LookupItem[]>([]);
 const loading = ref(false);
+const inputEl = ref<HTMLInputElement | null>(null);
 let t: any = null;
 
 watch(() => props.displayLabel, (v) => { if (v !== undefined) text.value = v; });
@@ -37,8 +38,10 @@ function pick(it: LookupItem) {
 	emit('update:modelValue', it.id);
 	emit('select', it);
 	text.value = it.label;
-	open.value = false;
+	close();
 }
+// Close and drop focus so the menu can't linger/re-open after a pick or Escape.
+function close() { open.value = false; inputEl.value?.blur(); }
 function clear() { emit('update:modelValue', ''); text.value = ''; items.value = []; }
 </script>
 
@@ -46,15 +49,19 @@ function clear() { emit('update:modelValue', ''); text.value = ''; items.value =
 	<label class="lookup">
 		<span class="lbl">{{ label }}</span>
 		<div class="box" :class="{ set: !!modelValue }">
-			<input v-model="text" :placeholder="placeholder" :disabled="disabled"
-				@input="onInput" @focus="focus" @blur="() => setTimeout(() => (open = false), 150)" />
+			<input ref="inputEl" v-model="text" :placeholder="placeholder" :disabled="disabled"
+				@input="onInput" @focus="focus" @keydown.esc.prevent="close" @keydown.enter.prevent="items[0] && pick(items[0])"
+				@blur="() => setTimeout(() => (open = false), 150)" />
 			<button v-if="modelValue" class="x" type="button" :disabled="disabled" @mousedown.prevent="clear">
 				<span class="material-symbols-rounded">close</span>
 			</button>
 		</div>
 		<div v-if="open && !disabled" class="menu">
 			<div v-if="loading" class="mi hint">searching…</div>
-			<button v-for="it in items" :key="it.id" type="button" class="mi" @mousedown.prevent="pick(it)">{{ it.label }}</button>
+			<button v-for="it in items" :key="it.id" type="button" class="mi" @mousedown.prevent="pick(it)">
+				<span class="mi-label">{{ it.label }}</span>
+				<span v-if="it.sublabel" class="mi-sub">{{ it.sublabel }}</span>
+			</button>
 			<div v-if="!loading && items.length === 0" class="mi hint">no matches</div>
 		</div>
 	</label>
@@ -73,4 +80,6 @@ function clear() { emit('update:modelValue', ''); text.value = ''; items.value =
 .mi { display: block; width: 100%; text-align: left; padding: 7px 10px; font-size: 12.5px; font-family: var(--mono); color: var(--text); background: transparent; border: none; cursor: pointer; }
 .mi:hover { background: var(--surface); }
 .mi.hint { color: var(--text-dim); font-family: inherit; cursor: default; }
+.mi-label { display: block; }
+.mi-sub { display: block; margin-top: 1px; font-family: inherit; font-size: 11px; color: var(--text-dim); }
 </style>

@@ -70,9 +70,23 @@ jobs:
       - name: Run Phase 6 AI-readiness tests
         run: bash tests/phase6_text_to_sql.sh
 
+      - name: Purge test/seed data before rollback
+        run: |
+          psql "$DATABASE_URL" -c "
+            DO \$\$
+            DECLARE r RECORD;
+            BEGIN
+              FOR r IN SELECT tablename FROM pg_tables
+                       WHERE schemaname = 'public'
+                         AND tablename != 'schema_migrations'
+              LOOP
+                EXECUTE format('TRUNCATE TABLE %I CASCADE', r.tablename);
+              END LOOP;
+            END \$\$;"
+
       - name: Roll back all migrations (down — verifies reversibility)
         run: |
-          for _ in $(seq 1 20); do
+          for _ in $(seq 1 120); do
             dbmate --no-dump-schema down || break
           done
 

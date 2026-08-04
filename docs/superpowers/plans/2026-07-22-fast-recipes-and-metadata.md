@@ -228,8 +228,18 @@ def test_program_nr_from_bezeichnung():
 
 def test_rezept_targets_uses_offset_by_one():
     # Rezept.Daten[N+1] <-> Kopfdaten.Nr = N. Real values from recipe 1248.
-    daten = ["", "Affaan", "1200", "Ti64-20V", "44kN", "vac", "pyro",
-             "40mm", "42 g", "20 min holding"] + [""] * 10
+    daten = [
+        "",
+        "Affaan",
+        "1200",
+        "Ti64-20V",
+        "44kN",
+        "vac",
+        "pyro",
+        "40mm",
+        "42 g",
+        "20 min holding",
+    ] + [""] * 10
     t = fr.rezept_targets(daten)
     assert t["target_temp_c"] == 1200
     assert t["target_force_kn"] == 44
@@ -249,9 +259,9 @@ def test_rcp_targets_from_name():
 
 def test_recipe_id_is_deterministic_and_machine_scoped():
     a = fr.recipe_id("25", 1248, "Ti64")
-    assert a == fr.recipe_id("25", 1248, "different name")   # 25 keyed by program_nr
+    assert a == fr.recipe_id("25", 1248, "different name")  # 25 keyed by program_nr
     b = fr.recipe_id("250", None, "D105_IN718")
-    assert b == fr.recipe_id("250", None, "d105_in718")      # 250 keyed by lower(name)
+    assert b == fr.recipe_id("250", None, "d105_in718")  # 250 keyed by lower(name)
     assert a != b
 
 
@@ -282,6 +292,7 @@ Rezept.Daten[N+1] corresponds to Kopfdaten.Nr = N (Daten1 is unused). Verified o
 1248: Daten3=Temperature '1200', Daten5=Force '44kN', Daten8=Tool size '40mm',
 Daten10='20 min holding'.
 """
+
 from __future__ import annotations
 
 import re
@@ -365,8 +376,11 @@ def rcp_targets_from_name(name: str) -> dict:
 
 def recipe_id(machine: str, program_nr: int | None, name: str) -> str:
     """Deterministic UUID: FAST 25 keyed by ProgrammNr, FAST 250 by lower(name)."""
-    key = f"fast{machine}|{program_nr}" if program_nr is not None \
+    key = (
+        f"fast{machine}|{program_nr}"
+        if program_nr is not None
         else f"fast{machine}|{str(name).strip().lower()}"
+    )
     return str(uuid.uuid5(_NS, key))
 ```
 
@@ -415,6 +429,7 @@ Add this function above `read_versuch`:
 def read_recipes(data_root: str) -> list[dict]:
     """ECS_Prog.mdb::Rezept -> fast_recipes rows for machine '25'."""
     from access_parser import AccessParser
+
     db = AccessParser(os.path.join(data_root, PROG_REL))
     r = db.parse_table("Rezept")
     out = []
@@ -459,36 +474,49 @@ In `read_versuch`, inside the per-row dict, add:
 In `main()`, after the `materials` upsert and before the operations upsert, insert:
 
 ```python
-    recipes = read_recipes(args.data_root)
-    psycopg2.extras.execute_values(
-        cur,
-        "INSERT INTO fast_recipes (id, machine, program_nr, name, group_name, source_file, "
-        "target_temp_c, target_force_kn, hold_time_min, params, date_created, date_changed) "
-        "VALUES %s ON CONFLICT (id) DO UPDATE SET "
-        "  name=EXCLUDED.name, group_name=EXCLUDED.group_name, source_file=EXCLUDED.source_file, "
-        "  target_temp_c=EXCLUDED.target_temp_c, target_force_kn=EXCLUDED.target_force_kn, "
-        "  hold_time_min=EXCLUDED.hold_time_min, params=EXCLUDED.params, "
-        "  date_changed=EXCLUDED.date_changed, updated_at=now()",
-        [(r["id"], r["machine"], r["program_nr"], r["name"], r["group_name"], r["source_file"],
-          r.get("target_temp_c"), r.get("target_force_kn"), r.get("hold_time_min"),
-          psycopg2.extras.Json(r["params"]), r["date_created"], r["date_changed"])
-         for r in recipes],
-        page_size=500,
-    )
-    print(f"upserted {len(recipes)} FAST 25 recipes")
-    by_prog = {r["program_nr"]: r["id"] for r in recipes}
+recipes = read_recipes(args.data_root)
+psycopg2.extras.execute_values(
+    cur,
+    "INSERT INTO fast_recipes (id, machine, program_nr, name, group_name, source_file, "
+    "target_temp_c, target_force_kn, hold_time_min, params, date_created, date_changed) "
+    "VALUES %s ON CONFLICT (id) DO UPDATE SET "
+    "  name=EXCLUDED.name, group_name=EXCLUDED.group_name, source_file=EXCLUDED.source_file, "
+    "  target_temp_c=EXCLUDED.target_temp_c, target_force_kn=EXCLUDED.target_force_kn, "
+    "  hold_time_min=EXCLUDED.hold_time_min, params=EXCLUDED.params, "
+    "  date_changed=EXCLUDED.date_changed, updated_at=now()",
+    [
+        (
+            r["id"],
+            r["machine"],
+            r["program_nr"],
+            r["name"],
+            r["group_name"],
+            r["source_file"],
+            r.get("target_temp_c"),
+            r.get("target_force_kn"),
+            r.get("hold_time_min"),
+            psycopg2.extras.Json(r["params"]),
+            r["date_created"],
+            r["date_changed"],
+        )
+        for r in recipes
+    ],
+    page_size=500,
+)
+print(f"upserted {len(recipes)} FAST 25 recipes")
+by_prog = {r["program_nr"]: r["id"] for r in recipes}
 ```
 
 Add `fast_recipe_id` to the `cols` list (after `"sintering_recipe_number"`):
 
 ```python
-        "fast_recipe_id",
+("fast_recipe_id",)
 ```
 
 and to each tuple in `values`, immediately after `o["recipe_title"]`:
 
 ```python
-        by_prog.get(o["program_nr"]),
+(by_prog.get(o["program_nr"]),)
 ```
 
 - [ ] **Step 5: Dry-run to check link rate**
@@ -567,7 +595,9 @@ def read_recipes(data_root: str) -> dict[str, dict]:
         segments = [ln.split(";") for ln in text.splitlines() if ln.strip()]
         row = {
             "id": frx.recipe_id("250", None, name),
-            "machine": "250", "program_nr": None, "name": name,
+            "machine": "250",
+            "program_nr": None,
+            "name": name,
             "group_name": None,
             "source_file": os.path.relpath(path, data_root).replace("\\", "/"),
             "params": {"segments": segments[:40]},
@@ -582,19 +612,24 @@ def read_recipes(data_root: str) -> dict[str, dict]:
 The export list truncates recipe names, so a run's recipe may not match any `PROGS/*.rcp`. Never drop the link — synthesise a name-only recipe. In `main()`, after `ops, traces = build_ops(...)`:
 
 ```python
-    recipes = read_recipes(args.data_root)
-    for o in ops:
-        nm = (o["recipe"] or "").strip()
-        if not nm:
-            continue
-        key = nm.lower()
-        if key not in recipes:
-            recipes[key] = {
-                "id": frx.recipe_id("250", None, nm), "machine": "250", "program_nr": None,
-                "name": nm, "group_name": None, "source_file": None, "params": None,
-                **frx.rcp_targets_from_name(nm),
-            }
-        o["fast_recipe_id"] = recipes[key]["id"]
+recipes = read_recipes(args.data_root)
+for o in ops:
+    nm = (o["recipe"] or "").strip()
+    if not nm:
+        continue
+    key = nm.lower()
+    if key not in recipes:
+        recipes[key] = {
+            "id": frx.recipe_id("250", None, nm),
+            "machine": "250",
+            "program_nr": None,
+            "name": nm,
+            "group_name": None,
+            "source_file": None,
+            "params": None,
+            **frx.rcp_targets_from_name(nm),
+        }
+    o["fast_recipe_id"] = recipes[key]["id"]
 ```
 
 - [ ] **Step 4: Upsert recipes and add the column**
@@ -602,26 +637,37 @@ The export list truncates recipe names, so a run's recipe may not match any `PRO
 In `main()`, before the operations upsert:
 
 ```python
-    psycopg2.extras.execute_values(
-        cur,
-        "INSERT INTO fast_recipes (id, machine, program_nr, name, group_name, source_file, "
-        "target_temp_c, target_force_kn, hold_time_min, params) VALUES %s "
-        "ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, source_file=EXCLUDED.source_file, "
-        "  target_temp_c=EXCLUDED.target_temp_c, target_force_kn=EXCLUDED.target_force_kn, "
-        "  hold_time_min=EXCLUDED.hold_time_min, params=EXCLUDED.params, updated_at=now()",
-        [(r["id"], r["machine"], r["program_nr"], r["name"], r["group_name"], r["source_file"],
-          r.get("target_temp_c"), r.get("target_force_kn"), r.get("hold_time_min"),
-          psycopg2.extras.Json(r["params"]) if r.get("params") else None)
-         for r in recipes.values()],
-        page_size=500,
-    )
-    print(f"upserted {len(recipes)} FAST 250 recipes")
+psycopg2.extras.execute_values(
+    cur,
+    "INSERT INTO fast_recipes (id, machine, program_nr, name, group_name, source_file, "
+    "target_temp_c, target_force_kn, hold_time_min, params) VALUES %s "
+    "ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, source_file=EXCLUDED.source_file, "
+    "  target_temp_c=EXCLUDED.target_temp_c, target_force_kn=EXCLUDED.target_force_kn, "
+    "  hold_time_min=EXCLUDED.hold_time_min, params=EXCLUDED.params, updated_at=now()",
+    [
+        (
+            r["id"],
+            r["machine"],
+            r["program_nr"],
+            r["name"],
+            r["group_name"],
+            r["source_file"],
+            r.get("target_temp_c"),
+            r.get("target_force_kn"),
+            r.get("hold_time_min"),
+            psycopg2.extras.Json(r["params"]) if r.get("params") else None,
+        )
+        for r in recipes.values()
+    ],
+    page_size=500,
+)
+print(f"upserted {len(recipes)} FAST 250 recipes")
 ```
 
 Add `"fast_recipe_id"` to `cols` after `"sintering_recipe_number"`, and to each `values` tuple after `o["recipe"]`:
 
 ```python
-        o.get("fast_recipe_id"),
+(o.get("fast_recipe_id"),)
 ```
 
 - [ ] **Step 5: Run and verify**
@@ -887,11 +933,13 @@ WHERE process_category='sintering' AND source_system IN ('fast_25','fast_250')
 In `main()`, immediately after the connection is opened:
 
 ```python
-    if "--revert" in sys.argv:
-        cur.execute(REVERT)
-        print(f"reverted sheet-written non-QA columns on {cur.rowcount} operations")
-        conn.commit()
-        cur.close(); conn.close(); return
+if "--revert" in sys.argv:
+    cur.execute(REVERT)
+    print(f"reverted sheet-written non-QA columns on {cur.rowcount} operations")
+    conn.commit()
+    cur.close()
+    conn.close()
+    return
 ```
 
 - [ ] **Step 3: Run the revert**

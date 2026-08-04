@@ -464,4 +464,3 @@ Different export versions may have 35-40 columns. Parse header dynamically rathe
 - [FAST250_FILE_READING_GUIDE.md](./FAST250_FILE_READING_GUIDE.md) — Code examples
 - [FAST25_DATA_ARCHITECTURE.md](./FAST25_DATA_ARCHITECTURE.md) — FAST 25 reference (similar but database-backed)
 - [FAST25_OVERVIEW.md](./FAST25_OVERVIEW.md) — Multi-machine overview
-

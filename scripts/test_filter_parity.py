@@ -6,6 +6,7 @@ zero-phase filters differs slightly between scipy and MATLAB, so 1% is trimmed e
 
 Run on the host (needs MATLAB): py scripts/test_filter_parity.py
 """
+
 from __future__ import annotations
 
 import json
@@ -28,7 +29,7 @@ CHAIN = {
     "lowpass": {"on": True, "cutoff_hz": 2000, "order": 4},
     "notch": {"on": True, "harmonics": [1, 2], "q": 30},
 }
-TOL = 1e-4   # relative RMS difference, interior
+TOL = 1e-4  # relative RMS difference, interior
 # Edge-transient exclusion: scipy and MATLAB pad filtfilt differently, so their edge
 # transients differ; these decay over ~Fs/fc of the SLOWEST stage (the 5 Hz HP here:
 # 5120 samples). Verified empirically: max diff sits at sample 3, median diff ~6e-7,
@@ -42,8 +43,13 @@ def synth(n=300_000, seed=11):
     f0 = RPM / 60
     axes = []
     for k in range(3):
-        x = (40 + 10 * k) + 3 * t / t[-1] + 2 * np.sin(2 * np.pi * f0 * t + k) \
-            + 0.8 * np.sin(2 * np.pi * 2 * f0 * t) + 0.3 * rng.standard_normal(n)
+        x = (
+            (40 + 10 * k)
+            + 3 * t / t[-1]
+            + 2 * np.sin(2 * np.pi * f0 * t + k)
+            + 0.8 * np.sin(2 * np.pi * 2 * f0 * t)
+            + 0.3 * rng.standard_normal(n)
+        )
         # spikes away from the edges (edge Hampel behaviour legitimately differs)
         idx = rng.integers(n // 20, n - n // 20, 30)
         x[idx] += rng.choice([-1.0, 1.0], 30) * 25
@@ -63,21 +69,23 @@ def main() -> int:
 
     matlab = r"C:\Program Files\MATLAB\R2025a\bin\matlab.exe"
     stmt = f"addpath('{(ROOT / 'scripts' / 'matlab').as_posix()}'); test_filter_parity('{d.as_posix()}')"
-    p = subprocess.run([matlab, "-batch", stmt], capture_output=True, text=True, timeout=600)
+    p = subprocess.run(
+        [matlab, "-batch", stmt], capture_output=True, text=True, timeout=600
+    )
     if p.returncode != 0:
         print(p.stderr or p.stdout)
         return 1
     ml = np.loadtxt(d / "out_ml.csv", delimiter=",")
 
     n = len(fx)
-    fc_min = CHAIN["detrend"]["cutoff_hz"]   # slowest stage dominates the transient
+    fc_min = CHAIN["detrend"]["cutoff_hz"]  # slowest stage dominates the transient
     trim = min(n // 3, int(EDGE_TCONSTS * FS / fc_min))
     lo, hi = trim, n - trim
     ok = True
     for i, name in enumerate(("Fx", "Fy", "Fz")):
         a = py_out[name][lo:hi]
         b = ml[lo:hi, i]
-        rel = np.sqrt(np.mean((a - b) ** 2)) / (np.sqrt(np.mean(a ** 2)) or 1)
+        rel = np.sqrt(np.mean((a - b) ** 2)) / (np.sqrt(np.mean(a**2)) or 1)
         status = "PASS" if rel < TOL else "FAIL"
         if rel >= TOL:
             ok = False

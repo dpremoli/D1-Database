@@ -32,6 +32,10 @@ const OP = process.env.D1_FAST_OP || '725e8266-4688-5cb5-a5df-0d86033a56c9';
   const emptyVals = await p.locator('.statgrid .s-val').evaluateAll(
     els => els.filter(e => !e.textContent.trim() || e.textContent.trim() === '—').length);
 
+  const dwell = await p.locator('.stat', { hasText: /DWELL/i }).innerText().catch(() => '');
+  const firstCodes = await p.locator('.rowcard .mono').evaluateAll(els => els.slice(0, 4).map(e => e.textContent.trim()));
+  console.log('dwell tile:', dwell.replace(/\n/g, ' '));
+  console.log('first list codes:', JSON.stringify(firstCodes));
   console.log('stat tiles:', stats);
   console.log('tiles tagged "measured":', measured);
   console.log('recipe card present:', recipeCard);

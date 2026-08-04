@@ -37,5 +37,25 @@
     handle_path /filter/* {
         reverse_proxy filter-service:8000
     }
+    # Recording backend (FastAPI on the acquisition host, needs the DAQ hardware so it is NOT a
+    # container). Proxied same-origin at /recorder → host.docker.internal:8200, so the SPA's REST
+    # calls AND the /record/stream WebSocket reach it without CORS or HTTPS mixed-content blocks
+    # (http/ws://localhost from an https page is refused by browsers). handle_path strips /recorder,
+    # mapping /recorder/record/start → /record/start. reverse_proxy upgrades the WebSocket
+    # transparently. Only the host actually running the recorder answers; the tailnet is trusted.
+    handle_path /recorder/* {
+        reverse_proxy host.docker.internal:8200
+    }
+    # Standalone Force App SPA (built with base /app/). Served same-origin as Directus so it
+    # calls /items,/assets,/auth (Directus), /filter and /octrees without CORS — reachable over
+    # Tailscale at https://<node>.<tailnet>.ts.net/app/. SPA history fallback → index.html.
+    handle_path /app/* {
+        root * /srv/force-app
+        try_files {path} /index.html
+        # index.html must revalidate so a rebuild is picked up; the hashed assets are immutable.
+        @html path / *.html
+        header @html Cache-Control "no-cache"
+        file_server
+    }
     reverse_proxy directus:8055
 }

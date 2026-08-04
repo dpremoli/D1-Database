@@ -7,7 +7,8 @@ CREATE TABLE material_alloying_elements (
     PRIMARY KEY (material_id, symbol)
 );
 
-COMMENT ON TABLE material_alloying_elements IS 'M2M: elemental composition of each alloy (mirrors AppSheet Alloy Codes.Alloying Elements EnumList).';
+COMMENT ON TABLE material_alloying_elements
+    IS 'M2M: elemental composition of each alloy.';
 
 -- Add item_type to physical_samples (separate concept from geometry/form).
 -- AppSheet "Inventory.Item Type": Sample | Equipment | Miscellaneous.
@@ -15,7 +16,8 @@ ALTER TABLE physical_samples
     ADD COLUMN IF NOT EXISTS item_type TEXT
         CHECK (item_type IN ('sample', 'equipment', 'miscellaneous'));
 
-COMMENT ON COLUMN physical_samples.item_type IS 'AppSheet Item Type: sample | equipment | miscellaneous. Distinct from form/geometry.';
+COMMENT ON COLUMN physical_samples.item_type
+    IS 'sample | equipment | miscellaneous (item type).';
 
 -- migrate:down
 DROP TABLE IF EXISTS material_alloying_elements;

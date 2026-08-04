@@ -1,4 +1,5 @@
 """ReplaySource: a D1LC cache streamed through the pipeline reconstructs the same summed forces."""
+
 import numpy as np
 
 from app import d1lc
@@ -15,8 +16,20 @@ def _make_cache(tmp_path, n=6000, fs=6000.0, rpm=1500.0, feed=0.05, diam=80.0):
     rpm_a = np.full(n, rpm, np.float32)
     revs = np.cumsum(rpm_a / 60.0 / fs).astype(np.float32)
     p = tmp_path / "src.bin"
-    d1lc.write_d1lc(str(p), t.astype(np.float32), fx, fy, fz, rpm_a, revs,
-                    fs=fs, feed=feed, diam=diam, cs_sec=0.1, ce_sec=t[-1] - 0.1)
+    d1lc.write_d1lc(
+        str(p),
+        t.astype(np.float32),
+        fx,
+        fy,
+        fz,
+        rpm_a,
+        revs,
+        fs=fs,
+        feed=feed,
+        diam=diam,
+        cs_sec=0.1,
+        ce_sec=t[-1] - 0.1,
+    )
     return p.read_bytes(), fz
 
 
@@ -28,6 +41,7 @@ def test_replay_reconstructs_channels():
     t, data = src.read()
     # Fz sub-channels sum back to the cache Fz
     from app.dsp import sum_axes
+
     axes = sum_axes(data)
     assert np.allclose(axes["Fz"][: t.size], fz[: t.size], atol=1e-3)
     # tacho actually pulses
@@ -35,7 +49,9 @@ def test_replay_reconstructs_channels():
 
 
 def _make_cache_bytes():
-    import tempfile, pathlib
+    import pathlib
+    import tempfile
+
     d = pathlib.Path(tempfile.mkdtemp())
     return _make_cache(d)
 
@@ -43,8 +59,14 @@ def _make_cache_bytes():
 def test_replay_end_to_end(tmp_path):
     cache, fz = _make_cache(tmp_path)
     src = ReplaySource(cache, ppr=1, realtime=False)
-    cfg = RecordConfig(sample_name="REPLAY-TEST", sample_rate=src.rate, feed=src.feed,
-                       diam=src.diam, duration_sec=src.total / src.rate, axis="Fz")
+    cfg = RecordConfig(
+        sample_name="REPLAY-TEST",
+        sample_rate=src.rate,
+        feed=src.feed,
+        diam=src.diam,
+        duration_sec=src.total / src.rate,
+        axis="Fz",
+    )
     sess = RecordingSession(cfg, str(tmp_path), src, broadcaster=None)
     sess.start()
     sess._thread.join(30)

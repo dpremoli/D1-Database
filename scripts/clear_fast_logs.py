@@ -16,6 +16,7 @@ Usage:
     DATABASE_URL=postgres://d1:change_me@localhost:5432/d1_database \
         python scripts/clear_fast_logs.py [--dry-run]
 """
+
 from __future__ import annotations
 
 import os

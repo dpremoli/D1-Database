@@ -1,7 +1,9 @@
 """Unit tests for the D1GR reader used by the grid-octree handler."""
+
 import struct
-import numpy as np
+
 import force_orchestrator as fo
+import numpy as np
 
 
 def _write_d1gr(path, x, y, fx, fy, fz, fidelity, arm_ratio, cell_mm):
@@ -15,8 +17,11 @@ def _write_d1gr(path, x, y, fx, fy, fz, fidelity, arm_ratio, cell_mm):
 
 def test_read_grid_bin_roundtrip(tmp_path):
     p = tmp_path / "grid.bin"
-    x = [0.0, 1.0, 2.0]; y = [3.0, 4.0, 5.0]
-    fx = [10.0, 11.0, 12.0]; fy = [1.0, 2.0, 3.0]; fz = [20.0, 21.0, 22.0]
+    x = [0.0, 1.0, 2.0]
+    y = [3.0, 4.0, 5.0]
+    fx = [10.0, 11.0, 12.0]
+    fy = [1.0, 2.0, 3.0]
+    fz = [20.0, 21.0, 22.0]
     _write_d1gr(p, x, y, fx, fy, fz, 0.97, 4.2, 0.031)
     n, fid, ratio, cell, rx, ry, rfx, rfy, rfz = fo._read_grid_bin(str(p))
     assert n == 3

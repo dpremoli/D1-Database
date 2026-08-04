@@ -9,12 +9,12 @@ Source rows (per the FCT HP D 250 monthly log tabs) carry these columns:
   Atmosphere, TC/Pyro control, Max Force (kN), Max Temp (°C), Voltage at Max T (V),
   Power at Max T (kW), PTC top (°C), PTC bot (°C), Comments, Failures, Alarms
 """
+
 from __future__ import annotations
 
 import hashlib
 import re
 import uuid
-from typing import Optional
 
 SOURCE_SYSTEM = "fast_log"
 SOURCE_MACHINE = "FCT HP D 250"  # the workbook == the machine
@@ -23,59 +23,103 @@ _NS = uuid.uuid5(uuid.NAMESPACE_DNS, "d1-database.fast-log.v1")
 # ── Materials ────────────────────────────────────────────────────────────────
 # New reusable material types to create (alloy_code, common_name). Approved set.
 NEW_MATERIALS: list[tuple[str, str]] = [
-    ("W",     "Tungsten"),
-    ("T9S",   "T9S+ (Ti alloy)"),
-    ("GE48",  "Ti-48Al-2Cr-2Nb (GE4822 TiAl)"),
-    ("RHEA",  "Refractory high-entropy alloy"),
-    ("TNM",   "TNM (γ-TiAl)"),
-    ("CCMW",  "Co-Cr-Mo-W"),
-    ("NITI",  "Nitinol (NiTi)"),
+    ("W", "Tungsten"),
+    ("T9S", "T9S+ (Ti alloy)"),
+    ("GE48", "Ti-48Al-2Cr-2Nb (GE4822 TiAl)"),
+    ("RHEA", "Refractory high-entropy alloy"),
+    ("TNM", "TNM (γ-TiAl)"),
+    ("CCMW", "Co-Cr-Mo-W"),
+    ("NITI", "Nitinol (NiTi)"),
     ("174PH", "17-4 PH stainless steel"),
     ("14YWT", "14YWT ODS steel"),
-    ("4140",  "AISI 4140 steel"),
+    ("4140", "AISI 4140 steel"),
     ("MOSI2", "Molybdenum disilicide (MoSi₂)"),
     ("TI2AC", "Ti₂AlC (MAX phase)"),
-    ("SPIN",  "MgAl₂O₄ spinel"),
-    ("SIO2",  "Silica (SiO₂)"),
-    ("HAP",   "Hydroxyapatite (CaP)"),
-    ("BITE",  "Bi-Te-Se (thermoelectric)"),
-    ("BISB",  "Bi-Sb-Te (thermoelectric)"),
-    ("ZNS",   "Zinc sulphide (ZnS)"),
-    ("ZRO2",  "Zirconia (ZrO₂)"),
+    ("SPIN", "MgAl₂O₄ spinel"),
+    ("SIO2", "Silica (SiO₂)"),
+    ("HAP", "Hydroxyapatite (CaP)"),
+    ("BITE", "Bi-Te-Se (thermoelectric)"),
+    ("BISB", "Bi-Sb-Te (thermoelectric)"),
+    ("ZNS", "Zinc sulphide (ZnS)"),
+    ("ZRO2", "Zirconia (ZrO₂)"),
 ]
 
 # Whole-string (normalised) matches — used for short/ambiguous names so we don't
 # false-match substrings like "co" inside "cocrmow".
 _EXACT = {
-    "w": "W", "co": "CO", "cr": "CR", "ni": "NI", "mg": "MG",
-    "nbsi": "NS", "hfc": "HF", "niti": "NITI", "mosi2": "MOSI2",
-    "rhea": "RHEA", "tnm": "TNM", "ge4822": "GE48", "t9s+": "T9S",
-    "t9s+ (ti)": "T9S", "14ywt": "14YWT", "sio2": "SIO2", "zns": "ZNS",
-    "zro2": "ZRO2", "ti2alc": "TI2AC", "cocrmow": "CCMW", "brass": "BR",
-    "sa508": "S8", "nacl": "NC",
+    "w": "W",
+    "co": "CO",
+    "cr": "CR",
+    "ni": "NI",
+    "mg": "MG",
+    "nbsi": "NS",
+    "hfc": "HF",
+    "niti": "NITI",
+    "mosi2": "MOSI2",
+    "rhea": "RHEA",
+    "tnm": "TNM",
+    "ge4822": "GE48",
+    "t9s+": "T9S",
+    "t9s+ (ti)": "T9S",
+    "14ywt": "14YWT",
+    "sio2": "SIO2",
+    "zns": "ZNS",
+    "zro2": "ZRO2",
+    "ti2alc": "TI2AC",
+    "cocrmow": "CCMW",
+    "brass": "BR",
+    "sa508": "S8",
+    "nacl": "NC",
 }
 
 # Ordered substring matches — first hit wins, so list more specific first.
 _SUBSTR: list[tuple[str, str]] = [
-    ("ti-6-4", "AA"), ("ti6-4", "AA"), ("ti 64", "AA"), ("ti-64", "AA"), ("ti64", "AA"),
+    ("ti-6-4", "AA"),
+    ("ti6-4", "AA"),
+    ("ti 64", "AA"),
+    ("ti-64", "AA"),
+    ("ti64", "AA"),
     ("ti-6al-4v", "AA"),
-    ("ti5553", "AG"), ("ti-5553", "AG"), ("ti 5553", "AG"), ("5553", "AG"),
-    ("ti6242", "AC"), ("ti-6242", "AC"),
-    ("ti6246", "AB"), ("ti-6246", "AB"),
-    ("cp ti", "AD"), ("ti-cp", "AD"),
-    ("ti-17", "AF"), ("ti 17", "AF"),
-    ("inconel 718", "IN18"), ("in718", "IN18"), ("in 718", "IN18"),
-    ("in625", "IN25"), ("in 625", "IN25"),
+    ("ti5553", "AG"),
+    ("ti-5553", "AG"),
+    ("ti 5553", "AG"),
+    ("5553", "AG"),
+    ("ti6242", "AC"),
+    ("ti-6242", "AC"),
+    ("ti6246", "AB"),
+    ("ti-6246", "AB"),
+    ("cp ti", "AD"),
+    ("ti-cp", "AD"),
+    ("ti-17", "AF"),
+    ("ti 17", "AF"),
+    ("inconel 718", "IN18"),
+    ("in718", "IN18"),
+    ("in 718", "IN18"),
+    ("in625", "IN25"),
+    ("in 625", "IN25"),
     ("316l", "SS"),
-    ("a20x", "AX"), ("rr1000", "RK"), ("scalmalloy", "SC"), ("a286", "S6"),
-    ("p91", "P9"), ("tz-8y", "TZ"), ("tosoh", "TZ"),
-    ("17-4ph", "174PH"), ("17-4 ph", "174PH"),
-    ("ge4822", "GE48"), ("ge 48", "GE48"),
-    ("hydroxyapatite", "HAP"), ("spinel", "SPIN"), ("mgal2o4", "SPIN"),
-    ("bitese", "BITE"), ("bisbte", "BISB"),
-    ("ti2alc", "TI2AC"), ("cocrmow", "CCMW"),
+    ("a20x", "AX"),
+    ("rr1000", "RK"),
+    ("scalmalloy", "SC"),
+    ("a286", "S6"),
+    ("p91", "P9"),
+    ("tz-8y", "TZ"),
+    ("tosoh", "TZ"),
+    ("17-4ph", "174PH"),
+    ("17-4 ph", "174PH"),
+    ("ge4822", "GE48"),
+    ("ge 48", "GE48"),
+    ("hydroxyapatite", "HAP"),
+    ("spinel", "SPIN"),
+    ("mgal2o4", "SPIN"),
+    ("bitese", "BITE"),
+    ("bisbte", "BISB"),
+    ("ti2alc", "TI2AC"),
+    ("cocrmow", "CCMW"),
     ("4140", "4140"),
-    ("nbsi", "NS"), ("hfc", "HF"), ("mosi2", "MOSI2"),
+    ("nbsi", "NS"),
+    ("hfc", "HF"),
+    ("mosi2", "MOSI2"),
 ]
 
 
@@ -83,7 +127,7 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", str(s).strip().lower())
 
 
-def match_material(text: Optional[str]) -> Optional[str]:
+def match_material(text: str | None) -> str | None:
     """Return an alloy_code (existing or new) for a free-text material, or None."""
     if not text:
         return None
@@ -111,47 +155,84 @@ RESEARCHER_USERS = {
     "nick": "n.weston@sheffield.ac.uk",
     "cameron": "cbarrie1@sheffield.ac.uk",
     "jack": "jack.batty@sheffield.ac.uk",
-    "joe": "jrhopkinson1@sheffield.ac.uk", "joe h": "jrhopkinson1@sheffield.ac.uk",
+    "joe": "jrhopkinson1@sheffield.ac.uk",
+    "joe h": "jrhopkinson1@sheffield.ac.uk",
     "joe hopkinson": "jrhopkinson1@sheffield.ac.uk",
-    "henry": "hrboyle1@sheffield.ac.uk", "henry b": "hrboyle1@sheffield.ac.uk",
+    "henry": "hrboyle1@sheffield.ac.uk",
+    "henry b": "hrboyle1@sheffield.ac.uk",
     "dennis": "dpremoli1@sheffield.ac.uk",
-    "jozef": "jsmcgowan1@sheffield.ac.uk", "zef": "jsmcgowan1@sheffield.ac.uk",
-    "oli": "o.levano@sheffield.ac.uk", "oliver": "o.levano@sheffield.ac.uk",
-    "josh": "jtaylor25@sheffield.ac.uk", "joshua": "jtaylor25@sheffield.ac.uk",
-    "sam j": "sjackson13@sheffield.ac.uk", "sam jackson": "sjackson13@sheffield.ac.uk",
+    "jozef": "jsmcgowan1@sheffield.ac.uk",
+    "zef": "jsmcgowan1@sheffield.ac.uk",
+    "oli": "o.levano@sheffield.ac.uk",
+    "oliver": "o.levano@sheffield.ac.uk",
+    "josh": "jtaylor25@sheffield.ac.uk",
+    "joshua": "jtaylor25@sheffield.ac.uk",
+    "sam j": "sjackson13@sheffield.ac.uk",
+    "sam jackson": "sjackson13@sheffield.ac.uk",
     "sam james": "sjackson13@sheffield.ac.uk",
-    "thomas": "t.m.childerhouse@sheffield.ac.uk", "tom": "t.m.childerhouse@sheffield.ac.uk",
+    "thomas": "t.m.childerhouse@sheffield.ac.uk",
+    "tom": "t.m.childerhouse@sheffield.ac.uk",
     "lewis": "LDeaney1@sheffield.ac.uk",
     "carolina": "carolina.Guerra@nottingham.ac.uk",
 }
 
 # Canonical display name for the operator Machine_Operators row.
 _CANON = {
-    "nigel": "Nigel Martin", "nja": "Nigel Martin", "nige": "Nigel Martin",
-    "nick": "Nick Weston", "cameron": "Cameron Barrie", "jack": "Jack Batty",
-    "jack k": "Jack Krohn", "jack krohn": "Jack Krohn",
-    "joe": "Joe Hopkinson", "joe h": "Joe Hopkinson", "joe hopkinson": "Joe Hopkinson",
-    "henry": "Henry Boyle", "henry b": "Henry Boyle",
-    "dennis": "Dennis Premoli", "jozef": "Jozef McGowan", "zef": "Jozef McGowan",
-    "oli": "Oliver Levano Blanch", "oliver": "Oliver Levano Blanch",
-    "josh": "Joshua Taylor", "joshua": "Joshua Taylor",
-    "sam j": "Sam Jackson", "sam jackson": "Sam Jackson", "sam james": "Sam Jackson",
-    "sam l": "Sam Lister", "thomas": "Thomas Childerhouse", "tom": "Thomas Childerhouse",
-    "simon": "Simon Graham", "sg": "Simon Graham", "james": "James Pepper",
-    "natasha": "Natasha", "sully": "Sully Khan", "will": "Will", "will g": "Will",
-    "xingjian": "Xingjian", "matt": "Matt", "matt g": "Matt",
-    "bea": "Beatrice", "billy": "Billy", "billy c": "Billy", "billy callon": "Billy",
-    "idris": "Idris", "seb": "Seb", "innes": "Innes",
+    "nigel": "Nigel Martin",
+    "nja": "Nigel Martin",
+    "nige": "Nigel Martin",
+    "nick": "Nick Weston",
+    "cameron": "Cameron Barrie",
+    "jack": "Jack Batty",
+    "jack k": "Jack Krohn",
+    "jack krohn": "Jack Krohn",
+    "joe": "Joe Hopkinson",
+    "joe h": "Joe Hopkinson",
+    "joe hopkinson": "Joe Hopkinson",
+    "henry": "Henry Boyle",
+    "henry b": "Henry Boyle",
+    "dennis": "Dennis Premoli",
+    "jozef": "Jozef McGowan",
+    "zef": "Jozef McGowan",
+    "oli": "Oliver Levano Blanch",
+    "oliver": "Oliver Levano Blanch",
+    "josh": "Joshua Taylor",
+    "joshua": "Joshua Taylor",
+    "sam j": "Sam Jackson",
+    "sam jackson": "Sam Jackson",
+    "sam james": "Sam Jackson",
+    "sam l": "Sam Lister",
+    "thomas": "Thomas Childerhouse",
+    "tom": "Thomas Childerhouse",
+    "simon": "Simon Graham",
+    "sg": "Simon Graham",
+    "james": "James Pepper",
+    "natasha": "Natasha",
+    "sully": "Sully Khan",
+    "will": "Will",
+    "will g": "Will",
+    "xingjian": "Xingjian",
+    "matt": "Matt",
+    "matt g": "Matt",
+    "bea": "Beatrice",
+    "billy": "Billy",
+    "billy c": "Billy",
+    "billy callon": "Billy",
+    "idris": "Idris",
+    "seb": "Seb",
+    "innes": "Innes",
 }
 
 
 def _split_names(s: str) -> list[str]:
-    s = re.sub(r"\(.*?\)", "", s)          # drop parentheticals (trainees/observers)
+    s = re.sub(r"\(.*?\)", "", s)  # drop parentheticals (trainees/observers)
     parts = re.split(r"[\/+&,]|\band\b", s, flags=re.IGNORECASE)
     return [p.strip() for p in parts if p.strip()]
 
 
-def parse_user(raw: Optional[str]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+def parse_user(
+    raw: str | None,
+) -> tuple[str | None, str | None, str | None]:
     """Return (operator_name, owner_email_or_None, raw_string).
 
     operator = the technician (Nigel) if present, else the lead researcher who ran
@@ -179,7 +260,7 @@ def parse_user(raw: Optional[str]) -> tuple[Optional[str], Optional[str], Option
     return operator, owner_email, raw
 
 
-def owner_from_names(raw_operator: Optional[str], name_to_uid: dict) -> Optional[str]:
+def owner_from_names(raw_operator: str | None, name_to_uid: dict) -> str | None:
     """Link an owner by matching any name token in the raw operator string to a Directus user.
 
     `name_to_uid` maps normalised full names (and unambiguous first names) to user ids. Used
@@ -203,6 +284,7 @@ def user_name_index(user_rows) -> dict:
     still links but a shared first name never mis-links.
     """
     from collections import Counter
+
     fn_count = Counter(_norm(fn) for _uid, fn, _ln in user_rows if fn)
     idx: dict = {}
     for uid, fn, ln in user_rows:
@@ -240,60 +322,82 @@ def run_uid(machine: str, date_str: str, time_str: str, batch: str) -> str:
 # unit, group). "group" buckets series by physical quantity for unit-grouped plotting.
 _CANON: dict[str, tuple[str, str, str, str]] = {
     # 25-machine labels
-    "av pyrometer":     ("pyro_top", "Pyrometer (top)", "C", "temp"),
-    "av pyro b":        ("pyro_b", "Pyrometer B", "C", "temp"),
-    "av tc1":           ("tc1", "TC1", "C", "temp"),
-    "av tc2":           ("tc2", "TC2", "C", "temp"),
-    "av tc3":           ("tc3", "TC3", "C", "temp"),
-    "av tc4":           ("tc4", "TC4", "C", "temp"),
-    "av ptc top":       ("ptc_top", "PTC top", "C", "temp"),
-    "av ptc bot.":      ("ptc_bot", "PTC bottom", "C", "temp"),
-    "av force":         ("force", "Force", "kN", "force"),
-    "sv force":         ("force_sv", "Force (setpoint)", "kN", "force"),
-    "av speed":         ("speed", "Ram speed", "mm/min", "speed"),
+    "av pyrometer": ("pyro_top", "Pyrometer (top)", "C", "temp"),
+    "av pyro b": ("pyro_b", "Pyrometer B", "C", "temp"),
+    "av tc1": ("tc1", "TC1", "C", "temp"),
+    "av tc2": ("tc2", "TC2", "C", "temp"),
+    "av tc3": ("tc3", "TC3", "C", "temp"),
+    "av tc4": ("tc4", "TC4", "C", "temp"),
+    "av ptc top": ("ptc_top", "PTC top", "C", "temp"),
+    "av ptc bot.": ("ptc_bot", "PTC bottom", "C", "temp"),
+    "av force": ("force", "Force", "kN", "force"),
+    "sv force": ("force_sv", "Force (setpoint)", "kN", "force"),
+    "av speed": ("speed", "Ram speed", "mm/min", "speed"),
     "av abs. piston t": ("piston_abs", "Piston travel (abs)", "mm", "position"),
     "av rel. piston t": ("piston_rel", "Piston travel (rel)", "mm", "position"),
     "av press. abs. 1": ("pressure_abs", "Pressure (abs)", "mbar", "pressure"),
-    "av press. rel.":   ("pressure_rel", "Pressure (rel)", "mbar", "pressure"),
-    "av thermovak":     ("vacuum", "Vacuum", "mbar", "pressure"),
-    "i rms":            ("sps_current", "SPS current", "kA", "current"),
-    "u rms":            ("sps_voltage", "SPS voltage", "V", "voltage"),
-    "av heating power":  ("sps_power", "SPS power", "kW", "power"),
-    "sv temperature":   ("heating_sp", "Heating setpoint", "C", "temp"),
+    "av press. rel.": ("pressure_rel", "Pressure (rel)", "mbar", "pressure"),
+    "av thermovak": ("vacuum", "Vacuum", "mbar", "pressure"),
+    "i rms": ("sps_current", "SPS current", "kA", "current"),
+    "u rms": ("sps_voltage", "SPS voltage", "V", "voltage"),
+    "av heating power": ("sps_power", "SPS power", "kW", "power"),
+    "sv temperature": ("heating_sp", "Heating setpoint", "C", "temp"),
     # 250-machine labels (unit stripped from the header before lookup)
-    "pyro top":                ("pyro_top", "Pyrometer (top)", "C", "temp"),
-    "pyro front":              ("pyro_b", "Pyrometer (front)", "C", "temp"),
-    "control tc 1":            ("tc1", "Control TC1", "C", "temp"),
-    "piston tc upper ram":     ("ptc_top", "Piston TC (upper ram)", "C", "temp"),
-    "piston tc contact area":  ("ptc_contact", "Piston TC (contact)", "C", "temp"),
-    "piston tc cooling ram":   ("ptc_bot", "Piston TC (cooling ram)", "C", "temp"),
-    "av pressing force":       ("force", "Force", "kN", "force"),
-    "sv pressing force":       ("force_sv", "Force (setpoint)", "kN", "force"),
-    "pressing speed":          ("speed", "Ram speed", "mm/min", "speed"),
-    "presinng max. way":       ("piston_abs", "Piston travel (abs)", "mm", "position"),
-    "pressing max. way":       ("piston_abs", "Piston travel (abs)", "mm", "position"),
-    "pressing relative way":   ("piston_rel", "Piston travel (rel)", "mm", "position"),
+    "pyro top": ("pyro_top", "Pyrometer (top)", "C", "temp"),
+    "pyro front": ("pyro_b", "Pyrometer (front)", "C", "temp"),
+    "control tc 1": ("tc1", "Control TC1", "C", "temp"),
+    "piston tc upper ram": ("ptc_top", "Piston TC (upper ram)", "C", "temp"),
+    "piston tc contact area": ("ptc_contact", "Piston TC (contact)", "C", "temp"),
+    "piston tc cooling ram": ("ptc_bot", "Piston TC (cooling ram)", "C", "temp"),
+    "av pressing force": ("force", "Force", "kN", "force"),
+    "sv pressing force": ("force_sv", "Force (setpoint)", "kN", "force"),
+    "pressing speed": ("speed", "Ram speed", "mm/min", "speed"),
+    "presinng max. way": ("piston_abs", "Piston travel (abs)", "mm", "position"),
+    "pressing max. way": ("piston_abs", "Piston travel (abs)", "mm", "position"),
+    "pressing relative way": ("piston_rel", "Piston travel (rel)", "mm", "position"),
     "absolute pressure vessel": ("pressure_abs", "Pressure (abs)", "mbar", "pressure"),
     "relative pressure vessel": ("pressure_rel", "Pressure (rel)", "mbar", "pressure"),
-    "vacuum vessel":           ("vacuum", "Vacuum", "mbar", "pressure"),
-    "sps power":               ("sps_power", "SPS power", "kW", "power"),
-    "sps voltage":             ("sps_voltage", "SPS voltage", "V", "voltage"),
-    "sps current":             ("sps_current", "SPS current", "kA", "current"),
-    "sv sps heating temp.":    ("heating_sp", "Heating setpoint", "C", "temp"),
-    "hydraulic oil temp.":     ("hyd_oil_temp", "Hydraulic oil temp", "C", "temp"),
+    "vacuum vessel": ("vacuum", "Vacuum", "mbar", "pressure"),
+    "sps power": ("sps_power", "SPS power", "kW", "power"),
+    "sps voltage": ("sps_voltage", "SPS voltage", "V", "voltage"),
+    "sps current": ("sps_current", "SPS current", "kA", "current"),
+    "sv sps heating temp.": ("heating_sp", "Heating setpoint", "C", "temp"),
+    "hydraulic oil temp.": ("hyd_oil_temp", "Hydraulic oil temp", "C", "temp"),
 }
 
 # Unit string -> physical group, for pass-through columns without a canonical entry.
 _UNIT_GROUP = {
-    "c": "temp", "°c": "temp", "kn": "force", "mm": "position", "mm/min": "speed",
-    "mbar": "pressure", "hpa": "pressure", "mbar(a)": "pressure", "mbar(g)": "pressure",
-    "kw": "power", "v": "voltage", "ka": "current", "a": "current", "%": "percent",
-    "l/min": "flow", "µs/cm": "other", "ms": "other",
+    "c": "temp",
+    "°c": "temp",
+    "kn": "force",
+    "mm": "position",
+    "mm/min": "speed",
+    "mbar": "pressure",
+    "hpa": "pressure",
+    "mbar(a)": "pressure",
+    "mbar(g)": "pressure",
+    "kw": "power",
+    "v": "voltage",
+    "ka": "current",
+    "a": "current",
+    "%": "percent",
+    "l/min": "flow",
+    "µs/cm": "other",
+    "ms": "other",
 }
 
 # Wall-clock columns (not plottable series) by normalised label.
-_TIME_COLS = {"no.", "date", "time", "p.time", "cur. time charge", "cur. time",
-              "charge", "prozesstime 1", "prozesstime 2"}
+_TIME_COLS = {
+    "no.",
+    "date",
+    "time",
+    "p.time",
+    "cur. time charge",
+    "cur. time",
+    "charge",
+    "prozesstime 1",
+    "prozesstime 2",
+}
 
 
 def _slug(label: str) -> str:
@@ -343,7 +447,11 @@ def _hms_to_s(s: str):
 def detect_fast_format(raw: bytes) -> str:
     """'250' if the FCT HP D 250 shape, else '25'."""
     head = raw[:4000].decode("cp1252", errors="replace").lower()
-    if "used recipe:" in head or "prozesstime" in head or ";" in head.splitlines()[3 if head.count("\n") > 3 else 0]:
+    if (
+        "used recipe:" in head
+        or "prozesstime" in head
+        or ";" in head.splitlines()[3 if head.count("\n") > 3 else 0]
+    ):
         # the 250 export has the Plant/Recipe preamble and semicolon delimiters
         if "used recipe:" in head or "prozesstime" in head:
             return "250"
@@ -378,20 +486,39 @@ def normalize_fast_csv(raw: bytes) -> dict:
             elif low.startswith("used recipe:"):
                 recipe = ln.split(":", 1)[1].strip()
             elif "starttime" in low:
-                run_start = _parse_dt_de(ln.split(":", 1)[1].strip() if ":" in ln else ln)
+                run_start = _parse_dt_de(
+                    ln.split(":", 1)[1].strip() if ":" in ln else ln
+                )
         header_raw = lines[3].split(";")
         data_lines = lines[4:]
         delim, num = ";", _num_eu
         headers = [_split_label_unit(h) for h in header_raw]
         # 250 time comes from Prozesstime 1 (HH:MM:SS)
-        time_idx = next((i for i, (lab, _u) in enumerate(headers) if lab.strip().lower() == "prozesstime 1"), 1)
+        time_idx = next(
+            (
+                i
+                for i, (lab, _u) in enumerate(headers)
+                if lab.strip().lower() == "prozesstime 1"
+            ),
+            1,
+        )
     else:
         header_raw = lines[0].split(",")
         units_row = lines[1].split(",") if len(lines) > 1 else []
         data_lines = lines[2:]
         delim, num = ",", _num_us
-        headers = [(h.strip(), (units_row[i].strip() if i < len(units_row) else "")) for i, h in enumerate(header_raw)]
-        time_idx = next((i for i, (lab, _u) in enumerate(headers) if lab.strip().lower() == "p.time"), 3)
+        headers = [
+            (h.strip(), (units_row[i].strip() if i < len(units_row) else ""))
+            for i, h in enumerate(header_raw)
+        ]
+        time_idx = next(
+            (
+                i
+                for i, (lab, _u) in enumerate(headers)
+                if lab.strip().lower() == "p.time"
+            ),
+            3,
+        )
 
     # Build per-column plans (skip wall-clock/index columns as plottable series).
     plans = []  # (idx, key, label, unit, group)
@@ -403,7 +530,9 @@ def normalize_fast_csv(raw: bytes) -> dict:
         canon = _CANON.get(norm)
         if canon:
             key, clabel, cunit, cgroup = canon
-            unit = cunit or unit          # canonical (clean, ASCII) unit wins for cross-machine consistency
+            unit = (
+                cunit or unit
+            )  # canonical (clean, ASCII) unit wins for cross-machine consistency
             label, group = clabel, cgroup
         else:
             key = _slug(lab)
@@ -439,18 +568,26 @@ def normalize_fast_csv(raw: bytes) -> dict:
         vals = [v for v in series_vals[j] if v is not None]
         if not vals:
             continue
-        columns.append({
-            "key": key, "label": label, "unit": unit, "group": group,
-            "min": min(vals), "max": max(vals),
-        })
+        columns.append(
+            {
+                "key": key,
+                "label": label,
+                "unit": unit,
+                "group": group,
+                "min": min(vals),
+                "max": max(vals),
+            }
+        )
         keep.append((j, key, label, unit, group))
 
     # Emit the canonical CSV (time_s first, then each kept column).
-    out_header = ["time_s [s]"] + [f"{c['label']} [{c['unit']}]" if c["unit"] else c["label"] for c in columns]
+    out_header = ["time_s [s]"] + [
+        f"{c['label']} [{c['unit']}]" if c["unit"] else c["label"] for c in columns
+    ]
     out_lines = [",".join(out_header)]
     for r in range(n_rows):
         row = [f"{time_vals[r]:g}"]
-        for (j, *_rest) in keep:
+        for j, *_rest in keep:
             v = series_vals[j][r]
             row.append("" if v is None else f"{v:g}")
         out_lines.append(",".join(row))
@@ -461,8 +598,13 @@ def normalize_fast_csv(raw: bytes) -> dict:
     summary = summarize_trace(by_key, time_vals)
 
     return {
-        "format": fmt, "plant": plant, "recipe": recipe, "run_start": run_start,
-        "n_rows": n_rows, "duration_s": duration_s, "columns": columns,
+        "format": fmt,
+        "plant": plant,
+        "recipe": recipe,
+        "run_start": run_start,
+        "n_rows": n_rows,
+        "duration_s": duration_s,
+        "columns": columns,
         "summary": summary,
         "csv_text": "\n".join(out_lines) + "\n",
     }

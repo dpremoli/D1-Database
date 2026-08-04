@@ -19,6 +19,12 @@ dev = ["pytest>=8"]
 # required on the acquisition PC. Install with:  pip install -e ".[nidaq]"
 nidaq = ["nidaqmx>=1.0"]
 
+# This sub-app inherits the repo-wide ruff rule set but uses a wider line length — the
+# backend was written at ~100 cols. Scoped here so the root stays at 88 for everything else.
+[tool.ruff]
+extend = "../../../pyproject.toml"
+line-length = 100
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

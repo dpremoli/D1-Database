@@ -72,6 +72,7 @@ def _known_values_section(objects: dict) -> str:
     _known_cache["text"] = text
     return text
 
+
 _SYSTEM_PREAMBLE = """\
 You are a careful PostgreSQL analyst for a materials-science laboratory database.
 Translate the user's question into ONE read-only SQL SELECT statement.
@@ -95,7 +96,10 @@ Hard rules:
 - For a greeting, small talk, or anything NOT answerable from these tables,
   reply with a single table-free SELECT of a friendly message (shown verbatim to
   the user), e.g.:
-    SELECT 'I can answer questions about your lab data — samples, materials, manufacturing operations, tests and tooling. What would you like to know?' AS note;
+    SELECT 'I can answer questions about your lab data —'
+           ' samples, materials, operations, tests and'
+           ' tooling. What would you like to know?'
+      AS note;
 """
 
 

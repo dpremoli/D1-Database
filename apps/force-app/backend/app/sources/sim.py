@@ -8,15 +8,15 @@ downstream rpm-from-tacho + FRM path is exercised exactly as it will be with rea
 Each summed axis is split evenly across its sub-channels (Fx→Fx1,Fx2; Fz→Fz1..Fz4) so summing
 reconstructs the intended axis force.
 """
+
 from __future__ import annotations
 
 import threading
 import time
-from typing import Optional
 
 import numpy as np
 
-from ..config import DYNO_CHANNELS, RecordConfig, SIGNAL_CHANNELS
+from ..config import SIGNAL_CHANNELS, RecordConfig
 
 
 class SimSource:
@@ -52,7 +52,7 @@ class SimSource:
         e = np.where(m, np.clip((1.0 - frac) / max(1e-9, 1.0 - self._down), 0.0, 1.0), e)
         return e
 
-    def read(self) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    def read(self) -> tuple[np.ndarray, np.ndarray] | None:
         if self._stop.is_set() or self._i >= self.total:
             return None
         n = min(self.chunk, self.total - self._i)
@@ -67,8 +67,14 @@ class SimSource:
         means = {"Fx": self.cfg.mean_fx, "Fy": self.cfg.mean_fy, "Fz": self.cfg.mean_fz}
         data = np.zeros((n, len(self.channels)), dtype=np.float64)
         col = {name: i for i, name in enumerate(self.channels)}
-        for axis, parts in (("Fx", ["Fx1", "Fx2"]), ("Fy", ["Fy1", "Fy2"]), ("Fz", ["Fz1", "Fz2", "Fz3", "Fz4"])):
-            axis_force = env * means[axis] * (1.0 + ripple) + self._rng.normal(0, self.cfg.noise, n) * env
+        for axis, parts in (
+            ("Fx", ["Fx1", "Fx2"]),
+            ("Fy", ["Fy1", "Fy2"]),
+            ("Fz", ["Fz1", "Fz2", "Fz3", "Fz4"]),
+        ):
+            axis_force = (
+                env * means[axis] * (1.0 + ripple) + self._rng.normal(0, self.cfg.noise, n) * env
+            )
             share = axis_force / len(parts)
             for p in parts:
                 data[:, col[p]] = share

@@ -240,9 +240,23 @@ In `scripts/force_orchestrator.py:78-82`, add the new column (no alias needed â€
 
 ```python
 SUMMARY_COLS = [
-    "file_version", "sample_rate", "feed", "cut_diameter", "surface_speed",
-    "depth_of_cut", "max_rpm", "dyno_gain", "n_raw", "cut_start_idx", "cut_end_idx",
-    "peak_fx", "peak_fy", "peak_fz", "mean_rpm", "trigger_time", "pulses_per_rev",
+    "file_version",
+    "sample_rate",
+    "feed",
+    "cut_diameter",
+    "surface_speed",
+    "depth_of_cut",
+    "max_rpm",
+    "dyno_gain",
+    "n_raw",
+    "cut_start_idx",
+    "cut_end_idx",
+    "peak_fx",
+    "peak_fy",
+    "peak_fz",
+    "mean_rpm",
+    "trigger_time",
+    "pulses_per_rev",
 ]
 ```
 
@@ -253,8 +267,14 @@ This alone makes `ingest()` write `machining_force_analysis.pulses_per_rev` on e
 In `scripts/force_orchestrator.py:217-218`:
 
 ```python
-DEFAULT_SAMPLING = {"series_points": 3000, "fft_points": 3000, "frm_downsample_step": 5,
-                    "frm_dpi": 300, "live_cache_points": 250000, "pulses_per_rev": 1}
+DEFAULT_SAMPLING = {
+    "series_points": 3000,
+    "fft_points": 3000,
+    "frm_downsample_step": 5,
+    "frm_dpi": 300,
+    "live_cache_points": 250000,
+    "pulses_per_rev": 1,
+}
 ```
 
 In `scripts/force_orchestrator.py:221-231` (`load_sampling_opts`), add the column to the query:
@@ -263,8 +283,10 @@ In `scripts/force_orchestrator.py:221-231` (`load_sampling_opts`), add the colum
 def load_sampling_opts(conn) -> dict:
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT series_points, fft_points, frm_downsample_step, frm_dpi, live_cache_points, "
-                        "pulses_per_rev FROM force_crawler_state WHERE id='00000000-0000-0000-0000-000000000001'")
+            cur.execute(
+                "SELECT series_points, fft_points, frm_downsample_step, frm_dpi, live_cache_points, "
+                "pulses_per_rev FROM force_crawler_state WHERE id='00000000-0000-0000-0000-000000000001'"
+            )
             row = cur.fetchone()
         if row:
             return {k: int(v) for k, v in row.items()}
@@ -282,7 +304,8 @@ def claim_batch(conn, args, limit: int):
     """Atomically move up to `limit` pending rows to 'processing'; return them."""
     scope, sparams = _scope_exists(args, "a")
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(f"""
+        cur.execute(
+            f"""
             WITH picked AS (
                 SELECT a.id
                 FROM machining_force_analysis a
@@ -300,7 +323,9 @@ def claim_batch(conn, args, limit: int):
                    a.live_cache_file AS old_cache, a.live_render_points, a.pulses_per_rev,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path,
                    (SELECT metadata->>'fingerprint'  FROM directus_files WHERE id = a.directus_files_id) AS fingerprint
-        """, sparams)
+        """,
+            sparams,
+        )
         rows = cur.fetchall()
     conn.commit()
     return rows
@@ -318,7 +343,13 @@ def process_file(row, exe: str, timeout: int, matlab_opts: dict) -> dict:
     overrides the global tacho pulses-per-rev just for that file."""
     workroot = os.environ.get("FORCE_WORKDIR")
     outdir = tempfile.mkdtemp(prefix="force_", dir=workroot)
-    res = {"id": row["id"], "outdir": outdir, "status": "error", "message": "", "summary": {}}
+    res = {
+        "id": row["id"],
+        "outdir": outdir,
+        "status": "error",
+        "message": "",
+        "summary": {},
+    }
     try:
         req = row.get("live_render_points")
         if req and int(req) > 0:
@@ -338,10 +369,12 @@ def process_file(row, exe: str, timeout: int, matlab_opts: dict) -> dict:
         summary = json.loads(summ_path.read_text(encoding="utf-8"))
         res["summary"] = summary
         if summary.get("status") != "done":
-            res["message"] = summary.get("message", "processing reported non-done status")
+            res["message"] = summary.get(
+                "message", "processing reported non-done status"
+            )
             return res
         res["status"] = "done"
-    except Exception as e:                       # noqa: BLE001 - want the message recorded
+    except Exception as e:  # noqa: BLE001 - want the message recorded
         res["message"] = f"{type(e).__name__}: {e}"
     return res
 ```

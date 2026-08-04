@@ -70,30 +70,52 @@ import requests
 log = logging.getLogger("force_orchestrator")
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-MATLAB_SRC = SCRIPT_DIR / "matlab"          # holds process_force.m
+MATLAB_SRC = SCRIPT_DIR / "matlab"  # holds process_force.m
 
-ARCHIVE_UNC = os.environ.get("ARCHIVE_UNC", r"\\uosfstore.shef.ac.uk\shared\star_group1")
+ARCHIVE_UNC = os.environ.get(
+    "ARCHIVE_UNC", r"\\uosfstore.shef.ac.uk\shared\star_group1"
+)
 DIRECTUS_URL = os.environ.get("DIRECTUS_URL", "http://localhost:8055").rstrip("/")
 
 # Phase 2 Potree octrees: PotreeConverter builds them from a LAS; they are written under
 # OCTREE_DIR (the Caddy-served ./infra/octrees mount) as <op_id>/ and streamed by the
 # browser. POTREE_CONVERTER is auto-detected if unset.
-OCTREE_DIR = Path(os.environ.get("OCTREE_DIR", str(SCRIPT_DIR.parent / "infra" / "octrees")))
+OCTREE_DIR = Path(
+    os.environ.get("OCTREE_DIR", str(SCRIPT_DIR.parent / "infra" / "octrees"))
+)
 
 
 def detect_potree_converter() -> str | None:
     env = os.environ.get("POTREE_CONVERTER")
     if env and Path(env).exists():
         return env
-    cands = glob.glob(os.path.expanduser(r"~/Downloads/PotreeConverter*/**/PotreeConverter.exe"), recursive=True)
+    cands = glob.glob(
+        os.path.expanduser(r"~/Downloads/PotreeConverter*/**/PotreeConverter.exe"),
+        recursive=True,
+    )
     cands += glob.glob(r"C:\Program Files\PotreeConverter*\PotreeConverter.exe")
     return cands[0] if cands else None
 
+
 # Scalar columns written from summary.json (JSON key == column name).
 SUMMARY_COLS = [
-    "file_version", "sample_rate", "feed", "cut_diameter", "surface_speed",
-    "depth_of_cut", "max_rpm", "dyno_gain", "n_raw", "cut_start_idx", "cut_end_idx",
-    "peak_fx", "peak_fy", "peak_fz", "mean_rpm", "trigger_time", "pulses_per_rev",
+    "file_version",
+    "sample_rate",
+    "feed",
+    "cut_diameter",
+    "surface_speed",
+    "depth_of_cut",
+    "max_rpm",
+    "dyno_gain",
+    "n_raw",
+    "cut_start_idx",
+    "cut_end_idx",
+    "peak_fx",
+    "peak_fy",
+    "peak_fz",
+    "mean_rpm",
+    "trigger_time",
+    "pulses_per_rev",
 ]
 # process_force emits `version` not `file_version`.
 SUMMARY_ALIASES = {"file_version": "version"}
@@ -148,16 +170,22 @@ def _scope_exists(args, alias="a"):
     frag, params = [], []
     fconds, fparams = [], []
     if args.file_like:
-        fconds.append("df.metadata->>'archive_path' ILIKE %s"); fparams.append(args.file_like)
+        fconds.append("df.metadata->>'archive_path' ILIKE %s")
+        fparams.append(args.file_like)
     if args.file_id:
-        fconds.append("df.id = %s"); fparams.append(args.file_id)
+        fconds.append("df.id = %s")
+        fparams.append(args.file_id)
     if fconds:
-        frag.append(f"EXISTS (SELECT 1 FROM directus_files df "
-                    f"WHERE df.id = {alias}.directus_files_id AND {' AND '.join(fconds)})")
+        frag.append(
+            f"EXISTS (SELECT 1 FROM directus_files df "
+            f"WHERE df.id = {alias}.directus_files_id AND {' AND '.join(fconds)})"
+        )
         params.extend(fparams)
     if args.op_code:
-        frag.append(f"EXISTS (SELECT 1 FROM manufacturing_operations mo "
-                    f"WHERE mo.operation_id = {alias}.operation_id AND mo.operation_code ILIKE %s)")
+        frag.append(
+            f"EXISTS (SELECT 1 FROM manufacturing_operations mo "
+            f"WHERE mo.operation_id = {alias}.operation_id AND mo.operation_code ILIKE %s)"
+        )
         params.append(args.op_code)
     return (" AND " + " AND ".join(frag)) if frag else "", params
 
@@ -169,15 +197,22 @@ def reset_stale_processing(conn, minutes: int = 30) -> int:
     to run anytime: a row genuinely still being processed just got updated recently,
     so it won't match the staleness window."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE machining_force_analysis
                SET status='pending', updated_at=now()
              WHERE status='processing' AND updated_at < now() - (%s || ' minutes')::interval
-        """, [minutes])
+        """,
+            [minutes],
+        )
         n = cur.rowcount
     conn.commit()
     if n:
-        log.info("reset %d stale 'processing' row(s) (older than %d min) back to pending", n, minutes)
+        log.info(
+            "reset %d stale 'processing' row(s) (older than %d min) back to pending",
+            n,
+            minutes,
+        )
     return n
 
 
@@ -185,7 +220,8 @@ def discover(conn, args) -> int:
     scope, sparams = _scope_sql(args)
     with conn.cursor() as cur:
         # 1. enqueue never-seen .mat files
-        cur.execute(f"""
+        cur.execute(
+            f"""
             INSERT INTO machining_force_analysis (operation_id, directus_files_id, fingerprint, status)
             SELECT od.operation_id, df.id, df.metadata->>'fingerprint', 'pending'
             FROM operation_data_files od
@@ -195,12 +231,15 @@ def discover(conn, args) -> int:
               AND NOT EXISTS (SELECT 1 FROM machining_force_analysis a WHERE a.directus_files_id = df.id)
               {scope}
             ON CONFLICT (directus_files_id) DO NOTHING
-        """, sparams)
+        """,
+            sparams,
+        )
         inserted = cur.rowcount
 
         # 2. reset rows that should be re-run (reprocess / retry errors / stale file)
         escope, eparams = _scope_exists(args, "a")
-        cur.execute(f"""
+        cur.execute(
+            f"""
             UPDATE machining_force_analysis a
                SET status='pending', error_message=NULL, updated_at=now()
               FROM directus_files df
@@ -210,7 +249,9 @@ def discover(conn, args) -> int:
                      OR (a.status = 'error' AND %s)
                      OR (a.status = 'done'  AND a.fingerprint IS DISTINCT FROM df.metadata->>'fingerprint') )
                {escope}
-        """, [args.reprocess, args.retry_errors, *eparams])
+        """,
+            [args.reprocess, args.retry_errors, *eparams],
+        )
         reset = cur.rowcount
     conn.commit()
     log.info("discover: %d new enqueued, %d reset to pending", inserted, reset)
@@ -222,8 +263,10 @@ def _octree_threshold(conn) -> int:
     octree_threshold, falling back to live_cache_points, then 5M)."""
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT COALESCE(octree_threshold, live_cache_points, 5000000) "
-                        "FROM force_crawler_state WHERE id='00000000-0000-0000-0000-000000000001'")
+            cur.execute(
+                "SELECT COALESCE(octree_threshold, live_cache_points, 5000000) "
+                "FROM force_crawler_state WHERE id='00000000-0000-0000-0000-000000000001'"
+            )
             row = cur.fetchone()
         if row and row[0]:
             return int(row[0])
@@ -239,18 +282,23 @@ def enqueue_pregen_octrees(conn) -> int:
     touches rows with no octree (octree_status IS NULL). The grid octree stays on-demand."""
     threshold = _octree_threshold(conn)
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE machining_force_analysis
                SET octree_status='pending', octree_requested_at=now(), updated_at=now()
              WHERE status='done'
                AND octree_status IS NULL
                AND cut_start_idx IS NOT NULL AND cut_end_idx IS NOT NULL
                AND (cut_end_idx - cut_start_idx) > %s
-        """, [threshold])
+        """,
+            [threshold],
+        )
         n = cur.rowcount
     conn.commit()
     if n:
-        log.info("pre-gen: enqueued %d octree build(s) for ops over %d points", n, threshold)
+        log.info(
+            "pre-gen: enqueued %d octree build(s) for ops over %d points", n, threshold
+        )
     return n
 
 
@@ -261,8 +309,10 @@ def enqueue_pregen_grids(conn) -> int:
     heavier than a raw octree). Idempotent: only rows with grid_octree_status IS NULL."""
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT grid_pregen FROM force_crawler_state "
-                        "WHERE id='00000000-0000-0000-0000-000000000001'")
+            cur.execute(
+                "SELECT grid_pregen FROM force_crawler_state "
+                "WHERE id='00000000-0000-0000-0000-000000000001'"
+            )
             row = cur.fetchone()
         if not (row and row[0]):
             return 0
@@ -271,7 +321,8 @@ def enqueue_pregen_grids(conn) -> int:
         return 0
     threshold = _octree_threshold(conn)
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             UPDATE machining_force_analysis
                SET grid_octree_status='pending', grid_octree_requested_at=now(), updated_at=now()
              WHERE status='done'
@@ -279,11 +330,17 @@ def enqueue_pregen_grids(conn) -> int:
                AND octree_status='done'
                AND cut_start_idx IS NOT NULL AND cut_end_idx IS NOT NULL
                AND (cut_end_idx - cut_start_idx) > %s
-        """, [threshold])
+        """,
+            [threshold],
+        )
         n = cur.rowcount
     conn.commit()
     if n:
-        log.info("pre-gen: enqueued %d grid-octree build(s) for ops over %d points", n, threshold)
+        log.info(
+            "pre-gen: enqueued %d grid-octree build(s) for ops over %d points",
+            n,
+            threshold,
+        )
     return n
 
 
@@ -291,7 +348,8 @@ def claim_batch(conn, args, limit: int):
     """Atomically move up to `limit` pending rows to 'processing'; return them."""
     scope, sparams = _scope_exists(args, "a")
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(f"""
+        cur.execute(
+            f"""
             WITH picked AS (
                 SELECT a.id
                 FROM machining_force_analysis a
@@ -309,7 +367,9 @@ def claim_batch(conn, args, limit: int):
                    a.live_cache_file AS old_cache, a.live_render_points, a.pulses_per_rev, a.inner_diameter, a.outer_diameter, a.filter_chain::text AS filter_chain,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path,
                    (SELECT metadata->>'fingerprint'  FROM directus_files WHERE id = a.directus_files_id) AS fingerprint
-        """, sparams)
+        """,
+            sparams,
+        )
         rows = cur.fetchall()
     conn.commit()
     return rows
@@ -318,15 +378,23 @@ def claim_batch(conn, args, limit: int):
 # ------------------------------------------------------------------------ process
 # Sampling settings default (mirrors process_force.m's own defaults); overridden
 # per-run by force_crawler_state, so admins control these without touching code.
-DEFAULT_SAMPLING = {"series_points": 3000, "fft_points": 3000, "frm_downsample_step": 5,
-                    "frm_dpi": 300, "live_cache_points": 250000, "pulses_per_rev": 1}
+DEFAULT_SAMPLING = {
+    "series_points": 3000,
+    "fft_points": 3000,
+    "frm_downsample_step": 5,
+    "frm_dpi": 300,
+    "live_cache_points": 250000,
+    "pulses_per_rev": 1,
+}
 
 
 def load_sampling_opts(conn) -> dict:
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT series_points, fft_points, frm_downsample_step, frm_dpi, live_cache_points, "
-                        "pulses_per_rev FROM force_crawler_state WHERE id='00000000-0000-0000-0000-000000000001'")
+            cur.execute(
+                "SELECT series_points, fft_points, frm_downsample_step, frm_dpi, live_cache_points, "
+                "pulses_per_rev FROM force_crawler_state WHERE id='00000000-0000-0000-0000-000000000001'"
+            )
             row = cur.fetchone()
         if row:
             return {k: int(v) for k, v in row.items()}
@@ -348,16 +416,22 @@ def matlab_opts_literal(opts: dict) -> str:
     return "struct(" + ",".join(parts) + ")"
 
 
-def run_matlab(exe: str, unc: str, outdir: str, timeout: int, matlab_opts: dict) -> tuple[bool, str]:
-    stmt = (f"addpath('{mlq(str(MATLAB_SRC))}'); "
-            f"process_force('{mlq(unc)}','{mlq(outdir)}',{matlab_opts_literal(matlab_opts)})")
+def run_matlab(
+    exe: str, unc: str, outdir: str, timeout: int, matlab_opts: dict
+) -> tuple[bool, str]:
+    stmt = (
+        f"addpath('{mlq(str(MATLAB_SRC))}'); "
+        f"process_force('{mlq(unc)}','{mlq(outdir)}',{matlab_opts_literal(matlab_opts)})"
+    )
     try:
-        p = subprocess.run([exe, "-batch", stmt], capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(
+            [exe, "-batch", stmt], capture_output=True, text=True, timeout=timeout
+        )
     except subprocess.TimeoutExpired:
         return False, f"matlab timeout after {timeout}s"
     if p.returncode != 0:
         tail = (p.stderr or p.stdout or "").strip().splitlines()[-5:]
-        return False, "matlab exit %d: %s" % (p.returncode, " | ".join(tail))
+        return False, f"matlab exit {p.returncode}: {' | '.join(tail)}"
     return True, ""
 
 
@@ -368,7 +442,13 @@ def process_file(row, exe: str, timeout: int, matlab_opts: dict) -> dict:
     ask for a denser (down to 1:1) point cloud without changing the global setting."""
     workroot = os.environ.get("FORCE_WORKDIR")
     outdir = tempfile.mkdtemp(prefix="force_", dir=workroot)
-    res = {"id": row["id"], "outdir": outdir, "status": "error", "message": "", "summary": {}}
+    res = {
+        "id": row["id"],
+        "outdir": outdir,
+        "status": "error",
+        "message": "",
+        "summary": {},
+    }
     try:
         req = row.get("live_render_points")
         if req and int(req) > 0:
@@ -397,10 +477,12 @@ def process_file(row, exe: str, timeout: int, matlab_opts: dict) -> dict:
         summary = json.loads(summ_path.read_text(encoding="utf-8"))
         res["summary"] = summary
         if summary.get("status") != "done":
-            res["message"] = summary.get("message", "processing reported non-done status")
+            res["message"] = summary.get(
+                "message", "processing reported non-done status"
+            )
             return res
         res["status"] = "done"
-    except Exception as e:                       # noqa: BLE001 - want the message recorded
+    except Exception as e:  # noqa: BLE001 - want the message recorded
         res["message"] = f"{type(e).__name__}: {e}"
     return res
 
@@ -417,14 +499,19 @@ def _ml_literal(v) -> str:
     if isinstance(v, str):
         return "'" + mlq(v) + "'"
     if isinstance(v, dict):
-        return "struct(" + ",".join(f"'{k}',{_ml_literal(val)}" for k, val in v.items()) + ")"
+        return (
+            "struct("
+            + ",".join(f"'{k}',{_ml_literal(val)}" for k, val in v.items())
+            + ")"
+        )
     raise ValueError(f"unsupported opt type: {type(v)}")
 
 
 def claim_render(conn, limit: int = 4):
     """Atomically move up to `limit` pending viewport-render requests to 'processing'."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("""
+        cur.execute(
+            """
             WITH picked AS (
                 SELECT id FROM machining_force_analysis
                  WHERE render_status='pending'
@@ -436,13 +523,17 @@ def claim_render(conn, limit: int = 4):
          RETURNING a.id, a.pulses_per_rev, a.inner_diameter, a.outer_diameter, a.filter_chain::text AS filter_chain, a.render_bounds, a.render_axis, a.render_colormap,
                    a.render_cmin, a.render_cmax, a.render_file AS old_render,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
-        """, [limit])
+        """,
+            [limit],
+        )
         rows = cur.fetchall()
     conn.commit()
     return rows
 
 
-def process_render_row(conn, directus, row, exe: str, timeout: int, matlab_opts: dict) -> str:
+def process_render_row(
+    conn, directus, row, exe: str, timeout: int, matlab_opts: dict
+) -> str:
     """Render one viewport request via MATLAB, upload the PNG, and record render_file.
     process_force('mat','outdir', struct(... ,'viewport',struct('axis',...,'out',...)))
     re-renders ONLY the requested bounds at full resolution, then returns early."""
@@ -457,8 +548,10 @@ def process_render_row(conn, directus, row, exe: str, timeout: int, matlab_opts:
         out_png = str(Path(outdir) / "viewport.png")
         vp = {
             "axis": row.get("render_axis") or "Fz",
-            "xmin": float(b["xmin"]), "xmax": float(b["xmax"]),
-            "ymin": float(b["ymin"]), "ymax": float(b["ymax"]),
+            "xmin": float(b["xmin"]),
+            "xmax": float(b["xmax"]),
+            "ymin": float(b["ymin"]),
+            "ymax": float(b["ymax"]),
             "colormap": row.get("render_colormap") or "viridis",
             "out": out_png,
         }
@@ -479,17 +572,24 @@ def process_render_row(conn, directus, row, exe: str, timeout: int, matlab_opts:
         if fchain:
             opts["filter_chain"] = str(fchain)
         opts["viewport"] = vp
-        stmt = (f"addpath('{mlq(str(MATLAB_SRC))}'); "
-                f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})")
-        p = subprocess.run([exe, "-batch", stmt], capture_output=True, text=True, timeout=timeout)
+        stmt = (
+            f"addpath('{mlq(str(MATLAB_SRC))}'); "
+            f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})"
+        )
+        p = subprocess.run(
+            [exe, "-batch", stmt], capture_output=True, text=True, timeout=timeout
+        )
         if p.returncode != 0 or not Path(out_png).exists():
             tail = (p.stderr or p.stdout or "").strip().splitlines()[-5:]
             raise RuntimeError("matlab render failed: " + " | ".join(tail))
         stem = Path(row["archive_path"]).stem
         fid = directus.upload_frm(out_png, f"FRM viewport — {stem}")
         with conn.cursor() as cur:
-            cur.execute("UPDATE machining_force_analysis SET render_status='done', render_file=%s, "
-                        "render_error=NULL, updated_at=now() WHERE id=%s", [fid, row["id"]])
+            cur.execute(
+                "UPDATE machining_force_analysis SET render_status='done', render_file=%s, "
+                "render_error=NULL, updated_at=now() WHERE id=%s",
+                [fid, row["id"]],
+            )
         conn.commit()
         if row.get("old_render") and row["old_render"] != fid:
             directus.delete_file(row["old_render"])
@@ -498,8 +598,11 @@ def process_render_row(conn, directus, row, exe: str, timeout: int, matlab_opts:
     except Exception as e:  # noqa: BLE001
         conn.rollback()
         with conn.cursor() as cur:
-            cur.execute("UPDATE machining_force_analysis SET render_status='error', render_error=%s, "
-                        "updated_at=now() WHERE id=%s", [str(e)[:2000], row["id"]])
+            cur.execute(
+                "UPDATE machining_force_analysis SET render_status='error', render_error=%s, "
+                "updated_at=now() WHERE id=%s",
+                [str(e)[:2000], row["id"]],
+            )
         conn.commit()
         log.error("[RENDER-ERR] %s", e)
         return "error"
@@ -522,7 +625,8 @@ def handle_renders(conn, exe: str, directus) -> int:
 # ------------------------------------------------------- Potree octree build (Phase 2)
 def claim_octree(conn, limit: int = 2):
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("""
+        cur.execute(
+            """
             WITH picked AS (
                 SELECT id FROM machining_force_analysis
                  WHERE octree_status='pending'
@@ -533,7 +637,9 @@ def claim_octree(conn, limit: int = 2):
               FROM picked WHERE a.id = picked.id
          RETURNING a.id, a.operation_id, a.pulses_per_rev, a.inner_diameter, a.outer_diameter, a.filter_chain::text AS filter_chain,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
-        """, [limit])
+        """,
+            [limit],
+        )
         rows = cur.fetchall()
     conn.commit()
     return rows
@@ -541,28 +647,39 @@ def claim_octree(conn, limit: int = 2):
 
 def _read_octree_bin(path: str):
     import numpy as np
+
     with open(path, "rb") as f:
         magic, n = struct.unpack("<II", f.read(8))
         if magic != 0x44314F43:
             raise RuntimeError(f"bad octree bin magic {magic:#x}")
         a = np.frombuffer(f.read(n * 5 * 4), dtype="<f4")
-    return n, a[0:n], a[n:2 * n], a[2 * n:3 * n], a[3 * n:4 * n], a[4 * n:5 * n]
+    return n, a[0:n], a[n : 2 * n], a[2 * n : 3 * n], a[3 * n : 4 * n], a[4 * n : 5 * n]
 
 
 def _read_grid_bin(path: str):
     """Read a D1GR interpolated-grid binary: magic, N, fidelity, arm_ratio, cell_mm header
     then float32 x,y,Fx,Fy,Fz [N]. NaN fidelity/arm_ratio -> None (stored NULL)."""
     import numpy as np
+
     with open(path, "rb") as f:
         magic, n = struct.unpack("<II", f.read(8))
         if magic != 0x44314752:
             raise RuntimeError(f"bad grid bin magic {magic:#x}")
         fidelity, arm_ratio, cell_mm = struct.unpack("<fff", f.read(12))
         a = np.frombuffer(f.read(n * 5 * 4), dtype="<f4")
-    fid = None if fidelity != fidelity else float(fidelity)          # NaN check
+    fid = None if fidelity != fidelity else float(fidelity)  # NaN check
     ratio = None if arm_ratio != arm_ratio else float(arm_ratio)
-    return (n, fid, ratio, float(cell_mm),
-            a[0:n], a[n:2 * n], a[2 * n:3 * n], a[3 * n:4 * n], a[4 * n:5 * n])
+    return (
+        n,
+        fid,
+        ratio,
+        float(cell_mm),
+        a[0:n],
+        a[n : 2 * n],
+        a[2 * n : 3 * n],
+        a[3 * n : 4 * n],
+        a[4 * n : 5 * n],
+    )
 
 
 def _patch_octree_climits(meta_path: Path, fx, fy, fz) -> None:
@@ -571,6 +688,7 @@ def _patch_octree_climits(meta_path: Path, fx, fy, fz) -> None:
     and the live cloud (which both clip at 1/99). Best-effort: leaves the file untouched on
     any error."""
     import numpy as np
+
     try:
         meta = json.loads(meta_path.read_text())
         pct = {"Fx": fx, "Fy": fy, "Fz": fz}
@@ -588,11 +706,14 @@ def _patch_octree_climits(meta_path: Path, fx, fy, fz) -> None:
         log.warning("[OCTREE] climits patch skipped: %s", e)
 
 
-def process_octree_row(conn, row, exe: str, timeout: int, matlab_opts: dict, potree_exe: str) -> str:
+def process_octree_row(
+    conn, row, exe: str, timeout: int, matlab_opts: dict, potree_exe: str
+) -> str:
     """MATLAB emits the full-res cloud -> laspy writes a LAS (force axes as attributes) ->
     PotreeConverter builds the octree -> publish under OCTREE_DIR/<op_id>/ for Caddy."""
-    import numpy as np
     import laspy
+    import numpy as np
+
     outdir = tempfile.mkdtemp(prefix="octree_", dir=os.environ.get("FORCE_WORKDIR"))
     try:
         if not row.get("archive_path"):
@@ -612,9 +733,13 @@ def process_octree_row(conn, row, exe: str, timeout: int, matlab_opts: dict, pot
         if fchain:
             opts["filter_chain"] = str(fchain)
         opts["octree_out"] = binp
-        stmt = (f"addpath('{mlq(str(MATLAB_SRC))}'); "
-                f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})")
-        p = subprocess.run([exe, "-batch", stmt], capture_output=True, text=True, timeout=timeout)
+        stmt = (
+            f"addpath('{mlq(str(MATLAB_SRC))}'); "
+            f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})"
+        )
+        p = subprocess.run(
+            [exe, "-batch", stmt], capture_output=True, text=True, timeout=timeout
+        )
         if p.returncode != 0 or not Path(binp).exists():
             tail = (p.stderr or p.stdout or "").strip().splitlines()[-5:]
             raise RuntimeError("matlab octree emit failed: " + " | ".join(tail))
@@ -629,14 +754,25 @@ def process_octree_row(conn, row, exe: str, timeout: int, matlab_opts: dict, pot
         for nm in ("Fx", "Fy", "Fz"):
             h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.float32))
         las = laspy.LasData(h)
-        las.x = x.astype(np.float64); las.y = y.astype(np.float64); las.z = np.zeros(n)
-        las.Fx = fx; las.Fy = fy; las.Fz = fz
+        las.x = x.astype(np.float64)
+        las.y = y.astype(np.float64)
+        las.z = np.zeros(n)
+        las.Fx = fx
+        las.Fy = fy
+        las.Fz = fz
         lo, hi = float(fz.min()), float(fz.max())
-        las.intensity = np.clip((fz - lo) / ((hi - lo) or 1.0) * 65535, 0, 65535).astype(np.uint16)
+        las.intensity = np.clip(
+            (fz - lo) / ((hi - lo) or 1.0) * 65535, 0, 65535
+        ).astype(np.uint16)
         las.write(las_path)
 
         octmp = str(Path(outdir) / "octree")
-        pc = subprocess.run([potree_exe, las_path, "-o", octmp], capture_output=True, text=True, timeout=timeout)
+        pc = subprocess.run(
+            [potree_exe, las_path, "-o", octmp],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
         if pc.returncode != 0 or not (Path(octmp) / "metadata.json").exists():
             tail = (pc.stderr or pc.stdout or "").strip().splitlines()[-5:]
             raise RuntimeError("PotreeConverter failed: " + " | ".join(tail))
@@ -657,17 +793,22 @@ def process_octree_row(conn, row, exe: str, timeout: int, matlab_opts: dict, pot
             shutil.copy2(Path(octmp) / fn, dst / fn)
 
         with conn.cursor() as cur:
-            cur.execute("UPDATE machining_force_analysis SET octree_status='done', octree_path=%s, "
-                        "octree_points=%s, octree_error=NULL, updated_at=now() WHERE id=%s",
-                        [op, int(n), row["id"]])
+            cur.execute(
+                "UPDATE machining_force_analysis SET octree_status='done', octree_path=%s, "
+                "octree_points=%s, octree_error=NULL, updated_at=now() WHERE id=%s",
+                [op, int(n), row["id"]],
+            )
         conn.commit()
         log.info("[OCTREE] %s -> %s (%d pts)", Path(row["archive_path"]).stem, op, n)
         return "done"
     except Exception as e:  # noqa: BLE001
         conn.rollback()
         with conn.cursor() as cur:
-            cur.execute("UPDATE machining_force_analysis SET octree_status='error', octree_error=%s, "
-                        "updated_at=now() WHERE id=%s", [str(e)[:2000], row["id"]])
+            cur.execute(
+                "UPDATE machining_force_analysis SET octree_status='error', octree_error=%s, "
+                "updated_at=now() WHERE id=%s",
+                [str(e)[:2000], row["id"]],
+            )
         conn.commit()
         log.error("[OCTREE-ERR] %s", e)
         return "error"
@@ -684,7 +825,9 @@ def handle_octrees(conn, exe: str) -> int:
     try:
         import laspy  # noqa: F401
     except ImportError:
-        log.warning("laspy not installed (pip install laspy) — octree requests left pending")
+        log.warning(
+            "laspy not installed (pip install laspy) — octree requests left pending"
+        )
         return 0
     rows = claim_octree(conn)
     if not rows:
@@ -701,8 +844,10 @@ def load_grid_opts(conn) -> dict:
     opts = {"n": 2048, "method": "splat", "cv_arm_step": 10}
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT grid_density, grid_method FROM force_crawler_state "
-                        "WHERE id='00000000-0000-0000-0000-000000000001'")
+            cur.execute(
+                "SELECT grid_density, grid_method FROM force_crawler_state "
+                "WHERE id='00000000-0000-0000-0000-000000000001'"
+            )
             row = cur.fetchone()
         if row:
             opts["n"] = min(8192, max(16, int(row["grid_density"] or 2048)))
@@ -715,7 +860,8 @@ def load_grid_opts(conn) -> dict:
 
 def claim_grid(conn, limit: int = 2):
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("""
+        cur.execute(
+            """
             WITH picked AS (
                 SELECT id FROM machining_force_analysis
                  WHERE grid_octree_status='pending'
@@ -726,20 +872,30 @@ def claim_grid(conn, limit: int = 2):
               FROM picked WHERE a.id = picked.id
          RETURNING a.id, a.operation_id, a.pulses_per_rev, a.inner_diameter, a.outer_diameter, a.filter_chain::text AS filter_chain,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
-        """, [limit])
+        """,
+            [limit],
+        )
         rows = cur.fetchall()
     conn.commit()
     return rows
 
 
-def process_grid_row(conn, row, exe: str, timeout: int, matlab_opts: dict,
-                     grid_opts: dict, potree_exe: str) -> str:
+def process_grid_row(
+    conn,
+    row,
+    exe: str,
+    timeout: int,
+    matlab_opts: dict,
+    grid_opts: dict,
+    potree_exe: str,
+) -> str:
     """MATLAB interpolates the spiral onto a grid + emits D1GR -> laspy LAS (force axes as
     int16-scaled attrs; force is 12-bit at source so this is lossless) -> PotreeConverter ->
     publish under OCTREE_DIR/grid/<op_id>/ for Caddy. Records grid_octree_* + grid_fidelity
     + grid_arm_ratio + grid_cell_mm."""
-    import numpy as np
     import laspy
+    import numpy as np
+
     outdir = tempfile.mkdtemp(prefix="grid_", dir=os.environ.get("FORCE_WORKDIR"))
     try:
         if not row.get("archive_path"):
@@ -759,11 +915,18 @@ def process_grid_row(conn, row, exe: str, timeout: int, matlab_opts: dict,
         if fchain:
             opts["filter_chain"] = str(fchain)
         opts["grid_out"] = binp
-        opts["grid"] = {"n": int(grid_opts["n"]), "method": str(grid_opts["method"]),
-                        "cv_arm_step": int(grid_opts["cv_arm_step"])}
-        stmt = (f"addpath('{mlq(str(MATLAB_SRC))}'); "
-                f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})")
-        p = subprocess.run([exe, "-batch", stmt], capture_output=True, text=True, timeout=timeout)
+        opts["grid"] = {
+            "n": int(grid_opts["n"]),
+            "method": str(grid_opts["method"]),
+            "cv_arm_step": int(grid_opts["cv_arm_step"]),
+        }
+        stmt = (
+            f"addpath('{mlq(str(MATLAB_SRC))}'); "
+            f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})"
+        )
+        p = subprocess.run(
+            [exe, "-batch", stmt], capture_output=True, text=True, timeout=timeout
+        )
         if p.returncode != 0 or not Path(binp).exists():
             tail = (p.stderr or p.stdout or "").strip().splitlines()[-5:]
             raise RuntimeError("matlab grid emit failed: " + " | ".join(tail))
@@ -783,14 +946,25 @@ def process_grid_row(conn, row, exe: str, timeout: int, matlab_opts: dict,
         for nm in ("Fx", "Fy", "Fz"):
             h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.float32))
         las = laspy.LasData(h)
-        las.x = x.astype(np.float64); las.y = y.astype(np.float64); las.z = np.zeros(n)
-        las.Fx = fx; las.Fy = fy; las.Fz = fz
+        las.x = x.astype(np.float64)
+        las.y = y.astype(np.float64)
+        las.z = np.zeros(n)
+        las.Fx = fx
+        las.Fy = fy
+        las.Fz = fz
         lo, hi = float(fz.min()), float(fz.max())
-        las.intensity = np.clip((fz - lo) / ((hi - lo) or 1.0) * 65535, 0, 65535).astype(np.uint16)
+        las.intensity = np.clip(
+            (fz - lo) / ((hi - lo) or 1.0) * 65535, 0, 65535
+        ).astype(np.uint16)
         las.write(las_path)
 
         octmp = str(Path(outdir) / "octree")
-        pc = subprocess.run([potree_exe, las_path, "-o", octmp], capture_output=True, text=True, timeout=timeout)
+        pc = subprocess.run(
+            [potree_exe, las_path, "-o", octmp],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
         if pc.returncode != 0 or not (Path(octmp) / "metadata.json").exists():
             tail = (pc.stderr or pc.stdout or "").strip().splitlines()[-5:]
             raise RuntimeError("PotreeConverter failed: " + " | ".join(tail))
@@ -805,20 +979,30 @@ def process_grid_row(conn, row, exe: str, timeout: int, matlab_opts: dict,
             shutil.copy2(Path(octmp) / fn, dst / fn)
 
         with conn.cursor() as cur:
-            cur.execute("UPDATE machining_force_analysis SET grid_octree_status='done', "
-                        "grid_octree_path=%s, grid_octree_points=%s, grid_fidelity=%s, "
-                        "grid_arm_ratio=%s, grid_cell_mm=%s, grid_octree_error=NULL, updated_at=now() "
-                        "WHERE id=%s",
-                        [f"grid/{op}", int(n), fidelity, arm_ratio, cell_mm, row["id"]])
+            cur.execute(
+                "UPDATE machining_force_analysis SET grid_octree_status='done', "
+                "grid_octree_path=%s, grid_octree_points=%s, grid_fidelity=%s, "
+                "grid_arm_ratio=%s, grid_cell_mm=%s, grid_octree_error=NULL, updated_at=now() "
+                "WHERE id=%s",
+                [f"grid/{op}", int(n), fidelity, arm_ratio, cell_mm, row["id"]],
+            )
         conn.commit()
-        log.info("[GRID] %s -> grid/%s (%d cells, fidelity=%s)",
-                 Path(row["archive_path"]).stem, op, n, fidelity)
+        log.info(
+            "[GRID] %s -> grid/%s (%d cells, fidelity=%s)",
+            Path(row["archive_path"]).stem,
+            op,
+            n,
+            fidelity,
+        )
         return "done"
     except Exception as e:  # noqa: BLE001
         conn.rollback()
         with conn.cursor() as cur:
-            cur.execute("UPDATE machining_force_analysis SET grid_octree_status='error', "
-                        "grid_octree_error=%s, updated_at=now() WHERE id=%s", [str(e)[:2000], row["id"]])
+            cur.execute(
+                "UPDATE machining_force_analysis SET grid_octree_status='error', "
+                "grid_octree_error=%s, updated_at=now() WHERE id=%s",
+                [str(e)[:2000], row["id"]],
+            )
         conn.commit()
         log.error("[GRID-ERR] %s", e)
         return "error"
@@ -869,10 +1053,14 @@ class Directus:
             if backoff:
                 time.sleep(backoff)
             try:
-                r = requests.post(f"{DIRECTUS_URL}/auth/login", json={
-                    "email": os.environ["DIRECTUS_ADMIN_EMAIL"],
-                    "password": os.environ.get("DIRECTUS_ADMIN_PASSWORD", ""),
-                }, timeout=30)
+                r = requests.post(
+                    f"{DIRECTUS_URL}/auth/login",
+                    json={
+                        "email": os.environ["DIRECTUS_ADMIN_EMAIL"],
+                        "password": os.environ.get("DIRECTUS_ADMIN_PASSWORD", ""),
+                    },
+                    timeout=30,
+                )
                 r.raise_for_status()
                 self._token = r.json()["data"]["access_token"]
                 return
@@ -890,15 +1078,23 @@ class Directus:
         """Get (or create) the FRM folder in directus_folders; cache its id."""
         if self._folder_id:
             return self._folder_id
-        q = requests.get(f"{DIRECTUS_URL}/folders", headers=self._hdr(),
-                         params={"filter[name][_eq]": FRM_FOLDER_NAME, "limit": 1}, timeout=30)
+        q = requests.get(
+            f"{DIRECTUS_URL}/folders",
+            headers=self._hdr(),
+            params={"filter[name][_eq]": FRM_FOLDER_NAME, "limit": 1},
+            timeout=30,
+        )
         q.raise_for_status()
         found = q.json().get("data") or []
         if found:
             self._folder_id = found[0]["id"]
         else:
-            c = requests.post(f"{DIRECTUS_URL}/folders", headers=self._hdr(),
-                              json={"name": FRM_FOLDER_NAME}, timeout=30)
+            c = requests.post(
+                f"{DIRECTUS_URL}/folders",
+                headers=self._hdr(),
+                json={"name": FRM_FOLDER_NAME},
+                timeout=30,
+            )
             c.raise_for_status()
             self._folder_id = c.json()["data"]["id"]
         return self._folder_id
@@ -907,15 +1103,23 @@ class Directus:
         """Get (or create) the live-cache folder in directus_folders; cache its id."""
         if self._cache_folder_id:
             return self._cache_folder_id
-        q = requests.get(f"{DIRECTUS_URL}/folders", headers=self._hdr(),
-                         params={"filter[name][_eq]": CACHE_FOLDER_NAME, "limit": 1}, timeout=30)
+        q = requests.get(
+            f"{DIRECTUS_URL}/folders",
+            headers=self._hdr(),
+            params={"filter[name][_eq]": CACHE_FOLDER_NAME, "limit": 1},
+            timeout=30,
+        )
         q.raise_for_status()
         found = q.json().get("data") or []
         if found:
             self._cache_folder_id = found[0]["id"]
         else:
-            c = requests.post(f"{DIRECTUS_URL}/folders", headers=self._hdr(),
-                              json={"name": CACHE_FOLDER_NAME}, timeout=30)
+            c = requests.post(
+                f"{DIRECTUS_URL}/folders",
+                headers=self._hdr(),
+                json={"name": CACHE_FOLDER_NAME},
+                timeout=30,
+            )
             c.raise_for_status()
             self._cache_folder_id = c.json()["data"]["id"]
         return self._cache_folder_id
@@ -929,11 +1133,15 @@ class Directus:
             if backoff:
                 time.sleep(backoff)
             try:
-                for attempt in (1, 2):            # retry once on token expiry
+                for attempt in (1, 2):  # retry once on token expiry
                     with open(path, "rb") as fh:
-                        r = requests.post(f"{DIRECTUS_URL}/files", headers=self._hdr(),
-                                          data={"title": title, "folder": folder},
-                                          files={"file": (Path(path).name, fh, mime)}, timeout=120)
+                        r = requests.post(
+                            f"{DIRECTUS_URL}/files",
+                            headers=self._hdr(),
+                            data={"title": title, "folder": folder},
+                            files={"file": (Path(path).name, fh, mime)},
+                            timeout=120,
+                        )
                     if r.status_code == 401 and attempt == 1:
                         self._token = None
                         continue
@@ -941,7 +1149,12 @@ class Directus:
                     return r.json()["data"]["id"]
             except requests.RequestException as e:
                 last_err = e
-                log.warning("upload attempt %d/3 for %s failed: %s", net_attempt, Path(path).name, e)
+                log.warning(
+                    "upload attempt %d/3 for %s failed: %s",
+                    net_attempt,
+                    Path(path).name,
+                    e,
+                )
         raise last_err
 
     def upload_frm(self, png_path: str, title: str) -> str | None:
@@ -954,14 +1167,18 @@ class Directus:
         """Upload the live-cache .bin (octet-stream) into the cache folder; return its id."""
         if not self.enabled:
             return None
-        return self._upload(bin_path, title, self._cache_folder(), "application/octet-stream")
+        return self._upload(
+            bin_path, title, self._cache_folder(), "application/octet-stream"
+        )
 
     def delete_file(self, file_id):
         """Best-effort delete of a superseded FRM file (keeps the folder tidy)."""
         if not self.enabled or not file_id:
             return
         try:
-            requests.delete(f"{DIRECTUS_URL}/files/{file_id}", headers=self._hdr(), timeout=30)
+            requests.delete(
+                f"{DIRECTUS_URL}/files/{file_id}", headers=self._hdr(), timeout=30
+            )
         except requests.RequestException:
             pass
 
@@ -971,9 +1188,11 @@ def _num(v):
     """None/NaN/'' -> None; else the value (Postgres NUMERIC/BIGINT/TIMESTAMPTZ tolerate the rest)."""
     if v is None:
         return None
-    if isinstance(v, float) and v != v:          # NaN
+    if isinstance(v, float) and v != v:  # NaN
         return None
-    if isinstance(v, str) and v == "":           # e.g. trigger_time absent from the .mat metadata
+    if (
+        isinstance(v, str) and v == ""
+    ):  # e.g. trigger_time absent from the .mat metadata
         return None
     return v
 
@@ -982,13 +1201,14 @@ def ingest(conn, row, res, frm_ids, mrelease):
     s = res["summary"]
     if res["status"] == "done":
         vals = {c: _num(s.get(SUMMARY_ALIASES.get(c, c))) for c in SUMMARY_COLS}
-        series = (Path(res["outdir"]) / "series.json")
-        fft = (Path(res["outdir"]) / "fft.json")
+        series = Path(res["outdir"]) / "series.json"
+        fft = Path(res["outdir"]) / "fft.json"
         series_txt = series.read_text(encoding="utf-8") if series.exists() else None
         fft_txt = fft.read_text(encoding="utf-8") if fft.exists() else None
         set_cols = ", ".join(f"{c}=%s" for c in SUMMARY_COLS)
         with conn.cursor() as cur:
-            cur.execute(f"""
+            cur.execute(
+                f"""
                 UPDATE machining_force_analysis SET
                     status='done', error_message=NULL, {set_cols},
                     series=%s::jsonb, fft=%s::jsonb,
@@ -996,18 +1216,31 @@ def ingest(conn, row, res, frm_ids, mrelease):
                     live_render_points=NULL,
                     fingerprint=%s, matlab_version=%s, processed_at=now(), updated_at=now()
                 WHERE id=%s
-            """, [*[vals[c] for c in SUMMARY_COLS], series_txt, fft_txt,
-                  frm_ids.get("frm_fx"), frm_ids.get("frm_fy"), frm_ids.get("frm_fz"),
-                  frm_ids.get("live_cache_file"),
-                  row["fingerprint"], mrelease, row["id"]])
+            """,
+                [
+                    *[vals[c] for c in SUMMARY_COLS],
+                    series_txt,
+                    fft_txt,
+                    frm_ids.get("frm_fx"),
+                    frm_ids.get("frm_fy"),
+                    frm_ids.get("frm_fz"),
+                    frm_ids.get("live_cache_file"),
+                    row["fingerprint"],
+                    mrelease,
+                    row["id"],
+                ],
+            )
     else:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 UPDATE machining_force_analysis
                    SET status='error', error_message=%s, matlab_version=%s,
                        live_render_points=NULL, processed_at=now(), updated_at=now()
                  WHERE id=%s
-            """, [res["message"][:2000], mrelease, row["id"]])
+            """,
+                [res["message"][:2000], mrelease, row["id"]],
+            )
     conn.commit()
 
 
@@ -1041,22 +1274,33 @@ def process_batch(conn, args, exe, mrelease, directus, batch_size, on_progress=N
                         png = Path(res["outdir"]) / f"frm_{ax}.png"
                         if png.exists():
                             frm_ids[f"frm_{ax.lower()}"] = directus.upload_frm(
-                                str(png), f"FRM {ax} — {stem}")
+                                str(png), f"FRM {ax} — {stem}"
+                            )
                     cache = Path(res["outdir"]) / "live_cache.bin"
                     if cache.exists():
                         frm_ids["live_cache_file"] = directus.upload_cache(
-                            str(cache), f"Live cache — {stem}")
+                            str(cache), f"Live cache — {stem}"
+                        )
                 ingest(conn, r, res, frm_ids, mrelease)
-                if res["status"] == "done":          # delete superseded FRM + cache files
+                if res["status"] == "done":  # delete superseded FRM + cache files
                     new = set(frm_ids.values())
-                    for old in (r.get("old_fx"), r.get("old_fy"), r.get("old_fz"), r.get("old_cache")):
+                    for old in (
+                        r.get("old_fx"),
+                        r.get("old_fy"),
+                        r.get("old_fz"),
+                        r.get("old_cache"),
+                    ):
                         if old and old not in new:
                             directus.delete_file(old)
                 done += 1 if res["status"] == "done" else 0
                 errors += 1 if res["status"] != "done" else 0
                 tag = res["status"].upper()
-                log.info("[%s] %s%s", tag, r["archive_path"],
-                         "" if res["status"] == "done" else f" — {res['message']}")
+                log.info(
+                    "[%s] %s%s",
+                    tag,
+                    r["archive_path"],
+                    "" if res["status"] == "done" else f" — {res['message']}",
+                )
                 if on_progress:
                     on_progress(r["archive_path"], res["status"])
             except Exception as e:  # noqa: BLE001
@@ -1069,9 +1313,11 @@ def process_batch(conn, args, exe, mrelease, directus, batch_size, on_progress=N
                 log.exception("post-process failed for %s: %s", r["archive_path"], e)
                 try:
                     with conn.cursor() as cur:
-                        cur.execute("UPDATE machining_force_analysis SET status='error', "
-                                    "error_message=%s, updated_at=now() WHERE id=%s",
-                                    [f"post-process error: {e}"[:2000], r["id"]])
+                        cur.execute(
+                            "UPDATE machining_force_analysis SET status='error', "
+                            "error_message=%s, updated_at=now() WHERE id=%s",
+                            [f"post-process error: {e}"[:2000], r["id"]],
+                        )
                     conn.commit()
                 except Exception:  # noqa: BLE001
                     try:
@@ -1089,15 +1335,21 @@ def process_batch(conn, args, exe, mrelease, directus, batch_size, on_progress=N
 def run_queue(conn, args, exe, mrelease):
     directus = Directus()
     if not directus.enabled:
-        log.warning("DIRECTUS_ADMIN_EMAIL unset — FRM PNGs will not be uploaded (frm_file stays NULL)")
+        log.warning(
+            "DIRECTUS_ADMIN_EMAIL unset — FRM PNGs will not be uploaded (frm_file stays NULL)"
+        )
 
-    handle_renders(conn, exe, directus)   # process any pending viewport-download renders
-    handle_octrees(conn, exe)             # build any pending Potree octrees
-    handle_grids(conn, exe)               # build any pending interpolated-grid octrees
+    handle_renders(conn, exe, directus)  # process any pending viewport-download renders
+    handle_octrees(conn, exe)  # build any pending Potree octrees
+    handle_grids(conn, exe)  # build any pending interpolated-grid octrees
 
     total = 0
     while True:
-        batch = min(args.workers * 2, args.limit - total) if args.limit else args.workers * 2
+        batch = (
+            min(args.workers * 2, args.limit - total)
+            if args.limit
+            else args.workers * 2
+        )
         if batch <= 0:
             break
         done, errors = process_batch(conn, args, exe, mrelease, directus, batch)
@@ -1113,6 +1365,7 @@ def run_queue(conn, args, exe, mrelease):
 # ------------------------------------------------------------------------- daemon
 class _DaemonArgs:
     """Adapts a force_crawler_state DB row to the attrs claim_batch()/process_batch() expect."""
+
     def __init__(self, row):
         self.workers = max(1, int(row["workers"] or 1))
         self.throttle = float(row["throttle_seconds"] or 0)
@@ -1126,7 +1379,9 @@ class _DaemonArgs:
 
 def _load_state(conn):
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("SELECT * FROM force_crawler_state WHERE id = '00000000-0000-0000-0000-000000000001'")
+        cur.execute(
+            "SELECT * FROM force_crawler_state WHERE id = '00000000-0000-0000-0000-000000000001'"
+        )
         return cur.fetchone()
 
 
@@ -1139,8 +1394,11 @@ def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
         log.warning("DIRECTUS_ADMIN_EMAIL unset — FRM PNGs will not be uploaded")
     pid = os.getpid()
     with conn.cursor() as cur:
-        cur.execute("UPDATE force_crawler_state SET daemon_pid=%s, daemon_started_at=now() "
-                    "WHERE id='00000000-0000-0000-0000-000000000001'", [pid])
+        cur.execute(
+            "UPDATE force_crawler_state SET daemon_pid=%s, daemon_started_at=now() "
+            "WHERE id='00000000-0000-0000-0000-000000000001'",
+            [pid],
+        )
     conn.commit()
     log.info("daemon started (pid=%d); polling force_crawler_state", pid)
 
@@ -1151,8 +1409,11 @@ def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
         """Best-effort status write — never let a failure here cascade into the caller."""
         try:
             with conn.cursor() as cur:
-                cur.execute("UPDATE force_crawler_state SET current_activity=%s, last_heartbeat_at=now() "
-                            "WHERE id='00000000-0000-0000-0000-000000000001'", [activity[:900]])
+                cur.execute(
+                    "UPDATE force_crawler_state SET current_activity=%s, last_heartbeat_at=now() "
+                    "WHERE id='00000000-0000-0000-0000-000000000001'",
+                    [activity[:900]],
+                )
             conn.commit()
         except Exception:  # noqa: BLE001
             try:
@@ -1171,7 +1432,9 @@ def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
             try:
                 state = _load_state(conn)
                 if state is None:
-                    log.error("force_crawler_state row missing; re-run the migration. Retrying in 30s.")
+                    log.error(
+                        "force_crawler_state row missing; re-run the migration. Retrying in 30s."
+                    )
                     time.sleep(30)
                     continue
 
@@ -1200,12 +1463,14 @@ def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
                     mark("discovering")
                     reset_stale_processing(conn)
                     n = discover(conn, dargs)
-                    enqueue_pregen_octrees(conn)   # pre-build octrees for big ops
-                    enqueue_pregen_grids(conn)     # + grid octrees when grid_pregen is on
+                    enqueue_pregen_octrees(conn)  # pre-build octrees for big ops
+                    enqueue_pregen_grids(conn)  # + grid octrees when grid_pregen is on
                     last_discover = time.time()
                     with conn.cursor() as cur:
-                        cur.execute("UPDATE force_crawler_state SET last_discover_at=now() "
-                                    "WHERE id='00000000-0000-0000-0000-000000000001'")
+                        cur.execute(
+                            "UPDATE force_crawler_state SET last_discover_at=now() "
+                            "WHERE id='00000000-0000-0000-0000-000000000001'"
+                        )
                     conn.commit()
                     if n:
                         log.info("daemon discover: %d row(s) enqueued/reset", n)
@@ -1220,12 +1485,19 @@ def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
                         session_errors += 1
                     try:
                         with conn.cursor() as cur:
-                            cur.execute("""
+                            cur.execute(
+                                """
                                 UPDATE force_crawler_state
                                    SET current_activity=%s, processed_count=%s, error_count=%s,
                                        last_heartbeat_at=now(), updated_at=now()
                                  WHERE id='00000000-0000-0000-0000-000000000001'
-                            """, [f"{status}: {path}"[:900], session_done, session_errors])
+                            """,
+                                [
+                                    f"{status}: {path}"[:900],
+                                    session_done,
+                                    session_errors,
+                                ],
+                            )
                         conn.commit()
                     except Exception:  # noqa: BLE001
                         try:
@@ -1233,8 +1505,15 @@ def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
                         except Exception:  # noqa: BLE001
                             pass
 
-                done, errors = process_batch(conn, dargs, exe, mrelease, directus,
-                                              dargs.workers * 2, on_progress=on_progress)
+                done, errors = process_batch(
+                    conn,
+                    dargs,
+                    exe,
+                    mrelease,
+                    directus,
+                    dargs.workers * 2,
+                    on_progress=on_progress,
+                )
                 if done + errors == 0:
                     mark("idle (queue empty)")
                     time.sleep(10)
@@ -1255,32 +1534,69 @@ def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--discover", action="store_true", help="scan + enqueue pending rows")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--discover", action="store_true", help="scan + enqueue pending rows"
+    )
     ap.add_argument("--run", action="store_true", help="process pending rows")
-    ap.add_argument("--reprocess", action="store_true", help="on discover, reset all matching rows to pending")
-    ap.add_argument("--retry-errors", action="store_true", help="on discover, requeue rows in 'error'")
-    ap.add_argument("--file-like", help="scope: archive_path ILIKE pattern, e.g. '%%10-AA-MF%%'")
-    ap.add_argument("--op-code", help="scope: manufacturing_operations.operation_code ILIKE pattern")
+    ap.add_argument(
+        "--reprocess",
+        action="store_true",
+        help="on discover, reset all matching rows to pending",
+    )
+    ap.add_argument(
+        "--retry-errors",
+        action="store_true",
+        help="on discover, requeue rows in 'error'",
+    )
+    ap.add_argument(
+        "--file-like", help="scope: archive_path ILIKE pattern, e.g. '%%10-AA-MF%%'"
+    )
+    ap.add_argument(
+        "--op-code", help="scope: manufacturing_operations.operation_code ILIKE pattern"
+    )
     ap.add_argument("--file-id", help="scope: a single directus_files id")
-    ap.add_argument("--workers", type=int, default=1, help="parallel MATLAB processes (default 1)")
-    ap.add_argument("--throttle", type=float, default=0.0, help="seconds to wait between launches")
-    ap.add_argument("--limit", type=int, default=0, help="max files to process this run (0 = all)")
-    ap.add_argument("--timeout", type=int, default=1800, help="per-file MATLAB timeout, seconds")
-    ap.add_argument("--dry-run", action="store_true", help="discover only; report the queue, process nothing")
-    ap.add_argument("--daemon", action="store_true",
-                    help="run forever, polling force_crawler_state for live settings/start-stop "
-                         "(for the d1-force-crawler admin module)")
-    ap.add_argument("--discover-every", type=int, default=300,
-                    help="daemon: seconds between automatic discover passes (default 300)")
+    ap.add_argument(
+        "--workers", type=int, default=1, help="parallel MATLAB processes (default 1)"
+    )
+    ap.add_argument(
+        "--throttle", type=float, default=0.0, help="seconds to wait between launches"
+    )
+    ap.add_argument(
+        "--limit", type=int, default=0, help="max files to process this run (0 = all)"
+    )
+    ap.add_argument(
+        "--timeout", type=int, default=1800, help="per-file MATLAB timeout, seconds"
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="discover only; report the queue, process nothing",
+    )
+    ap.add_argument(
+        "--daemon",
+        action="store_true",
+        help="run forever, polling force_crawler_state for live settings/start-stop "
+        "(for the d1-force-crawler admin module)",
+    )
+    ap.add_argument(
+        "--discover-every",
+        type=int,
+        default=300,
+        help="daemon: seconds between automatic discover passes (default 300)",
+    )
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
-                        format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
     if not (args.discover or args.run or args.daemon):
-        args.discover = args.run = True         # default: both phases
+        args.discover = args.run = True  # default: both phases
 
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
@@ -1298,11 +1614,16 @@ def main() -> int:
         if args.discover:
             reset_stale_processing(conn)
             discover(conn, args)
-            enqueue_pregen_octrees(conn)   # pre-build octrees for big ops
-            enqueue_pregen_grids(conn)     # + grid octrees when grid_pregen is on
+            enqueue_pregen_octrees(conn)  # pre-build octrees for big ops
+            enqueue_pregen_grids(conn)  # + grid octrees when grid_pregen is on
         with conn.cursor() as cur:
-            cur.execute("SELECT status, count(*) FROM machining_force_analysis GROUP BY status ORDER BY status")
-            log.info("queue: %s", ", ".join(f"{k}={v}" for k, v in cur.fetchall()) or "(empty)")
+            cur.execute(
+                "SELECT status, count(*) FROM machining_force_analysis GROUP BY status ORDER BY status"
+            )
+            log.info(
+                "queue: %s",
+                ", ".join(f"{k}={v}" for k, v in cur.fetchall()) or "(empty)",
+            )
         if args.run and not args.dry_run:
             run_queue(conn, args, exe, mrelease)
     finally:

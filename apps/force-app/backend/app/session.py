@@ -1,5 +1,6 @@
 """RecordingSession — owns one run's lifecycle: source → ring → consumers → live frames, then
 finalize on stop/completion. State machine: idle → recording → finalizing → done (or error)."""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +8,6 @@ import os
 import threading
 import time
 import uuid
-from typing import Optional
 
 import numpy as np
 from scipy import signal as ssig
@@ -21,37 +21,49 @@ from .finalize import finalize
 from .stream.broadcast import Broadcaster
 from .stream.frame import encode_frame
 
+# The 8 dyno sub-channels in raw-file column order (data[:, :8]) — matches the client SUB_NAMES.
+SUB_NAMES = ["Fx1", "Fx2", "Fy1", "Fy2", "Fz1", "Fz2", "Fz3", "Fz4"]
+
 
 class RecordingSession:
-    def __init__(self, cfg: RecordConfig, captures_root: str, source,
-                 broadcaster: Optional[Broadcaster] = None):
+    def __init__(
+        self, cfg: RecordConfig, captures_root: str, source, broadcaster: Broadcaster | None = None
+    ):
         self.cfg = cfg
         self.id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
         self.dir = os.path.join(captures_root, self.id)
         os.makedirs(self.dir, exist_ok=True)
         self.broadcaster = broadcaster
         self.state = "idle"
-        self.error: Optional[str] = None
-        self.summary: Optional[dict] = None
+        self.error: str | None = None
+        self.summary: dict | None = None
         self.n_total = 0
         self.peaks = [0.0, 0.0, 0.0]
         self._t_last = 0.0
 
         self.source = source  # SimSource or ReplaySource (any AcquisitionSource)
         self.ring = Ring(maxsize=128)
-        self.raw = RawWriter(os.path.join(self.dir, "raw.d1raw"),
-                             n_cols=1 + len(self.source.channels), rate=self.source.rate,
-                             start_unix=time.time())
+        self.raw = RawWriter(
+            os.path.join(self.dir, "raw.d1raw"),
+            n_cols=1 + len(self.source.channels),
+            rate=self.source.rate,
+            start_unix=time.time(),
+        )
         self.decimator = Decimator(bins=2)
         self.frm = FrmIntegrator(cfg)
         self.cut = CutDetector(cfg, self.source.rate)
-        self.cut_started_t: Optional[float] = None
+        self.cut_started_t: float | None = None
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
-        # Rolling window of the FRM axis (summed) for a live FFT, plus a wall-clock throttle.
+        # Rolling windows per channel for the live spectra (per-channel FFT / power / spectrogram /
+        # waterfall), plus a wall-clock throttle. We keep the 3 summed axes AND the 8 dyno
+        # sub-channels so the client can draw a spectrum for any selected channel, like the force.
         self._fft_axis = cfg.axis if cfg.axis in ("Fx", "Fy", "Fz") else "Fz"
-        self._fft_buf = np.zeros(0, dtype=np.float64)
+        self._fft_names = ["Fx", "Fy", "Fz", *SUB_NAMES]
+        self._fft_bufs: dict[str, np.ndarray] = {
+            n: np.zeros(0, dtype=np.float64) for n in self._fft_names
+        }
         self._fft_cap = int(max(2048, min(200_000, self.source.rate)))  # ~1 s, bounded
         self._fft_last = 0.0
 
@@ -71,7 +83,9 @@ class RecordingSession:
     def _run(self) -> None:
         # Start the consumer FIRST so it's always joinable — if source.start() raises (e.g. an
         # invalid NI-DAQ device), ring.close() below unblocks it cleanly.
-        consumer = threading.Thread(target=self._consume, name=f"rec-consume-{self.id}", daemon=True)
+        consumer = threading.Thread(
+            target=self._consume, name=f"rec-consume-{self.id}", daemon=True
+        )
         consumer.start()
         try:
             self.source.start()
@@ -99,8 +113,15 @@ class RecordingSession:
             else:
                 # Nothing captured (e.g. the source failed to start) — don't finalize an empty file.
                 self.state = "error" if self.error else "done"
-            self._publish_control({"type": "done", "id": self.id, "state": self.state,
-                                   "error": self.error, "summary": self.summary})
+            self._publish_control(
+                {
+                    "type": "done",
+                    "id": self.id,
+                    "state": self.state,
+                    "error": self.error,
+                    "summary": self.summary,
+                }
+            )
 
     def _consume(self) -> None:
         seq = 0
@@ -109,46 +130,78 @@ class RecordingSession:
             if item is None:
                 break
             t, data = item
-            self.raw.append(t, data)                  # never dropped — source of truth
+            self.raw.append(t, data)  # never dropped — source of truth
             axes = sum_axes(data)
             for i, ax in enumerate(("Fx", "Fy", "Fz")):
                 self.peaks[i] = max(self.peaks[i], float(np.max(np.abs(axes[ax]))))
-            # Causal cut-start detection: reset the FRM spiral origin + tell the UI when the cut begins.
+            # Causal cut-start detection: reset the FRM spiral origin + tell the UI when it begins.
             ct = self.cut.update(t, np.abs(axes["Fz"]))
             if ct is not None:
                 self.cut_started_t = ct
                 self.frm.mark_cut_start()
                 self._publish_control({"type": "cutstart", "t": ct})
             trace = self.decimator.process(t, axes)
+            # Per-sub-channel envelopes (the 8 dyno columns) so the client can plot any single
+            # sensor live, not just the summed axes.
+            sub = self.decimator.process_cols(t, np.asarray(data[:, :8], dtype=np.float64))
             pts, rpm = self.frm.process(t, axes, tacho_column(data))
             self.n_total += t.size
             self._t_last = float(t[-1])
             if self.broadcaster is not None:
-                frame = encode_frame(seq, self._t_last, rpm, tuple(self.peaks), self.n_total, trace, pts)
+                frame = encode_frame(
+                    seq, self._t_last, rpm, tuple(self.peaks), self.n_total, trace, pts, sub=sub
+                )
                 self.broadcaster.publish(frame)
-            self._update_fft(axes)
+            self._update_fft(axes, data)
             seq += 1
 
-    def _update_fft(self, axes: dict) -> None:
-        """Maintain a rolling window of the FRM axis and publish a Welch spectrum a few times a
-        second (a JSON control message) for the live FFT view."""
+    def _update_fft(self, axes: dict, data: np.ndarray) -> None:
+        """Maintain per-channel rolling windows and publish their Welch amplitude spectra a few
+        times a second (a JSON control message). The client draws a spectrum per selected channel
+        and accumulates the frames into the spectrogram/waterfall views — only the current spectra
+        cross the wire. `axis`/`amp` are kept for back-compat with the old single-axis view."""
         if self.broadcaster is None:
             return
-        y = axes.get(self._fft_axis)
-        if y is None:
-            return
-        self._fft_buf = np.concatenate([self._fft_buf, y])[-self._fft_cap:]
+        for n in ("Fx", "Fy", "Fz"):
+            y = axes.get(n)
+            if y is not None:
+                self._fft_bufs[n] = np.concatenate([self._fft_bufs[n], y])[-self._fft_cap :]
+        subcols = np.asarray(data[:, :8], dtype=np.float64)
+        for j, n in enumerate(SUB_NAMES):
+            if j < subcols.shape[1]:
+                self._fft_bufs[n] = np.concatenate([self._fft_bufs[n], subcols[:, j]])[
+                    -self._fft_cap :
+                ]
         now = time.perf_counter()
-        if now - self._fft_last < 0.3 or self._fft_buf.size < 256:
+        if now - self._fft_last < 0.3 or self._fft_bufs[self._fft_axis].size < 256:
             return
         self._fft_last = now
         fs = float(self.source.rate)
-        nper = int(min(self._fft_buf.size, 4096))
-        f, p = ssig.welch(self._fft_buf, fs=fs, nperseg=nper)
-        amp = np.sqrt(p)
+        nper = int(min(self._fft_bufs[self._fft_axis].size, 4096))
+        f: np.ndarray | None = None
+        spectra: dict[str, list[float]] = {}
+        for n in self._fft_names:
+            buf = self._fft_bufs[n]
+            if buf.size < 256:
+                continue
+            f, p = ssig.welch(buf, fs=fs, nperseg=nper)
+            spectra[n] = p  # power spectral density; client takes sqrt for amplitude if wanted
+        if f is None:
+            return
         step = max(1, f.size // 240)
-        self._publish_control({"type": "fft", "axis": self._fft_axis,
-                               "f": f[::step].round(2).tolist(), "amp": amp[::step].tolist()})
+        fout = f[::step].round(2).tolist()
+        # amplitude (sqrt of PSD), decimated, per channel — compact enough for ~3 Hz over the WS.
+        spectra_out = {n: np.sqrt(p[::step]).round(4).tolist() for n, p in spectra.items()}
+        self._publish_control(
+            {
+                "type": "fft",
+                "fs": fs,
+                "f": fout,
+                "spectra": spectra_out,
+                "axis": self._fft_axis,  # back-compat
+                "amp": spectra_out.get(self._fft_axis, []),  # back-compat
+            }
+        )
 
     def _publish_control(self, msg: dict) -> None:
         if self.broadcaster is not None:
@@ -157,8 +210,11 @@ class RecordingSession:
     # ---- status ----
     def status(self) -> dict:
         return {
-            "id": self.id, "state": self.state, "error": self.error,
-            "elapsed_sec": round(self._t_last, 3), "n_total": self.n_total,
+            "id": self.id,
+            "state": self.state,
+            "error": self.error,
+            "elapsed_sec": round(self._t_last, 3),
+            "n_total": self.n_total,
             "peaks": {"Fx": self.peaks[0], "Fy": self.peaks[1], "Fz": self.peaks[2]},
             "config": self.cfg.model_dump(),
         }

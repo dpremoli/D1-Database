@@ -1,8 +1,9 @@
 """SimSource shape/profile, Decimator envelope, FrmIntegrator continuity."""
+
 import numpy as np
 
 from app.acquisition.consumers import Decimator, FrmIntegrator
-from app.config import RecordConfig, SIGNAL_CHANNELS
+from app.config import SIGNAL_CHANNELS, RecordConfig
 from app.dsp import sum_axes, tacho_column
 from app.sources.sim import SimSource
 

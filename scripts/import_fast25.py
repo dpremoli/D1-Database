@@ -18,6 +18,7 @@ Usage:
     DATABASE_URL=… python scripts/import_fast25.py "…/FAST Machines Data" [--dry-run]
     (needs the pure-Python 'access-parser'; run with the real interpreter, e.g. `py`)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -41,7 +42,7 @@ _NS = uuid.uuid5(uuid.NAMESPACE_DNS, "d1-database.fast-25.v1")
 
 MDB_REL = os.path.join("FAST 25", "ECS2000", "Data", "ECS_Analysis.MDB")
 PROG_REL = os.path.join("FAST 25", "ECS2000", "Recipes", "1001", "ECS_Prog.mdb")
-EMD_PREFIX = "FAST 25/ECS2000/Data"   # + FileName + .EMD (data-root-relative, POSIX)
+EMD_PREFIX = "FAST 25/ECS2000/Data"  # + FileName + .EMD (data-root-relative, POSIX)
 
 
 def uid_for(vnr) -> str:
@@ -77,6 +78,7 @@ def mass_grams(v) -> float | None:
 
 def parse_dt(datev, timev) -> datetime | None:
     """Combine Versuch StartDate (date) + StartTime (epoch-dated time) -> datetime."""
+
     def to_dt(x):
         if isinstance(x, datetime):
             return x
@@ -91,6 +93,7 @@ def parse_dt(datev, timev) -> datetime | None:
             except ValueError:
                 continue
         return None
+
     d = to_dt(datev)
     t = to_dt(timev)
     if d is None:
@@ -118,6 +121,7 @@ def emd_rel(filename) -> str | None:
 def read_recipes(data_root: str) -> list[dict]:
     """ECS_Prog.mdb::Rezept -> fast_recipes rows for machine '25'."""
     from access_parser import AccessParser
+
     db = AccessParser(os.path.join(data_root, PROG_REL))
     r = db.parse_table("Rezept")
     # Rezept holds more rows than distinct ProgrammNr (variants per Anlage/InstrClass), so
@@ -148,6 +152,7 @@ def read_recipes(data_root: str) -> list[dict]:
 
 def read_versuch(data_root: str) -> list[dict]:
     from access_parser import AccessParser
+
     db = AccessParser(os.path.join(data_root, MDB_REL))
     v = db.parse_table("Versuch")
     n = len(v["VersuchNr"])
@@ -161,28 +166,30 @@ def read_versuch(data_root: str) -> list[dict]:
             continue
         operator_disp, owner_email, raw_user = fm.parse_user(_s(v["Daten1"][i]))
         material_text = _s(v["Daten3"][i])
-        ops.append({
-            "run_no": vnr,
-            "source_run_uid": uid_for(vnr),
-            "operation_id": op_id_for(vnr),
-            "operation_date": start,
-            "operator_disp": operator_disp,
-            "operator_name": raw_user,
-            "owner_email": owner_email,
-            "material_code": fm.match_material(material_text),
-            "material_text": material_text,
-            "recipe_title": _s(v["Bezeichnung"][i]),
-            "program_nr": frx.program_nr_from_bezeichnung(_s(v["Bezeichnung"][i])),
-            "batch": _s(v["Daten8"][i]),
-            "temp_c": first_num(v["Daten2"][i]),
-            "force_kn": first_num(v["Daten4"][i]),
-            "mould_mm": first_num(v["Daten7"][i]),
-            "mass_g": mass_grams(v["Daten9"][i]),
-            "atmosphere": _s(v["Daten5"][i]),
-            "tc_pyro": _s(v["Daten6"][i]),
-            "notes": clean_note(v["Bemerkung"][i]),
-            "emd_rel": emd_rel(v["FileName"][i]),
-        })
+        ops.append(
+            {
+                "run_no": vnr,
+                "source_run_uid": uid_for(vnr),
+                "operation_id": op_id_for(vnr),
+                "operation_date": start,
+                "operator_disp": operator_disp,
+                "operator_name": raw_user,
+                "owner_email": owner_email,
+                "material_code": fm.match_material(material_text),
+                "material_text": material_text,
+                "recipe_title": _s(v["Bezeichnung"][i]),
+                "program_nr": frx.program_nr_from_bezeichnung(_s(v["Bezeichnung"][i])),
+                "batch": _s(v["Daten8"][i]),
+                "temp_c": first_num(v["Daten2"][i]),
+                "force_kn": first_num(v["Daten4"][i]),
+                "mould_mm": first_num(v["Daten7"][i]),
+                "mass_g": mass_grams(v["Daten9"][i]),
+                "atmosphere": _s(v["Daten5"][i]),
+                "tc_pyro": _s(v["Daten6"][i]),
+                "notes": clean_note(v["Bemerkung"][i]),
+                "emd_rel": emd_rel(v["FileName"][i]),
+            }
+        )
     return ops
 
 
@@ -198,18 +205,35 @@ def main() -> None:
     with_emd = sum(1 for o in ops if o["emd_rel"])
     this_year = date.today().year
     bad = [o for o in ops if not (2005 <= o["operation_date"].year <= this_year + 1)]
-    print(f"FAST 25: {len(ops)} operations  (material linked {linked_mat}, "
-          f"owner linked {linked_owner}, EMD path {with_emd})")
+    print(
+        f"FAST 25: {len(ops)} operations  (material linked {linked_mat}, "
+        f"owner linked {linked_owner}, EMD path {with_emd})"
+    )
     if bad:
-        print(f"  WARNING: {len(bad)} implausible dates (kept, review):",
-              ", ".join(str(o["operation_date"].date()) for o in bad[:8]))
+        print(
+            f"  WARNING: {len(bad)} implausible dates (kept, review):",
+            ", ".join(str(o["operation_date"].date()) for o in bad[:8]),
+        )
 
     if args.dry_run:
         print("\n[dry-run] sample of 3:")
         for o in ops[:3]:
-            print("   ", {k: o[k] for k in ("run_no", "operation_date", "recipe_title",
-                                            "material_code", "temp_c", "force_kn", "mass_g",
-                                            "emd_rel")})
+            print(
+                "   ",
+                {
+                    k: o[k]
+                    for k in (
+                        "run_no",
+                        "operation_date",
+                        "recipe_title",
+                        "material_code",
+                        "temp_c",
+                        "force_kn",
+                        "mass_g",
+                        "emd_rel",
+                    )
+                },
+            )
         return
 
     dsn = os.environ.get("DATABASE_URL") or sys.exit("ERROR: DATABASE_URL required")
@@ -230,7 +254,10 @@ def main() -> None:
     op_to_id = {n: i for n, i in cur.fetchall()}
     for name in sorted({o["operator_disp"] for o in ops if o["operator_disp"]}):
         if name not in op_to_id:
-            cur.execute('INSERT INTO "Machine_Operators" ("Name") VALUES (%s) RETURNING id', (name,))
+            cur.execute(
+                'INSERT INTO "Machine_Operators" ("Name") VALUES (%s) RETURNING id',
+                (name,),
+            )
             op_to_id[name] = cur.fetchone()[0]
 
     cur.execute("SELECT email, id FROM directus_users")
@@ -253,46 +280,100 @@ def main() -> None:
         "  target_temp_c=EXCLUDED.target_temp_c, target_force_kn=EXCLUDED.target_force_kn, "
         "  hold_time_min=EXCLUDED.hold_time_min, params=EXCLUDED.params, "
         "  date_changed=EXCLUDED.date_changed, updated_at=now()",
-        [(r["id"], r["machine"], r["program_nr"], r["name"], r["group_name"], r["source_file"],
-          r.get("target_temp_c"), r.get("target_force_kn"), r.get("hold_time_min"),
-          psycopg2.extras.Json(r["params"]), r["date_created"], r["date_changed"])
-         for r in recipes],
+        [
+            (
+                r["id"],
+                r["machine"],
+                r["program_nr"],
+                r["name"],
+                r["group_name"],
+                r["source_file"],
+                r.get("target_temp_c"),
+                r.get("target_force_kn"),
+                r.get("hold_time_min"),
+                psycopg2.extras.Json(r["params"]),
+                r["date_created"],
+                r["date_changed"],
+            )
+            for r in recipes
+        ],
         page_size=500,
     )
     print(f"upserted {len(recipes)} FAST 25 recipes")
     by_prog = {r["program_nr"]: r["id"] for r in recipes}
 
     cols = [
-        "operation_id", "method_id", "equipment_id", "process_category",
-        "source_run_uid", "source_system", "operation_date",
-        "operator", "operator_name", "owner", "material_id",
-        "sintering_recipe_number", "fast_recipe_id",
-        "sintering_batch_number", "sintering_mass_grams",
-        "sintering_mould_diameter_mm", "sintering_atmosphere", "sintering_tc_pyro_control",
-        "sintering_max_force_kn", "sintering_max_temp_celsius",
-        "sintering_material_type_note", "outcome_notes",
+        "operation_id",
+        "method_id",
+        "equipment_id",
+        "process_category",
+        "source_run_uid",
+        "source_system",
+        "operation_date",
+        "operator",
+        "operator_name",
+        "owner",
+        "material_id",
+        "sintering_recipe_number",
+        "fast_recipe_id",
+        "sintering_batch_number",
+        "sintering_mass_grams",
+        "sintering_mould_diameter_mm",
+        "sintering_atmosphere",
+        "sintering_tc_pyro_control",
+        "sintering_max_force_kn",
+        "sintering_max_temp_celsius",
+        "sintering_material_type_note",
+        "outcome_notes",
     ]
-    values = [(
-        o["operation_id"], METHOD_MF, EQUIP_25, "sintering",
-        o["source_run_uid"], SOURCE_SYSTEM, o["operation_date"],
-        op_to_id.get(o["operator_disp"]), o["operator_name"],
-        resolve_owner(o),
-        code_to_mat.get(o["material_code"]) if o["material_code"] else None,
-        o["recipe_title"], by_prog.get(o["program_nr"]),
-        o["batch"], o["mass_g"], o["mould_mm"],
-        o["atmosphere"], o["tc_pyro"], o["force_kn"], o["temp_c"],
-        o["material_text"], o["notes"],
-    ) for o in ops]
+    values = [
+        (
+            o["operation_id"],
+            METHOD_MF,
+            EQUIP_25,
+            "sintering",
+            o["source_run_uid"],
+            SOURCE_SYSTEM,
+            o["operation_date"],
+            op_to_id.get(o["operator_disp"]),
+            o["operator_name"],
+            resolve_owner(o),
+            code_to_mat.get(o["material_code"]) if o["material_code"] else None,
+            o["recipe_title"],
+            by_prog.get(o["program_nr"]),
+            o["batch"],
+            o["mass_g"],
+            o["mould_mm"],
+            o["atmosphere"],
+            o["tc_pyro"],
+            o["force_kn"],
+            o["temp_c"],
+            o["material_text"],
+            o["notes"],
+        )
+        for o in ops
+    ]
 
-    update_cols = [c for c in cols if c not in ("operation_id", "source_run_uid", "method_id",
-                                                "process_category", "source_system")]
+    update_cols = [
+        c
+        for c in cols
+        if c
+        not in (
+            "operation_id",
+            "source_run_uid",
+            "method_id",
+            "process_category",
+            "source_system",
+        )
+    ]
     set_clause = ", ".join(f"{c}=EXCLUDED.{c}" for c in update_cols)
     psycopg2.extras.execute_values(
         cur,
         f"INSERT INTO manufacturing_operations ({', '.join(cols)}) VALUES %s "
         f"ON CONFLICT (source_run_uid) WHERE source_run_uid IS NOT NULL "
         f"DO UPDATE SET {set_clause}, updated_at=now()",
-        values, page_size=500,
+        values,
+        page_size=500,
     )
     # Enqueue the per-run EMD trace for decoding by fast_orchestrator (fast_his.decode_emd).
     # Guard IS DISTINCT FROM 'done' so re-runs don't re-drain finished traces.
@@ -308,7 +389,9 @@ def main() -> None:
         page_size=500,
     )
     conn.commit()
-    print(f"upserted {len(values)} FAST 25 operations; enqueued {len(enq)} EMD traces (pending)")
+    print(
+        f"upserted {len(values)} FAST 25 operations; enqueued {len(enq)} EMD traces (pending)"
+    )
     cur.close()
     conn.close()
 

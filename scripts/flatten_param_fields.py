@@ -21,35 +21,130 @@ Usage:
   # or just generate the SQL files without executing:
   python scripts/flatten_param_fields.py
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import sys
 from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
 
-# (param_table, parent, fk_col, discriminator_col, discriminator_value, prefix, panel_field)
+# (param_table, parent, fk_col, disc_col, disc_val, prefix, panel)
 MAPPINGS = [
     # test_sessions — driven by test_type
-    ("tensile_test_params",     "test_sessions", "session_id",   "test_type",        "tensile",        "tensile",     "tensile_test_params"),
-    ("hardness_test_params",    "test_sessions", "session_id",   "test_type",        "hardness",       "hardness",    "hardness_test_params"),
-    ("charpy_test_params",      "test_sessions", "session_id",   "test_type",        "charpy",         "charpy",      "charpy_test_params"),
-    ("compression_test_params", "test_sessions", "session_id",   "test_type",        "compression",    "compression", "compression_test_params"),
-    ("sem_params",              "test_sessions", "session_id",   "test_type",        "sem",            "sem",         "sem_params"),
-    ("xrd_params",              "test_sessions", "session_id",   "test_type",        "xrd",            "xrd",         "xrd_params"),
+    (
+        "tensile_test_params",
+        "test_sessions",
+        "session_id",
+        "test_type",
+        "tensile",
+        "tensile",
+        "tensile_test_params",
+    ),
+    (
+        "hardness_test_params",
+        "test_sessions",
+        "session_id",
+        "test_type",
+        "hardness",
+        "hardness",
+        "hardness_test_params",
+    ),
+    (
+        "charpy_test_params",
+        "test_sessions",
+        "session_id",
+        "test_type",
+        "charpy",
+        "charpy",
+        "charpy_test_params",
+    ),
+    (
+        "compression_test_params",
+        "test_sessions",
+        "session_id",
+        "test_type",
+        "compression",
+        "compression",
+        "compression_test_params",
+    ),
+    (
+        "sem_params",
+        "test_sessions",
+        "session_id",
+        "test_type",
+        "sem",
+        "sem",
+        "sem_params",
+    ),
+    (
+        "xrd_params",
+        "test_sessions",
+        "session_id",
+        "test_type",
+        "xrd",
+        "xrd",
+        "xrd_params",
+    ),
     # manufacturing_operations — driven by process_category
-    ("machining_params",        "manufacturing_operations", "operation_id", "process_category", "machining",      "machining", "machining_params"),
-    ("sintering_params",        "manufacturing_operations", "operation_id", "process_category", "sintering",      "sintering", "sintering_params"),
-    ("heat_treatment_params",   "manufacturing_operations", "operation_id", "process_category", "heat_treatment", "ht",        "heat_treatment_params"),
-    ("deformation_params",      "manufacturing_operations", "operation_id", "process_category", "deformation",    "deform",    "deformation_params"),
-    ("am_params",               "manufacturing_operations", "operation_id", "process_category", "additive",       "am",        "am_params"),
+    (
+        "machining_params",
+        "manufacturing_operations",
+        "operation_id",
+        "process_category",
+        "machining",
+        "machining",
+        "machining_params",
+    ),
+    (
+        "sintering_params",
+        "manufacturing_operations",
+        "operation_id",
+        "process_category",
+        "sintering",
+        "sintering",
+        "sintering_params",
+    ),
+    (
+        "heat_treatment_params",
+        "manufacturing_operations",
+        "operation_id",
+        "process_category",
+        "heat_treatment",
+        "ht",
+        "heat_treatment_params",
+    ),
+    (
+        "deformation_params",
+        "manufacturing_operations",
+        "operation_id",
+        "process_category",
+        "deformation",
+        "deform",
+        "deformation_params",
+    ),
+    (
+        "am_params",
+        "manufacturing_operations",
+        "operation_id",
+        "process_category",
+        "additive",
+        "am",
+        "am_params",
+    ),
 ]
 
-SKIP_COLS = {"param_id", "operation_id", "session_id", "created_at", "updated_at", "version"}
+SKIP_COLS = {
+    "param_id",
+    "operation_id",
+    "session_id",
+    "created_at",
+    "updated_at",
+    "version",
+}
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -89,8 +184,19 @@ def field_config(cur, collection: str, field: str) -> dict | None:
     r = cur.fetchone()
     if not r:
         return None
-    keys = ["special", "interface", "options", "display", "display_options",
-            "readonly", "hidden", "width", "required", "translations", "note"]
+    keys = [
+        "special",
+        "interface",
+        "options",
+        "display",
+        "display_options",
+        "readonly",
+        "hidden",
+        "width",
+        "required",
+        "translations",
+        "note",
+    ]
     return dict(zip(keys, r))
 
 
@@ -99,9 +205,9 @@ def sql_lit(v) -> str:
         return "NULL"
     if isinstance(v, bool):
         return "TRUE" if v else "FALSE"
-    if isinstance(v, (int, float)):
+    if isinstance(v, int | float):
         return str(v)
-    if isinstance(v, (dict, list)):
+    if isinstance(v, dict | list):
         return "'" + json.dumps(v).replace("'", "''") + "'"
     return "'" + str(v).replace("'", "''") + "'"
 
@@ -136,52 +242,90 @@ def main() -> None:
     meta.append("-- Remove the now-obsolete param collections, fields and relations")
     ptables = [m[0] for m in MAPPINGS]
     in_ptables = ",".join(sql_lit(t) for t in ptables)
-    meta.append(f"DELETE FROM directus_relations WHERE many_collection IN ({in_ptables}) OR one_collection IN ({in_ptables});")
+    meta.append(
+        f"DELETE FROM directus_relations"
+        f" WHERE many_collection IN ({in_ptables})"
+        f" OR one_collection IN ({in_ptables});"
+    )
     meta.append(f"DELETE FROM directus_fields    WHERE collection IN ({in_ptables});")
     meta.append(f"DELETE FROM directus_collections WHERE collection IN ({in_ptables});")
     meta.append("")
 
-    for idx, (ptable, parent, fk, disc, disc_val, prefix, _panel) in enumerate(MAPPINGS):
+    for idx, (ptable, parent, fk, disc, disc_val, prefix, _panel) in enumerate(
+        MAPPINGS
+    ):
         cols = data_columns(cur, ptable)
-        cond = [{
-            "name": f"show when {disc_val}",
-            "rule": {"_and": [{disc: {"_eq": disc_val}}]},
-            "hidden": False, "readonly": False, "required": False, 
-        }]
+        cond = [
+            {
+                "name": f"show when {disc_val}",
+                "rule": {"_and": [{disc: {"_eq": disc_val}}]},
+                "hidden": False,
+                "readonly": False,
+                "required": False,
+            }
+        ]
         sort_base = 100 + idx * 40
         copy_sets = []
         newcols = [f"{prefix}_{c}" for c in cols]
-        meta.append(f"-- ── {ptable} → {parent} (inline, shows when {disc}={disc_val}) ──")
-        # Idempotent: drop any existing inline fields for this type before re-inserting.
         meta.append(
-            f"DELETE FROM directus_fields WHERE collection={sql_lit(parent)} AND field IN ("
-            + ",".join(sql_lit(c) for c in newcols) + ");"
+            f"-- ── {ptable} → {parent} (inline, shows when {disc}={disc_val}) ──"
+        )
+        # Idempotent: drop existing inline fields before re-inserting.
+        meta.append(
+            "DELETE FROM directus_fields"
+            f" WHERE collection={sql_lit(parent)} AND field IN ("
+            + ",".join(sql_lit(c) for c in newcols)
+            + ");"
         )
         for j, col in enumerate(cols):
             newcol = f"{prefix}_{col}"
             ctype = col_type(cur, ptable, col)
-            schema_up.append(f"ALTER TABLE {parent} ADD COLUMN IF NOT EXISTS {newcol} {ctype};")
+            schema_up.append(
+                f"ALTER TABLE {parent} ADD COLUMN IF NOT EXISTS {newcol} {ctype};"
+            )
             schema_down.append(f"ALTER TABLE {parent} DROP COLUMN IF EXISTS {newcol};")
             copy_sets.append((newcol, col))
 
             fc = field_config(cur, ptable, col)
             if fc is None:
                 # Field wasn't registered — register a sane default.
-                fc = {"special": None, "interface": "input", 
-                      "display": "raw", "display_options": None, "readonly": False,
-                      "hidden": False, "width": "half", "required": False,
-                      "translations": None, "note": None}
+                fc = {
+                    "special": None,
+                    "interface": "input",
+                    "display": "raw",
+                    "display_options": None,
+                    "readonly": False,
+                    "hidden": False,
+                    "width": "half",
+                    "required": False,
+                    "translations": None,
+                    "note": None,
+                }
             meta.append(
                 "INSERT INTO directus_fields "
-                "(collection, field, special, interface, options, display, display_options, "
-                "readonly, hidden, sort, width, required, translations, note, conditions) VALUES ("
-                + ", ".join([
-                    sql_lit(parent), sql_lit(newcol), sql_lit(fc["special"]),
-                    sql_lit(fc["interface"]), sql_lit(fc["options"]), sql_lit(fc["display"]),
-                    sql_lit(fc["display_options"]), sql_lit(False), sql_lit(True),
-                    str(sort_base + j), sql_lit(fc["width"] or "half"), sql_lit(False),
-                    sql_lit(fc["translations"]), sql_lit(fc["note"]), sql_lit(cond),
-                ])
+                "(collection, field, special, interface, options,"
+                " display, display_options, readonly, hidden,"
+                " sort, width, required, translations, note,"
+                " conditions) VALUES ("
+                + ", ".join(
+                    [
+                        sql_lit(parent),
+                        sql_lit(newcol),
+                        sql_lit(fc["special"]),
+                        sql_lit(fc["interface"]),
+                        sql_lit(fc["options"]),
+                        sql_lit(fc["display"]),
+                        sql_lit(fc["display_options"]),
+                        sql_lit(False),
+                        sql_lit(True),
+                        str(sort_base + j),
+                        sql_lit(fc["width"] or "half"),
+                        sql_lit(False),
+                        sql_lit(fc["translations"]),
+                        sql_lit(fc["note"]),
+                        sql_lit(cond),
+                    ]
+                )
                 + ");"
             )
         # one UPDATE copying every column for this type

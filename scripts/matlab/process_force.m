@@ -77,6 +77,9 @@ else
     error('process_force:novar', 'no data/DATA variable in file');
 end
 
+vn = {};
+if ismember('VariableNames', vars); vn = mf.VariableNames; end
+
 meta = struct();
 if ismember('metadata', vars); meta = mf.metadata; end
 if isfield(meta, 'fileVersion'); ver = double(meta.fileVersion); end
@@ -93,14 +96,16 @@ trigTime = getdatetime(meta, 'TriggerTime');
 fprintf('  version=%.2f  Fs=%g  Feed=%g  Diam=%g  gain=%s  size=%s\n', ...
     ver, Fs, Feed, Diam, num2str(gain), mat2str(size(D)));
 
-% ---- channels per version (mirrors LoadFile) ----
-if ver >= 1.0
-    forces = sumdyno(D(:, 2:9)); tacho = D(:, 10); t = D(:, 1);
-elseif ver >= 0.5
-    forces = sumdyno(D(:, 1:8)); tacho = D(:, 9);  t = ts(:);
-else                              % v0.1: forces already single columns
-    forces = D(:, 2:4);          tacho = D(:, 13); t = D(:, 1);
-end
+% ---- channels: VariableNames first, version inference only as a fallback ----
+%   `fileVersion` cannot be trusted to describe the matrix: 22 archive captures
+%   declare fileVersion=1 while carrying the 10-col v0.9 layout
+%   [Time Fx Fy Fz Fx1 Fx2 Fy1 Fy2 Fz1 Fz2], which the v1.0 branch below would
+%   read as 8 raw dyno channels -- yielding Fx=Fx+Fy, a force channel as tacho,
+%   and no error. VariableNames ships inside the file and is authoritative.
+%   See docs/force-file-standards.md §4.
+[forces, tacho, t, layout] = pick_channels(D, ts, vn, ver);
+fprintf('  layout=%s  channels=%s  tacho=%s\n', layout, mat2str(size(forces)), ...
+    string(~isempty(tacho)));
 if isempty(t) || numel(t) ~= size(forces, 1); t = (0:size(forces,1)-1)' / Fs; end
 Fx = double(forces(:,1)); Fy = double(forces(:,2)); Fz = double(forces(:,3));
 N  = numel(Fz);
@@ -112,6 +117,11 @@ N  = numel(Fz);
 %   per-op-corrected rate) feeds everything else: series.json's RPM envelope,
 %   the FRM PNG geometry, and mean_rpm. FitType is linear (not smooth).
 try
+    if isempty(tacho)
+        % v0.9 truncated captures carry no tacho column at all -- there is no RPM
+        % to recover, so the FRM angular map from this file is not meaningful.
+        error('process_force:notacho', 'no tacho channel in file (v0.9 truncated layout)');
+    end
     rpm_raw = tachorpm(double(tacho), Fs, 'FitType', 'linear');
     rpm_raw = interp1(linspace(0,1,numel(rpm_raw))', rpm_raw(:), linspace(0,1,N)', 'linear', 'extrap');
 catch ME
@@ -333,6 +343,50 @@ fprintf('DONE. Outputs in %s\n', outdir);
 end
 
 % ================================================================== helpers
+function [forces, tacho, t, layout] = pick_channels(D, ts, vn, ver)
+%PICK_CHANNELS  Resolve force/tacho/time columns from the file's own VariableNames.
+%
+% Preference order matches what the legacy version branches already did, so files
+% that were being read correctly keep byte-identical output:
+%   * summed Fx/Fy/Fz columns win when present (v0.1 and v0.9)
+%   * otherwise sum the 8 raw corner channels (v1.0)
+% Files with no VariableNames (all v0.5) fall through to the version inference.
+tacho = [];
+if ~isempty(vn)
+    names = strtrim(cellfun(@(x) char(string(x)), vn(:)', 'uni', 0));
+    col = @(n) find(strcmpi(names, n), 1);
+
+    it = col('Time');
+    if isempty(it); t = []; else; t = D(:, it); end
+
+    ix = col('Fx'); iy = col('Fy'); iz = col('Fz');
+    raw = cellfun(col, {'Fx1','Fx2','Fy1','Fy2','Fz1','Fz2','Fz3','Fz4'}, 'uni', 0);
+    haveRaw = all(~cellfun(@isempty, raw));
+
+    itac = find(strncmpi(names, 'Tacho', 5), 1);
+    if ~isempty(itac); tacho = D(:, itac); end
+
+    if ~isempty(ix) && ~isempty(iy) && ~isempty(iz)
+        forces = D(:, [ix iy iz]);
+        layout = sprintf('VariableNames/summed (%d col)', numel(names));
+        return;
+    elseif haveRaw
+        forces = sumdyno(D(:, cell2mat(raw)));
+        layout = sprintf('VariableNames/raw-sumdyno (%d col)', numel(names));
+        return;
+    end
+    % VariableNames present but unrecognised -- fall through to inference.
+end
+
+if ver >= 1.0
+    forces = sumdyno(D(:, 2:9)); tacho = D(:, 10); t = D(:, 1);  layout = 'inferred v1.0';
+elseif ver >= 0.5
+    forces = sumdyno(D(:, 1:8)); tacho = D(:, 9);  t = ts(:);    layout = 'inferred v0.5';
+else                              % v0.1: forces already single columns
+    forces = D(:, 2:4);          tacho = D(:, 13); t = D(:, 1);  layout = 'inferred v0.1';
+end
+end
+
 function F = sumdyno(d)
 d = double(d);
 F = [d(:,1)+d(:,2), d(:,3)+d(:,4), d(:,5)+d(:,6)+d(:,7)+d(:,8)];

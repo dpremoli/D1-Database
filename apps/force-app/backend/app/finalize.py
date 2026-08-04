@@ -5,6 +5,7 @@ live_cache.bin (D1LC, so the plotting UI renders it directly), and summary.json.
 The .mat DATA layout is [Time, Fx1,Fx2,Fy1,Fy2,Fz1,Fz2,Fz3,Fz4, Tacho] (v1.0), identical to what
 the MATLAB app writes, so downstream tooling (process_force.m, the Directus crawler) is unchanged.
 """
+
 from __future__ import annotations
 
 import json
@@ -14,7 +15,7 @@ import numpy as np
 from scipy.io import savemat
 from scipy.signal import detrend
 
-from .config import RecordConfig, SIGNAL_CHANNELS
+from .config import SIGNAL_CHANNELS, RecordConfig
 from .d1lc import write_d1lc
 from .d1rw import memmap_rows, read_header
 from .dsp import rpm_from_tacho, sum_axes, tacho_column
@@ -59,8 +60,10 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     chan_ranges = [g * vfs for g in chan_gains]
     chan_peaks = [float(np.max(np.abs(signals[:, i]))) if n else 0.0 for i in range(8)]
     # Clipping only meaningful with real per-channel gains (nidaq path); sim/replay never rails.
-    chan_clipped = [bool(len(gains) >= 8 and chan_ranges[i] > 0 and chan_peaks[i] >= 0.99 * chan_ranges[i])
-                    for i in range(8)]
+    chan_clipped = [
+        bool(len(gains) >= 8 and chan_ranges[i] > 0 and chan_peaks[i] >= 0.99 * chan_ranges[i])
+        for i in range(8)
+    ]
 
     # Optional linear drift compensation on the 8 dyno channels (like the MATLAB app's driftComp).
     # Only affects the derived outputs (.mat DATA + live_cache); the raw .d1raw is never touched.
@@ -106,10 +109,17 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     fs_eff = fs / stride
     write_d1lc(
         os.path.join(capture_dir, "live_cache.bin"),
-        t[sl].astype(np.float32), axes["Fx"][sl].astype(np.float32),
-        axes["Fy"][sl].astype(np.float32), axes["Fz"][sl].astype(np.float32),
-        rpm[sl].astype(np.float32), revs_cum[sl].astype(np.float32),
-        fs=fs_eff, feed=cfg.feed, diam=cfg.diam, cs_sec=cs_sec, ce_sec=ce_sec,
+        t[sl].astype(np.float32),
+        axes["Fx"][sl].astype(np.float32),
+        axes["Fy"][sl].astype(np.float32),
+        axes["Fz"][sl].astype(np.float32),
+        rpm[sl].astype(np.float32),
+        revs_cum[sl].astype(np.float32),
+        fs=fs_eff,
+        feed=cfg.feed,
+        diam=cfg.diam,
+        cs_sec=cs_sec,
+        ce_sec=ce_sec,
     )
 
     summary = {
@@ -123,8 +133,11 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         "drift_comp": bool(cfg.drift_comp),
         # Per-channel ranging (drives converging between-cuts auto-range + records the per-cut N/V).
         "channels_ranging": {
-            "peaks_n": chan_peaks, "clipped": chan_clipped,
-            "gains_n_per_v": chan_gains, "ranges_n": chan_ranges, "fullscale_v": vfs,
+            "peaks_n": chan_peaks,
+            "clipped": chan_clipped,
+            "gains_n_per_v": chan_gains,
+            "ranges_n": chan_ranges,
+            "fullscale_v": vfs,
         },
         "metadata": cfg.extra_metadata or {},
         "config": cfg.model_dump(),

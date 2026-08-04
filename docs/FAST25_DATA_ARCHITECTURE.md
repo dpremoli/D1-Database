@@ -174,7 +174,7 @@ Segment 1 - Start Vacuum
 **Reading:**
 ```python
 with zipfile.ZipFile(emd_path) as zf:
-    erg_text = zf.read("*.ERG").decode('latin-1', errors='ignore')
+    erg_text = zf.read("*.ERG").decode("latin-1", errors="ignore")
 ```
 
 ### Recipe Files (.REZ)

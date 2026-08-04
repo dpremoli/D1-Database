@@ -5,20 +5,23 @@ finalizes it, WS /record/stream broadcasts D1LF live frames, and /captures/* ser
 artifacts (so the plotting UI can render the just-recorded live_cache.bin). CORS mirrors the
 filter-service so the standalone SPA can reach it from its own origin.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
-from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from .config import RecordConfig
+from . import channels as chan
+from . import nidaq_catalog, nidaq_enum
+from .config import DEFAULT_NIDAQ_CHANNELS, RecordConfig
 from .d1lc import read_d1lc_header
 from .labamp import LabAmpClient, LabAmpError, MockLabAmp
 from .labamp_autorange import converge_ranges, effective_bits, recommend_ranges
@@ -32,8 +35,8 @@ CAPTURES_ROOT = os.environ.get(
 )
 os.makedirs(CAPTURES_ROOT, exist_ok=True)
 
-_broadcaster: Optional[Broadcaster] = None
-_session: Optional[RecordingSession] = None
+_broadcaster: Broadcaster | None = None
+_session: RecordingSession | None = None
 
 # ---- LabAmp (2c) config + instance ----
 # The amp is link-local (reachable only from the acquisition PC) so the backend owns the HTTP
@@ -69,7 +72,9 @@ _labamp = None  # type: ignore[assignment]
 
 def _rebuild_labamp() -> None:
     global _labamp
-    _labamp = MockLabAmp() if _labamp_cfg.get("mode") == "mock" else LabAmpClient(_labamp_cfg["base_url"])
+    _labamp = (
+        MockLabAmp() if _labamp_cfg.get("mode") == "mock" else LabAmpClient(_labamp_cfg["base_url"])
+    )
 
 
 _rebuild_labamp()
@@ -84,10 +89,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="force-app-recorder", lifespan=lifespan)
 
-_cors = [o.strip() for o in os.environ.get(
-    "RECORDER_CORS_ORIGINS", "http://localhost:5180,http://localhost:5181").split(",") if o.strip()]
+_cors = [
+    o.strip()
+    for o in os.environ.get(
+        "RECORDER_CORS_ORIGINS", "http://localhost:5180,http://localhost:5181"
+    ).split(",")
+    if o.strip()
+]
 if _cors:
-    app.add_middleware(CORSMiddleware, allow_origins=_cors, allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(
+        CORSMiddleware, allow_origins=_cors, allow_methods=["*"], allow_headers=["*"]
+    )
 
 
 @app.get("/health")
@@ -105,12 +117,24 @@ async def record_start(cfg: RecordConfig) -> dict:
     if _busy():
         raise HTTPException(409, "a recording is already in progress")
     if cfg.source == "nidaq":
-        from .sources.nidaq import NidaqSource, NidaqUnavailable, nidaq_available
+        from .sources.nidaq import NidaqSource, NidaqUnavailableError, nidaq_available
+
         if not nidaq_available():
-            raise HTTPException(503, "NI-DAQmx runtime not available on this host — run on the acquisition PC.")
+            raise HTTPException(
+                503, "NI-DAQmx runtime not available on this host — run on the acquisition PC."
+            )
+        # The NI-DAQ page's channel model is the source of truth for physical channels + per-channel
+        # gains. A request may still override with an explicit non-default channel list.
+        cc = _channel_config()
+        if not cfg.nidaq_channels or cfg.nidaq_channels == list(DEFAULT_NIDAQ_CHANNELS):
+            cfg.nidaq_channels = chan.to_record_channels(cc)
+        if not cfg.dyno_gains:
+            g = chan.dyno_gains(cc)
+            if g:
+                cfg.dyno_gains = g
         try:
             source = NidaqSource(cfg, physical_channels=cfg.nidaq_channels or None)
-        except (ValueError, NidaqUnavailable) as e:
+        except (ValueError, NidaqUnavailableError) as e:
             raise HTTPException(400, str(e))
         # Per-channel volts→N gains from the amp's (auto-ranged) ranges: N/V = range / analog_fs.
         if not cfg.dyno_gains:
@@ -153,9 +177,13 @@ async def record_start_replay(
         meta = {}
     n, fs = h["n"], (h["fs"] or 1000.0)
     cfg = RecordConfig(
-        sample_name=sample_name, axis=axis if axis in ("Fx", "Fy", "Fz") else "Fz",
-        feed=max(1e-6, h["feed"]), diam=max(1e-6, h["diam"]),
-        sample_rate=fs, duration_sec=max(0.1, n / fs), ppr=max(1, ppr),
+        sample_name=sample_name,
+        axis=axis if axis in ("Fx", "Fy", "Fz") else "Fz",
+        feed=max(1e-6, h["feed"]),
+        diam=max(1e-6, h["diam"]),
+        sample_rate=fs,
+        duration_sec=max(0.1, n / fs),
+        ppr=max(1, ppr),
         extra_metadata=meta,
     )
     source = ReplaySource(cache_bytes, ppr=cfg.ppr, realtime=True, speed=speed)
@@ -169,7 +197,12 @@ async def record_stop() -> dict:
     if not _session or _session.state not in ("recording", "finalizing"):
         raise HTTPException(409, "no recording in progress")
     await run_in_threadpool(_session.stop, True, 60.0)
-    return {"id": _session.id, "state": _session.state, "error": _session.error, "summary": _session.summary}
+    return {
+        "id": _session.id,
+        "state": _session.state,
+        "error": _session.error,
+        "summary": _session.summary,
+    }
 
 
 @app.get("/record/status")
@@ -179,8 +212,10 @@ async def record_status() -> dict:
 
 @app.get("/captures")
 async def list_captures() -> dict:
-    ids = sorted((d for d in os.listdir(CAPTURES_ROOT)
-                  if os.path.isdir(os.path.join(CAPTURES_ROOT, d))), reverse=True)
+    ids = sorted(
+        (d for d in os.listdir(CAPTURES_ROOT) if os.path.isdir(os.path.join(CAPTURES_ROOT, d))),
+        reverse=True,
+    )
     return {"captures": ids}
 
 
@@ -207,8 +242,11 @@ async def capture_cache(cid: str) -> FileResponse:
 
 @app.get("/captures/{cid}/capture.mat")
 async def capture_mat(cid: str) -> FileResponse:
-    return FileResponse(_capture_file(cid, "capture.mat"), media_type="application/octet-stream",
-                        filename=f"{cid}.mat")
+    return FileResponse(
+        _capture_file(cid, "capture.mat"),
+        media_type="application/octet-stream",
+        filename=f"{cid}.mat",
+    )
 
 
 @app.get("/labamp/status")
@@ -221,8 +259,14 @@ async def labamp_status() -> dict:
             mode = await run_in_threadpool(amp.get_operation_mode)
         except LabAmpError:
             pass
-    return {"reachable": reachable, "mode": mode, "base_url": amp.base_url, "mock": amp.mock,
-            "channels": _labamp_cfg["channels"], "config_mode": _labamp_cfg["mode"]}
+    return {
+        "reachable": reachable,
+        "mode": mode,
+        "base_url": amp.base_url,
+        "mock": amp.mock,
+        "channels": _labamp_cfg["channels"],
+        "config_mode": _labamp_cfg["mode"],
+    }
 
 
 @app.post("/labamp/mode")
@@ -255,7 +299,7 @@ async def labamp_export() -> JSONResponse:
 
 # ---- Auto-range: drive the amp's measuring range from the measured signal ----
 def _measure_peaks(amp, channels: int) -> list[float]:
-    """Per-channel peak magnitude (N) from the amp's live max/min (run a representative cut first)."""
+    """Per-channel peak magnitude (N) from the amp's live max/min (run a representative cut)."""
     items = amp.signal_get(list(range(1, channels + 1)))
     by_ch: dict[int, float] = {}
     for it in items:
@@ -273,7 +317,7 @@ def _current_ranges(amp, channels: int) -> list:
 
 
 def _daq() -> tuple[int, int, int, float]:
-    """(nidaq_bits, dac_bits, effective_bits, analog_fullscale_v). Effective = the chain bottleneck."""
+    """(nidaq_bits, dac_bits, effective_bits, analog_fullscale_v). Effective = chain bottleneck."""
     nidaq = int(_labamp_cfg.get("nidaq_bits", 16))
     dac = int(_labamp_cfg.get("labamp_dac_bits", 12))
     vfs = float(_labamp_cfg.get("analog_fullscale_v", 10.0))
@@ -281,7 +325,7 @@ def _daq() -> tuple[int, int, int, float]:
 
 
 @app.get("/labamp/autorange")
-async def labamp_autorange(headroom: Optional[float] = None) -> dict:
+async def labamp_autorange(headroom: float | None = None) -> dict:
     hr = float(headroom) if headroom else float(_labamp_cfg.get("autorange_headroom", 1.5))
     ch = int(_labamp_cfg["channels"])
     nidaq, dac, eff, vfs = _daq()
@@ -290,8 +334,16 @@ async def labamp_autorange(headroom: Optional[float] = None) -> dict:
         currents = await run_in_threadpool(_current_ranges, _labamp, ch)
     except LabAmpError as e:
         raise HTTPException(502, str(e))
-    return {"headroom": hr, "nidaq_bits": nidaq, "dac_bits": dac, "effective_bits": eff, "fullscale_v": vfs,
-            "recommendations": recommend_ranges(peaks, currents, headroom=hr, bits=eff, fullscale_v=vfs)}
+    return {
+        "headroom": hr,
+        "nidaq_bits": nidaq,
+        "dac_bits": dac,
+        "effective_bits": eff,
+        "fullscale_v": vfs,
+        "recommendations": recommend_ranges(
+            peaks, currents, headroom=hr, bits=eff, fullscale_v=vfs
+        ),
+    }
 
 
 @app.post("/labamp/autorange/apply")
@@ -334,17 +386,22 @@ async def labamp_autorange_converge(body: dict) -> dict:
             status = await run_in_threadpool(_labamp.channel_status, int(_labamp_cfg["channels"]))
         except LabAmpError as e:
             raise HTTPException(502, str(e))
-    return {"headroom": hr, "nidaq_bits": nidaq, "dac_bits": dac, "effective_bits": eff,
-            "fullscale_v": vfs, "recommendations": recs, "applied": bool(body.get("apply")),
-            "status": status}
+    return {
+        "headroom": hr,
+        "nidaq_bits": nidaq,
+        "dac_bits": dac,
+        "effective_bits": eff,
+        "fullscale_v": vfs,
+        "recommendations": recs,
+        "applied": bool(body.get("apply")),
+        "status": status,
+    }
 
 
 @app.get("/labamp/config")
 async def labamp_get_config() -> dict:
     return _labamp_cfg
 
-
-from urllib.parse import urlparse
 
 # The amp is legitimately on a link-local/private address, so we can't block those ranges (that IS
 # the target). We do reject non-http(s) schemes and the cloud-metadata address — the one dangerous
@@ -368,7 +425,15 @@ def _validate_amp_url(url: str) -> str:
 async def labamp_post_config(body: dict) -> dict:
     if "base_url" in body:
         body["base_url"] = _validate_amp_url(str(body["base_url"]))
-    for k in ("base_url", "channels", "mode", "autorange_headroom", "nidaq_bits", "labamp_dac_bits", "analog_fullscale_v"):
+    for k in (
+        "base_url",
+        "channels",
+        "mode",
+        "autorange_headroom",
+        "nidaq_bits",
+        "labamp_dac_bits",
+        "analog_fullscale_v",
+    ):
         if k in body:
             _labamp_cfg[k] = body[k]
     try:
@@ -378,6 +443,102 @@ async def labamp_post_config(body: dict) -> dict:
         pass
     _rebuild_labamp()
     return _labamp_cfg
+
+
+# ---- NI-DAQ configuration (channel model + simulated chassis) ----
+# On dev machines with no DAQmx runtime the chassis is simulated (editable, persisted); on the rig
+# it enumerates real hardware. The channel model (roles + physical bindings) is persisted and, when
+# source="nidaq", feeds the recorder's channel list + per-channel gains at record start.
+NIDAQ_SIM_PATH = os.path.join(CAPTURES_ROOT, "nidaq_sim.json")
+NIDAQ_CHANNELS_PATH = os.path.join(CAPTURES_ROOT, "nidaq_channels.json")
+
+
+def _load_json(path: str, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def _save_json(path: str, data) -> None:
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+    except OSError:
+        pass
+
+
+def _sim_layout() -> dict:
+    return _load_json(NIDAQ_SIM_PATH, dict(nidaq_enum.DEFAULT_SIM_LAYOUT))
+
+
+def _devices() -> dict:
+    return nidaq_enum.enumerate_devices(sim_layout=_sim_layout())
+
+
+def _channel_config() -> list[dict]:
+    cfg = _load_json(NIDAQ_CHANNELS_PATH, None)
+    if isinstance(cfg, dict) and isinstance(cfg.get("channels"), list):
+        return cfg["channels"]
+    # First run: auto-assign force-first from whatever devices are present.
+    channels = chan.autoassign(_devices())
+    _save_json(NIDAQ_CHANNELS_PATH, {"channels": channels})
+    return channels
+
+
+@app.get("/nidaq/devices")
+async def nidaq_devices() -> dict:
+    return _devices()
+
+
+@app.get("/nidaq/catalog")
+async def nidaq_catalog_list() -> dict:
+    return {"cards": nidaq_catalog.gallery()}
+
+
+@app.post("/nidaq/sim/card")
+async def nidaq_add_card(body: dict) -> dict:
+    """Add a card to a simulated slot (the '+' on an empty slot → card catalog)."""
+    layout = _sim_layout()
+    slot = int(body.get("slot", 0))
+    product_type = str(body.get("product_type", "")).strip()
+    if not product_type or slot < 1 or slot > int(layout.get("slots", 8)):
+        raise HTTPException(400, "slot (1..slots) and product_type required")
+    cards = [c for c in layout.get("cards", []) if int(c["slot"]) != slot]
+    cards.append({"slot": slot, "product_type": product_type})
+    layout["cards"] = cards
+    _save_json(NIDAQ_SIM_PATH, layout)
+    return nidaq_enum.enumerate_simulated(layout)
+
+
+@app.delete("/nidaq/sim/card")
+async def nidaq_remove_card(slot: int) -> dict:
+    layout = _sim_layout()
+    layout["cards"] = [c for c in layout.get("cards", []) if int(c["slot"]) != int(slot)]
+    _save_json(NIDAQ_SIM_PATH, layout)
+    return nidaq_enum.enumerate_simulated(layout)
+
+
+@app.get("/nidaq/channels")
+async def nidaq_get_channels() -> dict:
+    return {"channels": _channel_config(), "roles": chan.ROLES, "colors": chan.ROLE_COLOR}
+
+
+@app.put("/nidaq/channels")
+async def nidaq_put_channels(body: dict) -> dict:
+    channels = body.get("channels")
+    if not isinstance(channels, list):
+        raise HTTPException(400, "channels list required")
+    _save_json(NIDAQ_CHANNELS_PATH, {"channels": channels})
+    return {"channels": channels}
+
+
+@app.post("/nidaq/channels/autoassign")
+async def nidaq_autoassign() -> dict:
+    channels = chan.autoassign(_devices())
+    _save_json(NIDAQ_CHANNELS_PATH, {"channels": channels})
+    return {"channels": channels}
 
 
 @app.websocket("/record/stream")

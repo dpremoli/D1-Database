@@ -4,6 +4,7 @@ The channel layout intentionally matches the NI-DAQ output the MATLAB app captur
 charge sub-channels + a tacho), so the summing / gain / FRM / writer pipeline built here is the
 exact code slice 2b reuses with a real `nidaqmx` source — only the source swaps.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -19,8 +20,14 @@ SIGNAL_CHANNELS: list[str] = DYNO_CHANNELS + [TACHO_CHANNEL]
 # — the 8 Kistler charge channels across the first two modules + the tacho on a third module's ai0.
 # These are PLACEHOLDERS; the operator sets the real device/channel strings for the rig.
 DEFAULT_NIDAQ_CHANNELS: list[str] = [
-    "cDAQ1Mod1/ai0", "cDAQ1Mod1/ai1", "cDAQ1Mod1/ai2", "cDAQ1Mod1/ai3",
-    "cDAQ1Mod2/ai0", "cDAQ1Mod2/ai1", "cDAQ1Mod2/ai2", "cDAQ1Mod2/ai3",
+    "cDAQ1Mod1/ai0",
+    "cDAQ1Mod1/ai1",
+    "cDAQ1Mod1/ai2",
+    "cDAQ1Mod1/ai3",
+    "cDAQ1Mod2/ai0",
+    "cDAQ1Mod2/ai1",
+    "cDAQ1Mod2/ai2",
+    "cDAQ1Mod2/ai3",
     "cDAQ1Mod3/ai0",
 ]
 
@@ -53,7 +60,7 @@ class RecordConfig(BaseModel):
     noise: float = 6.0  # gaussian noise std (N) on the summed axes
 
     # Free-form metadata compiled in the UI (sample/insert/tool/etc.), stamped into the .mat +
-    # summary. Directus write-back of a run row is a later slice (2d); this just persists it locally.
+    # summary. Directus write-back of a run row is a later slice (2d); persisted locally for now.
     extra_metadata: dict[str, Any] = Field(default_factory=dict)
 
     # Acquisition source (2b): "sim" (default), or "nidaq" for real NI-DAQ hardware.

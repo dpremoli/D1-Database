@@ -137,21 +137,29 @@ GET /sinter/series?run=<uuid>&channels=Pyro top [°C],AV pressing force [kN]&tar
 
 ```python
 @app.get("/sinter/series")
-def sinter_series(run: str, channels: str, target: int = 4000,
-                  start_s: float | None = None, end_s: float | None = None):
+def sinter_series(
+    run: str,
+    channels: str,
+    target: int = 4000,
+    start_s: float | None = None,
+    end_s: float | None = None,
+):
     r = db.get(SinteringRun, run)
-    if not r: raise HTTPException(404)
+    if not r:
+        raise HTTPException(404)
 
     # read the run's FILE (not a billion DB rows)
     if r.series_format == "csv_fast250":
-        df = read_fast250_csv(r.series_file)      # German-locale aware
+        df = read_fast250_csv(r.series_file)  # German-locale aware
     else:
-        df = read_fast25_his(r.series_file)       # cached .HIS → columns
+        df = read_fast25_his(r.series_file)  # cached .HIS → columns
 
     wanted = [c.strip() for c in channels.split(",")]
     t = df["time_offset_seconds"].to_numpy()
-    if start_s is not None: df = df[t >= start_s]
-    if end_s   is not None: df = df[t <= end_s]
+    if start_s is not None:
+        df = df[t >= start_s]
+    if end_s is not None:
+        df = df[t <= end_s]
 
     # decimate for the web (same idea as /filter/run's targetPoints)
     stride = max(1, len(df) // target)
@@ -160,7 +168,7 @@ def sinter_series(run: str, channels: str, target: int = 4000,
     return {
         "t": df["time_offset_seconds"].tolist(),
         "series": {c: df[c].tolist() for c in wanted if c in df.columns},
-        "units":  {c: unit_for(c) for c in wanted},
+        "units": {c: unit_for(c) for c in wanted},
         "points": len(df),
     }
 ```

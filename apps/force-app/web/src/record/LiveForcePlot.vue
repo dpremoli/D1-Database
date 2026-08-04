@@ -4,9 +4,16 @@
 // per-sample — it reads the plain buffers each frame.
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import type { RecordClient } from './liveClient';
-import { AXIS_COLOR } from './types';
+import { CH_COLOR } from './types';
 
-const props = defineProps<{ client: RecordClient }>();
+// `channels` selects which channels to draw — summed axes ('Fx'/'Fy'/'Fz') and/or individual dyno
+// sub-channels ('Fx1'…'Fz4'). Defaults to the three summed axes.
+const props = defineProps<{ client: RecordClient; channels?: string[] }>();
+type Env = [number, number][];
+function envOf(key: string): Env {
+	const tr = props.client.trace;
+	return key === 'Fx' ? tr.fx : key === 'Fy' ? tr.fy : key === 'Fz' ? tr.fz : (tr.sub[key] ?? []);
+}
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 let raf = 0;
 let ctx: CanvasRenderingContext2D | null = null;
@@ -38,9 +45,11 @@ function draw() {
 
 	const t0 = tr.t[0], t1 = tr.t[n - 1];
 	const span = Math.max(1e-3, t1 - t0);
-	// Y range across all axes in the window
+	// Only the selected channels are drawn / autoscaled (summed axes and/or sub-channels).
+	const sel = props.channels ?? ['Fx', 'Fy', 'Fz'];
+	const series = sel.map((k) => [k, envOf(k)] as const).filter(([, arr]) => arr.length > 0);
 	let lo = Infinity, hi = -Infinity;
-	for (const arr of [tr.fx, tr.fy, tr.fz]) for (const [mn, mx] of arr) { if (mn < lo) lo = mn; if (mx > hi) hi = mx; }
+	for (const [, arr] of series) for (const [mn, mx] of arr) { if (mn < lo) lo = mn; if (mx > hi) hi = mx; }
 	if (!isFinite(lo) || !isFinite(hi)) { lo = -1; hi = 1; }
 	const pad = 0.1 * (hi - lo || 1);
 	lo -= pad; hi += pad;
@@ -50,18 +59,18 @@ function draw() {
 	const xOf = (t: number) => ((t - t0) / span) * (W - 8) + 4;
 	const yOf = (v: number) => H - ((v - lo) / yr) * (H - 8) - 4;
 
-	for (const [axis, arr] of [['Fx', tr.fx], ['Fy', tr.fy], ['Fz', tr.fz]] as const) {
-		ctx.strokeStyle = AXIS_COLOR[axis];
-		ctx.globalAlpha = 0.95;
-		ctx.lineWidth = 1;
-		// max line
+	// One filled band (min→max envelope) per axis + a crisp top edge — so it reads as one band
+	// per axis, not two lines. The band keeps the peak envelope regardless of sample rate.
+	for (const [key, arr] of series) {
+		const col = CH_COLOR[key] ?? '#94a3b8';
 		ctx.beginPath();
 		for (let i = 0; i < n; i++) { const x = xOf(tr.t[i]); const y = yOf(arr[i][1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-		ctx.stroke();
-		// min line, lighter
-		ctx.globalAlpha = 0.5;
+		for (let i = n - 1; i >= 0; i--) { ctx.lineTo(xOf(tr.t[i]), yOf(arr[i][0])); }
+		ctx.closePath();
+		ctx.globalAlpha = 0.16; ctx.fillStyle = col; ctx.fill();
+		ctx.globalAlpha = 0.9; ctx.strokeStyle = col; ctx.lineWidth = 1.4;
 		ctx.beginPath();
-		for (let i = 0; i < n; i++) { const x = xOf(tr.t[i]); const y = yOf(arr[i][0]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+		for (let i = 0; i < n; i++) { const x = xOf(tr.t[i]); const y = yOf(arr[i][1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
 		ctx.stroke();
 	}
 	ctx.globalAlpha = 1;
@@ -89,7 +98,9 @@ onBeforeUnmount(() => { cancelAnimationFrame(raf); window.removeEventListener('r
 	<div class="live-force">
 		<canvas ref="canvasEl"></canvas>
 		<div class="legend">
-			<span class="lg fx">Fx</span><span class="lg fy">Fy</span><span class="lg fz">Fz</span>
+			<span v-for="k in (channels ?? ['Fx', 'Fy', 'Fz'])" :key="k" class="lg" :style="{ color: CH_COLOR[k] }">
+				<i :style="{ background: CH_COLOR[k] }"></i>{{ k }}
+			</span>
 		</div>
 	</div>
 </template>
@@ -97,9 +108,6 @@ onBeforeUnmount(() => { cancelAnimationFrame(raf); window.removeEventListener('r
 <style scoped>
 .live-force { position: relative; width: 100%; height: 100%; min-height: 160px; border-radius: 8px; overflow: hidden; background: #0b1020; }
 .live-force canvas { width: 100%; height: 100%; display: block; }
-.legend { position: absolute; top: 6px; right: 8px; display: flex; gap: 8px; font-size: 11px; font-weight: 600; }
-.lg::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 3px; vertical-align: middle; }
-.lg.fx { color: #f87171; } .lg.fx::before { background: #dc2626; }
-.lg.fy { color: #4ade80; } .lg.fy::before { background: #16a34a; }
-.lg.fz { color: #60a5fa; } .lg.fz::before { background: #2563eb; }
+.legend { position: absolute; top: 6px; right: 8px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 8px; font-size: 11px; font-weight: 600; max-width: 60%; }
+.lg i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 3px; vertical-align: middle; }
 </style>

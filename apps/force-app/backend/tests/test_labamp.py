@@ -1,4 +1,5 @@
 """LabAmp client (real, against a mocked transport) + MockLabAmp behaviour."""
+
 import json
 
 import httpx
@@ -17,12 +18,19 @@ def _handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"result": 0, "data": {"mode": "MEASURE"}})
     if path == "/api/param/get":
         params = body["params"]
-        return httpx.Response(200, json={"result": 0, "data": {
-            "params": [{"name": p, "value": p.split("/")[-1]} for p in params]}})
+        return httpx.Response(
+            200,
+            json={
+                "result": 0,
+                "data": {"params": [{"name": p, "value": p.split("/")[-1]} for p in params]},
+            },
+        )
     if path == "/api/param/export":
         return httpx.Response(200, json={"result": 0, "data": {"device": "5167A81"}})
     if path == "/api/$/signal/get":
-        return httpx.Response(200, json={"result": 0, "data": {"items": [{"channel": 1, "live": [1.0]}]}})
+        return httpx.Response(
+            200, json={"result": 0, "data": {"items": [{"channel": 1, "live": [1.0]}]}}
+        )
     return httpx.Response(200, json={"result": 7, "data": {}})  # unknown -> error result
 
 
@@ -32,7 +40,7 @@ def _client() -> LabAmpClient:
 
 def test_operation_mode_roundtrip():
     c = _client()
-    c.set_operation_mode("MEASURE")           # no raise
+    c.set_operation_mode("MEASURE")  # no raise
     assert c.get_operation_mode() == "MEASURE"
     assert c.ping() is True
 
@@ -45,7 +53,7 @@ def test_bad_mode_rejected():
 def test_error_result_raises():
     c = _client()
     with pytest.raises(LabAmpError):
-        c._post("/api/unknown", {})           # handler returns result=7
+        c._post("/api/unknown", {})  # handler returns result=7
 
 
 def test_sensor_table_parsing():
@@ -59,17 +67,26 @@ def test_sensor_table_parsing():
 def test_unreachable_ping_false():
     def boom(request):
         raise httpx.ConnectError("no route", request=request)
+
     c = LabAmpClient("http://10.255.255.1", transport=httpx.MockTransport(boom))
     assert c.ping() is False
 
 
 def test_amp_url_validation():
     from fastapi import HTTPException
+
     from app.main import _validate_amp_url
+
     # link-local amp address is allowed (that's the legitimate target)
     assert _validate_amp_url("http://169.254.143.59") == "http://169.254.143.59"
     assert _validate_amp_url("http://192.168.1.50:80").startswith("http://")
-    for bad in ("file:///etc/passwd", "gopher://x", "http://", "http://169.254.169.254", "http://metadata.google.internal"):
+    for bad in (
+        "file:///etc/passwd",
+        "gopher://x",
+        "http://",
+        "http://169.254.169.254",
+        "http://metadata.google.internal",
+    ):
         with pytest.raises(HTTPException):
             _validate_amp_url(bad)
 

@@ -59,9 +59,7 @@ def run_select(sql: str) -> list[dict]:
             except psycopg.Error as exc:
                 # e.g. UndefinedColumn, QueryCanceled (timeout). Keep the primary
                 # message; drop the multi-line CONTEXT/HINT noise psycopg appends.
-                raise QueryExecutionError(
-                    str(exc).strip().splitlines()[0]
-                ) from exc
+                raise QueryExecutionError(str(exc).strip().splitlines()[0]) from exc
 
 
 def fetch_query_targets() -> list[dict]:

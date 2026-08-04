@@ -67,7 +67,10 @@ DENY = [
     # Unknown/future directus_* is denied by default.
     ("unknown_directus", "SELECT * FROM directus_super_secret"),
     ("comment_hidden_secret", "SELECT * FROM /* */ directus_users"),
-    ("mixed_allow_and_secret", "SELECT * FROM v_complete_sample_history, directus_users"),
+    (
+        "mixed_allow_and_secret",
+        "SELECT * FROM v_complete_sample_history, directus_users",
+    ),
     ("cte_then_secret", "WITH x AS (SELECT 1) SELECT * FROM directus_sessions"),
     (
         "join_to_secret",

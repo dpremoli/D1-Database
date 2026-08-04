@@ -53,7 +53,7 @@ BEGIN
   -- Use 'registered' (valid under both the old and new status constraints) so
   -- the CI full-rollback reversibility check is not blocked by this fixture row.
   INSERT INTO test_sessions (sample_id,test_type,session_date,status)
-    VALUES (v_pa,'force_measurement','2026-01-12','registered');
+    VALUES (v_pa,'other','2026-01-12','registered');
 END \$\$;
 " > /dev/null 2>&1 || true
 

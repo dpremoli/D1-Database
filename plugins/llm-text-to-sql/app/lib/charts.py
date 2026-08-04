@@ -115,7 +115,7 @@ def _is_numeric_column(column: str, rows: list[dict]) -> bool:
         value = row.get(column)
         if value is None:
             continue
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if isinstance(value, bool) or not isinstance(value, int | float):
             return False
         saw_value = True
     return saw_value

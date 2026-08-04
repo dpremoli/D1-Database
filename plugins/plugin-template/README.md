@@ -87,12 +87,14 @@ required error-handling envelope (use the status constants from
 ```python
 from app.lib.statuses import STATUS_FAILED, STATUS_PROCESSED, STATUS_PROCESSING
 
+
 def example_job(session_id: str, object_key: str) -> None:
     _mark(session_id, STATUS_PROCESSING)
     try:
         # --- your logic here ---
         directus_client.patch_item(
-            "test_sessions", session_id,
+            "test_sessions",
+            session_id,
             {"status": STATUS_PROCESSED, "summary_stats": result},
         )
     except Exception:
@@ -178,7 +180,7 @@ function that follows the error-handling envelope shown in section 2.
 Update the import and `enqueue` call in `app/webhook.py`:
 
 ```python
-from app.jobs.your_job import process   # replace example_job import
+from app.jobs.your_job import process  # replace example_job import
 
 # in webhook_session():
 job = _queue.enqueue(process, session_id, object_key)

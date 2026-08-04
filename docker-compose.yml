@@ -323,9 +323,14 @@ services:
         condition: service_healthy
     ports:
       - "${PROXY_HTTP_PORT:-80}:80"
+    # Reach the host-run recording backend (apps/force-app/backend on :8200) for the /recorder
+    # same-origin proxy — it runs on the host because it needs the DAQ hardware, not in a container.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./infra/octrees:/srv/octrees:ro          # Potree octrees, served same-origin (Phase 2)
+      - ./apps/force-app/web/dist:/srv/force-app:ro   # standalone Force App SPA, served at /app/
       - caddy-data:/data
       - caddy-config:/config
     networks: [d1net]

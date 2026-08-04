@@ -37,7 +37,9 @@ function applyPartial(j: Partial<AppConfig> | null | undefined) {
 // Precedence: env defaults < /config.json < localStorage override (Settings > General).
 export async function loadRuntimeConfig(): Promise<void> {
 	try {
-		const res = await fetch('/config.json', { cache: 'no-store' });
+		// Base-relative so it resolves to <base>config.json (e.g. /app/config.json) and never the
+		// Directus origin root. Lets a deploy drop a config.json next to index.html to retarget URLs.
+		const res = await fetch(`${import.meta.env.BASE_URL}config.json`, { cache: 'no-store' });
 		if (res.ok) applyPartial((await res.json()) as Partial<AppConfig>);
 	} catch {
 		/* no runtime config file — env defaults stand */
