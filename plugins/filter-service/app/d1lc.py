@@ -46,7 +46,10 @@ def serialise(c: Cache, stride: int = 1) -> bytes:
     """Emit a D1LC binary, optionally strided (preview decimation)."""
     sl = slice(None, None, max(1, stride))
     t = c.t[sl]
-    head = struct.pack("<IIIfffff", MAGIC, 1, t.size, c.fs, c.feed, c.diam, c.cs_sec, c.ce_sec)
+    head = struct.pack(
+        "<IIIfffff",
+        MAGIC, 1, t.size, c.fs, c.feed, c.diam, c.cs_sec, c.ce_sec,
+    )
     body = b"".join(np.ascontiguousarray(x[sl], dtype="<f4").tobytes()
                     for x in (c.t, c.fx, c.fy, c.fz, c.rpm, c.revs))
     return head + body

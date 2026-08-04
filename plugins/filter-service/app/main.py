@@ -1,11 +1,14 @@
-"""FRM filter-service: interactive signal-filter previews for the force dashboard.
+"""FRM filter-service: interactive signal-filter previews.
 
-The browser POSTs a filter chain + a live-cache file id; we fetch the cache from Directus
-FORWARDING THE CALLER'S OWN credentials (cookie / Authorization header) — so access control
-stays Directus's and an unauthenticated caller simply gets Directus's 403. Parsed caches are
-LRU-kept in memory so repeated tweaks only pay the filter maths. Filtering runs at the
-cache's real sample rate; preview decimation (target_points) happens AFTER filtering.
-Served same-origin by Caddy at /filter/*.
+The browser POSTs a filter chain + a live-cache file id; we
+fetch the cache from Directus FORWARDING THE CALLER'S OWN
+credentials (cookie / Authorization header) — so access
+control stays Directus's and an unauthenticated caller simply
+gets Directus's 403. Parsed caches are LRU-kept in memory so
+repeated tweaks only pay the filter maths. Filtering runs at
+the cache's real sample rate; preview decimation
+(target_points) happens AFTER filtering. Served same-origin
+by Caddy at /filter/*.
 """
 
 from __future__ import annotations
@@ -30,10 +33,10 @@ LRU_CAP = int(os.environ.get("CACHE_LRU", "4"))
 
 app = FastAPI(title="d1-filter-service")
 
-# CORS for the standalone Force App (apps/force-app/web), which calls this service from its
-# own origin. `expose_headers` is essential: the browser reads X-Filter-Skipped / X-Filter-
-# Stride off the response, and cross-origin those are hidden unless explicitly exposed.
-# (Same-origin embedding in Directus needed none of this.)
+# CORS for the standalone Force App (apps/force-app/web), which
+# calls this service from its own origin. `expose_headers` is
+# essential: the browser reads X-Filter-Skipped / X-Filter-Stride
+# off the response; cross-origin those are hidden unless exposed.
 _cors_origins = [
     o.strip() for o in os.environ.get("FILTER_CORS_ORIGINS", "").split(",") if o.strip()
 ]
@@ -59,11 +62,15 @@ def _auth_headers(req: Request) -> dict:
 
 
 async def _authorize(file_id: str, req: Request) -> None:
-    """Re-check that THIS caller may read the asset, with their own credentials — a cheap
-    HEAD to the same /assets route the real fetch uses (Directus applies the identical file
-    permissions). Guards LRU HITS: without this, an entry warmed by one user's credentials
-    would be served to any other caller who knows the id (IDOR). The MISS path authorizes
-    inherently, because it fetches the bytes with the caller's own credentials."""
+    """Re-check that THIS caller may read the asset.
+
+    A cheap HEAD to the same /assets route the real fetch uses
+    (Directus applies identical file permissions). Guards LRU
+    HITS: without this, an entry warmed by one user's creds
+    would be served to any caller who knows the id (IDOR). The
+    MISS path authorizes inherently because it fetches bytes
+    with the caller's own credentials.
+    """
     async with httpx.AsyncClient(timeout=30) as cl:
         r = await cl.head(
             f"{DIRECTUS_URL}/assets/{file_id}", headers=_auth_headers(req)

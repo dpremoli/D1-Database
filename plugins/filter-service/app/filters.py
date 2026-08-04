@@ -1,8 +1,9 @@
-"""FRM signal-filter chain (docs/superpowers/specs/2026-07-21-frm-filtering-suite-design.md).
+"""FRM signal-filter chain.
 
-Fixed stage order — despike -> detrend -> lowpass -> notch — each independently enabled.
-All IIR stages run ZERO-PHASE (sosfiltfilt/filtfilt) so the FRM spiral geometry never
-phase-shifts. This module must stay numerically in lock-step with the MATLAB twin
+Fixed stage order: despike -> detrend -> lowpass -> notch, each
+independently enabled. All IIR stages run ZERO-PHASE
+(sosfiltfilt/filtfilt) so the FRM spiral geometry never
+phase-shifts. Must stay in lock-step with the MATLAB twin
 (scripts/matlab/frm_filters.m); test_parity.py guards the pair.
 """
 from __future__ import annotations
@@ -81,7 +82,8 @@ def apply_chain(axes: dict[str, np.ndarray], fs: float, mean_rpm: float,
 
     d = chain.get("despike") or {}
     if d.get("on"):
-        w = int(d.get("window", 11)); sg = float(d.get("sigma", 5))
+        w = int(d.get("window", 11))
+        sg = float(d.get("sigma", 5))
         for k in out:
             out[k] = _hampel(out[k], w, sg)
 
@@ -101,7 +103,8 @@ def apply_chain(axes: dict[str, np.ndarray], fs: float, mean_rpm: float,
 
     hp = chain.get("highpass") or {}
     if hp.get("on"):
-        fc = float(hp.get("cutoff_hz", 50)); order = int(hp.get("order", 4))
+        fc = float(hp.get("cutoff_hz", 50))
+        order = int(hp.get("order", 4))
         if fc >= nyq:
             skipped.append(f"highpass {fc:g} Hz >= preview Nyquist {nyq:g} Hz")
         else:
@@ -111,7 +114,8 @@ def apply_chain(axes: dict[str, np.ndarray], fs: float, mean_rpm: float,
 
     lp = chain.get("lowpass") or {}
     if lp.get("on"):
-        fc = float(lp.get("cutoff_hz", 2000)); order = int(lp.get("order", 4))
+        fc = float(lp.get("cutoff_hz", 2000))
+        order = int(lp.get("order", 4))
         if fc >= nyq:
             skipped.append(f"lowpass {fc:g} Hz >= preview Nyquist {nyq:g} Hz")
         else:

@@ -67,7 +67,7 @@ def test_build_system_prompt_includes_known_values_legend():
         prompt = schema_context.build_system_prompt()
 
     assert "Known column values" in prompt
-    legend = prompt.split("Known column values")[1]
+    legend = prompt.split("Known column values —")[1]
     assert "method_name: Turning, Milling" in legend
     assert "outcome_notes" not in legend  # free-text column skipped
     schema_context._known_cache["ts"] = 0.0  # don't leak cache to other tests
