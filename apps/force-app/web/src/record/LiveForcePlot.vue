@@ -2,7 +2,7 @@
 // Rolling live force scope: draws the Fx/Fy/Fz min/max envelope over the last windowSec, from the
 // RecordClient's trace buffer. Canvas 2D + rAF; autoscales Y to the visible window. Not reactive
 // per-sample — it reads the plain buffers each frame.
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { RecordClient } from './liveClient';
 import { CH_COLOR } from './types';
 
@@ -35,6 +35,7 @@ function draw() {
 	const c = canvasEl.value;
 	if (!c || !ctx) return;
 	const W = c.clientWidth, H = c.clientHeight;
+	if (W === 0 || H === 0) { resize(); return; }
 	ctx.clearRect(0, 0, W, H);
 	ctx.fillStyle = '#0b1020';
 	ctx.fillRect(0, 0, W, H);
@@ -90,7 +91,7 @@ function drawGrid(W: number, H: number, _n: number) {
 	for (let i = 1; i < 4; i++) { const y = (H * i) / 4; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
 }
 
-onMounted(() => { resize(); window.addEventListener('resize', resize); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); draw(); });
+onMounted(() => { resize(); window.addEventListener('resize', resize); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); draw(); nextTick(resize); });
 onBeforeUnmount(() => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize); ro?.disconnect(); });
 </script>
 

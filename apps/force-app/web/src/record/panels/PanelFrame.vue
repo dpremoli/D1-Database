@@ -29,5 +29,5 @@ defineEmits<{ close: [] }>();
 .panel-close { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: none; background: transparent; color: var(--text-dim); cursor: pointer; border-radius: 5px; }
 .panel-close:hover { color: var(--danger); background: rgba(239,68,68,0.12); }
 .panel-close .material-symbols-rounded { font-size: 15px; }
-.panel-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+.panel-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px; }
 </style>

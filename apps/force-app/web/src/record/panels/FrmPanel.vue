@@ -27,17 +27,12 @@ function openLive() { window.open(appUrl('/live/frm'), '_blank', 'noopener,width
 			</button>
 		</div>
 		<div class="frm-body">
-		<template v-if="!w.isDone.value">
-			<LiveFrm :client="w.client" :diam="w.cfg.diam" :colormap="w.plot.colormap" :point-size="w.plot.pointSize" />
-		</template>
-		<template v-else>
-			<FrmCloud v-if="w.finishedCache.value" cache-file-id="" :cache-override="w.finishedCache.value"
-				:axis="w.plot.frmAxis" :feed="w.finishedCache.value.feed" :diam="w.finishedCache.value.diam" :inner-diam="w.cfg.inner_diam"
-				speed-mode="measured" :rpm="w.cfg.rpm" :vc="0" :time-scale="1" :ppr="w.cfg.ppr"
-				:crop-start-sec="w.finishedCache.value.csSec" :crop-end-sec="w.finishedCache.value.ceSec"
-				:stride="1" :gridding="false" :grid-n="600" :point-size="w.plot.pointSize" :colormap="w.plot.colormap" pane-label="captured" />
-			<div v-else class="loading">Loading capture…</div>
-		</template>
+		<FrmCloud v-if="w.isDone.value && w.finishedCache.value" cache-file-id="" :cache-override="w.finishedCache.value"
+			:axis="w.plot.frmAxis" :feed="w.finishedCache.value.feed" :diam="w.finishedCache.value.diam" :inner-diam="w.cfg.inner_diam"
+			speed-mode="measured" :rpm="w.cfg.rpm" :vc="0" :time-scale="1" :ppr="w.cfg.ppr"
+			:crop-start-sec="w.finishedCache.value.csSec" :crop-end-sec="w.finishedCache.value.ceSec"
+			:stride="1" :gridding="false" :grid-n="600" :point-size="w.plot.pointSize" :colormap="w.plot.colormap" pane-label="captured" />
+		<LiveFrm v-else :client="w.client" :diam="w.cfg.diam" :colormap="w.plot.colormap" :point-size="w.plot.pointSize" />
 		</div>
 	</div>
 </template>

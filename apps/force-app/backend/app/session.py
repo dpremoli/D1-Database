@@ -22,7 +22,7 @@ from .stream.broadcast import Broadcaster
 from .stream.frame import encode_frame
 
 # The 8 dyno sub-channels in raw-file column order (data[:, :8]) — matches the client SUB_NAMES.
-SUB_NAMES = ["Fx1", "Fx2", "Fy1", "Fy2", "Fz1", "Fz2", "Fz3", "Fz4"]
+SUB_NAMES = ["Fx1", "Fx2", "Fy1", "Fy2", "Fz1", "Fz2", "Fz3", "Fz4", "Tacho"]
 
 
 class RecordingSession:
@@ -143,7 +143,7 @@ class RecordingSession:
             trace = self.decimator.process(t, axes)
             # Per-sub-channel envelopes (the 8 dyno columns) so the client can plot any single
             # sensor live, not just the summed axes.
-            sub = self.decimator.process_cols(t, np.asarray(data[:, :8], dtype=np.float64))
+            sub = self.decimator.process_cols(t, np.asarray(data[:, :9], dtype=np.float64))
             pts, rpm = self.frm.process(t, axes, tacho_column(data))
             self.n_total += t.size
             self._t_last = float(t[-1])
@@ -166,7 +166,7 @@ class RecordingSession:
             y = axes.get(n)
             if y is not None:
                 self._fft_bufs[n] = np.concatenate([self._fft_bufs[n], y])[-self._fft_cap :]
-        subcols = np.asarray(data[:, :8], dtype=np.float64)
+        subcols = np.asarray(data[:, :9], dtype=np.float64)
         for j, n in enumerate(SUB_NAMES):
             if j < subcols.shape[1]:
                 self._fft_bufs[n] = np.concatenate([self._fft_bufs[n], subcols[:, j]])[

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-// A single live panel in its own window (for a second monitor). It opens its OWN WebSocket to the
-// recorder, which broadcasts each frame to every connected client — so this window renders a live
-// view of the SAME recording session driven from the main window. Open it BEFORE pressing Start so
-// the FRM spiral accumulates from the beginning.
+// A single live panel in its own window (for a second monitor). Connects via BroadcastChannel relay
+// to the main window's RecordClient, so it shares the same accumulated state — the FRM spiral,
+// force traces, and FFT history all mirror the parent. A snapshot of the parent's current buffers
+// is sent on open so even a mid-recording pop-out catches up immediately.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { RecordClient } from './liveClient';
@@ -11,7 +11,7 @@ import LiveFft from './LiveFft.vue';
 import LiveFrm from './LiveFrm.vue';
 
 const route = useRoute();
-const panel = computed(() => String(route.params.panel || 'force')); // force | fft | frm
+const panel = computed(() => String(route.params.panel || 'force'));
 const title = computed(() => ({ force: 'Live Force', fft: 'Live FFT', frm: 'Live FRM Fingerprint' }[panel.value] || 'Live'));
 const client = new RecordClient();
 const st = client.status;
@@ -19,7 +19,7 @@ const colormap = ref('viridis');
 const pointSize = ref(2.2);
 const maps = ['viridis', 'inferno', 'grayscale'];
 
-onMounted(() => { client.connect(); document.title = title.value; });
+onMounted(() => { client.connectViaRelay(); document.title = title.value; });
 onBeforeUnmount(() => client.disconnect());
 </script>
 
@@ -36,7 +36,7 @@ onBeforeUnmount(() => client.disconnect());
 				<span class="material-symbols-rounded">{{ st.connected ? 'sensors' : 'sensors_off' }}</span>
 			</span>
 			<div class="readouts">
-				<template v-if="st.cutStartSec !== null"><b class="cut">✓ cut</b><span>{{ st.cutStartSec.toFixed(2) }}s</span></template>
+				<template v-if="st.cutStartSec !== null"><b class="cut">&#x2713; cut</b><span>{{ st.cutStartSec.toFixed(2) }}s</span></template>
 				<b>{{ Math.round(st.rpm) }}</b><span>rpm</span>
 				<b class="fz">{{ st.peaks.Fz.toFixed(0) }}</b><span>Fz peak</span>
 			</div>
@@ -66,6 +66,6 @@ onBeforeUnmount(() => client.disconnect());
 .readouts b { font-size: 15px; color: var(--text); }
 .readouts b.fz { color: #60a5fa; }
 .readouts b.cut { color: #4ade80; font-size: 13px; }
-.body { flex: 1; min-height: 0; padding: 12px; }
+.body { flex: 1; min-height: 0; padding: 12px; overflow: hidden; }
 .body > * { height: 100%; }
 </style>

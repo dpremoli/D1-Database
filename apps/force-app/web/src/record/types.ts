@@ -27,4 +27,5 @@ export const CH_COLOR: Record<string, string> = {
 	Fx1: '#f87171', Fx2: '#fca5a5',
 	Fy1: '#4ade80', Fy2: '#86efac',
 	Fz1: '#60a5fa', Fz2: '#93c5fd', Fz3: '#38bdf8', Fz4: '#818cf8',
+	Tacho: '#a78bfa',
 };

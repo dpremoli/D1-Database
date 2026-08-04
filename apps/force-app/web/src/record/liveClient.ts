@@ -8,7 +8,7 @@ import type { RecordConfig } from './types';
 
 const MAGIC = 0x46_4c_31_44; // 'D1LF' bytes D,1,L,F read little-endian as a u32
 // The 8 dyno sub-channels the frame streams (min/max envelope), in raw-file column order.
-export const SUB_NAMES = ['Fx1', 'Fx2', 'Fy1', 'Fy2', 'Fz1', 'Fz2', 'Fz3', 'Fz4'] as const;
+export const SUB_NAMES = ['Fx1', 'Fx2', 'Fy1', 'Fy2', 'Fz1', 'Fz2', 'Fz3', 'Fz4', 'Tacho'] as const;
 export type SubName = (typeof SUB_NAMES)[number];
 type Env = [number, number][];
 function emptyTrace() {
@@ -58,6 +58,8 @@ export class RecordClient {
 
 	private ws: WebSocket | null = null;
 	private base = getConfig().recorderUrl;
+	get baseUrl() { return this.base; }
+	private relay: BroadcastChannel | null = null;
 
 	// Build the absolute ws(s):// stream URL. `base` may be an absolute http(s) URL (dev, e.g.
 	// http://localhost:8200) or a same-origin relative path (deploy, /recorder proxied by Caddy).
@@ -79,11 +81,55 @@ export class RecordClient {
 		ws.onmessage = (ev) => {
 			if (typeof ev.data === 'string') this.onControl(JSON.parse(ev.data));
 			else this.onFrame(ev.data as ArrayBuffer);
+			this.relay?.postMessage(ev.data instanceof ArrayBuffer ? { bin: new Uint8Array(ev.data) } : { txt: ev.data });
 		};
 		this.ws = ws;
+		this.relay = new BroadcastChannel('force-app-live');
+		this.relay.onmessage = (ev) => {
+			if (ev.data?.type === 'sync-request') this.sendSnapshot();
+		};
 	}
 
-	disconnect() { this.ws?.close(); this.ws = null; }
+	connectViaRelay() {
+		this.relay = new BroadcastChannel('force-app-live');
+		this.relay.onmessage = (ev) => {
+			const d = ev.data;
+			if (d?.bin) { const u8 = new Uint8Array(d.bin); this.onFrame(u8.buffer as ArrayBuffer); }
+			else if (d?.txt) this.onControl(JSON.parse(d.txt));
+			else if (d?.type === 'snapshot') this.applySnapshot(d);
+		};
+		this.status.connected = true;
+		this.relay.postMessage({ type: 'sync-request' });
+	}
+
+	private sendSnapshot() {
+		const fm = this.frm;
+		this.relay?.postMessage({
+			type: 'snapshot',
+			status: { ...this.status },
+			frm: { xy: new Float32Array(fm.xy.buffer, 0, fm.count * 2), c: new Float32Array(fm.c.buffer, 0, fm.count), count: fm.count, cAbsMax: fm.cAbsMax },
+			trace: { t: this.trace.t, fx: this.trace.fx, fy: this.trace.fy, fz: this.trace.fz, sub: this.trace.sub },
+		});
+	}
+
+	private applySnapshot(snap: any) {
+		if (snap.status) { Object.assign(this.status, snap.status); }
+		if (snap.frm && snap.frm.count > this.frm.count) {
+			const n = snap.frm.count;
+			this.frm.xy.set(new Float32Array(snap.frm.xy), 0);
+			this.frm.c.set(new Float32Array(snap.frm.c), 0);
+			this.frm.count = n;
+			this.frm.cAbsMax = snap.frm.cAbsMax;
+		}
+		if (snap.trace) {
+			this.trace.t = snap.trace.t; this.trace.fx = snap.trace.fx;
+			this.trace.fy = snap.trace.fy; this.trace.fz = snap.trace.fz;
+			this.trace.sub = snap.trace.sub;
+		}
+		this.frameSeq.value++;
+	}
+
+	disconnect() { this.ws?.close(); this.ws = null; this.relay?.close(); this.relay = null; }
 
 	private onControl(msg: any) {
 		if (msg.type === 'done') {

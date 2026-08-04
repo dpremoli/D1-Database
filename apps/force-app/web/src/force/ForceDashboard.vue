@@ -1790,7 +1790,7 @@ function fmtDateTime(v: string | null | undefined) {
 	border-radius: 16px; display: flex; flex-direction: column; overflow: hidden;
 }
 .panel-samples .list { max-height: 30vh; }
-.panel-ops .list { max-height: 38vh; }
+.panel-ops .list { max-height: none; }
 .panel-head {
 	display: flex; align-items: center; gap: 8px; padding: 12px 14px;
 	font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;

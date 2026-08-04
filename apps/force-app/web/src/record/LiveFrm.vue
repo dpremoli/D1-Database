@@ -3,7 +3,7 @@
 // the RecordClient. Preallocated buffers filled incrementally (partial GPU upload of only the new
 // points each frame). Colour uses the plotting app's shared COLORMAPS (viridis by default),
 // mapping each point's chosen-axis force symmetrically around zero by the running |c| max.
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import type { RecordClient } from './liveClient';
 import { COLORMAPS } from '../force/liveCloud';
@@ -121,7 +121,7 @@ function loop() {
 const ptsLabel = computed(() => { void props.client.frameSeq.value; return props.client.frm.count; });
 
 watch(() => props.diam, () => sizeCanvas());
-onMounted(() => { setup(); window.addEventListener('resize', sizeCanvas); ro = new ResizeObserver(sizeCanvas); if (canvasEl.value) ro.observe(canvasEl.value); });
+onMounted(() => { setup(); window.addEventListener('resize', sizeCanvas); ro = new ResizeObserver(sizeCanvas); if (canvasEl.value) ro.observe(canvasEl.value); nextTick(sizeCanvas); });
 onBeforeUnmount(() => {
 	cancelAnimationFrame(raf);
 	window.removeEventListener('resize', sizeCanvas);
