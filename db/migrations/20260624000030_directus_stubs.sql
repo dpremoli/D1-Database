@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS directus_files (
 CREATE TABLE IF NOT EXISTS directus_users (
     id UUID NOT NULL PRIMARY KEY,
     email TEXT,
-    first_name TEXT
+    first_name TEXT,
+    last_name TEXT
 );
 
 CREATE TABLE IF NOT EXISTS "Machine_Operators" (
