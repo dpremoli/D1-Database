@@ -286,6 +286,9 @@ ALTER TABLE manufacturing_operations
         REFERENCES "Machine_Operators"(id) ON DELETE SET NULL;
 
 -- migrate:down
+-- WARNING: This down migration drops Directus-managed tables. In production
+-- Directus owns these tables and running this rollback would destroy data.
+-- This rollback path is exercised only in CI (bare Postgres, no real data).
 ALTER TABLE manufacturing_operations DROP COLUMN IF EXISTS operator;
 DROP TABLE IF EXISTS "Machine_Operators";
 DROP TABLE IF EXISTS directus_deployments;
