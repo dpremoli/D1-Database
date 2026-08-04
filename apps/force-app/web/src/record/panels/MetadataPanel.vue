@@ -1,11 +1,26 @@
 <script setup lang="ts">
 // Metadata for the cut. Sample/Operator/Machine are Directus-backed typeaheads (linked as m2o on
 // the run write-back); the rest ride in recorded_metadata. Stamped into the .mat + summary too.
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useWorkspace } from '../workspace';
 import LookupField from './LookupField.vue';
 const w = useWorkspace();
 const showAdvanced = ref(false);
+
+// Live human-readable cut id, built as the run's pass code will be: {sample_code}-{TYPE}{seq}
+// (mirrors the DB convention, e.g. 9-AA-MR-2023-03-23-F9). If the operator typed an explicit
+// pass code it wins; otherwise it composes from the picked sample + operation type + sequence.
+const cutId = computed(() => {
+	const typed = w.meta.operation?.trim();
+	if (typed) return typed;
+	const code = (w.link.sampleLabel || w.meta.sample_code || w.meta.sample_name || '').trim();
+	const type = (w.meta.op_type || '').trim().replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 2);
+	const seq = String(w.machining.operation_sequence ?? '').trim();
+	const suffix = `${type}${seq}`;
+	return [code, suffix].filter(Boolean).join('-');
+});
+const cutIdFromForm = computed(() => cutId.value && !w.meta.operation?.trim());
+function useCutId() { if (cutId.value) w.meta.operation = cutId.value; }
 const textFields: { key: string; label: string }[] = [
 	{ key: 'operation', label: 'Operation / pass code' },
 	{ key: 'op_type', label: 'Operation type' },
@@ -18,6 +33,12 @@ const textFields: { key: string; label: string }[] = [
 
 <template>
 	<div class="meta">
+		<div class="cutid" :class="{ empty: !cutId }">
+			<span class="cutid-lab">Cut ID</span>
+			<span class="cutid-val">{{ cutId || 'pick a sample + operation…' }}</span>
+			<button v-if="cutIdFromForm" class="cutid-use" type="button" title="Use this as the pass code"
+				:disabled="w.locked.value" @click="useCutId">use</button>
+		</div>
 		<div class="links">
 			<LookupField v-model="w.link.sampleId" :display-label="w.link.sampleLabel" label="Sample" placeholder="search sample code…"
 				:search="w.searchSamples" :disabled="w.locked.value" @select="w.onSelectSample" />
@@ -58,6 +79,16 @@ const textFields: { key: string; label: string }[] = [
 
 <style scoped>
 .meta { display: flex; flex-direction: column; }
+.cutid { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 8px 11px; border-radius: 9px;
+	background: rgba(56,189,248,0.09); border: 1px solid rgba(56,189,248,0.35); }
+.cutid.empty { background: rgba(0,0,0,0.2); border-color: var(--border); }
+.cutid-lab { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
+.cutid-val { flex: 1; min-width: 0; font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent);
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cutid.empty .cutid-val { color: var(--text-dim); font-weight: 400; font-family: inherit; font-size: 12px; }
+.cutid-use { flex: 0 0 auto; padding: 3px 9px; font-size: 11px; font-weight: 700; color: #0b1020; background: var(--accent);
+	border: none; border-radius: 6px; cursor: pointer; }
+.cutid-use:disabled { opacity: 0.5; cursor: default; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
 label { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px; }
 label.wide { display: block; }

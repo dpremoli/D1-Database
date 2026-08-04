@@ -20,21 +20,24 @@ const st = w.st;
 // Panel types. `single` types exist at most once; the rest can be added multiple times (e.g. two
 // Force panels each isolating a different axis, or a second FRM). `w/h` seed a newly-added panel.
 const PANEL_TYPES: Record<string, { title: string; icon: string; single?: boolean; w: number; h: number }> = {
-	options: { title: 'Recording Options', icon: 'tune', single: true, w: 3, h: 12 },
-	metadata: { title: 'Metadata', icon: 'description', single: true, w: 3, h: 14 },
+	options: { title: 'Recording Options', icon: 'tune', single: true, w: 3, h: 11 },
+	metadata: { title: 'Metadata', icon: 'description', single: true, w: 3, h: 23 },
 	force: { title: 'Force Plot', icon: 'show_chart', w: 5, h: 11 },
 	rpm: { title: 'RPM', icon: 'speed', w: 5, h: 7 },
 	frm: { title: 'FRM Map', icon: 'fingerprint', w: 4, h: 19 },
 };
 type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: 'time' | 'fft'; channels?: string[] };
 const DEFAULT_LAYOUT: Inst[] = [
-	{ i: 'options', type: 'options', x: 0, y: 0, w: 3, h: 12 },
-	{ i: 'metadata', type: 'metadata', x: 0, y: 12, w: 3, h: 14 },
+	// Metadata is a tall full-height left column so every field — including the machining-details
+	// section — is visible without hunting; Recording Options (source + Start/Stop) sits compact above.
+	{ i: 'options', type: 'options', x: 0, y: 0, w: 3, h: 11 },
+	{ i: 'metadata', type: 'metadata', x: 0, y: 11, w: 3, h: 23 },
 	{ i: 'force', type: 'force', x: 3, y: 0, w: 5, h: 12, mode: 'time', channels: ['Fx', 'Fy', 'Fz'] },
 	{ i: 'rpm', type: 'rpm', x: 3, y: 12, w: 5, h: 7 },
 	{ i: 'frm', type: 'frm', x: 8, y: 0, w: 4, h: 19 },
 ];
-const LS_KEY = 'force-app.record.layout.v2';
+// Bumped to v3 so existing users pick up the taller metadata column (v2 layouts are discarded).
+const LS_KEY = 'force-app.record.layout.v3';
 
 function loadLayout(): Inst[] {
 	try {
