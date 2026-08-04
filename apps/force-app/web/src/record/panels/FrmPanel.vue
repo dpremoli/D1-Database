@@ -46,7 +46,7 @@ function openLive() { window.open(appUrl('/live/frm'), '_blank', 'noopener,width
 .segbtn.fx.on { background: #f87171; border-color: #f87171; color: #2a0808; }
 .segbtn.fy.on { background: #4ade80; border-color: #4ade80; color: #05210f; }
 .segbtn.fz.on { background: #60a5fa; border-color: #60a5fa; color: #05173a; }
-.cmap { padding: 5px 7px; font-size: 12px; color: var(--text); background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 7px; }
+.cmap { padding: 5px 7px; font-size: 12px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
 .psize { width: 84px; accent-color: var(--accent); }
 .popout { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
 .popout:hover { color: var(--accent); background: var(--surface-2); }

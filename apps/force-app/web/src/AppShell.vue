@@ -57,7 +57,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 
 <style scoped>
 .shell { display: flex; min-height: 100vh; }
-.sidebar { width: 96px; flex-shrink: 0; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 14px 8px; background: #0a0f1e; border-right: 1px solid var(--border); position: sticky; top: 0; height: 100vh; }
+.sidebar { width: 96px; flex-shrink: 0; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 14px 8px; background: var(--bg-2); border-right: 1px solid var(--border); position: sticky; top: 0; height: 100vh; }
 .brand { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 6px 0 12px; }
 .brand-mark { display: inline-flex; gap: 3px; padding: 6px; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); }
 .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }

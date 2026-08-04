@@ -1837,12 +1837,12 @@ function fmtDateTime(v: string | null | undefined) {
 
 .card {
 	background: var(--theme--background, #fff); border: 1px solid var(--theme--border-color-subdued, #e7ebf0);
-	border-radius: 16px; padding: 16px 18px;
+	border-radius: 16px; padding: 12px 14px;
 }
 .info-head {
 	display: flex; align-items: center; justify-content: space-between; gap: 8px;
 	font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
-	color: var(--theme--foreground-subdued, #6b7684); margin-bottom: 11px;
+	color: var(--theme--foreground-subdued, #6b7684); margin-bottom: 8px;
 }
 .openbtn {
 	display: inline-flex; align-items: center; gap: 3px; border: 0; cursor: pointer; font: inherit;
@@ -1852,7 +1852,7 @@ function fmtDateTime(v: string | null | undefined) {
 }
 .openbtn:hover { background: color-mix(in srgb, var(--theme--primary, #1d4ed8) 18%, transparent); }
 .info-code { font-size: 13px; margin-bottom: 12px; }
-.kv { display: grid; grid-template-columns: auto 1fr; gap: 7px 12px; font-size: 12.5px; margin-bottom: 4px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; margin-bottom: 2px; }
 .kv span:nth-child(odd) { color: var(--theme--foreground-subdued, #6b7684); white-space: nowrap; }
 .kv span:nth-child(even) { font-weight: 600; text-align: right; }
 .stat-sep {

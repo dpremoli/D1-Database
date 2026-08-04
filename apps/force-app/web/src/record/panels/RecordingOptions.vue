@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from 'vue';
 import { useWorkspace } from '../workspace';
+import LookupField from './LookupField.vue';
 
 const w = useWorkspace();
 const ss = w.syncStatus;
@@ -17,16 +18,35 @@ let t: any = null;
 function onSearch() { clearTimeout(t); t = setTimeout(() => w.searchCuts(w.replay.query), 300); }
 watch(() => w.source.value, (s) => { if (s === 'replay' && w.replay.options.length === 0) w.searchCuts(''); });
 onMounted(() => { if (w.source.value === 'replay') w.searchCuts(''); });
+
+const MACHINING_SUBTYPES = [
+	{ value: 'MT-F', text: 'Turning – Facing' },
+	{ value: 'MT-R', text: 'Turning – Roughing' },
+	{ value: 'MT-O', text: 'Turning – OD' },
+	{ value: 'MT-G', text: 'Turning – Grooving' },
+	{ value: 'MT-B', text: 'Turning – Boring' },
+	{ value: 'MT-H', text: 'Turning – Threading' },
+	{ value: 'MT-P', text: 'Turning – Parting' },
+	{ value: 'MT-D', text: 'Turning – Drilling' },
+	{ value: 'MM-F', text: 'Milling – Facing' },
+	{ value: 'MM-R', text: 'Milling – Roughing' },
+	{ value: 'MM-S', text: 'Milling – Slotting' },
+	{ value: 'MM-D', text: 'Milling – Drilling' },
+	{ value: 'other', text: 'Other' },
+] as const;
+function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insertId || undefined); }
 </script>
 
 <template>
 	<div class="opts">
+		<!-- Source selector -->
 		<div class="seg">
 			<button :class="{ on: w.source.value === 'sim' }" :disabled="w.locked.value" @click="w.source.value = 'sim'">Simulated</button>
 			<button :class="{ on: w.source.value === 'replay' }" :disabled="w.locked.value" @click="w.source.value = 'replay'">Replay file</button>
 			<button :class="{ on: w.source.value === 'nidaq' }" :disabled="w.locked.value" @click="w.source.value = 'nidaq'">NI-DAQ</button>
 		</div>
 
+		<!-- Recording parameters -->
 		<template v-if="w.source.value === 'sim' || w.source.value === 'nidaq'">
 			<div class="grid2">
 				<label>Spindle (RPM)<input type="number" v-model.number="w.cfg.rpm" :disabled="w.locked.value" /></label>
@@ -39,13 +59,14 @@ onMounted(() => { if (w.source.value === 'replay') w.searchCuts(''); });
 			</div>
 		</template>
 
-		<template v-if="w.source.value === 'nidaq'">
-			<label>NI-DAQ channels <span class="sub">(Fx1,Fx2,Fy1,Fy2,Fz1,Fz2,Fz3,Fz4,Tacho)</span>
-				<textarea v-model="w.nidaqChannels.value" rows="9" spellcheck="false" :disabled="w.locked.value"></textarea>
-			</label>
-			<p class="hint warn"><span class="material-symbols-rounded">warning</span> Hardware acquisition — records until you press Stop. Set your rig's real device/channel strings; this path is built from the MATLAB method but untested against hardware (validate on the rig).</p>
-		</template>
+		<!-- NI-DAQ channel summary (configured in Settings) -->
+		<p v-if="w.source.value === 'nidaq'" class="hint nidaq-hint">
+			<span class="material-symbols-rounded">memory</span>
+			{{ w.nidaqChannels.value.split(/[\n,]+/).filter(Boolean).length }} channels configured
+			<span class="sub">(edit in Settings)</span>
+		</p>
 
+		<!-- Replay picker -->
 		<template v-if="w.source.value === 'replay'">
 			<label>Find a cut
 				<input v-model="w.replay.query" placeholder="e.g. 10-AA-MF" :disabled="w.locked.value" @input="onSearch" />
@@ -61,6 +82,7 @@ onMounted(() => { if (w.source.value === 'replay') w.searchCuts(''); });
 			<label>Replay speed ×<input type="number" v-model.number="w.replay.speed" min="1" :disabled="w.locked.value" /></label>
 		</template>
 
+		<!-- Processing options -->
 		<div v-if="w.source.value !== 'replay'" class="proc">
 			<label class="chk"><input type="checkbox" v-model="w.cfg.frm_from_cut" :disabled="w.locked.value" /> Detect cut start (live FRM begins at the cut)</label>
 			<label class="chk"><input type="checkbox" v-model="w.cfg.drift_comp" :disabled="w.locked.value" /> Drift compensation <span class="sub">(saved outputs only — raw stays raw)</span></label>
@@ -69,6 +91,49 @@ onMounted(() => { if (w.source.value === 'replay') w.searchCuts(''); });
 			<p v-if="w.converge.status" class="sync" :class="w.converge.busy ? 'warn' : 'ok'"><span class="material-symbols-rounded">tune</span>{{ w.converge.status }}</p>
 		</div>
 
+		<!-- ─── Metadata ─── -->
+		<div class="section-divider"><span>Metadata</span></div>
+
+		<div class="links">
+			<LookupField v-model="w.link.sampleId" :display-label="w.link.sampleLabel" label="Sample" placeholder="search sample code…"
+				:search="w.searchSamples" :disabled="w.locked.value" @select="w.onSelectSample" />
+			<LookupField v-model="w.link.operatorId" :display-label="w.link.operatorLabel" label="Operator" placeholder="search operator…"
+				:search="w.searchOperators" :disabled="w.locked.value" @select="(i: any) => (w.link.operatorLabel = i.label)" />
+			<LookupField v-model="w.link.equipmentId" :display-label="w.link.equipmentLabel" label="Machine" placeholder="search machine…"
+				:search="w.searchEquipment" :disabled="w.locked.value" @select="(i: any) => (w.link.equipmentLabel = i.label)" />
+		</div>
+		<div class="grid2">
+			<label>Operation type
+				<select v-model="w.meta.op_type" :disabled="w.locked.value">
+					<option value="">—</option>
+					<option v-for="t in MACHINING_SUBTYPES" :key="t.value" :value="t.value">{{ t.text }}</option>
+				</select>
+			</label>
+			<label>Tool<input v-model="w.meta.tool" :disabled="w.locked.value" /></label>
+			<label>Coolant<input v-model="w.meta.coolant" :disabled="w.locked.value" /></label>
+		</div>
+		<div class="links">
+			<LookupField v-model="w.link.insertId" :display-label="w.link.insertLabel" label="Insert" placeholder="search insert code…"
+				:search="w.searchInserts" :disabled="w.locked.value" @select="(i: any) => { w.link.insertLabel = i.label; w.link.edgeId = ''; w.link.edgeLabel = ''; }" />
+			<LookupField v-model="w.link.edgeId" :display-label="w.link.edgeLabel" label="Edge" placeholder="search edge code…"
+				:search="searchEdgesForInsert" :disabled="w.locked.value" @select="(i: any) => (w.link.edgeLabel = i.label)" />
+		</div>
+		<div class="grid2">
+			<label>Axial DoC (mm)<input type="number" step="0.01" v-model="w.machining.axial_doc" :disabled="w.locked.value" /></label>
+			<label>Radial DoC (mm)<input type="number" step="0.01" v-model="w.machining.radial_doc" :disabled="w.locked.value" /></label>
+			<label>Cutting length (mm)<input type="number" v-model="w.machining.cutting_length" :disabled="w.locked.value" /></label>
+			<label>Coolant pressure (bar)<input type="number" step="0.1" v-model="w.machining.coolant_pressure" :disabled="w.locked.value" /></label>
+			<label>Chips ref code<input v-model="w.machining.chips_ref" :disabled="w.locked.value" /></label>
+		</div>
+		<div class="chks">
+			<label class="chk"><input type="checkbox" v-model="w.machining.new_edge" :disabled="w.locked.value" /> New edge</label>
+			<label class="chk"><input type="checkbox" v-model="w.machining.chips_collected" :disabled="w.locked.value" /> Chips collected</label>
+		</div>
+		<label class="wide">Notes
+			<textarea v-model="w.meta.notes" rows="2" :disabled="w.locked.value"></textarea>
+		</label>
+
+		<!-- ─── Actions ─── -->
 		<div class="actions">
 			<button v-if="!w.locked.value" class="btn start" :disabled="w.busy.value || !w.st.connected" @click="w.start()">
 				<span class="material-symbols-rounded">fiber_manual_record</span> Start
@@ -85,35 +150,40 @@ onMounted(() => { if (w.source.value === 'replay') w.searchCuts(''); });
 			<button class="btn save" :disabled="!w.link.sampleId || w.logged.value" @click="w.logRunNow()">
 				<span class="material-symbols-rounded">cloud_upload</span> {{ w.logged.value ? 'Logged' : 'Log run to database' }}
 			</button>
-			<p v-if="!w.link.sampleId" class="hint">Pick a Sample in Metadata to enable logging.</p>
+			<p v-if="!w.link.sampleId" class="hint">Pick a Sample above to enable logging.</p>
 			<p v-if="syncText" class="sync" :class="syncClass"><span class="material-symbols-rounded">{{ syncIcon }}</span>{{ syncText }}</p>
 		</div>
 	</div>
 </template>
 
 <style scoped>
-.opts { display: flex; flex-direction: column; gap: 10px; }
+.opts { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: 100%; }
 .seg { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
 .seg button { flex: 1; padding: 8px; font-size: 12.5px; background: transparent; color: var(--text-dim); border: none; cursor: pointer; }
 .seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .seg button:disabled { opacity: 0.5; cursor: not-allowed; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
 label { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px; }
-input:not([type="checkbox"]), textarea { display: block; width: 100%; margin-top: 3px; padding: 7px 9px; font-size: 13px; color: var(--text); background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 7px; outline: none; font-family: inherit; }
+label.wide { display: block; }
+input:not([type="checkbox"]), textarea, select { display: block; width: 100%; margin-top: 3px; padding: 7px 9px; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; outline: none; font-family: inherit; }
+select option { background: var(--bg); color: var(--text); }
 textarea { font-family: var(--mono); font-size: 12px; resize: vertical; }
-input:focus, textarea:focus { border-color: var(--accent); }
-input:disabled, textarea:disabled { opacity: 0.55; }
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 .sub { color: var(--text-dim); font-weight: 400; font-size: 10.5px; }
-.hint.warn { display: flex; align-items: flex-start; gap: 5px; color: #fbbf24; }
-.hint.warn .material-symbols-rounded { font-size: 15px; margin-top: 1px; }
+.nidaq-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.nidaq-hint .material-symbols-rounded { font-size: 16px; color: var(--accent); }
 .proc { display: flex; flex-direction: column; gap: 7px; padding: 8px 0 2px; border-top: 1px solid var(--border); }
-.proc .chk { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); cursor: pointer; }
+.proc .chk { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); cursor: pointer; margin-bottom: 0; }
 .proc .chk input { accent-color: var(--accent); }
+.section-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+.section-divider::before, .section-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.links { display: flex; flex-direction: column; }
 .cutlist { max-height: 160px; overflow: auto; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: 8px; padding: 5px; }
 .cut { text-align: left; padding: 6px 8px; font-size: 12px; font-family: var(--mono); color: var(--text); background: transparent; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
 .cut:hover { background: var(--surface); }
 .cut.on { background: rgba(56,189,248,0.16); border-color: var(--accent); }
-.hint { font-size: 12px; color: var(--text-dim); padding: 6px; }
+.hint { font-size: 11.5px; color: var(--text-dim); margin: 0; }
 .actions { display: flex; gap: 8px; margin-top: 4px; }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; font-size: 13.5px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
 .btn .material-symbols-rounded { font-size: 18px; }
@@ -124,10 +194,12 @@ input:disabled, textarea:disabled { opacity: 0.55; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .err { color: var(--danger); font-size: 12px; margin: 4px 0 0; }
 .logrun { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
-.hint { font-size: 11.5px; color: var(--text-dim); margin: 0; }
 .sync { display: flex; align-items: center; gap: 5px; font-size: 12px; margin: 0; }
 .sync .material-symbols-rounded { font-size: 16px; }
 .sync.ok { color: #4ade80; }
 .sync.warn { color: #fbbf24; }
 .sync.err { color: var(--danger); }
+.chks { display: flex; gap: 16px; margin-top: 4px; }
+.chk { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text); cursor: pointer; }
+.chk input { accent-color: var(--accent); }
 </style>

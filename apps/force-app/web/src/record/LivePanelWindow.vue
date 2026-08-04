@@ -51,14 +51,14 @@ onBeforeUnmount(() => client.disconnect());
 
 <style scoped>
 .live-window { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
-.bar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: rgba(11,16,32,0.9); }
+.bar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 90%, transparent); }
 .rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #64748b; }
 .rec-dot.live { background: #ef4444; animation: pulse 1.4s infinite; }
 @keyframes pulse { 50% { opacity: 0.4; } }
 .title { font-weight: 600; font-size: 15px; }
 .state { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
 .state.recording { color: #fbbf24; } .state.done { color: #4ade80; } .state.error { color: var(--danger); }
-.cm { padding: 4px 8px; font-size: 12px; color: var(--text); background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 6px; }
+.cm { padding: 4px 8px; font-size: 12px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
 .conn { display: inline-flex; color: var(--text-dim); }
 .conn.ok { color: #4ade80; }
 .conn .material-symbols-rounded { font-size: 18px; }

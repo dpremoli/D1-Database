@@ -98,9 +98,9 @@ function openLive(panel: string) { window.open(appUrl(`/live/${panel}`), '_blank
 .chip .material-symbols-rounded { font-size: 15px; }
 .subwrap { position: relative; }
 .sub-btn.on { --c: #38bdf8; color: #7dd3fc; border-color: #38bdf8; background: rgba(56,189,248,0.12); }
-.subpop { position: absolute; top: 30px; left: 0; z-index: 40; min-width: 118px; background: #0f1730; border: 1px solid var(--border); border-radius: 9px; padding: 4px; box-shadow: 0 12px 34px rgba(0,0,0,0.5); }
+.subpop { position: absolute; top: 30px; left: 0; z-index: 40; min-width: 118px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 4px; box-shadow: 0 12px 34px rgba(0,0,0,0.3); }
 .subopt { display: flex; align-items: center; gap: 7px; width: 100%; padding: 5px 7px; font-size: 12px; color: var(--text); background: transparent; border: none; border-radius: 6px; cursor: pointer; text-align: left; }
-.subopt:hover { background: #16203c; }
+.subopt:hover { background: var(--surface-2); }
 .subopt.on { color: #fff; }
 .subopt .dot { width: 9px; height: 9px; border-radius: 50%; }
 .subopt .tick { margin-left: auto; font-size: 14px; color: #4ade80; }
