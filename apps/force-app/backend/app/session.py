@@ -18,6 +18,7 @@ from .config import RecordConfig
 from .d1rw import RawWriter
 from .dsp import sum_axes, tacho_column
 from .finalize import finalize
+from .recovery import write_manifest
 from .stream.broadcast import Broadcaster
 from .stream.frame import encode_frame
 
@@ -70,6 +71,7 @@ class RecordingSession:
     # ---- lifecycle ----
     def start(self) -> None:
         self.state = "recording"
+        write_manifest(self.dir, "recording", self.cfg)
         self._thread = threading.Thread(target=self._run, name=f"rec-{self.id}", daemon=True)
         self._thread.start()
 
@@ -105,14 +107,15 @@ class RecordingSession:
             if self.n_total > 0:
                 try:
                     self.state = "finalizing"
+                    write_manifest(self.dir, "finalizing", self.cfg)
                     self.summary = finalize(self.dir, self.cfg)
                     self.state = "error" if self.error else "done"
                 except Exception as e:
                     self.error = self.error or f"finalize error: {e}"  # keep the original cause
                     self.state = "error"
             else:
-                # Nothing captured (e.g. the source failed to start) — don't finalize an empty file.
                 self.state = "error" if self.error else "done"
+            write_manifest(self.dir, self.state, self.cfg, self.error)
             self._publish_control(
                 {
                     "type": "done",

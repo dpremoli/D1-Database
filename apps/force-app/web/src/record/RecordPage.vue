@@ -94,7 +94,54 @@ watch(() => st.state, (s) => {
 	}
 });
 
-onMounted(() => { w.client.connect(); startSync(); checkDisk(); });
+// ---- Recovery of incomplete recordings ----
+interface IncompleteSession {
+	id: string;
+	started_iso: string;
+	raw: { n_rows: number; duration_sec: number; rate: number; raw_size_mb: number };
+	manifest?: { config?: { sample_name?: string } } | null;
+}
+const recoveryItems = ref<IncompleteSession[]>([]);
+const recoveryBusy = ref<Record<string, boolean>>({});
+
+async function checkRecovery() {
+	try {
+		const res = await fetch(`${w.client.baseUrl}/recovery/check`);
+		if (res.ok) {
+			const data = await res.json();
+			recoveryItems.value = data.incomplete || [];
+		}
+	} catch { /* backend unreachable */ }
+}
+
+async function recoverSession(id: string) {
+	recoveryBusy.value[id] = true;
+	try {
+		const res = await fetch(`${w.client.baseUrl}/recovery/recover/${id}`, { method: 'POST' });
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		recoveryItems.value = recoveryItems.value.filter((s) => s.id !== id);
+	} catch (e: any) {
+		alert(`Recovery failed: ${e?.message || e}`);
+	} finally {
+		delete recoveryBusy.value[id];
+	}
+}
+
+async function discardSession(id: string) {
+	if (!confirm(`Discard incomplete recording ${id}? This cannot be undone.`)) return;
+	recoveryBusy.value[id] = true;
+	try {
+		const res = await fetch(`${w.client.baseUrl}/recovery/discard/${id}`, { method: 'POST' });
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		recoveryItems.value = recoveryItems.value.filter((s) => s.id !== id);
+	} catch (e: any) {
+		alert(`Discard failed: ${e?.message || e}`);
+	} finally {
+		delete recoveryBusy.value[id];
+	}
+}
+
+onMounted(() => { w.client.connect(); startSync(); checkDisk(); checkRecovery(); });
 onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(diskTimer); });
 </script>
 
@@ -108,6 +155,28 @@ onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(disk
 				<span v-for="al in w.alarms.active" :key="al.key" class="ao-item">{{ al.label }} {{ al.value.toFixed(al.kind === 'rpm' ? 0 : 1) }}{{ al.kind === 'rpm' ? '' : al.kind === 'disk' ? ' GB' : ' N' }}</span>
 			</div>
 			<button class="ao-ack" @click="w.alarms.acknowledge()">Acknowledge</button>
+		</div>
+
+		<!-- Recovery banner for incomplete recordings found on startup -->
+		<div v-if="recoveryItems.length" class="recovery-banner">
+			<div class="rb-head">
+				<span class="material-symbols-rounded">restore</span>
+				<b>{{ recoveryItems.length }} incomplete recording{{ recoveryItems.length > 1 ? 's' : '' }} found</b>
+				<span class="rb-hint">These recordings were interrupted by a crash or power failure. You can recover the data or discard them.</span>
+			</div>
+			<div v-for="s in recoveryItems" :key="s.id" class="rb-item">
+				<div class="rb-info">
+					<span class="rb-id">{{ s.id }}</span>
+					<span class="rb-detail">{{ s.raw.duration_sec.toFixed(1) }}s · {{ s.raw.n_rows.toLocaleString() }} samples · {{ s.raw.raw_size_mb }} MB</span>
+					<span v-if="s.manifest?.config?.sample_name" class="rb-detail">{{ s.manifest.config.sample_name }}</span>
+				</div>
+				<button class="rb-btn recover" :disabled="!!recoveryBusy[s.id]" @click="recoverSession(s.id)">
+					<span class="material-symbols-rounded">healing</span>{{ recoveryBusy[s.id] ? 'Recovering…' : 'Recover' }}
+				</button>
+				<button class="rb-btn discard" :disabled="!!recoveryBusy[s.id]" @click="discardSession(s.id)">
+					<span class="material-symbols-rounded">delete</span>Discard
+				</button>
+			</div>
 		</div>
 
 		<header class="topbar">
@@ -206,6 +275,23 @@ onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(disk
 .diskchip.crit { color: #ef4444; background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); animation: alarmpulse 0.9s ease-in-out infinite; }
 .conn { display: inline-flex; align-items: center; color: var(--text-dim); }
 .conn.ok { color: #4ade80; }
+/* Recovery banner */
+.recovery-banner { background: color-mix(in srgb, var(--bg-2) 95%, #fbbf24 5%); border-bottom: 1px solid rgba(251,191,36,0.3); padding: 14px 18px; }
+.rb-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.rb-head > .material-symbols-rounded { font-size: 22px; color: #fbbf24; }
+.rb-head b { font-size: 14px; color: var(--text); }
+.rb-hint { font-size: 12px; color: var(--text-dim); }
+.rb-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 6px; }
+.rb-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.rb-id { font-size: 12px; font-weight: 600; font-family: var(--mono); color: var(--text); }
+.rb-detail { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.rb-btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 12px; font-weight: 600; border: none; border-radius: 7px; cursor: pointer; }
+.rb-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.rb-btn .material-symbols-rounded { font-size: 15px; }
+.rb-btn.recover { color: #fff; background: #22c55e; }
+.rb-btn.recover:hover:not(:disabled) { background: #16a34a; }
+.rb-btn.discard { color: var(--text-dim); background: var(--surface-2); }
+.rb-btn.discard:hover:not(:disabled) { color: var(--danger); background: rgba(239,68,68,0.1); }
 .vgl-layout { margin: 8px 10px 0; }
 :deep(.vgl-item--placeholder) { background: rgba(56,189,248,0.18); border-radius: 12px; }
 :deep(.vgl-item__resizer) { z-index: 5; }

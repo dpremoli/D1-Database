@@ -1,0 +1,149 @@
+"""Recovery of incomplete recordings after a crash, power failure, or forced shutdown.
+
+Scans the captures directory for session directories that have a raw.d1raw file but were never
+finalized (no summary.json). Re-runs finalize() to produce the .mat, live_cache.bin, and
+summary.json from the crash-safe raw file (which is valid up to the last fsync point).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import time
+
+from .config import RecordConfig
+from .d1rw import HEADER_SIZE, read_header
+from .finalize import finalize
+
+MANIFEST = "manifest.json"
+
+
+def write_manifest(capture_dir: str, state: str, cfg: RecordConfig | None = None,
+                   error: str | None = None) -> None:
+    data: dict = {
+        "state": state,
+        "updated_at": time.time(),
+        "updated_iso": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    if cfg is not None:
+        data["config"] = cfg.model_dump()
+    if error is not None:
+        data["error"] = error
+    path = os.path.join(capture_dir, MANIFEST)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def _raw_info(capture_dir: str) -> dict | None:
+    raw_path = os.path.join(capture_dir, "raw.d1raw")
+    if not os.path.isfile(raw_path):
+        return None
+    try:
+        hdr = read_header(raw_path)
+    except (ValueError, OSError):
+        return None
+    body_bytes = os.path.getsize(raw_path) - HEADER_SIZE
+    n_cols = hdr["n_cols"]
+    row_bytes = n_cols * 4
+    n_rows = body_bytes // row_bytes if row_bytes > 0 else 0
+    duration_sec = n_rows / hdr["rate"] if hdr["rate"] > 0 else 0.0
+    return {
+        "n_rows": n_rows,
+        "n_cols": n_cols,
+        "rate": hdr["rate"],
+        "start_unix": hdr["start_unix"],
+        "duration_sec": round(duration_sec, 2),
+        "raw_size_mb": round(os.path.getsize(raw_path) / 1e6, 2),
+        "truncated_bytes": body_bytes % row_bytes,
+    }
+
+
+def scan_incomplete(captures_root: str) -> list[dict]:
+    """Return a list of session dirs that look like crashed/incomplete recordings."""
+    incomplete = []
+    if not os.path.isdir(captures_root):
+        return incomplete
+    for name in sorted(os.listdir(captures_root), reverse=True):
+        d = os.path.join(captures_root, name)
+        if not os.path.isdir(d):
+            continue
+        summary_path = os.path.join(d, "summary.json")
+        manifest_path = os.path.join(d, MANIFEST)
+        raw_path = os.path.join(d, "raw.d1raw")
+
+        if os.path.isfile(summary_path):
+            continue
+        if not os.path.isfile(raw_path):
+            continue
+
+        info = _raw_info(d)
+        if info is None or info["n_rows"] == 0:
+            continue
+
+        manifest = None
+        if os.path.isfile(manifest_path):
+            try:
+                with open(manifest_path) as f:
+                    manifest = json.load(f)
+            except (OSError, ValueError):
+                pass
+
+        incomplete.append({
+            "id": name,
+            "dir": d,
+            "raw": info,
+            "manifest": manifest,
+            "started_iso": time.strftime(
+                "%Y-%m-%d %H:%M:%S", time.localtime(info["start_unix"])
+            ),
+        })
+    return incomplete
+
+
+def recover_session(captures_root: str, session_id: str) -> dict:
+    """Re-run finalize on a crashed session's raw file."""
+    if "/" in session_id or "\\" in session_id or ".." in session_id:
+        raise ValueError("invalid session id")
+    capture_dir = os.path.join(captures_root, session_id)
+    raw_path = os.path.join(capture_dir, "raw.d1raw")
+    if not os.path.isfile(raw_path):
+        raise FileNotFoundError(f"no raw file for session {session_id}")
+    if os.path.isfile(os.path.join(capture_dir, "summary.json")):
+        raise ValueError(f"session {session_id} is already finalized")
+
+    manifest_path = os.path.join(capture_dir, MANIFEST)
+    cfg_dict = {}
+    if os.path.isfile(manifest_path):
+        try:
+            with open(manifest_path) as f:
+                m = json.load(f)
+                cfg_dict = m.get("config", {})
+        except (OSError, ValueError):
+            pass
+
+    hdr = read_header(raw_path)
+    cfg_dict.setdefault("sample_rate", hdr["rate"])
+    cfg_dict.setdefault("sample_name", f"RECOVERED-{session_id}")
+    cfg = RecordConfig(**{k: v for k, v in cfg_dict.items() if v is not None})
+
+    summary = finalize(capture_dir, cfg)
+
+    write_manifest(capture_dir, "recovered")
+    return summary
+
+
+def discard_session(captures_root: str, session_id: str) -> None:
+    """Delete an incomplete session directory."""
+    if "/" in session_id or "\\" in session_id or ".." in session_id:
+        raise ValueError("invalid session id")
+    capture_dir = os.path.join(captures_root, session_id)
+    if not os.path.isdir(capture_dir):
+        raise FileNotFoundError(f"session {session_id} not found")
+    if os.path.isfile(os.path.join(capture_dir, "summary.json")):
+        raise ValueError(f"session {session_id} is finalized — use delete instead")
+    shutil.rmtree(capture_dir)

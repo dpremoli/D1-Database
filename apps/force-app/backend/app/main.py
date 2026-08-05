@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from . import channels as chan
-from . import nidaq_catalog, nidaq_enum, storage
+from . import nidaq_catalog, nidaq_enum, recovery, storage
 from .config import DEFAULT_NIDAQ_CHANNELS, RecordConfig
 from .d1lc import read_d1lc_header
 from .labamp import LabAmpClient, LabAmpError, MockLabAmp
@@ -104,6 +104,12 @@ async def lifespan(app: FastAPI):
     global _broadcaster
     _broadcaster = Broadcaster(asyncio.get_running_loop())
     yield
+    # Graceful shutdown: stop any active recording so the raw file is properly closed and finalized.
+    if _session and _session.state in ("recording", "finalizing"):
+        try:
+            _session.stop(wait=True, timeout=15.0)
+        except Exception:
+            pass
 
 
 app = FastAPI(title="force-app-recorder", lifespan=lifespan)
@@ -222,6 +228,37 @@ async def health_check() -> dict:
             probes.append(r)
 
     return {"probes": probes, "disk": disk}
+
+
+# ---- Recovery of crashed recordings ----
+@app.get("/recovery/check")
+async def recovery_check() -> dict:
+    incomplete = await run_in_threadpool(recovery.scan_incomplete, CAPTURES_ROOT)
+    return {"incomplete": incomplete}
+
+
+@app.post("/recovery/recover/{session_id}")
+async def recovery_recover(session_id: str) -> dict:
+    try:
+        summary = await run_in_threadpool(recovery.recover_session, CAPTURES_ROOT, session_id)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"recovery failed: {e}")
+    return {"recovered": True, "session_id": session_id, "summary": summary}
+
+
+@app.post("/recovery/discard/{session_id}")
+async def recovery_discard(session_id: str) -> dict:
+    try:
+        await run_in_threadpool(recovery.discard_session, CAPTURES_ROOT, session_id)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"discarded": True, "session_id": session_id}
 
 
 def _busy() -> bool:
