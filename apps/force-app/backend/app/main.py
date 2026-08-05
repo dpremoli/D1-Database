@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
+from . import backup as backup_mod
 from . import channels as chan
 from . import nidaq_catalog, nidaq_enum, recovery, storage
 from .config import DEFAULT_NIDAQ_CHANNELS, RecordConfig
@@ -259,6 +260,72 @@ async def recovery_discard(session_id: str) -> dict:
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"discarded": True, "session_id": session_id}
+
+
+# ---- Remote live backup ----
+@app.get("/backup/config")
+async def backup_get_config() -> dict:
+    cfg = backup_mod.load_config(CAPTURES_ROOT)
+    # Probe server if configured
+    if cfg.get("server_url"):
+        probe = await run_in_threadpool(backup_mod.probe_server, cfg["server_url"])
+        cfg["server_status"] = probe
+    return cfg
+
+
+@app.post("/backup/config")
+async def backup_set_config(body: dict) -> dict:
+    cfg = backup_mod.save_config(CAPTURES_ROOT, {
+        k: body[k] for k in ("enabled", "server_url", "retention_hours") if k in body
+    })
+    return cfg
+
+
+@app.get("/backup/status")
+async def backup_status() -> dict:
+    cfg = backup_mod.load_config(CAPTURES_ROOT)
+    result: dict = {"enabled": cfg.get("enabled", False), "server_url": cfg.get("server_url", "")}
+    if _session and _session.backup:
+        result["active"] = _session.backup.status()
+    else:
+        result["active"] = None
+    return result
+
+
+@app.get("/backup/remote-sessions")
+async def backup_remote_sessions() -> dict:
+    cfg = backup_mod.load_config(CAPTURES_ROOT)
+    url = cfg.get("server_url", "")
+    if not url:
+        return {"sessions": [], "error": "no backup server configured"}
+    sessions = await run_in_threadpool(backup_mod.list_remote_sessions, url)
+    return {"sessions": sessions}
+
+
+@app.post("/backup/restore/{session_id}")
+async def backup_restore(session_id: str) -> dict:
+    """Download a raw backup from the remote server and finalize it locally."""
+    if "/" in session_id or "\\" in session_id or ".." in session_id:
+        raise HTTPException(400, "invalid session id")
+    cfg = backup_mod.load_config(CAPTURES_ROOT)
+    url = cfg.get("server_url", "")
+    if not url:
+        raise HTTPException(400, "no backup server configured")
+    capture_dir = os.path.join(CAPTURES_ROOT, session_id)
+    os.makedirs(capture_dir, exist_ok=True)
+    raw_path = os.path.join(capture_dir, "raw.d1raw")
+    try:
+        nbytes = await run_in_threadpool(
+            backup_mod.download_remote_raw, url, session_id, raw_path
+        )
+    except Exception as e:
+        raise HTTPException(502, f"download failed: {e}")
+    # Finalize the downloaded raw file
+    try:
+        summary = await run_in_threadpool(recovery.recover_session, CAPTURES_ROOT, session_id)
+    except Exception as e:
+        raise HTTPException(500, f"finalize failed after download: {e}")
+    return {"restored": True, "session_id": session_id, "bytes": nbytes, "summary": summary}
 
 
 def _busy() -> bool:

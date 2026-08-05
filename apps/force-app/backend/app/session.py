@@ -14,6 +14,7 @@ from scipy import signal as ssig
 
 from .acquisition.consumers import CutDetector, Decimator, FrmIntegrator
 from .acquisition.ring import Ring
+from .backup import BackupStreamer, load_config as load_backup_config
 from .config import RecordConfig
 from .d1rw import RawWriter
 from .dsp import sum_axes, tacho_column
@@ -31,10 +32,12 @@ class RecordingSession:
         self, cfg: RecordConfig, captures_root: str, source, broadcaster: Broadcaster | None = None
     ):
         self.cfg = cfg
+        self.captures_root = captures_root
         self.id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
         self.dir = os.path.join(captures_root, self.id)
         os.makedirs(self.dir, exist_ok=True)
         self.broadcaster = broadcaster
+        self.backup: BackupStreamer | None = None
         self.state = "idle"
         self.error: str | None = None
         self.summary: dict | None = None
@@ -72,6 +75,14 @@ class RecordingSession:
     def start(self) -> None:
         self.state = "recording"
         write_manifest(self.dir, "recording", self.cfg)
+        # Start remote live backup if configured
+        bcfg = load_backup_config(self.captures_root)
+        if bcfg.get("enabled") and bcfg.get("server_url"):
+            self.backup = BackupStreamer(
+                self.id, os.path.join(self.dir, "raw.d1raw"),
+                bcfg["server_url"], self.cfg,
+            )
+            self.backup.start()
         self._thread = threading.Thread(target=self._run, name=f"rec-{self.id}", daemon=True)
         self._thread.start()
 
@@ -104,6 +115,8 @@ class RecordingSession:
             self.ring.close()
             consumer.join(timeout=10.0)
             self.raw.close()
+            if self.backup:
+                self.backup.stop()
             if self.n_total > 0:
                 try:
                     self.state = "finalizing"
@@ -212,7 +225,7 @@ class RecordingSession:
 
     # ---- status ----
     def status(self) -> dict:
-        return {
+        s = {
             "id": self.id,
             "state": self.state,
             "error": self.error,
@@ -221,3 +234,6 @@ class RecordingSession:
             "peaks": {"Fx": self.peaks[0], "Fy": self.peaks[1], "Fz": self.peaks[2]},
             "config": self.cfg.model_dump(),
         }
+        if self.backup:
+            s["backup"] = self.backup.status()
+        return s

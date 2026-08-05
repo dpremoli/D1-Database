@@ -94,6 +94,40 @@ watch(() => st.state, (s) => {
 	}
 });
 
+// ---- Live backup status ----
+const backupStatus = reactive<{ enabled: boolean; state: string; progress: number; connected: boolean; error: string | null }>({
+	enabled: false, state: '', progress: 0, connected: false, error: null,
+});
+async function checkBackup() {
+	try {
+		const res = await fetch(`${w.client.baseUrl}/backup/status`);
+		if (res.ok) {
+			const data = await res.json();
+			backupStatus.enabled = data.enabled;
+			if (data.active) {
+				backupStatus.state = data.active.state;
+				backupStatus.progress = data.active.progress_pct;
+				backupStatus.connected = data.active.connected;
+				backupStatus.error = data.active.error;
+			} else {
+				backupStatus.state = '';
+				backupStatus.progress = 0;
+			}
+		}
+	} catch { /* ignore */ }
+}
+let backupTimer: ReturnType<typeof setInterval> | null = null;
+watch(() => st.state, (s) => {
+	if (s === 'recording' && !backupTimer && backupStatus.enabled) {
+		checkBackup();
+		backupTimer = setInterval(checkBackup, 5_000);
+	} else if (s !== 'recording' && backupTimer) {
+		clearInterval(backupTimer);
+		backupTimer = null;
+		checkBackup();
+	}
+});
+
 // ---- Recovery of incomplete recordings ----
 interface IncompleteSession {
 	id: string;
@@ -141,8 +175,8 @@ async function discardSession(id: string) {
 	}
 }
 
-onMounted(() => { w.client.connect(); startSync(); checkDisk(); checkRecovery(); });
-onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(diskTimer); });
+onMounted(() => { w.client.connect(); startSync(); checkDisk(); checkRecovery(); checkBackup(); });
+onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(diskTimer); if (backupTimer) clearInterval(backupTimer); });
 </script>
 
 <template>
@@ -212,6 +246,14 @@ onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(disk
 				<span class="material-symbols-rounded">hard_drive</span>
 				<span>{{ diskInfo.free_gb < 100 ? diskInfo.free_gb.toFixed(1) : Math.round(diskInfo.free_gb) }} GB</span>
 			</div>
+			<div v-if="backupStatus.enabled" class="backupchip"
+				:class="{ streaming: backupStatus.state === 'streaming', paused: backupStatus.state === 'paused', done: backupStatus.state === 'done', err: backupStatus.state === 'error' }"
+				:title="backupStatus.error || `Backup ${backupStatus.state || 'idle'} · ${backupStatus.progress.toFixed(0)}%`">
+				<span class="material-symbols-rounded">{{ backupStatus.connected ? 'cloud_done' : 'cloud_off' }}</span>
+				<span v-if="backupStatus.state === 'streaming'">{{ backupStatus.progress.toFixed(0) }}%</span>
+				<span v-else-if="backupStatus.state === 'paused'">paused</span>
+				<span v-else-if="backupStatus.state">{{ backupStatus.state }}</span>
+			</div>
 			<div class="conn" :class="{ ok: st.connected }">
 				<span class="material-symbols-rounded">{{ st.connected ? 'sensors' : 'sensors_off' }}</span>
 			</div>
@@ -273,6 +315,12 @@ onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(disk
 .diskchip .material-symbols-rounded { font-size: 15px; }
 .diskchip.warn { color: #fbbf24; background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.3); }
 .diskchip.crit { color: #ef4444; background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); animation: alarmpulse 0.9s ease-in-out infinite; }
+.backupchip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 8px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-dim); border: 1px solid var(--border); }
+.backupchip .material-symbols-rounded { font-size: 15px; }
+.backupchip.streaming { color: #22c55e; background: rgba(34,197,94,0.1); border-color: rgba(34,197,94,0.3); }
+.backupchip.paused { color: #fbbf24; background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.3); }
+.backupchip.done { color: #4ade80; }
+.backupchip.err { color: var(--danger); background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); }
 .conn { display: inline-flex; align-items: center; color: var(--text-dim); }
 .conn.ok { color: #4ade80; }
 /* Recovery banner */

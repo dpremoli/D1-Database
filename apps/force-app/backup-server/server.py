@@ -1,0 +1,270 @@
+"""Remote live-backup server for force-app recordings.
+
+Receives chunked D1RW data streamed from the acquisition backend during a recording, stores it in
+temporary storage, and auto-purges expired sessions. The acquisition PC can download a backup for
+recovery if the local recording is lost.
+
+Run:  uvicorn server:app --host 0.0.0.0 --port 8210
+
+Endpoints:
+  POST /ingest/start          — register a new session (sends header + config)
+  POST /ingest/chunk          — append a binary chunk to a session's raw file
+  POST /ingest/finish         — mark a session as complete
+  GET  /sessions              — list stored backup sessions
+  GET  /sessions/{id}/raw     — download the raw D1RW file
+  GET  /sessions/{id}/info    — session metadata (size, duration, state)
+  DELETE /sessions/{id}       — delete a backup session
+  GET  /health                — server health + storage info
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import struct
+import threading
+import time
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+
+STORAGE = os.environ.get("BACKUP_STORAGE", os.path.join(os.path.dirname(__file__), "backups"))
+RETENTION_HOURS = float(os.environ.get("BACKUP_RETENTION_HOURS", "12"))
+PURGE_INTERVAL = 300  # seconds between purge sweeps
+
+D1RW_MAGIC = b"D1RW"
+D1RW_HEADER_SIZE = 32
+D1RW_HEADER_FMT = "<4sIIfd"
+
+
+def _session_dir(sid: str) -> str:
+    if "/" in sid or "\\" in sid or ".." in sid:
+        raise HTTPException(400, "invalid session id")
+    return os.path.join(STORAGE, sid)
+
+
+def _session_info(sid: str) -> dict | None:
+    d = os.path.join(STORAGE, sid)
+    raw = os.path.join(d, "raw.d1rw")
+    meta_path = os.path.join(d, "meta.json")
+    if not os.path.isfile(raw):
+        return None
+    info: dict = {"id": sid, "raw_size_bytes": os.path.getsize(raw)}
+    if os.path.isfile(meta_path):
+        try:
+            with open(meta_path) as f:
+                info["meta"] = json.load(f)
+        except (OSError, ValueError):
+            pass
+    # Parse header for duration estimate
+    try:
+        with open(raw, "rb") as f:
+            hdr = f.read(D1RW_HEADER_SIZE)
+        if len(hdr) == D1RW_HEADER_SIZE:
+            magic, ver, n_cols, rate, start_unix = struct.unpack_from(D1RW_HEADER_FMT, hdr)
+            if magic == D1RW_MAGIC and n_cols > 0 and rate > 0:
+                body = info["raw_size_bytes"] - D1RW_HEADER_SIZE
+                n_rows = body // (n_cols * 4)
+                info["n_rows"] = n_rows
+                info["rate"] = rate
+                info["duration_sec"] = round(n_rows / rate, 2)
+                info["start_unix"] = start_unix
+                info["started_iso"] = time.strftime(
+                    "%Y-%m-%d %H:%M:%S", time.localtime(start_unix)
+                )
+    except (OSError, struct.error):
+        pass
+    info["raw_size_mb"] = round(info["raw_size_bytes"] / 1e6, 2)
+    state = info.get("meta", {}).get("state", "unknown")
+    info["state"] = state
+    return info
+
+
+# ---- Purge daemon ----
+_purge_stop = threading.Event()
+
+
+def _purge_loop():
+    while not _purge_stop.wait(PURGE_INTERVAL):
+        _purge_expired()
+
+
+def _purge_expired():
+    if not os.path.isdir(STORAGE):
+        return
+    cutoff = time.time() - RETENTION_HOURS * 3600
+    for name in os.listdir(STORAGE):
+        d = os.path.join(STORAGE, name)
+        if not os.path.isdir(d):
+            continue
+        meta_path = os.path.join(d, "meta.json")
+        ts = 0.0
+        if os.path.isfile(meta_path):
+            try:
+                with open(meta_path) as f:
+                    ts = json.load(f).get("updated_at", 0)
+            except (OSError, ValueError):
+                pass
+        if ts == 0:
+            try:
+                ts = os.path.getmtime(d)
+            except OSError:
+                continue
+        if ts < cutoff:
+            try:
+                shutil.rmtree(d)
+            except OSError:
+                pass
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    os.makedirs(STORAGE, exist_ok=True)
+    t = threading.Thread(target=_purge_loop, daemon=True, name="backup-purge")
+    t.start()
+    yield
+    _purge_stop.set()
+
+
+app = FastAPI(title="force-app-backup-server", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+)
+
+
+@app.get("/health")
+async def health() -> dict:
+    total, used, free = shutil.disk_usage(STORAGE)
+    sessions = 0
+    if os.path.isdir(STORAGE):
+        sessions = sum(1 for n in os.listdir(STORAGE) if os.path.isdir(os.path.join(STORAGE, n)))
+    return {
+        "ok": True,
+        "storage_path": STORAGE,
+        "retention_hours": RETENTION_HOURS,
+        "sessions": sessions,
+        "disk_free_gb": round(free / 1e9, 2),
+        "disk_total_gb": round(total / 1e9, 2),
+    }
+
+
+# ---- Ingest ----
+@app.post("/ingest/start")
+async def ingest_start(request: Request) -> dict:
+    body = await request.json()
+    sid = body.get("session_id", "")
+    if not sid:
+        raise HTTPException(400, "session_id required")
+    d = _session_dir(sid)
+    os.makedirs(d, exist_ok=True)
+    # Write header bytes if provided
+    header_hex = body.get("header_hex", "")
+    if header_hex:
+        raw_path = os.path.join(d, "raw.d1rw")
+        with open(raw_path, "wb") as f:
+            f.write(bytes.fromhex(header_hex))
+    meta = {
+        "session_id": sid,
+        "state": "streaming",
+        "started_at": time.time(),
+        "updated_at": time.time(),
+        "config": body.get("config", {}),
+    }
+    with open(os.path.join(d, "meta.json"), "w") as f:
+        json.dump(meta, f)
+    return {"ok": True, "session_id": sid}
+
+
+@app.post("/ingest/chunk")
+async def ingest_chunk(request: Request) -> dict:
+    sid = request.headers.get("X-Session-ID", "")
+    if not sid:
+        raise HTTPException(400, "X-Session-ID header required")
+    d = _session_dir(sid)
+    raw_path = os.path.join(d, "raw.d1rw")
+    if not os.path.isdir(d):
+        raise HTTPException(404, f"session {sid} not found — call /ingest/start first")
+    chunk = await request.body()
+    if not chunk:
+        return {"ok": True, "appended": 0}
+    with open(raw_path, "ab") as f:
+        f.write(chunk)
+    # Update timestamp in meta
+    meta_path = os.path.join(d, "meta.json")
+    try:
+        with open(meta_path) as f:
+            meta = json.load(f)
+        meta["updated_at"] = time.time()
+        meta["chunks_received"] = meta.get("chunks_received", 0) + 1
+        with open(meta_path, "w") as f:
+            json.dump(meta, f)
+    except (OSError, ValueError):
+        pass
+    return {"ok": True, "appended": len(chunk)}
+
+
+@app.post("/ingest/finish")
+async def ingest_finish(request: Request) -> dict:
+    body = await request.json()
+    sid = body.get("session_id", "")
+    if not sid:
+        raise HTTPException(400, "session_id required")
+    d = _session_dir(sid)
+    meta_path = os.path.join(d, "meta.json")
+    if not os.path.isdir(d):
+        raise HTTPException(404, f"session {sid} not found")
+    try:
+        with open(meta_path) as f:
+            meta = json.load(f)
+        meta["state"] = "complete"
+        meta["finished_at"] = time.time()
+        meta["updated_at"] = time.time()
+        with open(meta_path, "w") as f:
+            json.dump(meta, f)
+    except (OSError, ValueError):
+        pass
+    return {"ok": True, "session_id": sid}
+
+
+# ---- Session listing / download ----
+@app.get("/sessions")
+async def list_sessions() -> dict:
+    sessions = []
+    if os.path.isdir(STORAGE):
+        for name in sorted(os.listdir(STORAGE), reverse=True):
+            d = os.path.join(STORAGE, name)
+            if not os.path.isdir(d):
+                continue
+            info = _session_info(name)
+            if info:
+                sessions.append(info)
+    return {"sessions": sessions, "retention_hours": RETENTION_HOURS}
+
+
+@app.get("/sessions/{sid}/info")
+async def session_info(sid: str) -> dict:
+    info = _session_info(sid)
+    if not info:
+        raise HTTPException(404, "session not found")
+    return info
+
+
+@app.get("/sessions/{sid}/raw")
+async def session_raw(sid: str) -> FileResponse:
+    d = _session_dir(sid)
+    raw = os.path.join(d, "raw.d1rw")
+    if not os.path.isfile(raw):
+        raise HTTPException(404, "raw file not found")
+    return FileResponse(raw, media_type="application/octet-stream", filename=f"{sid}.d1raw")
+
+
+@app.delete("/sessions/{sid}")
+async def session_delete(sid: str) -> dict:
+    d = _session_dir(sid)
+    if not os.path.isdir(d):
+        raise HTTPException(404, "session not found")
+    shutil.rmtree(d)
+    return {"deleted": True, "session_id": sid}

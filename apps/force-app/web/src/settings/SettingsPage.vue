@@ -4,13 +4,15 @@ import { ref } from 'vue';
 import GeneralSettings from './GeneralSettings.vue';
 import AlarmsSettings from './AlarmsSettings.vue';
 import ConnectivitySettings from './ConnectivitySettings.vue';
+import BackupSettings from './BackupSettings.vue';
 
 const tabs = [
 	{ id: 'general', label: 'General', icon: 'tune' },
 	{ id: 'alarms', label: 'Safety Alarms', icon: 'warning' },
 	{ id: 'connectivity', label: 'Connectivity', icon: 'network_check' },
+	{ id: 'backup', label: 'Live Backup', icon: 'cloud_upload' },
 ];
-const active = ref<'general' | 'alarms' | 'connectivity'>('general');
+const active = ref<'general' | 'alarms' | 'connectivity' | 'backup'>('general');
 </script>
 
 <template>
@@ -26,6 +28,7 @@ const active = ref<'general' | 'alarms' | 'connectivity'>('general');
 				<GeneralSettings v-if="active === 'general'" />
 				<AlarmsSettings v-else-if="active === 'alarms'" />
 				<ConnectivitySettings v-else-if="active === 'connectivity'" />
+				<BackupSettings v-else-if="active === 'backup'" />
 			</section>
 		</div>
 	</div>
