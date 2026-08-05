@@ -41,14 +41,41 @@ export async function getMethods(): Promise<LookupItem[]> {
 }
 export async function resolveMachiningMethodId(hint?: string): Promise<string | null> {
 	const ms = await getMethods();
-	const norm = (s?: string) => (s || '').toLowerCase();
 	if (hint) {
-		const h = norm(hint);
-		const m = ms.find((x) => norm(x.label).includes(h) || (h.length > 3 && h.includes(norm(x.label))));
-		if (m) return m.id;
+		const prefix = hint.split('-')[0].toUpperCase();
+		const byCode = ms.find((x) => (x.extra?.method_code || '') === prefix);
+		if (byCode) return byCode.id;
 	}
-	const machining = ms.find((x) => norm(x.label).includes('machining')) || ms.find((x) => norm(x.label).includes('turning'));
-	return machining?.id ?? ms[0]?.id ?? null;
+	const fallback = ms.find((x) => (x.extra?.method_code || '') === 'MT')
+		|| ms.find((x) => x.label.toLowerCase().includes('turning'));
+	return fallback?.id ?? ms[0]?.id ?? null;
+}
+
+export async function searchInserts(q: string): Promise<LookupItem[]> {
+	const filter: any = { is_depleted: { _eq: false } };
+	if (q?.trim()) filter.insert_code = { _icontains: q.trim() };
+	const res = await api.get('/items/cutting_inserts', {
+		params: { filter, limit: 20, sort: 'insert_code', fields: ['insert_id', 'insert_code', 'insert_number', 'insert_type_id.type_code'] },
+	});
+	return (res.data?.data ?? []).map((r: any) => ({
+		id: r.insert_id,
+		label: r.insert_code || r.insert_id,
+		sublabel: r.insert_type_id?.type_code || undefined,
+	}));
+}
+
+export async function searchEdges(q: string, insertId?: string): Promise<LookupItem[]> {
+	const filter: any = { is_used: { _eq: false } };
+	if (insertId) filter.insert_id = { _eq: insertId };
+	if (q?.trim()) filter.edge_code = { _icontains: q.trim() };
+	const res = await api.get('/items/insert_edges', {
+		params: { filter, limit: 20, sort: 'edge_code', fields: ['edge_id', 'edge_code', 'edge_identifier'] },
+	});
+	return (res.data?.data ?? []).map((r: any) => ({
+		id: r.edge_id,
+		label: r.edge_code || r.edge_id,
+		sublabel: r.edge_identifier || undefined,
+	}));
 }
 
 export async function searchEquipment(q: string): Promise<LookupItem[]> {

@@ -15,6 +15,28 @@ const err = ref<string | null>(null);
 const pop = ref<{ physical: string; label: string; x: number; y: number } | null>(null);
 const catalogFor = ref<number | null>(null); // target slot for add-card
 
+// Hardware info summary
+const totalAi = computed(() => {
+	if (!devices.value) return 0;
+	return devices.value.chassis.reduce((sum, ch) => sum + ch.modules.reduce((ms, m) => ms + m.ports.filter(p => p.kind === 'ai').length, 0), 0)
+		+ devices.value.standalone.reduce((sum, m) => sum + m.ports.filter(p => p.kind === 'ai').length, 0);
+});
+const totalCi = computed(() => {
+	if (!devices.value) return 0;
+	return devices.value.chassis.reduce((sum, ch) => sum + ch.modules.reduce((ms, m) => ms + m.ports.filter(p => p.kind === 'ci').length, 0), 0)
+		+ devices.value.standalone.reduce((sum, m) => sum + m.ports.filter(p => p.kind === 'ci').length, 0);
+});
+const moduleCount = computed(() => {
+	if (!devices.value) return 0;
+	return devices.value.chassis.reduce((sum, ch) => sum + ch.modules.length, 0) + devices.value.standalone.length;
+});
+const assignedCount = computed(() => channels.value.filter(c => c.physical).length);
+
+// Card catalog spec lookup for display
+function cardSpec(productType: string): CatalogCard | undefined {
+	return cards.value.find(c => c.product_type === productType || c.label === productType);
+}
+
 async function load() {
 	loading.value = true; err.value = null;
 	try {
@@ -86,6 +108,34 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 		</header>
 		<p v-if="err" class="err">{{ err }}</p>
 
+		<!-- Hardware summary bar -->
+		<div v-if="devices" class="hw-summary">
+			<div class="hw-stat">
+				<span class="material-symbols-rounded">developer_board</span>
+				<div><span class="hw-label">Chassis</span><b>{{ devices.chassis.map(c => c.product_type).join(', ') || '—' }}</b></div>
+			</div>
+			<div class="hw-stat">
+				<span class="material-symbols-rounded">memory</span>
+				<div><span class="hw-label">Modules</span><b>{{ moduleCount }}</b></div>
+			</div>
+			<div class="hw-stat">
+				<span class="material-symbols-rounded">input</span>
+				<div><span class="hw-label">AI channels</span><b>{{ totalAi }}</b></div>
+			</div>
+			<div v-if="totalCi" class="hw-stat">
+				<span class="material-symbols-rounded">timer</span>
+				<div><span class="hw-label">Counters</span><b>{{ totalCi }}</b></div>
+			</div>
+			<div class="hw-stat">
+				<span class="material-symbols-rounded">link</span>
+				<div><span class="hw-label">Assigned</span><b>{{ assignedCount }} / {{ channels.length }}</b></div>
+			</div>
+			<div class="hw-stat" :class="{ ok: !devices.simulated }">
+				<span class="material-symbols-rounded">{{ devices.simulated ? 'cloud' : 'sensors' }}</span>
+				<div><span class="hw-label">Status</span><b>{{ devices.simulated ? 'Simulated' : 'Connected' }}</b></div>
+			</div>
+		</div>
+
 		<div class="layout">
 			<!-- Chassis diagram(s) -->
 			<div class="diagram">
@@ -100,6 +150,11 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 								</div>
 								<div class="model">{{ moduleAt(ch, slot)!.label }}<span v-if="moduleAt(ch, slot)!.iepe" class="iepe">IEPE</span></div>
 								<div class="conn-note">{{ moduleAt(ch, slot)!.note }}</div>
+								<div class="mod-specs" v-if="cardSpec(moduleAt(ch, slot)!.product_type)">
+									<span v-if="cardSpec(moduleAt(ch, slot)!.product_type)?.vmax" class="spec">±{{ cardSpec(moduleAt(ch, slot)!.product_type)!.vmax }}V</span>
+									<span v-if="cardSpec(moduleAt(ch, slot)!.product_type)?.ks" class="spec">{{ cardSpec(moduleAt(ch, slot)!.product_type)!.ks }}kS/s</span>
+									<span class="spec">{{ moduleAt(ch, slot)!.ports.length }}ch</span>
+								</div>
 								<!-- ports, connector-specific -->
 								<div class="ports" :class="moduleAt(ch, slot)!.connector">
 									<button v-for="p in moduleAt(ch, slot)!.ports" :key="p.physical" class="port-row"
@@ -173,14 +228,23 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .badge.sim { background: rgba(251,191,36,.16); color: #fbbf24; border: 1px solid rgba(251,191,36,.35); }
 .badge.live { background: rgba(74,222,128,.16); color: #4ade80; border: 1px solid rgba(74,222,128,.35); }
 .err { color: var(--danger); font-size: 12.5px; padding: 8px 24px 0; }
+.hw-summary { display: flex; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.hw-stat { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; }
+.hw-stat .material-symbols-rounded { font-size: 18px; color: var(--text-dim); }
+.hw-stat.ok .material-symbols-rounded { color: #4ade80; }
+.hw-stat div { display: flex; flex-direction: column; }
+.hw-label { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; }
+.hw-stat b { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.mod-specs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+.spec { font-size: 8.5px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: rgba(56,189,248,.1); color: #7dd3fc; border: 1px solid rgba(56,189,248,.2); }
 .layout { display: flex; gap: 20px; padding: 20px 24px; align-items: flex-start; }
 .diagram { flex: 1; min-width: 0; }
-.chassis { background: linear-gradient(#141b2e,#0e1524); border: 1px solid #2a3550; border-radius: 14px; padding: 14px; margin-bottom: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.3); }
+.chassis { background: color-mix(in srgb, var(--bg-2) 80%, transparent); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.3); }
 .chassis-top { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
 .chassis-top .sub { color: var(--text-dim); font-size: 12px; }
 .slots { display: flex; gap: 8px; align-items: stretch; overflow-x: auto; padding-bottom: 4px; }
 /* Portrait modules — real C-series geometry: tall + narrow. */
-.mod { flex: 0 0 116px; min-height: 230px; background: #0b1020; border: 1px solid #2a3550; border-radius: 9px; padding: 8px; display: flex; flex-direction: column; }
+.mod { flex: 0 0 116px; min-height: 230px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 8px; display: flex; flex-direction: column; }
 .mod-head { display: flex; align-items: center; }
 .slotno { font-size: 9px; color: #5f6f92; letter-spacing: .05em; }
 .mod .rm { margin-left: auto; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; color: #5f6f92; cursor: pointer; border-radius: 4px; }

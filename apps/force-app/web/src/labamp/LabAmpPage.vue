@@ -22,10 +22,23 @@ const arBusy = ref(false);
 async function persistDaq() {
 	await labamp.setConfig({ autorange_headroom: headroom.value, nidaq_bits: Number(daq.nidaq_bits), labamp_dac_bits: Number(daq.labamp_dac_bits), analog_fullscale_v: Number(daq.analog_fullscale_v) });
 }
+const arSource = ref<'live' | 'previous'>('live');
+const prevPeaks = ref('');
 async function measure() {
 	arBusy.value = true; err.value = null; arStatus.value = null;
-	try { await persistDaq(); const r = await labamp.autorange(headroom.value); recs.value = r.recommendations; effBits.value = r.effective_bits; }
-	catch (e: any) { err.value = e?.message || 'measure failed'; } finally { arBusy.value = false; }
+	try {
+		await persistDaq();
+		if (arSource.value === 'previous' && prevPeaks.value.trim()) {
+			const peaks = prevPeaks.value.split(/[,\s]+/).map(Number).filter(n => Number.isFinite(n));
+			if (peaks.length < 1) { err.value = 'enter comma-separated peak forces (N) per channel'; arBusy.value = false; return; }
+			const currents = sensors.value.map(s => s.range ?? 10000);
+			const r = await labamp.converge({ peaks, currents, headroom: headroom.value, apply: false });
+			recs.value = r.recommendations; effBits.value = r.effective_bits;
+		} else {
+			const r = await labamp.autorange(headroom.value);
+			recs.value = r.recommendations; effBits.value = r.effective_bits;
+		}
+	} catch (e: any) { err.value = e?.message || 'measure failed'; } finally { arBusy.value = false; }
 }
 async function applyRanges() {
 	arBusy.value = true; err.value = null;
@@ -33,6 +46,28 @@ async function applyRanges() {
 	catch (e: any) { err.value = e?.message || 'apply failed'; } finally { arBusy.value = false; }
 }
 function fmtRes(x: number) { return x >= 1 ? x.toFixed(2) : x >= 0.001 ? x.toFixed(4) : x.toExponential(1); }
+
+// Calibration editing
+const editing = ref<number | null>(null);
+const editSens = ref(0);
+const editRange = ref(0);
+const writeBusy = ref(false);
+function startEdit(s: SensorRow) {
+	editing.value = s.channel;
+	editSens.value = s.sensitivity ?? 0;
+	editRange.value = s.range ?? 0;
+}
+function cancelEdit() { editing.value = null; }
+async function writeCalibration() {
+	if (editing.value == null) return;
+	writeBusy.value = true; err.value = null;
+	try {
+		const res = await labamp.writeSensors([{ channel: editing.value, sensitivity: editSens.value, range: editRange.value }]);
+		sensors.value = res.sensors;
+		editing.value = null;
+	} catch (e: any) { err.value = e?.message || 'write failed'; }
+	finally { writeBusy.value = false; }
+}
 
 async function refresh() {
 	busy.value = true; err.value = null;
@@ -60,11 +95,9 @@ async function setMode(mode: 'MEASURE' | 'RESET') {
 }
 
 const reference = [
-	{ name: 'Operation mode', what: 'MEASURE actively integrates sensor charge into a force signal; RESET short-circuits the input and zeroes the integrator (drift reset).', rec: 'RESET between cuts to zero drift, MEASURE for the duration of a cut. The app sets RESET→MEASURE on start and RESET on stop.' },
-	{ name: 'Sensitivity (pC/N)', what: 'Charge sensitivity of each dynamometer channel — how much charge the sensor produces per newton.', rec: 'Enter the exact value from the Kistler calibration certificate for your dynamometer (Fx/Fy and Fz usually differ, e.g. ≈ −7.9 and ≈ −3.7 pC/N).' },
-	{ name: 'Measuring range', what: 'Full-scale force that maps to the amp’s ±10 V analog output. We digitise that voltage down the chain, whose bottleneck is the amp’s 12-bit analog-output DAC (no recording licence). So the range sets the V→N gain (range/10 V) and how much of the scarce 12-bit codes the signal uses — smaller range = larger swing = finer effective resolution, but clips sooner.', rec: 'Use Auto-range, or pick the smallest range that clears your expected peak force with ~1.5× headroom.' },
-	{ name: 'Physical quantity', what: 'The measured quantity for the channel.', rec: 'Force for a dynamometer channel.' },
-	{ name: 'Low-pass filter', what: 'Rejects noise/vibration above the mechanical bandwidth of interest.', rec: 'Set above your highest force frequency of interest (tooth-passing + a margin), below the noise floor.' },
+	{ name: 'Operation mode', what: 'MEASURE integrates charge into force; RESET zeroes drift.', rec: 'RESET between cuts, MEASURE during. The app handles this automatically on start/stop.' },
+	{ name: 'Sensitivity (pC/N)', what: 'Charge sensitivity per channel from the dynamometer calibration certificate.', rec: 'Click Edit on the channel row above to enter the exact certificate value (Fx/Fy ≈ −7.9, Fz ≈ −3.7 pC/N typical).' },
+	{ name: 'Measuring range', what: 'Full-scale N mapped to ±10 V analog output. The 12-bit DAC bottleneck means range selection directly affects resolution.', rec: 'Use Auto-range below, or pick the smallest range that clears peak force with ~1.5× headroom.' },
 ];
 onMounted(refresh);
 </script>
@@ -107,13 +140,25 @@ onMounted(refresh);
 			</section>
 
 			<section class="card wide">
-				<h2>Channels</h2>
+				<h2>Channels <span class="cal-hint">click a row to edit calibration values</span></h2>
 				<table v-if="sensors.length">
-					<thead><tr><th>Ch</th><th>Name</th><th>Serial</th><th>Quantity</th><th>Sensitivity (pC/N)</th><th>Range</th></tr></thead>
+					<thead><tr><th>Ch</th><th>Name</th><th>Serial</th><th>Quantity</th><th>Sensitivity (pC/N)</th><th>Range (N)</th><th></th></tr></thead>
 					<tbody>
-						<tr v-for="s in sensors" :key="s.channel">
+						<tr v-for="s in sensors" :key="s.channel" :class="{ 'edit-row': editing === s.channel }">
 							<td>{{ s.channel }}</td><td>{{ s.name }}</td><td>{{ s.serialNumber }}</td>
-							<td>{{ s.physicalQuantity }}</td><td>{{ s.sensitivity }}</td><td>{{ s.range }}</td>
+							<td>{{ s.physicalQuantity }}</td>
+							<template v-if="editing === s.channel">
+								<td><input type="number" step="0.01" v-model.number="editSens" class="cal-input" /></td>
+								<td><input type="number" step="1" v-model.number="editRange" class="cal-input" /></td>
+								<td class="cal-actions">
+									<button class="btn-sm save" :disabled="writeBusy" @click="writeCalibration">Write</button>
+									<button class="btn-sm" @click="cancelEdit">Cancel</button>
+								</td>
+							</template>
+							<template v-else>
+								<td>{{ s.sensitivity }}</td><td>{{ s.range }}</td>
+								<td><button class="btn-sm edit" @click="startEdit(s)" :disabled="!status?.reachable"><span class="material-symbols-rounded">edit</span></button></td>
+							</template>
 						</tr>
 					</tbody>
 				</table>
@@ -130,12 +175,25 @@ onMounted(refresh);
 					using more of the scarce codes). Too small clips (<code>OR_INPUT</code>). When auto-range is applied, each channel's
 					range → its own V→N gain, used per-channel in the recording.
 					<b>Workflow:</b> RESET → MEASURE, run a representative test cut, then Measure &amp; recommend.</p>
+				<div class="ar-source">
+					<span class="ar-label">Peak source:</span>
+					<div class="seg">
+						<button :class="{ on: arSource === 'live' }" @click="arSource = 'live'">Live measurement</button>
+						<button :class="{ on: arSource === 'previous' }" @click="arSource = 'previous'">Previous run</button>
+					</div>
+				</div>
+				<div v-if="arSource === 'previous'" class="prev-peaks">
+					<label>Per-channel peak forces (N), comma-separated (ch1–ch8)
+						<input v-model="prevPeaks" placeholder="e.g. 41, 39, 55, 53, 92, 88, 90, 91" spellcheck="false" />
+					</label>
+					<p class="hint">Paste from a previous recording's summary (channels_ranging.peaks_n) or enter manually.</p>
+				</div>
 				<div class="ar-controls">
 					<label>Headroom ×<input type="number" step="0.1" min="1" v-model.number="headroom" /></label>
 					<label>Amp DAC bits<input type="number" step="1" v-model.number="daq.labamp_dac_bits" /></label>
 					<label>NI-DAQ bits<input type="number" step="1" v-model.number="daq.nidaq_bits" /></label>
 					<label>Analog full-scale (±V)<input type="number" step="0.5" v-model.number="daq.analog_fullscale_v" /></label>
-					<button class="btn ghost" :disabled="arBusy || !status?.reachable" @click="measure">Measure &amp; recommend</button>
+					<button class="btn ghost" :disabled="arBusy || (arSource === 'live' && !status?.reachable)" @click="measure">{{ arSource === 'previous' ? 'Recommend from peaks' : 'Measure & recommend' }}</button>
 					<button class="btn save" :disabled="arBusy || !recs" @click="applyRanges">Apply recommended ranges</button>
 				</div>
 				<table v-if="recs">
@@ -182,7 +240,7 @@ onMounted(refresh);
 h2 { margin: 0 0 12px; font-size: 15px; }
 label { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 12px; }
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-input, select { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; font-size: 13px; color: var(--text); background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 7px; }
+input, select { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
 .hint { font-size: 11.5px; color: var(--text-dim); line-height: 1.5; margin: 4px 0 12px; }
 .hint code { font-family: var(--mono); color: var(--text); }
 .seg { display: flex; gap: 4px; }
@@ -200,6 +258,13 @@ input, select { display: block; width: 100%; margin-top: 4px; padding: 8px 10px;
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
 th { color: var(--text-dim); font-weight: 600; }
+.ar-source { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.ar-label { font-size: 12px; color: var(--text-dim); }
+.ar-source .seg { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.ar-source .seg button { padding: 6px 12px; font-size: 11.5px; font-weight: 600; color: var(--text-dim); background: transparent; border: none; cursor: pointer; }
+.ar-source .seg button.on { background: var(--accent); color: var(--accent-ink); }
+.prev-peaks { margin-bottom: 12px; }
+.prev-peaks label { margin-bottom: 4px; }
 .ar-controls { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 12px; }
 .ar-controls label { margin: 0; }
 .ar-controls input { width: 90px; }
@@ -213,4 +278,14 @@ tr.clip td { background: rgba(239,68,68,0.08); }
 .ref-what { font-size: 12.5px; color: var(--text-dim); margin: 3px 0; line-height: 1.5; }
 .ref-rec { display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; color: #86efac; line-height: 1.5; }
 .ref-rec .material-symbols-rounded { font-size: 15px; margin-top: 1px; }
+.cal-hint { font-size: 11px; font-weight: 400; color: var(--text-dim); margin-left: 8px; }
+.cal-input { width: 100px !important; padding: 4px 6px !important; font-size: 12px !important; margin: 0 !important; text-align: right; }
+.cal-actions { display: flex; gap: 4px; }
+.btn-sm { display: inline-flex; align-items: center; gap: 3px; padding: 4px 8px; font-size: 11px; font-weight: 600; border-radius: 5px; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.btn-sm:hover:not(:disabled) { background: var(--surface-2); }
+.btn-sm:disabled { opacity: .5; cursor: not-allowed; }
+.btn-sm.save { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn-sm.edit { padding: 3px 5px; }
+.btn-sm .material-symbols-rounded { font-size: 13px; }
+.edit-row td { background: rgba(56,189,248,.06); }
 </style>

@@ -3,12 +3,14 @@
 import { ref } from 'vue';
 import GeneralSettings from './GeneralSettings.vue';
 import AlarmsSettings from './AlarmsSettings.vue';
+import ConnectivitySettings from './ConnectivitySettings.vue';
 
 const tabs = [
 	{ id: 'general', label: 'General', icon: 'tune' },
 	{ id: 'alarms', label: 'Safety Alarms', icon: 'warning' },
+	{ id: 'connectivity', label: 'Connectivity', icon: 'network_check' },
 ];
-const active = ref<'general' | 'alarms'>('general');
+const active = ref<'general' | 'alarms' | 'connectivity'>('general');
 </script>
 
 <template>
@@ -23,6 +25,7 @@ const active = ref<'general' | 'alarms'>('general');
 			<section class="pane">
 				<GeneralSettings v-if="active === 'general'" />
 				<AlarmsSettings v-else-if="active === 'alarms'" />
+				<ConnectivitySettings v-else-if="active === 'connectivity'" />
 			</section>
 		</div>
 	</div>

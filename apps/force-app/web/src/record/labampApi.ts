@@ -30,4 +30,6 @@ export const labamp = {
 	autorangeApply: (headroom: number) => fetch(`${base()}/labamp/autorange/apply`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ headroom }) }).then(j<{ applied: AutoRangeRec[]; status: Record<string, string> }>),
 	converge: (body: { peaks: number[]; clipped?: boolean[]; currents?: number[]; headroom?: number; apply?: boolean }) =>
 		fetch(`${base()}/labamp/autorange/converge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(j<ConvergeResult>),
+	writeSensors: (updates: { channel: number; sensitivity?: number; range?: number }[]) =>
+		fetch(`${base()}/labamp/sensors/write`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ updates }) }).then(j<{ ok: boolean; sensors: SensorRow[] }>),
 };

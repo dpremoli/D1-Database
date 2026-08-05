@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from . import channels as chan
-from . import nidaq_catalog, nidaq_enum
+from . import nidaq_catalog, nidaq_enum, storage
 from .config import DEFAULT_NIDAQ_CHANNELS, RecordConfig
 from .d1lc import read_d1lc_header
 from .labamp import LabAmpClient, LabAmpError, MockLabAmp
@@ -30,9 +30,28 @@ from .sources.replay import ReplaySource
 from .sources.sim import SimSource
 from .stream.broadcast import Broadcaster
 
-CAPTURES_ROOT = os.environ.get(
-    "FORCE_APP_CAPTURES", os.path.join(os.path.dirname(os.path.dirname(__file__)), "captures")
+STORAGE_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "captures", "storage_config.json"
 )
+
+
+def _load_captures_root() -> str:
+    """Load the user-configured captures directory, falling back to the default."""
+    default = os.environ.get(
+        "FORCE_APP_CAPTURES", os.path.join(os.path.dirname(os.path.dirname(__file__)), "captures")
+    )
+    try:
+        with open(STORAGE_CONFIG_PATH) as f:
+            cfg = json.load(f)
+            path = cfg.get("captures_root", default)
+            if os.path.isdir(path) or os.path.isdir(os.path.dirname(path)):
+                return path
+    except (OSError, ValueError):
+        pass
+    return default
+
+
+CAPTURES_ROOT = _load_captures_root()
 os.makedirs(CAPTURES_ROOT, exist_ok=True)
 
 _broadcaster: Broadcaster | None = None
@@ -105,6 +124,104 @@ if _cors:
 @app.get("/health")
 async def health() -> dict:
     return {"ok": True, "state": _session.state if _session else "idle"}
+
+
+# ---- Storage management ----
+@app.get("/storage/drives")
+async def storage_drives() -> dict:
+    drives = await run_in_threadpool(storage.list_drives)
+    current = storage.disk_usage_for(CAPTURES_ROOT)
+    return {"drives": drives, "current": {**current, "captures_root": CAPTURES_ROOT}}
+
+
+@app.get("/storage/config")
+async def storage_get_config() -> dict:
+    current = storage.disk_usage_for(CAPTURES_ROOT)
+    return {"captures_root": CAPTURES_ROOT, **current}
+
+
+@app.post("/storage/config")
+async def storage_set_config(body: dict) -> dict:
+    global CAPTURES_ROOT
+    path = str(body.get("captures_root", "")).strip()
+    if not path:
+        raise HTTPException(400, "captures_root required")
+    if ".." in path:
+        raise HTTPException(400, "path traversal not allowed")
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(400, f"cannot create directory: {e}")
+    CAPTURES_ROOT = path
+    os.makedirs(os.path.dirname(STORAGE_CONFIG_PATH), exist_ok=True)
+    try:
+        with open(STORAGE_CONFIG_PATH, "w") as f:
+            json.dump({"captures_root": path}, f)
+    except OSError:
+        pass
+    current = storage.disk_usage_for(CAPTURES_ROOT)
+    return {"captures_root": CAPTURES_ROOT, **current}
+
+
+# ---- Connectivity check ----
+@app.get("/health/check")
+async def health_check() -> dict:
+    """Test connectivity to Internet, VPN-accessible services, equipment, and database."""
+    import asyncio
+
+    async def _probe(label: str, url: str, timeout: float = 4.0) -> dict:
+        import aiohttp
+
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as s:
+                async with s.get(url) as r:
+                    return {"label": label, "url": url, "ok": r.status < 500, "status": r.status}
+        except Exception as e:
+            return {"label": label, "url": url, "ok": False, "error": str(type(e).__name__)}
+
+    async def _probe_simple(label: str, url: str, timeout: float = 4.0) -> dict:
+        """Fallback probe using urllib — no aiohttp dependency required."""
+        import urllib.request
+        import urllib.error
+
+        def _do():
+            try:
+                req = urllib.request.Request(url, method="GET")
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    return {"label": label, "url": url, "ok": r.status < 500, "status": r.status}
+            except urllib.error.URLError as e:
+                return {"label": label, "url": url, "ok": False, "error": str(e.reason)}
+            except Exception as e:
+                return {"label": label, "url": url, "ok": False, "error": str(type(e).__name__)}
+
+        return await run_in_threadpool(_do)
+
+    probe = _probe_simple  # no aiohttp dependency needed
+
+    checks = [probe("Internet", "https://www.google.com/generate_204", 5.0)]
+
+    # Database (Directus)
+    directus_url = os.environ.get("DIRECTUS_URL", "")
+    if directus_url:
+        checks.append(probe("Database", f"{directus_url}/server/ping", 5.0))
+
+    # Equipment: LabAmp
+    amp_url = _labamp_cfg.get("base_url", "")
+    if amp_url:
+        checks.append(probe("LabAmp", f"{amp_url}/", 3.0))
+
+    # Disk space
+    disk = storage.disk_usage_for(CAPTURES_ROOT)
+
+    results = await asyncio.gather(*checks, return_exceptions=True)
+    probes = []
+    for r in results:
+        if isinstance(r, Exception):
+            probes.append({"label": "?", "ok": False, "error": str(r)})
+        else:
+            probes.append(r)
+
+    return {"probes": probes, "disk": disk}
 
 
 def _busy() -> bool:
@@ -355,6 +472,7 @@ async def labamp_autorange_apply(body: dict) -> dict:
         peaks = await run_in_threadpool(_measure_peaks, _labamp, ch)
         currents = await run_in_threadpool(_current_ranges, _labamp, ch)
         recs = recommend_ranges(peaks, currents, headroom=hr, bits=eff, fullscale_v=vfs)
+        await run_in_threadpool(_labamp.set_operation_mode, "RESET")
         for r in recs:
             await run_in_threadpool(_labamp.set_range, r["channel"], r["recommended"])
         status = await run_in_threadpool(_labamp.channel_status, ch)
@@ -381,6 +499,7 @@ async def labamp_autorange_converge(body: dict) -> dict:
     status: dict[str, str] = {}
     if body.get("apply"):
         try:
+            await run_in_threadpool(_labamp.set_operation_mode, "RESET")
             for r in recs:
                 await run_in_threadpool(_labamp.set_range, r["channel"], r["recommended"])
             status = await run_in_threadpool(_labamp.channel_status, int(_labamp_cfg["channels"]))
@@ -396,6 +515,30 @@ async def labamp_autorange_converge(body: dict) -> dict:
         "applied": bool(body.get("apply")),
         "status": status,
     }
+
+
+@app.post("/labamp/sensors/write")
+async def labamp_write_sensors(body: dict) -> dict:
+    """Write calibration values (sensitivity, range) to the amp for specific channels."""
+    updates = body.get("updates", [])
+    if not updates:
+        raise HTTPException(400, "updates required")
+    try:
+        params: dict[str, object] = {}
+        for u in updates:
+            ch = int(u["channel"])
+            if "sensitivity" in u and u["sensitivity"] is not None:
+                params[f"/measChannel/{ch}/sensor/type/charge/sensitivity"] = float(
+                    u["sensitivity"]
+                )
+            if "range" in u and u["range"] is not None:
+                params[f"/measChannel/{ch}/sensor/type/charge/physicalRange"] = float(u["range"])
+        if params:
+            await run_in_threadpool(_labamp.set_params, params)
+        rows = await run_in_threadpool(_labamp.sensor_table, int(_labamp_cfg["channels"]))
+        return {"ok": True, "sensors": rows}
+    except LabAmpError as e:
+        raise HTTPException(502, str(e))
 
 
 @app.get("/labamp/config")
@@ -539,6 +682,93 @@ async def nidaq_autoassign() -> dict:
     channels = chan.autoassign(_devices())
     _save_json(NIDAQ_CHANNELS_PATH, {"channels": channels})
     return {"channels": channels}
+
+
+# ---- Tacho signal generator (cDAQ-9178 built-in counter → PFI0) ----
+_tacho_gen_task = None  # nidaqmx.Task or None
+
+
+@app.post("/nidaq/tacho/start")
+async def nidaq_tacho_start(body: dict = {}) -> dict:
+    global _tacho_gen_task
+    if _tacho_gen_task is not None:
+        raise HTTPException(409, "tacho generator already running")
+    freq = float(body.get("freq_hz", 20.0))
+    ppr = int(body.get("ppr", 1))
+    counter = str(body.get("counter", "STAR_DAQ/ctr0"))
+    terminal = str(body.get("terminal", "/STAR_DAQ/PFI0"))
+    if freq <= 0 or freq > 100_000:
+        raise HTTPException(400, "freq_hz must be between 0 and 100,000")
+    from .sources.nidaq import _import_nidaqmx, NidaqUnavailableError
+
+    try:
+        nidaqmx, constants, _ = _import_nidaqmx()
+    except NidaqUnavailableError as e:
+        raise HTTPException(503, str(e))
+    task = nidaqmx.Task("tacho_gen")
+    try:
+        task.co_channels.add_co_pulse_chan_freq(counter, freq=freq, duty_cycle=0.5)
+        task.co_channels[0].co_pulse_term = terminal
+        task.timing.cfg_implicit_timing(sample_mode=constants.AcquisitionType.CONTINUOUS)
+        task.start()
+    except Exception as e:
+        task.close()
+        raise HTTPException(500, f"counter output error: {e}")
+    _tacho_gen_task = task
+    rpm = freq * 60 / ppr
+    return {"running": True, "freq_hz": freq, "ppr": ppr, "rpm": rpm, "terminal": terminal}
+
+
+@app.post("/nidaq/tacho/stop")
+async def nidaq_tacho_stop() -> dict:
+    global _tacho_gen_task
+    if _tacho_gen_task is None:
+        return {"running": False}
+    try:
+        _tacho_gen_task.stop()
+        _tacho_gen_task.close()
+    except Exception:
+        pass
+    _tacho_gen_task = None
+    return {"running": False}
+
+
+@app.get("/nidaq/tacho/status")
+async def nidaq_tacho_status() -> dict:
+    return {"running": _tacho_gen_task is not None}
+
+
+# ---- Audio: force system volume to maximum for catastrophic alarms ----
+@app.post("/audio/maxvolume")
+async def audio_max_volume() -> dict:
+    """Set the Windows system volume to 100% (best-effort, requires pycaw or nircmd)."""
+
+    async def _set_vol():
+        import platform
+
+        if platform.system() != "Windows":
+            return {"ok": False, "reason": "not Windows"}
+        try:
+            import subprocess
+
+            subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    (
+                        "$wshell = New-Object -ComObject WScript.Shell;"
+                        "1..50 | ForEach-Object { $wshell.SendKeys([char]175) }"
+                    ),
+                ],
+                capture_output=True,
+                timeout=5,
+            )
+            return {"ok": True, "method": "sendkeys"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    return await _set_vol()
 
 
 @app.websocket("/record/stream")

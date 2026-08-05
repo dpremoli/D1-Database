@@ -2,7 +2,7 @@
 // Modular Recording workspace: a draggable/resizable grid of panels (Recording Options, Metadata,
 // Force Plot w/ FFT, FRM Map, Plot Options), mirroring the Directus force-analysis feel. Layout is
 // persisted to localStorage; panels share one workspace store via provide/inject.
-import { onMounted, onBeforeUnmount, provide, ref, watch, computed } from 'vue';
+import { onMounted, onBeforeUnmount, provide, reactive, ref, watch, computed } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import { createWorkspace, WORKSPACE } from './workspace';
 import { startSync, syncStatus } from './directusSync';
@@ -68,8 +68,34 @@ const addable = computed(() => Object.entries(PANEL_TYPES).map(([type, m]) => ({
 // Load the finished cut on manual stop OR natural completion.
 watch(() => st.state, (s) => { if (s === 'done' && !w.finishedCache.value) w.loadFinished(); });
 
-onMounted(() => { w.client.connect(); startSync(); });
-onBeforeUnmount(() => w.client.disconnect());
+// Periodic disk space check during recording (every 30s)
+const diskInfo = reactive<{ free_gb: number; total_gb: number; used_pct: number; checking: boolean }>({ free_gb: -1, total_gb: 0, used_pct: 0, checking: false });
+let diskTimer: ReturnType<typeof setInterval> | null = null;
+async function checkDisk() {
+	try {
+		diskInfo.checking = true;
+		const res = await fetch(`${w.client.baseUrl}/storage/config`);
+		if (res.ok) {
+			const data = await res.json();
+			diskInfo.free_gb = data.free_gb ?? -1;
+			diskInfo.total_gb = data.total_gb ?? 0;
+			diskInfo.used_pct = data.used_pct ?? 0;
+			w.alarms.evaluateDisk(diskInfo.free_gb);
+		}
+	} catch { /* backend unreachable */ } finally { diskInfo.checking = false; }
+}
+watch(() => st.state, (s) => {
+	if (s === 'recording' && !diskTimer) {
+		checkDisk();
+		diskTimer = setInterval(checkDisk, 30_000);
+	} else if (s !== 'recording' && diskTimer) {
+		clearInterval(diskTimer);
+		diskTimer = null;
+	}
+});
+
+onMounted(() => { w.client.connect(); startSync(); checkDisk(); });
+onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(diskTimer); });
 </script>
 
 <template>
@@ -79,7 +105,7 @@ onBeforeUnmount(() => w.client.disconnect());
 			<span class="material-symbols-rounded">warning</span>
 			<div class="ao-text">
 				<b>SAFETY ALARM</b>
-				<span v-for="al in w.alarms.active" :key="al.key" class="ao-item">{{ al.label }} {{ al.value.toFixed(al.kind === 'rpm' ? 0 : 1) }}{{ al.kind === 'rpm' ? '' : ' N' }}</span>
+				<span v-for="al in w.alarms.active" :key="al.key" class="ao-item">{{ al.label }} {{ al.value.toFixed(al.kind === 'rpm' ? 0 : 1) }}{{ al.kind === 'rpm' ? '' : al.kind === 'disk' ? ' GB' : ' N' }}</span>
 			</div>
 			<button class="ao-ack" @click="w.alarms.acknowledge()">Acknowledge</button>
 		</div>
@@ -111,6 +137,11 @@ onBeforeUnmount(() => w.client.disconnect());
 				:title="syncStatus.lastError || `${syncStatus.pending} run record(s) queued offline`">
 				<span class="material-symbols-rounded">{{ syncStatus.pending > 0 ? 'cloud_queue' : 'error' }}</span>
 				<span v-if="syncStatus.pending > 0">{{ syncStatus.pending }}</span>
+			</div>
+			<div v-if="diskInfo.free_gb >= 0" class="diskchip" :class="{ warn: diskInfo.free_gb < 10, crit: diskInfo.free_gb < 5 }"
+				:title="`${diskInfo.free_gb.toFixed(1)} GB free of ${diskInfo.total_gb.toFixed(0)} GB`">
+				<span class="material-symbols-rounded">hard_drive</span>
+				<span>{{ diskInfo.free_gb < 100 ? diskInfo.free_gb.toFixed(1) : Math.round(diskInfo.free_gb) }} GB</span>
 			</div>
 			<div class="conn" :class="{ ok: st.connected }">
 				<span class="material-symbols-rounded">{{ st.connected ? 'sensors' : 'sensors_off' }}</span>
@@ -169,6 +200,10 @@ onBeforeUnmount(() => w.client.disconnect());
 .syncchip .material-symbols-rounded { font-size: 16px; }
 .syncchip.warn { color: #fbbf24; background: rgba(251,191,36,0.1); }
 .syncchip.err { color: var(--danger); background: rgba(252,165,165,0.1); }
+.diskchip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 8px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-dim); border: 1px solid var(--border); }
+.diskchip .material-symbols-rounded { font-size: 15px; }
+.diskchip.warn { color: #fbbf24; background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.3); }
+.diskchip.crit { color: #ef4444; background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); animation: alarmpulse 0.9s ease-in-out infinite; }
 .conn { display: inline-flex; align-items: center; color: var(--text-dim); }
 .conn.ok { color: #4ade80; }
 .vgl-layout { margin: 8px 10px 0; }

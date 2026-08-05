@@ -24,6 +24,12 @@ function save() { a.saveCfg(); }
 		</div>
 
 		<div class="grp">
+			<label class="chk"><input type="checkbox" v-model="a.config.diskEnabled" @change="save" /> Low disk space alarm</label>
+			<label class="thr">Alert when free space &lt; <input type="number" v-model.number="a.config.diskThresholdGb" :disabled="!a.config.diskEnabled" @change="save" /> GB</label>
+			<p class="hint">Fires during recording if the captures drive runs low. Recording will stop gracefully to prevent data loss.</p>
+		</div>
+
+		<div class="grp">
 			<label class="chk"><input type="checkbox" v-model="a.config.audioEnabled" @change="save" /> Audible alert (looping tone)</label>
 		</div>
 

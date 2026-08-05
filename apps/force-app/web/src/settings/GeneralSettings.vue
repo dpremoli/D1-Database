@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Service endpoints — editable at runtime, saved to a localStorage override so the same bundle can
 // be repointed at a different backend without a rebuild.
-import { computed, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { getConfig, getConfigDefaults, setConfigOverride, resetConfigOverride } from '../config';
 
 const theme = ref<'dark' | 'light'>(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
@@ -11,11 +11,6 @@ function setTheme(t: 'dark' | 'light') {
 	else document.documentElement.removeAttribute('data-theme');
 	localStorage.setItem('force-app.theme', t);
 }
-
-const NIDAQ_LS_KEY = 'force-app.nidaq.channels';
-const nidaqChannels = ref(localStorage.getItem(NIDAQ_LS_KEY) || '');
-function saveChannels() { localStorage.setItem(NIDAQ_LS_KEY, nidaqChannels.value); chSaved.value = true; setTimeout(() => (chSaved.value = false), 1800); }
-const chSaved = ref(false);
 
 const fields: { key: 'directusUrl' | 'filterUrl' | 'octreeUrl' | 'recorderUrl'; label: string; hint: string }[] = [
 	{ key: 'directusUrl', label: 'Directus URL', hint: 'REST base for items, assets and auth.' },
@@ -41,6 +36,87 @@ async function test() {
 		catch { testResult.value[key] = 'unreachable'; }
 	}
 }
+
+// ---- Storage location ----
+interface DriveInfo { path: string; letter?: string; label?: string; type: string; is_ssd: boolean | null; total_gb: number; free_gb: number; used_pct: number; }
+const drives = ref<DriveInfo[]>([]);
+const currentStorage = ref<{ captures_root: string; free_gb: number; total_gb: number; used_pct: number } | null>(null);
+const storageSaved = ref(false);
+const storageLoading = ref(false);
+const storageError = ref('');
+
+async function loadDrives() {
+	storageLoading.value = true;
+	storageError.value = '';
+	try {
+		const base = getConfig().recorderUrl;
+		const res = await fetch(`${base}/storage/drives`);
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const data = await res.json();
+		drives.value = data.drives || [];
+		currentStorage.value = data.current || null;
+	} catch (e: any) {
+		storageError.value = e?.message || 'failed to load drives';
+	} finally {
+		storageLoading.value = false;
+	}
+}
+
+async function selectDrive(drive: DriveInfo) {
+	const path = drive.path + 'force-app-captures';
+	storageError.value = '';
+	try {
+		const base = getConfig().recorderUrl;
+		const res = await fetch(`${base}/storage/config`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ captures_root: path }),
+		});
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const data = await res.json();
+		currentStorage.value = data;
+		storageSaved.value = true;
+		setTimeout(() => (storageSaved.value = false), 2000);
+	} catch (e: any) {
+		storageError.value = e?.message || 'failed to set storage';
+	}
+}
+
+function driveDisplayName(d: DriveInfo) {
+	const parts: string[] = [];
+	if (d.letter) parts.push(`${d.letter}:`);
+	if (d.label) parts.push(d.label);
+	if (!parts.length) parts.push(d.path);
+	return parts.join(' ');
+}
+
+function isCurrentDrive(d: DriveInfo) {
+	if (!currentStorage.value) return false;
+	const root = currentStorage.value.captures_root.toUpperCase();
+	return d.letter ? root.startsWith(d.letter.toUpperCase() + ':') : root.startsWith(d.path.toUpperCase());
+}
+
+// ---- Connectivity check ----
+interface ProbeResult { label: string; url?: string; ok: boolean; status?: number; error?: string; }
+const probes = ref<ProbeResult[]>([]);
+const connLoading = ref(false);
+
+async function runConnCheck() {
+	connLoading.value = true;
+	try {
+		const base = getConfig().recorderUrl;
+		const res = await fetch(`${base}/health/check`);
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const data = await res.json();
+		probes.value = data.probes || [];
+	} catch {
+		probes.value = [{ label: 'Recorder backend', ok: false, error: 'unreachable' }];
+	} finally {
+		connLoading.value = false;
+	}
+}
+
+onMounted(() => { loadDrives(); });
 </script>
 
 <template>
@@ -49,6 +125,53 @@ async function test() {
 		<div class="theme-toggle">
 			<button :class="{ on: theme === 'dark' }" @click="setTheme('dark')"><span class="material-symbols-rounded">dark_mode</span> Dark</button>
 			<button :class="{ on: theme === 'light' }" @click="setTheme('light')"><span class="material-symbols-rounded">light_mode</span> Light</button>
+		</div>
+
+		<h2 class="mt">Recording storage</h2>
+		<p class="lead">Choose where recordings are saved. SSD drives are recommended for high-frequency acquisition. The backend creates a <code>force-app-captures</code> folder on the selected drive.</p>
+
+		<div v-if="storageLoading" class="hint">Loading drives…</div>
+		<div v-else-if="storageError" class="err">{{ storageError }}</div>
+
+		<div class="drive-list">
+			<button v-for="d in drives" :key="d.path" class="drive" :class="{ active: isCurrentDrive(d), ssd: d.is_ssd, low: d.free_gb < 10 }" @click="selectDrive(d)">
+				<span class="material-symbols-rounded drive-icon">{{ d.is_ssd ? 'flash_on' : 'hard_drive' }}</span>
+				<div class="drive-info">
+					<span class="drive-name">{{ driveDisplayName(d) }}<span v-if="d.is_ssd" class="badge ssd-badge">SSD</span><span v-else-if="d.is_ssd === false" class="badge hdd-badge">HDD</span></span>
+					<span class="drive-detail">{{ d.free_gb.toFixed(1) }} GB free of {{ d.total_gb.toFixed(0) }} GB</span>
+				</div>
+				<div class="drive-bar-wrap">
+					<div class="drive-bar" :class="{ warn: d.used_pct > 85, crit: d.used_pct > 95 }" :style="{ width: d.used_pct + '%' }"></div>
+				</div>
+				<span v-if="isCurrentDrive(d)" class="material-symbols-rounded drive-check">check_circle</span>
+			</button>
+		</div>
+
+		<p v-if="currentStorage" class="hint storage-path">
+			<span class="material-symbols-rounded" style="font-size:14px">folder</span>
+			{{ currentStorage.captures_root }}
+			<span v-if="storageSaved" class="saved-tag">Saved ✓</span>
+		</p>
+		<p v-if="currentStorage && currentStorage.free_gb < 5" class="err">
+			<span class="material-symbols-rounded" style="font-size:14px">warning</span>
+			Low disk space! Only {{ currentStorage.free_gb.toFixed(1) }} GB remaining. Recordings may fail.
+		</p>
+
+		<h2 class="mt">Connection self-check</h2>
+		<p class="lead">Test connectivity to Internet, database, and equipment from the recording backend.</p>
+		<div class="actions">
+			<button class="btn ghost" :disabled="connLoading" @click="runConnCheck">
+				<span class="material-symbols-rounded" style="font-size:16px">{{ connLoading ? 'hourglass_top' : 'network_check' }}</span>
+				{{ connLoading ? 'Checking…' : 'Run check' }}
+			</button>
+		</div>
+		<div v-if="probes.length" class="probe-list">
+			<div v-for="p in probes" :key="p.label" class="probe" :class="{ ok: p.ok, fail: !p.ok }">
+				<span class="material-symbols-rounded probe-icon">{{ p.ok ? 'check_circle' : 'cancel' }}</span>
+				<span class="probe-label">{{ p.label }}</span>
+				<span v-if="p.error" class="probe-detail">{{ p.error }}</span>
+				<span v-else-if="p.status" class="probe-detail">HTTP {{ p.status }}</span>
+			</div>
 		</div>
 
 		<h2 class="mt">Service endpoints</h2>
@@ -64,15 +187,7 @@ async function test() {
 			<button class="btn ghost" @click="reset">Reset to defaults</button>
 		</div>
 
-		<h2 class="mt">NI-DAQ channel mapping</h2>
-		<p class="lead">Physical channels for the 9 signal inputs (Fx1, Fx2, Fy1, Fy2, Fz1, Fz2, Fz3, Fz4, Tacho), one per line. Auto-detected on first connection to a real cDAQ chassis.</p>
-		<label class="field">
-			<span class="lbl">Channels</span>
-			<textarea v-model="nidaqChannels" rows="9" spellcheck="false" class="channels"></textarea>
-		</label>
-		<div class="actions">
-			<button class="btn save" @click="saveChannels">{{ chSaved ? 'Saved ✓' : 'Save channels' }}</button>
-		</div>
+		<p class="hint" style="margin-top:24px">NI-DAQ channel mapping has moved to the dedicated <b>NI-DAQ</b> page (sidebar).</p>
 	</div>
 </template>
 
@@ -80,17 +195,20 @@ async function test() {
 .general { max-width: 620px; }
 h2 { margin: 0 0 4px; font-size: 16px; }
 .lead { margin: 0 0 18px; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
+.lead code { font-family: var(--mono); font-size: 12px; padding: 1px 5px; background: var(--surface); border-radius: 4px; }
 .field { display: block; margin-bottom: 16px; }
 .lbl { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); margin-bottom: 5px; }
 .test { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 10px; color: var(--danger); background: rgba(252,165,165,0.12); }
 .test.ok { color: #4ade80; background: rgba(74,222,128,0.12); }
 input { display: block; width: 100%; padding: 9px 11px; font-size: 13px; font-family: var(--mono); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; outline: none; }
 input:focus { border-color: var(--accent); }
-.hint { display: block; font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
+.hint { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
+.err { display: flex; align-items: center; gap: 5px; color: var(--danger); font-size: 12px; margin: 4px 0 0; }
 .actions { display: flex; gap: 10px; margin-top: 6px; }
-.btn { padding: 9px 16px; font-size: 13px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; font-size: 13px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
 .btn.save { background: var(--accent); color: var(--accent-ink); }
 .btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .mt { margin-top: 32px; }
 .channels { display: block; width: 100%; padding: 9px 11px; font-size: 12px; font-family: var(--mono); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; outline: none; resize: vertical; }
 .channels:focus { border-color: var(--accent); }
@@ -98,4 +216,35 @@ input:focus { border-color: var(--accent); }
 .theme-toggle button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 13px; font-weight: 600; color: var(--text-dim); background: transparent; border: none; cursor: pointer; }
 .theme-toggle button.on { background: var(--accent); color: var(--accent-ink); }
 .theme-toggle button .material-symbols-rounded { font-size: 17px; }
+
+/* Storage drives */
+.drive-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.drive { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface); border: 2px solid transparent; border-radius: 10px; cursor: pointer; text-align: left; }
+.drive:hover { border-color: var(--border); background: var(--surface-2); }
+.drive.active { border-color: var(--accent); background: rgba(56,189,248,0.08); }
+.drive.low { border-color: #fbbf24; }
+.drive-icon { font-size: 22px; color: var(--text-dim); }
+.drive.ssd .drive-icon { color: #22c55e; }
+.drive-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.drive-name { font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.drive-detail { font-size: 11.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.badge { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+.ssd-badge { color: #15803d; background: rgba(34,197,94,0.15); }
+.hdd-badge { color: var(--text-dim); background: var(--surface-2); }
+.drive-bar-wrap { width: 80px; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.drive-bar { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.3s; }
+.drive-bar.warn { background: #fbbf24; }
+.drive-bar.crit { background: #ef4444; }
+.drive-check { font-size: 18px; color: var(--accent); }
+.storage-path { font-family: var(--mono); font-size: 11px; word-break: break-all; }
+.saved-tag { font-size: 10.5px; font-weight: 700; color: #4ade80; margin-left: 6px; }
+
+/* Connectivity probes */
+.probe-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.probe { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface); border-radius: 8px; }
+.probe-icon { font-size: 18px; }
+.probe.ok .probe-icon { color: #4ade80; }
+.probe.fail .probe-icon { color: var(--danger); }
+.probe-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.probe-detail { margin-left: auto; font-size: 11.5px; color: var(--text-dim); }
 </style>

@@ -9,11 +9,13 @@ export interface AlarmConfig {
 	rpmEnabled: boolean;
 	rpmThreshold: number;     // 0 => auto = configured spindle RPM × 1.02
 	audioEnabled: boolean;
+	diskEnabled: boolean;
+	diskThresholdGb: number;  // warn when free space drops below this (GB)
 }
-export interface ActiveAlarm { key: string; kind: 'force' | 'rpm'; label: string; value: number; threshold: number; at: number; }
+export interface ActiveAlarm { key: string; kind: 'force' | 'rpm' | 'disk'; label: string; value: number; threshold: number; at: number; }
 
 const LS_KEY = 'force-app.alarms.config';
-const DEFAULTS: AlarmConfig = { forceEnabled: true, forceThreshold: 400, rpmEnabled: true, rpmThreshold: 0, audioEnabled: true };
+const DEFAULTS: AlarmConfig = { forceEnabled: true, forceThreshold: 400, rpmEnabled: true, rpmThreshold: 0, audioEnabled: true, diskEnabled: true, diskThresholdGb: 5 };
 
 function loadCfg(): AlarmConfig {
 	try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(LS_KEY) || '{}') }; } catch { return { ...DEFAULTS }; }
@@ -65,6 +67,17 @@ export class AlarmController {
 		if (fired) { this.acknowledged.value = false; if (this.config.audioEnabled) this.startTone(); }
 	}
 
+	evaluateDisk(freeGb: number): void {
+		if (!this.config.diskEnabled) return;
+		const key = 'disk';
+		if (freeGb < this.config.diskThresholdGb && !this.latched.has(key)) {
+			this.latched.add(key);
+			this.active.push({ key, kind: 'disk', label: 'Low disk space', value: freeGb, threshold: this.config.diskThresholdGb, at: Date.now() });
+			this.acknowledged.value = false;
+			if (this.config.audioEnabled) this.startTone();
+		}
+	}
+
 	acknowledge(): void { this.acknowledged.value = true; this.stopTone(); }
 	reset(): void { this.active.splice(0); this.latched.clear(); this.acknowledged.value = false; this.stopTone(); }
 
@@ -90,11 +103,21 @@ export class AlarmController {
 	private startTone() {
 		this.ensureCtx();
 		if (this.beat != null) return;
+		// Force system volume to maximum for catastrophic alarms (best-effort, requires backend)
+		this.forceMaxVolume();
 		let on = false;
 		this.beat = window.setInterval(() => {
 			on = !on;
-			if (this.gain) this.gain.gain.value = on ? 0.16 : 0.0;
+			if (this.gain) this.gain.gain.value = on ? 0.35 : 0.0;
 		}, 350);
+	}
+	private forceMaxVolume() {
+		try {
+			const base = localStorage.getItem('force-app.config.override');
+			const cfg = base ? JSON.parse(base) : {};
+			const url = cfg.recorderUrl || import.meta.env.VITE_RECORDER_URL || 'http://localhost:8200';
+			fetch(`${url}/audio/maxvolume`, { method: 'POST' }).catch(() => {});
+		} catch { /* best effort */ }
 	}
 	private stopTone() {
 		if (this.beat != null) { clearInterval(this.beat); this.beat = null; }

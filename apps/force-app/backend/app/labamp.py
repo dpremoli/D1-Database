@@ -14,7 +14,15 @@ from typing import Protocol
 import httpx
 
 # Sensor parameter leaves read for the per-channel table (as in the MATLAB generateTableData).
-SENSOR_LEAVES = ["name", "serialNumber", "physicalQuantity", "sensitivity", "range"]
+# Maps our canonical leaf names → param paths under /measChannel/{ch}/…
+SENSOR_PARAM_PATHS: dict[str, str] = {
+    "name": "name",
+    "serialNumber": "sensor/serialNumber",
+    "physicalQuantity": "sensor/type/charge/physicalUnit",
+    "sensitivity": "sensor/type/charge/sensitivity",
+    "range": "sensor/type/charge/physicalRange",
+}
+SENSOR_LEAVES = list(SENSOR_PARAM_PATHS.keys())
 
 
 class LabAmpError(Exception):
@@ -60,7 +68,7 @@ class LabAmpClient:
             raise LabAmpError(f"LabAmp non-JSON response for {path}") from e
         if j.get("result", 0) != 0:
             raise LabAmpError(f"LabAmp error result={j.get('result')} for {path}")
-        return j.get("data", {})
+        return j.get("data") or j
 
     def ping(self) -> bool:
         try:
@@ -89,16 +97,27 @@ class LabAmpClient:
 
     def set_params(self, values: dict[str, object]) -> None:
         self._post(
-            "/api/param/set", {"params": [{"name": k, "value": v} for k, v in values.items()]}
+            "/api/param/set",
+            {"params": [{"name": k, "value": str(v)} for k, v in values.items()]},
         )
 
     def sensor_table(self, channels: int) -> list[dict]:
-        paths = [f"/sensor/{i}/{leaf}" for i in range(1, channels + 1) for leaf in SENSOR_LEAVES]
+        paths = [
+            f"/measChannel/{i}/{SENSOR_PARAM_PATHS[leaf]}"
+            for i in range(1, channels + 1)
+            for leaf in SENSOR_LEAVES
+        ]
         vals = self.get_params(paths)
         rows = []
         for i in range(1, channels + 1):
             rows.append(
-                {"channel": i, **{leaf: vals.get(f"/sensor/{i}/{leaf}") for leaf in SENSOR_LEAVES}}
+                {
+                    "channel": i,
+                    **{
+                        leaf: vals.get(f"/measChannel/{i}/{SENSOR_PARAM_PATHS[leaf]}")
+                        for leaf in SENSOR_LEAVES
+                    },
+                }
             )
         return rows
 
@@ -110,7 +129,7 @@ class LabAmpClient:
         return data.get("items", [])
 
     def set_range(self, channel: int, value: float) -> None:
-        self.set_params({f"/sensor/{channel}/range": value})
+        self.set_params({f"/measChannel/{channel}/{SENSOR_PARAM_PATHS['range']}": value})
 
     def channel_status(self, channels: int) -> dict[int, str]:
         """Per-channel status (OK / OR_ADC / OR_INPUT …) via /api/$/status/channel."""
