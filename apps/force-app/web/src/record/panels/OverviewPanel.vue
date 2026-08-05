@@ -1,7 +1,12 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { useWorkspace } from '../workspace';
 const w = useWorkspace();
 const st = w.st;
+const estSizeMb = computed(() => {
+	if (st.nTotal === 0) return 0;
+	return st.nTotal * 10 * 8 / 1e6;
+});
 </script>
 
 <template>
@@ -12,6 +17,7 @@ const st = w.st;
 			<div class="ro"><span>Cut</span><b :class="{ cut: st.cutStartSec !== null }">{{ st.cutStartSec !== null ? st.cutStartSec.toFixed(2) + 's' : '—' }}</b></div>
 			<div class="ro"><span>RPM</span><b>{{ Math.round(st.rpm) }}</b></div>
 			<div class="ro"><span>Samples</span><b>{{ st.nTotal.toLocaleString() }}</b></div>
+			<div class="ro"><span>File size</span><b>{{ estSizeMb < 1 ? (estSizeMb * 1000).toFixed(0) + ' KB' : estSizeMb.toFixed(1) + ' MB' }}</b></div>
 			<div class="ro"><span>Fx</span><b class="fx">{{ st.peaks.Fx.toFixed(1) }}</b></div>
 			<div class="ro"><span>Fy</span><b class="fy">{{ st.peaks.Fy.toFixed(1) }}</b></div>
 			<div class="ro"><span>Fz</span><b class="fz">{{ st.peaks.Fz.toFixed(1) }}</b></div>

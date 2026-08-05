@@ -55,11 +55,14 @@ function draw() {
 	const floorDb = -60;
 	const yOf = (a: number) => {
 		if (psd) {
-			const db = 20 * Math.log10((a || 1e-12) / amax); // 0 dB at peak
+			const db = 20 * Math.log10((a || 1e-12) / amax);
 			const n = Math.max(0, Math.min(1, (db - floorDb) / -floorDb));
 			return H - n * (H - 16) - 4;
 		}
-		return H - (a / amax) * (H - 16) - 4;
+		// Log-scale amplitude: compresses the range so small peaks remain visible
+		const logVal = Math.log10((a || 1e-12) / amax);
+		const n = Math.max(0, Math.min(1, (logVal - floorDb / 20) / (-floorDb / 20)));
+		return H - n * (H - 16) - 4;
 	};
 
 	for (const ch of drawn) {
@@ -81,7 +84,7 @@ function draw() {
 		ctx.fillText(ch, lx, 14); lx += ctx.measureText(ch).width + 12;
 	}
 	ctx.fillStyle = 'rgba(226,232,240,0.6)';
-	ctx.fillText(psd ? 'power (dB)' : 'amplitude', 8, H - 6);
+	ctx.fillText(psd ? 'power (dB)' : 'amplitude (log)', 8, H - 6);
 	ctx.textAlign = 'right'; ctx.fillText(`${Math.round(fmax)} Hz`, W - 6, H - 6); ctx.textAlign = 'left';
 }
 

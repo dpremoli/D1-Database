@@ -122,6 +122,13 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         ce_sec=ce_sec,
     )
 
+    # File sizes for the UI summary
+    file_sizes: dict[str, float] = {}
+    for fname in ("raw.d1raw", "capture.mat", "live_cache.bin"):
+        fpath = os.path.join(capture_dir, fname)
+        if os.path.isfile(fpath):
+            file_sizes[fname] = round(os.path.getsize(fpath) / 1e6, 2)
+
     summary = {
         "sample_name": cfg.sample_name,
         "fs": fs,
@@ -131,6 +138,7 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         "peaks": {ax: float(np.max(np.abs(axes[ax]))) for ax in ("Fx", "Fy", "Fz")},
         "cut_window_sec": [cs_sec, ce_sec],
         "drift_comp": bool(cfg.drift_comp),
+        "file_sizes_mb": file_sizes,
         # Per-channel ranging (drives converging between-cuts auto-range + records the per-cut N/V).
         "channels_ranging": {
             "peaks_n": chan_peaks,

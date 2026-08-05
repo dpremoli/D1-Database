@@ -5,7 +5,7 @@ import { computed, inject, reactive, ref, shallowRef, watch, type InjectionKey }
 import { RecordClient } from './liveClient';
 import { api } from '../directusClient';
 import { parseCache, type Cache } from '../force/liveCache';
-import { searchSamples, searchOperators, searchEquipment, getMethods, resolveMachiningMethodId, type LookupItem } from './directusLookups';
+import { searchSamples, searchOperators, searchEquipment, searchInserts, searchEdges, getMethods, resolveMachiningMethodId, type LookupItem } from './directusLookups';
 import { logRun, syncStatus } from './directusSync';
 import { alarmController } from './alarms';
 import { labamp, type AutoRangeRec } from './labampApi';
@@ -17,18 +17,17 @@ export interface ReplayOption { label: string; cacheId: string; opId: string; }
 export function createWorkspace() {
 	const client = new RecordClient();
 	const source = ref<'sim' | 'replay' | 'nidaq'>('sim');
-	// NI-DAQ physical channels (2b), one per SIGNAL_CHANNEL, edited as newline text. Placeholders —
-	// the operator sets the real device/channel strings on the rig.
-	const nidaqChannels = ref(
-		['cDAQ1Mod1/ai0', 'cDAQ1Mod1/ai1', 'cDAQ1Mod1/ai2', 'cDAQ1Mod1/ai3',
-			'cDAQ1Mod2/ai0', 'cDAQ1Mod2/ai1', 'cDAQ1Mod2/ai2', 'cDAQ1Mod2/ai3', 'cDAQ1Mod3/ai0'].join('\n'),
-	);
+	const NIDAQ_LS_KEY = 'force-app.nidaq.channels';
+	const defaultChannels = ['cDAQ1Mod1/ai0', 'cDAQ1Mod1/ai1', 'cDAQ1Mod1/ai2', 'cDAQ1Mod1/ai3',
+		'cDAQ1Mod2/ai0', 'cDAQ1Mod2/ai1', 'cDAQ1Mod2/ai2', 'cDAQ1Mod2/ai3', 'cDAQ1Mod3/ai0'].join('\n');
+	const nidaqChannels = ref(localStorage.getItem(NIDAQ_LS_KEY) || defaultChannels);
+	watch(nidaqChannels, (v) => localStorage.setItem(NIDAQ_LS_KEY, v));
 
 	const cfg = reactive({
 		rpm: 1200, feed: 0.05, diam: 80, inner_diam: 0,
 		sample_rate: 25000, duration_sec: 8, ppr: 1,
 		drift_comp: false,   // optional drift compensation on the saved .mat/live_cache (raw stays raw)
-		frm_from_cut: true,  // live FRM begins at the detected cut start
+		frm_from_cut: false, // when true, live FRM waits for cut detection — off by default for immediate feedback
 	});
 	const meta = reactive<Record<string, string>>({
 		sample_name: 'SIM-CUT-001', sample_code: '', operation: '', op_type: '',
@@ -38,9 +37,10 @@ export function createWorkspace() {
 	const machining = reactive<{ axial_doc: string; radial_doc: string; cutting_length: string; coolant_pressure: string; operation_sequence: string; chips_ref: string; new_edge: boolean; chips_collected: boolean }>(
 		{ axial_doc: '', radial_doc: '', cutting_length: '', coolant_pressure: '', operation_sequence: '', chips_ref: '', new_edge: false, chips_collected: false },
 	);
-	const plot = reactive<{ forceMode: 'time' | 'fft'; frmAxis: Axis; colormap: string; pointSize: number }>({
-		forceMode: 'time', frmAxis: 'Fz', colormap: 'viridis', pointSize: 1.8,
+	const plot = reactive<{ forceMode: 'time' | 'fft'; frmAxis: Axis; colormap: string; pointSize: number; windowSec: number }>({
+		forceMode: 'time', frmAxis: 'Fz', colormap: 'viridis', pointSize: 1.8, windowSec: 12,
 	});
+	watch(() => plot.windowSec, (v) => { client.windowSec = Math.max(1, v); });
 	const replay = reactive<{ query: string; options: ReplayOption[]; cacheId: string; label: string; speed: number; loading: boolean }>(
 		{ query: '', options: [], cacheId: '', label: '', speed: 20, loading: false },
 	);
@@ -51,7 +51,11 @@ export function createWorkspace() {
 	const st = client.status;
 
 	// Directus links for the run write-back (2d)
-	const link = reactive({ sampleId: '', sampleLabel: '', operatorId: '', operatorLabel: '', equipmentId: '', equipmentLabel: '' });
+	const link = reactive({
+		sampleId: '', sampleLabel: '', operatorId: '', operatorLabel: '',
+		equipmentId: '', equipmentLabel: '', insertId: '', insertLabel: '',
+		edgeId: '', edgeLabel: '',
+	});
 	const logged = ref(false);
 
 	// Safety alarms (2e) — the app-wide controller (config lives in Settings > Alarms), evaluated
@@ -119,6 +123,12 @@ export function createWorkspace() {
 					axis: plot.frmAxis, ppr: cfg.ppr, speed: replay.speed, extra_metadata: metaObj(),
 				});
 			} else if (source.value === 'nidaq') {
+				// Reset the charge amplifier before each cut (clears accumulated charge drift).
+				try {
+					await labamp.setMode('RESET');
+					await new Promise((r) => setTimeout(r, 500));
+					await labamp.setMode('MEASURE');
+				} catch { /* amp unreachable — proceed anyway, gains were set at last range */ }
 				const chans = nidaqChannels.value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
 				await client.start({ ...cfg, source: 'nidaq', nidaq_channels: chans, axis: plot.frmAxis, extra_metadata: metaObj() } as any);
 			} else {
@@ -161,8 +171,8 @@ export function createWorkspace() {
 			sample_id: link.sampleId || null,
 			operator_person_id: link.operatorId || null,
 			equipment_id: link.equipmentId || null,
+			insert_edge_id: link.edgeId || null,
 			operation_date: new Date().toISOString(),
-			pass_code: (meta.operation && meta.operation.trim()) || `${meta.sample_code || meta.sample_name || 'REC'}-${Date.now()}`,
 			process_category: 'machining',
 			machining_operation_subtype: meta.op_type || null,
 			machining_spindle_speed_rpm: cfg.rpm,
@@ -202,6 +212,25 @@ export function createWorkspace() {
 	// Warm the methods cache so the required method_id resolves even if we're offline at log time.
 	getMethods().catch(() => {});
 
+	// Auto-detect NI-DAQ hardware and switch source + channels if real devices are present.
+	(async () => {
+		try {
+			const res = await fetch(`${client.baseUrl}/nidaq/devices`);
+			if (!res.ok) return;
+			const devs = await res.json();
+			if (!devs.simulated && devs.chassis?.length) {
+				source.value = 'nidaq';
+				const ar = await fetch(`${client.baseUrl}/nidaq/channels/autoassign`, { method: 'POST' });
+				if (ar.ok) {
+					const data = await ar.json();
+					const detected = (data.channels || []).map((c: any) => c.physical).join('\n');
+					nidaqChannels.value = detected;
+					localStorage.setItem(NIDAQ_LS_KEY, detected);
+				}
+			}
+		} catch { /* backend unreachable — stay on sim */ }
+	})();
+
 	// Directus-backed cut picker for replay: search done analyses by operation pass code.
 	async function searchCuts(q: string) {
 		replay.loading = true;
@@ -223,7 +252,7 @@ export function createWorkspace() {
 		start, stop, newRun, loadFinished, searchCuts, metaObj,
 		// 2d: Directus links + run write-back
 		link, logged, onSelectSample, logRunNow, syncStatus,
-		searchSamples, searchOperators, searchEquipment,
+		searchSamples, searchOperators, searchEquipment, searchInserts, searchEdges,
 		// 2e: safety alarms
 		alarms,
 		// converging between-cuts auto-range

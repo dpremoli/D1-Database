@@ -82,6 +82,15 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 			<label>Replay speed ×<input type="number" v-model.number="w.replay.speed" min="1" :disabled="w.locked.value" /></label>
 		</template>
 
+		<!-- Plot time window -->
+		<label class="timewin">Plot window
+			<div class="tw-row">
+				<input type="range" min="2" max="60" step="1" v-model.number="w.plot.windowSec" />
+				<input type="number" min="1" max="300" v-model.number="w.plot.windowSec" class="tw-num" />
+				<span class="tw-unit">s</span>
+			</div>
+		</label>
+
 		<!-- Processing options -->
 		<div v-if="w.source.value !== 'replay'" class="proc">
 			<label class="chk"><input type="checkbox" v-model="w.cfg.frm_from_cut" :disabled="w.locked.value" /> Detect cut start (live FRM begins at the cut)</label>
@@ -146,6 +155,26 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 		<p v-if="w.errMsg.value" class="err">{{ w.errMsg.value }}</p>
 		<p v-if="w.st.state === 'error' && w.st.error" class="err">{{ w.st.error.split('\n')[0] }}</p>
 
+		<!-- End-of-recording summary -->
+		<div v-if="w.isDone.value && w.st.summary" class="summary">
+			<div class="section-divider"><span>Recording summary</span></div>
+			<div class="sum-grid">
+				<div class="sum-item"><span class="sum-label">Duration</span><b>{{ w.st.summary.duration_sec.toFixed(2) }}s</b></div>
+				<div class="sum-item"><span class="sum-label">Samples</span><b>{{ w.st.summary.n.toLocaleString() }}</b></div>
+				<div class="sum-item"><span class="sum-label">Sample rate</span><b>{{ (w.st.summary.fs / 1000).toFixed(1) }} kHz</b></div>
+				<div class="sum-item"><span class="sum-label">Cut window</span><b>{{ w.st.summary.cut_window_sec[0].toFixed(2) }}–{{ w.st.summary.cut_window_sec[1].toFixed(2) }}s</b></div>
+			</div>
+			<div class="sum-peaks">
+				<div class="sum-peak fx"><span>Fx</span><b>{{ w.st.summary.peaks.Fx.toFixed(1) }} N</b></div>
+				<div class="sum-peak fy"><span>Fy</span><b>{{ w.st.summary.peaks.Fy.toFixed(1) }} N</b></div>
+				<div class="sum-peak fz"><span>Fz</span><b>{{ w.st.summary.peaks.Fz.toFixed(1) }} N</b></div>
+			</div>
+			<div v-if="w.st.summary.file_sizes_mb" class="sum-files">
+				<span v-for="(mb, name) in w.st.summary.file_sizes_mb" :key="name" class="sum-file">{{ name }} <b>{{ mb < 1 ? (mb * 1000).toFixed(0) + ' KB' : mb.toFixed(1) + ' MB' }}</b></span>
+			</div>
+			<p v-if="w.st.summary.drift_comp" class="hint">Drift compensation applied to saved outputs.</p>
+		</div>
+
 		<div v-if="w.isDone.value" class="logrun">
 			<button class="btn save" :disabled="!w.link.sampleId || w.logged.value" @click="w.logRunNow()">
 				<span class="material-symbols-rounded">cloud_upload</span> {{ w.logged.value ? 'Logged' : 'Log run to database' }}
@@ -202,4 +231,22 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 .chks { display: flex; gap: 16px; margin-top: 4px; }
 .chk { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text); cursor: pointer; }
 .chk input { accent-color: var(--accent); }
+.timewin { margin-bottom: 4px; }
+.tw-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.tw-row input[type="range"] { flex: 1; accent-color: var(--accent); }
+.tw-num { width: 52px !important; text-align: center; padding: 5px 4px !important; font-size: 12px !important; }
+.tw-unit { font-size: 12px; color: var(--text-dim); }
+.summary { margin-top: 6px; }
+.sum-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.sum-item { display: flex; flex-direction: column; padding: 6px 8px; background: var(--surface); border-radius: 7px; }
+.sum-item .sum-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.sum-item b { font-size: 13px; font-variant-numeric: tabular-nums; }
+.sum-peaks { display: flex; gap: 6px; margin-top: 6px; }
+.sum-peak { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 6px; background: var(--surface); border-radius: 7px; }
+.sum-peak span { font-size: 10px; color: var(--text-dim); text-transform: uppercase; }
+.sum-peak b { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sum-peak.fx b { color: #f87171; } .sum-peak.fy b { color: #4ade80; } .sum-peak.fz b { color: #60a5fa; }
+.sum-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.sum-file { font-size: 11px; color: var(--text-dim); padding: 3px 7px; background: var(--surface); border-radius: 5px; }
+.sum-file b { color: var(--text); font-weight: 600; }
 </style>
