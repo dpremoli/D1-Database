@@ -77,6 +77,9 @@ FAST Data/
 for llm *
 # verification screenshots
 tests/ui/*.png
+# ad-hoc Playwright verification artifacts (screenshots, console logs) from agent testing sessions
+.playwright-mcp/
+/screenshots/
 
 # Local daemon logs (force/fast orchestrators)
 logs/
