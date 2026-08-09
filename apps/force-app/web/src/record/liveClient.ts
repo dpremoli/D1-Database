@@ -10,6 +10,13 @@ const MAGIC = 0x46_4c_31_44; // 'D1LF' bytes D,1,L,F read little-endian as a u32
 // The 8 dyno sub-channels the frame streams (min/max envelope), in raw-file column order.
 export const SUB_NAMES = ['Fx1', 'Fx2', 'Fy1', 'Fy2', 'Fz1', 'Fz2', 'Fz3', 'Fz4', 'Tacho'] as const;
 export type SubName = (typeof SUB_NAMES)[number];
+
+// Raw-file geometry, for size/bandwidth estimates. The writer emits float32 rows (d1rw.py dtype
+// "<f4"; recovery.py reads row_bytes = n_cols * 4) of Time + 8 dyno channels + Tacho. Keep these
+// in step with backend/app/storage.py's RAW_BYTES_PER_SAMPLE — guessing float64 here silently
+// doubled every size readout and disk-space warning.
+export const RAW_BYTES_PER_SAMPLE = 4;
+export const RAW_COLUMNS = 10;
 type Env = [number, number][];
 function emptyTrace() {
 	const sub: Record<string, Env> = {};
@@ -29,12 +36,14 @@ export interface LiveStatus {
 	captureId: string | null;
 	summary: any | null;
 	cutStartSec: number | null;   // detected cut start (2f) — null until the cut begins
+	diskAction: { action: 'backup_started' | 'backup_unavailable' | 'forced_stop'; freeGb: number } | null;
 }
 
 export class RecordClient {
 	status = reactive<LiveStatus>({
 		connected: false, state: 'idle', seq: 0, tSec: 0, rpm: 0,
 		peaks: { Fx: 0, Fy: 0, Fz: 0 }, nTotal: 0, error: null, captureId: null, summary: null, cutStartSec: null,
+		diskAction: null,
 	});
 	// bump each frame so widgets can watch cheaply
 	frameSeq = ref(0);
@@ -60,6 +69,10 @@ export class RecordClient {
 	private base = getConfig().recorderUrl;
 	get baseUrl() { return this.base; }
 	private relay: BroadcastChannel | null = null;
+	// Whether a pop-out window has ever announced itself on the channel. Until one does, relaying
+	// every decoded frame is pure overhead on the acquisition PC (a structured clone per frame, at
+	// full frame rate, that nothing receives) — and the common case is that no pop-out is open.
+	private hasRelayPeer = false;
 
 	// Build the absolute ws(s):// stream URL. `base` may be an absolute http(s) URL (dev, e.g.
 	// http://localhost:8200) or a same-origin relative path (deploy, /recorder proxied by Caddy).
@@ -81,55 +94,108 @@ export class RecordClient {
 		ws.onmessage = (ev) => {
 			if (typeof ev.data === 'string') this.onControl(JSON.parse(ev.data));
 			else this.onFrame(ev.data as ArrayBuffer);
-			this.relay?.postMessage(ev.data instanceof ArrayBuffer ? { bin: new Uint8Array(ev.data) } : { txt: ev.data });
+			if (this.hasRelayPeer) {
+				this.relay?.postMessage(ev.data instanceof ArrayBuffer ? { bin: new Uint8Array(ev.data) } : { txt: ev.data });
+			}
 		};
 		this.ws = ws;
+		// Close any channel from a previous connect() before replacing it — reconnecting otherwise
+		// leaks the old BroadcastChannel, which stays subscribed and keeps its handler alive.
+		this.relay?.close();
 		this.relay = new BroadcastChannel('force-app-live');
 		this.relay.onmessage = (ev) => {
-			if (ev.data?.type === 'sync-request') this.sendSnapshot();
+			if (ev.data?.type === 'sync-request') {
+				// A pop-out exists: send it the backlog, and start relaying live frames from here on.
+				this.hasRelayPeer = true;
+				this.sendSnapshot();
+			}
 		};
 	}
 
+	snapshotReady = ref(false);
+
 	connectViaRelay() {
+		this.relay?.close();  // same leak guard as connect()
 		this.relay = new BroadcastChannel('force-app-live');
 		this.relay.onmessage = (ev) => {
 			const d = ev.data;
 			if (d?.bin) { const u8 = new Uint8Array(d.bin); this.onFrame(u8.buffer as ArrayBuffer); }
 			else if (d?.txt) this.onControl(JSON.parse(d.txt));
-			else if (d?.type === 'snapshot') this.applySnapshot(d);
+			else if (d?.type === 'snapshot') {
+				this.applySnapshot(d);
+				this.snapshotReady.value = true;
+			}
 		};
 		this.status.connected = true;
 		this.relay.postMessage({ type: 'sync-request' });
+		// The parent might not exist/respond (e.g. this window was opened standalone, or the parent
+		// tab closed) — don't leave the pop-out stuck on "Syncing…" forever if no snapshot ever comes.
+		setTimeout(() => { this.snapshotReady.value = true; }, 2000);
+	}
+
+	// `this.status` is a Vue reactive() proxy — its nested objects (peaks/summary/diskAction) are
+	// themselves lazily-wrapped reactive proxies on access, so a shallow `{ ...this.status }` copies
+	// those nested PROXIES by reference, not plain objects. Proxies aren't structured-clonable, so
+	// postMessage()ing that shape throws DataCloneError — which was silently swallowed by the catch
+	// below (whose OWN fallback made the exact same mistake, so it threw too, uncaught, and the
+	// child never got anything at all, just its 2s timeout). A full JSON round-trip strips every
+	// level of proxy-ness at once; safe here since LiveStatus is plain JSON-shaped data (no Dates,
+	// Maps, or typed arrays inside it — those live in frm/trace/fft, which are already plain class
+	// fields, not reactive-wrapped, so their own .slice()s were never the problem).
+	private plainStatus(): LiveStatus {
+		return JSON.parse(JSON.stringify(this.status));
 	}
 
 	private sendSnapshot() {
-		const fm = this.frm;
-		this.relay?.postMessage({
-			type: 'snapshot',
-			status: { ...this.status },
-			frm: { xy: new Float32Array(fm.xy.buffer, 0, fm.count * 2), c: new Float32Array(fm.c.buffer, 0, fm.count), count: fm.count, cAbsMax: fm.cAbsMax },
-			trace: { t: this.trace.t, fx: this.trace.fx, fy: this.trace.fy, fz: this.trace.fz, sub: this.trace.sub },
-		});
+		try {
+			const fm = this.frm;
+			const n = fm.count;
+			const snap = {
+				type: 'snapshot',
+				status: this.plainStatus(),
+				frm: { xy: fm.xy.slice(0, n * 2), c: fm.c.slice(0, n), count: n, cAbsMax: fm.cAbsMax },
+				trace: { t: this.trace.t.slice(), fx: this.trace.fx.slice(), fy: this.trace.fy.slice(), fz: this.trace.fz.slice(),
+					sub: Object.fromEntries(Object.entries(this.trace.sub).map(([k, v]) => [k, v.slice()])) },
+				fft: this.fft ? { ...this.fft } : null,
+				fftFreq: this.fftFreq.slice(),
+				fftHistory: this.fftHistory.slice(),
+			};
+			this.relay?.postMessage(snap);
+		} catch (e) {
+			console.warn('[force-app] snapshot sync to pop-out window failed:', e);
+			this.relay?.postMessage({ type: 'snapshot', status: this.plainStatus(), frm: { xy: new Float32Array(0), c: new Float32Array(0), count: 0, cAbsMax: 1 }, trace: null, fft: null, fftFreq: [], fftHistory: [] });
+		}
 	}
 
 	private applySnapshot(snap: any) {
 		if (snap.status) { Object.assign(this.status, snap.status); }
-		if (snap.frm && snap.frm.count > this.frm.count) {
-			const n = snap.frm.count;
-			this.frm.xy.set(new Float32Array(snap.frm.xy), 0);
-			this.frm.c.set(new Float32Array(snap.frm.c), 0);
-			this.frm.count = n;
-			this.frm.cAbsMax = snap.frm.cAbsMax;
+		if (snap.frm) {
+			const n = snap.frm.count || 0;
+			if (n > 0) {
+				const xy = snap.frm.xy instanceof Float32Array ? snap.frm.xy : Float32Array.from(snap.frm.xy);
+				const c = snap.frm.c instanceof Float32Array ? snap.frm.c : Float32Array.from(snap.frm.c);
+				if (xy.length >= n * 2 && c.length >= n) {
+					this.frm.xy.set(xy, 0);
+					this.frm.c.set(c, 0);
+					this.frm.count = n;
+					this.frm.cAbsMax = snap.frm.cAbsMax;
+				} else {
+					console.warn('[force-app] snapshot frm data too small: need xy[', n * 2, '], c[', n, ']');
+				}
+			}
 		}
 		if (snap.trace) {
 			this.trace.t = snap.trace.t; this.trace.fx = snap.trace.fx;
 			this.trace.fy = snap.trace.fy; this.trace.fz = snap.trace.fz;
 			this.trace.sub = snap.trace.sub;
 		}
+		if (snap.fft) this.fft = snap.fft;
+		if (snap.fftFreq) this.fftFreq = snap.fftFreq;
+		if (snap.fftHistory?.length) { this.fftHistory = snap.fftHistory; this.fftSeq.value++; }
 		this.frameSeq.value++;
 	}
 
-	disconnect() { this.ws?.close(); this.ws = null; this.relay?.close(); this.relay = null; }
+	disconnect() { this.ws?.close(); this.ws = null; this.relay?.close(); this.relay = null; this.hasRelayPeer = false; }
 
 	private onControl(msg: any) {
 		if (msg.type === 'done') {
@@ -146,6 +212,8 @@ export class RecordClient {
 			this.fftSeq.value++;
 		} else if (msg.type === 'cutstart') {
 			this.status.cutStartSec = msg.t;
+		} else if (msg.type === 'disk_action') {
+			this.status.diskAction = { action: msg.action, freeGb: msg.free_gb };
 		}
 	}
 
@@ -259,8 +327,10 @@ export class RecordClient {
 		this.status.state = 'idle'; this.status.error = null; this.status.summary = null;
 		this.status.captureId = null; this.status.nTotal = 0; this.status.tSec = 0;
 		this.status.peaks = { Fx: 0, Fy: 0, Fz: 0 }; this.status.cutStartSec = null;
+		this.status.diskAction = null;
 		this.frameSeq.value++;
 	}
 
 	cacheUrl(id: string) { return `${this.base}/captures/${id}/live_cache.bin`; }
+	matUrl(id: string) { return `${this.base}/captures/${id}/capture.mat`; }
 }

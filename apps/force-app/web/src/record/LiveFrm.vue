@@ -8,12 +8,17 @@ import * as THREE from 'three';
 import type { RecordClient } from './liveClient';
 import { COLORMAPS } from '../force/liveCloud';
 
-const props = withDefaults(defineProps<{ client: RecordClient; diam: number; colormap?: string; pointSize?: number }>(), {
-	colormap: 'viridis', pointSize: 1.8,
+const props = withDefaults(defineProps<{ client: RecordClient; diam: number; colormap?: string; pointSize?: number; pointStride?: number }>(), {
+	colormap: 'viridis', pointSize: 1.8, pointStride: 1,
 });
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
-const CAP = 1_000_000;
+// Matches RecordClient's own accumulator cap (liveClient.ts: `private cap = 2_000_000`) — this used
+// to be capped lower at 1,000,000, so a long/dense cut whose live point count outgrew this buffer
+// silently stopped rendering new points past it (TypedArray writes past the end are a silent
+// no-op, not an error) while the accumulator kept counting fine. Sized for the worst case
+// (pointStride=1); a stride > 1 just uploads fewer of the CAP slots.
+const CAP = 2_000_000;
 let renderer: THREE.WebGLRenderer | null = null;
 let scene: THREE.Scene | null = null;
 let camera: THREE.OrthographicCamera | null = null;
@@ -23,7 +28,8 @@ let colAttr: THREE.BufferAttribute | null = null;
 let mat: THREE.PointsMaterial | null = null;
 let disc: THREE.CanvasTexture | null = null;
 let raf = 0;
-let uploaded = 0;
+let uploaded = 0;   // source-side cursor into client.frm (every point seen, pre-decimation)
+let rendered = 0;   // destination-side cursor into the GPU buffer (post-decimation)
 let cssW = 1, cssH = 1;
 let ro: ResizeObserver | null = null;
 // tracked point bounds (mm) for auto-fit framing — robust for both sim and replayed real cuts
@@ -83,28 +89,43 @@ function frameCamera() {
 	camera.updateProjectionMatrix();
 }
 
+function resetUpload() {
+	uploaded = 0; rendered = 0;
+	geom?.setDrawRange(0, 0);
+	bx0 = by0 = Infinity; bx1 = by1 = -Infinity;
+}
+
 function frame() {
 	const cm = COLORMAPS[props.colormap] || COLORMAPS.viridis;
 	const fm = props.client.frm;
 	// New run detected (buffers reset) -> clear our upload cursor + bounds.
-	if (fm.count < uploaded) { uploaded = 0; geom!.setDrawRange(0, 0); bx0 = by0 = Infinity; bx1 = by1 = -Infinity; }
+	if (fm.count < uploaded) resetUpload();
 	const from = uploaded, to = fm.count;
 	if (to > from && posAttr && colAttr) {
 		const cMax = Math.max(1e-6, fm.cAbsMax);
 		const pos = posAttr.array as Float32Array;
 		const col = colAttr.array as Float32Array;
-		for (let i = from; i < to; i++) {
+		// pointStride thins the LIVE map by keeping every Nth accumulated point (indexed on the
+		// absolute source index, so the kept subset is stable regardless of chunking) — this is
+		// what lets a long/dense cut stay responsive and under the GPU buffer cap, independent of
+		// the coarser decimation the backend already applies per-chunk.
+		const stride = Math.max(1, Math.round(props.pointStride) || 1);
+		const firstKept = from + ((stride - (from % stride)) % stride);
+		for (let i = firstKept; i < to; i += stride) {
 			const x = fm.xy[i * 2], y = fm.xy[i * 2 + 1];
-			pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = 0;
+			const w = rendered;
+			if (w >= CAP) break;
+			pos[w * 3] = x; pos[w * 3 + 1] = y; pos[w * 3 + 2] = 0;
 			if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
 			const tnorm = Math.min(1, Math.max(0, (fm.c[i] + cMax) / (2 * cMax)));
 			const [r, g, b] = cm(tnorm);
-			col[i * 3] = r; col[i * 3 + 1] = g; col[i * 3 + 2] = b;
+			col[w * 3] = r; col[w * 3 + 1] = g; col[w * 3 + 2] = b;
+			rendered++;
 		}
 		// Re-upload the attribute buffers (full upload — robust across three versions; point
 		// counts in 2a are modest and this only runs on frames that actually added points).
 		posAttr.needsUpdate = true; colAttr.needsUpdate = true;
-		geom!.setDrawRange(0, to);
+		geom!.setDrawRange(0, rendered);
 		uploaded = to;
 	}
 }
@@ -121,6 +142,9 @@ function loop() {
 const ptsLabel = computed(() => { void props.client.frameSeq.value; return props.client.frm.count; });
 
 watch(() => props.diam, () => sizeCanvas());
+// Changing the decimation live re-renders the WHOLE accumulated spiral at the new density
+// (not just future points) so the displayed map is consistent at a single stride throughout.
+watch(() => props.pointStride, () => resetUpload());
 onMounted(() => { setup(); window.addEventListener('resize', sizeCanvas); ro = new ResizeObserver(sizeCanvas); if (canvasEl.value) ro.observe(canvasEl.value); nextTick(sizeCanvas); });
 onBeforeUnmount(() => {
 	cancelAnimationFrame(raf);

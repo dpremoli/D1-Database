@@ -6,6 +6,7 @@
 import { computed, ref } from 'vue';
 import { useWorkspace } from '../workspace';
 import LiveForcePlot from '../LiveForcePlot.vue';
+import FinishedForcePlot from '../FinishedForcePlot.vue';
 import LiveFft from '../LiveFft.vue';
 import LiveSpectrogram from '../LiveSpectrogram.vue';
 import LiveWaterfall from '../LiveWaterfall.vue';
@@ -44,7 +45,10 @@ function toggle(key: string) {
 }
 const subsOpen = ref(false);
 const subCount = computed(() => selected.value.filter((k) => (SUB_NAMES as readonly string[]).includes(k)).length);
-function openLive(panel: string) { window.open(appUrl(`/live/${panel}`), '_blank', 'noopener,width=1400,height=900'); }
+function openLive() {
+	const q = new URLSearchParams({ mode: mode.value, channels: selected.value.join(','), window: String(w.plot.windowSec) });
+	window.open(appUrl(`/live/force?${q}`), '_blank', 'noopener,width=1400,height=900');
+}
 </script>
 
 <template>
@@ -69,16 +73,29 @@ function openLive(panel: string) { window.open(appUrl(`/live/${panel}`), '_blank
 				</div>
 			</div>
 			<span v-if="singleChannelMode" class="mono-hint" title="Spectrogram/waterfall show one channel">{{ selected[0] }} only</span>
+			<!-- Applies to every mode with an actual time dimension. FFT/PSD show a single current
+				 spectrum with no time axis, so the control has nothing to affect there — hidden rather
+				 than shown-but-inert. -->
+			<div v-if="mode !== 'fft' && mode !== 'psd'" class="tw-row">
+				<input type="range" min="2" max="60" step="1" v-model.number="w.plot.windowSec" />
+				<input type="number" min="1" max="300" v-model.number="w.plot.windowSec" class="tw-num" />
+				<span class="tw-unit">s</span>
+			</div>
 			<button class="popout" title="Pop out to a new window (second monitor) — open before Start"
-				@click="openLive(mode === 'time' ? 'force' : 'fft')">
+				@click="openLive()">
 				<span class="material-symbols-rounded">open_in_new</span>
 			</button>
 		</div>
 		<div class="plot" @click="subsOpen = false">
-			<LiveForcePlot v-show="mode === 'time'" :client="w.client" :channels="selected" />
+			<!-- Skipped while the save dialog is open: it renders the same full-resolution trace over
+				 this panel anyway, and the moment recording ends is already the heaviest instant on the
+				 page (FRM rebuild + this panel + the dialog's own copy all wanting to redraw at once) —
+				 no point paying for a redundant draw of data the user can't currently see. -->
+			<FinishedForcePlot v-if="mode === 'time' && w.isDone.value && w.finishedCache.value && !w.saveOpen.value" :cache="w.finishedCache.value" :channels="selected" />
+			<LiveForcePlot v-else-if="mode === 'time'" :client="w.client" :channels="selected" />
 			<LiveFft v-if="mode === 'fft' || mode === 'psd'" :client="w.client" :channels="selected" :scale="mode === 'psd' ? 'psd' : 'amp'" />
-			<LiveSpectrogram v-else-if="mode === 'spectrogram'" :client="w.client" :channels="selected" />
-			<LiveWaterfall v-else-if="mode === 'waterfall'" :client="w.client" :channels="selected" />
+			<LiveSpectrogram v-else-if="mode === 'spectrogram'" :client="w.client" :channels="selected" :window-sec="w.plot.windowSec" />
+			<LiveWaterfall v-else-if="mode === 'waterfall'" :client="w.client" :channels="selected" :window-sec="w.plot.windowSec" />
 		</div>
 	</div>
 </template>
@@ -105,6 +122,10 @@ function openLive(panel: string) { window.open(appUrl(`/live/${panel}`), '_blank
 .subopt .dot { width: 9px; height: 9px; border-radius: 50%; }
 .subopt .tick { margin-left: auto; font-size: 14px; color: #4ade80; }
 .mono-hint { font-family: var(--mono); font-size: 11px; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px; }
+.tw-row { display: flex; align-items: center; gap: 4px; }
+.tw-row input[type="range"] { width: 80px; accent-color: var(--accent); }
+.tw-num { width: 42px !important; text-align: center; padding: 3px 2px !important; font-size: 11px !important; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text); }
+.tw-unit { font-size: 11px; color: var(--text-dim); }
 .popout { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
 .popout:hover { color: var(--accent); background: var(--surface-2); }
 .popout .material-symbols-rounded { font-size: 15px; }

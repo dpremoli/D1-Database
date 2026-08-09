@@ -6,7 +6,11 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { RecordClient } from './liveClient';
 
-const props = defineProps<{ client: RecordClient; channels?: string[] }>();
+const props = withDefaults(defineProps<{ client: RecordClient; channels?: string[]; windowSec?: number }>(), { windowSec: 12 });
+// The backend publishes a spectrum roughly every 0.3s (session.py's fft throttle) — convert the
+// user-facing time window into a frame count so this behaves the same as the force/FFT plots'
+// windowSec control instead of a fixed, non-configurable frame count.
+const FFT_PUBLISH_HZ = 1 / 0.3;
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
 let ro: ResizeObserver | null = null;
@@ -46,7 +50,8 @@ function draw() {
 	ctx.fillStyle = '#0b1020'; ctx.fillRect(0, 0, W, H);
 	const hist = props.client.fftHistory;
 	const ch = chan.value;
-	const frames = hist.filter((h) => h.spectra[ch] && h.spectra[ch].length);
+	const wanted = Math.max(2, Math.round(props.windowSec * FFT_PUBLISH_HZ));
+	const frames = hist.filter((h) => h.spectra[ch] && h.spectra[ch].length).slice(-wanted);
 	if (frames.length < 2) {
 		ctx.fillStyle = 'rgba(148,163,184,0.7)'; ctx.font = '12px system-ui';
 		ctx.fillText('accumulating spectrogram…', 12, H / 2);
@@ -84,6 +89,7 @@ function draw() {
 }
 
 watch(() => props.client.fftSeq.value, draw);
+watch(() => props.windowSec, draw);
 watch(chan, draw);
 onMounted(() => { resize(); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); });
 onBeforeUnmount(() => ro?.disconnect());

@@ -5,11 +5,14 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { RecordClient } from './liveClient';
 import { CH_COLOR } from './types';
 
-const props = defineProps<{ client: RecordClient; channels?: string[] }>();
+const props = withDefaults(defineProps<{ client: RecordClient; channels?: string[]; windowSec?: number }>(), { windowSec: 12 });
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
 let ro: ResizeObserver | null = null;
-const MAX_FRAMES = 44; // how many recent spectra to stack
+// The backend publishes a spectrum roughly every 0.3s (session.py's fft throttle) — convert the
+// user-facing time window into a frame count, same as the spectrogram, instead of a fixed count.
+const FFT_PUBLISH_HZ = 1 / 0.3;
+const maxFrames = computed(() => Math.max(2, Math.round(props.windowSec * FFT_PUBLISH_HZ)));
 
 const chan = computed(() => {
 	const avail = props.client.fft ? Object.keys(props.client.fft.spectra) : [];
@@ -36,7 +39,7 @@ function draw() {
 	const ch = chan.value;
 	const f = props.client.fft?.f;
 	const all = props.client.fftHistory.filter((h) => h.spectra[ch] && h.spectra[ch].length);
-	const frames = all.slice(-MAX_FRAMES);
+	const frames = all.slice(-maxFrames.value);
 	if (!f || frames.length < 2) {
 		ctx.fillStyle = 'rgba(148,163,184,0.7)'; ctx.font = '12px system-ui';
 		ctx.fillText('accumulating waterfall…', 12, H / 2);
@@ -74,6 +77,7 @@ function draw() {
 
 watch(() => props.client.fftSeq.value, draw);
 watch(chan, draw);
+watch(() => props.windowSec, draw);
 onMounted(() => { resize(); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); });
 onBeforeUnmount(() => ro?.disconnect());
 </script>

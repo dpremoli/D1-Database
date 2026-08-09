@@ -6,7 +6,11 @@ import LiveFrm from '../LiveFrm.vue';
 import FrmCloud from '../../force/FrmCloud.vue';
 import { appUrl } from '../../appUrl';
 const w = useWorkspace();
-function openLive() { window.open(appUrl('/live/frm'), '_blank', 'noopener,width=1200,height=1000'); }
+const STRIDES = [1, 2, 5, 10, 25, 50];
+function openLive() {
+	const q = new URLSearchParams({ colormap: w.plot.colormap, pointSize: String(w.plot.pointSize), frmAxis: w.plot.frmAxis, stride: String(w.plot.liveFrmStride) });
+	window.open(appUrl(`/live/frm?${q}`), '_blank', 'noopener,width=1200,height=1000');
+}
 </script>
 
 <template>
@@ -22,6 +26,10 @@ function openLive() { window.open(appUrl('/live/frm'), '_blank', 'noopener,width
 				<option v-for="m in ['viridis', 'inferno', 'grayscale']" :key="m">{{ m }}</option>
 			</select>
 			<input class="psize" type="range" min="1" max="5" step="0.1" v-model.number="w.plot.pointSize" :title="`Point size ${w.plot.pointSize.toFixed(1)}`" />
+			<select v-if="!w.isDone.value" class="cmap" v-model.number="w.plot.liveFrmStride"
+				title="Live map decimation — keep every Nth point. Raise this for long/dense cuts to keep the map responsive and under its point cap.">
+				<option v-for="s in STRIDES" :key="s" :value="s">{{ s === 1 ? 'full res' : `1 / ${s}` }}</option>
+			</select>
 			<button class="popout" title="Pop out to a new window (second monitor) — open before Start" @click="openLive">
 				<span class="material-symbols-rounded">open_in_new</span>
 			</button>
@@ -32,7 +40,7 @@ function openLive() { window.open(appUrl('/live/frm'), '_blank', 'noopener,width
 			speed-mode="measured" :rpm="w.cfg.rpm" :vc="0" :time-scale="1" :ppr="w.cfg.ppr"
 			:crop-start-sec="w.finishedCache.value.csSec" :crop-end-sec="w.finishedCache.value.ceSec"
 			:stride="1" :gridding="false" :grid-n="600" :point-size="w.plot.pointSize" :colormap="w.plot.colormap" pane-label="captured" />
-		<LiveFrm v-else :client="w.client" :diam="w.cfg.diam" :colormap="w.plot.colormap" :point-size="w.plot.pointSize" />
+		<LiveFrm v-else :client="w.client" :diam="w.cfg.diam" :colormap="w.plot.colormap" :point-size="w.plot.pointSize" :point-stride="w.plot.liveFrmStride" />
 		</div>
 	</div>
 </template>

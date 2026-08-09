@@ -1,13 +1,8 @@
 <script setup lang="ts">
-// Rolling live force scope: draws the Fx/Fy/Fz min/max envelope over the last windowSec, from the
-// RecordClient's trace buffer. Canvas 2D + rAF; autoscales Y to the visible window. Not reactive
-// per-sample — it reads the plain buffers each frame.
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { RecordClient } from './liveClient';
 import { CH_COLOR } from './types';
 
-// `channels` selects which channels to draw — summed axes ('Fx'/'Fy'/'Fz') and/or individual dyno
-// sub-channels ('Fx1'…'Fz4'). Defaults to the three summed axes.
 const props = defineProps<{ client: RecordClient; channels?: string[] }>();
 type Env = [number, number][];
 function envOf(key: string): Env {
@@ -18,6 +13,8 @@ const canvasEl = ref<HTMLCanvasElement | null>(null);
 let raf = 0;
 let ctx: CanvasRenderingContext2D | null = null;
 let ro: ResizeObserver | null = null;
+
+const ML = 48, MR = 10, MT = 10, MB = 22;
 
 function resize() {
 	const c = canvasEl.value;
@@ -30,24 +27,36 @@ function resize() {
 	if (ctx) ctx.scale(dpr, dpr);
 }
 
+function niceStep(range: number, ticks: number): number {
+	const raw = range / ticks;
+	const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+	const r = raw / mag;
+	return (r <= 1.5 ? 1 : r <= 3 ? 2 : r <= 7 ? 5 : 10) * mag;
+}
+
 function draw() {
 	raf = requestAnimationFrame(draw);
 	const c = canvasEl.value;
 	if (!c || !ctx) return;
-	const W = c.clientWidth, H = c.clientHeight;
-	if (W === 0 || H === 0) { resize(); return; }
-	ctx.clearRect(0, 0, W, H);
+	const CW = c.clientWidth, CH = c.clientHeight;
+	if (CW === 0 || CH === 0) { resize(); return; }
+	const W = CW - ML - MR, H = CH - MT - MB;
+	ctx.clearRect(0, 0, CW, CH);
 	ctx.fillStyle = '#0b1020';
-	ctx.fillRect(0, 0, W, H);
+	ctx.fillRect(0, 0, CW, CH);
 
 	const tr = props.client.trace;
 	const n = tr.t.length;
-	if (n < 2) { drawGrid(W, H, 1); return; }
+	const sel = props.channels ?? ['Fx', 'Fy', 'Fz'];
+
+	if (n < 2) {
+		ctx.fillStyle = 'rgba(148,163,184,0.5)'; ctx.font = '12px system-ui';
+		ctx.fillText('waiting for data…', ML + 8, MT + H / 2);
+		return;
+	}
 
 	const t0 = tr.t[0], t1 = tr.t[n - 1];
 	const span = Math.max(1e-3, t1 - t0);
-	// Only the selected channels are drawn / autoscaled (summed axes and/or sub-channels).
-	const sel = props.channels ?? ['Fx', 'Fy', 'Fz'];
 	const series = sel.map((k) => [k, envOf(k)] as const).filter(([, arr]) => arr.length > 0);
 	let lo = Infinity, hi = -Infinity;
 	for (const [, arr] of series) for (const [mn, mx] of arr) { if (mn < lo) lo = mn; if (mx > hi) hi = mx; }
@@ -56,17 +65,50 @@ function draw() {
 	lo -= pad; hi += pad;
 	const yr = hi - lo || 1;
 
-	drawGrid(W, H, 1);
-	const xOf = (t: number) => ((t - t0) / span) * (W - 8) + 4;
-	const yOf = (v: number) => H - ((v - lo) / yr) * (H - 8) - 4;
+	const xOf = (t: number) => ML + ((t - t0) / span) * W;
+	const yOf = (v: number) => MT + H - ((v - lo) / yr) * H;
 
-	// One filled band (min→max envelope) per axis + a crisp top edge — so it reads as one band
-	// per axis, not two lines. The band keeps the peak envelope regardless of sample rate.
+	// Grid + Y-axis ticks
+	ctx.font = '10px system-ui'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+	const yStep = niceStep(yr, Math.max(2, Math.floor(H / 50)));
+	const yStart = Math.ceil(lo / yStep) * yStep;
+	ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
+	for (let v = yStart; v <= hi; v += yStep) {
+		const y = yOf(v);
+		if (y < MT || y > MT + H) continue;
+		ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + W, y); ctx.stroke();
+		ctx.fillStyle = 'rgba(226,232,240,0.55)';
+		ctx.fillText(Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + 'k' : Number.isInteger(v) ? String(v) : v.toFixed(1), ML - 5, y);
+	}
+
+	// X-axis ticks
+	ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+	const xStep = niceStep(span, Math.max(2, Math.floor(W / 80)));
+	const xStart = Math.ceil(t0 / xStep) * xStep;
+	for (let t = xStart; t <= t1; t += xStep) {
+		const x = xOf(t);
+		if (x < ML || x > ML + W) continue;
+		ctx.beginPath(); ctx.moveTo(x, MT); ctx.lineTo(x, MT + H); ctx.stroke();
+		ctx.fillStyle = 'rgba(226,232,240,0.55)';
+		ctx.fillText(t.toFixed(t >= 100 ? 0 : 1), x, MT + H + 4);
+	}
+
+	// Axis labels
+	ctx.fillStyle = 'rgba(226,232,240,0.45)'; ctx.font = '10px system-ui';
+	ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+	ctx.fillText('Time (s)', ML + W / 2, CH - 4);
+	ctx.save(); ctx.translate(10, MT + H / 2); ctx.rotate(-Math.PI / 2);
+	ctx.textBaseline = 'middle'; ctx.fillText('Force (N)', 0, 0); ctx.restore();
+
+	// Zero line
+	if (lo < 0 && hi > 0) { ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(ML, yOf(0)); ctx.lineTo(ML + W, yOf(0)); ctx.stroke(); }
+
+	// Plot data
 	for (const [key, arr] of series) {
 		const col = CH_COLOR[key] ?? '#94a3b8';
 		ctx.beginPath();
 		for (let i = 0; i < n; i++) { const x = xOf(tr.t[i]); const y = yOf(arr[i][1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-		for (let i = n - 1; i >= 0; i--) { ctx.lineTo(xOf(tr.t[i]), yOf(arr[i][0])); }
+		for (let i = n - 1; i >= 0; i--) ctx.lineTo(xOf(tr.t[i]), yOf(arr[i][0]));
 		ctx.closePath();
 		ctx.globalAlpha = 0.16; ctx.fillStyle = col; ctx.fill();
 		ctx.globalAlpha = 0.9; ctx.strokeStyle = col; ctx.lineWidth = 1.4;
@@ -75,20 +117,6 @@ function draw() {
 		ctx.stroke();
 	}
 	ctx.globalAlpha = 1;
-	// zero line
-	if (lo < 0 && hi > 0) { ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.beginPath(); ctx.moveTo(4, yOf(0)); ctx.lineTo(W - 4, yOf(0)); ctx.stroke(); }
-	// labels
-	ctx.fillStyle = 'rgba(226,232,240,0.75)';
-	ctx.font = '11px system-ui';
-	ctx.fillText(`${hi.toFixed(0)} N`, 6, 14);
-	ctx.fillText(`${lo.toFixed(0)} N`, 6, H - 6);
-}
-
-function drawGrid(W: number, H: number, _n: number) {
-	if (!ctx) return;
-	ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-	ctx.lineWidth = 1;
-	for (let i = 1; i < 4; i++) { const y = (H * i) / 4; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
 }
 
 onMounted(() => { resize(); window.addEventListener('resize', resize); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); draw(); nextTick(resize); });

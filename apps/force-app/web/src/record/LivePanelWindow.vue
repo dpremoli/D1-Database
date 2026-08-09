@@ -1,22 +1,38 @@
 <script setup lang="ts">
-// A single live panel in its own window (for a second monitor). Connects via BroadcastChannel relay
-// to the main window's RecordClient, so it shares the same accumulated state — the FRM spiral,
-// force traces, and FFT history all mirror the parent. A snapshot of the parent's current buffers
-// is sent on open so even a mid-recording pop-out catches up immediately.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { RecordClient } from './liveClient';
 import LiveForcePlot from './LiveForcePlot.vue';
 import LiveFft from './LiveFft.vue';
+import LiveSpectrogram from './LiveSpectrogram.vue';
+import LiveWaterfall from './LiveWaterfall.vue';
 import LiveFrm from './LiveFrm.vue';
 
 const route = useRoute();
 const panel = computed(() => String(route.params.panel || 'force'));
-const title = computed(() => ({ force: 'Live Force', fft: 'Live FFT', frm: 'Live FRM Fingerprint' }[panel.value] || 'Live'));
+const isFrm = computed(() => panel.value === 'frm');
+
+const q = new URLSearchParams(window.location.search);
+const initMode = ref<string>(q.get('mode') || 'time');
+const initChannels = ref<string[]>(q.get('channels')?.split(',').filter(Boolean) || ['Fx', 'Fy', 'Fz']);
+const windowSec = ref(Number(q.get('window')) || 12);
+const initColormap = ref<string>(q.get('colormap') || 'viridis');
+const initPointSize = ref(Number(q.get('pointSize')) || 2.2);
+const initFrmAxis = ref<string>(q.get('frmAxis') || 'Fz');
+const initStride = ref(Number(q.get('stride')) || 1);
+
+const MODE_LABEL: Record<string, string> = { time: 'Force Plot', fft: 'FFT', psd: 'Power', spectrogram: 'Spectrogram', waterfall: 'Waterfall' };
+const title = computed(() => {
+	if (isFrm.value) return 'Live FRM Fingerprint';
+	return 'Live ' + (MODE_LABEL[initMode.value] || 'Force');
+});
+
 const client = new RecordClient();
+client.windowSec = windowSec.value;
 const st = client.status;
-const colormap = ref('viridis');
-const pointSize = ref(2.2);
+const ready = computed(() => client.snapshotReady.value);
+const colormap = ref(initColormap.value);
+const pointSize = ref(initPointSize.value);
 const maps = ['viridis', 'inferno', 'grayscale'];
 
 onMounted(() => { client.connectViaRelay(); document.title = title.value; });
@@ -28,8 +44,9 @@ onBeforeUnmount(() => client.disconnect());
 		<header class="bar">
 			<span class="rec-dot" :class="{ live: st.state === 'recording' }"></span>
 			<span class="title">{{ title }}</span>
+			<span v-if="!isFrm && initChannels.join() !== 'Fx,Fy,Fz'" class="ch-hint">{{ initChannels.join(' ') }}</span>
 			<span class="state" :class="st.state">{{ st.state }}</span>
-			<template v-if="panel === 'frm'">
+			<template v-if="isFrm">
 				<select v-model="colormap" class="cm"><option v-for="m in maps" :key="m">{{ m }}</option></select>
 			</template>
 			<span class="conn" :class="{ ok: st.connected }">
@@ -42,9 +59,17 @@ onBeforeUnmount(() => client.disconnect());
 			</div>
 		</header>
 		<div class="body">
-			<LiveForcePlot v-if="panel === 'force'" :client="client" />
-			<LiveFft v-else-if="panel === 'fft'" :client="client" />
-			<LiveFrm v-else :client="client" :diam="80" :colormap="colormap" :point-size="pointSize" />
+			<div v-if="!ready" class="syncing">
+				<span class="material-symbols-rounded spin">sync</span>
+				<span>Syncing with parent…</span>
+			</div>
+			<template v-else>
+				<LiveFrm v-if="isFrm" :client="client" :diam="80" :colormap="colormap" :point-size="pointSize" :point-stride="initStride" />
+				<LiveForcePlot v-else-if="initMode === 'time'" :client="client" :channels="initChannels" />
+				<LiveFft v-else-if="initMode === 'fft' || initMode === 'psd'" :client="client" :channels="initChannels" :scale="initMode === 'psd' ? 'psd' : 'amp'" />
+				<LiveSpectrogram v-else-if="initMode === 'spectrogram'" :client="client" :channels="initChannels" :window-sec="windowSec" />
+				<LiveWaterfall v-else-if="initMode === 'waterfall'" :client="client" :channels="initChannels" :window-sec="windowSec" />
+			</template>
 		</div>
 	</div>
 </template>
@@ -56,6 +81,7 @@ onBeforeUnmount(() => client.disconnect());
 .rec-dot.live { background: #ef4444; animation: pulse 1.4s infinite; }
 @keyframes pulse { 50% { opacity: 0.4; } }
 .title { font-weight: 600; font-size: 15px; }
+.ch-hint { font-size: 11px; color: var(--text-dim); font-family: var(--mono); background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; }
 .state { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
 .state.recording { color: #fbbf24; } .state.done { color: #4ade80; } .state.error { color: var(--danger); }
 .cm { padding: 4px 8px; font-size: 12px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
@@ -66,6 +92,9 @@ onBeforeUnmount(() => client.disconnect());
 .readouts b { font-size: 15px; color: var(--text); }
 .readouts b.fz { color: #60a5fa; }
 .readouts b.cut { color: #4ade80; font-size: 13px; }
+.syncing { display: flex; align-items: center; justify-content: center; gap: 8px; height: 100%; color: var(--text-dim); font-size: 13px; }
+.spin { animation: sp 1s linear infinite; }
+@keyframes sp { to { transform: rotate(360deg); } }
 .body { flex: 1; min-height: 0; padding: 12px; overflow: hidden; }
 .body > * { height: 100%; }
 </style>
