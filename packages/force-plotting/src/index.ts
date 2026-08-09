@@ -12,3 +12,6 @@ export { default as FrmCloud } from './FrmCloud.vue';
 export { buildSeriesEnvelope, cacheGet, cachePut, decimateCache, parseCache } from './liveCache';
 export type { Cache, EnvSeries } from './liveCache';
 export type { SpeedMode } from './liveCloud';
+
+export { chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
+export type { FilterChain } from './filterChain';
