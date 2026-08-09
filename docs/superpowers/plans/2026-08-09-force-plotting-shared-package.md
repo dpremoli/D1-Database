@@ -143,21 +143,35 @@ apps/force-app/web/.vite/
 
 Workspaces require a single root lockfile; leaving the nested ones causes npm to resolve inconsistently.
 
+The two workspaces' existing `node_modules/` must go too. npm treats a pre-existing nested install as already valid, so leaving them in place makes `npm install` exit 0 **without hoisting anything** — the exact silent failure this task exists to prevent.
+
 ```bash
 rm apps/force-app/web/package-lock.json core/extensions/d1-force-dashboard/package-lock.json
+rm -rf apps/force-app/web/node_modules core/extensions/d1-force-dashboard/node_modules
 npm install
 ```
 
 Expected: creates root `node_modules/` and `package-lock.json`, plus symlinks for each workspace. No `ERESOLVE` errors — the three shared dependency versions are already identical across both consumers.
 
+Verify hoisting actually happened rather than trusting the exit code:
+
+```bash
+ls -d node_modules/three node_modules/potree-core node_modules/grid-layout-plus
+ls -d apps/force-app/web/node_modules/three 2>/dev/null && echo "NOT HOISTED — investigate"
+```
+
+Expected: the three resolve at the root; the second command prints nothing.
+
 - [ ] **Step 6: Verify both consumers still build**
 
 ```bash
 npm run build:web
-npm run build:extension -- -o /tmp/ext-check.js
+(cd core/extensions/d1-force-dashboard && npx directus-extension build -t module -i src/index.ts -o /tmp/ext-check.js)
 ```
 
 Expected: both succeed. The `-o` redirect is mandatory — a bare extension build would overwrite the live `dist/index.js`.
+
+Note the extension build is invoked directly rather than as `npm run build:extension -- -o …`. Arguments after `--` are swallowed by the nested `npm run -w` inside that script and never reach `directus-extension`, which then fails on the leftover path. It fails safely — it errors before writing anything — but it does not perform the check.
 
 - [ ] **Step 7: Commit**
 
@@ -1105,9 +1119,11 @@ Expected: exactly `DirectusForceDashboard.vue` and `index.ts`.
 - [ ] **Step 5: Build to a temp path and verify**
 
 ```bash
-npm run build:extension -- -o /tmp/ext-new.js
+(cd core/extensions/d1-force-dashboard && npx directus-extension build -t module -i src/index.ts -o /tmp/ext-new.js)
 ls -l /tmp/ext-new.js
 ```
+
+(Invoked directly, not via `npm run build:extension -- -o …` — arguments after `--` never reach `directus-extension` through the nested `npm run -w`.)
 
 Expected: "Done" with **no** "could not be resolved – treating it as an external dependency" warnings. Any such warning means a dependency is unresolvable from `packages/force-plotting` and Task 1's hoisting is incomplete — stop and fix before Task 10.
 
