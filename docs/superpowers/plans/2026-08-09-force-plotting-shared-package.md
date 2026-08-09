@@ -443,7 +443,15 @@ export * from './frmExport';
 npm run typecheck -w @d1/force-plotting
 ```
 
-Expected: no errors. If `frmExport.ts` or `signalStats.ts` import a sibling not yet moved, that import is the signal to pull the sibling forward — recheck against the divergence table.
+Expected: **exactly these three errors and no others** — the four identical files import siblings that do not move until Tasks 4 and 5. This is the expected intermediate state, not a defect:
+
+```
+src/frmExport.ts(6,27): error TS2307: Cannot find module './liveCloud'
+src/signalStats.ts(9,28): error TS2307: Cannot find module './liveCache'
+src/SpectrumView.vue(7,52): error TS2307: Cannot find module './filterChain'
+```
+
+Any *additional* error is a real problem — investigate before continuing. The package first typechecks clean at the end of Task 5, once `filterChain.ts` lands.
 
 - [ ] **Step 5: Commit**
 
@@ -526,7 +534,9 @@ npm run test -w @d1/force-plotting
 npm run typecheck -w @d1/force-plotting
 ```
 
-Expected: the moved `liveCache` and `liveCloud` tests pass alongside the 3 host tests; no type errors.
+Expected: the moved `liveCache` and `liveCloud` tests pass alongside the 3 host tests.
+
+Typecheck is expected to report **exactly one remaining error** — `SpectrumView.vue` importing `./filterChain`, which lands in Task 5. The two errors Task 3 saw (`frmExport.ts` → `./liveCloud`, `signalStats.ts` → `./liveCache`) must now be gone; if either persists, the corresponding file did not land correctly.
 
 - [ ] **Step 6: Commit**
 
@@ -653,9 +663,10 @@ Apply the identical pattern to `/fft` and `/spectrogram`, preserving each call's
 
 ```bash
 npm run test -w @d1/force-plotting
+npm run typecheck -w @d1/force-plotting
 ```
 
-Expected: PASS, all suites.
+Expected: tests PASS, all suites. **This is the first task where typecheck must be completely clean** — `filterChain.ts` was the last unresolved sibling import. Any remaining `TS2307 Cannot find module` error means an earlier file did not land.
 
 - [ ] **Step 6: Extend index.ts and commit**
 
