@@ -1,8 +1,6 @@
 <script setup lang="ts">
-// Service endpoints — editable at runtime, saved to a localStorage override so the same bundle can
-// be repointed at a different backend without a rebuild.
-import { computed, onMounted, reactive, ref } from 'vue';
-import { getConfig, getConfigDefaults, setConfigOverride, resetConfigOverride } from '../config';
+import { onMounted, ref } from 'vue';
+import { getConfig } from '../config';
 
 const theme = ref<'dark' | 'light'>(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
 function setTheme(t: 'dark' | 'light') {
@@ -10,31 +8,6 @@ function setTheme(t: 'dark' | 'light') {
 	if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
 	else document.documentElement.removeAttribute('data-theme');
 	localStorage.setItem('force-app.theme', t);
-}
-
-const fields: { key: 'directusUrl' | 'filterUrl' | 'octreeUrl' | 'recorderUrl'; label: string; hint: string }[] = [
-	{ key: 'directusUrl', label: 'Directus URL', hint: 'REST base for items, assets and auth.' },
-	{ key: 'filterUrl', label: 'Filter service URL', hint: 'Signal-filter sidecar (/run, /fft).' },
-	{ key: 'octreeUrl', label: 'Octree server URL', hint: 'Potree LOD octree static host.' },
-	{ key: 'recorderUrl', label: 'Recorder URL', hint: 'Local recording/acquisition backend + Lab Amp proxy.' },
-];
-const form = reactive({ ...getConfig() });
-const saved = ref(false);
-const testResult = ref<Record<string, string>>({});
-
-function save() { setConfigOverride({ ...form }); saved.value = true; setTimeout(() => (saved.value = false), 1800); }
-function reset() { resetConfigOverride(); Object.assign(form, getConfigDefaults()); saved.value = false; testResult.value = {}; }
-
-async function test() {
-	testResult.value = {};
-	const checks: [string, string][] = [
-		['recorderUrl', `${form.recorderUrl}/health`],
-		['directusUrl', `${form.directusUrl}/server/ping`],
-	];
-	for (const [key, url] of checks) {
-		try { const r = await fetch(url, { method: 'GET' }); testResult.value[key] = r.ok ? 'ok' : `HTTP ${r.status}`; }
-		catch { testResult.value[key] = 'unreachable'; }
-	}
 }
 
 // ---- Storage location ----
@@ -96,26 +69,6 @@ function isCurrentDrive(d: DriveInfo) {
 	return d.letter ? root.startsWith(d.letter.toUpperCase() + ':') : root.startsWith(d.path.toUpperCase());
 }
 
-// ---- Connectivity check ----
-interface ProbeResult { label: string; url?: string; ok: boolean; status?: number; error?: string; }
-const probes = ref<ProbeResult[]>([]);
-const connLoading = ref(false);
-
-async function runConnCheck() {
-	connLoading.value = true;
-	try {
-		const base = getConfig().recorderUrl;
-		const res = await fetch(`${base}/health/check`);
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
-		const data = await res.json();
-		probes.value = data.probes || [];
-	} catch {
-		probes.value = [{ label: 'Recorder backend', ok: false, error: 'unreachable' }];
-	} finally {
-		connLoading.value = false;
-	}
-}
-
 onMounted(() => { loadDrives(); });
 </script>
 
@@ -157,37 +110,6 @@ onMounted(() => { loadDrives(); });
 			Low disk space! Only {{ currentStorage.free_gb.toFixed(1) }} GB remaining. Recordings may fail.
 		</p>
 
-		<h2 class="mt">Connection self-check</h2>
-		<p class="lead">Test connectivity to Internet, database, and equipment from the recording backend.</p>
-		<div class="actions">
-			<button class="btn ghost" :disabled="connLoading" @click="runConnCheck">
-				<span class="material-symbols-rounded" style="font-size:16px">{{ connLoading ? 'hourglass_top' : 'network_check' }}</span>
-				{{ connLoading ? 'Checking…' : 'Run check' }}
-			</button>
-		</div>
-		<div v-if="probes.length" class="probe-list">
-			<div v-for="p in probes" :key="p.label" class="probe" :class="{ ok: p.ok, fail: !p.ok }">
-				<span class="material-symbols-rounded probe-icon">{{ p.ok ? 'check_circle' : 'cancel' }}</span>
-				<span class="probe-label">{{ p.label }}</span>
-				<span v-if="p.error" class="probe-detail">{{ p.error }}</span>
-				<span v-else-if="p.status" class="probe-detail">HTTP {{ p.status }}</span>
-			</div>
-		</div>
-
-		<h2 class="mt">Service endpoints</h2>
-		<p class="lead">Where the app finds Directus and the local services. Changes are saved to this browser and apply to new requests immediately.</p>
-		<label v-for="f in fields" :key="f.key" class="field">
-			<span class="lbl">{{ f.label }} <span v-if="testResult[f.key]" class="test" :class="{ ok: testResult[f.key] === 'ok' }">{{ testResult[f.key] }}</span></span>
-			<input v-model="form[f.key]" spellcheck="false" />
-			<span class="hint">{{ f.hint }}</span>
-		</label>
-		<div class="actions">
-			<button class="btn save" @click="save">{{ saved ? 'Saved ✓' : 'Save' }}</button>
-			<button class="btn ghost" @click="test">Test connections</button>
-			<button class="btn ghost" @click="reset">Reset to defaults</button>
-		</div>
-
-		<p class="hint" style="margin-top:24px">NI-DAQ channel mapping has moved to the dedicated <b>NI-DAQ</b> page (sidebar).</p>
 	</div>
 </template>
 
@@ -196,12 +118,6 @@ onMounted(() => { loadDrives(); });
 h2 { margin: 0 0 4px; font-size: 16px; }
 .lead { margin: 0 0 18px; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
 .lead code { font-family: var(--mono); font-size: 12px; padding: 1px 5px; background: var(--surface); border-radius: 4px; }
-.field { display: block; margin-bottom: 16px; }
-.lbl { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); margin-bottom: 5px; }
-.test { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 10px; color: var(--danger); background: rgba(252,165,165,0.12); }
-.test.ok { color: #4ade80; background: rgba(74,222,128,0.12); }
-input { display: block; width: 100%; padding: 9px 11px; font-size: 13px; font-family: var(--mono); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; outline: none; }
-input:focus { border-color: var(--accent); }
 .hint { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
 .err { display: flex; align-items: center; gap: 5px; color: var(--danger); font-size: 12px; margin: 4px 0 0; }
 .actions { display: flex; gap: 10px; margin-top: 6px; }
@@ -222,7 +138,7 @@ input:focus { border-color: var(--accent); }
 .drive { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface); border: 2px solid transparent; border-radius: 10px; cursor: pointer; text-align: left; }
 .drive:hover { border-color: var(--border); background: var(--surface-2); }
 .drive.active { border-color: var(--accent); background: rgba(56,189,248,0.08); }
-.drive.low { border-color: #fbbf24; }
+.drive.low:not(.active) { border-color: #fbbf24; }
 .drive-icon { font-size: 22px; color: var(--text-dim); }
 .drive.ssd .drive-icon { color: #22c55e; }
 .drive-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -239,12 +155,4 @@ input:focus { border-color: var(--accent); }
 .storage-path { font-family: var(--mono); font-size: 11px; word-break: break-all; }
 .saved-tag { font-size: 10.5px; font-weight: 700; color: #4ade80; margin-left: 6px; }
 
-/* Connectivity probes */
-.probe-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-.probe { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--surface); border-radius: 8px; }
-.probe-icon { font-size: 18px; }
-.probe.ok .probe-icon { color: #4ade80; }
-.probe.fail .probe-icon { color: var(--danger); }
-.probe-label { font-size: 13px; font-weight: 600; color: var(--text); }
-.probe-detail { margin-left: auto; font-size: 11.5px; color: var(--text-dim); }
 </style>

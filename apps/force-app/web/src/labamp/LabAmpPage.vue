@@ -4,6 +4,8 @@
 // /labamp/* (which proxies the link-local amp; mock by default so this works without hardware).
 import { onMounted, reactive, ref } from 'vue';
 import { labamp, type AutoRangeRec, type LabAmpStatus, type SensorRow } from '../record/labampApi';
+import { searchPastOperations } from '../record/directusLookups';
+import LookupField from '../record/panels/LookupField.vue';
 
 const status = ref<LabAmpStatus | null>(null);
 const sensors = ref<SensorRow[]>([]);
@@ -23,16 +25,23 @@ async function persistDaq() {
 	await labamp.setConfig({ autorange_headroom: headroom.value, nidaq_bits: Number(daq.nidaq_bits), labamp_dac_bits: Number(daq.labamp_dac_bits), analog_fullscale_v: Number(daq.analog_fullscale_v) });
 }
 const arSource = ref<'live' | 'previous'>('live');
-const prevPeaks = ref('');
+// Searches both local recordings on this machine (exact per-channel peaks) and past operations
+// already uploaded to the database (peaks approximated per channel — see directusLookups.ts).
+const prevOpId = ref('');
+const prevOpPeaks = ref<number[] | null>(null);
+const prevOpExact = ref(true);
+function onPickPastOp(item: { extra?: { peaksN?: number[]; exact?: boolean } }) {
+	prevOpPeaks.value = item.extra?.peaksN ?? null;
+	prevOpExact.value = item.extra?.exact ?? true;
+}
 async function measure() {
 	arBusy.value = true; err.value = null; arStatus.value = null;
 	try {
 		await persistDaq();
-		if (arSource.value === 'previous' && prevPeaks.value.trim()) {
-			const peaks = prevPeaks.value.split(/[,\s]+/).map(Number).filter(n => Number.isFinite(n));
-			if (peaks.length < 1) { err.value = 'enter comma-separated peak forces (N) per channel'; arBusy.value = false; return; }
+		if (arSource.value === 'previous') {
+			if (!prevOpPeaks.value) { err.value = 'pick a previous recording'; arBusy.value = false; return; }
 			const currents = sensors.value.map(s => s.range ?? 10000);
-			const r = await labamp.converge({ peaks, currents, headroom: headroom.value, apply: false });
+			const r = await labamp.converge({ peaks: prevOpPeaks.value, currents, headroom: headroom.value, apply: false });
 			recs.value = r.recommendations; effBits.value = r.effective_bits;
 		} else {
 			const r = await labamp.autorange(headroom.value);
@@ -117,14 +126,15 @@ onMounted(refresh);
 		<div class="grid">
 			<section class="card">
 				<h2>Connection</h2>
-				<label>Amplifier URL<input v-model="cfg.base_url" placeholder="http://169.254.143.59" spellcheck="false" /></label>
+				<label>Amplifier URL<input v-model="cfg.base_url" placeholder="http://169.254.143.59" spellcheck="false" @input="cfg.mode = 'real'" /></label>
 				<div class="two">
 					<label>Channels<input type="number" v-model.number="cfg.channels" /></label>
 					<label>Source
 						<select v-model="cfg.mode"><option value="mock">mock (no hardware)</option><option value="real">real amplifier</option></select>
 					</label>
 				</div>
-				<p class="hint">The amp is link-local (e.g. <code>169.254.143.59</code>) and reachable only from the acquisition PC; the backend proxies it.</p>
+				<p class="hint">The amp is link-local (e.g. <code>169.254.143.59</code>) and reachable only from the acquisition PC; the backend proxies it.
+					Entering a URL switches Source to <b>real amplifier</b> automatically — pick <b>mock</b> explicitly to simulate without hardware.</p>
 				<button class="btn save" :disabled="busy" @click="saveCfg">{{ savedCfg ? 'Saved ✓' : 'Save connection' }}</button>
 				<p v-if="err" class="err">{{ err }}</p>
 			</section>
@@ -183,17 +193,20 @@ onMounted(refresh);
 					</div>
 				</div>
 				<div v-if="arSource === 'previous'" class="prev-peaks">
-					<label>Per-channel peak forces (N), comma-separated (ch1–ch8)
-						<input v-model="prevPeaks" placeholder="e.g. 41, 39, 55, 53, 92, 88, 90, 91" spellcheck="false" />
-					</label>
-					<p class="hint">Paste from a previous recording's summary (channels_ranging.peaks_n) or enter manually.</p>
+					<LookupField v-model="prevOpId" label="Previous recording" placeholder="search sample code or pass code…"
+						:search="searchPastOperations" @select="onPickPastOp" />
+					<span v-if="prevOpPeaks" class="tag" :class="prevOpExact ? 'exact' : 'approx'"
+						:title="prevOpExact ? 'Exact per-channel peaks from this recorder\'s own capture history.' : 'The database only stores summed-axis peaks (Fx/Fy/Fz), not per-channel — these are estimated by splitting each axis peak evenly across its sub-channels.'">
+						{{ prevOpExact ? 'exact' : 'approximate' }}
+					</span>
+					<p class="hint">Searches local recordings on this machine (exact per-channel peaks) and past operations in the database (peaks approximated per channel) — no need to copy numbers by hand.</p>
 				</div>
 				<div class="ar-controls">
 					<label>Headroom ×<input type="number" step="0.1" min="1" v-model.number="headroom" /></label>
 					<label>Amp DAC bits<input type="number" step="1" v-model.number="daq.labamp_dac_bits" /></label>
 					<label>NI-DAQ bits<input type="number" step="1" v-model.number="daq.nidaq_bits" /></label>
 					<label>Analog full-scale (±V)<input type="number" step="0.5" v-model.number="daq.analog_fullscale_v" /></label>
-					<button class="btn ghost" :disabled="arBusy || (arSource === 'live' && !status?.reachable)" @click="measure">{{ arSource === 'previous' ? 'Recommend from peaks' : 'Measure & recommend' }}</button>
+					<button class="btn ghost" :disabled="arBusy || (arSource === 'live' && !status?.reachable) || (arSource === 'previous' && !prevOpPeaks)" @click="measure">{{ arSource === 'previous' ? 'Recommend from peaks' : 'Measure & recommend' }}</button>
 					<button class="btn save" :disabled="arBusy || !recs" @click="applyRanges">Apply recommended ranges</button>
 				</div>
 				<table v-if="recs">
@@ -263,8 +276,10 @@ th { color: var(--text-dim); font-weight: 600; }
 .ar-source .seg { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
 .ar-source .seg button { padding: 6px 12px; font-size: 11.5px; font-weight: 600; color: var(--text-dim); background: transparent; border: none; cursor: pointer; }
 .ar-source .seg button.on { background: var(--accent); color: var(--accent-ink); }
-.prev-peaks { margin-bottom: 12px; }
-.prev-peaks label { margin-bottom: 4px; }
+.prev-peaks { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.prev-peaks .tag { margin-bottom: 8px; }
+.prev-peaks :deep(.lookup) { flex: 1; min-width: 260px; margin-bottom: 0; }
+.prev-peaks .hint { flex-basis: 100%; margin: 0; }
 .ar-controls { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 12px; }
 .ar-controls label { margin: 0; }
 .ar-controls input { width: 90px; }
@@ -272,6 +287,8 @@ tr.clip td { background: rgba(239,68,68,0.08); }
 .tag { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 10px; }
 .tag.ok { color: #4ade80; background: rgba(74,222,128,0.12); }
 .tag.clip, .tag.or { color: #fca5a5; background: rgba(252,165,165,0.12); }
+.tag.exact { color: #4ade80; background: rgba(74,222,128,0.12); cursor: help; }
+.tag.approx { color: #fbbf24; background: rgba(251,191,36,0.12); cursor: help; }
 .ref { padding: 10px 0; border-bottom: 1px solid var(--border); }
 .ref:last-child { border-bottom: 0; }
 .ref-name { font-size: 13.5px; font-weight: 640; color: var(--text); }

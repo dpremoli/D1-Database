@@ -13,6 +13,7 @@ export interface AutoRangeResult { headroom: number; nidaq_bits: number; dac_bit
 // last recorded cut's per-channel peaks (summary.channels_ranging), not a live amp poll.
 export interface ChannelsRanging { peaks_n: number[]; clipped: boolean[]; gains_n_per_v: number[]; ranges_n: number[]; fullscale_v: number; }
 export interface ConvergeResult extends AutoRangeResult { applied: boolean; status: Record<string, string>; }
+export interface RecentCapture { id: string; sample_name: string; duration_sec: number | null; peaks_n: number[]; }
 
 async function j<T>(res: Response): Promise<T> {
 	if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 160)}`);
@@ -32,4 +33,5 @@ export const labamp = {
 		fetch(`${base()}/labamp/autorange/converge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(j<ConvergeResult>),
 	writeSensors: (updates: { channel: number; sensitivity?: number; range?: number }[]) =>
 		fetch(`${base()}/labamp/sensors/write`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ updates }) }).then(j<{ ok: boolean; sensors: SensorRow[] }>),
+	recentCaptures: (limit = 20, q = '') => fetch(`${base()}/captures/recent?limit=${limit}&q=${encodeURIComponent(q)}`).then(j<{ captures: RecentCapture[] }>),
 };

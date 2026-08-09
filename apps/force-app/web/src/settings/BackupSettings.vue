@@ -128,8 +128,8 @@ onMounted(() => { loadConfig(); });
 
 		<label class="field">
 			<span class="lbl">Backup server URL</span>
-			<input v-model="cfg.server_url" placeholder="http://backup-host:8210" spellcheck="false" />
-			<span class="hint">The remote backup service endpoint (e.g. http://192.168.1.50:8210)</span>
+			<input v-model="cfg.server_url" placeholder="http://d1-server.tail54eeb6.ts.net:8210" spellcheck="false" />
+			<span class="hint">The remote backup service endpoint (e.g. http://d1-server.tail54eeb6.ts.net:8210)</span>
 		</label>
 
 		<label class="field">
