@@ -636,8 +636,10 @@ function startSplitResize(ev: PointerEvent) {
 	const rect = rightAreaEl.value?.getBoundingClientRect();
 	if (!rect) return;
 	dragging.value = true;
+	// rect! : the `if (!rect) return` above guarantees it, but TS drops the narrowing
+	// inside a hoisted function declaration (onMove is hoisted above the guard).
 	function onMove(e: PointerEvent) {
-		rightSplit.value = Math.min(0.78, Math.max(0.22, (e.clientX - rect.left) / rect.width));
+		rightSplit.value = Math.min(0.78, Math.max(0.22, (e.clientX - rect!.left) / rect!.width));
 	}
 	function onUp() {
 		dragging.value = false;
@@ -1611,7 +1613,7 @@ function fmtDateTime(v: string | null | undefined) {
 									:chain="specChain" :axis="a" :mode="(chartMode as 'psd' | 'spectrogram' | 'waterfall')" :color="AXIS_COLOR[a]" />
 							</div>
 							<div v-else class="charts-col">
-								<ForceChart v-for="c in chartsFor(item)" :key="c.key" v-bind="c" :hover-index="hoverIndex" @hover="hoverIndex = $event"
+								<ForceChart v-for="c in chartsFor(item)" v-bind="c" :key="c.key" :hover-index="hoverIndex" @hover="hoverIndex = $event"
 									:crop-editable="c.kind === 'env'" :active="c.key === axis"
 									:overlay="(chartMode === 'fft' && filtersOpen && c.kind === 'line' && c.key === axis) ? filterFftOverlay : null"
 									:view-start="zoomStart" :view-end="zoomEnd" :zoom-tool="rectZoomTool" @zoom="onChartZoom"
@@ -1669,7 +1671,7 @@ function fmtDateTime(v: string | null | undefined) {
 									:octree-path="gridActive ? detail.grid_octree_path : detail.octree_path" :axis="axis"
 									:colormap="colormap" :point-size="pointSize" :cmin="cmin" :cmax="cmax"
 									:z-series="zSeries" :z-scale="zScale"
-									:total-points="gridActive ? Number(detail.grid_octree_points) : fullResPoints"
+									:total-points="gridActive ? Number(detail.grid_octree_points) : (fullResPoints ?? undefined)"
 									:fill="gridActive" :cell-size="Number(detail.grid_cell_mm) || 1"
 									:min-node-px="octreeMinNodePx" :budget-cap="octreeBudgetCap"
 									@climits="onClimits" @points="displayedPoints = $event" @zscale="zScale = $event" />
