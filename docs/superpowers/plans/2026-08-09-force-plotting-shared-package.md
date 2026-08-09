@@ -601,7 +601,10 @@ describe('filterChain host wiring', () => {
 			authHeaders: () => ({ Authorization: 'Bearer t0ken' }),
 			fetchCredentials: 'omit',
 		}));
-		await fetchFiltered('op-1', defaultChain());
+		// fetchFiltered pipes the response through parseCache, which rejects on this stub
+		// body. Irrelevant here — the assertions are about how fetch was called, not the
+		// parsed result — so swallow it rather than constructing a valid binary cache.
+		await fetchFiltered('op-1', defaultChain()).catch(() => {});
 		const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
 		expect(url).toBe('https://d1.example/filter/run');
 		expect((init.headers as Record<string, string>).Authorization).toBe('Bearer t0ken');
@@ -610,7 +613,10 @@ describe('filterChain host wiring', () => {
 
 	it('calls the same-origin filter URL with cookies and no Authorization (Directus)', async () => {
 		setForceHost(hostWith({ filterUrl: '/filter', authHeaders: () => ({}), fetchCredentials: 'include' }));
-		await fetchFiltered('op-1', defaultChain());
+		// fetchFiltered pipes the response through parseCache, which rejects on this stub
+		// body. Irrelevant here — the assertions are about how fetch was called, not the
+		// parsed result — so swallow it rather than constructing a valid binary cache.
+		await fetchFiltered('op-1', defaultChain()).catch(() => {});
 		const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
 		expect(url).toBe('/filter/run');
 		expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
