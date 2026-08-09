@@ -203,6 +203,14 @@ function setupRenderer() {
 	} catch { error.value = 'WebGL unavailable in this browser'; return; }
 	renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 	renderer.setClearColor(0x000000, 0);
+	// Because this context is created with preserveDrawingBuffer (needed for exportViewport's
+	// pixel-identical downloads), the drawing buffer is NOT implicitly cleared before the first
+	// render — on many GPU/driver combos its initial content is uninitialised memory, which
+	// commonly reads back as solid white. draw() doesn't render at all until a cloud exists (which
+	// can be a few frames away — the cache still needs to load/rebuild), so without an explicit
+	// clear here the canvas shows that white flash the whole time. One clear right after context
+	// creation paints the intended background immediately.
+	renderer.clear();
 	// Surface software-GL fallback (SwiftShader/llvmpipe — e.g. remote-desktop sessions or a
 	// blocklisted driver): every render then runs on the CPU and pan feels like it burns a
 	// core no matter what we optimise. The badge tells the user WHY, instantly.
@@ -362,8 +370,16 @@ watch(() => props.zScale, () => { applyZScale(); scheduleDraw(); });
 // View-only redraw: no recompute, no re-upload — just drive the orthographic camera
 // from the current view and render the resident geometry. Cheap enough per frame.
 function draw() {
-	if (!ready || !renderer || !scene || !camera || !canvasEl.value || !cloud) return;
+	if (!ready || !renderer || !scene || !camera || !canvasEl.value) return;
 	sizeCanvas(canvasEl.value);
+	if (!cloud) {
+		// Nothing to show yet (still loading, or a degenerate/empty crop window) — explicitly
+		// clear rather than skipping the render entirely, so the canvas shows the intended
+		// background instead of whatever was left in the (preserveDrawingBuffer) buffer before.
+		renderer.clear();
+		scaleBar.value = null;
+		return;
+	}
 	if (is3D.value) {
 		// OrbitControls owns the camera; just render.
 		if (pointsMat) pointsMat.size = Math.max(1, props.pointSize || 1.4);

@@ -47,8 +47,10 @@ export interface Cloud {
 	zv?: Float32Array;            // centred (-0.5..0.5) Z displacement per point (3D Lite)
 }
 
-// first index with t[i] >= sec (binary search)
+// first index with t[i] >= sec (binary search). Returns -1 for an empty array — callers must
+// check for that (an empty t means there's nothing to search, not "index 0").
 function idxOfTime(t: Float32Array, sec: number): number {
+	if (t.length === 0) return -1;
 	let lo = 0, hi = t.length - 1, ans = t.length - 1;
 	while (lo <= hi) { const m = (lo + hi) >> 1; if (t[m] >= sec) { ans = m; hi = m - 1; } else lo = m + 1; }
 	return ans;
@@ -65,6 +67,7 @@ function percentile(sorted: Float32Array, p: number): number {
 // per axis, and it no longer shifts while the user drags the crop. Sampled to ~400k for speed.
 export function axisAutoLimits(c: Cache, axis: Axis): [number, number] {
 	const a = c[axis];
+	if (!a || a.length === 0) return [0, 1];
 	const stride = Math.max(1, Math.floor(a.length / 400_000));
 	const s = new Float32Array(Math.ceil(a.length / stride));
 	for (let i = 0, k = 0; i < a.length; i += stride, k++) s[k] = a[i];
@@ -77,7 +80,15 @@ export function axisAutoLimits(c: Cache, axis: Axis): [number, number] {
 
 export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 	const t = c.t, revs = c.revs;
+	// An empty/degenerate cache (e.g. the finished trace arriving before it's fully loaded, or a
+	// zero-sample capture) must bail out cleanly here — without this guard, idxOfTime returned -1,
+	// which fed straight into `revs[-1]`/`t[-1]` (undefined) below and propagated NaN through the
+	// whole position/colour computation. WebGL rendering NaN vertex colours is undefined behaviour
+	// that commonly paints the canvas solid white, which is the actual bug this was causing: the
+	// FRM map flashing white right when a finished cache first arrives, before real data replaces it.
+	if (!t || t.length === 0 || c.N === 0) return null;
 	const cs = idxOfTime(t, p.cropStartSec);
+	if (cs < 0) return null;
 	const ceTime = p.cropEndSec;
 	const F = p.feed, D = p.diam, rho0 = D / 2;
 	const innerR = Math.max(0, (p.innerDiam || 0) / 2);   // donut discs stop here, not at 0
@@ -189,7 +200,11 @@ function gridCloud(
 }
 
 // ---- colormaps (0..1 -> rgb 0..1) ----
-const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+// NaN fails both comparisons below and falls through unclamped — exactly the kind of invalid
+// vertex-colour value that renders as undefined (often solid white) garbage on the GPU. Defend
+// here too, not just at the buildCloud call site, since colormap functions are also used directly
+// (e.g. the colorbar gradient in FrmCloud.vue).
+const clamp01 = (v: number) => (Number.isNaN(v) ? 0 : v < 0 ? 0 : v > 1 ? 1 : v);
 
 // True viridis via linear interpolation over the reference control points
 // (matplotlib == MATLAB viridis, sampled at 0.1 spacing). A polynomial fit — the

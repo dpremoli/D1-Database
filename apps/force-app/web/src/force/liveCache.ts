@@ -44,6 +44,36 @@ export function decimateCache(c: Cache, stride: number): Cache {
 	return { ...c, N: Math.ceil(c.N / stride), t: pick(c.t), Fx: pick(c.Fx), Fy: pick(c.Fy), Fz: pick(c.Fz), rpm: pick(c.rpm), revs: pick(c.revs) };
 }
 
+export interface EnvSeries { t: number[]; min: number[]; max: number[] }
+
+// Bucketed min/max envelope for ForceDashboard's ForceChart (kind='env'), which reads its plot
+// data from machining_force_analysis.series — a JSONB column, NOT the live_cache_file binary.
+// The MATLAB/crawler ingestion pipeline populates this column; force-app's direct-upload path
+// (uploadCutToDatabase/uploadCaptureColdStart) has to build the same shape itself, or the chart
+// silently renders "no data" despite the peaks/FRM map all working fine off live_cache_file —
+// exactly the bug this fixes. Bucketed (not one point per sample) to keep the JSON payload sane:
+// a full-resolution 300k-point cache would serialise to tens of MB, when a chart only ever needs
+// enough resolution for its pixel width.
+export function buildSeriesEnvelope(c: Cache, buckets = 2000): { Fx: EnvSeries; Fy: EnvSeries; Fz: EnvSeries; RPM: EnvSeries } {
+	const n = c.N;
+	const stride = Math.max(1, Math.ceil(n / buckets));
+	const nb = Math.ceil(n / stride);
+	const mk = (): EnvSeries => ({ t: new Array(nb), min: new Array(nb), max: new Array(nb) });
+	const out = { Fx: mk(), Fy: mk(), Fz: mk(), RPM: mk() };
+	const srcs = { Fx: c.Fx, Fy: c.Fy, Fz: c.Fz, RPM: c.rpm };
+	for (let b = 0, i0 = 0; i0 < n; b++, i0 += stride) {
+		const i1 = Math.min(n, i0 + stride);
+		out.Fx.t[b] = out.Fy.t[b] = out.Fz.t[b] = out.RPM.t[b] = c.t[i0];
+		for (const key of ['Fx', 'Fy', 'Fz', 'RPM'] as const) {
+			const src = srcs[key];
+			let lo = Infinity, hi = -Infinity;
+			for (let i = i0; i < i1; i++) { const v = src[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+			out[key].min[b] = lo; out[key].max[b] = hi;
+		}
+	}
+	return out;
+}
+
 // Module-scoped LRU: survives component unmount, so revisiting a recently-viewed
 // operation is instant and issues no network request.
 const MEM = new Map<string, Cache>();

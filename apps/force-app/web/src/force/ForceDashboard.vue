@@ -925,6 +925,19 @@ const LAST_OP_KEY = 'd1-force-dashboard-lastop';
 async function selectOp(row: any) {
 	selectedRowId.value = row.id;
 	selectedSampleId.value = sampleOf(row)?.sample_id ?? null;
+	// selectSample() (clicking a sample directly) narrows the Operations list to just that
+	// sample's ops via filterSampleId — selectOp() never did, so a deep link (?operation=...) or
+	// any other caller of selectOp() left the Operations list showing everything/whatever was
+	// previously filtered, with the "selected" row buried in there rather than the list actually
+	// narrowing to match. This is the "sample list doesn't self-filter" bug.
+	filterSampleId.value = selectedSampleId.value;
+	// Bring both the sample and operation rows into view — necessary for a deep link (the match
+	// can be scrolled far outside the initial viewport in a long list), harmless on a direct click
+	// (scrollIntoView is a no-op when the row is already visible).
+	nextTick(() => {
+		document.querySelector('.panel-samples .rowcard.active')?.scrollIntoView({ block: 'nearest' });
+		document.querySelector('.panel-ops .rowcard.active')?.scrollIntoView({ block: 'nearest' });
+	});
 	// Remember the selection so navigating away and back restores it.
 	try { const opId = row.operation_id?.operation_id; if (opId) localStorage.setItem(LAST_OP_KEY, opId); } catch { /* ignore */ }
 	loadingDetail.value = true;

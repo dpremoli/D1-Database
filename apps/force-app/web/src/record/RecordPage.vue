@@ -12,6 +12,8 @@ import ForcePanel from './panels/ForcePanel.vue';
 import FrmPanel from './panels/FrmPanel.vue';
 import RpmPanel from './panels/RpmPanel.vue';
 import OverviewPanel from './panels/OverviewPanel.vue';
+import SaveCutDialog from './panels/SaveCutDialog.vue';
+
 
 const w = createWorkspace();
 provide(WORKSPACE, w);
@@ -25,15 +27,18 @@ const PANEL_TYPES: Record<string, { title: string; icon: string; single?: boolea
 	force: { title: 'Force Plot', icon: 'show_chart', w: 6, h: 11 },
 	rpm: { title: 'RPM', icon: 'speed', w: 6, h: 7 },
 	frm: { title: 'FRM Map', icon: 'fingerprint', w: 4, h: 19 },
+
 };
 type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: 'time' | 'fft' | 'psd' | 'spectrogram' | 'waterfall'; channels?: string[] };
 const DEFAULT_LAYOUT: Inst[] = [
 	{ i: 'options', type: 'options', x: 0, y: 0, w: 2, h: 28 },
-	{ i: 'force', type: 'force', x: 2, y: 0, w: 6, h: 12, mode: 'time', channels: ['Fx', 'Fy', 'Fz'] },
-	{ i: 'rpm', type: 'rpm', x: 2, y: 12, w: 6, h: 7 },
-	{ i: 'frm', type: 'frm', x: 8, y: 0, w: 4, h: 19 },
+	{ i: 'overview', type: 'overview', x: 2, y: 0, w: 6, h: 3 },
+	{ i: 'force', type: 'force', x: 2, y: 3, w: 6, h: 12, mode: 'time', channels: ['Fx', 'Fy', 'Fz'] },
+	{ i: 'fft', type: 'force', x: 2, y: 15, w: 6, h: 13, mode: 'fft', channels: ['Fx', 'Fy', 'Fz'] },
+	{ i: 'frm', type: 'frm', x: 8, y: 0, w: 4, h: 20 },
+	{ i: 'rpm', type: 'rpm', x: 8, y: 20, w: 4, h: 8 },
 ];
-const LS_KEY = 'force-app.record.layout.v4';
+const LS_KEY = 'force-app.record.layout.v7';
 
 function loadLayout(): Inst[] {
 	try {
@@ -49,8 +54,13 @@ function resetLayout() { layout.value = DEFAULT_LAYOUT.map((x) => ({ ...x })); }
 
 const addOpen = ref(false);
 const hasType = (t: string) => layout.value.some((p) => p.type === t);
+const MODE_LABEL: Record<string, string> = { time: 'Force Plot', fft: 'FFT', psd: 'Power', spectrogram: 'Spectrogram', waterfall: 'Waterfall' };
 function panelTitle(p: Inst) {
-	if (p.type === 'force' && p.channels && p.channels.join() !== 'Fx,Fy,Fz') return `Force · ${p.channels.join(' ')}`;
+	if (p.type === 'force') {
+		const mode = MODE_LABEL[p.mode || 'time'] || 'Force Plot';
+		const ch = p.channels && p.channels.join() !== 'Fx,Fy,Fz' ? ` · ${p.channels.join(' ')}` : '';
+		return mode + ch;
+	}
 	return PANEL_TYPES[p.type].title;
 }
 function addPanel(type: string) {
@@ -65,8 +75,16 @@ function addPanel(type: string) {
 function closePanel(i: string) { layout.value = layout.value.filter((p) => p.i !== i); }
 const addable = computed(() => Object.entries(PANEL_TYPES).map(([type, m]) => ({ type, ...m, disabled: !!m.single && hasType(type) })));
 
-// Load the finished cut on manual stop OR natural completion.
-watch(() => st.state, (s) => { if (s === 'done' && !w.finishedCache.value) w.loadFinished(); });
+watch(() => st.state, async (s, prev) => {
+	// Covers auto-stop (self-terminating duration, disk-full, etc) where the frontend never called
+	// w.stop() itself — the manual-stop path already opens this via workspace.ts's stop().
+	if ((s === 'finalizing' || s === 'done' || s === 'error') && prev === 'recording') {
+		w.saveOpen.value = true;
+	}
+	if (s === 'done' && prev !== 'done' && !w.finishedCache.value) {
+		await w.loadFinished();
+	}
+});
 
 // Periodic disk space check during recording (every 30s)
 const diskInfo = reactive<{ free_gb: number; total_gb: number; used_pct: number; checking: boolean }>({ free_gb: -1, total_gb: 0, used_pct: 0, checking: false });
@@ -181,6 +199,16 @@ onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(disk
 
 <template>
 	<div class="rec-wrap" @click="addOpen = false">
+		<!-- Disk-full protection: the backend watches free space during a recording independently of
+			 this page's own polling, and reports what (if anything) it had to do about it. -->
+		<div v-if="st.diskAction" class="disk-action-banner" :class="st.diskAction.action">
+			<span class="material-symbols-rounded">{{ st.diskAction.action === 'forced_stop' ? 'dangerous' : st.diskAction.action === 'backup_started' ? 'cloud_upload' : 'warning' }}</span>
+			<span v-if="st.diskAction.action === 'backup_started'">Disk space is low ({{ st.diskAction.freeGb.toFixed(1) }} GB free) — remote backup was switched on automatically to protect this recording.</span>
+			<span v-else-if="st.diskAction.action === 'forced_stop'">Recording was stopped automatically — disk space ran critically low ({{ st.diskAction.freeGb.toFixed(1) }} GB free). The data captured so far is safe.</span>
+			<span v-else>Disk space is low ({{ st.diskAction.freeGb.toFixed(1) }} GB free) and no remote backup is configured — free up space or configure a backup server soon.</span>
+			<button class="disk-action-ack" @click="st.diskAction = null">Dismiss</button>
+		</div>
+
 		<!-- Global safety-alarm overlay (2e): prominent, blocks nothing but demands acknowledgement. -->
 		<div v-if="w.alarms.tripped" class="alarm-overlay">
 			<span class="material-symbols-rounded">warning</span>
@@ -214,28 +242,9 @@ onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(disk
 		</div>
 
 		<header class="topbar">
-			<div class="brand"><span class="rec-dot" :class="{ live: w.isRecording.value }"></span><span class="brand-name">Recording &amp; Acquisition</span></div>
-			<div class="addwrap">
-				<button class="reset" title="Add a panel" @click.stop="addOpen = !addOpen"><span class="material-symbols-rounded">add</span></button>
-				<div v-if="addOpen" class="addmenu" @click.stop>
-					<button v-for="a in addable" :key="a.type" :disabled="a.disabled" @click="addPanel(a.type)">
-						<span class="material-symbols-rounded">{{ a.icon }}</span>{{ a.title }}<span v-if="a.disabled" class="added">added</span>
-					</button>
-				</div>
-			</div>
-			<button class="reset" title="Reset panel layout" @click="resetLayout"><span class="material-symbols-rounded">grid_view</span></button>
+			<span class="rec-dot" :class="{ live: w.isRecording.value }" :title="w.st.state"></span>
 
-			<div class="readouts">
-				<div class="ro"><span>State</span><b :class="st.state">{{ st.state }}</b></div>
-				<div class="ro"><span>Elapsed</span><b>{{ st.tSec.toFixed(2) }}s</b></div>
-				<div class="ro"><span>Cut</span><b :class="{ cut: st.cutStartSec !== null }">{{ st.cutStartSec !== null ? st.cutStartSec.toFixed(2) + 's' : '—' }}</b></div>
-				<div class="ro"><span>RPM</span><b>{{ Math.round(st.rpm) }}</b></div>
-				<div class="ro"><span>Samples</span><b>{{ st.nTotal.toLocaleString() }}</b></div>
-				<div class="ro"><span>Fx</span><b class="fx">{{ st.peaks.Fx.toFixed(1) }}</b></div>
-				<div class="ro"><span>Fy</span><b class="fy">{{ st.peaks.Fy.toFixed(1) }}</b></div>
-				<div class="ro"><span>Fz</span><b class="fz">{{ st.peaks.Fz.toFixed(1) }}</b></div>
-			</div>
-
+			<div class="spacer"></div>
 			<div v-if="syncStatus.pending > 0 || syncStatus.lastError" class="syncchip" :class="syncStatus.pending > 0 ? 'warn' : 'err'"
 				:title="syncStatus.lastError || `${syncStatus.pending} run record(s) queued offline`">
 				<span class="material-symbols-rounded">{{ syncStatus.pending > 0 ? 'cloud_queue' : 'error' }}</span>
@@ -257,12 +266,21 @@ onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(disk
 			<div class="conn" :class="{ ok: st.connected }">
 				<span class="material-symbols-rounded">{{ st.connected ? 'sensors' : 'sensors_off' }}</span>
 			</div>
+			<div class="addwrap">
+				<button class="reset" title="Add a panel" @click.stop="addOpen = !addOpen"><span class="material-symbols-rounded">add</span></button>
+				<div v-if="addOpen" class="addmenu" @click.stop>
+					<button v-for="a in addable" :key="a.type" :disabled="a.disabled" @click="addPanel(a.type)">
+						<span class="material-symbols-rounded">{{ a.icon }}</span>{{ a.title }}<span v-if="a.disabled" class="added">added</span>
+					</button>
+				</div>
+			</div>
+			<button class="reset" title="Reset panel layout" @click="resetLayout"><span class="material-symbols-rounded">grid_view</span></button>
 		</header>
 
 		<GridLayout v-model:layout="layout" :col-num="12" :row-height="30" :margin="[12, 12]"
 			:is-draggable="true" :is-resizable="true" :use-css-transforms="true" :vertical-compact="true">
 			<GridItem v-for="item in layout" :key="item.i" :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i"
-				drag-allow-from=".panel-handle" :min-w="2" :min-h="5">
+				drag-allow-from=".panel-handle" :min-w="2" :min-h="3">
 				<PanelFrame :title="panelTitle(item)" :icon="PANEL_TYPES[item.type].icon" closable @close="closePanel(item.i)">
 					<RecordingOptions v-if="item.type === 'options'" />
 					<OverviewPanel v-else-if="item.type === 'overview'" />
@@ -272,6 +290,8 @@ onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(disk
 				</PanelFrame>
 			</GridItem>
 		</GridLayout>
+
+		<SaveCutDialog v-if="w.saveOpen.value" />
 	</div>
 </template>
 
@@ -285,28 +305,28 @@ onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(disk
 .ao-text b { font-size: 15px; letter-spacing: 0.04em; }
 .ao-item { font-size: 13px; font-variant-numeric: tabular-nums; background: rgba(0,0,0,0.2); padding: 2px 8px; border-radius: 6px; }
 .ao-ack { margin-left: auto; padding: 8px 18px; font-size: 14px; font-weight: 700; color: #dc2626; background: #fff; border: none; border-radius: 8px; cursor: pointer; }
-.topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(8px); }
-.back, .reset { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; background: var(--surface); border: 1px solid var(--border); color: var(--text); cursor: pointer; }
+.disk-action-banner { position: sticky; top: 0; z-index: 90; display: flex; align-items: center; gap: 12px; padding: 10px 18px; font-size: 13px; color: #fff; }
+.disk-action-banner.backup_started { background: #2563eb; }
+.disk-action-banner.backup_unavailable { background: #b45309; }
+.disk-action-banner.forced_stop { background: #dc2626; }
+.disk-action-banner .material-symbols-rounded { font-size: 20px; }
+.disk-action-ack { margin-left: auto; padding: 6px 14px; font-size: 12px; font-weight: 700; color: inherit; background: rgba(255,255,255,0.18); border: none; border-radius: 7px; cursor: pointer; }
+.disk-action-ack:hover { background: rgba(255,255,255,0.28); }
+.topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(8px); }
+.back, .reset { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); color: var(--text); cursor: pointer; }
 .back:hover, .reset:hover { background: var(--surface-2); }
+.reset .material-symbols-rounded { font-size: 17px; }
 .addwrap { position: relative; }
-.addmenu { position: absolute; top: 40px; right: 0; z-index: 30; min-width: 190px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 5px; box-shadow: 0 14px 40px rgba(0,0,0,0.3); }
+.addmenu { position: absolute; top: 32px; right: 0; z-index: 30; min-width: 190px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 5px; box-shadow: 0 14px 40px rgba(0,0,0,0.3); }
 .addmenu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 9px; font-size: 12.5px; color: var(--text); background: transparent; border: none; border-radius: 7px; cursor: pointer; text-align: left; }
 .addmenu button:hover:not(:disabled) { background: var(--surface-2); }
 .addmenu button:disabled { opacity: 0.45; cursor: default; }
 .addmenu button .material-symbols-rounded { font-size: 17px; color: var(--text-dim); }
 .addmenu .added { margin-left: auto; font-size: 9.5px; color: var(--text-dim); }
-.brand { display: flex; align-items: center; gap: 9px; }
-.brand-name { font-weight: 600; white-space: nowrap; }
-.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #64748b; }
+.rec-dot { width: 9px; height: 9px; border-radius: 50%; background: #64748b; flex-shrink: 0; }
 .rec-dot.live { background: #ef4444; animation: pulse 1.4s infinite; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); } 70% { box-shadow: 0 0 0 8px rgba(239,68,68,0); } 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); } }
-.readouts { display: flex; gap: 8px; margin: 0 auto; flex-wrap: wrap; }
-.ro { display: flex; flex-direction: column; align-items: center; padding: 3px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
-.ro span { font-size: 9.5px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
-.ro b { font-size: 13px; font-variant-numeric: tabular-nums; }
-.ro b.recording { color: #fbbf24; } .ro b.done { color: #4ade80; } .ro b.error { color: var(--danger); }
-.ro b.cut { color: #4ade80; }
-.ro b.fx { color: #f87171; } .ro b.fy { color: #4ade80; } .ro b.fz { color: #60a5fa; }
+.spacer { flex: 1; }
 .syncchip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 8px; font-size: 12px; font-weight: 600; border: 1px solid var(--border); }
 .syncchip .material-symbols-rounded { font-size: 16px; }
 .syncchip.warn { color: #fbbf24; background: rgba(251,191,36,0.1); }

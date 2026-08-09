@@ -1,0 +1,270 @@
+<script setup lang="ts">
+// End-of-cut save routine: appears once a recording finishes (manual stop or auto-stop, e.g. disk
+// full). Shows the full finished force trace, lets the user upload to the database (pre-ticked
+// when online) and/or save locally as .mat/.csv, or explicitly discard (double-confirmed since it's
+// the only destructive-feeling path — the raw capture stays on disk regardless, only the database
+// write and any local export are skipped).
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import { useWorkspace } from '../workspace';
+import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS } from '../liveClient';
+import FinishedForcePlot from '../FinishedForcePlot.vue';
+
+const w = useWorkspace();
+const router = useRouter();
+
+const online = ref(navigator.onLine);
+window.addEventListener('online', () => (online.value = true));
+window.addEventListener('offline', () => (online.value = false));
+
+// manufacturing_operations.sample_id is NOT NULL, and buildRunPayload sends `sampleId || null`, so
+// uploading without a Sample picked fails on a raw Directus constraint error at the end of the save
+// — after the user has already committed to it. Gate the option on having one instead.
+const hasSample = computed(() => !!w.link.sampleId);
+const canUpload = computed(() => online.value && hasSample.value);
+
+const uploadDb = ref(canUpload.value);
+const saveMat = ref(false);
+const saveCsv = ref(false);
+// Untick (not just disable) whenever upload stops being possible — a checked-but-disabled box still
+// reads as "this will happen" and `save()` only tests uploadDb.
+watch(canUpload, (v) => { if (!v) uploadDb.value = false; });
+
+const stage = ref<'ask' | 'saving' | 'done' | 'discard-confirm'>('ask');
+const errMsg = ref<string | null>(null);
+const savedOpId = ref<string | null>(null);
+const nothingSelected = computed(() => !uploadDb.value && !saveMat.value && !saveCsv.value);
+
+// The dialog opens the instant Stop is pressed (workspace.ts) — st.state is still 'recording' for
+// a brief moment (waiting on the backend ack), then 'finalizing' while the backend writes the
+// full-resolution .mat/live_cache/summary in the background. Show a loading state through both so
+// the user gets immediate feedback instead of a UI that looks live but has actually already
+// stopped. Only once state is 'done' AND the finished trace has loaded do we show the save form.
+const loading = computed(() => w.st.state === 'recording' || w.st.state === 'finalizing' || (w.st.state === 'done' && !w.finishedCache.value));
+const failed = computed(() => w.st.state === 'error' && !w.finishedCache.value);
+const loadingLabel = computed(() => {
+	if (w.st.state === 'recording') return 'Stopping acquisition…';
+	if (w.st.state === 'finalizing') return 'Writing capture files (.mat, live cache)…';
+	return 'Loading recorded trace…';
+});
+// loadFinished() already retries a few times internally; if state is 'done' and the trace still
+// hasn't shown up after a while (a persistent failure, not just a blip), offer a manual retry
+// link under the spinner rather than spinning forever with no way out.
+const showManualRetry = ref(false);
+let manualRetryTimer: ReturnType<typeof setTimeout> | null = null;
+watch(() => w.st.state === 'done' && !w.finishedCache.value, (stuck) => {
+	if (manualRetryTimer) { clearTimeout(manualRetryTimer); manualRetryTimer = null; }
+	showManualRetry.value = false;
+	if (stuck) manualRetryTimer = setTimeout(() => { showManualRetry.value = true; }, 6000);
+}, { immediate: true });
+onBeforeUnmount(() => { if (manualRetryTimer) clearTimeout(manualRetryTimer); });
+
+// float32 rows, matching the raw writer — see RAW_BYTES_PER_SAMPLE.
+const estSizeMb = computed(() => (w.st.nTotal ? (w.st.nTotal * RAW_COLUMNS * RAW_BYTES_PER_SAMPLE) / 1e6 : 0));
+function fmtSize(mb: number): string {
+	if (mb < 1) return (mb * 1000).toFixed(0) + ' KB';
+	if (mb < 1000) return mb.toFixed(1) + ' MB';
+	return (mb / 1000).toFixed(2) + ' GB';
+}
+
+function downloadUrl(href: string, filename: string) {
+	const a = document.createElement('a');
+	a.href = href; a.download = filename;
+	document.body.appendChild(a); a.click(); a.remove();
+}
+
+function downloadMat() {
+	const id = w.st.captureId;
+	if (!id) return;
+	downloadUrl(w.client.matUrl(id), `${id}.mat`);
+}
+
+function downloadCsv() {
+	const c = w.finishedCache.value;
+	const id = w.st.captureId || 'capture';
+	if (!c) return;
+	const lines = ['t,Fx,Fy,Fz,rpm,revs'];
+	for (let i = 0; i < c.t.length; i++) {
+		lines.push(`${c.t[i]},${c.Fx[i]},${c.Fy[i]},${c.Fz[i]},${c.rpm[i]},${c.revs[i]}`);
+	}
+	const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+	downloadUrl(URL.createObjectURL(blob), `${id}.csv`);
+}
+
+async function confirmSave() {
+	errMsg.value = null;
+	stage.value = 'saving';
+	try {
+		if (saveMat.value) downloadMat();
+		if (saveCsv.value) downloadCsv();
+		if (uploadDb.value) savedOpId.value = await w.uploadCutToDatabase();
+		stage.value = 'done';
+	} catch (e: any) {
+		errMsg.value = e?.message || 'save failed';
+		stage.value = 'ask';
+	}
+}
+
+function askDiscard() { stage.value = 'discard-confirm'; }
+function cancelDiscard() { stage.value = 'ask'; }
+function confirmDiscard() {
+	w.saveOpen.value = false;
+	stage.value = 'ask';
+}
+
+function goToPlot() {
+	w.saveOpen.value = false;
+	// Uploaded -> the real analysis page; not (yet) uploaded -> the local-files fallback view, which
+	// works purely off the recorder backend and needs no database record at all.
+	if (savedOpId.value) router.push({ name: 'plot', query: { operation: savedOpId.value } });
+	else if (w.st.captureId) router.push({ name: 'plot-local', params: { captureId: w.st.captureId } });
+}
+function startNew() {
+	w.saveOpen.value = false;
+	w.newRun();
+}
+</script>
+
+<template>
+	<div class="scd-backdrop">
+		<div class="scd-modal">
+			<header class="scd-head">
+				<span class="material-symbols-rounded">task_alt</span>
+				<div class="scd-title">
+					<b>Recording finished</b>
+					<span class="scd-sub">{{ w.meta.sample_name || 'Untitled cut' }} · {{ (w.st.summary?.duration_sec ?? w.st.tSec).toFixed(1) }}s</span>
+				</div>
+			</header>
+
+			<template v-if="loading">
+				<div class="scd-loading">
+					<span class="material-symbols-rounded spin">progress_activity</span>
+					<b>{{ loadingLabel }}</b>
+					<span v-if="w.st.nTotal" class="scd-loading-sub">{{ w.st.nTotal.toLocaleString() }} samples · ~{{ fmtSize(estSizeMb) }}</span>
+					<button v-if="showManualRetry" class="scd-btn" @click="w.loadFinished()">Still loading — try again</button>
+				</div>
+			</template>
+
+			<template v-else-if="failed">
+				<div class="scd-confirm">
+					<span class="material-symbols-rounded warn">error</span>
+					<p>Finalizing this recording failed{{ w.st.error ? `: ${w.st.error}` : '' }}. The raw capture is still on disk and can be recovered later — nothing was uploaded.</p>
+				</div>
+				<div class="scd-actions">
+					<div class="scd-spacer"></div>
+					<button class="scd-btn primary" @click="startNew">Close</button>
+				</div>
+			</template>
+
+			<template v-else>
+			<div class="scd-plot">
+				<FinishedForcePlot v-if="w.finishedCache.value" :cache="w.finishedCache.value" />
+				<div v-else class="scd-loading">
+					<span class="material-symbols-rounded spin">progress_activity</span>
+					<span>Loading recorded trace…</span>
+				</div>
+			</div>
+
+			<template v-if="stage === 'ask' || stage === 'saving'">
+				<div class="scd-opts">
+					<label class="scd-opt">
+						<input type="checkbox" v-model="uploadDb" :disabled="!canUpload || stage === 'saving'" />
+						<div>
+							<span>Upload to database</span>
+							<small v-if="!online">offline — will only save locally until you reconnect</small>
+							<small v-else-if="!hasSample">pick a Sample in Metadata to enable database logging</small>
+							<small v-else>logs this run and links the capture into machining_force_analysis</small>
+						</div>
+					</label>
+					<label class="scd-opt">
+						<input type="checkbox" v-model="saveMat" :disabled="stage === 'saving'" />
+						<span>Save a local copy (.mat)</span>
+					</label>
+					<label class="scd-opt">
+						<input type="checkbox" v-model="saveCsv" :disabled="stage === 'saving'" />
+						<span>Save a local copy (.csv)</span>
+					</label>
+				</div>
+
+				<p v-if="errMsg" class="scd-err">
+					{{ errMsg }}
+					<br>The recording itself is safe on disk regardless — you can still view it or start a new run below.
+				</p>
+
+				<div class="scd-actions">
+					<button class="scd-btn discard" :disabled="stage === 'saving'" @click="askDiscard">Don't save</button>
+					<template v-if="errMsg">
+						<button class="scd-btn" :disabled="stage === 'saving'" @click="goToPlot">Open in Plot</button>
+						<button class="scd-btn" :disabled="stage === 'saving'" @click="startNew">Start new run</button>
+					</template>
+					<div class="scd-spacer"></div>
+					<button class="scd-btn primary" :disabled="nothingSelected || stage === 'saving'" @click="confirmSave">
+						{{ stage === 'saving' ? 'Saving…' : errMsg ? 'Retry' : 'Save' }}
+					</button>
+				</div>
+			</template>
+
+			<template v-else-if="stage === 'discard-confirm'">
+				<div class="scd-confirm">
+					<span class="material-symbols-rounded warn">warning</span>
+					<p>Discard this recording without saving? It will <b>not</b> be uploaded or logged — the raw capture stays on disk locally, but nothing will be recorded in the database and no local copy will be exported.</p>
+				</div>
+				<div class="scd-actions">
+					<button class="scd-btn" @click="cancelDiscard">Cancel</button>
+					<div class="scd-spacer"></div>
+					<button class="scd-btn danger" @click="confirmDiscard">Yes, discard</button>
+				</div>
+			</template>
+
+			<template v-else-if="stage === 'done'">
+				<div class="scd-confirm ok">
+					<span class="material-symbols-rounded ok">check_circle</span>
+					<p>Saved. {{ savedOpId ? 'Logged to the database.' : 'Saved locally — you can still view and plot it, and upload it to the database later.' }}</p>
+				</div>
+				<div class="scd-actions">
+					<button class="scd-btn" @click="startNew">Start new run</button>
+					<div class="scd-spacer"></div>
+					<button class="scd-btn primary" @click="goToPlot">
+						Open in Plot
+					</button>
+				</div>
+			</template>
+			</template>
+		</div>
+	</div>
+</template>
+
+<style scoped>
+.scd-backdrop { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); backdrop-filter: blur(2px); padding: 24px; }
+.scd-modal { width: min(880px, 100%); max-height: 92vh; overflow: auto; display: flex; flex-direction: column; gap: 14px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: 0 30px 80px rgba(0,0,0,0.45); }
+.scd-head { display: flex; align-items: center; gap: 12px; }
+.scd-head > .material-symbols-rounded { font-size: 26px; color: #4ade80; }
+.scd-title { display: flex; flex-direction: column; }
+.scd-title b { font-size: 15px; }
+.scd-sub { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.scd-plot { height: 280px; }
+.scd-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 200px; color: var(--text); }
+.scd-loading b { font-size: 14px; font-weight: 600; }
+.scd-loading-sub { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.scd-loading .spin { font-size: 28px; color: var(--accent); animation: scd-spin 1s linear infinite; }
+@keyframes scd-spin { to { transform: rotate(360deg); } }
+.scd-opts { display: flex; flex-direction: column; gap: 8px; }
+.scd-opt { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; cursor: pointer; }
+.scd-opt input { margin-top: 2px; }
+.scd-opt div, .scd-opt span { display: flex; flex-direction: column; font-size: 13px; color: var(--text); }
+.scd-opt small { font-size: 11px; color: var(--text-dim); font-weight: 400; }
+.scd-err { font-size: 12px; color: var(--danger); background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; padding: 8px 10px; }
+.scd-actions { display: flex; align-items: center; gap: 10px; }
+.scd-spacer { flex: 1; }
+.scd-btn { padding: 9px 16px; font-size: 13px; font-weight: 600; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 9px; cursor: pointer; }
+.scd-btn:hover:not(:disabled) { background: var(--surface-2); }
+.scd-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.scd-btn.primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.scd-btn.discard { color: var(--danger); }
+.scd-btn.danger { color: #fff; background: #dc2626; border-color: #dc2626; }
+.scd-confirm { display: flex; align-items: flex-start; gap: 10px; padding: 12px; background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.3); border-radius: 9px; font-size: 13px; }
+.scd-confirm.ok { background: rgba(74,222,128,0.08); border-color: rgba(74,222,128,0.3); }
+.scd-confirm .material-symbols-rounded.warn { color: #fbbf24; font-size: 22px; }
+.scd-confirm .material-symbols-rounded.ok { color: #4ade80; font-size: 22px; }
+.scd-confirm p { margin: 0; color: var(--text); }
+</style>
