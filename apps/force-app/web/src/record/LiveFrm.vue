@@ -6,7 +6,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import type { RecordClient } from './liveClient';
-import { COLORMAPS } from '../force/liveCloud';
+import { COLORMAPS } from '@d1/force-plotting';
 
 const props = withDefaults(defineProps<{ client: RecordClient; diam: number; colormap?: string; pointSize?: number; pointStride?: number }>(), {
 	colormap: 'viridis', pointSize: 1.8, pointStride: 1,

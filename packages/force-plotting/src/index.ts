@@ -12,6 +12,7 @@ export { default as FrmCloud } from './FrmCloud.vue';
 export { default as FrmOctree } from './FrmOctree.vue';
 export { buildSeriesEnvelope, cacheGet, cachePut, decimateCache, parseCache } from './liveCache';
 export type { Cache, EnvSeries } from './liveCache';
+export { COLORMAPS } from './liveCloud';
 export type { SpeedMode } from './liveCloud';
 
 export { chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';

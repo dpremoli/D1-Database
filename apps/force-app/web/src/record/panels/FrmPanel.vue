@@ -3,7 +3,7 @@
 // the plotting FrmCloud from the backend's D1LC) once done.
 import { useWorkspace } from '../workspace';
 import LiveFrm from '../LiveFrm.vue';
-import FrmCloud from '../../force/FrmCloud.vue';
+import { FrmCloud } from '@d1/force-plotting';
 import { appUrl } from '../../appUrl';
 const w = useWorkspace();
 const STRIDES = [1, 2, 5, 10, 25, 50];

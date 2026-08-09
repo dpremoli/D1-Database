@@ -10,7 +10,7 @@ const routes: RouteRecordRaw[] = [
 		children: [
 			{ path: '', redirect: '/record' },
 			{ path: 'record', name: 'record', component: () => import('./record/RecordPage.vue') },
-			{ path: 'plot', name: 'plot', component: () => import('./force/ForceDashboard.vue') },
+			{ path: 'plot', name: 'plot', component: () => import('./force/StandaloneForceDashboard.vue') },
 			{ path: 'plot/local/:captureId', name: 'plot-local', component: () => import('./force/LocalCaptureView.vue') },
 			{ path: 'labamp', name: 'labamp', component: () => import('./labamp/LabAmpPage.vue') },
 			{ path: 'nidaq', name: 'nidaq', component: () => import('./nidaq/NidaqPage.vue') },

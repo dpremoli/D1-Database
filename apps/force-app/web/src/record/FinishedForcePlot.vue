@@ -4,7 +4,7 @@
 // wherever a finished recording's full time series needs to be shown (ForcePanel post-stop,
 // SaveCutDialog).
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { Cache } from '../force/liveCache';
+import type { Cache } from '@d1/force-plotting';
 import { CH_COLOR } from './types';
 
 const props = defineProps<{ cache: Cache; channels?: string[] }>();

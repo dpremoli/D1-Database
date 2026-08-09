@@ -4,7 +4,7 @@
 import { computed, inject, reactive, ref, shallowRef, watch, type InjectionKey } from 'vue';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS, RecordClient } from './liveClient';
 import { api } from '../directusClient';
-import { buildSeriesEnvelope, parseCache, type Cache } from '../force/liveCache';
+import { buildSeriesEnvelope, parseCache, type Cache } from '@d1/force-plotting';
 import { searchSamples, searchOperators, searchEquipment, searchTools, searchInserts, searchEdges, getMethods, resolveMachiningMethodId, type LookupItem } from './directusLookups';
 import { logRun, syncStatus } from './directusSync';
 import { alarmController } from './alarms';

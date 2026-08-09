@@ -9,9 +9,8 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getConfig } from '../config';
-import { parseCache, type Cache } from './liveCache';
+import { FrmCloud, parseCache, type Cache } from '@d1/force-plotting';
 import FinishedForcePlot from '../record/FinishedForcePlot.vue';
-import FrmCloud from './FrmCloud.vue';
 import { uploadCaptureColdStart } from '../record/uploadCapture';
 
 const route = useRoute();

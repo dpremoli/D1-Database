@@ -1,5 +1,6 @@
-// The Directus REST client used by the ported plotting components (via the useApi() shim).
-// It is a plain axios instance pointed at the configured Directus origin, with:
+// The Directus REST client used by the app, including the shared plotting package via the
+// standalone ForceHost (see force/StandaloneForceDashboard.vue). It is a plain axios instance
+// pointed at the configured Directus origin, with:
 //   - a request interceptor that attaches the Bearer access token, and
 //   - a response interceptor that, on 401, transparently refreshes the token once and retries,
 //     falling back to the unauthorized handler (→ /login) when the refresh also fails.
