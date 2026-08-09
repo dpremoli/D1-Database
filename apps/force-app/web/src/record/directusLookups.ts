@@ -1,6 +1,7 @@
 // Directus-backed typeahead lookups for the Metadata pickers. Small, focused reads over the SPA's
 // authenticated `api` client. Each returns [{ id, label, extra? }].
 import { api } from '../directusClient';
+import { labamp } from './labampApi';
 
 export interface LookupItem { id: string; label: string; sublabel?: string; extra?: Record<string, any>; }
 
@@ -34,20 +35,35 @@ export async function searchOperators(q: string): Promise<LookupItem[]> {
 let methodsCache: LookupItem[] | null = null;
 export async function getMethods(): Promise<LookupItem[]> {
 	if (!methodsCache) {
-		const res = await api.get('/items/manufacturing_methods', { params: { limit: 100, fields: ['method_id', 'method_name'] } });
-		methodsCache = (res.data?.data ?? []).map((r: any) => ({ id: r.method_id, label: r.method_name || '' }));
+		// method_code must be fetched AND carried through to `extra` — resolveMachiningMethodId
+		// matches on it, and without it every lookup below silently misses and falls through to
+		// the turning default, tagging milling runs with a turning method_id (a NOT NULL FK).
+		const res = await api.get('/items/manufacturing_methods', { params: { limit: 100, fields: ['method_id', 'method_name', 'method_code'] } });
+		methodsCache = (res.data?.data ?? []).map((r: any) => ({
+			id: r.method_id,
+			label: r.method_name || '',
+			extra: { method_code: r.method_code || '' },
+		}));
 	}
-	return methodsCache;
+	return methodsCache ?? [];
 }
 export async function resolveMachiningMethodId(hint?: string): Promise<string | null> {
 	const ms = await getMethods();
+	// op_type codes are like 'MT-FACE' (turning) / 'MM-SLOT' (milling); the prefix IS the method code.
 	if (hint) {
 		const prefix = hint.split('-')[0].toUpperCase();
-		const byCode = ms.find((x) => (x.extra?.method_code || '') === prefix);
+		const byCode = ms.find((x) => (x.extra?.method_code || '').toUpperCase() === prefix);
 		if (byCode) return byCode.id;
+		// Fall back to matching the method name, in case method_code is blank in this instance.
+		const wanted = prefix === 'MM' ? 'milling' : prefix === 'MT' ? 'turning' : '';
+		if (wanted) {
+			const byName = ms.find((x) => x.label.toLowerCase().includes(wanted));
+			if (byName) return byName.id;
+		}
 	}
-	const fallback = ms.find((x) => (x.extra?.method_code || '') === 'MT')
-		|| ms.find((x) => x.label.toLowerCase().includes('turning'));
+	const fallback = ms.find((x) => (x.extra?.method_code || '').toUpperCase() === 'MT')
+		|| ms.find((x) => x.label.toLowerCase().includes('turning'))
+		|| ms.find((x) => x.label.toLowerCase().includes('machining'));
 	return fallback?.id ?? ms[0]?.id ?? null;
 }
 
@@ -78,13 +94,122 @@ export async function searchEdges(q: string, insertId?: string): Promise<LookupI
 	}));
 }
 
-export async function searchEquipment(q: string): Promise<LookupItem[]> {
+// Auto Range "previous run" picker: past operations to use as a reference for the per-channel
+// peak forces (converge.ts / labamp.converge). Two sources:
+//  - local captures still on this recorder's disk (summary.json's channels_ranging.peaks_n) —
+//    the real, per-channel numbers, exact.
+//  - Directus machining_force_analysis rows for operations already uploaded elsewhere — only the
+//    3 summed-axis peaks exist there (peak_fx/fy/fz), so the per-channel split is APPROXIMATED by
+//    dividing each axis peak evenly across its sub-channels, matching the same convention
+//    SimSource/finalize.py use (Fx -> 2 channels, Fy -> 2 channels, Fz -> 4 channels). Flagged via
+//    `extra.exact` so the UI can tell the user which numbers are real vs estimated.
+function approximateChannelPeaks(peakFx: number, peakFy: number, peakFz: number): number[] {
+	const fx = peakFx / 2, fy = peakFy / 2, fz = peakFz / 4;
+	return [fx, fx, fy, fy, fz, fz, fz, fz]; // Fx1,Fx2,Fy1,Fy2,Fz1,Fz2,Fz3,Fz4
+}
+
+export async function searchPastOperations(q: string): Promise<LookupItem[]> {
+	const query = q?.trim() || '';
+	const [local, db] = await Promise.all([
+		labamp.recentCaptures(15, query).then((r) => r.captures).catch(() => []),
+		(async () => {
+			const filter: any = { status: { _eq: 'done' } };
+			if (query) {
+				filter._or = [
+					{ operation_id: { pass_code: { _icontains: query } } },
+					{ operation_id: { sample_id: { sample_code: { _icontains: query } } } },
+					{ operation_id: { sample_id: { nickname: { _icontains: query } } } },
+				];
+			}
+			try {
+				const res = await api.get('/items/machining_force_analysis', {
+					params: {
+						filter, limit: 15, sort: '-created_at',
+						fields: ['id', 'peak_fx', 'peak_fy', 'peak_fz', 'operation_id.pass_code',
+							'operation_id.sample_id.sample_code', 'operation_id.sample_id.nickname'],
+					},
+				});
+				return res.data?.data ?? [];
+			} catch { return []; }
+		})(),
+	]);
+
+	const localItems: LookupItem[] = local.map((c) => ({
+		id: `local:${c.id}`,
+		label: c.sample_name,
+		sublabel: `${c.id} · local, exact`,
+		extra: { peaksN: c.peaks_n, exact: true },
+	}));
+
+	const dbItems: LookupItem[] = db
+		.filter((r: any) => r.peak_fx != null || r.peak_fy != null || r.peak_fz != null)
+		.map((r: any) => ({
+			id: `db:${r.id}`,
+			label: r.operation_id?.pass_code || r.operation_id?.sample_id?.sample_code || r.operation_id?.sample_id?.nickname || r.id,
+			sublabel: 'database, approximate',
+			extra: { peaksN: approximateChannelPeaks(Number(r.peak_fx) || 0, Number(r.peak_fy) || 0, Number(r.peak_fz) || 0), exact: false },
+		}));
+
+	// Exact (local) results first — most useful/reliable data up top.
+	return [...localItems, ...dbItems];
+}
+
+// `equipment.equipment_type` is free text with real values checked against the live data (not
+// assumed) — there is NO turning-vs-milling distinction available: the actual CNC machines here
+// (a mix of lathes and mill-turn centres, e.g. "NLX-2500 | 700", "DMU 60 Monoblock") all share the
+// single type "Machining", and a naive 'mill' keyword match would wrongly pull in "Attrition Mill"
+// — a powder-processing device, not a milling machine. So this can only filter to "is this
+// machining-relevant equipment at all" (excludes the ~190 SEM/TEM/furnace/printer/etc rows that
+// are never going to be the machine for a force-recorded cut) — it can't split turning from
+// milling the way the Tool filter genuinely can (tools.tool_type IS a clean "Turning"/"Milling").
+const MACHINING_EQUIPMENT_TYPE = 'Machining';
+
+export async function searchEquipment(q: string, category?: string | null): Promise<LookupItem[]> {
 	const filter: any = { is_active: { _eq: true } };
 	if (q?.trim()) filter.equipment_name = { _icontains: q.trim() };
-	const res = await api.get('/items/equipment', {
-		params: { filter, limit: 20, sort: 'equipment_name', fields: ['equipment_id', 'equipment_name', 'equipment_code', 'equipment_type'] },
-	});
-	return (res.data?.data ?? []).map((r: any) => ({
-		id: r.equipment_id, label: r.equipment_name || r.equipment_code || r.equipment_id, extra: { type: r.equipment_type },
-	}));
+	const fields = ['equipment_id', 'equipment_name', 'equipment_code', 'equipment_type'];
+	if (category) {
+		const res = await api.get('/items/equipment', {
+			params: { filter: { ...filter, equipment_type: { _eq: MACHINING_EQUIPMENT_TYPE } }, limit: 20, sort: 'equipment_name', fields },
+		});
+		const rows = res.data?.data ?? [];
+		if (rows.length) return rows.map(toEquipmentItem);
+		// No equipment tagged "Machining" matched (or none exist yet) — fall back to the unfiltered
+		// set rather than a dead-end "no matches" for a machine that might still be findable by name.
+	}
+	const res = await api.get('/items/equipment', { params: { filter, limit: 20, sort: 'equipment_name', fields } });
+	return (res.data?.data ?? []).map((r: any) => ({ ...toEquipmentItem(r), extra: { ...toEquipmentItem(r).extra, categoryFallback: !!category } }));
+}
+function toEquipmentItem(r: any): LookupItem {
+	return { id: r.equipment_id, label: r.equipment_name || r.equipment_code || r.equipment_id, extra: { type: r.equipment_type } };
+}
+
+export async function searchTools(q: string, category?: string | null): Promise<LookupItem[]> {
+	const filter: any = { is_active: { _eq: true } };
+	const clauses: any[] = [];
+	if (q?.trim()) clauses.push({ _or: [{ tool_code: { _icontains: q.trim() } }, { tool_name: { _icontains: q.trim() } }] });
+	if (category) clauses.push({ tool_type: { _icontains: category } });
+	if (clauses.length === 1) Object.assign(filter, clauses[0]);
+	else if (clauses.length > 1) filter._and = clauses;
+	const fields = ['tool_id', 'tool_code', 'tool_name', 'tool_type'];
+	const res = await api.get('/items/tools', { params: { filter, limit: 20, sort: 'tool_code', fields } });
+	let rows = res.data?.data ?? [];
+	if (!rows.length && category) {
+		// Same reasoning as searchEquipment: tool_type is free text, don't let a naming mismatch
+		// hide a real tool entirely.
+		const fallback = { is_active: { _eq: true } } as any;
+		if (q?.trim()) fallback._or = [{ tool_code: { _icontains: q.trim() } }, { tool_name: { _icontains: q.trim() } }];
+		const res2 = await api.get('/items/tools', { params: { filter: fallback, limit: 20, sort: 'tool_code', fields } });
+		rows = res2.data?.data ?? [];
+		return rows.map((r: any) => ({ ...toToolItem(r), extra: { ...toToolItem(r).extra, categoryFallback: true } }));
+	}
+	return rows.map(toToolItem);
+}
+function toToolItem(r: any): LookupItem {
+	return {
+		id: r.tool_id,
+		label: r.tool_code || r.tool_name || r.tool_id,
+		sublabel: r.tool_name && r.tool_name !== r.tool_code ? r.tool_name : (r.tool_type || undefined),
+		extra: { tool_type: r.tool_type },
+	};
 }

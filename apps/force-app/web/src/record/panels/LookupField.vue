@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Debounced Directus typeahead. Emits the selected id (v-model) and a `select` event with the full
 // item (for auto-fill, e.g. sample diameter). Shows the chosen label; a clear button resets it.
-import { ref, watch } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { LookupItem } from '../directusLookups';
 
 const props = defineProps<{
@@ -19,7 +19,21 @@ const open = ref(false);
 const items = ref<LookupItem[]>([]);
 const loading = ref(false);
 const inputEl = ref<HTMLInputElement | null>(null);
+const rootEl = ref<HTMLLabelElement | null>(null);
 let t: any = null;
+
+// Click-away close: blur+timeout (below) mostly covers this, but is timing-sensitive (a click
+// landing between two LookupFields, or anything that doesn't cleanly shift focus, could leave the
+// menu stuck open with no way to dismiss it except Escape). A capture-phase document listener is
+// the standard robust pattern for "close on click outside" and doesn't depend on focus/blur at
+// all — it just checks whether the click happened inside this component's own DOM.
+function onDocPointerDown(e: PointerEvent) {
+	if (open.value && rootEl.value && e.target instanceof Node && !rootEl.value.contains(e.target)) {
+		open.value = false;
+	}
+}
+onMounted(() => document.addEventListener('pointerdown', onDocPointerDown, true));
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointerDown, true));
 
 watch(() => props.displayLabel, (v) => { if (v !== undefined) text.value = v; });
 
@@ -43,15 +57,19 @@ function pick(it: LookupItem) {
 // Close and drop focus so the menu can't linger/re-open after a pick or Escape.
 function close() { open.value = false; inputEl.value?.blur(); }
 function clear() { emit('update:modelValue', ''); text.value = ''; items.value = []; }
+// A bare `setTimeout` inside an inline template handler resolves against the component instance
+// (_ctx.setTimeout), not window — Vue templates don't fall through to globals for function calls.
+// Delay the blur-close here instead, where `setTimeout` correctly resolves to the real global.
+function delayedBlurClose() { window.setTimeout(() => { open.value = false; }, 150); }
 </script>
 
 <template>
-	<label class="lookup">
+	<label ref="rootEl" class="lookup">
 		<span class="lbl">{{ label }}</span>
 		<div class="box" :class="{ set: !!modelValue }">
 			<input ref="inputEl" v-model="text" :placeholder="placeholder" :disabled="disabled"
 				@input="onInput" @focus="focus" @keydown.esc.prevent="close" @keydown.enter.prevent="items[0] && pick(items[0])"
-				@blur="() => setTimeout(() => (open = false), 150)" />
+				@blur="delayedBlurClose" />
 			<button v-if="modelValue" class="x" type="button" :disabled="disabled" @mousedown.prevent="clear">
 				<span class="material-symbols-rounded">close</span>
 			</button>
