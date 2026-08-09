@@ -7,3 +7,8 @@ export { default as SpectrumView } from './SpectrumView.vue';
 export { computeSignalStats } from './signalStats';
 export type { SignalStats } from './signalStats';
 export * from './frmExport';
+
+export { default as FrmCloud } from './FrmCloud.vue';
+export { buildSeriesEnvelope, cacheGet, cachePut, decimateCache, parseCache } from './liveCache';
+export type { Cache, EnvSeries } from './liveCache';
+export type { SpeedMode } from './liveCloud';
