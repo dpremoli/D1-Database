@@ -16,3 +16,5 @@ export type { SpeedMode } from './liveCloud';
 
 export { chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 export type { FilterChain } from './filterChain';
+
+export { default as ForceDashboard } from './ForceDashboard.vue';
