@@ -77,6 +77,86 @@ def test_ingest_start_chunk_finish(client, tmp_path):
     assert len(data) == 32 + 400 + 200  # header + chunks
 
 
+def _start(client, sid="dedup-001"):
+    r = client.post("/ingest/start", json={"session_id": sid, "header_hex": _make_header().hex()})
+    assert r.status_code == 200
+    return sid
+
+
+def _chunk(client, sid, content, offset=None):
+    headers = {"X-Session-ID": sid, "Content-Type": "application/octet-stream"}
+    if offset is not None:
+        headers["X-Offset"] = str(offset)
+    return client.post("/ingest/chunk", content=content, headers=headers)
+
+
+def _raw_size(tmp_path, sid):
+    return os.path.getsize(os.path.join(str(tmp_path), sid, "raw.d1rw"))
+
+
+def test_ingest_chunk_replay_at_same_offset_is_not_duplicated(client, tmp_path):
+    """A retry after a lost response must not append the bytes twice.
+
+    .d1raw is fixed-width interleaved rows, so one duplicated chunk misaligns every row after it
+    and silently corrupts the whole backup — the failure mode this offset check exists to prevent.
+    """
+    sid = _start(client)
+    chunk = os.urandom(400)
+
+    assert _chunk(client, sid, chunk, offset=32).json()["appended"] == 400
+    size_after_first = _raw_size(tmp_path, sid)
+
+    # Client never saw the response, so it re-sends the identical chunk from the same offset.
+    r = _chunk(client, sid, chunk, offset=32)
+    assert r.status_code == 200
+    assert r.json()["appended"] == 0
+    assert r.json()["duplicate"] is True
+    assert _raw_size(tmp_path, sid) == size_after_first
+
+
+def test_ingest_chunk_overlapping_retry_appends_only_new_tail(client, tmp_path):
+    """The normal retry shape: the re-read starts at the old offset but runs to a now-longer EOF."""
+    sid = _start(client)
+    first = os.urandom(400)
+    assert _chunk(client, sid, first, offset=32).json()["appended"] == 400
+
+    # Response was lost; by the next interval the file has grown, so the client re-sends from 32
+    # with the original 400 bytes plus 200 genuinely new ones.
+    tail = os.urandom(200)
+    r = _chunk(client, sid, first + tail, offset=32)
+    assert r.status_code == 200
+    assert r.json()["appended"] == 200  # only the new tail
+
+    data = open(os.path.join(str(tmp_path), sid, "raw.d1rw"), "rb").read()
+    assert data == _make_header() + first + tail
+
+
+def test_ingest_chunk_gap_is_refused(client, tmp_path):
+    """A chunk starting past EOF would leave a hole and misalign everything after it."""
+    sid = _start(client)
+    assert _chunk(client, sid, os.urandom(400), offset=32).json()["appended"] == 400
+    size_before = _raw_size(tmp_path, sid)
+
+    r = _chunk(client, sid, os.urandom(100), offset=9999)
+    assert r.status_code == 409
+    assert _raw_size(tmp_path, sid) == size_before  # nothing written
+
+
+def test_ingest_chunk_without_offset_still_appends(client, tmp_path):
+    """Older clients send no X-Offset — they must keep working (legacy blind append)."""
+    sid = _start(client)
+    r = _chunk(client, sid, os.urandom(400))
+    assert r.status_code == 200
+    assert r.json()["appended"] == 400
+    assert _raw_size(tmp_path, sid) == 32 + 400
+
+
+def test_ingest_chunk_rejects_malformed_offset(client):
+    sid = _start(client)
+    assert _chunk(client, sid, os.urandom(10), offset="not-a-number").status_code == 400
+    assert _chunk(client, sid, os.urandom(10), offset=-1).status_code == 400
+
+
 def test_ingest_chunk_without_start_returns_404(client):
     r = client.post("/ingest/chunk", content=b"\x00" * 100, headers={
         "X-Session-ID": "nonexistent",

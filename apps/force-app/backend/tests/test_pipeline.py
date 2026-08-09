@@ -48,7 +48,8 @@ def test_session_end_to_end(tmp_path):
     )
     sess = RecordingSession(cfg, str(tmp_path), SimSource(cfg, realtime=False), broadcaster=None)
     sess.start()
-    sess._thread.join(30)  # runs to natural completion (finite sim), then finalizes
+    sess._thread.join(30)  # runs to natural completion (finite sim), then finalizes in background
+    sess.join_finalize(30)
     assert sess.state == "done", sess.error
     assert sess.n_total > 0
 

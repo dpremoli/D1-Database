@@ -59,7 +59,10 @@ def _raw_info(capture_dir: str) -> dict | None:
         "start_unix": hdr["start_unix"],
         "duration_sec": round(duration_sec, 2),
         "raw_size_mb": round(os.path.getsize(raw_path) / 1e6, 2),
-        "truncated_bytes": body_bytes % row_bytes,
+        # Guarded like n_rows above: a header that parses but reports n_cols == 0 would otherwise
+        # raise ZeroDivisionError here, 500-ing /recovery/check and hiding every OTHER recoverable
+        # session in the scan.
+        "truncated_bytes": body_bytes % row_bytes if row_bytes > 0 else body_bytes,
     }
 
 

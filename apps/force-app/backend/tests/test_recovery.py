@@ -229,3 +229,27 @@ def test_discard_session_rejects_missing(tmp_path):
         assert False, "should have raised FileNotFoundError"
     except FileNotFoundError:
         pass
+
+
+def test_scan_incomplete_survives_zero_column_header(tmp_path):
+    """A header reporting n_cols == 0 must not take down the whole scan.
+
+    `truncated_bytes = body_bytes % row_bytes` was unguarded (unlike n_rows just above it), so one
+    corrupt file raised ZeroDivisionError out of scan_incomplete — 500-ing /recovery/check and
+    hiding every OTHER recoverable session from the user.
+    """
+    import struct
+
+    from app.d1rw import HEADER_SIZE, MAGIC
+
+    bad = tmp_path / "20260101-000000-bad"
+    bad.mkdir()
+    head = struct.pack("<4sIIfd", MAGIC, 1, 0, 2000.0, 1700000000.0)
+    (bad / "raw.d1raw").write_bytes(head + b"\x00" * (HEADER_SIZE - len(head)) + b"\x01" * 64)
+
+    good = tmp_path / "20260101-000001-good"
+    _make_raw(str(good), n_rows=100)
+
+    sessions = scan_incomplete(str(tmp_path))  # must not raise
+    ids = {s["id"] for s in sessions}
+    assert "20260101-000001-good" in ids, "a corrupt sibling must not hide recoverable sessions"

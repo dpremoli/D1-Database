@@ -20,11 +20,22 @@ from .d1rw import RawWriter
 from .dsp import sum_axes, tacho_column
 from .finalize import finalize
 from .recovery import write_manifest
+from .storage import disk_usage_for
 from .stream.broadcast import Broadcaster
 from .stream.frame import encode_frame
 
 # The 8 dyno sub-channels in raw-file column order (data[:, :8]) — matches the client SUB_NAMES.
 SUB_NAMES = ["Fx1", "Fx2", "Fy1", "Fy2", "Fz1", "Fz2", "Fz3", "Fz4", "Tacho"]
+
+# Disk-full protection during an active recording (independent of the frontend's own low-disk UI
+# alarm, which is advisory only). At DISK_BACKUP_GB, if remote backup is configured but wasn't
+# already streaming, switch it on now — BackupStreamer always reads from just after the raw
+# header, so it catches the whole recording up, not just what's written from here on. At
+# DISK_STOP_GB — a genuine "about to fill the disk" floor — force-stop regardless, since a
+# completely full system disk can make Windows itself misbehave, not just this recording.
+DISK_BACKUP_GB = 3.0
+DISK_STOP_GB = 1.0
+DISK_CHECK_INTERVAL = 10.0
 
 
 class RecordingSession:
@@ -59,6 +70,9 @@ class RecordingSession:
         self.cut_started_t: float | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._finalize_thread: threading.Thread | None = None
+        self._disk_thread: threading.Thread | None = None
+        self.disk_action: dict | None = None  # last thing the disk watcher did, for the UI
 
         # Rolling windows per channel for the live spectra (per-channel FFT / power / spectrogram /
         # waterfall), plus a wall-clock throttle. We keep the 3 summed axes AND the 8 dyno
@@ -75,22 +89,79 @@ class RecordingSession:
     def start(self) -> None:
         self.state = "recording"
         write_manifest(self.dir, "recording", self.cfg)
-        # Start remote live backup if configured
-        bcfg = load_backup_config(self.captures_root)
-        if bcfg.get("enabled") and bcfg.get("server_url"):
-            self.backup = BackupStreamer(
-                self.id, os.path.join(self.dir, "raw.d1raw"),
-                bcfg["server_url"], self.cfg,
-            )
-            self.backup.start()
+        self._enable_backup_now()  # starts it now if configured; a no-op if it isn't
         self._thread = threading.Thread(target=self._run, name=f"rec-{self.id}", daemon=True)
         self._thread.start()
+        self._disk_thread = threading.Thread(
+            target=self._watch_disk, name=f"rec-disk-{self.id}", daemon=True
+        )
+        self._disk_thread.start()
 
     def stop(self, wait: bool = True, timeout: float = 30.0) -> None:
         self._stop.set()
         self.source.stop()
         if wait and self._thread:
             self._thread.join(timeout)
+
+    def _watch_disk(self) -> None:
+        """Runs for the life of the recording. Two escalating responses to a filling disk, cheaper
+        than the frontend polling loop and independent of it — this keeps protecting the recording
+        even if the browser tab is closed or the network to it drops."""
+        backed_up_by_watcher = False
+        while not self._stop.is_set() and self.state == "recording":
+            try:
+                free_gb = disk_usage_for(self.captures_root).get("free_gb")
+            except Exception:
+                free_gb = None
+            # `None` means the stat failed, not that the disk is full — never act on it. Skipping a
+            # check is harmless (the next one is DISK_CHECK_INTERVAL away); killing a good recording
+            # over a transient stat error is not.
+            if free_gb is None:
+                self._stop.wait(DISK_CHECK_INTERVAL)
+                continue
+            if free_gb < DISK_STOP_GB:
+                self.disk_action = {"action": "forced_stop", "free_gb": free_gb}
+                self._publish_control({"type": "disk_action", **self.disk_action})
+                # Deliberately NOT set on self.error: the recording itself is intact and finalize
+                # will succeed, so the terminal state must stay "done" or the frontend refuses to
+                # load/save it — i.e. the recordings this guard exists to protect would be exactly
+                # the ones the user loses. `disk_action` already carries the reason for the UI.
+                self.stop(wait=False)
+                return
+            if free_gb < DISK_BACKUP_GB and self.backup is None and not backed_up_by_watcher:
+                backed_up_by_watcher = True
+                if self._enable_backup_now():
+                    self.disk_action = {"action": "backup_started", "free_gb": free_gb}
+                else:
+                    self.disk_action = {"action": "backup_unavailable", "free_gb": free_gb}
+                self._publish_control({"type": "disk_action", **self.disk_action})
+            self._stop.wait(DISK_CHECK_INTERVAL)
+
+    def _enable_backup_now(self) -> bool:
+        """Turn on remote backup mid-recording. BackupStreamer always tails from right after the
+        raw header, so this catches up the whole recording so far, not just what's written after
+        this point — a genuine safety net, not just a "protect what's left" measure."""
+        if self.backup is not None:
+            return False
+        bcfg = load_backup_config(self.captures_root)
+        if not bcfg.get("enabled") or not bcfg.get("server_url"):
+            return False
+        try:
+            self.backup = BackupStreamer(
+                self.id, os.path.join(self.dir, "raw.d1raw"), bcfg["server_url"], self.cfg
+            )
+            self.backup.start()
+            return True
+        except Exception:
+            self.backup = None
+            return False
+
+    def join_finalize(self, timeout: float | None = None) -> None:
+        """Block until the background finalize (mat/live_cache/summary write) completes, if one is
+        running. stop() no longer waits for this — only the caller who truly needs the finished
+        artifacts (e.g. graceful shutdown, before the process may be killed) should call it."""
+        if self._finalize_thread:
+            self._finalize_thread.join(timeout)
 
     # ---- worker ----
     def _run(self) -> None:
@@ -118,26 +189,47 @@ class RecordingSession:
             if self.backup:
                 self.backup.stop()
             if self.n_total > 0:
-                try:
-                    self.state = "finalizing"
-                    write_manifest(self.dir, "finalizing", self.cfg)
-                    self.summary = finalize(self.dir, self.cfg)
-                    self.state = "error" if self.error else "done"
-                except Exception as e:
-                    self.error = self.error or f"finalize error: {e}"  # keep the original cause
-                    self.state = "error"
+                # finalize() does the CPU-heavy work (full-resolution compressed .mat write, D1LC
+                # decimation) — run it off this thread so stop()'s join() (and thus the /record/stop
+                # HTTP response) returns as soon as the raw capture is safely flushed, instead of
+                # blocking for however long that write takes. The "done" state/summary reach the
+                # client via the WS control message published below, same as before.
+                self.state = "finalizing"
+                write_manifest(self.dir, "finalizing", self.cfg)
+                self._finalize_thread = threading.Thread(
+                    target=self._finalize_async, name=f"rec-finalize-{self.id}", daemon=True
+                )
+                self._finalize_thread.start()
             else:
                 self.state = "error" if self.error else "done"
-            write_manifest(self.dir, self.state, self.cfg, self.error)
-            self._publish_control(
-                {
-                    "type": "done",
-                    "id": self.id,
-                    "state": self.state,
-                    "error": self.error,
-                    "summary": self.summary,
-                }
-            )
+                write_manifest(self.dir, self.state, self.cfg, self.error)
+                self._publish_control(
+                    {
+                        "type": "done",
+                        "id": self.id,
+                        "state": self.state,
+                        "error": self.error,
+                        "summary": self.summary,
+                    }
+                )
+
+    def _finalize_async(self) -> None:
+        try:
+            self.summary = finalize(self.dir, self.cfg)
+            self.state = "error" if self.error else "done"
+        except Exception as e:
+            self.error = self.error or f"finalize error: {e}"  # keep the original cause
+            self.state = "error"
+        write_manifest(self.dir, self.state, self.cfg, self.error)
+        self._publish_control(
+            {
+                "type": "done",
+                "id": self.id,
+                "state": self.state,
+                "error": self.error,
+                "summary": self.summary,
+            }
+        )
 
     def _consume(self) -> None:
         seq = 0
@@ -146,6 +238,8 @@ class RecordingSession:
             if item is None:
                 break
             t, data = item
+            if t.size == 0:
+                continue
             self.raw.append(t, data)  # never dropped — source of truth
             axes = sum_axes(data)
             for i, ax in enumerate(("Fx", "Fy", "Fz")):
@@ -236,4 +330,6 @@ class RecordingSession:
         }
         if self.backup:
             s["backup"] = self.backup.status()
+        if self.disk_action:
+            s["disk_action"] = self.disk_action
         return s

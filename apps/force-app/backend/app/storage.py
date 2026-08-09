@@ -127,7 +127,13 @@ def _volume_label(root: str) -> str:
 
 
 def disk_usage_for(path: str) -> dict:
-    """Return disk usage for the partition containing `path`."""
+    """Return disk usage for the partition containing `path`.
+
+    On failure `free_gb` is None, NOT 0 — the difference matters: a caller that reads a failed stat
+    as "0 GB free" concludes the disk is full. `Session._watch_disk` would then force-stop a healthy
+    recording over one transient error, which is a real risk now that the captures root can live on
+    a removable or network drive. None means "unknown"; callers must decide explicitly.
+    """
     try:
         u = shutil.disk_usage(path)
         return {
@@ -137,9 +143,15 @@ def disk_usage_for(path: str) -> dict:
             "used_pct": round((u.total - u.free) / u.total * 100, 1) if u.total else 0,
         }
     except OSError:
-        return {"path": path, "total_gb": 0, "free_gb": 0, "used_pct": 0}
+        return {"path": path, "total_gb": None, "free_gb": None, "used_pct": None}
+
+
+# The raw writer is float32 (`d1rw.py` writes dtype "<f4", and recovery.py computes
+# row_bytes = n_cols * 4) — 4 bytes per sample, not 8. Assuming float64 doubles every size estimate
+# and bandwidth readout, which turns into spurious "not enough disk space" prompts.
+RAW_BYTES_PER_SAMPLE = 4
 
 
 def estimate_recording_size_gb(sample_rate: float, duration_sec: float, n_channels: int = 10) -> float:
-    """Estimate recording file size in GB (raw float64 per sample)."""
-    return sample_rate * duration_sec * n_channels * 8 / 1e9
+    """Estimate recording file size in GB (raw float32 per sample)."""
+    return sample_rate * duration_sec * n_channels * RAW_BYTES_PER_SAMPLE / 1e9

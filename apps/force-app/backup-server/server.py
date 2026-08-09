@@ -190,6 +190,35 @@ async def ingest_chunk(request: Request) -> dict:
     chunk = await request.body()
     if not chunk:
         return {"ok": True, "appended": 0}
+
+    # Offset-addressed append. The client re-sends from its last acknowledged offset whenever it
+    # didn't see our response — including when we DID write the bytes and only the response was
+    # lost — so a blind append duplicates them. .d1raw is fixed-width interleaved rows, so a single
+    # duplicated chunk misaligns every row after it and silently corrupts the whole backup.
+    # Overlap is the NORMAL retry shape, not an error: the client's re-read starts at the old
+    # offset but runs to the current end of file, so it legitimately carries both bytes we already
+    # have and bytes we don't. Skip the prefix we already hold and append only the genuinely new
+    # tail — that makes the write idempotent under arbitrary retries.
+    # Older clients send no X-Offset; fall back to the legacy blind append so they keep working.
+    size = os.path.getsize(raw_path) if os.path.isfile(raw_path) else 0
+    raw_offset = request.headers.get("X-Offset")
+    if raw_offset is not None:
+        try:
+            offset = int(raw_offset)
+        except ValueError:
+            raise HTTPException(400, f"invalid X-Offset: {raw_offset!r}")
+        if offset < 0:
+            raise HTTPException(400, f"invalid X-Offset: {offset}")
+        if offset > size:
+            # A gap means bytes were lost in transit; appending here would leave a hole and
+            # misalign everything after it. Refuse — the client still holds the authoritative copy.
+            raise HTTPException(
+                409, f"offset {offset} is beyond current size {size} — refusing to leave a gap"
+            )
+        already_have = size - offset
+        if already_have >= len(chunk):
+            return {"ok": True, "appended": 0, "duplicate": True, "size": size}
+        chunk = chunk[already_have:]
     with open(raw_path, "ab") as f:
         f.write(chunk)
     # Update timestamp in meta

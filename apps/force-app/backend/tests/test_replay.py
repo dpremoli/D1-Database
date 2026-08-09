@@ -70,6 +70,7 @@ def test_replay_end_to_end(tmp_path):
     sess = RecordingSession(cfg, str(tmp_path), src, broadcaster=None)
     sess.start()
     sess._thread.join(30)
+    sess.join_finalize(30)
     assert sess.state == "done", sess.error
     buf = open(f"{sess.dir}/live_cache.bin", "rb").read()
     out = d1lc.parse_d1lc(buf)

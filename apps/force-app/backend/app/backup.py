@@ -29,12 +29,29 @@ MAX_CHUNK_BYTES = 4 * 1024 * 1024  # 4 MB per HTTP POST
 
 
 def _config_path(captures_root: str) -> str:
-    return os.path.join(captures_root, "backup_config.json")
+    """Where the backup settings live.
+
+    When BACKUP_CONFIG_PATH is set (main.py does so at import) it wins, and it deliberately points
+    OUTSIDE the captures root: storing these settings on the recording drive tied them to whichever
+    drive was selected, so repointing the drive silently reverted backup to {"enabled": False} with
+    no UI indication — /backup/status reads the same now-empty config, so it looks correctly
+    disabled while recordings go unprotected.
+
+    Falling back to captures_root when it is unset keeps the function injectable, which is what
+    lets tests point it at a tmp_path instead of writing to the real installed config.
+    """
+    return BACKUP_CONFIG_PATH or os.path.join(captures_root, "backup_config.json")
 
 
 def load_config(captures_root: str) -> dict:
     cfg = {"enabled": False, "server_url": "", "retention_hours": 12}
     path = _config_path(captures_root)
+    if not os.path.isfile(path):
+        # Fall back to the pre-move location so an existing install doesn't silently lose its
+        # backup settings the first time it starts on the new path.
+        legacy = os.path.join(captures_root, "backup_config.json")
+        if os.path.isfile(legacy):
+            path = legacy
     try:
         with open(path) as f:
             cfg.update(json.load(f))
@@ -71,6 +88,26 @@ def list_remote_sessions(server_url: str, timeout: float = 8.0) -> list[dict]:
             return data.get("sessions", [])
     except Exception:
         return []
+
+
+def fetch_remote_session_config(server_url: str, session_id: str, timeout: float = 8.0) -> dict:
+    """Return the RecordConfig dict the recorder sent to /ingest/start for this session.
+
+    Restoring the raw bytes alone is not enough to reconstruct a recording: without this config
+    finalize falls back to a default RecordConfig with empty `dyno_gains`, applies the scalar
+    gain=1.0, and writes out raw amplifier VOLTS while labelling them newtons. Returns {} if the
+    server has no config for the session, in which case the caller must not fabricate one.
+    """
+    try:
+        url = f"{server_url.rstrip('/')}/sessions/{session_id}/info"
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            info = json.loads(r.read())
+        cfg = (info.get("meta") or {}).get("config") or {}
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception as e:
+        log.warning("could not fetch remote config for %s: %s", session_id, e)
+        return {}
 
 
 def download_remote_raw(server_url: str, session_id: str, dest_path: str,
@@ -156,7 +193,17 @@ class BackupStreamer:
             self.error = str(e)
             return None
 
-    def _post_chunk(self, chunk: bytes, timeout: float = 15.0) -> bool:
+    def _post_chunk(self, chunk: bytes, offset: int, timeout: float = 15.0) -> bool:
+        """POST one chunk, telling the server exactly where in the file it belongs.
+
+        The offset makes the write idempotent, which matters because a failure here is ambiguous:
+        a read timeout after the server has already appended looks identical to a chunk that never
+        arrived, and either way we return False and leave `offset` unadvanced, so the same bytes
+        are re-sent next interval. Without the offset the server would append them a second time —
+        and since .d1raw is fixed-width interleaved rows, one duplicated chunk misaligns every row
+        after it and silently ruins the whole backup. The server drops any chunk that doesn't start
+        exactly at its current file size.
+        """
         try:
             req = urllib.request.Request(
                 f"{self.server_url}/ingest/chunk",
@@ -164,6 +211,7 @@ class BackupStreamer:
                 headers={
                     "Content-Type": "application/octet-stream",
                     "X-Session-ID": self.session_id,
+                    "X-Offset": str(offset),
                 },
                 method="POST",
             )
@@ -248,7 +296,7 @@ class BackupStreamer:
                         chunk = f.read(to_read)
                         if not chunk:
                             break
-                        if self._post_chunk(chunk):
+                        if self._post_chunk(chunk, offset):
                             offset += len(chunk)
                             self.bytes_sent = offset
                             self.chunks_sent += 1
@@ -270,7 +318,7 @@ class BackupStreamer:
                         chunk = f.read(min(MAX_CHUNK_BYTES, file_size - offset))
                         if not chunk:
                             break
-                        if self._post_chunk(chunk):
+                        if self._post_chunk(chunk, offset):
                             offset += len(chunk)
                             self.bytes_sent = offset
                             self.chunks_sent += 1

@@ -5,6 +5,7 @@ import os
 import time
 
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main
@@ -192,6 +193,71 @@ def test_storage_config_get(tmp_path, monkeypatch):
         assert "free_gb" in data
         assert "total_gb" in data
         assert "captures_root" in data
+
+
+def test_disk_usage_reports_none_when_stat_fails(monkeypatch):
+    """A failed stat must read as UNKNOWN, not as a full disk.
+
+    Returning 0 here made `Session._watch_disk` force-stop a healthy recording over one transient
+    error — the exact recordings the disk guard exists to protect.
+    """
+    from app import storage
+
+    def _boom(_path):
+        raise OSError("drive disconnected")
+
+    monkeypatch.setattr(storage.shutil, "disk_usage", _boom)
+    usage = storage.disk_usage_for("D:\\nonexistent")
+    assert usage["free_gb"] is None
+    assert usage["total_gb"] is None
+
+
+def test_watch_disk_ignores_unknown_free_space(tmp_path, monkeypatch):
+    """An unreadable drive must not trip the forced-stop path."""
+    from app import session as session_mod
+
+    monkeypatch.setattr(session_mod, "disk_usage_for", lambda _p: {"free_gb": None})
+
+    class _FakeSession:
+        state = "recording"
+        captures_root = str(tmp_path)
+        backup = None
+        disk_action = None
+        error = None
+        stopped = False
+
+        def stop(self, wait=True):
+            self.stopped = True
+
+        def _publish_control(self, msg):
+            pass
+
+        def _enable_backup_now(self):
+            return False
+
+    s = _FakeSession()
+    # Pre-set the stop event so the watcher takes exactly one pass and exits.
+    import threading
+    s._stop = threading.Event()
+
+    def _wait(_timeout):
+        s._stop.set()
+        return True
+
+    s._stop.wait = _wait  # type: ignore[method-assign]
+    session_mod.RecordingSession._watch_disk(s)  # type: ignore[arg-type]
+
+    assert s.stopped is False, "unknown free space must not force-stop the recording"
+    assert s.disk_action is None
+    assert s.error is None
+
+
+def test_estimate_recording_size_uses_float32_rows():
+    """The raw writer emits float32 — assuming float64 doubled every size estimate."""
+    from app import storage
+
+    # 1000 Hz * 10 s * 10 cols * 4 bytes = 400_000 bytes
+    assert storage.estimate_recording_size_gb(1000, 10, 10) == pytest.approx(400_000 / 1e9)
 
 
 def test_storage_drives_list(tmp_path, monkeypatch):

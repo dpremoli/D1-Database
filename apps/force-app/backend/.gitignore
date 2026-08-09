@@ -5,3 +5,4 @@ captures/
 *.d1raw
 labamp.json
 .pytest_cache/
+logs/

@@ -14,7 +14,7 @@ import os
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
@@ -55,6 +55,13 @@ def _load_captures_root() -> str:
 CAPTURES_ROOT = _load_captures_root()
 os.makedirs(CAPTURES_ROOT, exist_ok=True)
 
+# Pin the backup settings next to storage_config.json rather than inside the captures root. Both
+# have to survive the user changing the recording drive — a config stored on the drive it configures
+# disappears the moment that drive is swapped, which for backup meant it silently turned itself off.
+backup_mod.BACKUP_CONFIG_PATH = os.path.join(
+    os.path.dirname(STORAGE_CONFIG_PATH), "backup_config.json"
+)
+
 _broadcaster: Broadcaster | None = None
 _session: RecordingSession | None = None
 
@@ -93,7 +100,9 @@ _labamp = None  # type: ignore[assignment]
 def _rebuild_labamp() -> None:
     global _labamp
     _labamp = (
-        MockLabAmp() if _labamp_cfg.get("mode") == "mock" else LabAmpClient(_labamp_cfg["base_url"])
+        MockLabAmp(_labamp_cfg["base_url"])
+        if _labamp_cfg.get("mode") == "mock"
+        else LabAmpClient(_labamp_cfg["base_url"])
     )
 
 
@@ -104,11 +113,24 @@ _rebuild_labamp()
 async def lifespan(app: FastAPI):
     global _broadcaster
     _broadcaster = Broadcaster(asyncio.get_running_loop())
+    # Pre-warm the nidaqmx import (can take hundreds of ms the first time) in the background so it's
+    # not paid as start-latency on the first NI-DAQ recording after a backend restart.
+    def _warm_nidaq():
+        try:
+            from .sources.nidaq import nidaq_available
+            nidaq_available()
+        except Exception:
+            pass
+    asyncio.get_running_loop().run_in_executor(None, _warm_nidaq)
     yield
     # Graceful shutdown: stop any active recording so the raw file is properly closed and finalized.
+    # finalize() now runs in its own background thread (see session.py) so normal /record/stop calls
+    # return quickly — but here, where the process may be killed right after, we must wait for it to
+    # actually finish writing the .mat/live_cache/summary before letting that thread die with them.
     if _session and _session.state in ("recording", "finalizing"):
         try:
             _session.stop(wait=True, timeout=15.0)
+            _session.join_finalize(timeout=30.0)
         except Exception:
             pass
 
@@ -217,6 +239,12 @@ async def health_check() -> dict:
     if amp_url:
         checks.append(probe("LabAmp", f"{amp_url}/", 3.0))
 
+    # Backup server
+    bcfg = backup_mod.load_config(CAPTURES_ROOT)
+    backup_url = bcfg.get("server_url", "")
+    if backup_url:
+        checks.append(probe("Backup server", f"{backup_url}/health", 5.0))
+
     # Disk space
     disk = storage.disk_usage_for(CAPTURES_ROOT)
 
@@ -229,6 +257,278 @@ async def health_check() -> dict:
             probes.append(r)
 
     return {"probes": probes, "disk": disk}
+
+
+@app.api_route("/health/doctor", methods=["GET", "POST"])
+async def health_doctor(request: Request) -> dict:
+    """Deep diagnostic: check each service, diagnose failures, suggest fixes."""
+    import socket
+    import subprocess
+
+    body: dict = {}
+    if request.method == "POST":
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+    findings: list[dict] = []
+
+    # Both of these block for up to their timeout, and the doctor runs ~6 port probes plus several
+    # DNS lookups per call — left on the event loop that's several seconds of a frozen backend
+    # (frame broadcast, /record/stop) every time someone opens the Connectivity pane. Threadpooled
+    # like _http_probe below already is.
+    async def _check_port(host: str, port: int, timeout: float = 3.0) -> bool:
+        def _do() -> bool:
+            try:
+                with socket.create_connection((host, port), timeout=timeout):
+                    return True
+            except (OSError, TimeoutError):
+                return False
+        return await run_in_threadpool(_do)
+
+    def _find_process(name_pattern: str) -> list[dict]:
+        try:
+            out = subprocess.check_output(
+                ["tasklist", "/FI", f"IMAGENAME eq {name_pattern}", "/FO", "CSV", "/NH"],
+                text=True, timeout=5, creationflags=0x08000000,
+            )
+            procs = []
+            for line in out.strip().splitlines():
+                parts = line.strip('"').split('","')
+                if len(parts) >= 2 and parts[0].lower() != "info:":
+                    procs.append({"name": parts[0], "pid": parts[1]})
+            return procs
+        except Exception:
+            return []
+
+    async def _http_probe(label: str, url: str, timeout: float = 4.0) -> dict:
+        import urllib.request, urllib.error
+        def _do():
+            try:
+                req = urllib.request.Request(url, method="GET")
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    return {"label": label, "url": url, "ok": r.status < 500, "status": r.status}
+            except urllib.error.HTTPError as e:
+                return {"label": label, "url": url, "ok": False, "status": e.code, "error": f"HTTP {e.code}"}
+            except Exception as e:
+                return {"label": label, "url": url, "ok": False, "error": str(type(e).__name__)}
+        return await run_in_threadpool(_do)
+
+    async def _resolve_host(hostname: str) -> str | None:
+        def _do() -> str | None:
+            try:
+                return socket.gethostbyname(hostname)
+            except socket.gaierror:
+                return None
+        return await run_in_threadpool(_do)
+
+    # 1. Recorder backend (self — always ok since we're serving this request)
+    findings.append({
+        "service": "Recorder backend",
+        "status": "ok",
+        "message": "Running (serving this request)",
+    })
+
+    # 2. Internet
+    internet_ok = await _check_port("www.google.com", 443, 4.0)
+    if internet_ok:
+        findings.append({"service": "Internet", "status": "ok", "message": "Connected"})
+    else:
+        findings.append({
+            "service": "Internet", "status": "fail",
+            "message": "No internet connectivity",
+            "diagnosis": "Cannot reach www.google.com:443. Check network cable, Wi-Fi, or VPN.",
+            "fix": None,
+        })
+
+    # 3. Directus / database
+    directus_url = os.environ.get("DIRECTUS_URL", "")
+    if directus_url:
+        parsed = urlparse(directus_url)
+        host = parsed.hostname or ""
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        resolved = await _resolve_host(host)
+        port_ok = await _check_port(host, port) if resolved else False
+        if port_ok:
+            findings.append({"service": "Directus", "status": "ok", "message": f"Reachable at {directus_url}"})
+        elif not resolved:
+            findings.append({
+                "service": "Directus", "status": "fail",
+                "message": f"DNS lookup failed for {host}",
+                "diagnosis": f"Cannot resolve hostname '{host}'. If using Tailscale, ensure it is connected. Check DIRECTUS_URL env var.",
+                "fix": "Connect to Tailscale or verify the hostname is correct.",
+            })
+        else:
+            findings.append({
+                "service": "Directus", "status": "fail",
+                "message": f"Host {host} resolved ({resolved}) but port {port} refused",
+                "diagnosis": "The server is reachable but Directus is not listening on the expected port.",
+                "fix": f"Verify Directus is running on {host}:{port}.",
+            })
+    else:
+        findings.append({
+            "service": "Directus", "status": "warn",
+            "message": "DIRECTUS_URL not configured",
+            "diagnosis": "No DIRECTUS_URL environment variable set. Database features (sample lookup, upload) are disabled.",
+            "fix": "Set the environment variable before starting the backend, then restart:",
+            "fix_command": '$env:DIRECTUS_URL = "https://d1-server.tail54eeb6.ts.net"; python -m uvicorn app.main:app --host 0.0.0.0 --port 8200',
+        })
+
+    # 4. LabAmp
+    amp_url = _labamp_cfg.get("base_url", "")
+    amp_mode = _labamp_cfg.get("mode", "mock")
+    if amp_mode == "mock":
+        findings.append({"service": "LabAmp", "status": "ok", "message": "Mock mode (no hardware)"})
+    elif amp_url:
+        parsed = urlparse(amp_url)
+        host = parsed.hostname or ""
+        port = parsed.port or 80
+        port_ok = await _check_port(host, port, 3.0)
+        if port_ok:
+            findings.append({"service": "LabAmp", "status": "ok", "message": f"Reachable at {amp_url}"})
+        else:
+            is_link_local = host.startswith("169.254.")
+            findings.append({
+                "service": "LabAmp", "status": "fail",
+                "message": f"Cannot reach {host}:{port}",
+                "diagnosis": (
+                    f"LabAmp at {amp_url} is not responding. "
+                    + ("This is a link-local address — ensure the Ethernet cable is connected directly to the amp and the NIC has a 169.254.x.x address." if is_link_local else "Check that the amplifier is powered on and the network config is correct.")
+                ),
+                "fix": "Power-cycle the LabAmp, check the Ethernet cable, or verify the IP address in labamp.json.",
+            })
+
+    # 5. Filter service & Octree server (URLs passed from frontend)
+    for svc_key, svc_label in [("filter_url", "Filter service"), ("octree_url", "Octree server")]:
+        svc_url = body.get(svc_key, "")
+        if not svc_url:
+            continue
+        parsed = urlparse(svc_url)
+        host = parsed.hostname or ""
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        resolved = await _resolve_host(host)
+        port_ok = await _check_port(host, port, 3.0) if resolved else False
+        if port_ok:
+            # Port is open — try an HTTP request to verify the service responds
+            probe_result = await _http_probe(svc_label, svc_url + ("/health" if "filter" in svc_key else "/"), 4.0)
+            if probe_result["ok"]:
+                findings.append({"service": svc_label, "status": "ok", "message": f"Reachable at {svc_url}"})
+            else:
+                status = probe_result.get("status", "")
+                err = probe_result.get("error", "")
+                if status == 404 and "octree" in svc_key:
+                    findings.append({"service": svc_label, "status": "ok", "message": f"Server running at {svc_url}"})
+                else:
+                    findings.append({
+                        "service": svc_label, "status": "warn",
+                        "message": f"Port open but service returned {err or f'HTTP {status}'}",
+                        "diagnosis": f"Something is listening on {host}:{port} but the {svc_label.lower()} endpoint did not respond as expected.",
+                    })
+        elif not resolved:
+            findings.append({
+                "service": svc_label, "status": "fail",
+                "message": f"DNS lookup failed for {host}",
+                "diagnosis": f"Cannot resolve hostname '{host}'.",
+                "fix": f"Check the {svc_label} URL in Settings > General.",
+            })
+        else:
+            is_caddy = host in ("localhost", "127.0.0.1") and port == 80
+            findings.append({
+                "service": svc_label, "status": "fail",
+                "message": f"Cannot reach {host}:{port}",
+                "diagnosis": (
+                    f"Nothing is listening on port {port}. "
+                    + ("The local web server (Caddy) may not be running." if is_caddy else f"Check that the service is running on {host}.")
+                ),
+                "fix": "Start the local web server (Caddy) that serves filter and octree endpoints." if is_caddy else f"Start the {svc_label.lower()} or fix the URL in Settings > General.",
+                "fix_command": 'caddy run --config Caddyfile' if is_caddy else None,
+            })
+
+    # 6. Backup server
+    bcfg = backup_mod.load_config(CAPTURES_ROOT)
+    backup_url = bcfg.get("server_url", "")
+    if backup_url:
+        parsed = urlparse(backup_url)
+        host = parsed.hostname or ""
+        port = parsed.port or 80
+        resolved = await _resolve_host(host)
+        port_ok = await _check_port(host, port, 4.0) if resolved else False
+        if port_ok:
+            findings.append({"service": "Backup server", "status": "ok", "message": f"Reachable at {backup_url}"})
+        elif not resolved:
+            is_tailscale = ".ts.net" in host
+            findings.append({
+                "service": "Backup server", "status": "fail",
+                "message": f"DNS lookup failed for {host}",
+                "diagnosis": (
+                    f"Cannot resolve '{host}'. "
+                    + ("This is a Tailscale hostname — ensure Tailscale is running and connected." if is_tailscale else "Check that the hostname is correct.")
+                ),
+                "fix": "Connect to Tailscale or correct the backup server URL in Settings > Live Backup.",
+            })
+        else:
+            # Host resolves but port is closed — maybe the server process isn't running
+            findings.append({
+                "service": "Backup server", "status": "fail",
+                "message": f"Host {host} resolved ({resolved}) but port {port} refused",
+                "diagnosis": f"The backup server host is reachable but nothing is listening on port {port}. The backup-server process may not be running.",
+                "fix": "The backup-server process is not running on the remote host.",
+                "fix_command": f"cd \"{os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'backup-server'))}\"; python -m uvicorn server:app --host 0.0.0.0 --port {port}",
+            })
+    elif bcfg.get("enabled"):
+        findings.append({
+            "service": "Backup server", "status": "fail",
+            "message": "Backup enabled but no server URL configured",
+            "diagnosis": "Live backup is enabled in settings but the server URL is empty.",
+            "fix": "Set the backup server URL in Settings > Live Backup (e.g. http://d1-server.tail54eeb6.ts.net:8210).",
+        })
+    else:
+        findings.append({
+            "service": "Backup server", "status": "info",
+            "message": "Not configured — enable in Settings > Live Backup to stream recordings to a remote server",
+        })
+
+    # 6. Disk space
+    disk = storage.disk_usage_for(CAPTURES_ROOT)
+    if disk["free_gb"] is None:
+        findings.append({
+            "service": "Disk space", "status": "warn",
+            "message": "Could not read free space on the recording drive",
+            "diagnosis": f"Reading disk usage for {CAPTURES_ROOT} failed. The drive may be "
+                         "disconnected, offline, or a network path that is unreachable.",
+            "fix": "Check the recording drive is connected, then set it again in Settings > General.",
+        })
+    elif disk["free_gb"] < 5:
+        findings.append({
+            "service": "Disk space", "status": "fail",
+            "message": f"Only {disk['free_gb']:.1f} GB free on recording drive",
+            "diagnosis": "Critically low disk space. Recordings will likely fail.",
+            "fix": "Free up space or change the recording drive in Settings > General.",
+        })
+    elif disk["free_gb"] < 20:
+        findings.append({
+            "service": "Disk space", "status": "warn",
+            "message": f"{disk['free_gb']:.1f} GB free — running low",
+            "diagnosis": "Disk space is limited. Long recordings at high sample rates may fill the drive.",
+            "fix": "Consider freeing space or switching to a drive with more capacity.",
+        })
+    else:
+        findings.append({"service": "Disk space", "status": "ok", "message": f"{disk['free_gb']:.1f} GB free"})
+
+    # 7. Incomplete recordings
+    incomplete = recovery.scan_incomplete(CAPTURES_ROOT)
+    if incomplete:
+        total_mb = sum(s.get("raw", {}).get("raw_size_mb", 0) for s in incomplete)
+        findings.append({
+            "service": "Crashed recordings", "status": "warn",
+            "message": f"{len(incomplete)} incomplete recording(s) found ({total_mb:.0f} MB)",
+            "diagnosis": "Previous recordings did not finalize — likely from a crash or forced shutdown.",
+            "fix": "Go to the Record page to recover or discard them, or use Settings > General to purge.",
+            "fixable": "purge_incomplete",
+        })
+
+    all_ok = all(f["status"] in ("ok", "info") for f in findings)
+    return {"healthy": all_ok, "findings": findings, "disk": disk}
 
 
 # ---- Recovery of crashed recordings ----
@@ -320,6 +620,37 @@ async def backup_restore(session_id: str) -> dict:
         )
     except Exception as e:
         raise HTTPException(502, f"download failed: {e}")
+
+    # Recover the ORIGINAL config too, not just the bytes. recover_session reads the per-channel
+    # dyno_gains out of manifest.json; with no manifest it builds a default RecordConfig whose
+    # dyno_gains are empty, so finalize applies the scalar gain=1.0 and the restored .mat/live_cache
+    # hold raw amplifier volts mislabelled as newtons — wrong by a per-channel factor, and not
+    # obviously wrong when you look at it. Write the manifest before finalizing.
+    remote_cfg = await run_in_threadpool(
+        backup_mod.fetch_remote_session_config, url, session_id
+    )
+    if remote_cfg:
+        try:
+            # Same None-filtering recover_session uses — a null in the stored config would
+            # otherwise fail validation against a non-optional field.
+            restored_cfg = RecordConfig(**{k: v for k, v in remote_cfg.items() if v is not None})
+            await run_in_threadpool(
+                recovery.write_manifest, capture_dir, "restored", restored_cfg
+            )
+        except Exception as e:
+            raise HTTPException(
+                500,
+                f"restored raw bytes but could not apply the original recording config ({e}); "
+                "finalizing now would silently produce volts instead of newtons",
+            )
+    else:
+        raise HTTPException(
+            502,
+            "the backup server has no recording config for this session, so the per-channel "
+            "gains needed to convert volts to newtons are unknown — refusing to finalize with "
+            "incorrect scaling. The raw file has been downloaded and is safe.",
+        )
+
     # Finalize the downloaded raw file
     try:
         summary = await run_in_threadpool(recovery.recover_session, CAPTURES_ROOT, session_id)
@@ -361,7 +692,9 @@ async def record_start(cfg: RecordConfig) -> dict:
         if not cfg.dyno_gains:
             try:
                 vfs = float(_labamp_cfg.get("analog_fullscale_v", 10.0))
-                rows = sorted(_labamp.sensor_table(8), key=lambda x: x["channel"])
+                # Blocking LAN round-trip to the amp — off the event loop so it doesn't stall other
+                # concurrent requests while this one waits on it.
+                rows = sorted(await run_in_threadpool(_labamp.sensor_table, 8), key=lambda x: x["channel"])
                 gains = [float(r.get("range") or vfs) / vfs for r in rows][:8]
                 if len(gains) == 8:
                     cfg.dyno_gains = gains
@@ -417,7 +750,11 @@ async def record_start_replay(
 async def record_stop() -> dict:
     if not _session or _session.state not in ("recording", "finalizing"):
         raise HTTPException(409, "no recording in progress")
-    await run_in_threadpool(_session.stop, True, 60.0)
+    # finalize() now runs in the background (session.py), so `state` may already be "finalizing"
+    # from a prior call — don't re-invoke stop() (source.stop() etc.) in that case, just report it.
+    # The client learns of the eventual "done"/summary via the WS control message, not this response.
+    if _session.state == "recording":
+        await run_in_threadpool(_session.stop, True, 60.0)
     return {
         "id": _session.id,
         "state": _session.state,
@@ -438,6 +775,48 @@ async def list_captures() -> dict:
         reverse=True,
     )
     return {"captures": ids}
+
+
+@app.get("/captures/recent")
+async def list_recent_captures(limit: int = 20, q: str = "") -> dict:
+    """Lightweight summaries of the most recent local captures — used by the Auto Range 'previous
+    run' picker, which needs each capture's full per-channel peaks (channels_ranging.peaks_n).
+    Directus's machining_force_analysis only stores the 3 summed-axis peaks, not per-channel, so a
+    previously-uploaded operation only gets an approximated per-channel split there (see the
+    frontend's searchPastOperations) — this endpoint is the source of the EXACT numbers, for
+    whatever is still local. Bounded + best-effort per capture so one corrupt/partial summary.json
+    can't break the whole list. `q` filters by substring match (case-insensitive) on the capture id
+    or sample name; matching scans further back than `limit` so an older match isn't hidden behind
+    more-recent-but-non-matching captures."""
+    ids = sorted(
+        (d for d in os.listdir(CAPTURES_ROOT) if os.path.isdir(os.path.join(CAPTURES_ROOT, d))),
+        reverse=True,
+    )
+    needle = q.strip().lower()
+    scan_cap = max(1, min(limit, 100)) if not needle else 200
+    out = []
+    for cid in ids[:scan_cap]:
+        try:
+            with open(os.path.join(CAPTURES_ROOT, cid, "summary.json")) as f:
+                s = json.load(f)
+            ranging = s.get("channels_ranging") or {}
+            peaks_n = ranging.get("peaks_n")
+            if not peaks_n:
+                continue  # older/partial summary.json without per-channel ranging data
+            sample_name = s.get("sample_name") or cid
+            if needle and needle not in cid.lower() and needle not in sample_name.lower():
+                continue
+            out.append({
+                "id": cid,
+                "sample_name": sample_name,
+                "duration_sec": s.get("duration_sec"),
+                "peaks_n": peaks_n,
+            })
+            if len(out) >= max(1, min(limit, 100)):
+                break
+        except (OSError, ValueError):
+            continue
+    return {"captures": out}
 
 
 def _capture_file(cid: str, name: str) -> str:
@@ -845,9 +1224,15 @@ async def nidaq_tacho_status() -> dict:
 # ---- Audio: force system volume to maximum for catastrophic alarms ----
 @app.post("/audio/maxvolume")
 async def audio_max_volume() -> dict:
-    """Set the Windows system volume to 100% (best-effort, requires pycaw or nircmd)."""
+    """Set the Windows system volume to 100% (best-effort, requires pycaw or nircmd).
 
-    async def _set_vol():
+    Runs off the event loop: the frontend POSTs this from `alarms.ts:forceMaxVolume()` on every
+    alarm trip — i.e. precisely while a recording is streaming frames over the WebSocket. A
+    synchronous PowerShell launch here stalls the whole backend (frame broadcast, /record/stop)
+    for as long as it takes to start, which is the worst possible moment for it.
+    """
+
+    def _set_vol():
         import platform
 
         if platform.system() != "Windows":
@@ -872,7 +1257,7 @@ async def audio_max_volume() -> dict:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    return await _set_vol()
+    return await run_in_threadpool(_set_vol)
 
 
 @app.websocket("/record/stream")
