@@ -56,7 +56,10 @@ export async function flush(): Promise<void> {
 				item.lastError = e?.message || 'write failed';
 				if (status && status >= 400 && status < 500 && status !== 429) {
 					// permanent (validation/permission): keep for manual retry but stop the run and surface it
-					syncStatus.lastError = `${status}: ${(JSON.stringify(e?.response?.data?.errors?.[0]?.message ?? '') || item.lastError).slice(0, 160)}`;
+					// item.lastError! : assigned a non-empty string three lines up, but the
+					// JSON.stringify() call in this same expression invalidates TS's narrowing
+					// of the property (the call could in principle mutate `item`).
+					syncStatus.lastError = `${status}: ${(JSON.stringify(e?.response?.data?.errors?.[0]?.message ?? '') || item.lastError!).slice(0, 160)}`;
 					save(q);
 					break;
 				}
