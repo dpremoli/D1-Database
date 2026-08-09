@@ -86,3 +86,8 @@ logs/
 
 # Superpowers brainstorming visual-companion artifacts
 .superpowers/
+
+# npm workspace root
+/node_modules/
+# Vite dev cache
+apps/force-app/web/.vite/

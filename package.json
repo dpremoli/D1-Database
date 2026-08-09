@@ -1,0 +1,17 @@
+{
+  "name": "d1-database",
+  "private": true,
+  "version": "0.0.0",
+  "description": "D1 LIMS monorepo. Workspaces cover the JS/TS surfaces only; Python services and Directus SQL migrations are managed separately.",
+  "workspaces": [
+    "packages/*",
+    "apps/force-app/web",
+    "core/extensions/d1-force-dashboard"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build:web": "npm run build -w force-app-web",
+    "build:extension": "npm run build -w directus-extension-d1-force-dashboard"
+  }
+}
