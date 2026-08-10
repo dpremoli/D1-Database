@@ -137,7 +137,41 @@ completed with `LastTaskResult: 0`.
 Re-verify restorability periodically; the procedure is documented in the
 script's header comment.
 
-### 1. Extract plotting into a shared workspace package
+### 1. Extract plotting into a shared workspace package — **DONE 2026-08-10**
+
+Implemented per `docs/superpowers/plans/2026-08-09-force-plotting-shared-package.md`
+and live in production. `core/extensions/d1-force-dashboard/src/` went from 11 files
+to 2, `apps/force-app/web/src/force/` from 14 to 2 — roughly 4,240 duplicated lines
+removed.
+
+**The Directus surface gained five things it never had**, all previously
+standalone-only: `buildSeriesEnvelope()`, the `liveCloud` empty-array guards and NaN
+clamp (the FRM map rendering solid white), the two `FrmCloud` `renderer.clear()`
+white-flash fixes, and the deep-link operations-list filter.
+
+Three things learned in execution that the plan had wrong, recorded because each
+would mislead the next person:
+
+- **`EXTENSIONS_AUTO_RELOAD: "true"` does not fire across a Windows→Linux Docker
+  bind mount.** Rebuilding `dist/index.js` is *not* sufficient — Directus kept
+  serving the in-memory bundle it had loaded days earlier, and a full browser
+  test suite passed 11/11 against the stale code. Only an A/B on behaviour unique
+  to the new bundle caught it. **`docker restart d1-database-directus-1` is
+  required after any extension rebuild on this host.**
+- **The extension bundle is not tracked in git** — `.gitignore` excludes `dist/`.
+  It is a build artifact regenerated on the host, so there is nothing to commit at
+  cutover.
+- **The `/app/` browser surface needs redeploying too.** `docker-compose.yml`
+  bind-mounts `./apps/force-app/web/dist` into Caddy as `/srv/force-app`, so any
+  change to `apps/force-app/web` requires `npm run build:web` to reach users.
+  Unlike Directus this needs no restart — Caddy's `file_server` reads from disk per
+  request and `index.html` is served `no-cache`.
+
+Both surfaces were verified in a real browser after cutover: the Directus module
+narrows a deep-linked operations list from 108 rows to 3 (the fix it previously
+lacked), and `/app/` renders the dashboard with its sample list populated.
+
+The original decision text follows.
 
 Create `packages/force-plotting` as an npm workspace holding the single copy of
 `ForceDashboard.vue`, `FrmCloud.vue`, `ForceChart.vue`, `FrmOctree.vue`,

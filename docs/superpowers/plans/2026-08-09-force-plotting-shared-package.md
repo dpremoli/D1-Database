@@ -1183,7 +1183,14 @@ ls -l core/extensions/d1-force-dashboard/dist/index.js
 
 Expected: "Done", no unresolved-dependency warnings, fresh timestamp.
 
-- [ ] **Step 3: Restart Directus to load it**
+- [ ] **Step 3: Restart Directus to load it — MANDATORY, not optional**
+
+`docker-compose.yml:94` sets `EXTENSIONS_AUTO_RELOAD: "true"`, which looks like it makes
+this step unnecessary. **It does not.** Auto-reload depends on filesystem watch events,
+which do not propagate across a Windows→Linux Docker bind mount. In practice Directus
+kept serving the bundle it had loaded days earlier, and a full browser suite passed
+11/11 against the stale code — the rebuild was invisible. Only an A/B on behaviour
+unique to the new bundle exposed it. Always restart.
 
 ```bash
 "/c/Program Files/Docker/Docker/resources/bin/docker.exe" restart d1-database-directus-1
@@ -1213,17 +1220,32 @@ cp core/extensions/d1-force-dashboard/dist/index.js.bak-<stamp> \
 
 Then reopen the module to confirm the previous version is serving again before investigating.
 
-- [ ] **Step 6: Remove the backup and commit**
+- [ ] **Step 6: Redeploy the `/app/` browser surface**
+
+`docker-compose.yml` bind-mounts `./apps/force-app/web/dist` into Caddy as
+`/srv/force-app`, served at `/app/`. Task 8 refactored the app that produces it, so that
+surface is stale until rebuilt:
+
+```bash
+npm run build:web
+```
+
+No restart needed here — Caddy's `file_server` reads from disk per request and
+`index.html` is served `no-cache`. Verify by loading `http://localhost/app/`, logging in,
+and confirming the sample list populates.
+
+- [ ] **Step 7: Remove the backup**
 
 Only once Step 4 has passed:
 
 ```bash
 rm core/extensions/d1-force-dashboard/dist/index.js.bak-*
-git add core/extensions/d1-force-dashboard/dist/index.js
-git commit -m "build(force-dashboard): rebuild module from shared package"
 ```
 
-- [ ] **Step 7: Record completion in the ADR**
+**Nothing to commit.** `.gitignore:22` excludes `dist/`, so neither the rebuilt extension
+bundle nor the web build is tracked — both are build artifacts regenerated on the host.
+
+- [ ] **Step 8: Record completion in the ADR**
 
 Mark step 1 **DONE** in `docs/adr/0010-force-app-extraction-and-electron-packaging.md`, noting the four bug fixes and one function the Directus surface gained in the process, and commit.
 
