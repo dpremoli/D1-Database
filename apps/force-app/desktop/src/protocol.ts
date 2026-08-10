@@ -39,8 +39,10 @@ export function resolveRequestPath(
 
   const root = path.normalize(webDistDir);
   const candidate = path.normalize(path.join(root, pathname));
-  if (!candidate.startsWith(root)) {
+  if (candidate !== root && !candidate.startsWith(root + path.sep)) {
     // Traversal guard: a request like app://force/..%2f..%2fsecrets must not escape webDistDir.
+    // Use path boundary check (root + path.sep) to avoid false positives from string prefix matching
+    // (e.g., sibling directory "dist-evil" would incorrectly pass a simple startsWith("dist") check).
     return { filePath: '', is404: true };
   }
   if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {

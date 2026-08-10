@@ -56,4 +56,27 @@ describe('resolveRequestPath', () => {
     const { is404 } = resolveRequestPath('app://force/..%2f..%2fsecrets.txt', webDistDir, configFilePath);
     expect(is404).toBe(true);
   });
+
+  it('blocks traversal into sibling directory whose name shares root as string prefix', () => {
+    // Create a sibling directory with a name like webDistDir + '-evil' to test the boundary-aware check.
+    // This catches the vulnerability where startsWith(root) alone would incorrectly allow access
+    // to /foo/dist-evil/secrets.txt when root is /foo/dist.
+    const siblingDir = webDistDir + '-evil';
+    fs.mkdirSync(siblingDir);
+    fs.writeFileSync(path.join(siblingDir, 'secrets.txt'), 'confidential');
+
+    try {
+      // Try to traverse up one level (../) and into the sibling directory.
+      // The pathname must be URL-encoded but preserves the traversal pattern.
+      // We encode .. as %2e%2e and / as %2f to prevent URL normalization.
+      // This creates a pathname like /..%2f<siblingName>%2fsecrets.txt which decodes to
+      // /../<siblingName>/secrets.txt, causing path.join to resolve to the sibling directory.
+      const siblingName = path.basename(siblingDir);
+      const encodedPath = `/%2e%2e%2f${siblingName}%2fsecrets.txt`;
+      const { is404 } = resolveRequestPath(`app://force${encodedPath}`, webDistDir, configFilePath);
+      expect(is404).toBe(true);
+    } finally {
+      fs.rmSync(siblingDir, { recursive: true, force: true });
+    }
+  });
 });
