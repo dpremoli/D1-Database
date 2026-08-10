@@ -6,6 +6,7 @@
   "workspaces": [
     "packages/*",
     "apps/force-app/web",
+    "apps/force-app/desktop",
     "core/extensions/d1-force-dashboard"
   ],
   "scripts": {

@@ -1,0 +1,19 @@
+{
+  "name": "force-app-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Electron shell packaging the force-app SPA and recorder backend as a single Windows installer.",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build && electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^43.3.0",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.10"
+  }
+}
