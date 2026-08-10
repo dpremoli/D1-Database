@@ -24,6 +24,10 @@
     Credentials are never passed on the command line or logged — the script
     reads POSTGRES_USER / POSTGRES_DB from the container's own environment.
 
+    After the local backup succeeds, both artifacts are copied off-host to the
+    university filestore. The local copy protects against a bad migration or a
+    corrupted volume; only the off-host copy survives losing the machine.
+
 .PARAMETER DestinationRoot
     Folder to write archives to. Defaults to D:\D1-Backups\postgres.
 
@@ -35,10 +39,31 @@
 .PARAMETER Container
     Name of the Postgres container. Defaults to d1-database-postgres-1.
 
+.PARAMETER OffsiteRoot
+    UNC path on the university filestore to copy each new pair of artifacts to.
+    A UNC path rather than the Z: mapping on purpose: drive letters belong to a
+    logon session and a scheduled task cannot be relied on to see them. Set to
+    an empty string to skip the off-host step.
+
+.PARAMETER OffsiteRetentionDays
+    Off-host archives older than this are deleted after a verified copy.
+    Defaults to 5 — shorter than the local window because the share is a quota'd
+    group area also holding ~26 GB of Directus uploads.
+
 .EXAMPLE
     pwsh -File scripts\backup-postgres.ps1
 
+.EXAMPLE
+    # Local only, e.g. when off the university network
+    pwsh -File scripts\backup-postgres.ps1 -OffsiteRoot ''
+
 .NOTES
+    Exit codes: 0 success; 1 the local backup failed (nothing new was written);
+    2 the local backup succeeded but the off-host copy did not — the share was
+    unreachable, out of quota, or the copy did not verify. Code 2 means you still
+    have a good local backup but no off-host one, so it needs attention rather
+    than alarm.
+
     Verify restorability periodically — a dump that has never been restored is
     not a backup. See docs/adr/0010 step 0. To test:
 
@@ -54,7 +79,17 @@
 param(
     [string]$DestinationRoot = 'D:\D1-Backups\postgres',
     [int]$RetentionDays = 14,
-    [string]$Container = 'd1-database-postgres-1'
+    [string]$Container = 'd1-database-postgres-1',
+
+    # Off-host copy on the university filestore. A UNC path deliberately, NOT the Z: mapping:
+    # drive letters are per-logon-session and a scheduled task cannot be relied on to see them,
+    # whereas the UNC resolves as long as the session has credentials for the share.
+    # Set to '' to skip the off-host step entirely.
+    [string]$OffsiteRoot = '\\uosfstore.shef.ac.uk\shared\star_group1\Shared\D1-Server-Backup\postgres',
+
+    # Kept shorter than the local window: the share is a quota'd group area holding ~26 GB of
+    # Directus uploads alongside these dumps, and each dump is ~1.3 GB.
+    [int]$OffsiteRetentionDays = 5
 )
 
 $ErrorActionPreference = 'Stop'
@@ -124,7 +159,49 @@ try {
 
     $kept = @(Get-ChildItem -Path $DestinationRoot -Filter 'd1_database-*.dump' -File)
     $totalGb = ($kept | Measure-Object -Property Length -Sum).Sum / 1GB
-    Write-Log ("Backup complete. {0} archive(s) retained, {1:N1} GB total." -f $kept.Count, $totalGb)
+    Write-Log ("Local backup complete. {0} archive(s) retained, {1:N1} GB total." -f $kept.Count, $totalGb)
+
+    # --- off-host copy ----------------------------------------------------
+    # Runs last and cannot damage the local backup, which is already safely on disk and
+    # pruned. A failure here is still reported (exit 2, distinct from a local failure)
+    # because a silently-broken off-host copy is the failure mode that only shows up on
+    # the day the machine dies.
+    if ($OffsiteRoot) {
+        try {
+            if (-not (Test-Path $OffsiteRoot)) { New-Item -ItemType Directory -Force -Path $OffsiteRoot | Out-Null }
+
+            foreach ($src in @($dumpDest, $globalsDest)) {
+                $leaf = Split-Path $src -Leaf
+                $dst  = Join-Path $OffsiteRoot $leaf
+                Copy-Item -Path $src -Destination $dst -Force
+                $srcLen = (Get-Item $src).Length
+                $dstLen = (Get-Item $dst).Length
+                if ($dstLen -ne $srcLen) {
+                    throw "Off-host size mismatch for ${leaf}: local $srcLen bytes, remote $dstLen bytes."
+                }
+                Write-Log ("Off-host copy OK: {0} ({1:N0} bytes)" -f $leaf, $dstLen)
+            }
+
+            # Prune the share only after this run's copy verified, same rule as locally.
+            $offCutoff = (Get-Date).AddDays(-$OffsiteRetentionDays)
+            $offStale = Get-ChildItem -Path $OffsiteRoot -File |
+                        Where-Object { $_.Name -match '^(d1_database-|globals-)' -and $_.LastWriteTime -lt $offCutoff }
+            foreach ($f in $offStale) {
+                Remove-Item $f.FullName -Force
+                Write-Log "Off-host pruned $($f.Name)"
+            }
+
+            $offKept = @(Get-ChildItem -Path $OffsiteRoot -Filter 'd1_database-*.dump' -File)
+            Write-Log ("Off-host complete. {0} archive(s) retained at {1}" -f $offKept.Count, $OffsiteRoot)
+        }
+        catch {
+            # The share being unreachable (VPN down, credentials expired, quota full) must not
+            # be mistaken for the database backup having failed — it succeeded above.
+            Write-Log ("Off-host copy FAILED (local backup is intact): " + $_.Exception.Message) 'ERROR'
+            exit 2
+        }
+    }
+
     exit 0
 }
 catch {
