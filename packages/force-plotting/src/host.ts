@@ -3,10 +3,13 @@ import type { AxiosInstance } from 'axios';
 /**
  * The subset of the Directus user record the dashboard uses for ownership scoping.
  * `role` may be a bare id string or a hydrated object depending on how far the
- * Directus user store has loaded, so both shapes are permitted.
+ * Directus user store has loaded, so both shapes are permitted. It is also nullable:
+ * Directus genuinely allows a user with no role assigned, and both hosts' user types
+ * reflect that with `role: null` — ForceDashboard.vue's `isAdminRole` already treats
+ * that safely (optional chaining falls through to `undefined`, matching no admin role id).
  */
 export interface ForceHostUser {
-	role?: string | { id?: string; admin_access?: boolean };
+	role?: string | { id?: string; admin_access?: boolean } | null;
 	admin_access?: boolean;
 	[key: string]: unknown;
 }
