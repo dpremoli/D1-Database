@@ -304,7 +304,32 @@ it under two repositories instead of one, and converts a local refactor into a
 cross-repository publishing exercise. Deferring the split costs nothing — a
 history-preserving extraction remains available at any time.
 
-### (f) Rewrite the recorder backend in Node/TypeScript
+### (f) Tauri instead of Electron
+
+Considered 2026-08-10, after this ADR was first written. Tauri v2 borrows the system
+WebView2 rather than shipping Chromium, has a built-in signed updater, and Rust is
+not foreign here.
+
+Not adopted. A PyInstaller bundle carrying numpy, scipy and nidaqmx is 150–250 MB
+whichever shell is used, so the realistic comparison is ~350 MB against ~220 MB —
+the Python payload dominates and Tauri's size advantage is diluted. Against that,
+the UI is unusually WebGL-heavy (Potree octrees plus hand-written WebGL FRM
+rendering), and Electron ships its own Chromium so every rig renders identically;
+Tauri inherits whatever WebView2 version a machine happens to have, which is a
+support cost on machines the maintainer does not administer. Electron also avoids
+adding a Rust toolchain to an otherwise Node/Vite pipeline — `abetterplus-rust` is a
+PyO3 extension crate and would not be reused by a Tauri shell.
+
+### (g) Package the desktop app only after the repo split
+
+This ADR originally sequenced extraction (step 2) before packaging (steps 3–4).
+
+Reversed 2026-08-10. `apps/force-app/desktop/` plus a path-filtered release workflow
+gives independent versioning and releases from inside the monorepo, and step 1
+already made force-app cleanly separable, so extraction stays cheap. Performing the
+irreversible step before knowing what packaging actually needs is the wrong order.
+
+### (h) Rewrite the recorder backend in Node/TypeScript
 
 Avoids bundling a second language runtime inside the Electron app.
 
@@ -357,15 +382,49 @@ PyInstaller sidecar does not already achieve at far lower cost.
   committed to the force-app repo and regenerated on a deliberate cadence, with
   the existing Connectivity Doctor extended to report schema mismatches at
   runtime. Not yet decided.
-- Where the Electron auto-update feed is hosted — Caddy on `d1-server` vs
-  private GitHub Releases.
+- ~~Where the Electron auto-update feed is hosted.~~ **Resolved 2026-08-10:**
+  static files behind the Caddy proxy on `d1-server`. The app must stay private
+  — its existence and behaviour should not be publicly visible — which rules out
+  public GitHub Releases; private Releases is worse, needing a leakable access
+  token embedded in every shipped binary. In v1 all users are on the tailnet by
+  definition, so a Caddy-served feed is private *by construction* rather than
+  merely access-controlled.
+
+  This is coupled to shipping unsigned: `electron-updater` skips signature
+  verification on unsigned apps, so the update channel's trust rests entirely on
+  the transport. Unsigned plus tailnet-only is coherent; unsigned plus public
+  hosting would be a remote-code-execution path into the rigs. **If labs that
+  are not on the tailnet ever need updates, signing and feed hosting must be
+  revisited together.**
+
+  See `docs/superpowers/specs/2026-08-10-force-app-desktop-packaging-design.md`.
 - CI setup for the force-app repo (none exists today), including how the
   Directus extension bundle is published and consumed.
-- **Off-host copy of the backups.** Retention is settled (14 days on `D:`),
-  but the archives currently live on the same physical machine as the
-  database. That covers volume corruption, a bad migration and accidental
-  deletion; it does not cover loss of the machine. An off-host or offline copy
-  is still needed.
+- ~~**Off-host copy of the backups.**~~ **Resolved 2026-08-10.** Each nightly
+  run now copies both artifacts to
+  `\\uosfstore.shef.ac.uk\shared\star_group1\Shared\D1-Server-Backup\postgres`
+  (5-day retention there, 14 locally), and a one-off snapshot of the 26 GB
+  `directus-uploads` volume was placed alongside it — 11,330 files,
+  26,250,038,491 bytes, verified byte-for-byte against the source.
+
+  **Accepted risk, decided deliberately:** the dump sits on a group-readable
+  share, so read access to `star_group1\Shared` is equivalent to read access to
+  the research data, user emails and the `directus_users` bcrypt password
+  hashes. The maintainer's judgement is that the share is the research group's
+  own and the data is theirs too. The mitigations considered and declined were
+  encrypting the artifacts to a private key, and breaking ACL inheritance on the
+  backup folder. Revisit if the share's membership ever widens beyond the group.
+
+  The real `.env` is deliberately excluded — live database and admin
+  credentials on a group share would be a different category of exposure, since
+  it grants write access to production rather than read access to a snapshot.
+  `.env.example` is stored instead and the restore README says a rebuild needs
+  the secrets from a password manager.
+
+- **`directus-uploads` is a one-off snapshot, not synced.** Only the Postgres
+  dumps refresh nightly; 26 GB over SMB every night is not sensible. Newly
+  uploaded files are therefore unprotected off-host until someone re-runs the
+  copy. A weekly incremental (`robocopy /MIR`) would close most of the gap.
 - **`directus_revisions` bloat.** 1812 MB of the 2710 MB database — 67% — is
   Directus revision history, and it dominates both backup size and duration.
   A retention policy on revisions would shrink every future archive
