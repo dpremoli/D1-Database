@@ -1,0 +1,32 @@
+# Electron packaging config. Unsigned (v1 — see ADR-0010's open decisions) and the update feed is
+# Tailscale-only; both are documented, coupled decisions — do not point `publish.url` at a public
+# host without re-reading docs/superpowers/specs/2026-08-10-force-app-desktop-packaging-design.md.
+appId: net.tailscale.d1-server.force-app
+productName: Force App
+# npm workspaces hoists `electron` to the repo root node_modules; electron-builder only looks
+# inside this workspace's own node_modules and can't fall back to a caret-range version string,
+# so it must be told explicitly. Keep this in sync with the installed electron version
+# (electron-builder logs the version it expects if this drifts).
+electronVersion: 43.3.0
+directories:
+  output: release
+files:
+  - dist/**/*
+  - static/**/*
+  - package.json
+extraResources:
+  - from: ../web/dist
+    to: web
+  - from: ../backend/dist/force-app-backend
+    to: backend
+win:
+  target: nsis
+  artifactName: '${productName}-Setup-${version}.${ext}'
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+publish:
+  - provider: generic
+    url: https://d1-server.tail54eeb6.ts.net/force-app-updates/
+    channel: latest

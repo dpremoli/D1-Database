@@ -6,6 +6,7 @@ import { findAvailablePort } from './port';
 import { registerAppScheme, handleAppProtocol } from './protocol';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
+import { initAutoUpdater } from './updater';
 import { classifyWindowOpen } from './windowOpen';
 
 const PREFERRED_PORT = 8200;
@@ -96,6 +97,7 @@ async function createWindow(): Promise<void> {
 
   await mainWindow.loadURL('app://force/');
   void offerScheduledTaskCleanup();
+  initAutoUpdater();
 }
 
 export function getSupervisor(): SidecarSupervisor | null {

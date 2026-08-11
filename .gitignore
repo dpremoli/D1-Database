@@ -21,6 +21,7 @@ env/
 htmlcov/
 dist/
 build/
+apps/force-app/desktop/release/
 
 # ---- Node / front-end ----
 node_modules/

@@ -8,11 +8,16 @@
     "build": "tsc -p tsconfig.json",
     "dev": "npm run build && electron .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "package": "npm run build && electron-builder --win"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "electron": "^43.3.0",
+    "electron-builder": "^25.1.0",
     "typescript": "^5.7.3",
     "vitest": "^4.1.10"
   }
