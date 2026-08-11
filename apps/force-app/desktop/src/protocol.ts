@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { net as electronNet, protocol } from 'electron';
 
 export function registerAppScheme(): void {
@@ -58,6 +59,9 @@ export function handleAppProtocol(webDistDir: string, configFilePath: string): v
   protocol.handle('app', async (request) => {
     const { filePath, is404 } = resolveRequestPath(request.url, webDistDir, configFilePath);
     if (is404) return new Response('Not found', { status: 404 });
-    return electronNet.fetch(`file://${filePath}`);
+    // pathToFileURL, not string concatenation: real install paths are Windows paths with
+    // backslashes and spaces ("C:\Program Files\Force App\...", "%APPDATA%\Force App\config.json"),
+    // which only produce a valid file: URL once properly encoded.
+    return electronNet.fetch(pathToFileURL(filePath).href);
   });
 }

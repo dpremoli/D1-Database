@@ -12,6 +12,22 @@ import { classifyWindowOpen } from './windowOpen';
 const PREFERRED_PORT = 8200;
 const HEALTH_PATH = '/health';
 
+// Single-instance lock. A second launch would spawn a second sidecar (the port probe would push
+// it to 8201) with both instances writing the same <userData>/config.json and, worse, the same
+// capture storage root — a data-integrity hazard for an instrument. Focus the running window
+// instead. `mainWindow` is assigned later; this closure only runs once the app is up.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 registerAppScheme();
 
 let mainWindow: BrowserWindow | null = null;
@@ -19,16 +35,31 @@ let supervisor: SidecarSupervisor | null = null;
 Menu.setApplicationMenu(buildMenu(() => mainWindow));
 
 function webDistDir(): string {
+  // dist-desktop (base '/'), not dist (base '/app/'): the /app/ variant's asset URLs cannot
+  // resolve under app://force/. Dev mode uses the same variant the installer ships so what we
+  // test is what we ship. Build it with `npm run build:web:desktop` from the repo root.
   return app.isPackaged
     ? path.join(process.resourcesPath, 'web')
-    : path.join(__dirname, '..', '..', 'web', 'dist');
+    : path.join(__dirname, '..', '..', 'web', 'dist-desktop');
 }
 
-function backendCommand(port: number): { exePath: string; args: string[]; cwd?: string } {
+// The recorder backend keeps its own CORS allowlist (RECORDER_CORS_ORIGINS, defaulting to the
+// Vite dev-server origins). Under Electron the renderer's origin is app://force, which is not in
+// that default, so every renderer -> recorder request would be CORS-blocked. Thread it in
+// explicitly for both the dev and packaged branches — it's the same backend either way.
+const RECORDER_ENV: NodeJS.ProcessEnv = { RECORDER_CORS_ORIGINS: 'app://force' };
+
+function backendCommand(port: number): {
+  exePath: string;
+  args: string[];
+  cwd?: string;
+  env: NodeJS.ProcessEnv;
+} {
   if (app.isPackaged) {
     return {
       exePath: path.join(process.resourcesPath, 'backend', 'force-app-backend.exe'),
       args: ['--port', String(port)],
+      env: RECORDER_ENV,
     };
   }
   // Dev mode: the same venv + uvicorn invocation apps/force-app/backend/scripts/start_recorder.ps1
@@ -38,6 +69,7 @@ function backendCommand(port: number): { exePath: string; args: string[]; cwd?: 
     exePath: path.join(backendDir, '.venv', 'Scripts', 'python.exe'),
     args: ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(port)],
     cwd: backendDir,
+    env: RECORDER_ENV,
   };
 }
 
@@ -81,6 +113,7 @@ async function createWindow(): Promise<void> {
     exePath: cmd.exePath,
     args: cmd.args,
     cwd: cmd.cwd,
+    env: cmd.env,
     port,
     healthUrl: `http://127.0.0.1:${port}${HEALTH_PATH}`,
     onStateChange: onSidecarStateChange,
@@ -111,16 +144,20 @@ if (process.env.FORCE_APP_TEST_HOOKS === '1') {
   (global as unknown as { __forceAppTestHooks: unknown }).__forceAppTestHooks = { getSupervisor };
 }
 
-app.whenReady().then(() => {
-  void createWindow();
-});
+// Only the lock-holding instance boots a window and a sidecar; the loser already called
+// app.quit() above and must not register any of this.
+if (gotLock) {
+  app.whenReady().then(() => {
+    void createWindow();
+  });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
 
-app.on('before-quit', (event) => {
-  if (!supervisor || supervisor.getState() === 'stopped') return;
-  event.preventDefault();
-  void supervisor.stop().then(() => app.quit());
-});
+  app.on('before-quit', (event) => {
+    if (!supervisor || supervisor.getState() === 'stopped') return;
+    event.preventDefault();
+    void supervisor.stop().then(() => app.quit());
+  });
+}

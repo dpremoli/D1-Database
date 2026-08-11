@@ -15,7 +15,9 @@ files:
   - static/**/*
   - package.json
 extraResources:
-  - from: ../web/dist
+  # dist-desktop, not dist: the desktop build variant has base '/' so assets resolve under
+  # app://force/. The plain `dist` build has base '/app/' and is exclusively Caddy's browser surface.
+  - from: ../web/dist-desktop
     to: web
   - from: ../backend/dist/force-app-backend
     to: backend

@@ -6,6 +6,8 @@ export interface SidecarOptions {
   exePath: string;
   args: string[];
   cwd?: string;
+  /** Extra environment for the child, merged over (not replacing) the parent's env. */
+  env?: NodeJS.ProcessEnv;
   port: number;
   healthUrl: string;
   readyTimeoutMs?: number;
@@ -46,8 +48,8 @@ function killTree(pid: number): Promise<void> {
 /** Spawns the recorder backend, polls it healthy, and restarts it with capped exponential
  * backoff if it exits unexpectedly. One instance per app run. */
 export class SidecarSupervisor {
-  private readonly opts: Required<Omit<SidecarOptions, 'onStateChange' | 'cwd'>> &
-    Pick<SidecarOptions, 'onStateChange' | 'cwd'>;
+  private readonly opts: Required<Omit<SidecarOptions, 'onStateChange' | 'cwd' | 'env'>> &
+    Pick<SidecarOptions, 'onStateChange' | 'cwd' | 'env'>;
   private proc: ChildProcess | null = null;
   private state: SidecarState = 'stopped';
   private detail: string | undefined;
@@ -93,6 +95,9 @@ export class SidecarSupervisor {
   private spawnProcess(): ChildProcess {
     const proc = spawn(this.opts.exePath, this.opts.args, {
       cwd: this.opts.cwd,
+      // Merge over the parent env rather than replacing it — the child still needs PATH,
+      // SystemRoot, etc. Undefined opts.env spreads to nothing, so this is a no-op by default.
+      env: { ...process.env, ...this.opts.env },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });

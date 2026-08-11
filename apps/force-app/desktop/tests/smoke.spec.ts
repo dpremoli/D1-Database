@@ -32,11 +32,43 @@ test('the bundle boots: sidecar reaches healthy and the renderer loads on app://
   const app = await launch();
   try {
     const window = await app.firstWindow();
+    const pageErrors: string[] = [];
+    window.on('pageerror', (err) => pageErrors.push(err.message));
+    const consoleErrors: string[] = [];
+    window.on('console', (msg) => {
+      if (msg.type() === 'error') consoleErrors.push(msg.text());
+    });
+
     await window.waitForURL((url) => url.href.startsWith('app://force/'), { timeout: 30_000 });
+    await window.waitForLoadState('networkidle');
+
+    // Asserting the URL alone passes against a completely blank window — which is exactly what a
+    // mis-based bundle produces (a '/app/' base emits asset URLs no protocol route serves, the SPA
+    // history fallback hands back index.html as text/html, and the module script is rejected).
+    // These assertions are the ones that fail on a blank page.
+    const bodyText = await window.locator('body').innerText();
+    expect(bodyText).toContain('Force App');
+    expect(bodyText).toContain('Sign in');
+    expect(pageErrors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+    // The SPA mounts into #app; a rejected entry script leaves it empty.
+    expect(await window.locator('#app').count()).toBe(1);
+    expect((await window.locator('#app').innerHTML()).trim().length).toBeGreaterThan(0);
 
     const url = await recorderUrl(app);
     const health = await fetch(`${url}/health`);
     expect(health.ok).toBe(true);
+
+    // The recorder keeps its own CORS allowlist (RECORDER_CORS_ORIGINS), separate from Directus's
+    // and the filter service's. Its default covers only the Vite dev origins, so unless main.ts
+    // threads app://force into the spawned sidecar's env, every renderer -> recorder call
+    // (start recording, recovery check, LabAmp control, the live socket) is blocked. The main
+    // process's own health fetches above are not subject to CORS and would never catch that.
+    const preflight = await fetch(`${url}/health`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'app://force', 'Access-Control-Request-Method': 'GET' },
+    });
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('app://force');
   } finally {
     await app.close();
   }
