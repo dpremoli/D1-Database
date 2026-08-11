@@ -4,6 +4,7 @@ import { ConfigStore } from './config';
 import { buildMenu } from './menu';
 import { findAvailablePort } from './port';
 import { registerAppScheme, handleAppProtocol } from './protocol';
+import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
 import { classifyWindowOpen } from './windowOpen';
 
@@ -42,6 +43,12 @@ function backendCommand(port: number): { exePath: string; args: string[]; cwd?: 
 function onSidecarStateChange(state: SidecarState, detail?: string): void {
   if (state === 'crashed') {
     dialog.showErrorBox('Recorder backend stopped responding', detail ?? 'See logs for details.');
+  }
+  // A restart (not the initial start) means the backend crashed mid-session — route the
+  // operator back to Record, where the existing recovery banner (RecordPage.vue) picks up any
+  // incomplete session via GET /recovery/check on mount.
+  if (state === 'ready' && supervisor && supervisor.getRestartCount() > 0) {
+    mainWindow?.webContents.send('navigate', '/record');
   }
 }
 
@@ -88,6 +95,7 @@ async function createWindow(): Promise<void> {
   }
 
   await mainWindow.loadURL('app://force/');
+  void offerScheduledTaskCleanup();
 }
 
 export function getSupervisor(): SidecarSupervisor | null {
