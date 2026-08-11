@@ -1,6 +1,7 @@
-import { app, BrowserWindow, dialog } from 'electron';
+import { app, BrowserWindow, dialog, Menu } from 'electron';
 import path from 'node:path';
 import { ConfigStore } from './config';
+import { buildMenu } from './menu';
 import { findAvailablePort } from './port';
 import { registerAppScheme, handleAppProtocol } from './protocol';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
@@ -13,6 +14,7 @@ registerAppScheme();
 
 let mainWindow: BrowserWindow | null = null;
 let supervisor: SidecarSupervisor | null = null;
+Menu.setApplicationMenu(buildMenu(() => mainWindow));
 
 function webDistDir(): string {
   return app.isPackaged
@@ -51,7 +53,11 @@ async function createWindow(): Promise<void> {
     width: 1500,
     height: 950,
     show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.js'),
+    },
   });
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.webContents.setWindowOpenHandler(classifyWindowOpen);

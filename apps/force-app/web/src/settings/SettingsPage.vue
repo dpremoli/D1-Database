@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // App settings with sub-tabs for things that don't need surfacing on the working pages.
 import { ref } from 'vue';
+import { useRoute } from 'vue-router';
 import GeneralSettings from './GeneralSettings.vue';
 import AlarmsSettings from './AlarmsSettings.vue';
 import ConnectivitySettings from './ConnectivitySettings.vue';
@@ -12,7 +13,15 @@ const tabs = [
 	{ id: 'connectivity', label: 'Connectivity', icon: 'network_check' },
 	{ id: 'backup', label: 'Live Backup', icon: 'cloud_upload' },
 ];
-const active = ref<'general' | 'alarms' | 'connectivity' | 'backup'>('general');
+const VALID_TABS = ['general', 'alarms', 'connectivity', 'backup'] as const;
+type SettingsTab = (typeof VALID_TABS)[number];
+
+const route = useRoute();
+const requestedTab = route.query.tab as string | undefined;
+const initialTab: SettingsTab = VALID_TABS.includes(requestedTab as SettingsTab)
+	? (requestedTab as SettingsTab)
+	: 'general';
+const active = ref<SettingsTab>(initialTab);
 </script>
 
 <template>

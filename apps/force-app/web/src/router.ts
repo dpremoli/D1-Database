@@ -35,3 +35,11 @@ router.beforeEach((to) => {
 	if (authStore.isAuthenticated.value) return true;
 	return { name: 'login', query: to.fullPath !== '/' ? { redirect: to.fullPath } : undefined };
 });
+
+// Electron desktop shell only (see electronBridge.d.ts): the main process's Help menu and the
+// sidecar-recovery flow (apps/force-app/desktop/src/sidecar.ts) both route the renderer here.
+if (window.forceApp) {
+	window.forceApp.onNavigate((targetPath) => {
+		void router.push(targetPath);
+	});
+}
