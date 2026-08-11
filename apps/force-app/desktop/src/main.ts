@@ -104,6 +104,13 @@ export function getSupervisor(): SidecarSupervisor | null {
   return supervisor;
 }
 
+// Test-only: lets the Playwright smoke suite (tests/smoke.spec.ts) reach the supervisor through
+// app.evaluate(), which has no access to this module's exports otherwise. Inert unless the test
+// runner explicitly opts in via the env var.
+if (process.env.FORCE_APP_TEST_HOOKS === '1') {
+  (global as unknown as { __forceAppTestHooks: unknown }).__forceAppTestHooks = { getSupervisor };
+}
+
 app.whenReady().then(() => {
   void createWindow();
 });

@@ -22,6 +22,8 @@ htmlcov/
 dist/
 build/
 apps/force-app/desktop/release/
+# Playwright smoke-test output (traces, screenshots, error-context.md on failure)
+apps/force-app/desktop/test-results/
 
 # ---- Node / front-end ----
 node_modules/
