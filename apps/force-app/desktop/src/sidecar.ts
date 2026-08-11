@@ -105,7 +105,20 @@ export class SidecarSupervisor {
         this.setState('stopped');
         return;
       }
-      void this.handleUnexpectedExit(`exit code=${code} signal=${signal}\n${stderrTail}`);
+      void this.handleUnexpectedExit(`exit code=${code} signal=${signal}\n${stderrTail}`).catch(
+        (err) => {
+          console.error('sidecar: handleUnexpectedExit failed', err);
+        },
+      );
+    });
+    proc.on('error', (err) => {
+      if (this.stopping) {
+        this.setState('stopped');
+        return;
+      }
+      void this.handleUnexpectedExit(`spawn error: ${err.message}`).catch((handlerErr) => {
+        console.error('sidecar: handleUnexpectedExit failed', handlerErr);
+      });
     });
     return proc;
   }
