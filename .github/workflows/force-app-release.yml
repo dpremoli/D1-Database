@@ -1,0 +1,64 @@
+name: force-app-release
+
+on:
+  push:
+    tags:
+      - 'force-app-v*'
+    paths:
+      - 'apps/force-app/**'
+      - 'packages/force-plotting/**'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install JS workspace dependencies
+        run: npm ci
+
+      - name: Build the web SPA
+        run: npm run build:web
+
+      - name: Install backend dependencies
+        working-directory: apps/force-app/backend
+        run: |
+          python -m venv .venv
+          .venv\Scripts\pip install -e ".[build]"
+
+      - name: Run backend tests
+        working-directory: apps/force-app/backend
+        run: .venv\Scripts\pytest
+
+      - name: Freeze the backend with PyInstaller
+        working-directory: apps/force-app/backend
+        run: .venv\Scripts\pyinstaller force-app-backend.spec --noconfirm
+
+      - name: Run desktop unit tests
+        working-directory: apps/force-app/desktop
+        run: npm test
+
+      - name: Build the Electron installer
+        working-directory: apps/force-app/desktop
+        run: |
+          npm run build
+          npx electron-builder --win --publish never
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: force-app-installer
+          path: |
+            apps/force-app/desktop/release/*.exe
+            apps/force-app/desktop/release/latest.yml
