@@ -35,7 +35,7 @@ jobs:
         working-directory: apps/force-app/backend
         run: |
           python -m venv .venv
-          .venv\Scripts\pip install -e ".[build]"
+          .venv\Scripts\pip install -e ".[dev,build]"
 
       - name: Run backend tests
         working-directory: apps/force-app/backend
