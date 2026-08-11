@@ -64,6 +64,7 @@ desktop.ini
 .cache/
 tmp/
 infra/octrees
+infra/force-app-updates
 
 # ---- Local / not-for-repo ----
 # local Claude config, memory, plans

@@ -46,6 +46,15 @@
     handle_path /recorder/* {
         reverse_proxy host.docker.internal:8200
     }
+    # Electron auto-update feed (electron-updater, generic provider). Populated by a pull-based
+    # publish script run on this host (apps/force-app/desktop/scripts/publish-release.ps1) — see
+    # docs/superpowers/specs/2026-08-10-force-app-desktop-packaging-design.md. Tailnet-only by
+    # construction: this Caddy instance is reachable only over Tailscale, and the app ships
+    # unsigned, so the update channel's trust rests entirely on this transport staying private.
+    handle_path /force-app-updates/* {
+        root * /srv/force-app-updates
+        file_server
+    }
     # Standalone Force App SPA (built with base /app/). Served same-origin as Directus so it
     # calls /items,/assets,/auth (Directus), /filter and /octrees without CORS — reachable over
     # Tailscale at https://<node>.<tailnet>.ts.net/app/. SPA history fallback → index.html.
