@@ -290,3 +290,36 @@ def test_finalize_includes_file_sizes(tmp_path, monkeypatch):
         assert "file_sizes_mb" in summ
         assert "raw.d1raw" in summ["file_sizes_mb"]
         assert summ["file_sizes_mb"]["raw.d1raw"] > 0
+
+
+# ---- Connectivity Doctor: NI-DAQ runtime finding ----
+#
+# nidaq_available() is mocked here rather than relying on ambient host state: unlike the design
+# doc's assumption of a driver-less dev machine, this build machine has NI-DAQmx 26.0 actually
+# installed (from earlier NI-DAQ acquisition work this session), so leaving it unmocked would make
+# the warn-path assertion flaky/host-dependent. Mocking both branches exercises the actual
+# health_doctor() code path deterministically, same as the other isolation done in this file.
+
+def test_health_doctor_reports_nidaq_runtime_status(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    monkeypatch.setattr(main, "nidaq_available", lambda: False)
+    with TestClient(fastapi_app) as client:
+        r = client.post("/health/doctor", json={})
+        assert r.status_code == 200, r.text
+        findings = r.json()["findings"]
+        nidaq = next(f for f in findings if f["service"] == "NI-DAQ runtime")
+        # No NI-DAQmx driver available, so the finding must warn, not silently pass as "ok" —
+        # that's the whole point of the check.
+        assert nidaq["status"] == "warn"
+        assert "NI-DAQmx" in nidaq["message"]
+
+
+def test_health_doctor_reports_nidaq_runtime_ok_when_available(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    monkeypatch.setattr(main, "nidaq_available", lambda: True)
+    with TestClient(fastapi_app) as client:
+        r = client.post("/health/doctor", json={})
+        assert r.status_code == 200, r.text
+        findings = r.json()["findings"]
+        nidaq = next(f for f in findings if f["service"] == "NI-DAQ runtime")
+        assert nidaq["status"] == "ok"

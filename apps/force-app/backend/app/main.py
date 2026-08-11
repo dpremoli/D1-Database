@@ -27,6 +27,7 @@ from .d1lc import read_d1lc_header
 from .labamp import LabAmpClient, LabAmpError, MockLabAmp
 from .labamp_autorange import converge_ranges, effective_bits, recommend_ranges
 from .session import RecordingSession
+from .sources.nidaq import nidaq_available
 from .sources.replay import ReplaySource
 from .sources.sim import SimSource
 from .stream.broadcast import Broadcaster
@@ -398,7 +399,21 @@ async def health_doctor(request: Request) -> dict:
                 "fix": "Power-cycle the LabAmp, check the Ethernet cable, or verify the IP address in labamp.json.",
             })
 
-    # 5. Filter service & Octree server (URLs passed from frontend)
+    # 5. NI-DAQ runtime — checked proactively so a missing driver is visible before the operator
+    # tries to record, not discovered as a 503 from POST /record/start.
+    if nidaq_available():
+        findings.append({"service": "NI-DAQ runtime", "status": "ok", "message": "NI-DAQmx driver detected"})
+    else:
+        findings.append({
+            "service": "NI-DAQ runtime", "status": "warn",
+            "message": "NI-DAQmx runtime not found on this machine",
+            "diagnosis": "Real hardware recording is unavailable. This is expected on a "
+                         "non-acquisition machine (sim/replay sources still work); if this IS "
+                         "the acquisition PC, the NI-DAQmx driver needs installing.",
+            "fix": "Install the NI-DAQmx runtime from ni.com, then restart the app.",
+        })
+
+    # 6. Filter service & Octree server (URLs passed from frontend)
     for svc_key, svc_label in [("filter_url", "Filter service"), ("octree_url", "Octree server")]:
         svc_url = body.get(svc_key, "")
         if not svc_url:
@@ -444,7 +459,7 @@ async def health_doctor(request: Request) -> dict:
                 "fix_command": 'caddy run --config Caddyfile' if is_caddy else None,
             })
 
-    # 6. Backup server
+    # 7. Backup server
     bcfg = backup_mod.load_config(CAPTURES_ROOT)
     backup_url = bcfg.get("server_url", "")
     if backup_url:
@@ -488,7 +503,7 @@ async def health_doctor(request: Request) -> dict:
             "message": "Not configured — enable in Settings > Live Backup to stream recordings to a remote server",
         })
 
-    # 6. Disk space
+    # 8. Disk space
     disk = storage.disk_usage_for(CAPTURES_ROOT)
     if disk["free_gb"] is None:
         findings.append({
@@ -515,7 +530,7 @@ async def health_doctor(request: Request) -> dict:
     else:
         findings.append({"service": "Disk space", "status": "ok", "message": f"{disk['free_gb']:.1f} GB free"})
 
-    # 7. Incomplete recordings
+    # 9. Incomplete recordings
     incomplete = recovery.scan_incomplete(CAPTURES_ROOT)
     if incomplete:
         total_mb = sum(s.get("raw", {}).get("raw_size_mb", 0) for s in incomplete)

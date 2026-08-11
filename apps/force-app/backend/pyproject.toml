@@ -19,6 +19,10 @@ dev = ["pytest>=8"]
 # required on the acquisition PC. Install with:  pip install -e ".[nidaq]"
 nidaq = ["nidaqmx>=1.0"]
 
+# PyInstaller freeze (Electron packaging). Kept out of the base install — only needed when
+# building the desktop app's sidecar, not for day-to-day backend development.
+build = ["pyinstaller>=6.10"]
+
 # This sub-app inherits the repo-wide ruff rule set but uses a wider line length — the
 # backend was written at ~100 cols. Scoped here so the root stays at 88 for everything else.
 [tool.ruff]
