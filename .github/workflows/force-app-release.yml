@@ -4,9 +4,13 @@ on:
   push:
     tags:
       - 'force-app-v*'
-    paths:
-      - 'apps/force-app/**'
-      - 'packages/force-plotting/**'
+    # No `paths:` filter here — GitHub cannot compute a path diff for a newly pushed tag ref, and
+    # the combination can silently stop the workflow from firing at all. The tag glob is already a
+    # narrow enough trigger on its own.
+
+# Needed by the "Create GitHub Release" step; the default GITHUB_TOKEN is read-only for contents.
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -16,6 +20,18 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
+
+      # Fail fast: a tag that outruns the manifest makes electron-builder emit a latest.yml
+      # advertising the stale version, so electron-updater on deployed rigs never sees the release.
+      - name: Verify tag matches package.json version
+        shell: pwsh
+        run: |
+          $tagVersion = $env:GITHUB_REF_NAME -replace '^force-app-v', ''
+          $pkgVersion = (Get-Content apps/force-app/desktop/package.json | ConvertFrom-Json).version
+          if ($tagVersion -ne $pkgVersion) {
+            Write-Error "Tag $env:GITHUB_REF_NAME (version $tagVersion) does not match apps/force-app/desktop/package.json version $pkgVersion"
+            exit 1
+          }
 
       - uses: actions/setup-node@v4
         with:
@@ -28,14 +44,19 @@ jobs:
       - name: Install JS workspace dependencies
         run: npm ci
 
+      # The desktop variant (base '/', outDir dist-desktop) — CI packages the Electron app and has
+      # no use for the '/app/' browser build Caddy serves.
       - name: Build the web SPA
-        run: npm run build:web
+        run: npm run build:web:desktop
 
       - name: Install backend dependencies
         working-directory: apps/force-app/backend
         run: |
           python -m venv .venv
-          .venv\Scripts\pip install -e ".[dev,build]"
+          # The nidaq extra is the pure-Python nidaqmx wrapper — installing and freezing it needs
+          # no NI-DAQmx driver or hardware on the runner, but omitting it ships installers that
+          # can never talk to a DAQ.
+          .venv\Scripts\pip install -e ".[dev,build,nidaq]"
 
       - name: Run backend tests
         working-directory: apps/force-app/backend
@@ -70,3 +91,12 @@ jobs:
           path: |
             apps/force-app/desktop/release/*.exe
             apps/force-app/desktop/release/latest.yml
+
+      # scripts/publish-release.ps1 pulls with `gh release download <tag>`, which reads Release
+      # assets — a workflow-run artifact is not the same thing and is invisible to it. Creating a
+      # Release here is a plain GitHub API call; it does not push to the tailnet feed. Populating
+      # that feed stays a manual publish-release.ps1 run on d1-server.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$env:GITHUB_REF_NAME" apps/force-app/desktop/release/*.exe apps/force-app/desktop/release/latest.yml --title "$env:GITHUB_REF_NAME" --notes "Automated build from CI."
