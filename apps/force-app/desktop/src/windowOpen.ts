@@ -17,6 +17,8 @@ export function classifyWindowOpen(
       },
     };
   }
-  void shell.openExternal(details.url);
+  if (url.protocol === 'http:' || url.protocol === 'https:') {
+    void shell.openExternal(details.url);
+  }
   return { action: 'deny' };
 }
