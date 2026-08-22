@@ -4,7 +4,7 @@
 // when online) and/or save locally as .mat/.csv, or explicitly discard (double-confirmed since it's
 // the only destructive-feeling path — the raw capture stays on disk regardless, only the database
 // write and any local export are skipped).
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useWorkspace } from '../workspace';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS } from '../liveClient';
@@ -42,14 +42,55 @@ const nothingSelected = computed(() => !uploadDb.value && !saveMat.value && !sav
 // stopped. Only once state is 'done' AND the finished trace has loaded do we show the save form.
 const loading = computed(() => w.st.state === 'recording' || w.st.state === 'finalizing' || (w.st.state === 'done' && !w.finishedCache.value));
 const failed = computed(() => w.st.state === 'error' && !w.finishedCache.value);
-const loadingLabel = computed(() => {
-	if (w.st.state === 'recording') return 'Stopping acquisition…';
-	if (w.st.state === 'finalizing') return 'Writing capture files (.mat, live cache)…';
-	return 'Loading recorded trace…';
+
+// Three-stage save/finalize progress, each timed independently, so a slow save reads as "which
+// stage is taking long, and for how long" instead of one undifferentiated spinner. Backend timing
+// for the equivalent stages (acquisition stop, finalize write, capture-file fetch) is also logged
+// server-side (backend.log, next to storage_config.json) — the two should roughly agree; if they
+// don't, the gap is somewhere else (network, Electron sidecar, etc).
+type StageKey = 'stop' | 'finalize' | 'load';
+const STAGES: { key: StageKey; label: string }[] = [
+	{ key: 'stop', label: 'Stopping acquisition' },
+	{ key: 'finalize', label: 'Writing capture files (.mat, live cache)' },
+	{ key: 'load', label: 'Loading recorded trace' },
+];
+const stageState = reactive<Record<StageKey, { start: number | null; end: number | null }>>({
+	stop: { start: null, end: null }, finalize: { start: null, end: null }, load: { start: null, end: null },
 });
+function mark(stage: StageKey, field: 'start' | 'end') {
+	if (stageState[stage][field] == null) stageState[stage][field] = performance.now();
+}
+watch(() => w.st.state, (s) => {
+	if (s === 'recording') mark('stop', 'start');
+	if (s === 'finalizing') { mark('stop', 'start'); mark('stop', 'end'); mark('finalize', 'start'); }
+	if (s === 'done' || s === 'error') {
+		mark('stop', 'start'); mark('stop', 'end'); mark('finalize', 'start'); mark('finalize', 'end'); mark('load', 'start');
+	}
+}, { immediate: true });
+watch(() => w.finishedCache.value, (c) => { if (c) mark('load', 'end'); });
+
+// Ticks a reactive clock while any stage is in flight so elapsed-time readouts count up live
+// instead of only updating when Vue happens to re-render for another reason.
+const tick = ref(0);
+let tickTimer: ReturnType<typeof setInterval> | null = null;
+onMounted(() => { tickTimer = setInterval(() => { tick.value++; }, 250); });
+onBeforeUnmount(() => { if (tickTimer) clearInterval(tickTimer); });
+
+function stageStatus(key: StageKey): 'pending' | 'active' | 'done' {
+	const s = stageState[key];
+	if (s.start == null) return 'pending';
+	return s.end == null ? 'active' : 'done';
+}
+function stageElapsed(key: StageKey): number {
+	void tick.value; // reactivity dependency — recompute on every tick while a stage is active
+	const s = stageState[key];
+	if (s.start == null) return 0;
+	return ((s.end ?? performance.now()) - s.start) / 1000;
+}
+
 // loadFinished() already retries a few times internally; if state is 'done' and the trace still
 // hasn't shown up after a while (a persistent failure, not just a blip), offer a manual retry
-// link under the spinner rather than spinning forever with no way out.
+// link under the progress list rather than spinning forever with no way out.
 const showManualRetry = ref(false);
 let manualRetryTimer: ReturnType<typeof setTimeout> | null = null;
 watch(() => w.st.state === 'done' && !w.finishedCache.value, (stuck) => {
@@ -137,9 +178,14 @@ function startNew() {
 			</header>
 
 			<template v-if="loading">
-				<div class="scd-loading">
-					<span class="material-symbols-rounded spin">progress_activity</span>
-					<b>{{ loadingLabel }}</b>
+				<div class="scd-progress">
+					<div v-for="s in STAGES" :key="s.key" class="scd-stage" :class="stageStatus(s.key)">
+						<span class="scd-stage-icon material-symbols-rounded" :class="{ spin: stageStatus(s.key) === 'active' }">
+							{{ stageStatus(s.key) === 'done' ? 'check_circle' : stageStatus(s.key) === 'active' ? 'progress_activity' : 'radio_button_unchecked' }}
+						</span>
+						<span class="scd-stage-label">{{ s.label }}</span>
+						<span v-if="stageStatus(s.key) !== 'pending'" class="scd-stage-time">{{ stageElapsed(s.key).toFixed(1) }}s</span>
+					</div>
 					<span v-if="w.st.nTotal" class="scd-loading-sub">{{ w.st.nTotal.toLocaleString() }} samples · ~{{ fmtSize(estSizeMb) }}</span>
 					<button v-if="showManualRetry" class="scd-btn" @click="w.loadFinished()">Still loading — try again</button>
 				</div>
@@ -193,10 +239,12 @@ function startNew() {
 
 				<div class="scd-actions">
 					<button class="scd-btn discard" :disabled="stage === 'saving'" @click="askDiscard">Don't save</button>
-					<template v-if="errMsg">
-						<button class="scd-btn" :disabled="stage === 'saving'" @click="goToPlot">Open in Plot</button>
-						<button class="scd-btn" :disabled="stage === 'saving'" @click="startNew">Start new run</button>
-					</template>
+					<!-- Not gated on the save/upload choice above — the raw capture, .mat and live_cache are
+						 already finalized on disk the moment this stage is reachable (finalize() writes them
+						 unconditionally; the checkboxes above only add a DB record and/or a Downloads copy),
+						 so jumping straight to the plot view here is always safe. -->
+					<button class="scd-btn" :disabled="stage === 'saving'" @click="goToPlot">Open in Plot</button>
+					<button v-if="errMsg" class="scd-btn" :disabled="stage === 'saving'" @click="startNew">Start new run</button>
 					<div class="scd-spacer"></div>
 					<button class="scd-btn primary" :disabled="nothingSelected || stage === 'saving'" @click="confirmSave">
 						{{ stage === 'saving' ? 'Saving…' : errMsg ? 'Retry' : 'Save' }}
@@ -245,9 +293,19 @@ function startNew() {
 .scd-plot { height: 280px; }
 .scd-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 200px; color: var(--text); }
 .scd-loading b { font-size: 14px; font-weight: 600; }
-.scd-loading-sub { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.scd-loading-sub { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; text-align: center; margin-top: 4px; }
 .scd-loading .spin { font-size: 28px; color: var(--accent); animation: scd-spin 1s linear infinite; }
 @keyframes scd-spin { to { transform: rotate(360deg); } }
+.scd-progress { display: flex; flex-direction: column; gap: 4px; justify-content: center; min-height: 200px; padding: 8px 4px; }
+.scd-stage { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; font-size: 13px; color: var(--text-dim); }
+.scd-stage.active { color: var(--text); background: var(--surface); }
+.scd-stage.done { color: var(--text-dim); }
+.scd-stage-icon { font-size: 18px; flex-shrink: 0; }
+.scd-stage.done .scd-stage-icon { color: #4ade80; }
+.scd-stage.active .scd-stage-icon { color: var(--accent); }
+.scd-stage-icon.spin { animation: scd-spin 1s linear infinite; }
+.scd-stage-label { flex: 1; }
+.scd-stage-time { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-dim); }
 .scd-opts { display: flex; flex-direction: column; gap: 8px; }
 .scd-opt { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; cursor: pointer; }
 .scd-opt input { margin-top: 2px; }

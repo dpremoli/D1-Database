@@ -729,8 +729,16 @@ watch(rightLayout, (v) => {
 	const snapshot = JSON.stringify(v);
 	persistT = setTimeout(() => localStorage.setItem(RIGHT_KEY, snapshot), 250);
 }, { deep: true });
-// Row height so the default (h:20) panels fill the measured area; grid margins subtracted.
-const rightRowH = computed(() => Math.max(16, Math.floor((availableHeight.value - 24) / 20)));
+// Row height so the panels fill the measured area exactly. grid-layout-plus sizes its container as
+// `bottomRow * (rowHeight + marginY) + marginY`, so the exact-fit inverse is
+// `(H - marginY) / bottomRow - marginY` — the previous `(H - 24) / 20` overflowed by ~186px (hidden
+// only because .right-area scrolls), and its hardcoded /20 (the DEFAULT panel h) stopped being
+// right the moment a user resized or added a panel. Both are derived properly now.
+const RIGHT_MARGIN = 10;   // must match :margin="[10, 10]" on the right-hand GridLayout
+const rightBottomRow = computed(() => rightLayout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0) || 1);
+const rightRowH = computed(() =>
+	Math.max(16, Math.floor((availableHeight.value - RIGHT_MARGIN) / rightBottomRow.value) - RIGHT_MARGIN),
+);
 const rightAddOpen = ref(false);
 const hasPanel = (t: string) => rightLayout.value.some((p) => p.type === t);
 function addRightPanel(type: 'signals' | 'frm') {
@@ -806,7 +814,7 @@ onMounted(async () => {
 				filter,
 				limit: -1,
 				fields: [
-					'id', 'peak_fx', 'peak_fy', 'peak_fz', 'status', 'live_cache_file', 'octree_status',
+					'id', 'peak_fx', 'peak_fy', 'peak_fz', 'status', 'live_cache_file', 'octree_status', 'created_at',
 					'operation_id.operation_id', 'operation_id.pass_code', 'operation_id.operation_date',
 					'operation_id.sample_id.sample_id', 'operation_id.sample_id.sample_code',
 					'operation_id.sample_id.nickname', 'operation_id.sample_id.material_id.common_name',
@@ -882,6 +890,19 @@ const filteredSamples = computed(() => {
 	return q ? samples.value.filter((s) =>
 		(s.sample_code || '').toLowerCase().includes(q) || (s.nickname || '').toLowerCase().includes(q)
 		|| (s.material || '').toLowerCase().includes(q)) : samples.value;
+});
+
+// Most recently saved recording across ALL operations (not just the currently filtered/searched
+// list) — created_at is a DB-level default (now()) set on insert regardless of which path wrote
+// the row (force-app's direct upload or the MATLAB crawler), so it's a reliable "latest" signal
+// independent of operation_date (which can be backdated/historical) or client-supplied timestamps.
+const latestRowId = computed(() => {
+	let best: any = null;
+	for (const r of rows.value) {
+		if (!r.created_at) continue;
+		if (!best || new Date(r.created_at).getTime() > new Date(best.created_at).getTime()) best = r;
+	}
+	return best?.id ?? null;
 });
 
 // Data-quality stoplight for an operation row (mirrors the FAST dashboard). Green = a
@@ -1314,7 +1335,11 @@ function fmtDateTime(v: string | null | undefined) {
 						<div class="list">
 							<button v-for="o in displayedOps" :key="o.id"
 								class="rowcard" :class="{ active: selectedRowId === o.id }" @click="selectOp(o)">
-								<span class="mono sm"><span class="qdot" :class="frmQuality(o).level" :title="frmQuality(o).label"></span>{{ o.operation_id?.pass_code || '—' }}</span>
+								<span class="mono sm"><span class="qdot" :class="frmQuality(o).level" :title="frmQuality(o).label"></span>{{ o.operation_id?.pass_code || '—' }}
+									<span v-if="o.id === latestRowId" class="latest-chip" title="The most recently saved recording">
+										<v-icon name="bolt" x-small />Latest
+									</span>
+								</span>
 								<span class="sub">
 									<template v-if="!filterSampleId">{{ sampleOf(o)?.sample_code }} · </template>
 									{{ fmtDate(o.operation_id?.operation_date) }}
@@ -1823,6 +1848,17 @@ function fmtDateTime(v: string | null | undefined) {
 .qdot.yellow { background: #f59e0b; }
 .qdot.blue { background: #3b82f6; }
 .qdot.red { background: #ef4444; }
+/* Marks the single most-recently-saved recording across all operations (see latestRowId) — an
+   inline badge rather than another corner dot since .qdot's corner is already the quality light. */
+.latest-chip {
+	display: inline-flex; align-items: center; gap: 1px; margin-left: 5px;
+	font-family: var(--theme--fonts--sans--font-family, system-ui, sans-serif);
+	font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+	padding: 1px 6px 1px 4px; border-radius: 99px; color: #b45309;
+	background: color-mix(in srgb, #f59e0b 18%, transparent);
+	vertical-align: middle;
+}
+.latest-chip .v-icon-shim { font-size: 11px !important; }
 .rowcard {
 	position: relative;
 	text-align: left; font: inherit; cursor: pointer; color: inherit;
