@@ -21,7 +21,9 @@ import urllib.request
 from .config import RecordConfig
 from .d1rw import HEADER_SIZE
 
-log = logging.getLogger(__name__)
+# Explicit name, matching force_app.main / force_app.session / force_app.nidaq. __name__ here
+# resolves to "app.backup", which breaks module filtering in the Settings > Logs view.
+log = logging.getLogger("force_app.backup")
 
 BACKUP_CONFIG_PATH: str | None = None  # set at module init from main.py
 CHUNK_INTERVAL = 5.0  # seconds between chunk sends

@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
@@ -207,6 +208,100 @@ if _cors:
 @app.get("/health")
 async def health() -> dict:
     return {"ok": True, "state": _session.state if _session else "idle"}
+
+
+# ---- Logs ----
+# The desktop app runs this backend as a hidden sidecar and keeps only a 4KB stderr tail for crash
+# reports, so the log file is the only durable record of what it did. Serve it so the operator can
+# read it from Settings > Logs without hunting through AppData — the crash dialog has always said
+# "See logs for details" with no such surface behind it.
+_LOG_LINE_RE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) +"
+    r"(?P<level>[A-Z]+) +(?P<logger>[\w.]+): (?P<message>.*)$"
+)
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+def _read_log_tail(limit: int) -> list[str]:
+    """Last `limit` physical lines across the rotating set, oldest first.
+
+    RotatingFileHandler splits history over backend.log plus .1/.2/.3, with the HIGHEST suffix
+    being the OLDEST, so reading just backend.log silently truncates history to the last 2MB.
+    Walk the backups from oldest to newest and keep only the tail we need.
+    """
+    if not LOG_PATH:
+        return []
+    lines: list[str] = []
+    paths = [f"{LOG_PATH}.{i}" for i in range(3, 0, -1)] + [LOG_PATH]
+    for p in paths:
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, encoding="utf-8", errors="replace") as f:
+                lines.extend(f.read().splitlines())
+        except OSError:
+            continue
+        if len(lines) > limit * 4:  # bound memory on a long history; we only ever return `limit`
+            lines = lines[-limit * 2:]
+    return lines[-limit:]
+
+
+def _parse_log_lines(raw: list[str]) -> list[dict]:
+    """Structure what matches the formatter; keep the rest as continuation of the previous record.
+
+    Tracebacks and any third-party output that doesn't follow our format would otherwise be
+    dropped — which is exactly the content someone opens a log viewer to read.
+    """
+    out: list[dict] = []
+    for line in raw:
+        m = _LOG_LINE_RE.match(line)
+        if m:
+            out.append({
+                "ts": m.group("ts"), "level": m.group("level"),
+                "logger": m.group("logger"), "message": m.group("message"),
+            })
+        elif out:
+            out[-1]["message"] += "\n" + line
+        elif line.strip():
+            out.append({"ts": "", "level": "INFO", "logger": "", "message": line})
+    return out
+
+
+@app.get("/logs")
+async def get_logs(limit: int = 500, level: str = "", q: str = "") -> dict:
+    """Recent backend log records, oldest first.
+
+    `level` filters to that severity and above; `q` is a case-insensitive substring match over the
+    logger name and message.
+    """
+    limit = max(1, min(limit, 5000))
+    raw = await run_in_threadpool(_read_log_tail, limit)
+    records = _parse_log_lines(raw)
+
+    lvl = level.strip().upper()
+    if lvl in LOG_LEVELS:
+        keep = set(LOG_LEVELS[LOG_LEVELS.index(lvl):])
+        records = [r for r in records if r["level"] in keep]
+    needle = q.strip().lower()
+    if needle:
+        records = [
+            r for r in records
+            if needle in r["message"].lower() or needle in r["logger"].lower()
+        ]
+
+    return {
+        "path": LOG_PATH,
+        "available": bool(LOG_PATH),
+        "loggers": sorted({r["logger"] for r in records if r["logger"]}),
+        "records": records,
+    }
+
+
+@app.get("/logs/download")
+async def download_logs() -> FileResponse:
+    if not LOG_PATH or not os.path.isfile(LOG_PATH):
+        raise HTTPException(404, "no log file — the backend is logging to stderr only")
+    return FileResponse(LOG_PATH, media_type="text/plain", filename="force-app-backend.log")
 
 
 # ---- Storage management ----
