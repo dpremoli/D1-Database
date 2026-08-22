@@ -7,15 +7,17 @@ import AlarmsSettings from './AlarmsSettings.vue';
 import ConnectivitySettings from './ConnectivitySettings.vue';
 import BackupSettings from './BackupSettings.vue';
 import LogsSettings from './LogsSettings.vue';
+import CapturesSettings from './CapturesSettings.vue';
 
 const tabs = [
 	{ id: 'general', label: 'General', icon: 'tune' },
 	{ id: 'alarms', label: 'Safety Alarms', icon: 'warning' },
 	{ id: 'connectivity', label: 'Connectivity', icon: 'network_check' },
 	{ id: 'backup', label: 'Live Backup', icon: 'cloud_upload' },
+	{ id: 'captures', label: 'Local Captures', icon: 'folder' },
 	{ id: 'logs', label: 'Logs', icon: 'receipt_long' },
 ];
-const VALID_TABS = ['general', 'alarms', 'connectivity', 'backup', 'logs'] as const;
+const VALID_TABS = ['general', 'alarms', 'connectivity', 'backup', 'captures', 'logs'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 const route = useRoute();
@@ -40,6 +42,7 @@ const active = ref<SettingsTab>(initialTab);
 				<AlarmsSettings v-else-if="active === 'alarms'" />
 				<ConnectivitySettings v-else-if="active === 'connectivity'" />
 				<BackupSettings v-else-if="active === 'backup'" />
+				<CapturesSettings v-else-if="active === 'captures'" />
 				<LogsSettings v-else-if="active === 'logs'" />
 			</section>
 		</div>

@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import time
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
@@ -1002,6 +1003,95 @@ def _capture_file(cid: str, name: str) -> str:
     if not os.path.isfile(path):
         raise HTTPException(404, "not found")
     return path
+
+
+@app.get("/captures/browse")
+async def browse_captures(limit: int = 200) -> dict:
+    """Every local capture with the facts needed to decide what to keep.
+
+    Distinct from /captures/recent, which exists for the Auto Range picker and therefore skips
+    anything without per-channel ranging data. This one lists everything on disk, finalized or not,
+    because its job is disk housekeeping: captures accumulate indefinitely (a "Don't save" leaves
+    the raw behind by design) and nothing in the app has ever been able to show or remove them.
+    """
+    def _scan() -> tuple[list[dict], dict]:
+        rows: list[dict] = []
+        if not os.path.isdir(CAPTURES_ROOT):
+            return rows, storage.disk_usage_for(CAPTURES_ROOT)
+        ids = sorted(
+            (d for d in os.listdir(CAPTURES_ROOT) if os.path.isdir(os.path.join(CAPTURES_ROOT, d))),
+            reverse=True,
+        )
+        for cid in ids[: max(1, min(limit, 1000))]:
+            d = os.path.join(CAPTURES_ROOT, cid)
+            entry: dict = {"id": cid, "size_mb": 0.0, "finalized": False, "files": {}}
+            total = 0
+            for fname in ("raw.d1raw", "capture.mat", "live_cache.bin", "summary.json"):
+                fpath = os.path.join(d, fname)
+                if os.path.isfile(fpath):
+                    n = os.path.getsize(fpath)
+                    total += n
+                    entry["files"][fname] = round(n / 1e6, 2)
+            entry["size_mb"] = round(total / 1e6, 2)
+            entry["finalized"] = "summary.json" in entry["files"]
+            try:
+                entry["mtime"] = os.path.getmtime(d)
+            except OSError:
+                entry["mtime"] = 0
+            if entry["finalized"]:
+                try:
+                    with open(os.path.join(d, "summary.json")) as f:
+                        s = json.load(f)
+                    entry["sample_name"] = s.get("sample_name")
+                    entry["duration_sec"] = s.get("duration_sec")
+                    entry["n"] = s.get("n")
+                    entry["peaks"] = s.get("peaks")
+                    entry["source"] = (s.get("config") or {}).get("source")
+                except (OSError, ValueError):
+                    pass
+            rows.append(entry)
+        return rows, storage.disk_usage_for(CAPTURES_ROOT)
+
+    captures, disk = await run_in_threadpool(_scan)
+    return {
+        "captures_root": CAPTURES_ROOT,
+        "captures": captures,
+        "total_size_mb": round(sum(c["size_mb"] for c in captures), 2),
+        "disk": disk,
+    }
+
+
+@app.delete("/captures/{cid}")
+async def delete_capture(cid: str) -> dict:
+    """Permanently delete a capture directory.
+
+    recovery.discard_session deliberately refuses to touch finalized sessions, so there was no way
+    to remove a completed capture from inside the app at all — they accumulated on the recording
+    drive forever. This is the deliberate counterpart to that guard, not a bypass: it is only ever
+    reached from an explicit, confirmed user action, and it refuses to delete the recording that is
+    currently in progress.
+    """
+    if "/" in cid or "\\" in cid or ".." in cid:
+        raise HTTPException(400, "bad id")
+    d = os.path.join(CAPTURES_ROOT, cid)
+    if not os.path.isdir(d):
+        raise HTTPException(404, "not found")
+    if _session and _session.id == cid and _session.state in ("recording", "finalizing"):
+        raise HTTPException(409, "that recording is still in progress")
+    t0 = time.perf_counter()
+    freed = 0
+    try:
+        for root, _dirs, files in os.walk(d):
+            for f in files:
+                try:
+                    freed += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass
+        await run_in_threadpool(shutil.rmtree, d)
+    except OSError as e:
+        raise HTTPException(500, f"could not delete: {e}")
+    log.info("delete_capture: id=%s freed=%.1fMB in %.2fs", cid, freed / 1e6, time.perf_counter() - t0)
+    return {"deleted": True, "id": cid, "freed_mb": round(freed / 1e6, 2)}
 
 
 @app.get("/captures/{cid}/summary")

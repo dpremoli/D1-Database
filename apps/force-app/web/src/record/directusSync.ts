@@ -74,6 +74,33 @@ export async function flush(): Promise<void> {
 	}
 }
 
+// ---- Queue inspection (Settings > Local Captures) ----
+// The topbar only ever showed a count, so a run stuck behind a validation error was invisible:
+// no way to see which one, why, or to clear it. These expose the queue for that UI.
+export function listQueue(): QueuedRun[] {
+	return load();
+}
+
+/** Drop one item permanently. Its capture stays on disk; only the pending DB write is abandoned. */
+export function discardQueued(id: string): void {
+	save(load().filter((x) => x.id !== id));
+}
+
+/** Move an item to the front and flush, so a fixed permanent failure can be retried on demand. */
+export async function retryQueued(id: string): Promise<void> {
+	const q = load();
+	const i = q.findIndex((x) => x.id === id);
+	if (i < 0) return;
+	// flush() stops at the first permanent failure, so a poisoned head would block everything
+	// behind it — promoting the requested item is what makes a targeted retry possible at all.
+	const [item] = q.splice(i, 1);
+	item.lastError = undefined;
+	q.unshift(item);
+	save(q);
+	syncStatus.lastError = null;
+	await flush();
+}
+
 // Wire background retries once.
 let started = false;
 export function startSync(): void {
