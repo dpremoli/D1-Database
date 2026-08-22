@@ -27,6 +27,10 @@ const props = defineProps<{
 	zoomTool?: boolean;              // when true, drag draws a rectangular zoom box
 	overlay?: { f: number[]; amp: number[] } | null;   // FFT-only: dashed filtered spectrum
 	active?: boolean;                // the axis currently shown in the FRM cloud -> highlighted
+	// Additional cuts plotted on the same axes for comparison (e.g. successive passes on one
+	// insert edge, to see wear develop). Drawn as mid-lines, not filled envelopes: three or four
+	// translucent bands over each other turn to mush, whereas lines stay readable.
+	compare?: { label: string; color: string; data: any }[] | null;
 }>();
 const emit = defineEmits<{
 	(e: 'hover', i: number | null): void;
@@ -105,6 +109,19 @@ const geom = computed(() => {
 		// squashed all-negative signals (e.g. an Fy at −5…−10 N) into half the plot,
 		// with the top half empty — the envelope looked cropped/compressed. Now the axis
 		// extends to 0 only if the gap to 0 costs ≤ half the data's own range.
+		// Comparison cuts share these axes, so they have to widen the y-range too — otherwise a
+		// worn pass with higher forces would be silently clipped at the top of the plot, which is
+		// exactly the difference the comparison exists to show.
+		for (const c of props.compare ?? []) {
+			const cd = c.data;
+			if (!cd?.t?.length) continue;
+			for (let i = 0; i < cd.t.length; i++) {
+				if (cd.t[i] < x0 || cd.t[i] > x1) continue;
+				const mid = (cd.min[i] + cd.max[i]) / 2;
+				if (mid < lo) lo = mid;
+				if (mid > hi) hi = mid;
+			}
+		}
 		const R = (hi - lo) || 1;
 		if (lo > 0 && lo <= R * 0.5) lo = 0;
 		else if (hi < 0 && -hi <= R * 0.5) hi = 0;
@@ -192,7 +209,26 @@ const geom = computed(() => {
 			started = true;
 		}
 	}
-	return { W, Hh, xs, x0, x1, iA, iB, lo, hi, sx, sy, area, line, cropArea, xticks, yticks, zeroY, cropStartX, cropEndX, overlayLine };
+	// Comparison cuts as mid-lines through the same sx/sy, so they line up with the primary
+	// envelope and the shared zoom. Each carries its own time base (a different recording), so
+	// they are mapped by x-value rather than by index.
+	const compareLines: { label: string; color: string; d: string }[] = [];
+	if (props.kind === 'env') {
+		for (const c of props.compare ?? []) {
+			const cd = c.data;
+			if (!cd?.t?.length) continue;
+			let path = '', started = false;
+			for (let i = 0; i < cd.t.length; i++) {
+				const xv = cd.t[i];
+				if (xv < x0 || xv > x1) { started = false; continue; }
+				const mid = (cd.min[i] + cd.max[i]) / 2;
+				path += `${started ? 'L' : 'M'}${sx(xv).toFixed(1)},${sy(mid).toFixed(1)} `;
+				started = true;
+			}
+			if (path) compareLines.push({ label: c.label, color: c.color, d: path });
+		}
+	}
+	return { W, Hh, xs, x0, x1, iA, iB, lo, hi, sx, sy, area, line, cropArea, xticks, yticks, zeroY, cropStartX, cropEndX, overlayLine, compareLines };
 });
 
 const hoverPt = computed(() => {
@@ -325,6 +361,10 @@ function onWheel(ev: WheelEvent) {
 			<path v-if="kind === 'env' && geom.cropArea" :d="geom.cropArea" :fill="stroke" fill-opacity="0.28" :stroke="stroke" stroke-width="0.8" />
 			<path v-if="kind === 'line'" :d="geom.line" fill="none" :stroke="stroke" stroke-width="1.1" />
 			<path v-if="geom.overlayLine" :d="geom.overlayLine" fill="none" stroke="#0891b2" stroke-width="1" stroke-dasharray="3 2" opacity="0.9" />
+			<!-- Comparison cuts, drawn over the primary envelope so the current cut stays the
+				 visual subject and the others read as reference traces. -->
+			<path v-for="c in geom.compareLines" :key="c.label" :d="c.d" fill="none"
+				:stroke="c.color" stroke-width="1.2" stroke-dasharray="4 2" opacity="0.85" />
 			<line :x1="ML" :x2="ML" :y1="MT" :y2="geom.Hh - MB" stroke="#94a3b8" stroke-width="0.8" />
 			<line :x1="ML" :x2="geom.W - MR" :y1="geom.Hh - MB" :y2="geom.Hh - MB" stroke="#94a3b8" stroke-width="0.8" />
 			<g v-for="(t, i) in geom.yticks" :key="'y' + i">
