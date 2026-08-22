@@ -13,11 +13,15 @@ driver for the sim/replay paths.
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
 
 import numpy as np
 
 from ..config import DEFAULT_NIDAQ_CHANNELS, SIGNAL_CHANNELS, RecordConfig
+
+log = logging.getLogger("force_app.nidaq")
 
 
 class NidaqUnavailableError(Exception):
@@ -45,6 +49,15 @@ def nidaq_available() -> bool:
 
 
 class NidaqSource:
+    # Bounds the blocking hardware read below — NOT how long a chunk normally takes (that's
+    # chunk_sec, ~50ms), but the worst case a manual stop() has to wait for the *in-flight* read to
+    # notice the task was stopped and unblock. Previously 10.0s (a value copied from the MATLAB
+    # app's acquisition-error timeout, not chosen for stop responsiveness) — on real hardware this
+    # is exactly the path that was flagged as never validated against a physical DAQ chassis (see
+    # docs/force-app-desktop-hardware-testing-handoff.md), and a stop landing mid-read could stall
+    # the whole /record/stop response, and therefore the save dialog, for up to that long.
+    READ_TIMEOUT_SEC = 2.0
+
     def __init__(
         self,
         cfg: RecordConfig,
@@ -69,6 +82,13 @@ class NidaqSource:
         self._buf = np.zeros((len(self.channels), self.chunk), dtype=np.float64)
         self._i = 0
         self._stop = threading.Event()
+        # Serializes all direct DAQmx task access between the acquisition thread (read(), inside
+        # session._run) and whichever thread calls stop() (session.stop(), off the FastAPI event
+        # loop). stop()/close() on a task with a read in flight on another thread is not something
+        # the DAQmx driver is guaranteed to handle cleanly — this lock plus the short read timeout
+        # above means stop() only ever has to wait for the CURRENT read to hit its own short
+        # timeout, never a fresh one, and the task is never touched from two threads at once.
+        self._task_lock = threading.Lock()
 
     def start(self) -> None:
         self._stop.clear()
@@ -92,16 +112,29 @@ class NidaqSource:
     def read(self) -> tuple[np.ndarray, np.ndarray] | None:
         if self._stop.is_set():
             return None
-        try:
-            # Blocking read of one chunk (hardware-paced). Reader fills (n_channels, chunk).
-            self._reader.read_many_sample(
-                self._buf, number_of_samples_per_channel=self.chunk, timeout=10.0
-            )
-        except Exception:
-            # A stop() during a blocking read aborts the task; treat as end-of-stream.
-            if self._stop.is_set():
+        t_read0 = time.perf_counter()
+        with self._task_lock:
+            # Re-check inside the lock: stop() may have taken it and cleared self._task while this
+            # call was waiting to acquire it.
+            if self._stop.is_set() or self._task is None:
                 return None
-            raise
+            try:
+                # Blocking read of one chunk (hardware-paced). Reader fills (n_channels, chunk).
+                self._reader.read_many_sample(
+                    self._buf,
+                    number_of_samples_per_channel=self.chunk,
+                    timeout=self.READ_TIMEOUT_SEC,
+                )
+            except Exception:
+                # A stop() during a blocking read aborts the task; treat as end-of-stream. Anything
+                # else (including a plain timeout under normal operation, e.g. a hiccup on the
+                # chassis) is a real acquisition error and should surface as one.
+                if self._stop.is_set():
+                    return None
+                raise
+        dt = time.perf_counter() - t_read0
+        if dt > self.READ_TIMEOUT_SEC * 0.5:
+            log.warning("NidaqSource.read() took %.2fs for a %d-sample chunk", dt, self.chunk)
         n = self.chunk
         idx = np.arange(self._i, self._i + n)
         self._i += n
@@ -110,11 +143,15 @@ class NidaqSource:
 
     def stop(self) -> None:
         self._stop.set()
-        task = self._task
+        t0 = time.perf_counter()
+        with self._task_lock:
+            task, self._task = self._task, None
         if task is not None:
             try:
                 task.stop()
                 task.close()
             except Exception:
                 pass
-            self._task = None
+        dt = time.perf_counter() - t0
+        if dt > 0.2:
+            log.warning("NidaqSource.stop() waited %.2fs for the in-flight read to release the task", dt)

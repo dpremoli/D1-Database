@@ -47,7 +47,18 @@ function webDistDir(): string {
 // Vite dev-server origins). Under Electron the renderer's origin is app://force, which is not in
 // that default, so every renderer -> recorder request would be CORS-blocked. Thread it in
 // explicitly for both the dev and packaged branches — it's the same backend either way.
-const RECORDER_ENV: NodeJS.ProcessEnv = { RECORDER_CORS_ORIGINS: 'app://force' };
+//
+// FORCE_APP_LOG_DIR pins the backend's log file inside Electron's userData rather than letting it
+// fall back to its own per-user default. That keeps the app's logs alongside its other user data,
+// and matters most for the packaged build: the backend lives under Program Files there, which a
+// standard user cannot write to. Built lazily (not as a module-level const) because
+// app.getPath() is only valid once the app is ready.
+function recorderEnv(): NodeJS.ProcessEnv {
+  return {
+    RECORDER_CORS_ORIGINS: 'app://force',
+    FORCE_APP_LOG_DIR: path.join(app.getPath('userData'), 'logs'),
+  };
+}
 
 function backendCommand(port: number): {
   exePath: string;
@@ -59,7 +70,7 @@ function backendCommand(port: number): {
     return {
       exePath: path.join(process.resourcesPath, 'backend', 'force-app-backend.exe'),
       args: ['--port', String(port)],
-      env: RECORDER_ENV,
+      env: recorderEnv(),
     };
   }
   // Dev mode: the same venv + uvicorn invocation apps/force-app/backend/scripts/start_recorder.ps1
@@ -69,7 +80,7 @@ function backendCommand(port: number): {
     exePath: path.join(backendDir, '.venv', 'Scripts', 'python.exe'),
     args: ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(port)],
     cwd: backendDir,
-    env: RECORDER_ENV,
+    env: recorderEnv(),
   };
 }
 

@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+import time
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -55,6 +58,50 @@ def _load_captures_root() -> str:
 
 CAPTURES_ROOT = _load_captures_root()
 os.makedirs(CAPTURES_ROOT, exist_ok=True)
+
+# The desktop app spawns this as a hidden sidecar process (stdio piped, window hidden) and only
+# keeps a short in-memory tail of stderr for crash reports — so without a log file, there is no way
+# to see what the backend actually did during a slow stop/finalize/discard once the app is closed.
+#
+# The directory must be one that is WRITABLE AT RUNTIME, which rules out anything package-relative:
+# under PyInstaller, `__file__` resolves inside the frozen bundle (the app package lives in the PYZ
+# archive, so `<install>/resources/backend/_internal/app/main.py` is a virtual path), and the
+# default NSIS install location is Program Files, where a standard user cannot write. Since
+# RotatingFileHandler opens its file eagerly at construction, putting the log there would raise
+# PermissionError at import and take the whole backend down on startup.
+#
+# Order: an explicit FORCE_APP_LOG_DIR (the Electron sidecar passes its own userData path) > the
+# per-user state dir for the platform. Deliberately NOT CAPTURES_ROOT, which can point at a
+# removable or network drive — the log should survive the recording drive being swapped.
+def _default_log_dir() -> str:
+    override = os.environ.get("FORCE_APP_LOG_DIR")
+    if override:
+        return override
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "force-app", "logs")
+    xdg = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(xdg, "force-app")
+
+
+LOG_DIR = _default_log_dir()
+LOG_PATH = os.path.join(LOG_DIR, "backend.log")
+_handlers: list[logging.Handler] = [logging.StreamHandler()]
+try:
+    os.makedirs(LOG_DIR, exist_ok=True)
+    _file_handler = RotatingFileHandler(
+        LOG_PATH, maxBytes=2_000_000, backupCount=3, encoding="utf-8"
+    )
+    _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    _handlers.append(_file_handler)
+except OSError:
+    # Read-only or otherwise unwritable location — degrade to stderr-only. Logging is diagnostic;
+    # never let it be the reason the recorder won't start.
+    LOG_PATH = ""
+logging.basicConfig(level=logging.INFO, handlers=_handlers)
+log = logging.getLogger("force_app.main")
+if not LOG_PATH:
+    log.warning("log file unavailable (%s not writable) — logging to stderr only", LOG_DIR)
 
 # Pin the backup settings next to storage_config.json rather than inside the captures root. Both
 # have to survive the user changing the recording drive — a config stored on the drive it configures
@@ -568,12 +615,15 @@ async def recovery_recover(session_id: str) -> dict:
 
 @app.post("/recovery/discard/{session_id}")
 async def recovery_discard(session_id: str) -> dict:
+    t0 = time.perf_counter()
     try:
         await run_in_threadpool(recovery.discard_session, CAPTURES_ROOT, session_id)
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
+    finally:
+        log.info("recovery_discard: id=%s took %.2fs", session_id, time.perf_counter() - t0)
     return {"discarded": True, "session_id": session_id}
 
 
@@ -768,8 +818,14 @@ async def record_stop() -> dict:
     # finalize() now runs in the background (session.py), so `state` may already be "finalizing"
     # from a prior call — don't re-invoke stop() (source.stop() etc.) in that case, just report it.
     # The client learns of the eventual "done"/summary via the WS control message, not this response.
+    t0 = time.perf_counter()
+    log.info("record_stop: id=%s state=%s", _session.id, _session.state)
     if _session.state == "recording":
         await run_in_threadpool(_session.stop, True, 60.0)
+    log.info(
+        "record_stop: acquisition-stop returned in %.2fs (state now %s)",
+        time.perf_counter() - t0, _session.state,
+    )
     return {
         "id": _session.id,
         "state": _session.state,
