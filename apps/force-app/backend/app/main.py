@@ -113,6 +113,12 @@ backup_mod.BACKUP_CONFIG_PATH = os.path.join(
 _broadcaster: Broadcaster | None = None
 _session: RecordingSession | None = None
 
+# Suggested live-backup endpoint. The backup server runs as a compose service on the lab server and
+# is reached through Caddy's /backup-ingest route rather than on its own published port, so it
+# inherits that single TLS, tailnet-only entry point (see infra/caddy/Caddyfile). A direct
+# host:8210 URL still works for a hand-run server — nothing here requires this exact form.
+DEFAULT_BACKUP_URL = "https://d1-server.tail54eeb6.ts.net/backup-ingest"
+
 # ---- LabAmp (2c) config + instance ----
 # The amp is link-local (reachable only from the acquisition PC) so the backend owns the HTTP
 # conversation. Defaults to a mock (no hardware here); switch mode=real on the rig.
@@ -529,20 +535,23 @@ async def health_doctor(request: Request) -> dict:
                 "fix": "Connect to Tailscale or correct the backup server URL in Settings > Live Backup.",
             })
         else:
-            # Host resolves but port is closed — maybe the server process isn't running
+            # Host resolves but port is closed — maybe the server process isn't running. It is
+            # deployed as a compose service behind Caddy's /backup-ingest route, so the fix is to
+            # bring that service up on the server host, not to hand-run uvicorn (which was the old
+            # advice, from before the service was deployable at all).
             findings.append({
                 "service": "Backup server", "status": "fail",
                 "message": f"Host {host} resolved ({resolved}) but port {port} refused",
-                "diagnosis": f"The backup server host is reachable but nothing is listening on port {port}. The backup-server process may not be running.",
-                "fix": "The backup-server process is not running on the remote host.",
-                "fix_command": f"cd \"{os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'backup-server'))}\"; python -m uvicorn server:app --host 0.0.0.0 --port {port}",
+                "diagnosis": f"The backup server host is reachable but nothing is listening on port {port}. The backup-server container may not be running.",
+                "fix": "Start the backup-server service on the server host (it is part of the main docker compose stack).",
+                "fix_command": "docker compose up -d backup-server proxy",
             })
     elif bcfg.get("enabled"):
         findings.append({
             "service": "Backup server", "status": "fail",
             "message": "Backup enabled but no server URL configured",
             "diagnosis": "Live backup is enabled in settings but the server URL is empty.",
-            "fix": "Set the backup server URL in Settings > Live Backup (e.g. http://d1-server.tail54eeb6.ts.net:8210).",
+            "fix": f"Set the backup server URL in Settings > Live Backup (e.g. {DEFAULT_BACKUP_URL}).",
         })
     else:
         findings.append({

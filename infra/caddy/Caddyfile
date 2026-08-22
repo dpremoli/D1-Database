@@ -46,6 +46,22 @@
     handle_path /recorder/* {
         reverse_proxy host.docker.internal:8200
     }
+    # force-app live recording backup (apps/force-app/backup-server). The acquisition PC streams
+    # raw D1RW chunks here while recording, and pulls them back to finalize if the local copy is
+    # lost. Proxied same-origin so it rides the one TLS entry point instead of publishing a second
+    # plaintext port; handle_path strips the prefix, mapping /backup-ingest/ingest/chunk →
+    # /ingest/chunk. Chunk uploads are up to 4 MB (backup.py's MAX_CHUNK_BYTES) and raw downloads
+    # are multi-GB; Caddy streams both without a size limit unless one is configured, so no
+    # request_body directive is wanted here.
+    #
+    # NOTE: the backup server has NO authentication of its own — anyone who can reach this route
+    # can read or delete any stored capture. That is the same tailnet-trust posture as /recorder
+    # and /octrees above (this Caddy is reachable only over Tailscale), and it is why the service
+    # must stay unpublished in docker-compose rather than exposed on :8210 directly. Revisit if
+    # this host ever becomes publicly reachable.
+    handle_path /backup-ingest/* {
+        reverse_proxy backup-server:8210
+    }
     # Electron auto-update feed (electron-updater, generic provider). Populated by a pull-based
     # publish script run on this host (apps/force-app/desktop/scripts/publish-release.ps1) — see
     # docs/superpowers/specs/2026-08-10-force-app-desktop-packaging-design.md. Tailnet-only by

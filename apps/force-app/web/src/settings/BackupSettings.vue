@@ -128,8 +128,12 @@ onMounted(() => { loadConfig(); });
 
 		<label class="field">
 			<span class="lbl">Backup server URL</span>
-			<input v-model="cfg.server_url" placeholder="http://d1-server.tail54eeb6.ts.net:8210" spellcheck="false" />
-			<span class="hint">The remote backup service endpoint (e.g. http://d1-server.tail54eeb6.ts.net:8210)</span>
+			<input v-model="cfg.server_url" placeholder="https://d1-server.tail54eeb6.ts.net/backup-ingest" spellcheck="false" />
+			<span class="hint">
+				The remote backup service endpoint. On the lab server it runs behind the shared proxy at
+				<code>/backup-ingest</code>; a directly-run server on its own port (e.g.
+				<code>http://host:8210</code>) works too.
+			</span>
 		</label>
 
 		<label class="field">
