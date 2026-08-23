@@ -211,9 +211,9 @@ def test_default_captures_root_is_never_inside_the_package(monkeypatch, tmp_path
     pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(m.__file__)))
     root = m._load_captures_root()
 
-    assert not root.startswith(pkg_dir), (
-        f"default captures root {root} is inside the package — an update would delete it"
-    )
+    assert not root.startswith(
+        pkg_dir
+    ), f"default captures root {root} is inside the package — an update would delete it"
     assert "force-app" in root
 
 
