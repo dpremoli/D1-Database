@@ -204,10 +204,15 @@ def test_default_captures_root_is_never_inside_the_package(monkeypatch, tmp_path
     that cannot be regenerated.
     """
     monkeypatch.delenv("FORCE_APP_CAPTURES", raising=False)
+    # Also clear the config-dir override, and neutralise the legacy path: either one supplies a
+    # STORED captures root, which correctly wins over the default and so would not be testing the
+    # default at all. Without this the test passes or fails depending on the ambient environment.
+    monkeypatch.delenv("FORCE_APP_CONFIG_DIR", raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData"))
     import app.main as main
 
     m = importlib.reload(main)
+    monkeypatch.setattr(m, "LEGACY_STORAGE_CONFIG_PATH", str(tmp_path / "no-legacy.json"))
     pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(m.__file__)))
     root = m._load_captures_root()
 

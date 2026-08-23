@@ -60,8 +60,14 @@ def test_sensor_table_parsing():
     rows = _client().sensor_table(8)
     assert len(rows) == 8
     assert rows[0]["channel"] == 1
-    # value echoes the leaf name in the mock handler
-    assert rows[0]["name"] == "name" and rows[0]["range"] == "range"
+    # The mock echoes the last segment of the requested PARAM PATH, which is not the same as the
+    # row key: "range" is read from sensor/type/charge/physicalRange. Asserting "range" here made
+    # the test fail against correct code — the mapping back to the short key is exactly what
+    # sensor_table() is for, and this checks it.
+    assert rows[0]["name"] == "name"
+    assert rows[0]["range"] == "physicalRange"
+    assert rows[0]["sensitivity"] == "sensitivity"
+    assert rows[0]["serialNumber"] == "serialNumber"
 
 
 def test_unreachable_ping_false():
