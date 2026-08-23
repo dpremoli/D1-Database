@@ -41,30 +41,36 @@ export async function flush(): Promise<void> {
 	flushing = true;
 	syncStatus.syncing = true;
 	try {
-		let q = load();
-		while (q.length) {
+		// Re-read the queue on every iteration, and again after each await, rather than holding one
+		// array for the whole run. The POST is an await point, so the user can discard or reorder an
+		// item (Settings > Local Captures) while it is in flight — writing back a copy captured
+		// before that would undo their edit, resurrecting an item they had just deleted.
+		for (;;) {
+			const q = load();
+			if (!q.length) break;
 			const item = q[0];
 			try {
 				await api.post(`/items/${item.collection}`, item.payload);
-				q.shift();                       // success — drop it
-				save(q);
+				save(load().filter((x) => x.id !== item.id));   // success — drop just this one
 				syncStatus.lastSyncedAt = Date.now();
 				syncStatus.lastError = null;
 			} catch (e: any) {
 				const status = e?.response?.status;
-				item.attempts++;
-				item.lastError = e?.message || 'write failed';
+				const cur = load();
+				const live = cur.find((x) => x.id === item.id);
+				if (!live) break;   // discarded mid-flight — nothing to record against
+				live.attempts++;
+				live.lastError = e?.message || 'write failed';
 				if (status && status >= 400 && status < 500 && status !== 429) {
 					// permanent (validation/permission): keep for manual retry but stop the run and surface it
-					// item.lastError! : assigned a non-empty string three lines up, but the
+					// live.lastError! : assigned a non-empty string three lines up, but the
 					// JSON.stringify() call in this same expression invalidates TS's narrowing
-					// of the property (the call could in principle mutate `item`).
-					syncStatus.lastError = `${status}: ${(JSON.stringify(e?.response?.data?.errors?.[0]?.message ?? '') || item.lastError!).slice(0, 160)}`;
-					save(q);
-					break;
+					// of the property (the call could in principle mutate `live`).
+					syncStatus.lastError = `${status}: ${(JSON.stringify(e?.response?.data?.errors?.[0]?.message ?? '') || live.lastError!).slice(0, 160)}`;
 				}
-				// transient (offline/5xx/429): stop; the timer / online event retries later
-				save(q);
+				// Either way stop: a permanent failure needs attention, and a transient one is
+				// retried by the timer / online event.
+				save(cur);
 				break;
 			}
 		}
