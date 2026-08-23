@@ -974,6 +974,10 @@ async function selectOp(row: any) {
 					'operation_id.operation_sequence', 'operation_id.machining_operation_subtype',
 					'operation_id.process_category', 'operation_id.operator_name',
 					'operation_id.machining_new_edge', 'operation_id.machining_coolant_used', 'operation_id.outcome_notes',
+					// Needed by the wear-trend panel to group an edge's passes. `*` above covers only
+					// machining_force_analysis's own columns, not the related operation's, so without
+					// this the edge grouping silently finds nothing and falls back to sample.
+					'operation_id.insert_edge_id', 'operation_id.machining_cutting_length_mm',
 					'operation_id.equipment_id.equipment_name', 'operation_id.method_id.method_name',
 					'operation_id.sample_id.sample_id', 'operation_id.sample_id.sample_code', 'operation_id.sample_id.nickname',
 					'operation_id.sample_id.form', 'operation_id.sample_id.manufactured_date',
