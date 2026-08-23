@@ -170,10 +170,17 @@ cd apps\force-app\backend;      .venv\Scripts\pytest          # backend
 cd apps\force-app\backup-server; ..\backend\.venv\Scripts\pytest   # backup server (own directory)
 cd apps\force-app\web;          npm test                      # web unit
 cd apps\force-app\desktop;      npm test                      # shell unit
-cd apps\force-app\desktop;      npx playwright test           # e2e, drives the real app
+cd apps\force-app\desktop;      npm run test:e2e               # e2e, drives the real app — rig only
+cd apps\force-app\desktop;      npm run test:e2e:ci            # smoke.spec.ts only — safe anywhere
 ```
 
 The Playwright suite launches the real Electron app against the real backend and, for the
 save-flow test, the real NI-DAQ source. It is self-cleaning: dev-mode launches share one `userData`
 profile, so each test removes the fake auth token it seeds, and the save-flow test deletes the
 capture it creates — otherwise every run litters the operator's capture drive.
+
+**`test:e2e` (no filter) needs the rig** — `save-flow.spec.ts` drives the real NI-DAQ source and
+`captures-tab.spec.ts` reads "the operator's real capture drive" by design. Neither means anything
+on a GitHub-hosted CI runner, which has no hardware and isn't on the tailnet. The release workflow
+therefore runs `test:e2e:ci` (`smoke.spec.ts` only — bundle boots, sidecar restart) as its gate;
+`test:e2e` is for whoever has the rig to run by hand.
