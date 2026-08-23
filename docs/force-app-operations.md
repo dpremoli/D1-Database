@@ -132,9 +132,17 @@ these need the rig and a human:
       pulled back is **byte-identical** (matching SHA-256), the recording config survived the round
       trip, and re-finalizing the restored raw reproduced the original exactly — same sample count,
       rate, duration, and all three per-axis peaks.
-- [ ] Still untried on real hardware: pulling the network **mid-recording**. The recording must
-      continue locally, the chip should show `paused` then resume, and the restored file must still
-      be byte-identical. Covered by automated tests against an in-process server, not by the rig.
+- [x] **Network drop mid-recording — done 2026-08-23.** A 395,000-sample (15.8 MB) run with the
+      link cut partway through: the backup chip went `paused` / disconnected and `bytes_sent`
+      froze, the recording carried on locally untouched (`done`, no error), and on restore the
+      streamer caught up the whole backlog and finished at 100 %. The raw is **byte-identical**
+      across the outage and re-finalizes to match the original. The link was cut at the socket the
+      streamer uses rather than by unplugging Tailscale, so this proves the recorder recovers, not
+      that Tailscale does.
+
+      Note for anyone watching the chip: the percentage *falls* during an outage (69 % → 24 % in
+      that run). It is `bytes_sent / bytes_total`, and the denominator keeps growing while the
+      numerator is frozen — a growing backlog, not lost data.
 - [ ] **A packaged install as a standard user.** `npm run package -w force-app-desktop`, install to
       the default Program Files location, then confirm the capture drive choice survives a restart
       and that logs still appear in Settings > Logs. This is the one scenario the config-location
