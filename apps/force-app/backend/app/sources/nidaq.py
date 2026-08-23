@@ -57,6 +57,11 @@ class NidaqSource:
     # docs/force-app-desktop-hardware-testing-handoff.md), and a stop landing mid-read could stall
     # the whole /record/stop response, and therefore the save dialog, for up to that long.
     READ_TIMEOUT_SEC = 2.0
+    # How long a run of consecutive read timeouts is tolerated before the acquisition is declared
+    # failed. Matches the tolerance the original single 10s timeout provided, but split into short
+    # waits so stop() is never stuck behind one — responsiveness and stall-tolerance are separate
+    # concerns and this keeps them that way.
+    READ_STALL_BUDGET_SEC = 10.0
 
     def __init__(
         self,
@@ -109,29 +114,55 @@ class NidaqSource:
             self._task = task
         self._task.start()
 
+    # DAQmx "some or all of the samples requested have not yet been acquired" — the plain timeout,
+    # as opposed to a real fault (overrun, device gone, task aborted).
+    _DAQ_TIMEOUT_CODE = -200284
+
+    @staticmethod
+    def _is_timeout(exc: Exception) -> bool:
+        code = getattr(exc, "error_code", None)
+        if code is not None:
+            return code == NidaqSource._DAQ_TIMEOUT_CODE
+        # Injected fakes and any driver build that doesn't carry an error_code: fall back to the
+        # message. Deliberately narrow — anything unrecognised is treated as a real fault.
+        return "not yet been acquired" in str(exc).lower() or "timeout" in str(exc).lower()
+
     def read(self) -> tuple[np.ndarray, np.ndarray] | None:
         if self._stop.is_set():
             return None
         t_read0 = time.perf_counter()
-        with self._task_lock:
-            # Re-check inside the lock: stop() may have taken it and cleared self._task while this
-            # call was waiting to acquire it.
-            if self._stop.is_set() or self._task is None:
-                return None
-            try:
-                # Blocking read of one chunk (hardware-paced). Reader fills (n_channels, chunk).
-                self._reader.read_many_sample(
-                    self._buf,
-                    number_of_samples_per_channel=self.chunk,
-                    timeout=self.READ_TIMEOUT_SEC,
-                )
-            except Exception:
-                # A stop() during a blocking read aborts the task; treat as end-of-stream. Anything
-                # else (including a plain timeout under normal operation, e.g. a hiccup on the
-                # chassis) is a real acquisition error and should surface as one.
-                if self._stop.is_set():
+        while True:
+            with self._task_lock:
+                # Re-check inside the lock: stop() may have taken it and cleared self._task while
+                # this call was waiting to acquire it.
+                if self._stop.is_set() or self._task is None:
                     return None
-                raise
+                try:
+                    # Blocking read of one chunk (hardware-paced). Reader fills (n_channels, chunk).
+                    self._reader.read_many_sample(
+                        self._buf,
+                        number_of_samples_per_channel=self.chunk,
+                        timeout=self.READ_TIMEOUT_SEC,
+                    )
+                    break
+                except Exception as e:
+                    # A stop() during a blocking read aborts the task: end of stream.
+                    if self._stop.is_set():
+                        return None
+                    # A plain timeout is NOT fatal. The short per-read timeout exists so a manual
+                    # stop is never stuck behind a long one — it is not a judgement that the rig has
+                    # failed. Killing a recording mid-cut over a transient stall would throw away
+                    # the very data this is capturing, so retry until the total wait exceeds the
+                    # tolerance a single long read used to provide. Anything that is not a timeout
+                    # is a real fault and propagates immediately.
+                    if not self._is_timeout(e):
+                        raise
+                    if time.perf_counter() - t_read0 >= self.READ_STALL_BUDGET_SEC:
+                        raise
+                    log.warning(
+                        "NidaqSource.read() timed out after %.1fs, retrying (budget %.0fs)",
+                        time.perf_counter() - t_read0, self.READ_STALL_BUDGET_SEC,
+                    )
         dt = time.perf_counter() - t_read0
         if dt > self.READ_TIMEOUT_SEC * 0.5:
             log.warning("NidaqSource.read() took %.2fs for a %d-sample chunk", dt, self.chunk)

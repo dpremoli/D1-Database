@@ -62,9 +62,13 @@ def load_config(captures_root: str) -> dict:
         try:
             with open(path) as f:
                 cfg.update(json.load(f))
-            break
         except (OSError, ValueError):
-            continue
+            # The current config exists but is unreadable (save_config is not atomic, so a
+            # truncated write is possible). Stop here rather than falling through: an older file
+            # could resurrect a stale server URL or re-enable backup the user had turned off, and
+            # streaming a recording to the wrong host is worse than the safe defaults.
+            log.warning("backup config at %s is unreadable — using defaults", path)
+        break
     return cfg
 
 

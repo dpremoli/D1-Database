@@ -139,9 +139,6 @@ async function uploadAllUnsynced() {
 	for (const c of pending) await upload(c);   // sequential: each is a multi-MB file upload
 }
 
-const unsynced = computed(() =>
-	uploadedKnown.value ? captures.value.filter((c) => c.finalized && !uploaded.value[c.id]) : [],
-);
 
 function fmtSize(mb: number): string {
 	if (mb < 1) return `${(mb * 1000).toFixed(0)} KB`;
@@ -162,9 +159,29 @@ const queue = ref<QueuedRun[]>([]);
 const queueBusy = ref<string | null>(null);
 function refreshQueue() { queue.value = listQueue(); }
 
+// uploadCaptureColdStart has no idempotency guard: running it twice creates a SECOND
+// manufacturing_operations row plus a second analysis record, and re-sends the multi-MB files. So
+// an upload is only offered when we positively know one hasn't happened. Two states must suppress
+// it — an unknown upload state (Directus unreachable, so `uploaded` is empty, which is NOT the
+// same as "nothing is uploaded"), and a run still in the offline queue, which will be written by
+// itself as soon as the connection returns.
+const queuedCaptureIds = computed(
+	() => new Set(queue.value.map((q) => q.payload?.recorded_metadata?.capture_id).filter(Boolean)),
+);
+function canUpload(c: Capture): boolean {
+	return c.finalized && uploadedKnown.value
+		&& !uploaded.value[c.id] && !queuedCaptureIds.value.has(c.id);
+}
+const unsynced = computed(() => captures.value.filter(canUpload));
+
 async function retryOne(id: string) {
 	queueBusy.value = id;
-	try { await retryQueued(id); } finally { queueBusy.value = null; refreshQueue(); }
+	try {
+		// false = a background sync already held the lock, so nothing was attempted now. Say so
+		// rather than letting the row look as though it had been retried and failed again.
+		const attempted = await retryQueued(id);
+		if (!attempted) rowMsg.value[id] = 'a sync is already running — this run is next in line';
+	} finally { queueBusy.value = null; refreshQueue(); }
 }
 function discardOne(item: QueuedRun) {
 	const name = item.payload?.recorded_metadata?.sample_name || item.payload?.recorded_metadata?.capture_id || item.id;
@@ -229,6 +246,7 @@ onMounted(() => { load(); refreshQueue(); });
 						<span v-if="item.attempts">{{ item.attempts }} attempt<span v-if="item.attempts !== 1">s</span></span>
 						<span>{{ new Date(item.createdAt).toLocaleString() }}</span>
 					</div>
+					<p v-if="rowMsg[item.id]" class="rmsg">{{ rowMsg[item.id] }}</p>
 					<p v-if="item.lastError" class="rmsg bad">{{ item.lastError }}</p>
 				</div>
 				<div class="ract">
@@ -254,6 +272,7 @@ onMounted(() => { load(); refreshQueue(); });
 					<span v-if="!c.finalized" class="tag warn" title="No summary.json — this recording was never finalized">incomplete</span>
 					<span v-else-if="!uploadedKnown" class="tag">upload state unknown</span>
 					<span v-else-if="uploaded[c.id]" class="tag ok">uploaded</span>
+					<span v-else-if="queuedCaptureIds.has(c.id)" class="tag">upload queued</span>
 					<span v-else class="tag warn">not uploaded</span>
 					<span v-if="c.source" class="tag dim">{{ c.source }}</span>
 				</div>
@@ -267,7 +286,7 @@ onMounted(() => { load(); refreshQueue(); });
 				<p v-if="rowMsg[c.id]" class="rmsg" :class="{ bad: rowMsg[c.id].includes('failed') }">{{ rowMsg[c.id] }}</p>
 			</div>
 			<div class="ract">
-				<button v-if="c.finalized && !uploaded[c.id]" class="btn ghost sm" :disabled="!!busy[c.id]" @click="upload(c)">
+				<button v-if="canUpload(c)" class="btn ghost sm" :disabled="!!busy[c.id]" @click="upload(c)">
 					<span class="material-symbols-rounded">{{ busy[c.id] === 'uploading' ? 'hourglass_top' : 'cloud_upload' }}</span>
 					{{ busy[c.id] === 'uploading' ? 'Uploading…' : 'Upload' }}
 				</button>

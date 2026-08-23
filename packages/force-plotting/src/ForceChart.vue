@@ -30,7 +30,7 @@ const props = defineProps<{
 	// Additional cuts plotted on the same axes for comparison (e.g. successive passes on one
 	// insert edge, to see wear develop). Drawn as mid-lines, not filled envelopes: three or four
 	// translucent bands over each other turn to mush, whereas lines stay readable.
-	compare?: { label: string; color: string; data: any }[] | null;
+	compare?: { id: string; label: string; color: string; data: any }[] | null;
 }>();
 const emit = defineEmits<{
 	(e: 'hover', i: number | null): void;
@@ -212,7 +212,7 @@ const geom = computed(() => {
 	// Comparison cuts as mid-lines through the same sx/sy, so they line up with the primary
 	// envelope and the shared zoom. Each carries its own time base (a different recording), so
 	// they are mapped by x-value rather than by index.
-	const compareLines: { label: string; color: string; d: string }[] = [];
+	const compareLines: { id: string; label: string; color: string; d: string }[] = [];
 	if (props.kind === 'env') {
 		for (const c of props.compare ?? []) {
 			const cd = c.data;
@@ -225,7 +225,7 @@ const geom = computed(() => {
 				path += `${started ? 'L' : 'M'}${sx(xv).toFixed(1)},${sy(mid).toFixed(1)} `;
 				started = true;
 			}
-			if (path) compareLines.push({ label: c.label, color: c.color, d: path });
+			if (path) compareLines.push({ id: c.id, label: c.label, color: c.color, d: path });
 		}
 	}
 	return { W, Hh, xs, x0, x1, iA, iB, lo, hi, sx, sy, area, line, cropArea, xticks, yticks, zeroY, cropStartX, cropEndX, overlayLine, compareLines };
@@ -363,7 +363,7 @@ function onWheel(ev: WheelEvent) {
 			<path v-if="geom.overlayLine" :d="geom.overlayLine" fill="none" stroke="#0891b2" stroke-width="1" stroke-dasharray="3 2" opacity="0.9" />
 			<!-- Comparison cuts, drawn over the primary envelope so the current cut stays the
 				 visual subject and the others read as reference traces. -->
-			<path v-for="c in geom.compareLines" :key="c.label" :d="c.d" fill="none"
+			<path v-for="c in geom.compareLines" :key="c.id" :d="c.d" fill="none"
 				:stroke="c.color" stroke-width="1.2" stroke-dasharray="4 2" opacity="0.85" />
 			<line :x1="ML" :x2="ML" :y1="MT" :y2="geom.Hh - MB" stroke="#94a3b8" stroke-width="0.8" />
 			<line :x1="ML" :x2="geom.W - MR" :y1="geom.Hh - MB" :y2="geom.Hh - MB" stroke="#94a3b8" stroke-width="0.8" />

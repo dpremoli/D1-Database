@@ -92,19 +92,28 @@ export function discardQueued(id: string): void {
 	save(load().filter((x) => x.id !== id));
 }
 
-/** Move an item to the front and flush, so a fixed permanent failure can be retried on demand. */
-export async function retryQueued(id: string): Promise<void> {
+/**
+ * Move an item to the front and flush, so a fixed permanent failure can be retried on demand.
+ * Returns false if a sync was already running, in which case nothing was attempted here — the
+ * item is still promoted, so the in-progress run reaches it next.
+ */
+export async function retryQueued(id: string): Promise<boolean> {
 	const q = load();
 	const i = q.findIndex((x) => x.id === id);
-	if (i < 0) return;
+	if (i < 0) return false;
 	// flush() stops at the first permanent failure, so a poisoned head would block everything
 	// behind it — promoting the requested item is what makes a targeted retry possible at all.
 	const [item] = q.splice(i, 1);
-	item.lastError = undefined;
 	q.unshift(item);
 	save(q);
+	// Deliberately NOT clearing lastError up front. flush() is a no-op while another run holds the
+	// guard, so wiping the diagnosis here would repaint the row as a healthy "queued" item with no
+	// error and nothing actually retried. The error is cleared by a successful write (the item
+	// disappears) or replaced by the next failure.
+	if (flushing) return false;
 	syncStatus.lastError = null;
 	await flush();
+	return true;
 }
 
 // Wire background retries once.

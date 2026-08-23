@@ -134,18 +134,50 @@ describe('queue management', () => {
     expect(idsInQueue()).toEqual(['a']);   // 'b' went through; the stuck one is still queued
   });
 
-  it('retryQueued clears the previous error so the row stops showing a stale failure', async () => {
+  it('retryQueued keeps the previous error visible until the retry actually resolves it', async () => {
+    // The diagnosis must not be wiped optimistically: flush() is a no-op while another run holds
+    // the guard, so clearing it up front repainted the row as a healthy "queued" item with no
+    // error and nothing retried. It goes away when the write succeeds (the item disappears) or is
+    // replaced by the next failure.
     seed([{ id: 'a', sample: 'S1' }]);
     post.mockRejectedValue({ response: { status: 400, data: { errors: [{ message: 'bad' }] } } });
     await flush();
     expect(listQueue()[0].lastError).toBeTruthy();
 
     post.mockReset();
-    post.mockImplementation(() => new Promise(() => {}));  // never settles; we only inspect state
-    void retryQueued('a');
+    // Held open so the state can be inspected mid-retry, then released — `flushing` is module
+    // state, so leaving a write pending would wedge the guard for every later test.
+    let release!: () => void;
+    post.mockImplementation(
+      () => new Promise((_res, rej) => { release = () => rej({ message: 'Network Error' }); }),
+    );
+    const retrying = retryQueued('a');
     await vi.waitFor(() => expect(post).toHaveBeenCalled());
 
-    expect(listQueue()[0].lastError).toBeUndefined();
+    expect(listQueue()[0].lastError).toBeTruthy();
+
+    release();
+    await retrying;
+  });
+
+  it('retryQueued reports that nothing was attempted when a sync is already running', async () => {
+    seed([{ id: 'a', sample: 'S1' }, { id: 'b', sample: 'S2' }]);
+    let release!: () => void;
+    post.mockImplementationOnce(
+      () => new Promise((resolve) => { release = () => resolve({ data: { data: {} } }); }),
+    );
+    post.mockRejectedValue({ message: 'Network Error' });
+
+    const running = flush();
+    await vi.waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+
+    // flush() is guarded, so this cannot send anything right now — say so rather than letting the
+    // caller report a retry that never happened.
+    expect(await retryQueued('b')).toBe(false);
+    expect(idsInQueue()[0]).toBe('b');   // still promoted, so the running flush reaches it next
+
+    release();
+    await running;
   });
 
   it('retryQueued on an unknown id is a no-op', async () => {

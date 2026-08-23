@@ -249,6 +249,9 @@ _LOG_LINE_RE = re.compile(
     r"(?P<level>[A-Z]+) +(?P<logger>[\w.]+): (?P<message>.*)$"
 )
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+# How far back a filtered query looks. The rotating set holds ~8MB, so this is comfortably the
+# whole history while still bounding the work for a pathological file.
+LOG_SCAN_CAP = 50_000
 
 
 def _read_log_tail(limit: int) -> list[str]:
@@ -304,7 +307,14 @@ async def get_logs(limit: int = 500, level: str = "", q: str = "") -> dict:
     logger name and message.
     """
     limit = max(1, min(limit, 5000))
-    raw = await run_in_threadpool(_read_log_tail, limit)
+    lvl_or_q = bool(level.strip()) or bool(q.strip())
+    # Filter across the whole retained history, then take the tail — not the other way round.
+    # Truncating first meant "show me errors" searched only the most recent `limit` lines and
+    # reported "no matching entries" while the errors sat further back in the rotated files,
+    # which is precisely when someone is looking for them. SCAN_CAP bounds the work when a filter
+    # is active; without a filter the tail is all that is ever needed.
+    scan = LOG_SCAN_CAP if lvl_or_q else limit
+    raw = await run_in_threadpool(_read_log_tail, scan)
     records = _parse_log_lines(raw)
 
     lvl = level.strip().upper()
@@ -318,9 +328,12 @@ async def get_logs(limit: int = 500, level: str = "", q: str = "") -> dict:
             if needle in r["message"].lower() or needle in r["logger"].lower()
         ]
 
+    truncated = len(records) > limit
+    records = records[-limit:]
     return {
         "path": LOG_PATH,
         "available": bool(LOG_PATH),
+        "truncated": truncated,
         "loggers": sorted({r["logger"] for r in records if r["logger"]}),
         "records": records,
     }
@@ -652,7 +665,10 @@ async def health_doctor(request: Request) -> dict:
     if backup_url:
         parsed = urlparse(backup_url)
         host = parsed.hostname or ""
-        port = parsed.port or 80
+        # Behind Caddy the recommended URL is https with no explicit port, so defaulting to 80
+        # probed the wrong port and reported the container as down when it was fine. Matches the
+        # Directus and filter-service checks above.
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
         resolved = await _resolve_host(host)
         port_ok = await _check_port(host, port, 4.0) if resolved else False
         if port_ok:

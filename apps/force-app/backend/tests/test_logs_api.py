@@ -129,3 +129,39 @@ def test_limit_is_clamped(client, sample_log):
     assert len(client.get("/logs", params={"limit": 99999}).json()["records"]) <= 5000
     assert client.get("/logs", params={"limit": 0}).status_code == 200
     assert len(client.get("/logs", params={"limit": 2}).json()["records"]) == 2
+
+
+def test_filters_search_the_whole_history_not_just_the_tail(tmp_path, monkeypatch, client):
+    """The regression: truncating to `limit` BEFORE filtering hid exactly what was searched for.
+
+    An error early in a long log, with a filter applied, must still be found — that is when
+    someone reaches for the level filter in the first place.
+    """
+    lines = ["2026-08-22 22:00:00,000 ERROR force_app.session: the needle, early on"]
+    lines += [f"2026-08-22 22:01:{i:02d},000 INFO force_app.main: filler {i}" for i in range(60)]
+    p = tmp_path / "backend.log"
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(main, "LOG_PATH", str(p))
+
+    # A small window: the ERROR is far outside the most recent `limit` lines.
+    errs = client.get("/logs", params={"level": "ERROR", "limit": 10}).json()["records"]
+    assert len(errs) == 1 and "needle" in errs[0]["message"]
+
+    hits = client.get("/logs", params={"q": "needle", "limit": 10}).json()["records"]
+    assert len(hits) == 1
+
+    # Unfiltered still means "the most recent N".
+    recent = client.get("/logs", params={"limit": 10}).json()["records"]
+    assert len(recent) == 10 and all("filler" in r["message"] for r in recent)
+
+
+def test_limit_still_caps_filtered_results(tmp_path, monkeypatch, client):
+    lines = [f"2026-08-22 22:00:{i:02d},000 ERROR force_app.main: e{i}" for i in range(40)]
+    p = tmp_path / "backend.log"
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(main, "LOG_PATH", str(p))
+
+    body = client.get("/logs", params={"level": "ERROR", "limit": 5}).json()
+    assert len(body["records"]) == 5
+    assert body["truncated"] is True
+    assert body["records"][-1]["message"] == "e39"   # the most recent matches are kept

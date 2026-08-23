@@ -69,7 +69,13 @@ function measureGrid() {
 	// Measured from the grid's own top, so the sticky topbar and the conditional disk-action /
 	// recovery banners (which push the grid down when they appear) are all accounted for
 	// automatically. .alarm-overlay is position:fixed and correctly costs no flow height.
-	const top = gridEl.value.getBoundingClientRect().top;
+	//
+	// Document offset, not the viewport-relative rect: when the layout is taller than the window
+	// it scrolls (by design, past the min row height), and a scrolled rect has a negative top.
+	// Using that directly inflates availableHeight, which grows the rows, which makes the page
+	// taller still — a feedback loop that runs away as the user scrolls. The document offset is
+	// scroll-invariant, so the measurement means the same thing wherever the page happens to be.
+	const top = gridEl.value.getBoundingClientRect().top + window.scrollY;
 	availableHeight.value = Math.max(320, Math.floor(window.innerHeight - top - BOTTOM_PAD));
 }
 // Derived from the LIVE layout, not the default: `layout` is user-editable and persisted, so the

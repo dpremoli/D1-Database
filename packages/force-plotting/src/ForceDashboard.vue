@@ -1163,7 +1163,7 @@ const compareItems = computed(() =>
 
 function compareSeriesFor(axis: Axis) {
 	return compareItems.value
-		.map((c) => ({ label: c.label as string, color: c.color, data: c.series?.[axis] }))
+		.map((c) => ({ id: c.id, label: c.label as string, color: c.color, data: c.series?.[axis] }))
 		.filter((c) => c.data);
 }
 
