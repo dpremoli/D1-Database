@@ -960,6 +960,18 @@ async def backup_restore(session_id: str) -> dict:
     if not url:
         raise HTTPException(400, "no backup server configured")
     capture_dir = os.path.join(CAPTURES_ROOT, session_id)
+    # Refuse BEFORE writing anything. The download opens raw.d1raw for writing, and
+    # recover_session then refuses a session that is already finalized — so restoring over an
+    # intact local capture used to destroy its raw file and *then* fail. Harmless when the remote
+    # copy is complete, but a partial or truncated one would take the good local copy with it, and
+    # this endpoint exists precisely for situations where copies are already being lost.
+    if os.path.isfile(os.path.join(capture_dir, "summary.json")):
+        raise HTTPException(
+            409,
+            f"{session_id} is already finalized on this machine — restoring would overwrite the "
+            "local raw file. Delete or move the local capture first if you really want the remote "
+            "copy (Settings > Local Captures).",
+        )
     os.makedirs(capture_dir, exist_ok=True)
     raw_path = os.path.join(capture_dir, "raw.d1raw")
     try:

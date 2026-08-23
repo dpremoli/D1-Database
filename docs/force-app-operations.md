@@ -60,15 +60,27 @@ the acquisition machine loses its disk, its power, or the recording process, the
 back and finalized into a normal `.mat` + `live_cache`. It is a crash safety net with hours-scale
 retention, **not** an archive — the archive path is the Directus upload.
 
+Deployed and verified end to end on 2026-08-23.
+
 ```bash
 # on d1-server, in the repo root
-docker compose up -d backup-server proxy
+docker compose up -d backup-server
+docker compose restart proxy       # NOT `up -d proxy` — see below
 curl https://d1-server.tail54eeb6.ts.net/backup-ingest/health
 ```
 
 Expect `{"ok": true, "storage_path": "/data", ...}`. Then in the app: **Settings > Live Backup**,
 tick Enable, set the URL to `https://d1-server.tail54eeb6.ts.net/backup-ingest`, Test connection,
 Save.
+
+**Restart the proxy explicitly after changing the Caddyfile.** It is a bind mount, so editing it
+does not change the container spec and `docker compose up -d proxy` leaves the old config loaded in
+memory — the new route simply 404s. `docker compose restart proxy` (or
+`docker exec <proxy> caddy reload --config /etc/caddy/Caddyfile`) is what applies it.
+
+TLS for `d1-server.tail54eeb6.ts.net` is terminated by **Tailscale serve**, which forwards to Caddy
+on `localhost:80`. Caddy's own site block is plain `:80` by design; it is not doing certificate
+management here.
 
 Retention defaults to 12 h (`BACKUP_RETENTION_HOURS` in `.env`). Raw captures are multi-GB; the
 named `backup-raw` volume is what keeps them across a container recreate, so do not replace it with
@@ -80,6 +92,14 @@ Validate the proxy config after touching it:
 docker run --rm -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
   caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
 ```
+
+Two host quirks on the current `d1-server`, neither a repo problem:
+
+- `docker` is not on `PATH` and the compose CLI plugin is not registered, so the commands above
+  need the standalone `docker-compose.exe` from Docker Desktop's `resources\bin`. Adding that
+  directory to the system `PATH` would make them work as written.
+- From **Git Bash on Windows**, prefix that `docker run` with `MSYS_NO_PATHCONV=1` or the
+  `-v $PWD/...:/etc/caddy/...` mount path gets mangled. WSL, PowerShell and Linux are unaffected.
 
 ### Security posture — read before exposing anything
 
@@ -107,10 +127,14 @@ these need the rig and a human:
       running uvicorn in dev). The supervisor should restart it and route back to Record, where the
       recovery banner picks up the interrupted session.
 - [ ] A second copy of the app focuses the running window instead of opening a second one.
-- [ ] **Live backup end to end:** enable it, record, watch the topbar chip reach 100 %, stop, then
-      restore that session from Settings > Live Backup and confirm the trace matches. Worth also
-      pulling the network mid-recording: the recording must continue locally, the chip should show
-      `paused` then resume, and the restored file must still be byte-identical.
+- [x] **Live backup end to end — done 2026-08-23.** A real 25 kHz NI-DAQ recording (112,500
+      samples, 4,500,032 bytes) streamed to `d1-server` over Tailscale and reached 100 %. The raw
+      pulled back is **byte-identical** (matching SHA-256), the recording config survived the round
+      trip, and re-finalizing the restored raw reproduced the original exactly — same sample count,
+      rate, duration, and all three per-axis peaks.
+- [ ] Still untried on real hardware: pulling the network **mid-recording**. The recording must
+      continue locally, the chip should show `paused` then resume, and the restored file must still
+      be byte-identical. Covered by automated tests against an in-process server, not by the rig.
 - [ ] **A packaged install as a standard user.** `npm run package -w force-app-desktop`, install to
       the default Program Files location, then confirm the capture drive choice survives a restart
       and that logs still appear in Settings > Logs. This is the one scenario the config-location

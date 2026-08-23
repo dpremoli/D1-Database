@@ -485,3 +485,32 @@ def test_streamer_reports_progress_against_the_real_server(server, tmp_path):
     assert st["connected"] is True
     assert st["bytes_sent"] == os.path.getsize(raw_path)
     assert st["progress_pct"] == pytest.approx(100.0, abs=0.5)
+
+
+def test_restore_refuses_to_overwrite_a_finalized_local_capture(server, tmp_path, monkeypatch):
+    """Restoring must not clobber an intact local capture.
+
+    The download opens raw.d1raw for writing and recover_session only refuses a finalized session
+    afterwards, so the old order destroyed the local raw and then failed. Harmless when the remote
+    copy is complete — but this endpoint exists for situations where copies are already being lost,
+    and a truncated remote copy would have taken the good local one with it.
+    """
+    from fastapi.testclient import TestClient
+
+    from app import main as mainmod
+
+    captures = tmp_path / "captures"
+    (captures / "sess-1").mkdir(parents=True)
+    raw = captures / "sess-1" / "raw.d1raw"
+    raw.write_bytes(b"the local copy, which must survive")
+    (captures / "sess-1" / "summary.json").write_text('{"n": 1}')
+
+    monkeypatch.setattr(mainmod, "CAPTURES_ROOT", str(captures))
+    bmod.save_config(str(captures), {"enabled": True, "server_url": server.url})
+
+    with TestClient(mainmod.app) as c:
+        res = c.post("/backup/restore/sess-1")
+
+    assert res.status_code == 409
+    assert "already finalized" in res.json()["detail"]
+    assert raw.read_bytes() == b"the local copy, which must survive"
