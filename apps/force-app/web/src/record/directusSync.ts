@@ -41,30 +41,36 @@ export async function flush(): Promise<void> {
 	flushing = true;
 	syncStatus.syncing = true;
 	try {
-		let q = load();
-		while (q.length) {
+		// Re-read the queue on every iteration, and again after each await, rather than holding one
+		// array for the whole run. The POST is an await point, so the user can discard or reorder an
+		// item (Settings > Local Captures) while it is in flight — writing back a copy captured
+		// before that would undo their edit, resurrecting an item they had just deleted.
+		for (;;) {
+			const q = load();
+			if (!q.length) break;
 			const item = q[0];
 			try {
 				await api.post(`/items/${item.collection}`, item.payload);
-				q.shift();                       // success — drop it
-				save(q);
+				save(load().filter((x) => x.id !== item.id));   // success — drop just this one
 				syncStatus.lastSyncedAt = Date.now();
 				syncStatus.lastError = null;
 			} catch (e: any) {
 				const status = e?.response?.status;
-				item.attempts++;
-				item.lastError = e?.message || 'write failed';
+				const cur = load();
+				const live = cur.find((x) => x.id === item.id);
+				if (!live) break;   // discarded mid-flight — nothing to record against
+				live.attempts++;
+				live.lastError = e?.message || 'write failed';
 				if (status && status >= 400 && status < 500 && status !== 429) {
 					// permanent (validation/permission): keep for manual retry but stop the run and surface it
-					// item.lastError! : assigned a non-empty string three lines up, but the
+					// live.lastError! : assigned a non-empty string three lines up, but the
 					// JSON.stringify() call in this same expression invalidates TS's narrowing
-					// of the property (the call could in principle mutate `item`).
-					syncStatus.lastError = `${status}: ${(JSON.stringify(e?.response?.data?.errors?.[0]?.message ?? '') || item.lastError!).slice(0, 160)}`;
-					save(q);
-					break;
+					// of the property (the call could in principle mutate `live`).
+					syncStatus.lastError = `${status}: ${(JSON.stringify(e?.response?.data?.errors?.[0]?.message ?? '') || live.lastError!).slice(0, 160)}`;
 				}
-				// transient (offline/5xx/429): stop; the timer / online event retries later
-				save(q);
+				// Either way stop: a permanent failure needs attention, and a transient one is
+				// retried by the timer / online event.
+				save(cur);
 				break;
 			}
 		}
@@ -72,6 +78,42 @@ export async function flush(): Promise<void> {
 		flushing = false;
 		syncStatus.syncing = false;
 	}
+}
+
+// ---- Queue inspection (Settings > Local Captures) ----
+// The topbar only ever showed a count, so a run stuck behind a validation error was invisible:
+// no way to see which one, why, or to clear it. These expose the queue for that UI.
+export function listQueue(): QueuedRun[] {
+	return load();
+}
+
+/** Drop one item permanently. Its capture stays on disk; only the pending DB write is abandoned. */
+export function discardQueued(id: string): void {
+	save(load().filter((x) => x.id !== id));
+}
+
+/**
+ * Move an item to the front and flush, so a fixed permanent failure can be retried on demand.
+ * Returns false if a sync was already running, in which case nothing was attempted here — the
+ * item is still promoted, so the in-progress run reaches it next.
+ */
+export async function retryQueued(id: string): Promise<boolean> {
+	const q = load();
+	const i = q.findIndex((x) => x.id === id);
+	if (i < 0) return false;
+	// flush() stops at the first permanent failure, so a poisoned head would block everything
+	// behind it — promoting the requested item is what makes a targeted retry possible at all.
+	const [item] = q.splice(i, 1);
+	q.unshift(item);
+	save(q);
+	// Deliberately NOT clearing lastError up front. flush() is a no-op while another run holds the
+	// guard, so wiping the diagnosis here would repaint the row as a healthy "queued" item with no
+	// error and nothing actually retried. The error is cleared by a successful write (the item
+	// disappears) or replaced by the next failure.
+	if (flushing) return false;
+	syncStatus.lastError = null;
+	await flush();
+	return true;
 }
 
 // Wire background retries once.

@@ -80,4 +80,8 @@ Python workers · Ollama (local LLM) · Docker Compose.
 - [`system_requirements_specification.md`](./system_requirements_specification.md) — requirements
 - [`docs/legacy-data-analysis.md`](./docs/legacy-data-analysis.md) — analysis of the legacy AppSheet/Sheets data
 - [`docs/experiment-sheets-and-naming.md`](./docs/experiment-sheets-and-naming.md) — experiment sheets & deterministic naming
+- [`docs/force-app-operations.md`](./docs/force-app-operations.md) — running, deploying & troubleshooting the force-capture app
+- [`docs/force-file-standards.md`](./docs/force-file-standards.md) — the four force-capture `.mat` layouts
+- [`docs/FAST25_OVERVIEW.md`](./docs/FAST25_OVERVIEW.md) — FAST 25 / FAST 250 sintering data architecture
+- [`docs/adr/`](./docs/adr/) — architecture decision records · [`docs/runbooks/`](./docs/runbooks/) — operational runbooks
 - [`CONTRIBUTING.md`](./CONTRIBUTING.md) · [`SECURITY.md`](./SECURITY.md)

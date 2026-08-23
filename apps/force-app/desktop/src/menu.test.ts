@@ -21,6 +21,16 @@ describe('buildMenu', () => {
     expect(sent).toEqual([['navigate', '/settings?tab=connectivity']]);
   });
 
+  it('the View Logs item routes to the Logs settings tab', () => {
+    sent.length = 0;
+    const menu = buildMenu(() => fakeWin as unknown as Electron.BrowserWindow) as unknown as {
+      template: Array<{ label: string; submenu: Array<{ label: string; click: () => void }> }>;
+    };
+    const help = menu.template.find((m) => m.label === 'Help')!;
+    help.submenu.find((m) => m.label === 'View Logs')!.click();
+    expect(sent).toEqual([['navigate', '/settings?tab=logs']]);
+  });
+
   it('does nothing when there is no current window', () => {
     const menu = buildMenu(() => null) as unknown as {
       template: Array<{ label: string; submenu: Array<{ label: string; click: () => void }> }>;

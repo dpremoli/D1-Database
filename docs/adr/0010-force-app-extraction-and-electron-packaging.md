@@ -139,8 +139,7 @@ script's header comment.
 
 ### 1. Extract plotting into a shared workspace package — **DONE 2026-08-10**
 
-Implemented per `docs/superpowers/plans/2026-08-09-force-plotting-shared-package.md`
-and live in production. `core/extensions/d1-force-dashboard/src/` went from 11 files
+Live in production. `core/extensions/d1-force-dashboard/src/` went from 11 files
 to 2, `apps/force-app/web/src/force/` from 14 to 2 — roughly 4,240 duplicated lines
 removed.
 

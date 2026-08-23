@@ -313,6 +313,39 @@ services:
       start_period: 20s
     networks: [d1net]
 
+  # Remote live-backup receiver for force-app recordings (apps/force-app/backup-server). The
+  # acquisition PC streams raw D1RW chunks here for the duration of a recording, so a local disk
+  # failure, power cut or crash on that machine can't take the capture with it; the same machine
+  # can then pull the raw back and finalize it (POST /backup/restore/{id} on the recorder).
+  #
+  # Reached through Caddy at /backup-ingest/* rather than by publishing 8210 — that keeps it on the
+  # single TLS, tailnet-only entry point instead of adding a second plaintext one. It has no auth
+  # of its own (see the Caddyfile comment), which is why it must not be published directly.
+  #
+  # Storage is a named volume: raw captures are multi-GB and must survive a container recreate.
+  # Retention is deliberately short (hours, not days) — this is a crash safety net, not an archive.
+  backup-server:
+    build:
+      context: apps/force-app/backup-server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      BACKUP_STORAGE: /data
+      BACKUP_RETENTION_HOURS: ${BACKUP_RETENTION_HOURS:-12}
+    volumes:
+      - backup-raw:/data
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8210/health')"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [d1net]
+
   # Reverse proxy: single HTTP entry point → Directus admin UI.
   # MinIO console and API remain directly accessible on their own ports.
   proxy:
@@ -344,6 +377,9 @@ volumes:
   caddy-data:
   caddy-config:
   ollama-models:
+  # In-flight recording backups (multi-GB raw D1RW files, auto-purged after
+  # BACKUP_RETENTION_HOURS). Named so they survive `docker compose up --force-recreate`.
+  backup-raw:
 
   # Read-only mount of the university SMB archive (Z: → \\uosfstore.shef.ac.uk\shared).
   # The whole `shared` export is mounted; only the star_group1 subtree is used

@@ -363,3 +363,20 @@ alone; the drop-Directus drill succeeds.
 | 7 | ✅ Done | Traceability — recursive cradle-to-grave lineage functions (f_trace_ancestors/descendants/stock_origins/sample_timeline), migration 0014, ADR-0008, runbook, phase7 test wired into CI. Visual timeline UI deferred |
 | 8 | ✅ Done | Legacy migration — `scripts/migrate_legacy.py` loads 850 rows (alloying elements, materials, equipment, tools, insert hierarchy, samples, genealogy, operations) from Sample_Data.xlsx. Idempotent. 1 407 unlinked FAST Runs flagged in reconciliation report. |
 | 9 | ☐ Not started | Hardening + drop-Directus drill |
+
+## Parallel track — force capture (machining)
+
+The machining force-capture app grew alongside the phases above rather than inside them: a
+Directus dashboard module first, then a standalone recorder + Electron desktop app sharing one
+plotting package, plus a live-backup service. It has its own decision record and operations guide.
+
+- [`docs/adr/0010-force-app-extraction-and-electron-packaging.md`](./docs/adr/0010-force-app-extraction-and-electron-packaging.md) — why it was extracted and how it ships
+- [`docs/force-app-operations.md`](./docs/force-app-operations.md) — running, deploying, troubleshooting
+- [`docs/force-file-standards.md`](./docs/force-file-standards.md) — the four `.mat` layouts in the archive
+- `docs/superpowers/specs/` — per-feature design documents (tacho/PPR, FRM viewer and octrees,
+  filtering suite, NI-DAQ channel model, recording slices, desktop packaging)
+
+Separately, the FAST 25 / FAST 250 **sintering** data path is specified in
+[`docs/FAST25_OVERVIEW.md`](./docs/FAST25_OVERVIEW.md) and
+[`docs/FAST_DIRECTUS_INTEGRATION.md`](./docs/FAST_DIRECTUS_INTEGRATION.md). It is deliberately a
+separate system from machining force analysis.

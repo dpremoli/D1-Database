@@ -10,8 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+import re
+import shutil
+import time
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -32,9 +37,41 @@ from .sources.replay import ReplaySource
 from .sources.sim import SimSource
 from .stream.broadcast import Broadcaster
 
-STORAGE_CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "captures", "storage_config.json"
-)
+def _user_state_dir() -> str:
+    """Per-user directory for this app's own state (settings, logs).
+
+    Must be writable AT RUNTIME, which rules out anything package-relative: under PyInstaller
+    `__file__` resolves inside the frozen bundle, and the default NSIS install location is Program
+    Files, where a standard user cannot write.
+    """
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "force-app")
+    xdg = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(xdg, "force-app")
+
+
+# Settings this backend owns. Deliberately NOT under CAPTURES_ROOT: these have to survive the user
+# repointing the recording drive, and storage_config.json in particular is what remembers which
+# drive that is.
+CONFIG_DIR = os.environ.get("FORCE_APP_CONFIG_DIR") or _user_state_dir()
+STORAGE_CONFIG_PATH = os.path.join(CONFIG_DIR, "storage_config.json")
+
+# Where these settings lived before they moved out of the package. Read-only fallback, so an
+# existing install keeps its configured drive; the next successful save rewrites to the new
+# location. Writing here was silently failing in a packaged install — POST /storage/config
+# swallowed the OSError, so choosing a drive appeared to work and then reverted on restart.
+LEGACY_CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "captures")
+LEGACY_STORAGE_CONFIG_PATH = os.path.join(LEGACY_CONFIG_DIR, "storage_config.json")
+
+
+def _read_json(path: str) -> dict | None:
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
 
 
 def _load_captures_root() -> str:
@@ -42,29 +79,75 @@ def _load_captures_root() -> str:
     default = os.environ.get(
         "FORCE_APP_CAPTURES", os.path.join(os.path.dirname(os.path.dirname(__file__)), "captures")
     )
-    try:
-        with open(STORAGE_CONFIG_PATH) as f:
-            cfg = json.load(f)
-            path = cfg.get("captures_root", default)
-            if os.path.isdir(path) or os.path.isdir(os.path.dirname(path)):
-                return path
-    except (OSError, ValueError):
-        pass
+    for candidate in (STORAGE_CONFIG_PATH, LEGACY_STORAGE_CONFIG_PATH):
+        cfg = _read_json(candidate)
+        if not cfg:
+            continue
+        path = cfg.get("captures_root")
+        if not path:
+            continue
+        # Accept a drive that is present now, or whose parent is — a removable/network drive that
+        # is merely offline should not silently reset the setting to the package default.
+        if os.path.isdir(path) or os.path.isdir(os.path.dirname(path)):
+            return path
     return default
 
 
 CAPTURES_ROOT = _load_captures_root()
 os.makedirs(CAPTURES_ROOT, exist_ok=True)
 
+# The desktop app spawns this as a hidden sidecar process (stdio piped, window hidden) and only
+# keeps a short in-memory tail of stderr for crash reports — so without a log file, there is no way
+# to see what the backend actually did during a slow stop/finalize/discard once the app is closed.
+#
+# The directory must be one that is WRITABLE AT RUNTIME, which rules out anything package-relative:
+# under PyInstaller, `__file__` resolves inside the frozen bundle (the app package lives in the PYZ
+# archive, so `<install>/resources/backend/_internal/app/main.py` is a virtual path), and the
+# default NSIS install location is Program Files, where a standard user cannot write. Since
+# RotatingFileHandler opens its file eagerly at construction, putting the log there would raise
+# PermissionError at import and take the whole backend down on startup.
+#
+# Order: an explicit FORCE_APP_LOG_DIR (the Electron sidecar passes its own userData path) > the
+# per-user state dir for the platform. Deliberately NOT CAPTURES_ROOT, which can point at a
+# removable or network drive — the log should survive the recording drive being swapped.
+def _default_log_dir() -> str:
+    return os.environ.get("FORCE_APP_LOG_DIR") or os.path.join(_user_state_dir(), "logs")
+
+
+LOG_DIR = _default_log_dir()
+LOG_PATH = os.path.join(LOG_DIR, "backend.log")
+_handlers: list[logging.Handler] = [logging.StreamHandler()]
+try:
+    os.makedirs(LOG_DIR, exist_ok=True)
+    _file_handler = RotatingFileHandler(
+        LOG_PATH, maxBytes=2_000_000, backupCount=3, encoding="utf-8"
+    )
+    _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    _handlers.append(_file_handler)
+except OSError:
+    # Read-only or otherwise unwritable location — degrade to stderr-only. Logging is diagnostic;
+    # never let it be the reason the recorder won't start.
+    LOG_PATH = ""
+logging.basicConfig(level=logging.INFO, handlers=_handlers)
+log = logging.getLogger("force_app.main")
+if not LOG_PATH:
+    log.warning("log file unavailable (%s not writable) — logging to stderr only", LOG_DIR)
+
 # Pin the backup settings next to storage_config.json rather than inside the captures root. Both
 # have to survive the user changing the recording drive — a config stored on the drive it configures
 # disappears the moment that drive is swapped, which for backup meant it silently turned itself off.
-backup_mod.BACKUP_CONFIG_PATH = os.path.join(
-    os.path.dirname(STORAGE_CONFIG_PATH), "backup_config.json"
-)
+backup_mod.BACKUP_CONFIG_PATH = os.path.join(CONFIG_DIR, "backup_config.json")
+# Same read-only fallback as the storage config, for installs that wrote it to the old location.
+backup_mod.LEGACY_BACKUP_CONFIG_PATH = os.path.join(LEGACY_CONFIG_DIR, "backup_config.json")
 
 _broadcaster: Broadcaster | None = None
 _session: RecordingSession | None = None
+
+# Suggested live-backup endpoint. The backup server runs as a compose service on the lab server and
+# is reached through Caddy's /backup-ingest route rather than on its own published port, so it
+# inherits that single TLS, tailnet-only entry point (see infra/caddy/Caddyfile). A direct
+# host:8210 URL still works for a hand-run server — nothing here requires this exact form.
+DEFAULT_BACKUP_URL = "https://d1-server.tail54eeb6.ts.net/backup-ingest"
 
 # ---- LabAmp (2c) config + instance ----
 # The amp is link-local (reachable only from the acquisition PC) so the backend owns the HTTP
@@ -156,6 +239,113 @@ async def health() -> dict:
     return {"ok": True, "state": _session.state if _session else "idle"}
 
 
+# ---- Logs ----
+# The desktop app runs this backend as a hidden sidecar and keeps only a 4KB stderr tail for crash
+# reports, so the log file is the only durable record of what it did. Serve it so the operator can
+# read it from Settings > Logs without hunting through AppData — the crash dialog has always said
+# "See logs for details" with no such surface behind it.
+_LOG_LINE_RE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) +"
+    r"(?P<level>[A-Z]+) +(?P<logger>[\w.]+): (?P<message>.*)$"
+)
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+# How far back a filtered query looks. The rotating set holds ~8MB, so this is comfortably the
+# whole history while still bounding the work for a pathological file.
+LOG_SCAN_CAP = 50_000
+
+
+def _read_log_tail(limit: int) -> list[str]:
+    """Last `limit` physical lines across the rotating set, oldest first.
+
+    RotatingFileHandler splits history over backend.log plus .1/.2/.3, with the HIGHEST suffix
+    being the OLDEST, so reading just backend.log silently truncates history to the last 2MB.
+    Walk the backups from oldest to newest and keep only the tail we need.
+    """
+    if not LOG_PATH:
+        return []
+    lines: list[str] = []
+    paths = [f"{LOG_PATH}.{i}" for i in range(3, 0, -1)] + [LOG_PATH]
+    for p in paths:
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, encoding="utf-8", errors="replace") as f:
+                lines.extend(f.read().splitlines())
+        except OSError:
+            continue
+        if len(lines) > limit * 4:  # bound memory on a long history; we only ever return `limit`
+            lines = lines[-limit * 2:]
+    return lines[-limit:]
+
+
+def _parse_log_lines(raw: list[str]) -> list[dict]:
+    """Structure what matches the formatter; keep the rest as continuation of the previous record.
+
+    Tracebacks and any third-party output that doesn't follow our format would otherwise be
+    dropped — which is exactly the content someone opens a log viewer to read.
+    """
+    out: list[dict] = []
+    for line in raw:
+        m = _LOG_LINE_RE.match(line)
+        if m:
+            out.append({
+                "ts": m.group("ts"), "level": m.group("level"),
+                "logger": m.group("logger"), "message": m.group("message"),
+            })
+        elif out:
+            out[-1]["message"] += "\n" + line
+        elif line.strip():
+            out.append({"ts": "", "level": "INFO", "logger": "", "message": line})
+    return out
+
+
+@app.get("/logs")
+async def get_logs(limit: int = 500, level: str = "", q: str = "") -> dict:
+    """Recent backend log records, oldest first.
+
+    `level` filters to that severity and above; `q` is a case-insensitive substring match over the
+    logger name and message.
+    """
+    limit = max(1, min(limit, 5000))
+    lvl_or_q = bool(level.strip()) or bool(q.strip())
+    # Filter across the whole retained history, then take the tail — not the other way round.
+    # Truncating first meant "show me errors" searched only the most recent `limit` lines and
+    # reported "no matching entries" while the errors sat further back in the rotated files,
+    # which is precisely when someone is looking for them. SCAN_CAP bounds the work when a filter
+    # is active; without a filter the tail is all that is ever needed.
+    scan = LOG_SCAN_CAP if lvl_or_q else limit
+    raw = await run_in_threadpool(_read_log_tail, scan)
+    records = _parse_log_lines(raw)
+
+    lvl = level.strip().upper()
+    if lvl in LOG_LEVELS:
+        keep = set(LOG_LEVELS[LOG_LEVELS.index(lvl):])
+        records = [r for r in records if r["level"] in keep]
+    needle = q.strip().lower()
+    if needle:
+        records = [
+            r for r in records
+            if needle in r["message"].lower() or needle in r["logger"].lower()
+        ]
+
+    truncated = len(records) > limit
+    records = records[-limit:]
+    return {
+        "path": LOG_PATH,
+        "available": bool(LOG_PATH),
+        "truncated": truncated,
+        "loggers": sorted({r["logger"] for r in records if r["logger"]}),
+        "records": records,
+    }
+
+
+@app.get("/logs/download")
+async def download_logs() -> FileResponse:
+    if not LOG_PATH or not os.path.isfile(LOG_PATH):
+        raise HTTPException(404, "no log file — the backend is logging to stderr only")
+    return FileResponse(LOG_PATH, media_type="text/plain", filename="force-app-backend.log")
+
+
 # ---- Storage management ----
 @app.get("/storage/drives")
 async def storage_drives() -> dict:
@@ -183,14 +373,24 @@ async def storage_set_config(body: dict) -> dict:
     except OSError as e:
         raise HTTPException(400, f"cannot create directory: {e}")
     CAPTURES_ROOT = path
-    os.makedirs(os.path.dirname(STORAGE_CONFIG_PATH), exist_ok=True)
+    # Persisting is what makes the choice survive a restart, so a failure here must be reported.
+    # It used to be swallowed: the drive change applied to the running process, the UI showed
+    # "saved", and the setting quietly reverted on the next launch. The directory creation was
+    # outside the guard too, so an unwritable config dir 500'd instead of degrading.
+    persisted, warning = True, None
     try:
+        os.makedirs(os.path.dirname(STORAGE_CONFIG_PATH), exist_ok=True)
         with open(STORAGE_CONFIG_PATH, "w") as f:
             json.dump({"captures_root": path}, f)
-    except OSError:
-        pass
+    except OSError as e:
+        persisted = False
+        warning = (
+            f"Recording to {path} for now, but the choice could not be saved to "
+            f"{STORAGE_CONFIG_PATH} ({e}), so it will revert when the app restarts."
+        )
+        log.warning("storage_set_config: could not persist captures_root: %s", e)
     current = storage.disk_usage_for(CAPTURES_ROOT)
-    return {"captures_root": CAPTURES_ROOT, **current}
+    return {"captures_root": CAPTURES_ROOT, "persisted": persisted, "warning": warning, **current}
 
 
 # ---- Connectivity check ----
@@ -465,7 +665,10 @@ async def health_doctor(request: Request) -> dict:
     if backup_url:
         parsed = urlparse(backup_url)
         host = parsed.hostname or ""
-        port = parsed.port or 80
+        # Behind Caddy the recommended URL is https with no explicit port, so defaulting to 80
+        # probed the wrong port and reported the container as down when it was fine. Matches the
+        # Directus and filter-service checks above.
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
         resolved = await _resolve_host(host)
         port_ok = await _check_port(host, port, 4.0) if resolved else False
         if port_ok:
@@ -482,20 +685,23 @@ async def health_doctor(request: Request) -> dict:
                 "fix": "Connect to Tailscale or correct the backup server URL in Settings > Live Backup.",
             })
         else:
-            # Host resolves but port is closed — maybe the server process isn't running
+            # Host resolves but port is closed — maybe the server process isn't running. It is
+            # deployed as a compose service behind Caddy's /backup-ingest route, so the fix is to
+            # bring that service up on the server host, not to hand-run uvicorn (which was the old
+            # advice, from before the service was deployable at all).
             findings.append({
                 "service": "Backup server", "status": "fail",
                 "message": f"Host {host} resolved ({resolved}) but port {port} refused",
-                "diagnosis": f"The backup server host is reachable but nothing is listening on port {port}. The backup-server process may not be running.",
-                "fix": "The backup-server process is not running on the remote host.",
-                "fix_command": f"cd \"{os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'backup-server'))}\"; python -m uvicorn server:app --host 0.0.0.0 --port {port}",
+                "diagnosis": f"The backup server host is reachable but nothing is listening on port {port}. The backup-server container may not be running.",
+                "fix": "Start the backup-server service on the server host (it is part of the main docker compose stack).",
+                "fix_command": "docker compose up -d backup-server proxy",
             })
     elif bcfg.get("enabled"):
         findings.append({
             "service": "Backup server", "status": "fail",
             "message": "Backup enabled but no server URL configured",
             "diagnosis": "Live backup is enabled in settings but the server URL is empty.",
-            "fix": "Set the backup server URL in Settings > Live Backup (e.g. http://d1-server.tail54eeb6.ts.net:8210).",
+            "fix": f"Set the backup server URL in Settings > Live Backup (e.g. {DEFAULT_BACKUP_URL}).",
         })
     else:
         findings.append({
@@ -568,12 +774,15 @@ async def recovery_recover(session_id: str) -> dict:
 
 @app.post("/recovery/discard/{session_id}")
 async def recovery_discard(session_id: str) -> dict:
+    t0 = time.perf_counter()
     try:
         await run_in_threadpool(recovery.discard_session, CAPTURES_ROOT, session_id)
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
+    finally:
+        log.info("recovery_discard: id=%s took %.2fs", session_id, time.perf_counter() - t0)
     return {"discarded": True, "session_id": session_id}
 
 
@@ -768,8 +977,14 @@ async def record_stop() -> dict:
     # finalize() now runs in the background (session.py), so `state` may already be "finalizing"
     # from a prior call — don't re-invoke stop() (source.stop() etc.) in that case, just report it.
     # The client learns of the eventual "done"/summary via the WS control message, not this response.
+    t0 = time.perf_counter()
+    log.info("record_stop: id=%s state=%s", _session.id, _session.state)
     if _session.state == "recording":
         await run_in_threadpool(_session.stop, True, 60.0)
+    log.info(
+        "record_stop: acquisition-stop returned in %.2fs (state now %s)",
+        time.perf_counter() - t0, _session.state,
+    )
     return {
         "id": _session.id,
         "state": _session.state,
@@ -842,6 +1057,95 @@ def _capture_file(cid: str, name: str) -> str:
     if not os.path.isfile(path):
         raise HTTPException(404, "not found")
     return path
+
+
+@app.get("/captures/browse")
+async def browse_captures(limit: int = 200) -> dict:
+    """Every local capture with the facts needed to decide what to keep.
+
+    Distinct from /captures/recent, which exists for the Auto Range picker and therefore skips
+    anything without per-channel ranging data. This one lists everything on disk, finalized or not,
+    because its job is disk housekeeping: captures accumulate indefinitely (a "Don't save" leaves
+    the raw behind by design) and nothing in the app has ever been able to show or remove them.
+    """
+    def _scan() -> tuple[list[dict], dict]:
+        rows: list[dict] = []
+        if not os.path.isdir(CAPTURES_ROOT):
+            return rows, storage.disk_usage_for(CAPTURES_ROOT)
+        ids = sorted(
+            (d for d in os.listdir(CAPTURES_ROOT) if os.path.isdir(os.path.join(CAPTURES_ROOT, d))),
+            reverse=True,
+        )
+        for cid in ids[: max(1, min(limit, 1000))]:
+            d = os.path.join(CAPTURES_ROOT, cid)
+            entry: dict = {"id": cid, "size_mb": 0.0, "finalized": False, "files": {}}
+            total = 0
+            for fname in ("raw.d1raw", "capture.mat", "live_cache.bin", "summary.json"):
+                fpath = os.path.join(d, fname)
+                if os.path.isfile(fpath):
+                    n = os.path.getsize(fpath)
+                    total += n
+                    entry["files"][fname] = round(n / 1e6, 2)
+            entry["size_mb"] = round(total / 1e6, 2)
+            entry["finalized"] = "summary.json" in entry["files"]
+            try:
+                entry["mtime"] = os.path.getmtime(d)
+            except OSError:
+                entry["mtime"] = 0
+            if entry["finalized"]:
+                try:
+                    with open(os.path.join(d, "summary.json")) as f:
+                        s = json.load(f)
+                    entry["sample_name"] = s.get("sample_name")
+                    entry["duration_sec"] = s.get("duration_sec")
+                    entry["n"] = s.get("n")
+                    entry["peaks"] = s.get("peaks")
+                    entry["source"] = (s.get("config") or {}).get("source")
+                except (OSError, ValueError):
+                    pass
+            rows.append(entry)
+        return rows, storage.disk_usage_for(CAPTURES_ROOT)
+
+    captures, disk = await run_in_threadpool(_scan)
+    return {
+        "captures_root": CAPTURES_ROOT,
+        "captures": captures,
+        "total_size_mb": round(sum(c["size_mb"] for c in captures), 2),
+        "disk": disk,
+    }
+
+
+@app.delete("/captures/{cid}")
+async def delete_capture(cid: str) -> dict:
+    """Permanently delete a capture directory.
+
+    recovery.discard_session deliberately refuses to touch finalized sessions, so there was no way
+    to remove a completed capture from inside the app at all — they accumulated on the recording
+    drive forever. This is the deliberate counterpart to that guard, not a bypass: it is only ever
+    reached from an explicit, confirmed user action, and it refuses to delete the recording that is
+    currently in progress.
+    """
+    if "/" in cid or "\\" in cid or ".." in cid:
+        raise HTTPException(400, "bad id")
+    d = os.path.join(CAPTURES_ROOT, cid)
+    if not os.path.isdir(d):
+        raise HTTPException(404, "not found")
+    if _session and _session.id == cid and _session.state in ("recording", "finalizing"):
+        raise HTTPException(409, "that recording is still in progress")
+    t0 = time.perf_counter()
+    freed = 0
+    try:
+        for root, _dirs, files in os.walk(d):
+            for f in files:
+                try:
+                    freed += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass
+        await run_in_threadpool(shutil.rmtree, d)
+    except OSError as e:
+        raise HTTPException(500, f"could not delete: {e}")
+    log.info("delete_capture: id=%s freed=%.1fMB in %.2fs", cid, freed / 1e6, time.perf_counter() - t0)
+    return {"deleted": True, "id": cid, "freed_mb": round(freed / 1e6, 2)}
 
 
 @app.get("/captures/{cid}/summary")

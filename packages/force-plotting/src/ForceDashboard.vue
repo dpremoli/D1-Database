@@ -6,6 +6,7 @@ import ForceChart from './ForceChart.vue';
 import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
+import WearTrend from './WearTrend.vue';
 import type { SpeedMode } from './liveCloud';
 import { cacheGet, cachePut, decimateCache, parseCache, type Cache } from './liveCache';
 import { computeSignalStats, type SignalStats } from './signalStats';
@@ -703,7 +704,7 @@ onBeforeUnmount(() => {
 // Samples/Operations + detail stay as the docked left rail; only the plots are flexible.
 // Per-instance panel state: a Signals panel carries its own selected channels + RPM toggle so
 // duplicated panels can differ (e.g. one showing only Fz next to one showing Fx/Fy).
-type RPanel = { i: string; type: 'signals' | 'frm'; x: number; y: number; w: number; h: number; channels?: Axis[]; rpm?: boolean };
+type RPanel = { i: string; type: 'signals' | 'frm' | 'wear'; x: number; y: number; w: number; h: number; channels?: Axis[]; rpm?: boolean };
 const RIGHT_KEY = 'd1-force-right-layout-v2';
 const RIGHT_DEFAULT: RPanel[] = [
 	{ i: 'signals', type: 'signals', x: 0, y: 0, w: 6, h: 20, channels: ['Fx', 'Fy', 'Fz'], rpm: false },
@@ -712,6 +713,7 @@ const RIGHT_DEFAULT: RPanel[] = [
 const R_META: Record<string, { title: string; icon: string }> = {
 	signals: { title: 'Signals', icon: 'insights' },
 	frm: { title: 'FRM map', icon: 'fingerprint' },
+	wear: { title: 'Wear trend', icon: 'trending_up' },
 };
 function loadRight(): RPanel[] {
 	try {
@@ -729,11 +731,19 @@ watch(rightLayout, (v) => {
 	const snapshot = JSON.stringify(v);
 	persistT = setTimeout(() => localStorage.setItem(RIGHT_KEY, snapshot), 250);
 }, { deep: true });
-// Row height so the default (h:20) panels fill the measured area; grid margins subtracted.
-const rightRowH = computed(() => Math.max(16, Math.floor((availableHeight.value - 24) / 20)));
+// Row height so the panels fill the measured area exactly. grid-layout-plus sizes its container as
+// `bottomRow * (rowHeight + marginY) + marginY`, so the exact-fit inverse is
+// `(H - marginY) / bottomRow - marginY` — the previous `(H - 24) / 20` overflowed by ~186px (hidden
+// only because .right-area scrolls), and its hardcoded /20 (the DEFAULT panel h) stopped being
+// right the moment a user resized or added a panel. Both are derived properly now.
+const RIGHT_MARGIN = 10;   // must match :margin="[10, 10]" on the right-hand GridLayout
+const rightBottomRow = computed(() => rightLayout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0) || 1);
+const rightRowH = computed(() =>
+	Math.max(16, Math.floor((availableHeight.value - RIGHT_MARGIN) / rightBottomRow.value) - RIGHT_MARGIN),
+);
 const rightAddOpen = ref(false);
 const hasPanel = (t: string) => rightLayout.value.some((p) => p.type === t);
-function addRightPanel(type: 'signals' | 'frm') {
+function addRightPanel(type: 'signals' | 'frm' | 'wear') {
 	rightAddOpen.value = false;
 	// Place a new panel beside the shortest existing column when there's room on the top row,
 	// otherwise start a fresh row below. Half-height (h:10) so a stacked pair fits one screen and
@@ -754,7 +764,7 @@ function addRightPanel(type: 'signals' | 'frm') {
 	});
 }
 function closeRightPanel(i: string) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.i !== i); }
-function toggleRightType(type: 'signals' | 'frm') {
+function toggleRightType(type: 'signals' | 'frm' | 'wear') {
 	if (hasPanel(type)) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.type !== type); }
 	else addRightPanel(type);
 }
@@ -806,7 +816,7 @@ onMounted(async () => {
 				filter,
 				limit: -1,
 				fields: [
-					'id', 'peak_fx', 'peak_fy', 'peak_fz', 'status', 'live_cache_file', 'octree_status',
+					'id', 'peak_fx', 'peak_fy', 'peak_fz', 'status', 'live_cache_file', 'octree_status', 'created_at',
 					'operation_id.operation_id', 'operation_id.pass_code', 'operation_id.operation_date',
 					'operation_id.sample_id.sample_id', 'operation_id.sample_id.sample_code',
 					'operation_id.sample_id.nickname', 'operation_id.sample_id.material_id.common_name',
@@ -884,6 +894,19 @@ const filteredSamples = computed(() => {
 		|| (s.material || '').toLowerCase().includes(q)) : samples.value;
 });
 
+// Most recently saved recording across ALL operations (not just the currently filtered/searched
+// list) — created_at is a DB-level default (now()) set on insert regardless of which path wrote
+// the row (force-app's direct upload or the MATLAB crawler), so it's a reliable "latest" signal
+// independent of operation_date (which can be backdated/historical) or client-supplied timestamps.
+const latestRowId = computed(() => {
+	let best: any = null;
+	for (const r of rows.value) {
+		if (!r.created_at) continue;
+		if (!best || new Date(r.created_at).getTime() > new Date(best.created_at).getTime()) best = r;
+	}
+	return best?.id ?? null;
+});
+
 // Data-quality stoplight for an operation row (mirrors the FAST dashboard). Green = a
 // plottable FRM cache exists · Blue = processing · Yellow = octree-only (no live cache) ·
 // Red = failed or no plot data.
@@ -951,6 +974,10 @@ async function selectOp(row: any) {
 					'operation_id.operation_sequence', 'operation_id.machining_operation_subtype',
 					'operation_id.process_category', 'operation_id.operator_name',
 					'operation_id.machining_new_edge', 'operation_id.machining_coolant_used', 'operation_id.outcome_notes',
+					// Needed by the wear-trend panel to group an edge's passes. `*` above covers only
+					// machining_force_analysis's own columns, not the related operation's, so without
+					// this the edge grouping silently finds nothing and falls back to sample.
+					'operation_id.insert_edge_id', 'operation_id.machining_cutting_length_mm',
 					'operation_id.equipment_id.equipment_name', 'operation_id.method_id.method_name',
 					'operation_id.sample_id.sample_id', 'operation_id.sample_id.sample_code', 'operation_id.sample_id.nickname',
 					'operation_id.sample_id.form', 'operation_id.sample_id.manufactured_date',
@@ -1104,7 +1131,8 @@ function chartsFor(item: RPanel) {
 	const base = AXES.filter((a) => sel.includes(a)).map((a) => (
 		effectiveMode.value === 'force'
 			? { key: a, title: `${a} · force`, kind: 'env' as const, data: d?.series?.[a], color: AXIS_COLOR[a], xUnit: 's', yUnit: 'N',
-				cropStart: activeCrop.value?.start, cropEnd: activeCrop.value?.end, peak: d?.[PEAK_FIELD[a]] }
+				cropStart: activeCrop.value?.start, cropEnd: activeCrop.value?.end, peak: d?.[PEAK_FIELD[a]],
+				compare: compareSeriesFor(a) }
 			: { key: a, title: `${a} · spectrum`, kind: 'line' as const, data: d?.fft?.[a], color: AXIS_COLOR[a], xUnit: 'Hz', yUnit: '', logY: true }
 	));
 	if (effectiveMode.value === 'force' && item.rpm) {
@@ -1113,6 +1141,58 @@ function chartsFor(item: RPanel) {
 	}
 	return base;
 }
+// ---- Multi-cut comparison -----------------------------------------------------------------
+// Overlay other operations' force envelopes on the current one, so successive passes on a single
+// insert edge can be read against each other (tool wear shows as the force envelope growing pass
+// over pass). Only `series` is fetched — the same JSONB envelope the charts already draw — so a
+// comparison costs one small request per cut, not a live-cache download.
+const COMPARE_COLORS = ['#f59e0b', '#a855f7', '#0ea5e9', '#ec4899', '#84cc16'];
+const compareIds = ref<string[]>([]);
+const compareData = ref<Record<string, any>>({});   // op row id -> { series, label }
+const compareBusy = ref(false);
+const comparePickerOpen = ref(false);
+
+const compareCandidates = computed(() =>
+	displayedOps.value.filter((o) => o.id !== selectedRowId.value && !compareIds.value.includes(o.id)),
+);
+const compareItems = computed(() =>
+	compareIds.value
+		.map((id, i) => ({ id, color: COMPARE_COLORS[i % COMPARE_COLORS.length], ...(compareData.value[id] || {}) }))
+		.filter((c) => c.series),
+);
+
+function compareSeriesFor(axis: Axis) {
+	return compareItems.value
+		.map((c) => ({ id: c.id, label: c.label as string, color: c.color, data: c.series?.[axis] }))
+		.filter((c) => c.data);
+}
+
+async function addCompare(row: any) {
+	comparePickerOpen.value = false;
+	if (compareIds.value.includes(row.id)) return;
+	compareIds.value = [...compareIds.value, row.id];
+	if (compareData.value[row.id]) return;
+	compareBusy.value = true;
+	try {
+		const res = await api.get(`/items/machining_force_analysis/${row.id}`, { params: { fields: ['series'] } });
+		compareData.value = {
+			...compareData.value,
+			[row.id]: {
+				series: res.data?.data?.series ?? null,
+				label: row.operation_id?.pass_code || sampleOf(row)?.sample_code || row.id,
+			},
+		};
+	} catch {
+		// Drop it again rather than leaving a legend entry that draws nothing.
+		compareIds.value = compareIds.value.filter((x) => x !== row.id);
+	} finally { compareBusy.value = false; }
+}
+function removeCompare(id: string) { compareIds.value = compareIds.value.filter((x) => x !== id); }
+function clearCompare() { compareIds.value = []; }
+// Selecting a different primary cut keeps the comparisons (comparing a series of passes is the
+// whole point), but one that is now the primary must not also be drawn as a comparison.
+watch(selectedRowId, (id) => { if (id) compareIds.value = compareIds.value.filter((x) => x !== id); });
+
 // Selected axes for a panel (spectral views render one SpectrumView per axis, like the force plot).
 function axesFor(item: RPanel): Axis[] {
 	const sel = (item.channels && item.channels.length ? item.channels : AXES) as readonly Axis[];
@@ -1277,6 +1357,7 @@ function fmtDateTime(v: string | null | undefined) {
 						<div v-if="rightAddOpen" class="pt-menu" @click.stop>
 							<button @click="addRightPanel('signals')"><v-icon name="insights" x-small /> Signals</button>
 							<button @click="addRightPanel('frm')"><v-icon name="fingerprint" x-small /> FRM map</button>
+							<button @click="addRightPanel('wear')"><v-icon name="trending_up" x-small /> Wear trend</button>
 						</div>
 					</div>
 					<button class="pt-chip" title="Reset panel layout" @click="resetRightLayout"><v-icon name="grid_view" x-small /></button>
@@ -1314,7 +1395,11 @@ function fmtDateTime(v: string | null | undefined) {
 						<div class="list">
 							<button v-for="o in displayedOps" :key="o.id"
 								class="rowcard" :class="{ active: selectedRowId === o.id }" @click="selectOp(o)">
-								<span class="mono sm"><span class="qdot" :class="frmQuality(o).level" :title="frmQuality(o).label"></span>{{ o.operation_id?.pass_code || '—' }}</span>
+								<span class="mono sm"><span class="qdot" :class="frmQuality(o).level" :title="frmQuality(o).label"></span>{{ o.operation_id?.pass_code || '—' }}
+									<span v-if="o.id === latestRowId" class="latest-chip" title="The most recently saved recording">
+										<v-icon name="bolt" x-small />Latest
+									</span>
+								</span>
 								<span class="sub">
 									<template v-if="!filterSampleId">{{ sampleOf(o)?.sample_code }} · </template>
 									{{ fmtDate(o.operation_id?.operation_date) }}
@@ -1607,6 +1692,29 @@ function fmtDateTime(v: string | null | undefined) {
 								</div>
 								<button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button>
 							</div>
+							<!-- Multi-cut comparison. Force mode only: overlaying spectra or spectrograms
+								 from different cuts is not readable, and the wear question this answers is
+								 a time-domain one. -->
+							<div v-if="detail && effectiveMode === 'force'" class="cmp-bar">
+								<span class="cmp-label"><v-icon name="stacked_line_chart" x-small /> Compare</span>
+								<span v-for="c in compareItems" :key="c.id" class="cmp-chip" :style="{ borderColor: c.color, color: c.color }">
+									{{ c.label }}
+									<button class="cmp-x" title="Remove from comparison" @click="removeCompare(c.id)">×</button>
+								</span>
+								<span v-if="compareBusy" class="cmp-hint">loading…</span>
+								<div class="cmp-add">
+									<button class="tbtn" :disabled="!compareCandidates.length"
+										:title="compareCandidates.length ? 'Overlay another cut' : 'No other operations in the current list'"
+										@click.stop="comparePickerOpen = !comparePickerOpen">+ Add cut</button>
+									<div v-if="comparePickerOpen" class="cmp-menu" @click.stop>
+										<button v-for="o in compareCandidates.slice(0, 40)" :key="o.id" @click="addCompare(o)">
+											<span class="mono sm">{{ o.operation_id?.pass_code || sampleOf(o)?.sample_code || o.id }}</span>
+											<span class="sub">{{ fmtDate(o.operation_id?.operation_date) }}</span>
+										</button>
+									</div>
+								</div>
+								<button v-if="compareItems.length" class="tbtn" title="Clear all comparisons" @click="clearCompare">Clear</button>
+							</div>
 							<div v-if="!detail" class="empty">Select an operation to view its signals</div>
 							<div v-else-if="isSpectral" class="charts-col">
 								<SpectrumView v-for="a in axesFor(item)" :key="a" :cache-file-id="detail.live_cache_file"
@@ -1619,6 +1727,15 @@ function fmtDateTime(v: string | null | undefined) {
 									:view-start="zoomStart" :view-end="zoomEnd" :zoom-tool="rectZoomTool" @zoom="onChartZoom"
 									@update:crop-start="onCropEdit('start', $event)" @update:crop-end="onCropEdit('end', $event)" />
 							</div>
+						</div>
+
+						<div v-else-if="item.type === 'wear'" class="card pg-card">
+							<div class="pg-bar">
+								<span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span>
+								<span class="pg-title"><v-icon name="trending_up" x-small /> Wear trend</span>
+								<button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button>
+							</div>
+							<WearTrend :detail="detail" />
 						</div>
 
 						<div v-else-if="item.type === 'frm'" class="card col-frm frm-col pg-card">
@@ -1823,6 +1940,34 @@ function fmtDateTime(v: string | null | undefined) {
 .qdot.yellow { background: #f59e0b; }
 .qdot.blue { background: #3b82f6; }
 .qdot.red { background: #ef4444; }
+/* Marks the single most-recently-saved recording across all operations (see latestRowId) — an
+   inline badge rather than another corner dot since .qdot's corner is already the quality light. */
+.latest-chip {
+	display: inline-flex; align-items: center; gap: 1px; margin-left: 5px;
+	font-family: var(--theme--fonts--sans--font-family, system-ui, sans-serif);
+	font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+	padding: 1px 6px 1px 4px; border-radius: 99px; color: #b45309;
+	background: color-mix(in srgb, #f59e0b 18%, transparent);
+	vertical-align: middle;
+}
+.latest-chip .v-icon-shim { font-size: 11px !important; }
+/* Multi-cut comparison bar (Signals panel, force mode). */
+.cmp-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 10px;
+	border-bottom: 1px solid var(--theme--border-color-subdued, #e7ebf0); }
+.cmp-label { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 700;
+	text-transform: uppercase; letter-spacing: 0.04em; color: var(--theme--foreground-subdued, #6b7684); }
+.cmp-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 700;
+	padding: 1px 4px 1px 8px; border: 1px solid; border-radius: 99px; }
+.cmp-x { border: 0; background: none; cursor: pointer; color: inherit; font-size: 13px; line-height: 1; padding: 0 3px; }
+.cmp-hint { font-size: 10.5px; color: var(--theme--foreground-subdued, #98a2b3); }
+.cmp-add { position: relative; }
+.cmp-menu { position: absolute; top: 24px; left: 0; z-index: 40; min-width: 200px; max-height: 280px;
+	overflow: auto; padding: 4px; background: var(--theme--background, #fff);
+	border: 1px solid var(--theme--border-color-subdued, #e7ebf0); border-radius: 9px;
+	box-shadow: 0 14px 40px rgba(15,23,42,0.18); }
+.cmp-menu button { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 6px 8px;
+	background: transparent; border: 0; border-radius: 6px; cursor: pointer; text-align: left; color: inherit; }
+.cmp-menu button:hover { background: var(--theme--background-subdued, #f4f6f8); }
 .rowcard {
 	position: relative;
 	text-align: left; font: inherit; cursor: pointer; color: inherit;

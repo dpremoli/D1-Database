@@ -4,6 +4,7 @@ finalize on stop/completion. State machine: idle → recording → finalizing �
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -11,6 +12,8 @@ import uuid
 
 import numpy as np
 from scipy import signal as ssig
+
+log = logging.getLogger("force_app.session")
 
 from .acquisition.consumers import CutDetector, Decimator, FrmIntegrator
 from .acquisition.ring import Ring
@@ -98,10 +101,18 @@ class RecordingSession:
         self._disk_thread.start()
 
     def stop(self, wait: bool = True, timeout: float = 30.0) -> None:
+        t0 = time.perf_counter()
         self._stop.set()
         self.source.stop()
+        log.info("session.stop: source.stop() returned in %.2fs", time.perf_counter() - t0)
         if wait and self._thread:
+            t1 = time.perf_counter()
             self._thread.join(timeout)
+            dt = time.perf_counter() - t1
+            if self._thread.is_alive():
+                log.warning("session.stop: acquisition thread still alive after %.2fs join timeout", dt)
+            else:
+                log.info("session.stop: acquisition thread joined in %.2fs", dt)
 
     def _watch_disk(self) -> None:
         """Runs for the life of the recording. Two escalating responses to a filling disk, cheaper
@@ -184,8 +195,12 @@ class RecordingSession:
             self.error = f"acquisition error: {e}"
         finally:
             self.ring.close()
+            t_consumer = time.perf_counter()
             consumer.join(timeout=10.0)
+            log.info("session._run: consumer thread joined in %.2fs", time.perf_counter() - t_consumer)
+            t_raw = time.perf_counter()
             self.raw.close()
+            log.info("session._run: raw.close() (flush+fsync) took %.2fs", time.perf_counter() - t_raw)
             if self.backup:
                 self.backup.stop()
             if self.n_total > 0:
@@ -214,12 +229,18 @@ class RecordingSession:
                 )
 
     def _finalize_async(self) -> None:
+        t0 = time.perf_counter()
+        log.info("session._finalize_async: starting (n_total=%d)", self.n_total)
         try:
             self.summary = finalize(self.dir, self.cfg)
             self.state = "error" if self.error else "done"
         except Exception as e:
             self.error = self.error or f"finalize error: {e}"  # keep the original cause
             self.state = "error"
+        log.info(
+            "session._finalize_async: finished in %.2fs (state=%s)",
+            time.perf_counter() - t0, self.state,
+        )
         write_manifest(self.dir, self.state, self.cfg, self.error)
         self._publish_control(
             {

@@ -52,6 +52,41 @@ let saveT: any = null;
 watch(layout, (l) => { clearTimeout(saveT); saveT = setTimeout(() => localStorage.setItem(LS_KEY, JSON.stringify(l)), 400); }, { deep: true });
 function resetLayout() { layout.value = DEFAULT_LAYOUT.map((x) => ({ ...x })); }
 
+// ---- Responsive grid height ----------------------------------------------------------------
+// The grid's own height is `bottomRow * (rowHeight + marginY) + marginY` (grid-layout-plus), so a
+// FIXED row height pins the whole workspace to one pixel height no matter the window size — the
+// default 28-row layout came out at 28*(30+12)+12 = 1188px, overflowing a 1080p screen and leaving
+// a gap on a taller one. Measuring the viewport and inverting that formula makes the panels fill
+// the window exactly instead.
+const GRID_MARGIN = 12;   // must match :margin="[12, 12]" on GridLayout below
+const MIN_ROW_H = 18;     // floor: past this a tall layout scrolls rather than squashing to nothing
+const BOTTOM_PAD = 16;    // breathing room under the last row
+
+const gridEl = ref<HTMLElement | null>(null);
+const availableHeight = ref(700);
+function measureGrid() {
+	if (!gridEl.value) return;
+	// Measured from the grid's own top, so the sticky topbar and the conditional disk-action /
+	// recovery banners (which push the grid down when they appear) are all accounted for
+	// automatically. .alarm-overlay is position:fixed and correctly costs no flow height.
+	//
+	// Document offset, not the viewport-relative rect: when the layout is taller than the window
+	// it scrolls (by design, past the min row height), and a scrolled rect has a negative top.
+	// Using that directly inflates availableHeight, which grows the rows, which makes the page
+	// taller still — a feedback loop that runs away as the user scrolls. The document offset is
+	// scroll-invariant, so the measurement means the same thing wherever the page happens to be.
+	const top = gridEl.value.getBoundingClientRect().top + window.scrollY;
+	availableHeight.value = Math.max(320, Math.floor(window.innerHeight - top - BOTTOM_PAD));
+}
+// Derived from the LIVE layout, not the default: `layout` is user-editable and persisted, so the
+// row span is arbitrary after any drag/resize/add.
+const bottomRow = computed(() => layout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0) || 1);
+const rowHeight = computed(() =>
+	Math.max(MIN_ROW_H, Math.floor((availableHeight.value - GRID_MARGIN) / bottomRow.value) - GRID_MARGIN),
+);
+
+let gridRO: ResizeObserver | undefined;
+
 const addOpen = ref(false);
 const hasType = (t: string) => layout.value.some((p) => p.type === t);
 const MODE_LABEL: Record<string, string> = { time: 'Force Plot', fft: 'FFT', psd: 'Power', spectrogram: 'Spectrogram', waterfall: 'Waterfall' };
@@ -155,6 +190,28 @@ interface IncompleteSession {
 }
 const recoveryItems = ref<IncompleteSession[]>([]);
 const recoveryBusy = ref<Record<string, boolean>>({});
+// Recover/discard on a crashed session's raw.d1raw can take a while for a large/long-running
+// capture (finalize has to re-derive everything, discard has to delete a potentially multi-GB
+// file) — previously the button just went disabled with no further feedback, which read as hung.
+// Track a start time per id and tick a shared clock so the button can show live elapsed seconds.
+const recoveryBusyStart = ref<Record<string, number>>({});
+const recoveryTick = ref(0);
+let recoveryTickTimer: ReturnType<typeof setInterval> | null = null;
+function recoveryElapsed(id: string): number {
+	void recoveryTick.value;
+	const t = recoveryBusyStart.value[id];
+	return t ? (performance.now() - t) / 1000 : 0;
+}
+function beginRecoveryBusy(id: string) {
+	recoveryBusy.value[id] = true;
+	recoveryBusyStart.value[id] = performance.now();
+	if (!recoveryTickTimer) recoveryTickTimer = setInterval(() => { recoveryTick.value++; }, 250);
+}
+function endRecoveryBusy(id: string) {
+	delete recoveryBusy.value[id];
+	delete recoveryBusyStart.value[id];
+	if (!Object.keys(recoveryBusy.value).length && recoveryTickTimer) { clearInterval(recoveryTickTimer); recoveryTickTimer = null; }
+}
 
 async function checkRecovery() {
 	try {
@@ -167,7 +224,7 @@ async function checkRecovery() {
 }
 
 async function recoverSession(id: string) {
-	recoveryBusy.value[id] = true;
+	beginRecoveryBusy(id);
 	try {
 		const res = await fetch(`${w.client.baseUrl}/recovery/recover/${id}`, { method: 'POST' });
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -175,13 +232,13 @@ async function recoverSession(id: string) {
 	} catch (e: any) {
 		alert(`Recovery failed: ${e?.message || e}`);
 	} finally {
-		delete recoveryBusy.value[id];
+		endRecoveryBusy(id);
 	}
 }
 
 async function discardSession(id: string) {
 	if (!confirm(`Discard incomplete recording ${id}? This cannot be undone.`)) return;
-	recoveryBusy.value[id] = true;
+	beginRecoveryBusy(id);
 	try {
 		const res = await fetch(`${w.client.baseUrl}/recovery/discard/${id}`, { method: 'POST' });
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -189,12 +246,28 @@ async function discardSession(id: string) {
 	} catch (e: any) {
 		alert(`Discard failed: ${e?.message || e}`);
 	} finally {
-		delete recoveryBusy.value[id];
+		endRecoveryBusy(id);
 	}
 }
 
-onMounted(() => { w.client.connect(); startSync(); checkDisk(); checkRecovery(); checkBackup(); });
-onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(diskTimer); if (backupTimer) clearInterval(backupTimer); });
+onMounted(() => {
+	w.client.connect(); startSync(); checkDisk(); checkRecovery(); checkBackup();
+	// ResizeObserver catches content reflow (a banner appearing/dismissing shifts the grid's top);
+	// the window listener is the belt-and-braces fallback, since RO can fire unreliably under rapid
+	// or programmatic viewport changes. Same pairing ForceDashboard uses.
+	gridRO = new ResizeObserver(measureGrid);
+	if (gridEl.value) gridRO.observe(gridEl.value);
+	measureGrid();
+	window.addEventListener('resize', measureGrid);
+});
+onBeforeUnmount(() => {
+	w.client.disconnect();
+	if (diskTimer) clearInterval(diskTimer);
+	if (backupTimer) clearInterval(backupTimer);
+	if (recoveryTickTimer) clearInterval(recoveryTickTimer);
+	gridRO?.disconnect();
+	window.removeEventListener('resize', measureGrid);
+});
 </script>
 
 <template>
@@ -233,10 +306,10 @@ onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(disk
 					<span v-if="s.manifest?.config?.sample_name" class="rb-detail">{{ s.manifest.config.sample_name }}</span>
 				</div>
 				<button class="rb-btn recover" :disabled="!!recoveryBusy[s.id]" @click="recoverSession(s.id)">
-					<span class="material-symbols-rounded">healing</span>{{ recoveryBusy[s.id] ? 'Recovering…' : 'Recover' }}
+					<span class="material-symbols-rounded" :class="{ spin: recoveryBusy[s.id] }">{{ recoveryBusy[s.id] ? 'progress_activity' : 'healing' }}</span>{{ recoveryBusy[s.id] ? `Recovering… ${recoveryElapsed(s.id).toFixed(0)}s` : 'Recover' }}
 				</button>
 				<button class="rb-btn discard" :disabled="!!recoveryBusy[s.id]" @click="discardSession(s.id)">
-					<span class="material-symbols-rounded">delete</span>Discard
+					<span class="material-symbols-rounded" :class="{ spin: recoveryBusy[s.id] }">{{ recoveryBusy[s.id] ? 'progress_activity' : 'delete' }}</span>{{ recoveryBusy[s.id] ? `Discarding… ${recoveryElapsed(s.id).toFixed(0)}s` : 'Discard' }}
 				</button>
 			</div>
 		</div>
@@ -277,7 +350,8 @@ onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(disk
 			<button class="reset" title="Reset panel layout" @click="resetLayout"><span class="material-symbols-rounded">grid_view</span></button>
 		</header>
 
-		<GridLayout v-model:layout="layout" :col-num="12" :row-height="30" :margin="[12, 12]"
+		<div ref="gridEl" class="gridwrap">
+		<GridLayout v-model:layout="layout" :col-num="12" :row-height="rowHeight" :margin="[12, 12]"
 			:is-draggable="true" :is-resizable="true" :use-css-transforms="true" :vertical-compact="true">
 			<GridItem v-for="item in layout" :key="item.i" :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i"
 				drag-allow-from=".panel-handle" :min-w="2" :min-h="3">
@@ -290,6 +364,7 @@ onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(disk
 				</PanelFrame>
 			</GridItem>
 		</GridLayout>
+		</div>
 
 		<SaveCutDialog v-if="w.saveOpen.value" />
 	</div>
@@ -360,7 +435,12 @@ onBeforeUnmount(() => { w.client.disconnect(); if (diskTimer) clearInterval(disk
 .rb-btn.recover:hover:not(:disabled) { background: #16a34a; }
 .rb-btn.discard { color: var(--text-dim); background: var(--surface-2); }
 .rb-btn.discard:hover:not(:disabled) { color: var(--danger); background: rgba(239,68,68,0.1); }
-.vgl-layout { margin: 8px 10px 0; }
+.rb-btn .spin { animation: rb-spin 1s linear infinite; }
+@keyframes rb-spin { to { transform: rotate(360deg); } }
+/* Wrapper exists purely so the responsive row-height maths has a real element to measure from
+   (a ref on <GridLayout> would hand back the component instance, not a DOM node). */
+.gridwrap { margin: 8px 10px 0; }
+.vgl-layout { margin: 0; }
 :deep(.vgl-item--placeholder) { background: rgba(56,189,248,0.18); border-radius: 12px; }
 :deep(.vgl-item__resizer) { z-index: 5; }
 </style>
