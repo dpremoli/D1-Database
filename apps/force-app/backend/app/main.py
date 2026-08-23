@@ -87,10 +87,17 @@ def _read_json(path: str) -> dict | None:
 
 
 def _load_captures_root() -> str:
-    """Load the user-configured captures directory, falling back to the default."""
-    default = os.environ.get(
-        "FORCE_APP_CAPTURES", os.path.join(os.path.dirname(os.path.dirname(__file__)), "captures")
-    )
+    """Load the user-configured captures directory, falling back to the default.
+
+    The default must not be package-relative. In an installed build that resolves inside the
+    application directory, and an update REPLACES that directory — so a user who never picked a
+    drive in Settings would silently lose every recording the first time the app auto-updated.
+    Recordings are the one thing in this system that cannot be regenerated.
+
+    FORCE_APP_CAPTURES still overrides, and Settings > General is the normal way to put captures on
+    a real data drive — this is only the fallback for a fresh install that has not chosen yet.
+    """
+    default = os.environ.get("FORCE_APP_CAPTURES", os.path.join(_user_state_dir(), "captures"))
     for candidate in (STORAGE_CONFIG_PATH, LEGACY_STORAGE_CONFIG_PATH):
         cfg = _read_json(candidate)
         if not cfg:

@@ -194,3 +194,48 @@ def test_backup_config_prefers_the_current_location(monkeypatch, tmp_path):
     monkeypatch.setattr(bmod, "LEGACY_BACKUP_CONFIG_PATH", str(legacy_dir / "backup_config.json"))
 
     assert bmod.load_config(str(tmp_path / "captures"))["server_url"] == "http://new:8210"
+
+
+def test_default_captures_root_is_never_inside_the_package(monkeypatch, tmp_path):
+    """A fresh install must not default to storing recordings in the application directory.
+
+    An update replaces that directory, so a user who never picked a drive in Settings would lose
+    every recording the first time the app auto-updated — and recordings are the one thing here
+    that cannot be regenerated.
+    """
+    monkeypatch.delenv("FORCE_APP_CAPTURES", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData"))
+    import app.main as main
+
+    m = importlib.reload(main)
+    pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(m.__file__)))
+    root = m._load_captures_root()
+
+    assert not root.startswith(pkg_dir), (
+        f"default captures root {root} is inside the package — an update would delete it"
+    )
+    assert "force-app" in root
+
+
+def test_force_app_captures_env_is_the_default_not_an_override(monkeypatch, tmp_path):
+    """FORCE_APP_CAPTURES supplies the fallback; a saved choice still wins.
+
+    Both halves matter: with nothing stored the env var decides, and with something stored the
+    user's own choice is not silently overridden by the environment.
+    """
+    target = tmp_path / "chosen-by-env"
+    monkeypatch.setenv("FORCE_APP_CAPTURES", str(target))
+    monkeypatch.setenv("FORCE_APP_CONFIG_DIR", str(tmp_path / "cfg"))
+    import app.main as main
+
+    m = importlib.reload(main)
+    # Neutralise the real repo's legacy config, which would otherwise be found and (correctly) win.
+    monkeypatch.setattr(m, "LEGACY_STORAGE_CONFIG_PATH", str(tmp_path / "nonexistent.json"))
+    assert m._load_captures_root() == str(target)
+
+    saved = tmp_path / "saved-by-user"
+    saved.mkdir()
+    os.makedirs(tmp_path / "cfg", exist_ok=True)
+    with open(m.STORAGE_CONFIG_PATH, "w") as f:
+        json.dump({"captures_root": str(saved)}, f)
+    assert m._load_captures_root() == str(saved)
