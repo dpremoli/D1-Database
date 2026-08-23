@@ -48,8 +48,9 @@ def _wait(sess: RecordingSession, timeout: float = 15.0) -> None:
     once join_finalize() returns too."""
     if sess._thread:
         sess._thread.join(timeout)
-    assert sess._thread is None or not sess._thread.is_alive(), \
-        f"session thread still alive after {timeout}s — possible deadlock"
+    assert (
+        sess._thread is None or not sess._thread.is_alive()
+    ), f"session thread still alive after {timeout}s — possible deadlock"
     sess.join_finalize(timeout)
 
 
@@ -64,8 +65,10 @@ def _manifest(sess: RecordingSession) -> dict:
 
 # ---- Fault-injecting sources ----
 
+
 class _BaseSource:
     """Minimal source that produces synthetic data at 2000 Hz."""
+
     channels = list(SIGNAL_CHANNELS)
     rate = 2000.0
 
@@ -89,6 +92,7 @@ class _BaseSource:
 
 class DisconnectAfterNSource(_BaseSource):
     """Simulates source disconnect: produces N chunks then returns None (like a DAQ cable pull)."""
+
     def __init__(self, n_chunks: int = 5):
         super().__init__()
         self._max = n_chunks
@@ -103,6 +107,7 @@ class DisconnectAfterNSource(_BaseSource):
 
 class ExceptionAfterNSource(_BaseSource):
     """Simulates hardware fault: raises an exception after N successful reads."""
+
     def __init__(self, n_chunks: int = 5, error_msg: str = "DAQ device error: buffer overflow"):
         super().__init__()
         self._max = n_chunks
@@ -120,6 +125,7 @@ class ExceptionAfterNSource(_BaseSource):
 
 class StartFailureSource(_BaseSource):
     """Source whose start() raises — device not found."""
+
     def start(self):
         raise RuntimeError("Device identifier is invalid. Ensure the NI-DAQ chassis is connected.")
 
@@ -130,6 +136,7 @@ class StartFailureSource(_BaseSource):
 class SlowConsumerSource(_BaseSource):
     """Produces data faster than the consumer can drain, triggering ring overrun.
     Uses moderate chunks — the ring size is reduced in the test to trigger overrun reliably."""
+
     def __init__(self, chunk_size: int = 200, n_chunks: int = 50):
         super().__init__()
         self._chunk_size = chunk_size
@@ -145,6 +152,7 @@ class SlowConsumerSource(_BaseSource):
 
 class SingleChunkSource(_BaseSource):
     """Produces exactly one small chunk then disconnects."""
+
     def __init__(self, n_rows: int = 10):
         super().__init__()
         self._n = n_rows
@@ -159,6 +167,7 @@ class SingleChunkSource(_BaseSource):
 
 class EmptyChunkSource(_BaseSource):
     """Produces several empty (0-row) chunks, then some real data, then disconnects."""
+
     def __init__(self):
         super().__init__()
         self._phase = 0
@@ -177,6 +186,7 @@ class EmptyChunkSource(_BaseSource):
 
 class InfiniteSource(_BaseSource):
     """Produces data forever until stopped — for testing forced stop."""
+
     def read(self):
         if self._stop.is_set():
             return None
@@ -185,6 +195,7 @@ class InfiniteSource(_BaseSource):
 
 
 # ---- Tests ----
+
 
 class TestSourceDisconnect:
     """NI-DAQ cable pull, USB drop — source returns None mid-recording."""
@@ -227,7 +238,8 @@ class TestSourceException:
 
     def test_session_records_error(self, tmp_path):
         sess = RecordingSession(
-            _cfg(), str(tmp_path),
+            _cfg(),
+            str(tmp_path),
             ExceptionAfterNSource(5, "DAQ device error: buffer overflow"),
         )
         sess.start()
@@ -237,7 +249,9 @@ class TestSourceException:
 
     def test_partial_data_saved(self, tmp_path):
         sess = RecordingSession(
-            _cfg(), str(tmp_path), ExceptionAfterNSource(5),
+            _cfg(),
+            str(tmp_path),
+            ExceptionAfterNSource(5),
         )
         sess.start()
         _wait(sess)
@@ -246,7 +260,9 @@ class TestSourceException:
 
     def test_still_finalizes_partial_data(self, tmp_path):
         sess = RecordingSession(
-            _cfg(), str(tmp_path), ExceptionAfterNSource(5),
+            _cfg(),
+            str(tmp_path),
+            ExceptionAfterNSource(5),
         )
         sess.start()
         _wait(sess)
@@ -257,7 +273,8 @@ class TestSourceException:
 
     def test_manifest_records_error(self, tmp_path):
         sess = RecordingSession(
-            _cfg(), str(tmp_path),
+            _cfg(),
+            str(tmp_path),
             ExceptionAfterNSource(3, "USB device disconnected"),
         )
         sess.start()
@@ -270,7 +287,9 @@ class TestSourceException:
     def test_recoverable_after_error(self, tmp_path):
         """Even after an error, the raw file can be re-finalized via recovery."""
         sess = RecordingSession(
-            _cfg(), str(tmp_path), ExceptionAfterNSource(5),
+            _cfg(),
+            str(tmp_path),
+            ExceptionAfterNSource(5),
         )
         sess.start()
         _wait(sess)
@@ -365,8 +384,10 @@ class TestConsumerOverrun:
 
     def test_overrun_sets_error(self, tmp_path):
         from app.acquisition.ring import Ring
+
         sess = RecordingSession(
-            _cfg(), str(tmp_path),
+            _cfg(),
+            str(tmp_path),
             SlowConsumerSource(chunk_size=200, n_chunks=50),
         )
         sess.ring = Ring(maxsize=2)

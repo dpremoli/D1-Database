@@ -33,10 +33,16 @@ def _make_capture(root, cid: str, *, finalized: bool = True, raw_bytes: int = 25
         with open(os.path.join(d, "live_cache.bin"), "wb") as f:
             f.write(b"\0" * 32)
         with open(os.path.join(d, "summary.json"), "w") as f:
-            json.dump({
-                "sample_name": f"SAMPLE-{cid}", "duration_sec": 4.5, "n": 9000,
-                "peaks": {"Fx": 1.0, "Fy": 2.0, "Fz": 3.0}, "config": {"source": "nidaq"},
-            }, f)
+            json.dump(
+                {
+                    "sample_name": f"SAMPLE-{cid}",
+                    "duration_sec": 4.5,
+                    "n": 9000,
+                    "peaks": {"Fx": 1.0, "Fy": 2.0, "Fz": 3.0},
+                    "config": {"source": "nidaq"},
+                },
+                f,
+            )
     return d
 
 

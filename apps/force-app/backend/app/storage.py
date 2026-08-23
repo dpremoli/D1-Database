@@ -3,7 +3,6 @@ free space, and total capacity. Windows-focused (the acquisition PC runs Windows
 
 from __future__ import annotations
 
-import os
 import platform
 import shutil
 import subprocess
@@ -152,6 +151,8 @@ def disk_usage_for(path: str) -> dict:
 RAW_BYTES_PER_SAMPLE = 4
 
 
-def estimate_recording_size_gb(sample_rate: float, duration_sec: float, n_channels: int = 10) -> float:
+def estimate_recording_size_gb(
+    sample_rate: float, duration_sec: float, n_channels: int = 10
+) -> float:
     """Estimate recording file size in GB (raw float32 per sample)."""
     return sample_rate * duration_sec * n_channels * RAW_BYTES_PER_SAMPLE / 1e9

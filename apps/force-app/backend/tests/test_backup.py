@@ -9,11 +9,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import numpy as np
 
 from app.backup import BackupStreamer, load_config, save_config
-from app.config import RecordConfig
 from app.d1rw import HEADER_SIZE, RawWriter
 
-
 # ---- Config persistence ----
+
 
 def test_load_config_defaults(tmp_path):
     cfg = load_config(str(tmp_path))
@@ -41,12 +40,14 @@ def test_save_config_merges(tmp_path):
 
 # ---- BackupStreamer ----
 
+
 class _IngestHandler(BaseHTTPRequestHandler):
     """Minimal mock backup server that records what it receives."""
+
     sessions: dict = {}
     lock = threading.Lock()
 
-    def do_POST(self):
+    def do_POST(self):  # noqa: N802 — name mandated by BaseHTTPRequestHandler
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length) if length else b""
 
@@ -54,7 +55,11 @@ class _IngestHandler(BaseHTTPRequestHandler):
             data = json.loads(body)
             sid = data["session_id"]
             with self.lock:
-                self.sessions[sid] = {"header": bytes.fromhex(data.get("header_hex", "")), "chunks": [], "finished": False}
+                self.sessions[sid] = {
+                    "header": bytes.fromhex(data.get("header_hex", "")),
+                    "chunks": [],
+                    "finished": False,
+                }
             self.send_response(200)
             self.end_headers()
             self.wfile.write(json.dumps({"ok": True}).encode())
@@ -160,6 +165,7 @@ def test_streamer_tails_growing_file(tmp_path):
         streamer = BackupStreamer("test-tailing", raw_path, url)
         # Patch chunk interval to be fast for testing
         import app.backup as bmod
+
         orig_interval = bmod.CHUNK_INTERVAL
         bmod.CHUNK_INTERVAL = 0.3
         try:

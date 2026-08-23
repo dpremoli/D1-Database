@@ -16,10 +16,12 @@ def client():
 
 
 def test_parses_the_formatter_output():
-    recs = _parse_log_lines([
-        "2026-08-22 22:41:59,123 INFO force_app.main: record_stop: id=abc state=recording",
-        "2026-08-22 22:42:00,001 WARNING force_app.nidaq: stop() waited 0.20s",
-    ])
+    recs = _parse_log_lines(
+        [
+            "2026-08-22 22:41:59,123 INFO force_app.main: record_stop: id=abc state=recording",
+            "2026-08-22 22:42:00,001 WARNING force_app.nidaq: stop() waited 0.20s",
+        ]
+    )
     assert [r["level"] for r in recs] == ["INFO", "WARNING"]
     assert recs[0]["logger"] == "force_app.main"
     assert recs[0]["message"] == "record_stop: id=abc state=recording"
@@ -28,12 +30,14 @@ def test_parses_the_formatter_output():
 
 def test_traceback_lines_attach_to_their_record():
     """Unmatched lines must not be dropped — a traceback is exactly what a log view is opened for."""
-    recs = _parse_log_lines([
-        "2026-08-22 22:41:59,123 ERROR force_app.session: finalize blew up",
-        "Traceback (most recent call last):",
-        '  File "app/finalize.py", line 1, in finalize',
-        "ValueError: boom",
-    ])
+    recs = _parse_log_lines(
+        [
+            "2026-08-22 22:41:59,123 ERROR force_app.session: finalize blew up",
+            "Traceback (most recent call last):",
+            '  File "app/finalize.py", line 1, in finalize',
+            "ValueError: boom",
+        ]
+    )
     assert len(recs) == 1
     assert recs[0]["message"].startswith("finalize blew up\nTraceback")
     assert recs[0]["message"].endswith("ValueError: boom")
@@ -77,13 +81,18 @@ def test_no_log_file_reports_unavailable_rather_than_failing(monkeypatch, client
 # the root logger first, which makes main.py's logging.basicConfig() a no-op — so emitted records
 # never reach the file. Asserting against live emission would be testing the ambient logging
 # config, and would pass on pre-existing history rather than on anything the test wrote.
-SAMPLE_LOG = "\n".join([
-    "2026-08-22 22:00:00,000 DEBUG force_app.main: a debug line",
-    "2026-08-22 22:00:01,000 INFO force_app.main: an info line",
-    "2026-08-22 22:00:02,000 WARNING force_app.nidaq: stop() waited 0.20s",
-    "2026-08-22 22:00:03,000 ERROR force_app.session: finalize error: boom",
-    "2026-08-22 22:00:04,000 INFO force_app.backup: distinctive-needle-xyz in the message",
-]) + "\n"
+SAMPLE_LOG = (
+    "\n".join(
+        [
+            "2026-08-22 22:00:00,000 DEBUG force_app.main: a debug line",
+            "2026-08-22 22:00:01,000 INFO force_app.main: an info line",
+            "2026-08-22 22:00:02,000 WARNING force_app.nidaq: stop() waited 0.20s",
+            "2026-08-22 22:00:03,000 ERROR force_app.session: finalize error: boom",
+            "2026-08-22 22:00:04,000 INFO force_app.backup: distinctive-needle-xyz in the message",
+        ]
+    )
+    + "\n"
+)
 
 
 @pytest.fixture
@@ -117,12 +126,19 @@ def test_search_matches_message_or_logger(client, sample_log):
     by_logger = client.get("/logs", params={"q": "force_app.nidaq"}).json()["records"]
     assert len(by_logger) == 1 and by_logger[0]["level"] == "WARNING"
 
-    assert client.get("/logs", params={"q": "NEEDLE-XYZ"}).json()["records"], "search is case-insensitive"
+    assert client.get("/logs", params={"q": "NEEDLE-XYZ"}).json()[
+        "records"
+    ], "search is case-insensitive"
 
 
 def test_loggers_list_is_reported_for_the_ui(client, sample_log):
     body = client.get("/logs").json()
-    assert body["loggers"] == ["force_app.backup", "force_app.main", "force_app.nidaq", "force_app.session"]
+    assert body["loggers"] == [
+        "force_app.backup",
+        "force_app.main",
+        "force_app.nidaq",
+        "force_app.session",
+    ]
 
 
 def test_limit_is_clamped(client, sample_log):
@@ -164,4 +180,4 @@ def test_limit_still_caps_filtered_results(tmp_path, monkeypatch, client):
     body = client.get("/logs", params={"level": "ERROR", "limit": 5}).json()
     assert len(body["records"]) == 5
     assert body["truncated"] is True
-    assert body["records"][-1]["message"] == "e39"   # the most recent matches are kept
+    assert body["records"][-1]["message"] == "e39"  # the most recent matches are kept

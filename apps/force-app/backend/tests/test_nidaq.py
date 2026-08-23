@@ -71,6 +71,7 @@ def test_nidaq_available_is_bool():
 
 # ---- Read-timeout tolerance (see NidaqSource.READ_STALL_BUDGET_SEC) ----
 
+
 class _TimeoutThenOkReader:
     """Times out `n` times, then succeeds — a transient stall on the chassis."""
 
@@ -88,31 +89,38 @@ class _TimeoutThenOkReader:
 
 class _FaultReader:
     def read_many_sample(self, buf, number_of_samples_per_channel, timeout=10.0):
-        raise RuntimeError("Device could not be found")   # not a timeout
+        raise RuntimeError("Device could not be found")  # not a timeout
 
 
 def test_transient_read_timeout_is_retried_not_fatal():
     """A short per-read timeout must not turn a hiccup into a lost recording."""
-    src = NidaqSource(RecordConfig(sample_rate=2000, source="nidaq"),
-                      _task=FakeTask(), _reader=_TimeoutThenOkReader(2))
+    src = NidaqSource(
+        RecordConfig(sample_rate=2000, source="nidaq"),
+        _task=FakeTask(),
+        _reader=_TimeoutThenOkReader(2),
+    )
     src.start()
     t, data = src.read()
     assert data.shape == (src.chunk, len(SIGNAL_CHANNELS))
-    assert src._reader.calls == 3     # two timeouts, then the good read
+    assert src._reader.calls == 3  # two timeouts, then the good read
 
 
 def test_a_real_fault_still_propagates_immediately():
-    src = NidaqSource(RecordConfig(sample_rate=2000, source="nidaq"),
-                      _task=FakeTask(), _reader=_FaultReader())
+    src = NidaqSource(
+        RecordConfig(sample_rate=2000, source="nidaq"), _task=FakeTask(), _reader=_FaultReader()
+    )
     src.start()
     with pytest.raises(RuntimeError, match="could not be found"):
         src.read()
 
 
 def test_timeouts_past_the_budget_are_fatal():
-    src = NidaqSource(RecordConfig(sample_rate=2000, source="nidaq"),
-                      _task=FakeTask(), _reader=_TimeoutThenOkReader(10_000))
-    src.READ_STALL_BUDGET_SEC = 0.0   # budget already spent on the first failure
+    src = NidaqSource(
+        RecordConfig(sample_rate=2000, source="nidaq"),
+        _task=FakeTask(),
+        _reader=_TimeoutThenOkReader(10_000),
+    )
+    src.READ_STALL_BUDGET_SEC = 0.0  # budget already spent on the first failure
     src.start()
     with pytest.raises(RuntimeError, match="not yet been acquired"):
         src.read()
@@ -120,14 +128,17 @@ def test_timeouts_past_the_budget_are_fatal():
 
 def test_stop_during_a_timeout_run_ends_the_stream_cleanly():
     """Stop must win over the retry loop rather than being held for the whole budget."""
-    src = NidaqSource(RecordConfig(sample_rate=2000, source="nidaq"),
-                      _task=FakeTask(), _reader=_TimeoutThenOkReader(10_000))
+    src = NidaqSource(
+        RecordConfig(sample_rate=2000, source="nidaq"),
+        _task=FakeTask(),
+        _reader=_TimeoutThenOkReader(10_000),
+    )
     src.start()
 
     real_read = src._reader.read_many_sample
 
     def stop_then_timeout(buf, number_of_samples_per_channel, timeout=10.0):
-        src._stop.set()               # a stop lands while this read is in flight
+        src._stop.set()  # a stop lands while this read is in flight
         return real_read(buf, number_of_samples_per_channel, timeout)
 
     src._reader.read_many_sample = stop_then_timeout

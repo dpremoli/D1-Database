@@ -55,9 +55,9 @@ def test_config_lives_outside_the_package_by_default(monkeypatch, tmp_path):
 
     m = importlib.reload(main)
     pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(m.__file__)))
-    assert not m.STORAGE_CONFIG_PATH.startswith(pkg_dir), (
-        "settings must not live inside the package — that is Program Files once installed"
-    )
+    assert not m.STORAGE_CONFIG_PATH.startswith(
+        pkg_dir
+    ), "settings must not live inside the package — that is Program Files once installed"
     assert "force-app" in m.STORAGE_CONFIG_PATH
 
 
@@ -74,7 +74,7 @@ def test_reads_the_current_location(monkeypatch, tmp_path):
 
 def test_falls_back_to_the_legacy_location(monkeypatch, tmp_path):
     """An existing install keeps its configured drive after the settings move."""
-    cfg_dir = tmp_path / "cfg"          # new location, deliberately empty
+    cfg_dir = tmp_path / "cfg"  # new location, deliberately empty
     cfg_dir.mkdir()
     target = tmp_path / "legacy-configured-drive"
     target.mkdir()
@@ -154,8 +154,8 @@ def test_unwritable_settings_dir_still_applies_the_drive(monkeypatch, tmp_path):
     with TestClient(m.app) as c:
         body = c.post("/storage/config", json={"captures_root": str(target)}).json()
 
-    assert body["captures_root"] == str(target)   # applied now
-    assert body["persisted"] is False             # but will not survive a restart
+    assert body["captures_root"] == str(target)  # applied now
+    assert body["persisted"] is False  # but will not survive a restart
     assert "revert" in body["warning"]
 
 

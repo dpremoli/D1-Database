@@ -161,7 +161,8 @@ class NidaqSource:
                         raise
                     log.warning(
                         "NidaqSource.read() timed out after %.1fs, retrying (budget %.0fs)",
-                        time.perf_counter() - t_read0, self.READ_STALL_BUDGET_SEC,
+                        time.perf_counter() - t_read0,
+                        self.READ_STALL_BUDGET_SEC,
                     )
         dt = time.perf_counter() - t_read0
         if dt > self.READ_TIMEOUT_SEC * 0.5:
@@ -185,4 +186,6 @@ class NidaqSource:
                 pass
         dt = time.perf_counter() - t0
         if dt > 0.2:
-            log.warning("NidaqSource.stop() waited %.2fs for the in-flight read to release the task", dt)
+            log.warning(
+                "NidaqSource.stop() waited %.2fs for the in-flight read to release the task", dt
+            )

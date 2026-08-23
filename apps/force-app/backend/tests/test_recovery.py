@@ -6,7 +6,7 @@ import os
 import numpy as np
 
 from app.config import RecordConfig
-from app.d1rw import RawWriter, read_header
+from app.d1rw import RawWriter
 from app.recovery import (
     MANIFEST,
     discard_session,
@@ -34,6 +34,7 @@ def _make_raw(capture_dir: str, n_rows: int = 500, rate: float = 2000.0) -> str:
 
 
 # ---- write_manifest ----
+
 
 def test_write_manifest_creates_file(tmp_path):
     d = str(tmp_path / "session-001")
@@ -76,6 +77,7 @@ def test_write_manifest_atomic_overwrite(tmp_path):
 
 
 # ---- scan_incomplete ----
+
 
 def test_scan_incomplete_finds_crashed_session(tmp_path):
     # Session with raw file but no summary.json → incomplete
@@ -134,6 +136,7 @@ def test_scan_incomplete_multiple_sessions(tmp_path):
 
 
 # ---- recover_session ----
+
 
 def test_recover_session_finalizes(tmp_path):
     sid = "20240101-120000-rec001"
@@ -199,6 +202,7 @@ def test_recover_session_rejects_path_traversal(tmp_path):
 
 
 # ---- discard_session ----
+
 
 def test_discard_session_removes_directory(tmp_path):
     sid = "20240101-120000-disc01"

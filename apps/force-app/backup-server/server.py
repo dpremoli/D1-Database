@@ -27,11 +27,13 @@ import threading
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 
-STORAGE = os.environ.get("BACKUP_STORAGE", os.path.join(os.path.dirname(__file__), "backups"))
+STORAGE = os.environ.get(
+    "BACKUP_STORAGE", os.path.join(os.path.dirname(__file__), "backups")
+)
 RETENTION_HOURS = float(os.environ.get("BACKUP_RETENTION_HOURS", "12"))
 PURGE_INTERVAL = 300  # seconds between purge sweeps
 
@@ -64,7 +66,9 @@ def _session_info(sid: str) -> dict | None:
         with open(raw, "rb") as f:
             hdr = f.read(D1RW_HEADER_SIZE)
         if len(hdr) == D1RW_HEADER_SIZE:
-            magic, ver, n_cols, rate, start_unix = struct.unpack_from(D1RW_HEADER_FMT, hdr)
+            magic, ver, n_cols, rate, start_unix = struct.unpack_from(
+                D1RW_HEADER_FMT, hdr
+            )
             if magic == D1RW_MAGIC and n_cols > 0 and rate > 0:
                 body = info["raw_size_bytes"] - D1RW_HEADER_SIZE
                 n_rows = body // (n_cols * 4)
@@ -140,7 +144,9 @@ async def health() -> dict:
     total, used, free = shutil.disk_usage(STORAGE)
     sessions = 0
     if os.path.isdir(STORAGE):
-        sessions = sum(1 for n in os.listdir(STORAGE) if os.path.isdir(os.path.join(STORAGE, n)))
+        sessions = sum(
+            1 for n in os.listdir(STORAGE) if os.path.isdir(os.path.join(STORAGE, n))
+        )
     return {
         "ok": True,
         "storage_path": STORAGE,
@@ -213,7 +219,8 @@ async def ingest_chunk(request: Request) -> dict:
             # A gap means bytes were lost in transit; appending here would leave a hole and
             # misalign everything after it. Refuse — the client still holds the authoritative copy.
             raise HTTPException(
-                409, f"offset {offset} is beyond current size {size} — refusing to leave a gap"
+                409,
+                f"offset {offset} is beyond current size {size} — refusing to leave a gap",
             )
         already_have = size - offset
         if already_have >= len(chunk):
@@ -287,7 +294,9 @@ async def session_raw(sid: str) -> FileResponse:
     raw = os.path.join(d, "raw.d1rw")
     if not os.path.isfile(raw):
         raise HTTPException(404, "raw file not found")
-    return FileResponse(raw, media_type="application/octet-stream", filename=f"{sid}.d1raw")
+    return FileResponse(
+        raw, media_type="application/octet-stream", filename=f"{sid}.d1raw"
+    )
 
 
 @app.delete("/sessions/{sid}")

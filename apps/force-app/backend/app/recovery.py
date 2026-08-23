@@ -19,8 +19,9 @@ from .finalize import finalize
 MANIFEST = "manifest.json"
 
 
-def write_manifest(capture_dir: str, state: str, cfg: RecordConfig | None = None,
-                   error: str | None = None) -> None:
+def write_manifest(
+    capture_dir: str, state: str, cfg: RecordConfig | None = None, error: str | None = None
+) -> None:
     data: dict = {
         "state": state,
         "updated_at": time.time(),
@@ -96,15 +97,17 @@ def scan_incomplete(captures_root: str) -> list[dict]:
             except (OSError, ValueError):
                 pass
 
-        incomplete.append({
-            "id": name,
-            "dir": d,
-            "raw": info,
-            "manifest": manifest,
-            "started_iso": time.strftime(
-                "%Y-%m-%d %H:%M:%S", time.localtime(info["start_unix"])
-            ),
-        })
+        incomplete.append(
+            {
+                "id": name,
+                "dir": d,
+                "raw": info,
+                "manifest": manifest,
+                "started_iso": time.strftime(
+                    "%Y-%m-%d %H:%M:%S", time.localtime(info["start_unix"])
+                ),
+            }
+        )
     return incomplete
 
 

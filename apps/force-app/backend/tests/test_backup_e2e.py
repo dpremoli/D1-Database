@@ -54,7 +54,9 @@ def _load_backup_server(storage_dir: str):
     os.environ["BACKUP_STORAGE"] = storage_dir
     os.environ["BACKUP_RETENTION_HOURS"] = "24"
     sys.modules.pop("server", None)
-    spec = importlib.util.spec_from_file_location("server", os.path.join(BACKUP_SERVER_DIR, "server.py"))
+    spec = importlib.util.spec_from_file_location(
+        "server", os.path.join(BACKUP_SERVER_DIR, "server.py")
+    )
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     sys.modules["server"] = mod
@@ -94,7 +96,9 @@ class _ServerHandle:
         cfg = uvicorn.Config(self.module.app, log_level="warning", lifespan="on")
         self._server = uvicorn.Server(cfg)
         sock = self._sock
-        self._thread = threading.Thread(target=lambda: self._server.run(sockets=[sock]), daemon=True)
+        self._thread = threading.Thread(
+            target=lambda: self._server.run(sockets=[sock]), daemon=True
+        )
         self._thread.start()
         deadline = time.time() + 15
         while time.time() < deadline:
@@ -124,6 +128,7 @@ def server(tmp_path):
 
 
 # ---- A real recording source (deterministic, fast) ----
+
 
 class _FiniteSource:
     """Emits a fixed number of chunks of synthetic 9-channel data, then ends the stream."""
@@ -160,7 +165,9 @@ class _FiniteSource:
         return t, data
 
 
-def _record(tmp_path, server_url: str, *, chunk_interval: float = 0.2, **cfg_kw) -> RecordingSession:
+def _record(
+    tmp_path, server_url: str, *, chunk_interval: float = 0.2, **cfg_kw
+) -> RecordingSession:
     """Run a complete recording locally with live backup streaming to `server_url`."""
     cfg = RecordConfig(sample_rate=2000, duration_sec=4.0, sample_name="E2E-BACKUP", **cfg_kw)
     captures = str(tmp_path / "captures")
@@ -191,13 +198,16 @@ def _restore_and_finalize(server_url: str, sid: str, restore_root: str) -> dict:
     os.makedirs(capture_dir, exist_ok=True)
     download_remote_raw(server_url, sid, os.path.join(capture_dir, "raw.d1raw"))
     remote_cfg = fetch_remote_session_config(server_url, sid)
-    assert remote_cfg, "server returned no recording config — restore would produce volts-as-newtons"
+    assert (
+        remote_cfg
+    ), "server returned no recording config — restore would produce volts-as-newtons"
     cfg = RecordConfig(**{k: v for k, v in remote_cfg.items() if v is not None})
     write_manifest(capture_dir, "restored", cfg)
     return recover_session(restore_root, sid)
 
 
 # ---- The round trip ----
+
 
 def test_streamed_backup_restores_byte_identically(server, tmp_path):
     sess = _record(tmp_path, server.url)
@@ -237,10 +247,10 @@ def test_restore_survives_a_mid_stream_outage(server, tmp_path):
     try:
         sess = RecordingSession(cfg, captures, _FiniteSource(chunks=60, delay=0.03))
         sess.start()
-        time.sleep(0.6)          # let some chunks land
-        server.stop()            # outage begins
-        time.sleep(0.8)          # recording continues locally, streamer retries and fails
-        server.start()           # back on the same port
+        time.sleep(0.6)  # let some chunks land
+        server.stop()  # outage begins
+        time.sleep(0.8)  # recording continues locally, streamer retries and fails
+        server.start()  # back on the same port
         if sess._thread:
             sess._thread.join(30)
         sess.join_finalize(30)
@@ -370,7 +380,9 @@ def test_dropped_ack_does_not_duplicate_bytes(server, tmp_path):
     finally:
         proxy.stop()
 
-    assert proxy.dropped == 1, "the proxy never got a chunk to drop — test did not exercise its case"
+    assert (
+        proxy.dropped == 1
+    ), "the proxy never got a chunk to drop — test did not exercise its case"
     assert sess.state == "done", f"recording failed: {sess.error}"
 
     # Read back through the real server (not the proxy) and compare byte for byte.
@@ -388,12 +400,15 @@ def test_dropped_ack_does_not_duplicate_bytes(server, tmp_path):
 def test_local_recording_unaffected_when_server_never_reachable(tmp_path):
     """Backup is best-effort: an unreachable server must not degrade the local capture at all."""
     sess = _record(tmp_path, "http://127.0.0.1:9")  # port 9 = discard, refuses connections
-    assert sess.state == "done", f"recording must survive an unreachable backup server: {sess.error}"
+    assert (
+        sess.state == "done"
+    ), f"recording must survive an unreachable backup server: {sess.error}"
     assert os.path.isfile(os.path.join(sess.dir, "capture.mat"))
     assert sess.backup is not None and sess.backup.status()["connected"] is False
 
 
 # ---- The remote-query helpers, previously untested ----
+
 
 def test_probe_server_reports_reachability(server):
     ok = probe_server(server.url)
@@ -431,11 +446,13 @@ def test_restore_refuses_without_a_recording_config(server, tmp_path):
 
     req = urllib.request.Request(
         f"{server.url}/ingest/start",
-        data=json.dumps({
-            "session_id": "cfgless",
-            "header_hex": pack_header(10, 2000.0, time.time()).hex(),
-            # config deliberately omitted — an older or partially-upgraded client
-        }).encode(),
+        data=json.dumps(
+            {
+                "session_id": "cfgless",
+                "header_hex": pack_header(10, 2000.0, time.time()).hex(),
+                # config deliberately omitted — an older or partially-upgraded client
+            }
+        ).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )

@@ -9,10 +9,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main
+from app.config import RecordConfig
 from app.d1rw import RawWriter
 from app.main import app as fastapi_app
 from app.recovery import write_manifest
-from app.config import RecordConfig
 
 
 def _make_raw(capture_dir: str, n_rows: int = 200, rate: float = 2000.0) -> None:
@@ -29,6 +29,7 @@ def _make_raw(capture_dir: str, n_rows: int = 200, rate: float = 2000.0) -> None
 
 
 # ---- Recovery API ----
+
 
 def test_recovery_check_empty(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
@@ -114,6 +115,7 @@ def test_recovery_discard_404_for_missing(tmp_path, monkeypatch):
 
 # ---- Manifest written during recording lifecycle ----
 
+
 def test_session_writes_manifest_on_start_and_done(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
     with TestClient(fastapi_app) as client:
@@ -143,6 +145,7 @@ def test_session_writes_manifest_on_start_and_done(tmp_path, monkeypatch):
 
 # ---- Backup config API ----
 
+
 def test_backup_config_defaults(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
     with TestClient(fastapi_app) as client:
@@ -156,11 +159,14 @@ def test_backup_config_defaults(tmp_path, monkeypatch):
 def test_backup_config_save_and_load(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
     with TestClient(fastapi_app) as client:
-        r = client.post("/backup/config", json={
-            "enabled": True,
-            "server_url": "http://backuphost:8210",
-            "retention_hours": 24,
-        })
+        r = client.post(
+            "/backup/config",
+            json={
+                "enabled": True,
+                "server_url": "http://backuphost:8210",
+                "retention_hours": 24,
+            },
+        )
         assert r.status_code == 200
         cfg = r.json()
         assert cfg["enabled"] is True
@@ -183,6 +189,7 @@ def test_backup_status_no_active_session(tmp_path, monkeypatch):
 
 
 # ---- Storage API ----
+
 
 def test_storage_config_get(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
@@ -238,6 +245,7 @@ def test_watch_disk_ignores_unknown_free_space(tmp_path, monkeypatch):
     s = _FakeSession()
     # Pre-set the stop event so the watcher takes exactly one pass and exits.
     import threading
+
     s._stop = threading.Event()
 
     def _wait(_timeout):
@@ -272,6 +280,7 @@ def test_storage_drives_list(tmp_path, monkeypatch):
 
 # ---- Finalize file_sizes_mb ----
 
+
 def test_finalize_includes_file_sizes(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
     with TestClient(fastapi_app) as client:
@@ -299,6 +308,7 @@ def test_finalize_includes_file_sizes(tmp_path, monkeypatch):
 # installed (from earlier NI-DAQ acquisition work this session), so leaving it unmocked would make
 # the warn-path assertion flaky/host-dependent. Mocking both branches exercises the actual
 # health_doctor() code path deterministically, same as the other isolation done in this file.
+
 
 def test_health_doctor_reports_nidaq_runtime_status(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))

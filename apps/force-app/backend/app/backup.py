@@ -122,8 +122,9 @@ def fetch_remote_session_config(server_url: str, session_id: str, timeout: float
         return {}
 
 
-def download_remote_raw(server_url: str, session_id: str, dest_path: str,
-                        timeout: float = 120.0) -> int:
+def download_remote_raw(
+    server_url: str, session_id: str, dest_path: str, timeout: float = 120.0
+) -> int:
     """Download a raw backup file from the remote server. Returns bytes written."""
     url = f"{server_url.rstrip('/')}/sessions/{session_id}/raw"
     req = urllib.request.Request(url, method="GET")
@@ -142,8 +143,9 @@ def download_remote_raw(server_url: str, session_id: str, dest_path: str,
 class BackupStreamer:
     """Tails a raw.d1raw file and streams chunks to the backup server in a daemon thread."""
 
-    def __init__(self, session_id: str, raw_path: str, server_url: str,
-                 cfg: RecordConfig | None = None):
+    def __init__(
+        self, session_id: str, raw_path: str, server_url: str, cfg: RecordConfig | None = None
+    ):
         self.session_id = session_id
         self.raw_path = raw_path
         self.server_url = server_url.rstrip("/")
@@ -227,7 +229,7 @@ class BackupStreamer:
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=timeout):
                 self.connected = True
                 self.error = None
                 return True
@@ -260,11 +262,14 @@ class BackupStreamer:
 
         # Register session with backup server
         cfg_dump = self.cfg.model_dump() if self.cfg else {}
-        result = self._post_json("/ingest/start", {
-            "session_id": self.session_id,
-            "header_hex": header.hex(),
-            "config": cfg_dump,
-        })
+        result = self._post_json(
+            "/ingest/start",
+            {
+                "session_id": self.session_id,
+                "header_hex": header.hex(),
+                "config": cfg_dump,
+            },
+        )
         if result is None:
             # Server unreachable at start — keep trying in the loop
             log.warning("backup server unreachable at session start, will retry")
@@ -288,11 +293,14 @@ class BackupStreamer:
 
             # Register if we haven't yet (server was down at start)
             if not registered:
-                result = self._post_json("/ingest/start", {
-                    "session_id": self.session_id,
-                    "header_hex": header.hex(),
-                    "config": cfg_dump,
-                })
+                result = self._post_json(
+                    "/ingest/start",
+                    {
+                        "session_id": self.session_id,
+                        "header_hex": header.hex(),
+                        "config": cfg_dump,
+                    },
+                )
                 if result is None:
                     continue
                 registered = True

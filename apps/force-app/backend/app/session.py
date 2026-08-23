@@ -13,11 +13,10 @@ import uuid
 import numpy as np
 from scipy import signal as ssig
 
-log = logging.getLogger("force_app.session")
-
 from .acquisition.consumers import CutDetector, Decimator, FrmIntegrator
 from .acquisition.ring import Ring
-from .backup import BackupStreamer, load_config as load_backup_config
+from .backup import BackupStreamer
+from .backup import load_config as load_backup_config
 from .config import RecordConfig
 from .d1rw import RawWriter
 from .dsp import sum_axes, tacho_column
@@ -26,6 +25,8 @@ from .recovery import write_manifest
 from .storage import disk_usage_for
 from .stream.broadcast import Broadcaster
 from .stream.frame import encode_frame
+
+log = logging.getLogger("force_app.session")
 
 # The 8 dyno sub-channels in raw-file column order (data[:, :8]) — matches the client SUB_NAMES.
 SUB_NAMES = ["Fx1", "Fx2", "Fy1", "Fy2", "Fz1", "Fz2", "Fz3", "Fz4", "Tacho"]
@@ -110,7 +111,9 @@ class RecordingSession:
             self._thread.join(timeout)
             dt = time.perf_counter() - t1
             if self._thread.is_alive():
-                log.warning("session.stop: acquisition thread still alive after %.2fs join timeout", dt)
+                log.warning(
+                    "session.stop: acquisition thread still alive after %.2fs join timeout", dt
+                )
             else:
                 log.info("session.stop: acquisition thread joined in %.2fs", dt)
 
@@ -197,10 +200,14 @@ class RecordingSession:
             self.ring.close()
             t_consumer = time.perf_counter()
             consumer.join(timeout=10.0)
-            log.info("session._run: consumer thread joined in %.2fs", time.perf_counter() - t_consumer)
+            log.info(
+                "session._run: consumer thread joined in %.2fs", time.perf_counter() - t_consumer
+            )
             t_raw = time.perf_counter()
             self.raw.close()
-            log.info("session._run: raw.close() (flush+fsync) took %.2fs", time.perf_counter() - t_raw)
+            log.info(
+                "session._run: raw.close() (flush+fsync) took %.2fs", time.perf_counter() - t_raw
+            )
             if self.backup:
                 self.backup.stop()
             if self.n_total > 0:
@@ -239,7 +246,8 @@ class RecordingSession:
             self.state = "error"
         log.info(
             "session._finalize_async: finished in %.2fs (state=%s)",
-            time.perf_counter() - t0, self.state,
+            time.perf_counter() - t0,
+            self.state,
         )
         write_manifest(self.dir, self.state, self.cfg, self.error)
         self._publish_control(
