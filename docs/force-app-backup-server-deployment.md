@@ -91,17 +91,19 @@ Not verified — this is the gap:
 - The Caddyfile has never been parsed by Caddy.
 - No real recording has ever been streamed over Tailscale to a real server.
 
-## Known issue found while doing this work
+## Where the backend keeps its settings
 
-**The captures directory setting may not persist in a packaged install.**
-`STORAGE_CONFIG_PATH` in `apps/force-app/backend/app/main.py` is package-relative, so in an
-installed build it resolves under the install directory (Program Files by default), which a
-standard user cannot write to. `POST /storage/config` swallows the resulting `OSError`, so
-choosing a capture drive appears to work and then silently reverts on restart. `backup_config.json`
-sits in the same directory and has the same exposure.
+`storage_config.json` (which drive recordings go to) and `backup_config.json` live in
+`%LOCALAPPDATA%\force-app` — a per-user writable location, overridable with `FORCE_APP_CONFIG_DIR`.
+Logs are in `logs/` beside them, overridable with `FORCE_APP_LOG_DIR`, which the Electron main
+process points at its own `userData`.
 
-This is pre-existing, not a regression. The logging path had the identical problem and was fixed
-this session by resolving to `%LOCALAPPDATA%\force-app` (overridable by `FORCE_APP_LOG_DIR`, which
-the Electron main process points at its `userData`) — the same treatment would fix these, but it
-needs a read-fallback to the old location so existing installs don't lose their configured drive.
-Deliberately left alone rather than silently migrating someone's live configuration.
+They used to sit inside the package. In an installed build that resolves under the install
+directory (Program Files by default), which a standard user cannot write to, and
+`POST /storage/config` swallowed the resulting `OSError` — so choosing a capture drive appeared to
+work, applied to the running process, and silently reverted on the next launch. Both files are now
+read with a fallback to the old location, so an existing install keeps its configured drive and the
+next save migrates it. If the settings genuinely cannot be written, the response now says so
+(`persisted: false` plus a warning the Settings page displays) instead of reporting success.
+
+Covered by `apps/force-app/backend/tests/test_config_location.py`.

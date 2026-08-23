@@ -37,9 +37,41 @@ from .sources.replay import ReplaySource
 from .sources.sim import SimSource
 from .stream.broadcast import Broadcaster
 
-STORAGE_CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "captures", "storage_config.json"
-)
+def _user_state_dir() -> str:
+    """Per-user directory for this app's own state (settings, logs).
+
+    Must be writable AT RUNTIME, which rules out anything package-relative: under PyInstaller
+    `__file__` resolves inside the frozen bundle, and the default NSIS install location is Program
+    Files, where a standard user cannot write.
+    """
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "force-app")
+    xdg = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(xdg, "force-app")
+
+
+# Settings this backend owns. Deliberately NOT under CAPTURES_ROOT: these have to survive the user
+# repointing the recording drive, and storage_config.json in particular is what remembers which
+# drive that is.
+CONFIG_DIR = os.environ.get("FORCE_APP_CONFIG_DIR") or _user_state_dir()
+STORAGE_CONFIG_PATH = os.path.join(CONFIG_DIR, "storage_config.json")
+
+# Where these settings lived before they moved out of the package. Read-only fallback, so an
+# existing install keeps its configured drive; the next successful save rewrites to the new
+# location. Writing here was silently failing in a packaged install — POST /storage/config
+# swallowed the OSError, so choosing a drive appeared to work and then reverted on restart.
+LEGACY_CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "captures")
+LEGACY_STORAGE_CONFIG_PATH = os.path.join(LEGACY_CONFIG_DIR, "storage_config.json")
+
+
+def _read_json(path: str) -> dict | None:
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
 
 
 def _load_captures_root() -> str:
@@ -47,14 +79,17 @@ def _load_captures_root() -> str:
     default = os.environ.get(
         "FORCE_APP_CAPTURES", os.path.join(os.path.dirname(os.path.dirname(__file__)), "captures")
     )
-    try:
-        with open(STORAGE_CONFIG_PATH) as f:
-            cfg = json.load(f)
-            path = cfg.get("captures_root", default)
-            if os.path.isdir(path) or os.path.isdir(os.path.dirname(path)):
-                return path
-    except (OSError, ValueError):
-        pass
+    for candidate in (STORAGE_CONFIG_PATH, LEGACY_STORAGE_CONFIG_PATH):
+        cfg = _read_json(candidate)
+        if not cfg:
+            continue
+        path = cfg.get("captures_root")
+        if not path:
+            continue
+        # Accept a drive that is present now, or whose parent is — a removable/network drive that
+        # is merely offline should not silently reset the setting to the package default.
+        if os.path.isdir(path) or os.path.isdir(os.path.dirname(path)):
+            return path
     return default
 
 
@@ -76,14 +111,7 @@ os.makedirs(CAPTURES_ROOT, exist_ok=True)
 # per-user state dir for the platform. Deliberately NOT CAPTURES_ROOT, which can point at a
 # removable or network drive — the log should survive the recording drive being swapped.
 def _default_log_dir() -> str:
-    override = os.environ.get("FORCE_APP_LOG_DIR")
-    if override:
-        return override
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-        return os.path.join(base, "force-app", "logs")
-    xdg = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
-    return os.path.join(xdg, "force-app")
+    return os.environ.get("FORCE_APP_LOG_DIR") or os.path.join(_user_state_dir(), "logs")
 
 
 LOG_DIR = _default_log_dir()
@@ -108,9 +136,9 @@ if not LOG_PATH:
 # Pin the backup settings next to storage_config.json rather than inside the captures root. Both
 # have to survive the user changing the recording drive — a config stored on the drive it configures
 # disappears the moment that drive is swapped, which for backup meant it silently turned itself off.
-backup_mod.BACKUP_CONFIG_PATH = os.path.join(
-    os.path.dirname(STORAGE_CONFIG_PATH), "backup_config.json"
-)
+backup_mod.BACKUP_CONFIG_PATH = os.path.join(CONFIG_DIR, "backup_config.json")
+# Same read-only fallback as the storage config, for installs that wrote it to the old location.
+backup_mod.LEGACY_BACKUP_CONFIG_PATH = os.path.join(LEGACY_CONFIG_DIR, "backup_config.json")
 
 _broadcaster: Broadcaster | None = None
 _session: RecordingSession | None = None
@@ -332,14 +360,24 @@ async def storage_set_config(body: dict) -> dict:
     except OSError as e:
         raise HTTPException(400, f"cannot create directory: {e}")
     CAPTURES_ROOT = path
-    os.makedirs(os.path.dirname(STORAGE_CONFIG_PATH), exist_ok=True)
+    # Persisting is what makes the choice survive a restart, so a failure here must be reported.
+    # It used to be swallowed: the drive change applied to the running process, the UI showed
+    # "saved", and the setting quietly reverted on the next launch. The directory creation was
+    # outside the guard too, so an unwritable config dir 500'd instead of degrading.
+    persisted, warning = True, None
     try:
+        os.makedirs(os.path.dirname(STORAGE_CONFIG_PATH), exist_ok=True)
         with open(STORAGE_CONFIG_PATH, "w") as f:
             json.dump({"captures_root": path}, f)
-    except OSError:
-        pass
+    except OSError as e:
+        persisted = False
+        warning = (
+            f"Recording to {path} for now, but the choice could not be saved to "
+            f"{STORAGE_CONFIG_PATH} ({e}), so it will revert when the app restarts."
+        )
+        log.warning("storage_set_config: could not persist captures_root: %s", e)
     current = storage.disk_usage_for(CAPTURES_ROOT)
-    return {"captures_root": CAPTURES_ROOT, **current}
+    return {"captures_root": CAPTURES_ROOT, "persisted": persisted, "warning": warning, **current}
 
 
 # ---- Connectivity check ----

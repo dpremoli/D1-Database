@@ -48,8 +48,15 @@ async function selectDrive(drive: DriveInfo) {
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		const data = await res.json();
 		currentStorage.value = data;
-		storageSaved.value = true;
-		setTimeout(() => (storageSaved.value = false), 2000);
+		// The drive can apply to the running backend but fail to persist (an unwritable config
+		// location). Saying "saved" then reverting on restart is the failure this replaces, so the
+		// warning is shown instead of the tick and is not auto-dismissed.
+		if (data.persisted === false && data.warning) {
+			storageError.value = data.warning;
+		} else {
+			storageSaved.value = true;
+			setTimeout(() => (storageSaved.value = false), 2000);
+		}
 	} catch (e: any) {
 		storageError.value = e?.message || 'failed to set storage';
 	}

@@ -26,6 +26,8 @@ from .d1rw import HEADER_SIZE
 log = logging.getLogger("force_app.backup")
 
 BACKUP_CONFIG_PATH: str | None = None  # set at module init from main.py
+# Read-only fallback for installs that wrote this to the pre-move (package-relative) location.
+LEGACY_BACKUP_CONFIG_PATH: str | None = None  # set at module init from main.py
 CHUNK_INTERVAL = 5.0  # seconds between chunk sends
 MAX_CHUNK_BYTES = 4 * 1024 * 1024  # 4 MB per HTTP POST
 
@@ -47,18 +49,22 @@ def _config_path(captures_root: str) -> str:
 
 def load_config(captures_root: str) -> dict:
     cfg = {"enabled": False, "server_url": "", "retention_hours": 12}
-    path = _config_path(captures_root)
-    if not os.path.isfile(path):
-        # Fall back to the pre-move location so an existing install doesn't silently lose its
-        # backup settings the first time it starts on the new path.
-        legacy = os.path.join(captures_root, "backup_config.json")
-        if os.path.isfile(legacy):
-            path = legacy
-    try:
-        with open(path) as f:
-            cfg.update(json.load(f))
-    except (OSError, ValueError):
-        pass
+    # Fall back through the pre-move locations so an existing install doesn't silently lose its
+    # backup settings — and therefore silently stop backing up — the first time it starts on the
+    # new path. Only the first (current) path is ever written to; a save migrates the settings.
+    candidates = [_config_path(captures_root)]
+    if LEGACY_BACKUP_CONFIG_PATH:
+        candidates.append(LEGACY_BACKUP_CONFIG_PATH)
+    candidates.append(os.path.join(captures_root, "backup_config.json"))
+    for path in candidates:
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path) as f:
+                cfg.update(json.load(f))
+            break
+        except (OSError, ValueError):
+            continue
     return cfg
 
 
