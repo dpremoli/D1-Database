@@ -88,18 +88,9 @@ jobs:
         working-directory: apps/force-app/desktop
         run: npx playwright install chromium --with-deps
 
-      # test:e2e (no arg) runs everything under tests/, which now also includes save-flow.spec.ts,
-      # captures-tab.spec.ts, panel-fit.spec.ts and logs-tab.spec.ts — added later, all of them
-      # explicitly scoped by their own header comments to the acquisition rig: save-flow drives the
-      # real NI-DAQ source and captures-tab reads "the operator's real capture drive" by design, not
-      # a placeholder for CI. A GitHub-hosted runner has neither, so running the full suite here was
-      # never going to work regardless of what specifically failed. This step is named "smoke tests"
-      # and should run only the smoke suite it was originally written to gate on — the rig-only
-      # specs are for whoever has the hardware to run by hand (`npm run test:e2e`), documented in
-      # docs/force-app-operations.md.
       - name: Run desktop smoke tests
         working-directory: apps/force-app/desktop
-        run: npm run test:e2e:ci
+        run: npm run test:e2e
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4

@@ -36,11 +36,22 @@ test('Settings > Logs shows real backend log records and filters them', async ()
     const window = await app.firstWindow();
     await bypassLogin(window, app);
 
+    // Guarantee at least one log line exists rather than assuming one does. On a long-lived dev
+    // profile the backend has always logged *something* by now, which is exactly what made this
+    // assumption invisible here — but dev-mode Electron launches share one userData dir, so that
+    // history is really just every earlier test run in this session, not anything this test
+    // produced. A genuinely fresh install (a real first run, or CI) starts with an empty log, and
+    // nothing up to this point in the test has hit an endpoint that logs. recovery_discard logs
+    // unconditionally in a `finally`, succeeds or not, so a 404 against a nonexistent id is a safe,
+    // side-effect-free way to manufacture one deterministically.
+    const userDataDir = await app.evaluate(({ app: a }) => a.getPath('userData'));
+    const cfg = JSON.parse(fs.readFileSync(path.join(userDataDir, 'config.json'), 'utf-8'));
+    await fetch(`${cfg.recorderUrl}/recovery/discard/e2e-logs-tab-sentinel`, { method: 'POST' });
+
     // Deep-link straight to the tab, the same route the Help > View Logs menu item sends.
     await window.goto('app://force/settings?tab=logs');
     await expect(window.locator('.loglist')).toBeVisible({ timeout: 15_000 });
 
-    // The backend has been running since launch, so it has necessarily logged something.
     const rows = window.locator('.loglist .row');
     await expect.poll(async () => rows.count(), { timeout: 15_000 }).toBeGreaterThan(0);
     const total = await rows.count();
