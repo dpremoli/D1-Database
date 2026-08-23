@@ -25,14 +25,14 @@ Complete specifications for FAST 25 and FAST 250 sintering apparatus data archit
    - Complete import example
    - Troubleshooting guide
 
-3. **[FAST25_SUPPORTING_DATABASES.md](./FAST25_SUPPORTING_DATABASES.md)** — Additional context
+3. **Supporting databases** (not yet written up) — Additional context
    - Instrument definitions (246 MB MDB)
    - System configuration (alarms, parameters, measurement points)
    - Schema and export formats
    - Monitoring logs and diagnostics
    - Import priority (Phase 1/2/3)
 
-4. **[FAST25_QA_LOGS.md](./FAST25_QA_LOGS.md)** — Compliance and quality tracking
+4. **QA logs** (not yet written up) — Compliance and quality tracking
    - Excel log structure (1,888 entries across 2022-2026)
    - Why they're separate from run database
    - Link strategy (Recipe # + Date/Time)
@@ -113,7 +113,7 @@ Complete specifications for FAST 25 and FAST 250 sintering apparatus data archit
    - Numpy example for reading measurement data
    - Matplotlib integration
 
-2. Add context from **FAST25_SUPPORTING_DATABASES.md**
+2. Add context from the supporting databases (see above; not yet written up)
    - Measurement point definitions (units, ranges)
    - Alarm thresholds
    - Sensor calibration data
@@ -125,7 +125,7 @@ Complete specifications for FAST 25 and FAST 250 sintering apparatus data archit
    - Update strategy (UpdateCounter polling)
    - Backup/retention recommendations
 
-2. Review **FAST25_SUPPORTING_DATABASES.md**
+2. Review the supporting databases (see above; not yet written up)
    - Where to find configuration databases
    - ECS_Instruments.MDB location and size
 
@@ -359,8 +359,7 @@ A: Check `Refresh.UpdateCounter` in ECS_Analysis.mdb; fetch new runs when it cha
 ### FAST 25
 - **Master Specification:** FAST25_DATA_ARCHITECTURE.md
 - **Code Examples:** FAST25_FILE_READING_GUIDE.md
-- **Context Databases:** FAST25_SUPPORTING_DATABASES.md
-- **QA Strategy:** FAST25_QA_LOGS.md
+- **Context Databases / QA Strategy:** described in this document; no separate write-up yet
 
 ### FAST 250
 - **Master Specification:** FAST250_DATA_ARCHITECTURE.md
@@ -371,5 +370,3 @@ A: Check `Refresh.UpdateCounter` in ECS_Analysis.mdb; fetch new runs when it cha
 ## 🔗 Related Documents
 
 - [../system_requirements_specification.md](../system_requirements_specification.md) — Overall D1 Database SRS
-- [Memory/fast-machine-data-formats.md](../../.claude/projects/c--Users-CMBE-Admn-3214022001-Documents-GitHub-D1-Database/memory/fast-machine-data-formats.md) — Detailed format breakdown (Claude memory)
-- [Memory/fast-supporting-databases.md](../../.claude/projects/c--Users-CMBE-Admn-3214022001-Documents-GitHub-D1-Database/memory/fast-supporting-databases.md) — Context databases (Claude memory)

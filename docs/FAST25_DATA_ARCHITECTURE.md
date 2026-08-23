@@ -415,5 +415,5 @@ CREATE TABLE events (
 ## Related Documentation
 
 - [File Reading Guide](./FAST25_FILE_READING_GUIDE.md) — Code examples for parsing each format
-- [Supporting Databases](./FAST25_SUPPORTING_DATABASES.md) — Instruments, Config, Alarms
-- [QA Logs Strategy](./FAST25_QA_LOGS.md) — How to handle Excel logs
+- Supporting databases (Instruments, Config, Alarms) and the QA-log strategy are summarised in
+  [FAST25_OVERVIEW.md](./FAST25_OVERVIEW.md); neither has a separate write-up yet.
