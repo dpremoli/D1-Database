@@ -2,6 +2,7 @@
 import { computed, onMounted, watch } from 'vue';
 import { useWorkspace } from '../workspace';
 import LookupField from './LookupField.vue';
+import TransportBar from './TransportBar.vue';
 
 const w = useWorkspace();
 let t: any = null;
@@ -112,7 +113,6 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 				</button>
 				<div v-if="!w.replay.loading && w.replay.options.length === 0" class="hint">no matches</div>
 			</div>
-			<label>Replay speed ×<input type="number" v-model.number="w.replay.speed" min="1" :disabled="w.locked.value" /></label>
 		</template>
 
 		<div class="links">
@@ -144,7 +144,8 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 		</label>
 
 		<!-- ─── Actions ─── -->
-		<div class="actions">
+		<TransportBar v-if="w.mode.value === 'playback'" />
+		<div v-else class="actions">
 			<button v-if="!w.locked.value" class="btn start" :disabled="w.busy.value || !w.st.connected" @click="w.start()">
 				<span class="material-symbols-rounded">fiber_manual_record</span> Start
 			</button>

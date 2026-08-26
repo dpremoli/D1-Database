@@ -1,0 +1,66 @@
+<script setup lang="ts">
+// Video-style transport for replaying an archived cut: play/pause, a scrub bar, an elapsed /
+// total readout and a speed picker. Playback writes nothing — this drives a playhead over a cut
+// already in the database, so there is no Stop and no Save.
+import { computed } from 'vue';
+import { useWorkspace } from '../workspace';
+
+const w = useWorkspace();
+const p = computed(() => w.playback.state);
+
+// Scrubbing fires continuously while dragging; only the settled value forces a spectrum request
+// (the FFT / spectrogram views are the expensive part). `input` = dragging, `change` = released.
+function onScrub(e: Event) { w.playback.seek(Number((e.target as HTMLInputElement).value), { commit: false }); }
+function onScrubEnd(e: Event) { w.playback.seek(Number((e.target as HTMLInputElement).value), { commit: true }); }
+
+const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
+function fmt(sec: number): string {
+	if (!Number.isFinite(sec) || sec < 0) return '0:00';
+	const m = Math.floor(sec / 60);
+	return `${m}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+}
+</script>
+
+<template>
+	<div class="transport">
+		<div class="row">
+			<button class="play" :disabled="!p.loaded" :title="p.playing ? 'Pause' : 'Play'" @click="w.playback.toggle()">
+				<span class="material-symbols-rounded">{{ p.playing ? 'pause' : 'play_arrow' }}</span>
+			</button>
+			<input class="scrub" type="range" min="0" :max="p.duration || 0" step="0.01"
+				:value="p.tSec" :disabled="!p.loaded" @input="onScrub" @change="onScrubEnd" />
+			<span class="time">{{ fmt(p.tSec) }} / {{ fmt(p.duration) }}</span>
+		</div>
+		<div class="row sub">
+			<label class="speed">Speed
+				<select :value="p.speed" @change="w.playback.setSpeed(Number(($event.target as HTMLSelectElement).value))">
+					<option v-for="s in SPEEDS" :key="s" :value="s">{{ s }}×</option>
+				</select>
+			</label>
+			<span class="note" title="This file stores summed Fx/Fy/Fz only. Per-sensor sub-channels are shown as an even split, and Tacho is not stored at all — RPM comes from the file's own rpm series.">
+				<span class="material-symbols-rounded">info</span> summed axes only
+			</span>
+		</div>
+		<p v-if="p.error" class="err">{{ p.error }}</p>
+		<p v-else-if="!p.loaded" class="hint">Pick a cut above to load it.</p>
+	</div>
+</template>
+
+<style scoped>
+.transport { display: flex; flex-direction: column; gap: 7px; padding: 9px 0 2px; border-top: 1px solid var(--border); }
+.row { display: flex; align-items: center; gap: 9px; }
+.row.sub { justify-content: space-between; }
+.play { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex-shrink: 0;
+	background: #22c55e; color: #05210f; border: none; border-radius: 50%; cursor: pointer; }
+.play:disabled { opacity: 0.5; cursor: not-allowed; }
+.play .material-symbols-rounded { font-size: 21px; }
+.scrub { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+.scrub:disabled { opacity: 0.5; cursor: not-allowed; }
+.time { font-size: 11.5px; font-family: var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.speed { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-dim); margin: 0; }
+.speed select { width: auto; margin: 0; padding: 4px 7px; font-size: 12px; }
+.note { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--text-dim); cursor: help; }
+.note .material-symbols-rounded { font-size: 14px; }
+.err { color: var(--danger); font-size: 12px; margin: 2px 0 0; }
+.hint { font-size: 11.5px; color: var(--text-dim); margin: 2px 0 0; }
+</style>
