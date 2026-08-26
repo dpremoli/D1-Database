@@ -23,7 +23,13 @@ extraResources:
     to: backend
 win:
   target: nsis
-  artifactName: '${productName}-Setup-${version}.${ext}'
+  # No space here (unlike productName) — GitHub silently rewrites spaces to periods in uploaded
+  # release-asset filenames, but electron-builder generates latest.yml from this name BEFORE that
+  # upload-time rename happens. The feed ends up pointing at a filename that never actually exists
+  # on GitHub, and electron-updater 404s trying to fetch it. A space-free artifact name sidesteps
+  # the mismatch entirely rather than needing publish-release.ps1 to correct latest.yml after the
+  # fact.
+  artifactName: 'ForceApp-Setup-${version}.${ext}'
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
