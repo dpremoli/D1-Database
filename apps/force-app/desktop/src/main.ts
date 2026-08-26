@@ -7,7 +7,8 @@ import { registerAppScheme, handleAppProtocol } from './protocol';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
 import { initAutoUpdater } from './updater';
-import { classifyWindowOpen } from './windowOpen';
+import { classifyWindowOpen, popoutKey } from './windowOpen';
+import { WindowStateStore } from './windowState';
 
 const PREFERRED_PORT = 8200;
 const HEALTH_PATH = '/health';
@@ -99,10 +100,15 @@ function onSidecarStateChange(state: SidecarState, detail?: string): void {
 async function createWindow(): Promise<void> {
   const configStore = new ConfigStore(app.getPath('userData'));
   configStore.seedIfMissing();
+  const windowState = new WindowStateStore(app.getPath('userData'));
 
+  const mainKey = 'main';
+  const savedMain = windowState.get(mainKey);
   mainWindow = new BrowserWindow({
-    width: 1500,
-    height: 950,
+    width: savedMain?.width ?? 1500,
+    height: savedMain?.height ?? 950,
+    x: savedMain?.x,
+    y: savedMain?.y,
     show: false,
     // Packaged builds get this for free — electron-builder embeds build/icon.ico into the .exe
     // itself, and Windows shows that everywhere (title bar, taskbar, Start Menu) with no runtime
@@ -115,8 +121,23 @@ async function createWindow(): Promise<void> {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+  if (savedMain?.maximized) mainWindow.maximize();
   mainWindow.once('ready-to-show', () => mainWindow?.show());
-  mainWindow.webContents.setWindowOpenHandler(classifyWindowOpen);
+  // Bounds while maximized are the whole-screen size, not a meaningful "last used" size to
+  // restore into next launch — save the pre-maximize bounds instead and just reapply maximize().
+  mainWindow.on('close', () => {
+    if (!mainWindow) return;
+    const maximized = mainWindow.isMaximized();
+    const bounds = maximized ? mainWindow.getNormalBounds() : mainWindow.getBounds();
+    windowState.save(mainKey, { ...bounds, maximized });
+  });
+  mainWindow.webContents.setWindowOpenHandler((details) => classifyWindowOpen(details, windowState));
+  // setWindowOpenHandler only returns creation OPTIONS, not a handle to the window itself — this
+  // is the hook that actually gets one, so a pop-out's size/position can be saved when it closes.
+  mainWindow.webContents.on('did-create-window', (win, details) => {
+    const key = popoutKey(details.url);
+    win.on('close', () => windowState.save(key, win.getBounds()));
+  });
 
   handleAppProtocol(webDistDir(), configStore.path);
   await mainWindow.loadFile(path.join(__dirname, '..', 'static', 'loading.html'));
