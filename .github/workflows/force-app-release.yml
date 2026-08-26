@@ -115,6 +115,17 @@ jobs:
         working-directory: apps/force-app/desktop
         run: npm run test:e2e
 
+      # test-results (traces, screenshots, error-context.md) only ever existed on the runner's own
+      # disk — a failed run's evidence was gone the moment the job ended, leaving nothing to debug
+      # beyond the bare console log. Only worth keeping on failure; a green run has nothing useful in it.
+      - name: Upload Playwright results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: apps/force-app/desktop/test-results
+          retention-days: 7
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
