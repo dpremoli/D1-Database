@@ -71,7 +71,7 @@ The operator already has the cut — it is in Directus, which is where it was pi
 Producing a second, near-identical copy of it every time someone wants to look at one was
 never the point of the feature.
 
-### Client-side playback, driving the existing live buffers
+### The playhead is local; the DSP stays in Python
 
 The browser already downloads the D1LC cache to hand to the backend. Playback parses it
 locally with `parseCache` instead, runs the playhead in the browser, and fills the same
@@ -86,20 +86,36 @@ Seeking is cheap because both buffers are time-ordered. Scrubbing back is a `cou
 and a tail drop; scrubbing forward appends the crossed range. Scrub latency is a memory
 copy.
 
-Two further benefits fall out: playback works with the recorder sidecar down, and it
-cannot collide with the backend's single-session `_busy()` model, so an operator can
-review an old cut without touching a rig that is mid-recording.
+A further benefit falls out: because no session is opened, playback cannot collide with
+the backend's single-session `_busy()` model, so an operator can review an old cut on a
+machine that is mid-recording without either one disturbing the other.
 
-The cost is a client-side Welch for the FFT panel. There is no precedent for one in this
-codebase — the live FFT comes from scipy in `session._update_fft`, and the finished-cut
-FFT comes from the filter-service over REST. It is roughly 80 lines and it is the price of
-the requirement.
+Spectra stay in Python. There is no FFT in the frontend and there will not be one: every
+spectral path in this repo is scipy — `session._update_fft` for live, the filter-service
+`/fft` and `/spectrogram` for finished cuts — and a second implementation in TypeScript
+would be a new source of disagreement for no gain.
 
-**Rejected: a backend playback session** (`pause`/`resume`/`seek` on `ReplaySource` behind
-a `/playback/*` surface). It keeps scipy's Welch, so the FFT would be bit-identical to a
-real cut. But dragging a scrub bar fires seeks continuously, and a WebSocket round-trip
-per seek is not an interactive scrub. It also adds server-side playhead state that fights
-the single-session model. Interactive scrubbing and a network hop per seek do not coexist.
+Playback instead calls a new **stateless** `POST /dsp/spectrum` on the recorder sidecar:
+send the current window, get back `f` plus per-channel spectra, computed by the same
+`scipy.signal.welch` call `_update_fft` already makes. Playback's FFT is then bit-identical
+to a live cut's rather than merely similar, which is the parity the feature was asked for.
+
+The round-trip is affordable because the cadence is low. `_update_fft` already throttles
+live spectra to roughly three per second (`now - _fft_last < 0.3`), and playback matches
+that; a call to the bundled sidecar on localhost is single-digit milliseconds. Scrubbing
+is debounced on drag release, so dragging the bar costs one request when it settles, not
+one per frame.
+
+This does mean playback needs the sidecar running. In the desktop bundle the sidecar ships
+with the app and is started by it, so that is not a deployment that occurs in practice.
+
+**Rejected: a *stateful* backend playback session** (`pause`/`resume`/`seek` on
+`ReplaySource` behind a `/playback/*` surface, streaming over the WebSocket). Note this is
+not a rejection of backend DSP — spectra are computed in Python either way. What is
+rejected is putting the *playhead* on the server: it adds session state that fights the
+single-session `_busy()` model, so reviewing an archived cut could block or be blocked by
+a rig that is mid-recording. Keeping the playhead local and the DSP remote gets the scipy
+parity without the coupling.
 
 **Rejected: reusing the finished-cut components** (`ForceChart`, `FrmCloud`,
 `SpectrumView`) fed a growing prefix. Least new code, and `SpectrumView` already covers
@@ -130,13 +146,24 @@ evaluated — an old cut cannot trip a safety alarm on a machine that is not cut
 Making the mode explicit rather than testing `source.value === 'replay'` at each site
 keeps the branch in one place and makes the "playback writes nothing" guarantee auditable.
 
+### Playback applies no filter chain
+
+The `FilterChain` (despike / detrend / highpass / lowpass / notch) stays where it is today:
+on finished cuts in the plotting dashboard, via the filter-service. Live recording applies
+no chain, so neither does playback. An archived cut therefore looks in playback exactly as
+it looked while it was being recorded, which is the whole point.
+
+Auditioning filter settings against a moving playhead is a reasonable thing to want later,
+but the chain is cache-file-oriented in the filter-service and would need new plumbing to
+apply to a moving window. Out of scope here.
+
 ## Components
 
 Three new units, each usable and testable on its own.
 
 | Unit | Responsibility | Depends on |
 |---|---|---|
-| `record/playback/spectrum.ts` | Welch amplitude spectrum over a sample window. Pure function, no state. | nothing |
+| `record/playback/spectrum.ts` | Thin client for `POST /dsp/spectrum`: window in, `f` + spectra out. Debounce and in-flight coalescing live here. | recorder sidecar |
 | `record/playback/engine.ts` | Owns the parsed `Cache` and the playhead. `play` / `pause` / `seek` / `setSpeed`. Fills a `RecordClient`'s buffers for a given playhead. | `liveCache`, `liveCloud`, `spectrum` |
 | `record/panels/TransportBar.vue` | Play/pause button, scrub bar, `0:24 / 1:02` readout, speed control. | `engine` |
 
@@ -146,8 +173,9 @@ they do for a live recording.
 
 ## Data flow
 
-Picking a cut downloads the asset and parses it into a `Cache` the engine holds. There is
-no backend call at any point in playback.
+Picking a cut downloads the asset and parses it into a `Cache` the engine holds. From
+there the only backend traffic is the throttled `/dsp/spectrum` call; the waveform, FRM and
+RPM views are served entirely from the parsed cache.
 
 `play()` advances the playhead on `requestAnimationFrame` by `dt × speed`. Each tick:
 
@@ -160,7 +188,10 @@ no backend call at any point in playback.
    point-for-point. Samples before `csSec` contribute no points.
 3. Updates `client.status` — `tSec`, `rpm` (read from the cache's own `rpm` array, not
    re-derived), and running `peaks`.
-4. Recomputes the spectrum over the trailing window and assigns `client.fft`.
+4. Requests a spectrum for the trailing window (throttled to ~3/s, matching
+   `_update_fft`) and assigns the reply to `client.fft`, appending to `client.fftHistory`
+   exactly as `onControl`'s `fft` branch does. Requests coalesce: a window is never
+   queued behind a stale one.
 5. Bumps `client.frameSeq`.
 
 `seek(t)` truncates `trace` and `frm` to `t` and refills from the cache. Because points
@@ -177,6 +208,10 @@ A cut whose asset download or `parseCache` fails leaves the engine unloaded and 
 the reason in `errMsg`, the same field the recording path already uses; the transport bar
 stays disabled. A cache with fewer than two samples, or a zero/absent `Fs`, is treated as
 unplayable and reported rather than divided by. Seeks are clamped to `[0, duration]`.
+
+If `/dsp/spectrum` is unreachable, the waveform, FRM and RPM views keep playing — they need
+no backend — and only the spectral panels show an unavailable state. Playback degrades to
+the views that still have data rather than stopping.
 
 ## Known limits
 
@@ -211,12 +246,18 @@ a tested endpoint is worse than fixing them:
 
 ## Testing
 
-`spectrum.ts` — Vitest against a synthesised sine of known frequency and amplitude; the
-peak bin must land on the right frequency and scale correctly with window length.
+`spectrum.ts` — Vitest against a stubbed `fetch`: throttling holds to ~3/s, a second
+request while one is in flight coalesces rather than queues, and a sidecar error surfaces
+without stalling the playhead. The DSP itself is not retested here; it is
+`session._update_fft`'s existing scipy path.
+
+`/dsp/spectrum` — a backend test asserting it returns the same `f` and spectra as
+`_update_fft` produces for the same window, so the two paths cannot drift.
 
 `engine.ts` — Vitest on the seek invariant that makes scrubbing trustworthy: buffer
 contents after `seek(t)` must equal contents after playing straight through to `t`.
-Also covers clamping at both ends, `windowSec` trimming, and that no `fetch` is issued.
+Also covers clamping at both ends, `windowSec` trimming, and that the engine issues no
+network call other than the spectrum request.
 
 Backend — extend `test_replay.py` with a decimated case (a cut long enough to force
 `stride > 1`) asserting the live RPM matches the cache's, which is the assertion the
