@@ -18,6 +18,7 @@ declare global {
       onNavigate: (callback: (path: string) => void) => void;
       getUpdateInfo: () => Promise<{ version: string; packaged: boolean; status: UpdateStatus }>;
       checkForUpdates: () => Promise<{ ok: boolean; reason?: string }>;
+      installUpdate: () => Promise<{ ok: boolean; reason?: string }>;
       onUpdateStatus: (callback: (status: UpdateStatus) => void) => void;
     };
   }

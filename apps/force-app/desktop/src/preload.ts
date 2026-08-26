@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('forceApp', {
   getUpdateInfo: (): Promise<{ version: string; packaged: boolean; status: UpdateStatus }> =>
     ipcRenderer.invoke('update:get-info'),
   checkForUpdates: (): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke('update:check'),
+  installUpdate: (): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke('update:install'),
   onUpdateStatus: (callback: (status: UpdateStatus) => void) => {
     ipcRenderer.on('update:status', (_event, status: UpdateStatus) => callback(status));
   },

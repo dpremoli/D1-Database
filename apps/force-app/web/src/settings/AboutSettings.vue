@@ -1,0 +1,136 @@
+<script setup lang="ts">
+// Version + changelog + the update controls. Electron-only for the update controls: the
+// browser-served /app/ build has no window.forceApp and auto-update has no meaning there.
+import { onMounted, ref } from 'vue';
+import { CHANGELOG } from '../changelog';
+
+type UpdateStatus =
+	| { state: 'idle' }
+	| { state: 'checking' }
+	| { state: 'available'; version: string }
+	| { state: 'not-available' }
+	| { state: 'downloading'; percent: number }
+	| { state: 'downloaded'; version: string }
+	| { state: 'error'; message: string };
+
+const isElectron = !!window.forceApp;
+const appVersion = ref('');
+const packaged = ref(false);
+const updateStatus = ref<UpdateStatus>({ state: 'idle' });
+const checking = ref(false);
+const installing = ref(false);
+const installNotice = ref('');
+
+async function checkForUpdates() {
+	if (!window.forceApp) return;
+	checking.value = true;
+	try {
+		const res = await window.forceApp.checkForUpdates();
+		if (!res.ok) updateStatus.value = { state: 'error', message: res.reason || 'could not check for updates' };
+	} finally {
+		checking.value = false;
+	}
+}
+
+// Same "don't interrupt a recording" guard the automatic prompt applies, so there is no way to
+// force a restart mid-cut whether the operator reacts to the dialog or comes here instead.
+async function installNow() {
+	if (!window.forceApp) return;
+	installing.value = true;
+	installNotice.value = '';
+	try {
+		const res = await window.forceApp.installUpdate();
+		if (!res.ok) installNotice.value = res.reason || 'could not install right now';
+	} finally {
+		installing.value = false;
+	}
+}
+
+onMounted(async () => {
+	if (!window.forceApp) return;
+	const info = await window.forceApp.getUpdateInfo();
+	appVersion.value = info.version;
+	packaged.value = info.packaged;
+	updateStatus.value = info.status;
+	window.forceApp.onUpdateStatus((s) => { updateStatus.value = s; });
+});
+</script>
+
+<template>
+	<div class="about">
+		<h2>Version</h2>
+		<p class="lead">
+			<template v-if="isElectron">Force App {{ appVersion || '…' }}<span v-if="!packaged"> (dev build — auto-update is disabled)</span></template>
+			<template v-else>Browser build — version and updates are managed by the desktop app.</template>
+		</p>
+
+		<template v-if="isElectron">
+			<div class="actions">
+				<button class="btn ghost" :disabled="!packaged || checking || updateStatus.state === 'checking' || updateStatus.state === 'downloading'"
+					@click="checkForUpdates">
+					<span class="material-symbols-rounded">refresh</span>
+					{{ updateStatus.state === 'checking' ? 'Checking…' : 'Check for updates' }}
+				</button>
+				<button v-if="updateStatus.state === 'downloaded'" class="btn save" :disabled="installing" @click="installNow">
+					<span class="material-symbols-rounded">restart_alt</span> Restart and install
+				</button>
+			</div>
+			<p v-if="updateStatus.state === 'not-available'" class="hint">
+				<span class="material-symbols-rounded" style="font-size:14px">check_circle</span> You're up to date.
+			</p>
+			<p v-else-if="updateStatus.state === 'available'" class="hint">
+				<span class="material-symbols-rounded" style="font-size:14px">cloud_download</span> Version {{ updateStatus.version }} found — downloading…
+			</p>
+			<p v-else-if="updateStatus.state === 'downloading'" class="hint">
+				<span class="material-symbols-rounded" style="font-size:14px">cloud_download</span> Downloading… {{ updateStatus.percent }}%
+			</p>
+			<p v-else-if="updateStatus.state === 'downloaded'" class="hint">
+				<span class="material-symbols-rounded" style="font-size:14px">task_alt</span> Version {{ updateStatus.version }} downloaded — install whenever you're ready.
+			</p>
+			<p v-else-if="updateStatus.state === 'error'" class="err">
+				<span class="material-symbols-rounded" style="font-size:14px">error</span> {{ updateStatus.message }}
+			</p>
+			<p v-if="installNotice" class="err">
+				<span class="material-symbols-rounded" style="font-size:14px">error</span> {{ installNotice }}
+			</p>
+		</template>
+
+		<h2 class="mt">What's new</h2>
+		<div class="changelog">
+			<div v-for="c in CHANGELOG" :key="c.version" class="entry" :class="{ current: isElectron && c.version === appVersion }">
+				<div class="entry-head">
+					<span class="entry-version">v{{ c.version }}</span>
+					<span v-if="isElectron && c.version === appVersion" class="badge current-badge">running now</span>
+					<span class="entry-date">{{ c.date }}</span>
+				</div>
+				<ul>
+					<li v-for="n in c.notes" :key="n">{{ n }}</li>
+				</ul>
+			</div>
+		</div>
+	</div>
+</template>
+
+<style scoped>
+.about { max-width: 640px; }
+h2 { margin: 0 0 4px; font-size: 16px; }
+.mt { margin-top: 32px; }
+.lead { margin: 0 0 12px; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
+.hint { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
+.err { display: flex; align-items: center; gap: 5px; color: var(--danger); font-size: 12px; margin: 4px 0 0; }
+.actions { display: flex; gap: 10px; margin-top: 6px; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; font-size: 13px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
+.btn.save { background: var(--accent); color: var(--accent-ink); }
+.btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.changelog { display: flex; flex-direction: column; gap: 14px; }
+.entry { padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.entry.current { border-color: var(--accent); background: rgba(56,189,248,0.06); }
+.entry-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.entry-version { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--text); }
+.entry-date { font-size: 11px; color: var(--text-dim); margin-left: auto; }
+.current-badge { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent-ink); background: var(--accent); }
+.entry ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.entry li { font-size: 12.5px; color: var(--text-dim); line-height: 1.45; }
+</style>
