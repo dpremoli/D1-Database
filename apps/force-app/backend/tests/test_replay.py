@@ -105,3 +105,29 @@ def test_replay_live_rpm_survives_decimation(tmp_path):
     assert abs(sess.frm._last_rpm - 1500.0) / 1500.0 < 0.05, (
         f"live RPM {sess.frm._last_rpm:.0f} != 1500 (stride {fs / src.rate:.0f}x error)"
     )
+
+
+def test_replay_honours_speed_on_long_chunks(tmp_path):
+    """Pacing must track the requested speed even when a chunk exceeds the old 0.1 s sleep cap.
+
+    Chunks are sized so any replay is ~400 of them, so a long cut has long chunks. The old
+    min(dt, 0.1) cap under-slept every one of them and never caught up, giving a ~40 s floor
+    per replay however long the cut really was.
+    """
+    import time
+
+    n, fs = 200_000, 2_000.0  # 100 s of cut; chunk lands well above 0.1 s of wall time at 1x
+    cache, _ = _make_cache(tmp_path, n=n, fs=fs, rpm=1500.0)
+    src = ReplaySource(cache, ppr=1, realtime=True, speed=1.0)
+    chunk_sec = src.chunk / src.rate
+    assert chunk_sec > 0.1, f"fixture chunk {chunk_sec:.3f}s must exceed the old cap"
+
+    src.start()
+    t0 = time.perf_counter()
+    reads = 5
+    for _ in range(reads):
+        assert src.read() is not None
+    wall = time.perf_counter() - t0
+    played = reads * chunk_sec
+    # Allow generous slack for scheduler jitter; the bug was a 3x+ overspeed, not a few percent.
+    assert wall > played * 0.7, f"played {played:.2f}s of cut in {wall:.2f}s wall — too fast"

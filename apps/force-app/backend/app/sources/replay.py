@@ -90,6 +90,11 @@ class ReplaySource:
         if self.realtime:
             target = self._t0 + float(t[-1]) / self.speed
             dt = target - time.perf_counter()
-            if dt > 0:
-                time.sleep(min(dt, 0.1))
+            # Sleep the WHOLE remaining interval, in slices, so stop() still interrupts promptly.
+            # The old min(dt, 0.1) cap under-slept every chunk longer than 0.1 s and — because the
+            # target is absolute — never repaid it, so a 120 s cut replayed in 40 s at 1x.
+            while dt > 0:
+                if self._stop.wait(min(dt, 0.1)):
+                    break
+                dt = target - time.perf_counter()
         return t, data
