@@ -23,6 +23,11 @@ extraResources:
     to: backend
 win:
   target: nsis
+  # electron-builder would pick up build/icon.ico from the default buildResources dir either way;
+  # explicit since every other icon-adjacent choice here is spelled out too. Multi-resolution ICO
+  # (16 up to 256px) — embeds into the .exe itself, so title bar, taskbar, and Start Menu all get
+  # it for free with no runtime code.
+  icon: build/icon.ico
   # No space here (unlike productName) — GitHub silently rewrites spaces to periods in uploaded
   # release-asset filenames, but electron-builder generates latest.yml from this name BEFORE that
   # upload-time rename happens. The feed ends up pointing at a filename that never actually exists

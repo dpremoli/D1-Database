@@ -25,6 +25,11 @@ build/
 # needs its own entry.
 apps/force-app/web/dist-desktop/
 apps/force-app/desktop/release/
+# electron-builder's buildResources convention is a directory named "build" — collides with the
+# generic build/ ignore above, but this one holds tracked source assets (the app icon), not
+# generated output. Un-ignoring the directory itself is required before per-file negation applies.
+!apps/force-app/desktop/build/
+!apps/force-app/desktop/build/icon.*
 # Playwright smoke-test output (traces, screenshots, error-context.md on failure)
 apps/force-app/desktop/test-results/
 

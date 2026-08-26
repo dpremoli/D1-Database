@@ -104,6 +104,11 @@ async function createWindow(): Promise<void> {
     width: 1500,
     height: 950,
     show: false,
+    // Packaged builds get this for free — electron-builder embeds build/icon.ico into the .exe
+    // itself, and Windows shows that everywhere (title bar, taskbar, Start Menu) with no runtime
+    // help. Only dev mode needs it here: `electron .` runs the plain node_modules Electron binary,
+    // which shows Electron's own default icon unless a window explicitly overrides it.
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
