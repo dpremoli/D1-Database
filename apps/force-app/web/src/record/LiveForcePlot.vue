@@ -25,6 +25,7 @@ function resize() {
 	c.height = Math.max(1, Math.floor(r.height * dpr));
 	ctx = c.getContext('2d');
 	if (ctx) ctx.scale(dpr, dpr);
+	lastN = -1;   // force the next draw() past the unchanged-data skip so the resized canvas repaints
 }
 
 function niceStep(range: number, ticks: number): number {
@@ -34,20 +35,32 @@ function niceStep(range: number, ticks: number): number {
 	return (r <= 1.5 ? 1 : r <= 3 ? 2 : r <= 7 ? 5 : 10) * mag;
 }
 
+// The trace only grows a point every chunk (well under 60Hz), but this redraws the FULL history
+// each time — path-building cost climbs with the recording's length. Left running at 60fps
+// regardless of whether new data arrived, that's mostly wasted CPU repainting an unchanged plot,
+// and on slower hardware it's enough sustained main-thread work to make the live view visibly
+// stop keeping up ("doesn't update") as a long cut goes on. Skipping frames where nothing changed
+// costs nothing lost (the plot did not change) and removes nearly all of that waste.
+let lastN = -1, lastT = NaN, lastSel = '';
 function draw() {
 	raf = requestAnimationFrame(draw);
 	const c = canvasEl.value;
 	if (!c || !ctx) return;
 	const CW = c.clientWidth, CH = c.clientHeight;
 	if (CW === 0 || CH === 0) { resize(); return; }
-	const W = CW - ML - MR, H = CH - MT - MB;
-	ctx.clearRect(0, 0, CW, CH);
-	ctx.fillStyle = '#0b1020';
-	ctx.fillRect(0, 0, CW, CH);
 
 	const tr = props.client.trace;
 	const n = tr.t.length;
 	const sel = props.channels ?? ['Fx', 'Fy', 'Fz'];
+	const selKey = sel.join(',');
+	const lastPt = n ? tr.t[n - 1] : NaN;
+	if (n === lastN && lastPt === lastT && selKey === lastSel) return;
+	lastN = n; lastT = lastPt; lastSel = selKey;
+
+	const W = CW - ML - MR, H = CH - MT - MB;
+	ctx.clearRect(0, 0, CW, CH);
+	ctx.fillStyle = '#0b1020';
+	ctx.fillRect(0, 0, CW, CH);
 
 	if (n < 2) {
 		ctx.fillStyle = 'rgba(148,163,184,0.5)'; ctx.font = '12px system-ui';

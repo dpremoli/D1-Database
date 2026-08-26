@@ -1201,11 +1201,25 @@ function axesFor(item: RPanel): Axis[] {
 // Chain the spectral views reflect: the live-tuned/applied filter when present, else raw.
 const specChain = computed<FilterChain>(() => previewChain() ?? savedChain.value ?? defaultChain());
 function toggleItemAxis(item: RPanel, a: Axis) {
+	// A spectrogram is a heatmap — there is no readable way to overlay two of them, unlike a
+	// waterfall (stacked line traces) or the force/FFT charts, which draw multiple axes as
+	// distinct colored lines just fine. So spectrogram stays single-axis: clicking a chip
+	// replaces the selection instead of toggling it.
+	if (chartMode.value === 'spectrogram') { item.channels = [a]; return; }
 	const cur = (item.channels && item.channels.length ? [...item.channels] : [...AXES]);
 	const i = cur.indexOf(a);
 	if (i >= 0) { if (cur.length > 1) cur.splice(i, 1); } else cur.push(a);
 	item.channels = AXES.filter((x) => cur.includes(x));
 }
+// Entering spectrogram with several axes already picked (e.g. coming from waterfall) would
+// otherwise render several heatmaps stacked on top of each other with no way to tell them apart
+// until a chip is clicked — clamp down to one right away instead.
+watch(chartMode, (m) => {
+	if (m !== 'spectrogram') return;
+	for (const item of rightLayout.value) {
+		if (item.channels && item.channels.length > 1) item.channels = [item.channels[0]];
+	}
+});
 
 // Seed the editable controls from the loaded cache (FrmCloud emits this once the
 // binary is parsed). User edits thereafter drive the cloud; Reset restores these.

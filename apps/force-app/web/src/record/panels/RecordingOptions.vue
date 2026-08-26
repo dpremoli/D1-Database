@@ -160,7 +160,11 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 </template>
 
 <style scoped>
-.opts { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: 100%; }
+/* No overflow/max-height here: PanelFrame's own .panel-body is already the scroll container.
+   Nesting a second auto-overflow box inside it let the two end up with independent scroll
+   positions — the outer at 0 while this one had scrolled itself, which read as the very top row
+   (the Simulated/Replay/NI-DAQ source buttons) being clipped even though the panel was at rest. */
+.opts { display: flex; flex-direction: column; gap: 10px; }
 .seg { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
 .seg button { flex: 1; padding: 8px; font-size: 12.5px; background: transparent; color: var(--text-dim); border: none; cursor: pointer; }
 .seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }

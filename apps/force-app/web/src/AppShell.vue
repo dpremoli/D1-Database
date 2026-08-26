@@ -97,7 +97,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 .who { font-size: 9.5px; color: var(--text-dim); text-align: center; word-break: break-word; max-width: 82px; }
 .signout { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); color: var(--text); cursor: pointer; }
 .signout:hover { background: var(--surface-2); }
-/* The sidebar is fixed/overlaid (it expands over the page on hover rather than pushing content),
-   so this only needs to clear the permanent 40px collapsed corner badge, not the expanded width. */
-.content { flex: 1; min-width: 0; margin-left: 40px; }
+/* The sidebar is fixed/overlaid — it expands over the page on hover rather than pushing content —
+   so content needs no reserved margin at all; the collapsed 40px corner badge sits on top of it. */
+.content { flex: 1; min-width: 0; }
 </style>

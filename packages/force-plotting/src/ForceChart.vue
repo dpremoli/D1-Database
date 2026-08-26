@@ -59,7 +59,7 @@ onMounted(() => {
 	});
 	if (svgEl.value) ro.observe(svgEl.value);
 });
-onBeforeUnmount(() => ro?.disconnect());
+onBeforeUnmount(() => { ro?.disconnect(); if (rafId) cancelAnimationFrame(rafId); });
 
 function niceNum(v: number): string {
 	const a = Math.abs(v);
@@ -173,8 +173,11 @@ const geom = computed(() => {
 			// (guard, else areaPath would index past the array and emit NaN paths).
 			// Clamp to the visible [iA,iB] window so a zoom doesn't paint off-plot.
 			const i0 = Math.max(iA, xs.findIndex((v) => v >= props.cropStart!));
-			const revIdx = [...xs].reverse().findIndex((v) => v <= props.cropEnd!);
-			const i1 = revIdx < 0 ? -1 : Math.min(iB, xs.length - 1 - revIdx);
+			// Scan backward in place rather than xs.slice().reverse().findIndex(...) — that clones
+			// the whole array on every recompute, and this runs on every crop-drag pointermove.
+			let i1 = -1;
+			for (let k = xs.length - 1; k >= 0; k--) { if (xs[k] <= props.cropEnd!) { i1 = k; break; } }
+			i1 = i1 < 0 ? -1 : Math.min(iB, i1);
 			if (i0 >= iA && i1 >= i0) cropArea = areaPath(i0, i1);
 		}
 	} else {
@@ -258,6 +261,13 @@ function onLeave() { emit('hover', null); }
 
 // ---- draggable crop handles (Live mode) ----
 let dragging: 'start' | 'end' | null = null;
+// Raw pointermove can fire far faster than the screen repaints (some mice/trackpads report at
+// 100Hz+). Each emitted crop value flows back down as a prop, which recomputes this component's
+// own geometry AND every sibling env chart's (Fx/Fy/Fz/RPM can all be crop-shaded at once) — so
+// emitting on every raw event redoes that whole chain several times per visible frame. Coalescing
+// to one emit per animation frame caps it at the rate the user can actually see.
+let rafId = 0;
+let pendingEv: PointerEvent | null = null;
 function xToSec(ev: PointerEvent): number {
 	const g = geom.value, svg = svgEl.value;
 	if (!g || !svg) return 0;
@@ -276,14 +286,23 @@ function onCropDown(ev: PointerEvent) {
 	ev.stopPropagation();
 	onCropMove(ev);
 }
-function onCropMove(ev: PointerEvent) {
-	if (!dragging) return;
+function emitCrop(ev: PointerEvent) {
 	const sec = xToSec(ev);
 	if (dragging === 'start') emit('update:cropStart', props.cropEnd != null ? Math.min(sec, props.cropEnd) : sec);
 	else emit('update:cropEnd', props.cropStart != null ? Math.max(sec, props.cropStart) : sec);
+}
+function onCropMove(ev: PointerEvent) {
+	if (!dragging) return;
+	pendingEv = ev;
+	if (!rafId) rafId = requestAnimationFrame(() => { rafId = 0; if (pendingEv) emitCrop(pendingEv); });
 	ev.stopPropagation();
 }
 function onCropUp(ev: PointerEvent) {
+	if (dragging) {
+		if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+		emitCrop(ev);   // land on the exact release point, not the last coalesced frame
+		pendingEv = null;
+	}
 	dragging = null;
 	try { (ev.currentTarget as Element).releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
 }
