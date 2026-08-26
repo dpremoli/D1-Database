@@ -36,10 +36,33 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: 'npm'
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/force-app/backend/pyproject.toml
+
+      # electron-builder's own downloads (the electron binary, nsis, winCodeSign) are not npm
+      # packages, so setup-node's cache above never touches them — same ~100s of re-downloading
+      # every run otherwise. Keyed on package-lock.json since that pins the electron/electron-builder
+      # versions that determine what gets fetched.
+      - name: Cache electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: electron-builder-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # By far the single largest step otherwise (~3.5 min to fetch Chromium fresh every run).
+      # Keyed on package-lock.json so a @playwright/test version bump invalidates it automatically.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Install JS workspace dependencies
         run: npm ci
