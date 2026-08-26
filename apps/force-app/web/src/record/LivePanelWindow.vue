@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+// The window/channel/mode controls here mirror ForcePanel.vue's toolbar deliberately — this route
+// used to only read mode/channels/window from the opening URL once and never expose any way to
+// change them afterward, so a pop-out was frozen at whatever was selected the moment it opened.
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { RecordClient } from './liveClient';
+import { RecordClient, SUB_NAMES } from './liveClient';
+import { CH_COLOR } from './types';
 import LiveForcePlot from './LiveForcePlot.vue';
 import LiveFft from './LiveFft.vue';
 import LiveSpectrogram from './LiveSpectrogram.vue';
@@ -13,29 +17,50 @@ const panel = computed(() => String(route.params.panel || 'force'));
 const isFrm = computed(() => panel.value === 'frm');
 
 const q = new URLSearchParams(window.location.search);
-const initMode = ref<string>(q.get('mode') || 'time');
-const initChannels = ref<string[]>(q.get('channels')?.split(',').filter(Boolean) || ['Fx', 'Fy', 'Fz']);
+const mode = ref<string>(q.get('mode') || 'time');
+const SUMMED = ['Fx', 'Fy', 'Fz'];
+const ORDER = [...SUMMED, ...SUB_NAMES];
+const channels = ref<string[]>(q.get('channels')?.split(',').filter(Boolean) || [...SUMMED]);
 const windowSec = ref(Number(q.get('window')) || 12);
 const initColormap = ref<string>(q.get('colormap') || 'viridis');
 const initPointSize = ref(Number(q.get('pointSize')) || 2.2);
 const initFrmAxis = ref<string>(q.get('frmAxis') || 'Fz');
 const initStride = ref(Number(q.get('stride')) || 1);
 
+const MODES: { key: string; label: string }[] = [
+	{ key: 'time', label: 'Force' }, { key: 'fft', label: 'FFT' }, { key: 'psd', label: 'Power' },
+	{ key: 'spectrogram', label: 'Spectrogram' }, { key: 'waterfall', label: 'Waterfall' },
+];
 const MODE_LABEL: Record<string, string> = { time: 'Force Plot', fft: 'FFT', psd: 'Power', spectrogram: 'Spectrogram', waterfall: 'Waterfall' };
 const title = computed(() => {
 	if (isFrm.value) return 'Live FRM Fingerprint';
-	return 'Live ' + (MODE_LABEL[initMode.value] || 'Force');
+	return 'Live ' + (MODE_LABEL[mode.value] || 'Force');
 });
+
+const singleChannelMode = computed(() => mode.value === 'spectrogram' || mode.value === 'waterfall');
+function toggleChannel(key: string) {
+	const s = channels.value.slice();
+	const i = s.indexOf(key);
+	if (i >= 0) { if (s.length > 1) s.splice(i, 1); } else s.push(key);
+	channels.value = ORDER.filter((k) => s.includes(k));
+}
+const subsOpen = ref(false);
+const subCount = computed(() => channels.value.filter((k) => (SUB_NAMES as readonly string[]).includes(k)).length);
 
 const client = new RecordClient();
 client.windowSec = windowSec.value;
+watch(windowSec, (v) => { client.windowSec = v; });
 const st = client.status;
 const ready = computed(() => client.snapshotReady.value);
 const colormap = ref(initColormap.value);
 const pointSize = ref(initPointSize.value);
 const maps = ['viridis', 'inferno', 'grayscale'];
 
-onMounted(() => { client.connectViaRelay(); document.title = title.value; });
+// Keeps the OS window title (taskbar/alt-tab) in sync with a mode change made after opening —
+// onMounted alone only ever set it once, from the URL the window was opened with.
+watch(title, (t) => { document.title = t; }, { immediate: true });
+
+onMounted(() => { client.connectViaRelay(); });
 onBeforeUnmount(() => client.disconnect());
 </script>
 
@@ -44,10 +69,35 @@ onBeforeUnmount(() => client.disconnect());
 		<header class="bar">
 			<span class="rec-dot" :class="{ live: st.state === 'recording' }"></span>
 			<span class="title">{{ title }}</span>
-			<span v-if="!isFrm && initChannels.join() !== 'Fx,Fy,Fz'" class="ch-hint">{{ initChannels.join(' ') }}</span>
 			<span class="state" :class="st.state">{{ st.state }}</span>
 			<template v-if="isFrm">
 				<select v-model="colormap" class="cm"><option v-for="m in maps" :key="m">{{ m }}</option></select>
+			</template>
+			<template v-else>
+				<div class="segmode">
+					<button v-for="m in MODES" :key="m.key" class="segbtn" :class="{ on: mode === m.key }" @click="mode = m.key">{{ m.label }}</button>
+				</div>
+				<div class="chips">
+					<button v-for="a in SUMMED" :key="a" class="chip" :style="channels.includes(a) ? { '--c': CH_COLOR[a] } : {}"
+						:class="{ on: channels.includes(a) }" @click="toggleChannel(a)">{{ a }}</button>
+				</div>
+				<div class="subwrap">
+					<button class="chip sub-btn" :class="{ on: subCount > 0 }" @click.stop="subsOpen = !subsOpen">
+						Sub<span v-if="subCount"> · {{ subCount }}</span> <span class="material-symbols-rounded">expand_more</span>
+					</button>
+					<div v-if="subsOpen" class="subpop" @click.stop>
+						<button v-for="s in SUB_NAMES" :key="s" class="subopt" :class="{ on: channels.includes(s) }" @click="toggleChannel(s)">
+							<span class="dot" :style="{ background: CH_COLOR[s] }"></span>{{ s }}
+							<span v-if="channels.includes(s)" class="material-symbols-rounded tick">check</span>
+						</button>
+					</div>
+				</div>
+				<span v-if="singleChannelMode" class="mono-hint" title="Spectrogram/waterfall show one channel">{{ channels[0] }} only</span>
+				<div v-if="mode !== 'fft' && mode !== 'psd'" class="tw-row">
+					<input type="range" min="2" max="60" step="1" v-model.number="windowSec" />
+					<input type="number" min="1" max="300" v-model.number="windowSec" class="tw-num" />
+					<span class="tw-unit">s</span>
+				</div>
 			</template>
 			<span class="conn" :class="{ ok: st.connected }">
 				<span class="material-symbols-rounded">{{ st.connected ? 'sensors' : 'sensors_off' }}</span>
@@ -58,17 +108,17 @@ onBeforeUnmount(() => client.disconnect());
 				<b class="fz">{{ st.peaks.Fz.toFixed(0) }}</b><span>Fz peak</span>
 			</div>
 		</header>
-		<div class="body">
+		<div class="body" @click="subsOpen = false">
 			<div v-if="!ready" class="syncing">
 				<span class="material-symbols-rounded spin">sync</span>
 				<span>Syncing with parent…</span>
 			</div>
 			<template v-else>
 				<LiveFrm v-if="isFrm" :client="client" :diam="80" :colormap="colormap" :point-size="pointSize" :point-stride="initStride" />
-				<LiveForcePlot v-else-if="initMode === 'time'" :client="client" :channels="initChannels" />
-				<LiveFft v-else-if="initMode === 'fft' || initMode === 'psd'" :client="client" :channels="initChannels" :scale="initMode === 'psd' ? 'psd' : 'amp'" />
-				<LiveSpectrogram v-else-if="initMode === 'spectrogram'" :client="client" :channels="initChannels" :window-sec="windowSec" />
-				<LiveWaterfall v-else-if="initMode === 'waterfall'" :client="client" :channels="initChannels" :window-sec="windowSec" />
+				<LiveForcePlot v-else-if="mode === 'time'" :client="client" :channels="channels" />
+				<LiveFft v-else-if="mode === 'fft' || mode === 'psd'" :client="client" :channels="channels" :scale="mode === 'psd' ? 'psd' : 'amp'" />
+				<LiveSpectrogram v-else-if="mode === 'spectrogram'" :client="client" :channels="channels" :window-sec="windowSec" />
+				<LiveWaterfall v-else-if="mode === 'waterfall'" :client="client" :channels="channels" :window-sec="windowSec" />
 			</template>
 		</div>
 	</div>
@@ -76,15 +126,38 @@ onBeforeUnmount(() => client.disconnect());
 
 <style scoped>
 .live-window { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
-.bar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 90%, transparent); }
-.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #64748b; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; row-gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 90%, transparent); }
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #64748b; flex-shrink: 0; }
 .rec-dot.live { background: #ef4444; animation: pulse 1.4s infinite; }
 @keyframes pulse { 50% { opacity: 0.4; } }
-.title { font-weight: 600; font-size: 15px; }
-.ch-hint { font-size: 11px; color: var(--text-dim); font-family: var(--mono); background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; }
-.state { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
+.title { font-weight: 600; font-size: 15px; flex-shrink: 0; }
+.state { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); flex-shrink: 0; }
 .state.recording { color: #fbbf24; } .state.done { color: #4ade80; } .state.error { color: var(--danger); }
 .cm { padding: 4px 8px; font-size: 12px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+
+/* Mode/channel controls — ported from record/panels/ForcePanel.vue's toolbar so behaviour and
+   look stay identical between the embedded panel and its pop-out. */
+.segmode { display: flex; gap: 4px; flex-shrink: 0; }
+.segbtn { padding: 5px 10px; font-size: 12px; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
+.segbtn.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; border-color: var(--accent); }
+.chips { display: flex; gap: 5px; flex-shrink: 0; }
+.chip { display: inline-flex; align-items: center; gap: 3px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
+.chip.on { color: var(--c); border-color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
+.chip .material-symbols-rounded { font-size: 15px; }
+.subwrap { position: relative; flex-shrink: 0; }
+.sub-btn.on { --c: #38bdf8; color: #7dd3fc; border-color: #38bdf8; background: rgba(56,189,248,0.12); }
+.subpop { position: absolute; top: 30px; left: 0; z-index: 40; min-width: 118px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 4px; box-shadow: 0 12px 34px rgba(0,0,0,0.3); }
+.subopt { display: flex; align-items: center; gap: 7px; width: 100%; padding: 5px 7px; font-size: 12px; color: var(--text); background: transparent; border: none; border-radius: 6px; cursor: pointer; text-align: left; }
+.subopt:hover { background: var(--surface-2); }
+.subopt.on { color: #fff; }
+.subopt .dot { width: 9px; height: 9px; border-radius: 50%; }
+.subopt .tick { margin-left: auto; font-size: 14px; color: #4ade80; }
+.mono-hint { font-family: var(--mono); font-size: 11px; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px; flex-shrink: 0; }
+.tw-row { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.tw-row input[type="range"] { width: 80px; accent-color: var(--accent); }
+.tw-num { width: 42px !important; text-align: center; padding: 3px 2px !important; font-size: 11px !important; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text); }
+.tw-unit { font-size: 11px; color: var(--text-dim); }
+
 .conn { display: inline-flex; color: var(--text-dim); }
 .conn.ok { color: #4ade80; }
 .conn .material-symbols-rounded { font-size: 18px; }
