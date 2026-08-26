@@ -11,7 +11,6 @@ import time
 import uuid
 
 import numpy as np
-from scipy import signal as ssig
 
 from .acquisition.consumers import CutDetector, Decimator, FrmIntegrator
 from .acquisition.ring import Ring
@@ -19,7 +18,7 @@ from .backup import BackupStreamer
 from .backup import load_config as load_backup_config
 from .config import RecordConfig
 from .d1rw import RawWriter
-from .dsp import sum_axes, tacho_column
+from .dsp import sum_axes, tacho_column, welch_spectra
 from .finalize import finalize
 from .recovery import write_manifest
 from .storage import disk_usage_for
@@ -317,20 +316,9 @@ class RecordingSession:
         self._fft_last = now
         fs = float(self.source.rate)
         nper = int(min(self._fft_bufs[self._fft_axis].size, 4096))
-        f: np.ndarray | None = None
-        spectra: dict[str, list[float]] = {}
-        for n in self._fft_names:
-            buf = self._fft_bufs[n]
-            if buf.size < 256:
-                continue
-            f, p = ssig.welch(buf, fs=fs, nperseg=nper)
-            spectra[n] = p  # power spectral density; client takes sqrt for amplitude if wanted
-        if f is None:
+        fout, spectra_out = welch_spectra(self._fft_bufs, fs=fs, nperseg=nper)
+        if fout is None:
             return
-        step = max(1, f.size // 240)
-        fout = f[::step].round(2).tolist()
-        # amplitude (sqrt of PSD), decimated, per channel — compact enough for ~3 Hz over the WS.
-        spectra_out = {n: np.sqrt(p[::step]).round(4).tolist() for n, p in spectra.items()}
         self._publish_control(
             {
                 "type": "fft",
