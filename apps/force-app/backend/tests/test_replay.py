@@ -78,3 +78,30 @@ def test_replay_end_to_end(tmp_path):
     assert abs(float(np.max(out["fz"])) - float(np.max(fz))) < 3.0
     # rpm recovered from the synthesised tacho is ~1500
     assert abs(float(np.median(out["rpm"])) - 1500.0) / 1500.0 < 0.05
+
+
+def test_replay_live_rpm_survives_decimation(tmp_path):
+    """A cut long enough to force stride > 1 must still report the cache's true RPM live.
+
+    Regression: /record/start_replay sets cfg.sample_rate to the cache's ORIGINAL rate while
+    ReplaySource streams at fs/stride, so FrmIntegrator (which read cfg.sample_rate) reported
+    RPM high by exactly `stride`. Every fixture above is stride == 1, which is why it was missed.
+    """
+    n, fs = 400_000, 20_000.0  # 20 s; > the 300k cap, so ReplaySource decimates
+    cache, _ = _make_cache(tmp_path, n=n, fs=fs, rpm=1500.0)
+    src = ReplaySource(cache, ppr=1, realtime=False)
+    assert src.rate < fs, "fixture must actually decimate or it cannot catch this"
+
+    # Exactly what main.py:record_start_replay builds — cfg.sample_rate is the ORIGINAL fs.
+    cfg = RecordConfig(
+        sample_name="REPLAY-DECIMATED", axis="Fz",
+        feed=src.feed, diam=src.diam, sample_rate=fs, duration_sec=n / fs, ppr=1,
+    )
+    sess = RecordingSession(cfg, str(tmp_path), src, broadcaster=None)
+    sess.start()
+    sess._thread.join(120)
+    sess.join_finalize(120)
+    assert sess.state == "done", sess.error
+    assert abs(sess.frm._last_rpm - 1500.0) / 1500.0 < 0.05, (
+        f"live RPM {sess.frm._last_rpm:.0f} != 1500 (stride {fs / src.rate:.0f}x error)"
+    )

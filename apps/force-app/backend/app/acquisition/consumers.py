@@ -104,10 +104,14 @@ class FrmIntegrator:
     continuously. RPM is derived from the tacho pulse train each chunk (real path), falling back to
     the last-known RPM when a chunk is too short to time an edge."""
 
-    def __init__(self, cfg: RecordConfig, max_points_per_frame: int = 300):
+    def __init__(self, cfg: RecordConfig, fs: float | None = None, max_points_per_frame: int = 300):
         self.cfg = cfg
         self.max_pts = max_points_per_frame
-        self.fs = float(cfg.sample_rate)
+        # The rate data ACTUALLY arrives at, which is not always cfg.sample_rate: a ReplaySource
+        # decimates a long cut and streams at fs/stride, so reading cfg.sample_rate here reported
+        # RPM high by exactly that stride. Callers that genuinely acquire at cfg.sample_rate can
+        # omit it. CutDetector and session._update_fft already take source.rate for this reason.
+        self.fs = float(cfg.sample_rate if fs is None else fs)
         self.r_outer = cfg.diam / 2.0
         self.r_inner = cfg.inner_diam / 2.0 if cfg.inner_diam > 0 else 0.0
         self._theta = 0.0  # accumulated spindle angle (rad)
