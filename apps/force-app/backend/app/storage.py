@@ -3,6 +3,7 @@ free space, and total capacity. Windows-focused (the acquisition PC runs Windows
 
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import subprocess
@@ -62,6 +63,22 @@ def _detect_ssd_map() -> dict[str, bool]:
         return {}
 
 
+def _usable_root(root: str) -> str:
+    """Return the path that should actually be offered for a drive, not necessarily its bare root.
+
+    Google Drive for Desktop's virtual drive presents its writable content under
+    "<root>My Drive", not the root itself — the root is a synthetic shell namespace (it also
+    lists "Other computers"/shared drives there) that silently refuses to create files or folders
+    directly: os.makedirs on it fails with WinError 2 ("cannot find the file specified"), not
+    even a normal access-denied. "<root>My Drive" is a real, writable path, so use it when present
+    rather than offering a drive that 400s the moment it's picked.
+    """
+    my_drive = os.path.join(root, "My Drive")
+    if os.path.isdir(my_drive):
+        return my_drive + os.sep
+    return root
+
+
 def list_drives() -> list[dict]:
     """Enumerate available storage drives with capacity information."""
     if platform.system() != "Windows":
@@ -88,26 +105,43 @@ def list_drives() -> list[dict]:
     for letter in letters:
         root = f"{letter}:\\"
         dtype = _drive_type_win(letter)
-        if dtype not in ("fixed", "removable"):
+        # Network shares and cloud-sync virtual drives (Google Drive et al.) are offered, but
+        # flagged — the live backup feature exists specifically because a network hiccup mid-
+        # recording is a real risk to an in-progress capture, which local disk doesn't share.
+        if dtype not in ("fixed", "removable", "network"):
             continue
         try:
             u = shutil.disk_usage(root)
         except OSError:
             continue
+        usable_root = _usable_root(root)
+        is_cloud_sync = usable_root != root
+        less_reliable = dtype == "network" or is_cloud_sync
         drives.append(
             {
-                "path": root,
+                "path": usable_root,
                 "letter": letter,
                 "label": _volume_label(root),
                 "type": dtype,
                 "is_ssd": ssd_map.get(letter),
+                "less_reliable": less_reliable,
+                "reliability_note": (
+                    "Network drive — a connection drop mid-recording can lose or corrupt an "
+                    "in-progress capture. Consider Settings > Live Backup instead."
+                    if dtype == "network"
+                    else "Cloud-sync drive — a sync hiccup mid-recording can lose or corrupt an "
+                    "in-progress capture. Consider Settings > Live Backup instead."
+                    if is_cloud_sync
+                    else None
+                ),
                 "total_gb": round(u.total / 1e9, 1),
                 "free_gb": round(u.free / 1e9, 1),
                 "used_pct": round((u.total - u.free) / u.total * 100, 1) if u.total else 0,
             }
         )
-    # Sort: SSD first, then by free space descending
-    drives.sort(key=lambda d: (not d.get("is_ssd", False), -(d.get("free_gb", 0))))
+    # Sort: reliable drives first (SSD ahead of HDD within that group, then by free space
+    # descending), network/cloud-sync drives pushed to the bottom regardless of free space.
+    drives.sort(key=lambda d: (d.get("less_reliable", False), not d.get("is_ssd", False), -(d.get("free_gb", 0))))
     return drives
 
 

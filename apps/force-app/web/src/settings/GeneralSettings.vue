@@ -11,12 +11,27 @@ function setTheme(t: 'dark' | 'light') {
 }
 
 // ---- Storage location ----
-interface DriveInfo { path: string; letter?: string; label?: string; type: string; is_ssd: boolean | null; total_gb: number; free_gb: number; used_pct: number; }
+interface DriveInfo {
+	path: string; letter?: string; label?: string; type: string; is_ssd: boolean | null;
+	less_reliable?: boolean; reliability_note?: string | null;
+	total_gb: number; free_gb: number; used_pct: number;
+}
 const drives = ref<DriveInfo[]>([]);
 const currentStorage = ref<{ captures_root: string; free_gb: number; total_gb: number; used_pct: number } | null>(null);
 const storageSaved = ref(false);
 const storageLoading = ref(false);
 const storageError = ref('');
+
+// FastAPI's HTTPException body is {"detail": "..."} — showing that instead of a bare status code
+// is the difference between "cannot create directory: [WinError 2] ..." and "HTTP 400", the
+// latter of which sends every failure back to us to reproduce from scratch.
+async function errorDetail(res: Response, fallback: string): Promise<string> {
+	try {
+		const body = await res.json();
+		if (typeof body?.detail === 'string') return body.detail;
+	} catch { /* body wasn't JSON */ }
+	return `${fallback} (HTTP ${res.status})`;
+}
 
 async function loadDrives() {
 	storageLoading.value = true;
@@ -24,7 +39,7 @@ async function loadDrives() {
 	try {
 		const base = getConfig().recorderUrl;
 		const res = await fetch(`${base}/storage/drives`);
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		if (!res.ok) throw new Error(await errorDetail(res, 'failed to load drives'));
 		const data = await res.json();
 		drives.value = data.drives || [];
 		currentStorage.value = data.current || null;
@@ -45,7 +60,7 @@ async function selectDrive(drive: DriveInfo) {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ captures_root: path }),
 		});
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		if (!res.ok) throw new Error(await errorDetail(res, 'failed to set storage'));
 		const data = await res.json();
 		currentStorage.value = data;
 		// The drive can apply to the running backend but fail to persist (an unwritable config
@@ -94,11 +109,17 @@ onMounted(() => { loadDrives(); });
 		<div v-else-if="storageError" class="err">{{ storageError }}</div>
 
 		<div class="drive-list">
-			<button v-for="d in drives" :key="d.path" class="drive" :class="{ active: isCurrentDrive(d), ssd: d.is_ssd, low: d.free_gb < 10 }" @click="selectDrive(d)">
-				<span class="material-symbols-rounded drive-icon">{{ d.is_ssd ? 'flash_on' : 'hard_drive' }}</span>
+			<button v-for="d in drives" :key="d.path" class="drive" :class="{ active: isCurrentDrive(d), ssd: d.is_ssd, low: d.free_gb < 10, caution: d.less_reliable }" @click="selectDrive(d)">
+				<span class="material-symbols-rounded drive-icon">{{ d.less_reliable ? 'cloud' : d.is_ssd ? 'flash_on' : 'hard_drive' }}</span>
 				<div class="drive-info">
-					<span class="drive-name">{{ driveDisplayName(d) }}<span v-if="d.is_ssd" class="badge ssd-badge">SSD</span><span v-else-if="d.is_ssd === false" class="badge hdd-badge">HDD</span></span>
+					<span class="drive-name">
+						{{ driveDisplayName(d) }}
+						<span v-if="d.is_ssd" class="badge ssd-badge">SSD</span>
+						<span v-else-if="d.is_ssd === false && !d.less_reliable" class="badge hdd-badge">HDD</span>
+						<span v-if="d.less_reliable" class="badge caution-badge" :title="d.reliability_note || undefined">Not recommended</span>
+					</span>
 					<span class="drive-detail">{{ d.free_gb.toFixed(1) }} GB free of {{ d.total_gb.toFixed(0) }} GB</span>
+					<span v-if="d.reliability_note" class="drive-caution-note">{{ d.reliability_note }}</span>
 				</div>
 				<div class="drive-bar-wrap">
 					<div class="drive-bar" :class="{ warn: d.used_pct > 85, crit: d.used_pct > 95 }" :style="{ width: d.used_pct + '%' }"></div>
@@ -153,6 +174,10 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .badge { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
 .ssd-badge { color: #15803d; background: rgba(34,197,94,0.15); }
 .hdd-badge { color: var(--text-dim); background: var(--surface-2); }
+.caution-badge { color: #b45309; background: rgba(251,191,36,0.16); cursor: help; }
+.drive.caution:not(.active) { border-color: rgba(251,191,36,0.35); }
+.drive.caution .drive-icon { color: #b45309; }
+.drive-caution-note { font-size: 10.5px; color: #b45309; line-height: 1.4; margin-top: 1px; }
 .drive-bar-wrap { width: 80px; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
 .drive-bar { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.3s; }
 .drive-bar.warn { background: #fbbf24; }
