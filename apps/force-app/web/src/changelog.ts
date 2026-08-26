@@ -9,6 +9,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.9',
+		date: '2026-08-27',
+		notes: [
+			'Replay file now plays like a video: play, pause and scrub through a past cut, at true realtime speed by default (with slow-motion down to 0.25×). It drives the same waveform, FFT, FRM and RPM views a live cut does.',
+			'Replaying a cut no longer records a second copy of it — it plays the file already in the database, so nothing new is written to disk.',
+			'Fixed: replaying a long cut reported a spindle speed several times too high, which also raised a false safety alarm every time.',
+			'Fixed: replay ignored the speed you asked for on long cuts, always finishing in about 40 seconds however long the cut really was.',
+		],
+	},
+	{
 		version: '0.1.6',
 		date: '2026-08-26',
 		notes: [
