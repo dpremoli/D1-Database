@@ -171,6 +171,15 @@ if (gotLock) {
     if (process.platform !== 'darwin') app.quit();
   });
 
+  // The View/Help bar is redundant now — both menu items just navigate to Settings tabs already
+  // reachable from the in-app sidebar. Hiding (not removing) it keeps the Menu registered, so
+  // Reload/Toggle DevTools still work via their normal accelerators; only the visible bar goes
+  // away. Covers every window the app creates, including the "open in a second window" popouts
+  // from AppShell.vue, not just the main one.
+  app.on('browser-window-created', (_event, window) => {
+    window.setMenuBarVisibility(false);
+  });
+
   app.on('before-quit', (event) => {
     if (!supervisor || supervisor.getState() === 'stopped') return;
     event.preventDefault();
