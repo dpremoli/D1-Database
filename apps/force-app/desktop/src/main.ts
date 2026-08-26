@@ -141,7 +141,7 @@ async function createWindow(): Promise<void> {
 
   await mainWindow.loadURL('app://force/');
   void offerScheduledTaskCleanup();
-  initAutoUpdater();
+  initAutoUpdater(() => mainWindow);
 }
 
 export function getSupervisor(): SidecarSupervisor | null {

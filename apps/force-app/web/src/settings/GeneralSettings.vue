@@ -77,6 +77,42 @@ function isCurrentDrive(d: DriveInfo) {
 }
 
 onMounted(() => { loadDrives(); });
+
+// ---- Updates ---- (Electron only — the browser-served /app/ build has no window.forceApp and
+// auto-update has no meaning there, so this section just doesn't render for it.)
+type UpdateStatus =
+	| { state: 'idle' }
+	| { state: 'checking' }
+	| { state: 'available'; version: string }
+	| { state: 'not-available' }
+	| { state: 'downloading'; percent: number }
+	| { state: 'downloaded'; version: string }
+	| { state: 'error'; message: string };
+const isElectron = !!window.forceApp;   // false on the browser-served /app/ build
+const appVersion = ref('');
+const packaged = ref(false);
+const updateStatus = ref<UpdateStatus>({ state: 'idle' });
+const checking = ref(false);
+
+async function checkForUpdates() {
+	if (!window.forceApp) return;
+	checking.value = true;
+	try {
+		const res = await window.forceApp.checkForUpdates();
+		if (!res.ok) updateStatus.value = { state: 'error', message: res.reason || 'could not check for updates' };
+	} finally {
+		checking.value = false;
+	}
+}
+
+onMounted(async () => {
+	if (!window.forceApp) return;
+	const info = await window.forceApp.getUpdateInfo();
+	appVersion.value = info.version;
+	packaged.value = info.packaged;
+	updateStatus.value = info.status;
+	window.forceApp.onUpdateStatus((s) => { updateStatus.value = s; });
+});
 </script>
 
 <template>
@@ -117,6 +153,32 @@ onMounted(() => { loadDrives(); });
 			Low disk space! Only {{ currentStorage.free_gb.toFixed(1) }} GB remaining. Recordings may fail.
 		</p>
 
+		<template v-if="isElectron">
+			<h2 class="mt">Application</h2>
+			<p class="lead">Version {{ appVersion || '…' }}<span v-if="!packaged"> (dev build — auto-update is disabled)</span></p>
+			<div class="actions">
+				<button class="btn ghost" :disabled="!packaged || checking || updateStatus.state === 'checking' || updateStatus.state === 'downloading'"
+					@click="checkForUpdates">
+					<span class="material-symbols-rounded">refresh</span>
+					{{ updateStatus.state === 'checking' ? 'Checking…' : 'Check for updates' }}
+				</button>
+			</div>
+			<p v-if="updateStatus.state === 'not-available'" class="hint">
+				<span class="material-symbols-rounded" style="font-size:14px">check_circle</span> Up to date.
+			</p>
+			<p v-else-if="updateStatus.state === 'available'" class="hint">
+				<span class="material-symbols-rounded" style="font-size:14px">cloud_download</span> Version {{ updateStatus.version }} found — downloading…
+			</p>
+			<p v-else-if="updateStatus.state === 'downloading'" class="hint">
+				<span class="material-symbols-rounded" style="font-size:14px">cloud_download</span> Downloading… {{ updateStatus.percent }}%
+			</p>
+			<p v-else-if="updateStatus.state === 'downloaded'" class="hint">
+				<span class="material-symbols-rounded" style="font-size:14px">task_alt</span> Version {{ updateStatus.version }} downloaded — restart to install.
+			</p>
+			<p v-else-if="updateStatus.state === 'error'" class="err">
+				<span class="material-symbols-rounded" style="font-size:14px">error</span> {{ updateStatus.message }}
+			</p>
+		</template>
 	</div>
 </template>
 

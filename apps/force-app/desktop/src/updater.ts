@@ -1,13 +1,46 @@
-import { app, dialog } from 'electron';
+import { app, dialog, ipcMain, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
 
+export type UpdateStatus =
+  | { state: 'idle' }
+  | { state: 'checking' }
+  | { state: 'available'; version: string }
+  | { state: 'not-available' }
+  | { state: 'downloading'; percent: number }
+  | { state: 'downloaded'; version: string }
+  | { state: 'error'; message: string };
+
+let status: UpdateStatus = { state: 'idle' };
+let getWindow: (() => BrowserWindow | null) | null = null;
+
+function push(next: UpdateStatus): void {
+  status = next;
+  getWindow?.()?.webContents.send('update:status', status);
+}
+
 /** electron-updater needs a real packaged app with publish config to do anything meaningful —
- * calling it in dev throws on the missing dev-update-config.yml, so this is a no-op there. */
-export function initAutoUpdater(): void {
+ * calling it in dev throws on the missing dev-update-config.yml, so this is a no-op there. The
+ * IPC handlers stay registered either way so the Settings UI can show "dev build" instead of
+ * hanging on a renderer call that never resolves. */
+export function initAutoUpdater(getMainWindow: () => BrowserWindow | null): void {
+  getWindow = getMainWindow;
+
+  ipcMain.handle('update:get-info', () => ({ version: app.getVersion(), packaged: app.isPackaged, status }));
+  ipcMain.handle('update:check', () => {
+    if (!app.isPackaged) return { ok: false, reason: 'not a packaged build' };
+    autoUpdater.checkForUpdates().catch((err) => push({ state: 'error', message: err?.message || String(err) }));
+    return { ok: true };
+  });
+
   if (!app.isPackaged) return;
 
   autoUpdater.autoDownload = true;
-  autoUpdater.on('update-downloaded', () => {
+  autoUpdater.on('checking-for-update', () => push({ state: 'checking' }));
+  autoUpdater.on('update-available', (info) => push({ state: 'available', version: info.version }));
+  autoUpdater.on('update-not-available', () => push({ state: 'not-available' }));
+  autoUpdater.on('download-progress', (p) => push({ state: 'downloading', percent: Math.round(p.percent) }));
+  autoUpdater.on('update-downloaded', (info) => {
+    push({ state: 'downloaded', version: info.version });
     void dialog
       .showMessageBox({
         type: 'info',
@@ -28,7 +61,9 @@ export function initAutoUpdater(): void {
       });
   });
   autoUpdater.on('error', (err) => {
+    push({ state: 'error', message: err?.message || String(err) });
     console.error('autoUpdater error', err);
   });
-  autoUpdater.checkForUpdates().catch((err) => console.error('checkForUpdates failed', err));
+
+  autoUpdater.checkForUpdates().catch((err) => push({ state: 'error', message: err?.message || String(err) }));
 }
