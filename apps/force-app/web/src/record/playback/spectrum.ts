@@ -12,7 +12,11 @@ export interface SpectrumReply { fs: number; f: number[]; spectra: Record<string
 export interface SpectrumRequest {
 	fs: number;
 	names: string[];
-	samples: Float32Array;   // channel-major, names.length * n
+	// channel-major, names.length * n. Must span its whole backing buffer (byteOffset 0, no
+	// trailing bytes) — pump() posts `samples.buffer` directly rather than copying, since the one
+	// caller (engine.ts) always allocates a fresh exact-length Float32Array per request. A
+	// subarray view of a larger buffer would post extra bytes past the intended window.
+	samples: Float32Array;
 	nperseg?: number;
 	force?: boolean;         // bypass the throttle (scrub release)
 }
@@ -60,8 +64,10 @@ export function createSpectrumClient(baseUrl: string, opts: { minIntervalMs?: nu
 				const res = await fetch(`${baseUrl}/dsp/spectrum?${q}`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/octet-stream' },
-					// Send the exact bytes: a subarray view would post the whole backing buffer.
-					body: req.samples.slice().buffer,
+					// Cast because .buffer is ArrayBufferLike (it could be a SharedArrayBuffer, which
+					// is not a BodyInit). The contract on SpectrumRequest.samples guarantees a plain,
+					// exactly-sized ArrayBuffer here.
+					body: req.samples.buffer as ArrayBuffer,
 				});
 				if (!res.ok) throw new Error(`spectrum: ${res.status} ${(await res.text()).slice(0, 200)}`);
 				if (!disposed) c.onReply(await res.json());

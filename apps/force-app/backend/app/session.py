@@ -68,7 +68,7 @@ class RecordingSession:
             start_unix=time.time(),
         )
         self.decimator = Decimator(bins=2)
-        self.frm = FrmIntegrator(cfg, self.source.rate)
+        self.frm = FrmIntegrator(cfg, fs=self.source.rate)
         self.cut = CutDetector(cfg, self.source.rate)
         self.cut_started_t: float | None = None
         self._stop = threading.Event()

@@ -1134,6 +1134,11 @@ async def dsp_spectrum(request: Request, fs: float, names: str, nperseg: int = 4
             422, f"body has {flat.size} samples, not a multiple of {len(chan_names)} channels"
         )
     n = flat.size // len(chan_names)
+    # float64 is required, not cosmetic: rounding a float32-derived value to 4 decimals still
+    # carries float32's imprecise representation into the JSON output (e.g. 0.009800000116229057
+    # instead of a clean 0.0098) — test_spectrum_matches_welch_spectra_exactly catches this. The
+    # live path (session.py) passes raw float32 too, so this endpoint is the odd one out; that's
+    # pre-existing behavior, not something to change here.
     bufs = {
         name: flat[i * n : (i + 1) * n].astype(np.float64)
         for i, name in enumerate(chan_names)

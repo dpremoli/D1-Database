@@ -104,7 +104,7 @@ class FrmIntegrator:
     continuously. RPM is derived from the tacho pulse train each chunk (real path), falling back to
     the last-known RPM when a chunk is too short to time an edge."""
 
-    def __init__(self, cfg: RecordConfig, fs: float | None = None, max_points_per_frame: int = 300):
+    def __init__(self, cfg: RecordConfig, *, fs: float | None = None, max_points_per_frame: int = 300):
         self.cfg = cfg
         self.max_pts = max_points_per_frame
         # The rate data ACTUALLY arrives at, which is not always cfg.sample_rate: a ReplaySource

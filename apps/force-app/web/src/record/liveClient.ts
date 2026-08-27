@@ -292,23 +292,13 @@ export class RecordClient {
 		this.status.captureId = j.id;
 	}
 
-	// Replay a real recorded cut: upload its D1LC cache bytes to the backend, which reconstructs
-	// the raw channels and streams them through the identical live pipeline.
-	async startReplay(cacheBytes: ArrayBuffer, opts: { sample_name: string; axis: string; ppr: number; speed: number; extra_metadata?: Record<string, any> }) {
-		this.reset();
-		const fd = new FormData();
-		fd.append('file', new Blob([cacheBytes], { type: 'application/octet-stream' }), 'live_cache.bin');
-		fd.append('sample_name', opts.sample_name);
-		fd.append('axis', opts.axis);
-		fd.append('ppr', String(opts.ppr));
-		fd.append('speed', String(opts.speed));
-		fd.append('extra_metadata', JSON.stringify(opts.extra_metadata ?? {}));
-		const res = await fetch(this.base + '/record/start_replay', { method: 'POST', headers: { ...authHeaders() }, body: fd });
-		if (!res.ok) throw new Error(`replay failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
-		const j = await res.json();
-		this.status.state = 'recording';
-		this.status.captureId = j.id;
-	}
+	// NOTE: there is deliberately no startReplay() here any more. Replaying an archived cut is
+	// PLAYBACK — a local playhead over the cut (record/playback/engine.ts) that writes nothing —
+	// not a recording session, so nothing in the app posts /record/start_replay. That endpoint does
+	// still exist and stays covered by backend/tests/test_replay.py: it drives real data through
+	// the whole acquisition pipeline, which is useful as a pipeline test. This client method was
+	// its only caller and had none of its own left, so it went rather than lingering as a second,
+	// untested way to start a replay that behaves nothing like the transport controls.
 
 	async stop() {
 		const res = await fetch(this.base + '/record/stop', { method: 'POST', headers: { ...authHeaders() } });
