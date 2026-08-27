@@ -111,6 +111,10 @@ function closePanel(i: string) { layout.value = layout.value.filter((p) => p.i !
 const addable = computed(() => Object.entries(PANEL_TYPES).map(([type, m]) => ({ type, ...m, disabled: !!m.single && hasType(type) })));
 
 watch(() => st.state, async (s, prev) => {
+	// Playback never finalizes anything, so there is nothing to save — and its state only ever
+	// moves recording <-> idle, which would not match here anyway. Guarded explicitly so it stays
+	// true if playback's state handling changes.
+	if (w.mode.value === 'playback') return;
 	// Covers auto-stop (self-terminating duration, disk-full, etc) where the frontend never called
 	// w.stop() itself — the manual-stop path already opens this via workspace.ts's stop().
 	if ((s === 'finalizing' || s === 'done' || s === 'error') && prev === 'recording') {
@@ -137,11 +141,14 @@ async function checkDisk() {
 		}
 	} catch { /* backend unreachable */ } finally { diskInfo.checking = false; }
 }
+// Guarded to record mode: play() marks status 'recording' too (see playback/engine.ts), and
+// polling disk/backup status for an archived cut that writes nothing would be pure noise —
+// playback's only backend traffic is its own throttled /dsp/spectrum call.
 watch(() => st.state, (s) => {
-	if (s === 'recording' && !diskTimer) {
+	if (w.mode.value === 'record' && s === 'recording' && !diskTimer) {
 		checkDisk();
 		diskTimer = setInterval(checkDisk, 30_000);
-	} else if (s !== 'recording' && diskTimer) {
+	} else if ((s !== 'recording' || w.mode.value !== 'record') && diskTimer) {
 		clearInterval(diskTimer);
 		diskTimer = null;
 	}
@@ -171,10 +178,10 @@ async function checkBackup() {
 }
 let backupTimer: ReturnType<typeof setInterval> | null = null;
 watch(() => st.state, (s) => {
-	if (s === 'recording' && !backupTimer && backupStatus.enabled) {
+	if (w.mode.value === 'record' && s === 'recording' && !backupTimer && backupStatus.enabled) {
 		checkBackup();
 		backupTimer = setInterval(checkBackup, 5_000);
-	} else if (s !== 'recording' && backupTimer) {
+	} else if ((s !== 'recording' || w.mode.value !== 'record') && backupTimer) {
 		clearInterval(backupTimer);
 		backupTimer = null;
 		checkBackup();
@@ -262,6 +269,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
 	w.client.disconnect();
+	w.playback.dispose();
 	if (diskTimer) clearInterval(diskTimer);
 	if (backupTimer) clearInterval(backupTimer);
 	if (recoveryTickTimer) clearInterval(recoveryTickTimer);

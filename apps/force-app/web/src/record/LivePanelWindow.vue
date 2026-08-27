@@ -48,8 +48,10 @@ const subsOpen = ref(false);
 const subCount = computed(() => channels.value.filter((k) => (SUB_NAMES as readonly string[]).includes(k)).length);
 
 const client = new RecordClient();
-client.windowSec = windowSec.value;
-watch(windowSec, (v) => { client.windowSec = v; });
+// Clamped, matching the workspace path (workspace.ts). The number input below can be cleared to
+// empty/NaN, and a non-positive window makes the rolling plot drop every point it is handed.
+client.windowSec = Math.max(1, Number(windowSec.value) || 12);
+watch(windowSec, (v) => { client.windowSec = Math.max(1, Number(v) || 12); });
 const st = client.status;
 const ready = computed(() => client.snapshotReady.value);
 const colormap = ref(initColormap.value);

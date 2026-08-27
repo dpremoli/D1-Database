@@ -14,7 +14,10 @@ watch(() => w.client.frameSeq.value, () => {
 });
 
 const rpm = computed(() => w.st.rpm || 0);
-const target = computed(() => w.cfg.rpm || 0);
+// Resolved by the workspace: the replayed cut's own spindle speed in playback, the configured
+// target when recording — so a replay is measured against itself, not against whatever number
+// happened to be left in the recording form.
+const target = computed(() => w.rpmTarget.value || 0);
 const max = computed(() => Math.max(target.value * 1.25, rpm.value * 1.1, 100));
 const overTarget = computed(() => target.value > 0 && rpm.value > target.value * 1.02);
 

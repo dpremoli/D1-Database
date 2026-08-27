@@ -9,6 +9,7 @@ import { searchSamples, searchOperators, searchEquipment, searchTools, searchIns
 import { logRun, syncStatus } from './directusSync';
 import { alarmController } from './alarms';
 import { labamp, type AutoRangeRec } from './labampApi';
+import { createPlaybackEngine } from './playback/engine';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 
@@ -65,9 +66,25 @@ export function createWorkspace() {
 		forceMode: 'time', frmAxis: 'Fz', colormap: 'viridis', pointSize: 1.8, windowSec: 12, liveFrmStride: 1,
 	});
 	watch(() => plot.windowSec, (v) => { client.windowSec = Math.max(1, v); });
-	const replay = reactive<{ query: string; options: ReplayOption[]; cacheId: string; label: string; speed: number; loading: boolean }>(
-		{ query: '', options: [], cacheId: '', label: '', speed: 20, loading: false },
+	// `rpm`/`feed`/`diam` here describe the CUT BEING PLAYED. They deliberately do not live on
+	// `cfg`: that is the config for the next real recording and is also serialised into the
+	// Directus write-back by buildRunPayload(), so letting a replay overwrite it would silently
+	// carry an archived cut's parameters — including the cache's already-DECIMATED sample rate —
+	// into the next NI-DAQ capture and its logged record.
+	const replay = reactive<{ query: string; options: ReplayOption[]; cacheId: string; label: string; speed: number; loading: boolean; rpm: number; feed: number; diam: number }>(
+		{ query: '', options: [], cacheId: '', label: '', speed: 1, loading: false, rpm: 0, feed: 0, diam: 0 },
 	);
+
+	// Replaying an archived cut is PLAYBACK, not recording: a local playhead over a cut already in
+	// the database, writing nothing to disk. Making the mode explicit (rather than testing
+	// source.value === 'replay' at each site) keeps the "playback writes nothing" guarantee in one
+	// auditable place.
+	const mode = computed<'record' | 'playback'>(() => (source.value === 'replay' ? 'playback' : 'record'));
+	const playback = createPlaybackEngine(client, { baseUrl: client.baseUrl });
+	// The RPM gauge's reference line: the replayed cut's own spindle speed in playback, the
+	// configured target when recording. Panels read this rather than cfg.rpm directly.
+	const rpmTarget = computed(() => (mode.value === 'playback' ? replay.rpm : cfg.rpm));
+	watch(() => replay.speed, (s) => playback.setSpeed(s), { immediate: true });
 
 	const busy = ref(false);
 	const errMsg = ref<string | null>(null);
@@ -86,7 +103,12 @@ export function createWorkspace() {
 	// Safety alarms (2e) — the app-wide controller (config lives in Settings > Alarms), evaluated
 	// here on every live frame while recording.
 	const alarms = alarmController;
-	watch(() => client.frameSeq.value, () => { if (st.state === 'recording') alarms.evaluate(st.peaks, st.rpm, cfg.rpm); });
+	// Record mode only: an archived cut must never trip a safety alarm on a machine that is not
+	// cutting. Playback drove this with RPM that was also wrong by the decimation stride, so every
+	// replay raised the full-screen overlay.
+	watch(() => client.frameSeq.value, () => {
+		if (mode.value === 'record' && st.state === 'recording') alarms.evaluate(st.peaks, st.rpm, cfg.rpm);
+	});
 
 	// Converging between-cuts auto-range: after each cut, recommend + apply the next-pass per-channel
 	// ranges from THIS cut's recorded per-channel peaks (summary.channels_ranging). Applying them to
@@ -185,12 +207,9 @@ export function createWorkspace() {
 		alarms.reset();
 		try {
 			if (source.value === 'replay') {
-				if (!replay.cacheId) throw new Error('pick a cut to replay');
-				const res = await api.get(`/assets/${replay.cacheId}`, { responseType: 'arraybuffer' });
-				await client.startReplay(res.data as ArrayBuffer, {
-					sample_name: meta.sample_name || replay.label || 'REPLAY',
-					axis: plot.frmAxis, ppr: cfg.ppr, speed: replay.speed, extra_metadata: metaObj(),
-				});
+				// Playback is driven by the transport bar, not by start(). Reaching here means a
+				// caller bypassed the mode switch.
+				throw new Error('replay is played, not recorded — use the transport controls');
 			} else if (source.value === 'nidaq') {
 				// Reset the charge amplifier before each cut (clears accumulated charge drift).
 				try {
@@ -465,6 +484,17 @@ export function createWorkspace() {
 	// blank even though the original operation had them all recorded.
 	async function pickReplayCut(o: ReplayOption) {
 		replay.cacheId = o.cacheId; replay.label = o.label;
+		errMsg.value = null;
+		// Parse the cut locally and hand it to the playhead. No backend session is opened and
+		// nothing is written to disk — playback is a viewer over a cut already in the database.
+		try {
+			const res = await api.get(`/assets/${o.cacheId}`, { responseType: 'arraybuffer' });
+			const c = parseCache(res.data as ArrayBuffer);
+			playback.load(c, { ppr: cfg.ppr, stride: plot.liveFrmStride });
+			replay.feed = c.feed; replay.diam = c.diam;
+		} catch (e: any) {
+			errMsg.value = `could not load that cut — ${e?.message || e}`;
+		}
 		if (!o.operationId) return;
 		try {
 			const res = await api.get(`/items/manufacturing_operations/${o.operationId}`, {
@@ -487,6 +517,8 @@ export function createWorkspace() {
 			link.insertId = d.insert_edge_id?.insert_id?.insert_id || ''; link.insertLabel = d.insert_edge_id?.insert_id?.insert_code || '';
 			link.edgeId = d.insert_edge_id?.edge_id || ''; link.edgeLabel = d.insert_edge_id?.edge_code || '';
 			meta.op_type = d.machining_operation_subtype || '';
+			// Drives the RPM gauge's target in playback (see rpmTarget below) without touching cfg.
+			if (d.machining_spindle_speed_rpm != null) replay.rpm = Number(d.machining_spindle_speed_rpm);
 			meta.sample_name = rm.sample_name || link.sampleLabel || o.label;
 			meta.coolant = rm.coolant || '';
 			meta.notes = d.outcome_notes || rm.notes || '';
@@ -504,6 +536,7 @@ export function createWorkspace() {
 	return {
 		client, source, setSource, nidaqChannels, cfg, meta, machining, plot, replay, st, busy, errMsg, finishedCache,
 		isIdle, isRecording, isFinalizing, isDone, locked, saveOpen,
+		mode, playback, rpmTarget,
 		start, stop, newRun, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
 		// 2d: Directus links + run write-back
 		link, logged, onSelectSample, logRunNow, syncStatus,

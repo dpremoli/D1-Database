@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from urllib.parse import urlparse
 
+import numpy as np
 from fastapi import (
     FastAPI,
     File,
@@ -38,6 +39,7 @@ from . import channels as chan
 from . import nidaq_catalog, nidaq_enum, recovery, storage
 from .config import DEFAULT_NIDAQ_CHANNELS, RecordConfig
 from .d1lc import read_d1lc_header
+from .dsp import welch_spectra
 from .labamp import LabAmpClient, LabAmpError, MockLabAmp
 from .labamp_autorange import converge_ranges, effective_bits, recommend_ranges
 from .session import RecordingSession
@@ -1107,6 +1109,40 @@ async def record_start_replay(
     _session = RecordingSession(cfg, CAPTURES_ROOT, source, broadcaster=_broadcaster)
     _session.start()
     return _session.status()
+
+
+@app.post("/dsp/spectrum")
+async def dsp_spectrum(request: Request, fs: float, names: str, nperseg: int = 4096) -> dict:
+    """Welch amplitude spectra for one window of samples. Stateless — no session, no playhead.
+
+    Playback (an archived cut scrubbed in the browser) calls this a few times a second so its
+    FFT panel is computed by the SAME scipy path as a live recording's, rather than by a second
+    implementation in the frontend that could drift. Body is little-endian float32,
+    channel-major, len(names) * n_samples.
+    """
+    chan_names = [n for n in names.split(",") if n]
+    if not chan_names:
+        raise HTTPException(422, "names must list at least one channel")
+    raw = await request.body()
+    # Validate BEFORE np.frombuffer: it raises ValueError on a partial element, which would
+    # surface as a 500 rather than the 422 a malformed body deserves.
+    if len(raw) % 4:
+        raise HTTPException(422, f"body is {len(raw)} bytes, not a whole number of float32s")
+    flat = np.frombuffer(raw, dtype="<f4")
+    if flat.size % len(chan_names):
+        raise HTTPException(
+            422, f"body has {flat.size} samples, not a multiple of {len(chan_names)} channels"
+        )
+    n = flat.size // len(chan_names)
+    bufs = {
+        name: flat[i * n : (i + 1) * n].astype(np.float64)
+        for i, name in enumerate(chan_names)
+    }
+    # Welch is CPU-bound; keep it off the event loop so concurrent requests aren't stalled.
+    f, spectra = await run_in_threadpool(
+        welch_spectra, bufs, fs=fs, nperseg=max(1, int(nperseg))
+    )
+    return {"fs": fs, "f": f or [], "spectra": spectra}
 
 
 @app.post("/record/stop")

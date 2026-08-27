@@ -40,7 +40,10 @@ function openLive() {
 			speed-mode="measured" :rpm="w.cfg.rpm" :vc="0" :time-scale="1" :ppr="w.cfg.ppr"
 			:crop-start-sec="w.finishedCache.value.csSec" :crop-end-sec="w.finishedCache.value.ceSec"
 			:stride="1" :gridding="false" :grid-n="600" :point-size="w.plot.pointSize" :colormap="w.plot.colormap" pane-label="captured" />
-		<LiveFrm v-else :client="w.client" :diam="w.cfg.diam" :colormap="w.plot.colormap" :point-size="w.plot.pointSize" :point-stride="w.plot.liveFrmStride" />
+		<!-- diam is only the empty-canvas fallback (LiveFrm auto-fits to the real point bounds), but
+			 in playback it should still describe the cut being played, not the recording form. -->
+		<LiveFrm v-else :client="w.client" :diam="w.mode.value === 'playback' ? (w.replay.diam || w.cfg.diam) : w.cfg.diam"
+			:colormap="w.plot.colormap" :point-size="w.plot.pointSize" :point-stride="w.plot.liveFrmStride" />
 		</div>
 	</div>
 </template>

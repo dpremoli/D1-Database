@@ -78,3 +78,56 @@ def test_replay_end_to_end(tmp_path):
     assert abs(float(np.max(out["fz"])) - float(np.max(fz))) < 3.0
     # rpm recovered from the synthesised tacho is ~1500
     assert abs(float(np.median(out["rpm"])) - 1500.0) / 1500.0 < 0.05
+
+
+def test_replay_live_rpm_survives_decimation(tmp_path):
+    """A cut long enough to force stride > 1 must still report the cache's true RPM live.
+
+    Regression: /record/start_replay sets cfg.sample_rate to the cache's ORIGINAL rate while
+    ReplaySource streams at fs/stride, so FrmIntegrator (which read cfg.sample_rate) reported
+    RPM high by exactly `stride`. Every fixture above is stride == 1, which is why it was missed.
+    """
+    n, fs = 400_000, 20_000.0  # 20 s; > the 300k cap, so ReplaySource decimates
+    cache, _ = _make_cache(tmp_path, n=n, fs=fs, rpm=1500.0)
+    src = ReplaySource(cache, ppr=1, realtime=False)
+    assert src.rate < fs, "fixture must actually decimate or it cannot catch this"
+
+    # Exactly what main.py:record_start_replay builds — cfg.sample_rate is the ORIGINAL fs.
+    cfg = RecordConfig(
+        sample_name="REPLAY-DECIMATED", axis="Fz",
+        feed=src.feed, diam=src.diam, sample_rate=fs, duration_sec=n / fs, ppr=1,
+    )
+    sess = RecordingSession(cfg, str(tmp_path), src, broadcaster=None)
+    sess.start()
+    sess._thread.join(120)
+    sess.join_finalize(120)
+    assert sess.state == "done", sess.error
+    assert abs(sess.frm._last_rpm - 1500.0) / 1500.0 < 0.05, (
+        f"live RPM {sess.frm._last_rpm:.0f} != 1500 (stride {fs / src.rate:.0f}x error)"
+    )
+
+
+def test_replay_honours_speed_on_long_chunks(tmp_path):
+    """Pacing must track the requested speed even when a chunk exceeds the old 0.1 s sleep cap.
+
+    Chunks are sized so any replay is ~400 of them, so a long cut has long chunks. The old
+    min(dt, 0.1) cap under-slept every one of them and never caught up, giving a ~40 s floor
+    per replay however long the cut really was.
+    """
+    import time
+
+    n, fs = 200_000, 2_000.0  # 100 s of cut; chunk lands well above 0.1 s of wall time at 1x
+    cache, _ = _make_cache(tmp_path, n=n, fs=fs, rpm=1500.0)
+    src = ReplaySource(cache, ppr=1, realtime=True, speed=1.0)
+    chunk_sec = src.chunk / src.rate
+    assert chunk_sec > 0.1, f"fixture chunk {chunk_sec:.3f}s must exceed the old cap"
+
+    src.start()
+    t0 = time.perf_counter()
+    reads = 5
+    for _ in range(reads):
+        assert src.read() is not None
+    wall = time.perf_counter() - t0
+    played = reads * chunk_sec
+    # Allow generous slack for scheduler jitter; the bug was a 3x+ overspeed, not a few percent.
+    assert wall > played * 0.7, f"played {played:.2f}s of cut in {wall:.2f}s wall — too fast"

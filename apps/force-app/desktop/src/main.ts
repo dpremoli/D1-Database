@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, Menu } from 'electron';
+import { app, BrowserWindow, dialog, Menu, screen } from 'electron';
 import path from 'node:path';
 import { ConfigStore } from './config';
 import { buildMenu } from './menu';
@@ -8,7 +8,7 @@ import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
 import { initAutoUpdater } from './updater';
 import { classifyWindowOpen, popoutKey } from './windowOpen';
-import { WindowStateStore } from './windowState';
+import { WindowStateStore, isOnSomeDisplay } from './windowState';
 
 const PREFERRED_PORT = 8200;
 const HEALTH_PATH = '/health';
@@ -97,6 +97,17 @@ function onSidecarStateChange(state: SidecarState, detail?: string): void {
   }
 }
 
+/** Work areas of every connected screen (excludes taskbars/docks). Wrapped because `screen` is
+ * only usable after the app is ready, and a failure here should degrade to "place it yourself"
+ * rather than take the window down. */
+function currentDisplayAreas() {
+  try {
+    return screen.getAllDisplays().map((d) => d.workArea);
+  } catch {
+    return [];
+  }
+}
+
 async function createWindow(): Promise<void> {
   const configStore = new ConfigStore(app.getPath('userData'));
   configStore.seedIfMissing();
@@ -104,11 +115,16 @@ async function createWindow(): Promise<void> {
 
   const mainKey = 'main';
   const savedMain = windowState.get(mainKey);
+  // A remembered position is only usable if the machine still has a screen there. Undock the
+  // monitor a window was last on and the saved coordinates point into empty space, which reopens
+  // the app somewhere the operator cannot see or drag it back from. Drop just the position in that
+  // case and let Electron place the window; the remembered SIZE is still good.
+  const mainOnScreen = savedMain ? isOnSomeDisplay(savedMain, currentDisplayAreas()) : false;
   mainWindow = new BrowserWindow({
     width: savedMain?.width ?? 1500,
     height: savedMain?.height ?? 950,
-    x: savedMain?.x,
-    y: savedMain?.y,
+    x: mainOnScreen ? savedMain?.x : undefined,
+    y: mainOnScreen ? savedMain?.y : undefined,
     show: false,
     // Packaged builds get this for free — electron-builder embeds build/icon.ico into the .exe
     // itself, and Windows shows that everywhere (title bar, taskbar, Start Menu) with no runtime
@@ -128,7 +144,11 @@ async function createWindow(): Promise<void> {
   mainWindow.on('close', () => {
     if (!mainWindow) return;
     const maximized = mainWindow.isMaximized();
-    const bounds = maximized ? mainWindow.getNormalBounds() : mainWindow.getBounds();
+    // getNormalBounds() for minimized too, not just maximized: Windows reports x/y ≈ -32000 for a
+    // minimized window, so closing while minimized would persist an off-screen position and the
+    // next launch would open out of view.
+    const restoring = maximized || mainWindow.isMinimized();
+    const bounds = restoring ? mainWindow.getNormalBounds() : mainWindow.getBounds();
     windowState.save(mainKey, { ...bounds, maximized });
   });
   mainWindow.webContents.setWindowOpenHandler((details) => classifyWindowOpen(details, windowState));
@@ -136,7 +156,7 @@ async function createWindow(): Promise<void> {
   // is the hook that actually gets one, so a pop-out's size/position can be saved when it closes.
   mainWindow.webContents.on('did-create-window', (win, details) => {
     const key = popoutKey(details.url);
-    win.on('close', () => windowState.save(key, win.getBounds()));
+    win.on('close', () => windowState.save(key, win.isMinimized() || win.isMaximized() ? win.getNormalBounds() : win.getBounds()));
   });
 
   handleAppProtocol(webDistDir(), configStore.path);

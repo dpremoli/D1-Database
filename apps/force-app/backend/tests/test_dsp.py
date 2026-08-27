@@ -43,3 +43,37 @@ def test_frm_spiral_revs():
     # spiral radius stays within the disc and winds inward from the rim
     r = np.hypot(x, y)
     assert r.max() <= 40.0 + 1e-6 and r[-1] < r[0]
+
+
+def test_welch_spectra_peaks_at_the_input_frequency():
+    import numpy as np
+
+    from app.dsp import welch_spectra
+
+    fs, n, f0 = 2000.0, 4096, 120.0
+    t = np.arange(n) / fs
+    bufs = {
+        "Fz": np.sin(2 * np.pi * f0 * t),
+        "Fx": np.zeros(n),
+        "Short": np.zeros(10),  # below min_samples — must be dropped, not crash
+    }
+    f, spectra = welch_spectra(bufs, fs=fs, nperseg=1024)
+
+    assert f is not None
+    assert "Short" not in spectra
+    assert set(spectra) == {"Fz", "Fx"}
+    # step = f.size // max_bins is a floor division (matching the pre-existing
+    # session._update_fft formula this preserves), so the sliced result can land a little
+    # over max_bins rather than exactly at or under it — bound generously, not exactly.
+    assert len(f) == len(spectra["Fz"]) <= 260
+    peak_hz = f[int(np.argmax(spectra["Fz"]))]
+    assert abs(peak_hz - f0) < 10.0, f"peak at {peak_hz} Hz, expected ~{f0}"
+
+
+def test_welch_spectra_empty_when_all_buffers_too_short():
+    import numpy as np
+
+    from app.dsp import welch_spectra
+
+    f, spectra = welch_spectra({"Fz": np.zeros(4)}, fs=1000.0, nperseg=256)
+    assert f is None and spectra == {}

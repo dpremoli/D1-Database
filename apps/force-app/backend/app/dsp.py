@@ -7,6 +7,7 @@ can move to abfp_core later without changing these signatures.
 from __future__ import annotations
 
 import numpy as np
+from scipy import signal as ssig
 
 from .config import AXIS_SUM, SIGNAL_CHANNELS
 
@@ -76,3 +77,34 @@ def frm_spiral(
     x = rho * np.cos(theta)
     y = rho * np.sin(theta)
     return x, y, revs_cum
+
+
+def welch_spectra(
+    bufs: dict[str, np.ndarray],
+    fs: float,
+    nperseg: int,
+    min_samples: int = 256,
+    max_bins: int = 240,
+) -> tuple[list[float] | None, dict[str, list[float]]]:
+    """Welch AMPLITUDE spectra for a set of named channel buffers, decimated for the wire.
+
+    One implementation shared by the live recording path (session._update_fft) and the
+    /dsp/spectrum endpoint that playback calls, so a replayed cut's FFT cannot drift from a
+    live one's. Buffers shorter than `min_samples` are skipped rather than erroring, since
+    live chunks arrive before the rolling window has filled.
+
+    Returns (f, {name: amp}) with f decimated to at most `max_bins` points, or (None, {}) if
+    no buffer was long enough.
+    """
+    f: np.ndarray | None = None
+    psd: dict[str, np.ndarray] = {}
+    for name, buf in bufs.items():
+        if buf.size < min_samples:
+            continue
+        f, p = ssig.welch(buf, fs=fs, nperseg=min(int(nperseg), buf.size))
+        psd[name] = p
+    if f is None:
+        return None, {}
+    step = max(1, f.size // max_bins)
+    fout = f[::step].round(2).tolist()
+    return fout, {n: np.sqrt(p[::step]).round(4).tolist() for n, p in psd.items()}
