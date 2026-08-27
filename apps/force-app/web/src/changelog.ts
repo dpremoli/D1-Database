@@ -9,6 +9,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.10',
+		date: '2026-08-27',
+		notes: [
+			'Fixed: the replay scrub bar vanished when the Recording panel was narrow — it collapsed to zero width behind the play button and time readout, leaving playback uncontrollable. The row now wraps and the scrub keeps a usable width.',
+		],
+	},
+	{
 		version: '0.1.9',
 		date: '2026-08-27',
 		notes: [

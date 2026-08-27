@@ -23,7 +23,12 @@ function fmt(sec: number): string {
 
 <template>
 	<div class="transport">
-		<div class="row">
+		<!-- The Recording panel is user-resizable and can get narrow. Keeping this on one row meant
+			 the scrub bar (flex:1, min-width:0) was squeezed to nothing by the play button and the
+			 time readout — measured at 0 px below ~1030 px of window width, i.e. genuinely
+			 unusable, not merely cramped. The scrub now holds a floor width and the readout drops
+			 to its own line instead. -->
+		<div class="row transport-main">
 			<button class="play" :disabled="!p.loaded" :title="p.playing ? 'Pause' : 'Play'" @click="w.playback.toggle()">
 				<span class="material-symbols-rounded">{{ p.playing ? 'pause' : 'play_arrow' }}</span>
 			</button>
@@ -50,13 +55,18 @@ function fmt(sec: number): string {
 .transport { display: flex; flex-direction: column; gap: 7px; padding: 9px 0 2px; border-top: 1px solid var(--border); }
 .row { display: flex; align-items: center; gap: 9px; }
 .row.sub { justify-content: space-between; }
+/* Wrap rather than crush: below the width where all three fit, the time readout moves to its own
+   line and the scrub keeps its floor. */
+.transport-main { flex-wrap: wrap; }
 .play { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex-shrink: 0;
 	background: #22c55e; color: #05210f; border: none; border-radius: 50%; cursor: pointer; }
 .play:disabled { opacity: 0.5; cursor: not-allowed; }
 .play .material-symbols-rounded { font-size: 21px; }
-.scrub { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+/* min-width, NOT the usual `min-width: 0`: this control has to stay grabbable. Under the floor
+   the row wraps (above) instead of shrinking it away to a zero-width, unclickable element. */
+.scrub { flex: 1 1 90px; min-width: 90px; accent-color: var(--accent); cursor: pointer; }
 .scrub:disabled { opacity: 0.5; cursor: not-allowed; }
-.time { font-size: 11.5px; font-family: var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.time { font-size: 11.5px; font-family: var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; flex-shrink: 0; margin-left: auto; }
 .speed { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-dim); margin: 0; }
 .speed select { width: auto; margin: 0; padding: 4px 7px; font-size: 12px; }
 .note { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--text-dim); cursor: help; }

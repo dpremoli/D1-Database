@@ -210,6 +210,21 @@ test('replay plays as a video: play/pause/scrub drives the live viewers and writ
     await window.waitForTimeout(1200);
     expect(await playheadSec(window)).toBeCloseTo(atPause, 5);
 
+    // ---- The scrub bar stays usable in a narrow panel ----
+    // Regression: `.scrub` was flex:1 with min-width:0, so the play button and time readout
+    // squeezed it to literally 0 px once the options panel got narrow — measured 2.4 px at
+    // 1100 px of window width and 0 px at 1024 px, which is what CI runners give you. A
+    // zero-width range input is unclickable, and Playwright reports it as not visible.
+    // Checked at the smallest width the app is expected to cope with, not just the default.
+    await app.evaluate(async ({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0].setContentSize(1024, 720);
+    });
+    await window.waitForTimeout(700);
+    const narrowBox = await scrub.boundingBox();
+    console.log(`[layout] scrub width at 1024px window: ${narrowBox?.width.toFixed(1)}px`);
+    expect(narrowBox!.width).toBeGreaterThan(40);
+    await expect(scrub).toBeVisible();
+
     // ---- Scrub forwards, then backwards ----
     await scrub.fill('15');
     await expect.poll(() => playheadSec(window)).toBeCloseTo(15, 1);
