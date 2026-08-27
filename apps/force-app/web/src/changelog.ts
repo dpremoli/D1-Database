@@ -9,6 +9,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.12',
+		date: '2026-08-27',
+		notes: [
+			'Fixed: a failed download while switching replay cuts could leave the picker showing the new cuts name while the transport kept playing the old cut. The previous cut now stays fully in effect until a new one actually finishes loading.',
+			'Fixed: switching to a new replay cut could show the previous cuts RPM target or depth of cut if the new cut had none recorded, instead of reading as not set.',
+			'Fixed: a stored outer diameter of exactly 0 (meaning "not set") was being read as a real 0 mm override, showing Diameter and Surface speed as 0.',
+			'Fixed: the Capture rate tile could read several times too low for a real recording, since it was reading the decimated cache rate instead of the true acquisition rate.',
+			'Fixed: dismissing the cut search without picking a different cut (Escape, or clicking away) used to lose the loaded cuts label and parameter panel even though playback kept running.',
+			'Fixed: the FRM panels Fx/Fy/Fz colour toggle had no effect once a replay cut was already loaded.',
+		],
+	},
+	{
 		version: '0.1.11',
 		date: '2026-08-27',
 		notes: [

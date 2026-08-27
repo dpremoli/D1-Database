@@ -11,6 +11,12 @@ import { useWorkspace, type ReplayOption } from '../workspace';
 
 const w = useWorkspace();
 const open = ref(false);
+// Whether the picker is actively searching for a DIFFERENT cut than the one currently loaded.
+// Deliberately separate from w.replay.cacheId: clearing cacheId itself to show the search box
+// (the previous approach) meant dismissing the dropdown WITHOUT picking — Escape, or a click
+// outside — permanently lost the loaded cut's label and its parameter panel even though playback
+// kept running that exact cut. reselecting only ever affects what this component shows.
+const reselecting = ref(false);
 const inputEl = ref<HTMLInputElement | null>(null);
 const rootEl = ref<HTMLDivElement | null>(null);
 let t: any = null;
@@ -33,12 +39,15 @@ function pick(o: ReplayOption) {
 	w.pickReplayCut(o);
 	close();
 }
-function close() { open.value = false; inputEl.value?.blur(); }
+function close() {
+	open.value = false;
+	// Only revert to the collapsed view if there IS a loaded cut to revert to — dismissing before
+	// ever picking one (first use) has nothing to fall back to, so the search box stays put.
+	if (w.replay.cacheId) reselecting.value = false;
+	inputEl.value?.blur();
+}
 function change() {
-	// Reopen search on the currently-loaded cut's label cleared back to blank — picking a new cut
-	// naturally replaces the loaded one (pickReplayCut / playback.load both start from a clean
-	// slate), so there is nothing to explicitly unload here.
-	w.replay.cacheId = '';
+	reselecting.value = true;
 	w.replay.query = '';
 	open.value = true;
 	w.searchCuts('');
@@ -51,7 +60,7 @@ function delayedBlurClose() { window.setTimeout(() => { open.value = false; }, 1
 	<div ref="rootEl" class="cutpicker">
 		<span class="lbl">Find a cut <span class="sub">(narrowed by Sample/Operation type/Machine above)</span></span>
 		<!-- Collapsed: the picked cut's label, one line, with a button to search again. -->
-		<div v-if="w.replay.cacheId && !open" class="chosen">
+		<div v-if="w.replay.cacheId && !reselecting" class="chosen">
 			<span class="chosen-label">{{ w.replay.label }}</span>
 			<button type="button" class="change" :disabled="w.locked.value" @click="change">
 				<span class="material-symbols-rounded">search</span> change

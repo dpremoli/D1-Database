@@ -29,6 +29,7 @@ export interface PlaybackEngine {
 	play(): void; pause(): void; toggle(): void;
 	seek(tSec: number, o?: { commit?: boolean }): void;
 	setSpeed(x: number): void;
+	setAxis(axis: Axis): void;
 	dispose(): void;
 	state: PlaybackState;
 }
@@ -320,6 +321,22 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 			lastTick = now();
 		},
 		setSpeed(x) { state.speed = x > 0 ? x : 1; },
+		setAxis(axis) {
+			// FrmPanel's Fx/Fy/Fz toggle is always visible, not gated on mode, and for the
+			// finished-cut view it IS live (FrmCloud's :axis prop is reactive). Without this,
+			// clicking it during playback silently did nothing — colorAxis was set once at load()
+			// and never revisited, so the button's `on` state changed but the spiral's colours did
+			// not, which read as broken rather than merely unbuilt.
+			if (!state.loaded || !cache || axis === colorAxis) return;
+			colorAxis = axis;
+			const [lo, hi] = axisAutoLimits(cache, axis);
+			client.frm.cLo = lo; client.frm.cHi = hi;
+			// Force renderTo's "target < frmCursor" rebuild branch regardless of tSec — this is the
+			// exact same full-rebuild path a backward seek already takes (cheap: a linear pass over
+			// typed arrays), just triggered by an axis change instead of a smaller playhead.
+			frmCursor = cache.N + 1;
+			renderTo(state.tSec, false);
+		},
 		dispose() { pause(); spectra.dispose(); cache = null; },
 	};
 }

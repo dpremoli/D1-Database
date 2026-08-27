@@ -17,7 +17,9 @@ export interface ReplayOption {
 	label: string; cacheId: string; opId: string; operationId: string | null;
 	// From machining_force_analysis itself, not the linked operation — this is where the recorder
 	// or the MATLAB ingestion pipeline actually stores a cut's true pulses-per-rev and diameters.
-	ppr: number | null; outerDiam: number | null; innerDiam: number | null;
+	// sampleRate is the TRUE acquisition rate; the cache's own Fs is decimated for a force-app cut
+	// (finalize.py's fs_eff = fs/stride) and can read several times too low if used directly.
+	ppr: number | null; outerDiam: number | null; innerDiam: number | null; sampleRate: number | null;
 }
 
 // The "Operation type" select's values are short codes (MT-* = machining/turning, MM-* =
@@ -483,7 +485,7 @@ export function createWorkspace() {
 			const res = await api.get('/items/machining_force_analysis', {
 				params: {
 					filter, limit: 25, sort: '-created_at',
-					fields: ['id', 'live_cache_file', 'created_at', 'pulses_per_rev', 'outer_diameter', 'inner_diameter',
+					fields: ['id', 'live_cache_file', 'created_at', 'pulses_per_rev', 'outer_diameter', 'inner_diameter', 'sample_rate',
 						'operation_id.operation_id', 'operation_id.pass_code',
 						'operation_id.sample_id.sample_code', 'operation_id.sample_id.nickname'],
 				},
@@ -494,6 +496,7 @@ export function createWorkspace() {
 				ppr: r.pulses_per_rev != null ? Number(r.pulses_per_rev) : null,
 				outerDiam: r.outer_diameter != null ? Number(r.outer_diameter) : null,
 				innerDiam: r.inner_diameter != null ? Number(r.inner_diameter) : null,
+				sampleRate: r.sample_rate != null ? Number(r.sample_rate) : null,
 			})).filter((o: ReplayOption) => o.cacheId);
 		} catch { replay.options = []; } finally { replay.loading = false; }
 	}
@@ -503,29 +506,53 @@ export function createWorkspace() {
 	// recording" left every other field (operator, machine, tool, insert/edge, machining params)
 	// blank even though the original operation had them all recorded.
 	async function pickReplayCut(o: ReplayOption) {
-		replay.cacheId = o.cacheId; replay.label = o.label;
 		errMsg.value = null;
+		replay.downloading = true;
+		// Parse the cut locally and hand it to the playhead. No backend session is opened and
+		// nothing is written to disk — playback is a viewer over a cut already in the database.
+		//
+		// Nothing in `replay`/`machining` is written until this succeeds: committing the NEW cut's
+		// identity (cacheId/label) up front, before the download can actually fail, used to leave
+		// the picker showing cut B's label while the transport kept playing cut A's data — the
+		// pick and the load could disagree. A failed download now leaves the previous cut (identity
+		// AND its metadata below) exactly as it was; errMsg reports the failure.
+		let c;
+		try {
+			const res = await api.get(`/assets/${o.cacheId}`, { responseType: 'arraybuffer' });
+			c = parseCache(res.data as ArrayBuffer);
+		} catch (e: any) {
+			errMsg.value = `could not load that cut — ${e?.message || e}`;
+			replay.downloading = false;
+			return;
+		}
 		// PPR (and diameters) come from the cut's own machining_force_analysis row, fetched
 		// alongside it in searchCuts — NOT from cfg.ppr, which is the recording form's value and
 		// has no relation to how this cut was actually recorded. Getting this wrong doesn't just
 		// look slightly off: the FRM spiral's radius is r = revs/ppr, so a wrong ppr makes the
 		// spiral wind in at the wrong rate and it can visibly stop short of the centre (a "donut")
 		// or overshoot, instead of tracking the real geometry.
-		replay.ppr = o.ppr ?? 1;
-		replay.innerDiam = o.innerDiam ?? 0;
-		replay.downloading = true;
-		// Parse the cut locally and hand it to the playhead. No backend session is opened and
-		// nothing is written to disk — playback is a viewer over a cut already in the database.
-		try {
-			const res = await api.get(`/assets/${o.cacheId}`, { responseType: 'arraybuffer' });
-			const c = parseCache(res.data as ArrayBuffer);
-			playback.load(c, { ppr: replay.ppr, innerDiam: replay.innerDiam, stride: plot.liveFrmStride, axis: plot.frmAxis });
-			replay.feed = c.feed; replay.diam = o.outerDiam ?? c.diam; replay.sampleRate = c.Fs;
-		} catch (e: any) {
-			errMsg.value = `could not load that cut — ${e?.message || e}`;
-		} finally {
-			replay.downloading = false;
-		}
+		const ppr = o.ppr ?? 1;
+		const innerDiam = o.innerDiam ?? 0;
+		playback.load(c, { ppr, innerDiam, stride: plot.liveFrmStride, axis: plot.frmAxis });
+		replay.cacheId = o.cacheId; replay.label = o.label;
+		replay.ppr = ppr; replay.innerDiam = innerDiam; replay.feed = c.feed;
+		// 0 is a real, common outer_diameter value on this table meaning "use the .mat metadata",
+		// not "override to zero" (db/migrations/20260721000096_force_outer_diameter.sql) — || so a
+		// stored 0 falls through to the cache's own diameter, matching FrmPanel's existing
+		// w.replay.diam || w.cfg.diam. ?? would have read Diameter and Surface speed as 0.
+		replay.diam = o.outerDiam || c.diam;
+		// The cache's own Fs is decimated for a force-app-recorded cut (finalize.py's
+		// fs_eff = fs/stride) and can understate the true rate several times over — prefer the
+		// row's own sample_rate (the true acquisition rate) when the cut has one.
+		replay.sampleRate = o.sampleRate || c.Fs;
+		replay.downloading = false;
+		// A picked cut's descriptive metadata (RPM target, depth of cut, …) starts blank rather
+		// than carrying over whatever the PREVIOUSLY picked cut's operation record happened to
+		// hold — both are only ever set below, and only if this new cut's own record has a value.
+		replay.rpm = 0;
+		machining.axial_doc = ''; machining.radial_doc = ''; machining.cutting_length = '';
+		machining.coolant_pressure = ''; machining.operation_sequence = ''; machining.chips_ref = '';
+		machining.new_edge = false; machining.chips_collected = false;
 		if (!o.operationId) return;
 		try {
 			const res = await api.get(`/items/manufacturing_operations/${o.operationId}`, {

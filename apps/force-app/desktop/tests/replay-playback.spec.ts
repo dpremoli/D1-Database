@@ -100,6 +100,10 @@ async function stubDirectusAndBypassLogin(window: Page, directusUrl: string, cac
             pulses_per_rev: 4,
             outer_diameter: 80,
             inner_diameter: 0,
+            // Deliberately far from the synthetic cache's own Fs (1000 Hz): proves the tile
+            // prefers the row's TRUE sample_rate over live_cache.bin's own Fs, which finalize.py
+            // decimates for a force-app-recorded cut and can understate several times over.
+            sample_rate: 25600,
             operation_id: {
               operation_id: OPERATION_ID,
               pass_code: 'TEST-REPLAY-CUT',
@@ -197,6 +201,22 @@ test('replay plays as a video: play/pause/scrub drives the live viewers and writ
     // at the wrong rate and stop short of the centre. Directly checks the value pickReplayCut
     // fetched, independent of the geometry maths (engine.test.ts covers that).
     const pprTile = window.locator('.cut-params .stat-tile', { hasText: 'Pulses/rev' });
+    await expect(pprTile.locator('.value-text')).toHaveText('4');
+    const captureTile = window.locator('.cut-params .stat-tile', { hasText: 'Capture' });
+    await expect(captureTile.locator('.value-text')).toHaveText('25.6');
+
+    // ---- Dismissing the picker without choosing a different cut keeps the loaded one ----
+    // Regression: "change" used to clear w.replay.cacheId immediately, so pressing Escape (or
+    // clicking away) without actually picking a new cut permanently lost the loaded cut's label
+    // and its whole parameter panel, even though playback kept running that exact cut underneath.
+    // Deliberately placed before Play starts: this is about the picker's own state, not
+    // playback, and doing it here costs no cut-time — done mid-playback it would eat into the
+    // same 20s the cut only has once, racing the "Pause freezes" check below for no reason.
+    await window.locator('.cutpicker .change').click();
+    const searchInput = window.locator('.cutpicker input');
+    await expect(searchInput).toBeFocused();   // the rAF-deferred focus() in change() landed
+    await searchInput.press('Escape');
+    await expect(window.locator('.cutpicker .chosen-label')).toHaveText('TEST-REPLAY-CUT');
     await expect(pprTile.locator('.value-text')).toHaveText('4');
 
     const scrub = window.locator('.transport .scrub');

@@ -288,4 +288,22 @@ describe('playback engine', () => {
 		for (let i = 0; i < h.client.frm.count; i++) if (Math.abs(h.client.frm.c[i]) > 200) sawLarge = true;
 		expect(sawLarge).toBe(true);
 	});
+	it('setAxis recolours already-drawn points, not just future ones', () => {
+		// Regression: colorAxis was frozen at load() with nothing watching a later change, so
+		// FrmPanel's Fx/Fy/Fz toggle silently did nothing once a cut was already loaded and points
+		// had been drawn.
+		const h = harness();
+		h.engine.load(makeDenseCache(), { ppr: 1, stride: 1, axis: 'Fz' });
+		h.engine.seek(5);
+		const beforeC0 = h.client.frm.c[0];
+		const beforeCLo = h.client.frm.cLo, beforeCHi = h.client.frm.cHi;
+
+		h.engine.setAxis('Fx');
+
+		// Same playhead, same point count, but the colour SOURCE (and its scale) must have changed —
+		// makeDenseCache's Fx and Fz series are unrelated (Fx = i, Fz = a bounded sine), so a
+		// genuine recolour changes both the raw value at index 0 and the axis's own cLo/cHi.
+		expect(h.client.frm.c[0]).not.toBe(beforeC0);
+		expect(h.client.frm.cLo === beforeCLo && h.client.frm.cHi === beforeCHi).toBe(false);
+	});
 });
