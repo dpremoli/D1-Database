@@ -1139,14 +1139,9 @@ async def dsp_spectrum(request: Request, fs: float, names: str, nperseg: int = 4
     # instead of a clean 0.0098) — test_spectrum_matches_welch_spectra_exactly catches this. The
     # live path (session.py) passes raw float32 too, so this endpoint is the odd one out; that's
     # pre-existing behavior, not something to change here.
-    bufs = {
-        name: flat[i * n : (i + 1) * n].astype(np.float64)
-        for i, name in enumerate(chan_names)
-    }
+    bufs = {name: flat[i * n : (i + 1) * n].astype(np.float64) for i, name in enumerate(chan_names)}
     # Welch is CPU-bound; keep it off the event loop so concurrent requests aren't stalled.
-    f, spectra = await run_in_threadpool(
-        welch_spectra, bufs, fs=fs, nperseg=max(1, int(nperseg))
-    )
+    f, spectra = await run_in_threadpool(welch_spectra, bufs, fs=fs, nperseg=max(1, int(nperseg)))
     return {"fs": fs, "f": f or [], "spectra": spectra}
 
 

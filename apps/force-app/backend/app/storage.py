@@ -141,7 +141,13 @@ def list_drives() -> list[dict]:
         )
     # Sort: reliable drives first (SSD ahead of HDD within that group, then by free space
     # descending), network/cloud-sync drives pushed to the bottom regardless of free space.
-    drives.sort(key=lambda d: (d.get("less_reliable", False), not d.get("is_ssd", False), -(d.get("free_gb", 0))))
+    drives.sort(
+        key=lambda d: (
+            d.get("less_reliable", False),
+            not d.get("is_ssd", False),
+            -(d.get("free_gb", 0)),
+        )
+    )
     return drives
 
 

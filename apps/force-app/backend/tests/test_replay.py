@@ -94,17 +94,22 @@ def test_replay_live_rpm_survives_decimation(tmp_path):
 
     # Exactly what main.py:record_start_replay builds — cfg.sample_rate is the ORIGINAL fs.
     cfg = RecordConfig(
-        sample_name="REPLAY-DECIMATED", axis="Fz",
-        feed=src.feed, diam=src.diam, sample_rate=fs, duration_sec=n / fs, ppr=1,
+        sample_name="REPLAY-DECIMATED",
+        axis="Fz",
+        feed=src.feed,
+        diam=src.diam,
+        sample_rate=fs,
+        duration_sec=n / fs,
+        ppr=1,
     )
     sess = RecordingSession(cfg, str(tmp_path), src, broadcaster=None)
     sess.start()
     sess._thread.join(120)
     sess.join_finalize(120)
     assert sess.state == "done", sess.error
-    assert abs(sess.frm._last_rpm - 1500.0) / 1500.0 < 0.05, (
-        f"live RPM {sess.frm._last_rpm:.0f} != 1500 (stride {fs / src.rate:.0f}x error)"
-    )
+    assert (
+        abs(sess.frm._last_rpm - 1500.0) / 1500.0 < 0.05
+    ), f"live RPM {sess.frm._last_rpm:.0f} != 1500 (stride {fs / src.rate:.0f}x error)"
 
 
 def test_replay_honours_speed_on_long_chunks(tmp_path):
