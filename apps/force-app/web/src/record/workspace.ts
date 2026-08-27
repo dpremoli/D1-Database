@@ -13,7 +13,12 @@ import { createPlaybackEngine } from './playback/engine';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 
-export interface ReplayOption { label: string; cacheId: string; opId: string; operationId: string | null; }
+export interface ReplayOption {
+	label: string; cacheId: string; opId: string; operationId: string | null;
+	// From machining_force_analysis itself, not the linked operation — this is where the recorder
+	// or the MATLAB ingestion pipeline actually stores a cut's true pulses-per-rev and diameters.
+	ppr: number | null; outerDiam: number | null; innerDiam: number | null;
+}
 
 // The "Operation type" select's values are short codes (MT-* = machining/turning, MM-* =
 // machining/milling, 'other' = no category) — this is the single place that maps a code to the
@@ -71,8 +76,19 @@ export function createWorkspace() {
 	// Directus write-back by buildRunPayload(), so letting a replay overwrite it would silently
 	// carry an archived cut's parameters — including the cache's already-DECIMATED sample rate —
 	// into the next NI-DAQ capture and its logged record.
-	const replay = reactive<{ query: string; options: ReplayOption[]; cacheId: string; label: string; speed: number; loading: boolean; rpm: number; feed: number; diam: number }>(
-		{ query: '', options: [], cacheId: '', label: '', speed: 1, loading: false, rpm: 0, feed: 0, diam: 0 },
+	// `rpm`/`feed`/`diam`/`ppr` describe the CUT BEING PLAYED — see the note on why they don't live
+	// on `cfg` above `replay`'s declaration. `downloading` covers the asset fetch + parse in
+	// pickReplayCut, separate from `loading` (the cut-search list), so the transport area can show
+	// its own spinner while a (potentially large) cache is being fetched.
+	const replay = reactive<{
+		query: string; options: ReplayOption[]; cacheId: string; label: string; speed: number;
+		loading: boolean; downloading: boolean;
+		rpm: number; feed: number; diam: number; innerDiam: number; ppr: number; sampleRate: number;
+	}>(
+		{
+			query: '', options: [], cacheId: '', label: '', speed: 1, loading: false, downloading: false,
+			rpm: 0, feed: 0, diam: 0, innerDiam: 0, ppr: 1, sampleRate: 0,
+		},
 	);
 
 	// Replaying an archived cut is PLAYBACK, not recording: a local playhead over a cut already in
@@ -467,13 +483,17 @@ export function createWorkspace() {
 			const res = await api.get('/items/machining_force_analysis', {
 				params: {
 					filter, limit: 25, sort: '-created_at',
-					fields: ['id', 'live_cache_file', 'created_at', 'operation_id.operation_id', 'operation_id.pass_code',
+					fields: ['id', 'live_cache_file', 'created_at', 'pulses_per_rev', 'outer_diameter', 'inner_diameter',
+						'operation_id.operation_id', 'operation_id.pass_code',
 						'operation_id.sample_id.sample_code', 'operation_id.sample_id.nickname'],
 				},
 			});
 			replay.options = (res.data?.data ?? []).map((r: any) => ({
 				label: r.operation_id?.pass_code || r.operation_id?.sample_id?.sample_code || r.operation_id?.sample_id?.nickname || r.id,
 				cacheId: r.live_cache_file, opId: r.id, operationId: r.operation_id?.operation_id ?? null,
+				ppr: r.pulses_per_rev != null ? Number(r.pulses_per_rev) : null,
+				outerDiam: r.outer_diameter != null ? Number(r.outer_diameter) : null,
+				innerDiam: r.inner_diameter != null ? Number(r.inner_diameter) : null,
 			})).filter((o: ReplayOption) => o.cacheId);
 		} catch { replay.options = []; } finally { replay.loading = false; }
 	}
@@ -485,15 +505,26 @@ export function createWorkspace() {
 	async function pickReplayCut(o: ReplayOption) {
 		replay.cacheId = o.cacheId; replay.label = o.label;
 		errMsg.value = null;
+		// PPR (and diameters) come from the cut's own machining_force_analysis row, fetched
+		// alongside it in searchCuts — NOT from cfg.ppr, which is the recording form's value and
+		// has no relation to how this cut was actually recorded. Getting this wrong doesn't just
+		// look slightly off: the FRM spiral's radius is r = revs/ppr, so a wrong ppr makes the
+		// spiral wind in at the wrong rate and it can visibly stop short of the centre (a "donut")
+		// or overshoot, instead of tracking the real geometry.
+		replay.ppr = o.ppr ?? 1;
+		replay.innerDiam = o.innerDiam ?? 0;
+		replay.downloading = true;
 		// Parse the cut locally and hand it to the playhead. No backend session is opened and
 		// nothing is written to disk — playback is a viewer over a cut already in the database.
 		try {
 			const res = await api.get(`/assets/${o.cacheId}`, { responseType: 'arraybuffer' });
 			const c = parseCache(res.data as ArrayBuffer);
-			playback.load(c, { ppr: cfg.ppr, stride: plot.liveFrmStride });
-			replay.feed = c.feed; replay.diam = c.diam;
+			playback.load(c, { ppr: replay.ppr, innerDiam: replay.innerDiam, stride: plot.liveFrmStride, axis: plot.frmAxis });
+			replay.feed = c.feed; replay.diam = o.outerDiam ?? c.diam; replay.sampleRate = c.Fs;
 		} catch (e: any) {
 			errMsg.value = `could not load that cut — ${e?.message || e}`;
+		} finally {
+			replay.downloading = false;
 		}
 		if (!o.operationId) return;
 		try {

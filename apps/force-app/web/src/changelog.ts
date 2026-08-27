@@ -9,6 +9,17 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.11',
+		date: '2026-08-27',
+		notes: [
+			'Fixed: replayed cuts could stop short of the centre in the FRM map instead of spiralling all the way in. Replay now reads the real pulses-per-rev and diameters from the database instead of using whatever was left in the recording form.',
+			'Fixed: the live FRM colour scale drifted while replaying, so early points looked off compared to the finished-cut view. It now uses the same colour range as the finished view, computed once from the whole cut.',
+			'Replay: picking a cut now shows a loading indicator while it downloads, and the cut search collapses to a single line once a cut is picked instead of always showing the full list.',
+			'Replay: the feed, diameter, pulses-per-rev, surface speed, depth of cut, capture rate and cut time are now shown as a compact parameter summary once a cut is loaded.',
+			'Recording: the numeric setup fields (spindle, feed, diameter, sample rate, pulses/rev) use the same compact card style as the new replay parameter summary.',
+		],
+	},
+	{
 		version: '0.1.10',
 		date: '2026-08-27',
 		notes: [

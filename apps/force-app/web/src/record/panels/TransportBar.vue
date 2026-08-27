@@ -29,11 +29,13 @@ function fmt(sec: number): string {
 			 unusable, not merely cramped. The scrub now holds a floor width and the readout drops
 			 to its own line instead. -->
 		<div class="row transport-main">
-			<button class="play" :disabled="!p.loaded" :title="p.playing ? 'Pause' : 'Play'" @click="w.playback.toggle()">
-				<span class="material-symbols-rounded">{{ p.playing ? 'pause' : 'play_arrow' }}</span>
+			<button class="play" :disabled="!p.loaded || w.replay.downloading" :title="p.playing ? 'Pause' : 'Play'" @click="w.playback.toggle()">
+				<span class="material-symbols-rounded" :class="{ spin: w.replay.downloading }">
+					{{ w.replay.downloading ? 'progress_activity' : p.playing ? 'pause' : 'play_arrow' }}
+				</span>
 			</button>
 			<input class="scrub" type="range" min="0" :max="p.duration || 0" step="0.01"
-				:value="p.tSec" :disabled="!p.loaded" @input="onScrub" @change="onScrubEnd" />
+				:value="p.tSec" :disabled="!p.loaded || w.replay.downloading" @input="onScrub" @change="onScrubEnd" />
 			<span class="time">{{ fmt(p.tSec) }} / {{ fmt(p.duration) }}</span>
 		</div>
 		<div class="row sub">
@@ -46,7 +48,10 @@ function fmt(sec: number): string {
 				<span class="material-symbols-rounded">info</span> summed axes only
 			</span>
 		</div>
-		<p v-if="p.error" class="err">{{ p.error }}</p>
+		<p v-if="w.replay.downloading" class="hint loading">
+			<span class="material-symbols-rounded spin">progress_activity</span> Loading cut…
+		</p>
+		<p v-else-if="p.error" class="err">{{ p.error }}</p>
 		<p v-else-if="!p.loaded" class="hint">Pick a cut above to load it.</p>
 	</div>
 </template>
@@ -73,4 +78,7 @@ function fmt(sec: number): string {
 .note .material-symbols-rounded { font-size: 14px; }
 .err { color: var(--danger); font-size: 12px; margin: 2px 0 0; }
 .hint { font-size: 11.5px; color: var(--text-dim); margin: 2px 0 0; }
+.hint.loading { display: flex; align-items: center; gap: 5px; }
+.spin { animation: transport-spin 1s linear infinite; }
+@keyframes transport-spin { to { transform: rotate(360deg); } }
 </style>

@@ -63,7 +63,11 @@ export class RecordClient {
 
 	// FRM points, preallocated; filled incrementally. count = live points; cCap for colour scaling
 	private cap = 2_000_000;
-	frm = { xy: new Float32Array(this.cap * 2), c: new Float32Array(this.cap), count: 0, cAbsMax: 1 };
+	// cLo/cHi: optional percentile-based colour bounds, set once by playback (which has the whole
+	// cut up front and can match the finished-cut view's colour scale exactly) and left undefined
+	// for a true live recording (which cannot know its own final range ahead of time and falls
+	// back to cAbsMax's running-max, symmetric-about-zero scheme — see LiveFrm.vue's frame()).
+	frm = { xy: new Float32Array(this.cap * 2), c: new Float32Array(this.cap), count: 0, cAbsMax: 1, cLo: undefined as number | undefined, cHi: undefined as number | undefined };
 
 	private ws: WebSocket | null = null;
 	private base = getConfig().recorderUrl;
@@ -153,7 +157,7 @@ export class RecordClient {
 			const snap = {
 				type: 'snapshot',
 				status: this.plainStatus(),
-				frm: { xy: fm.xy.slice(0, n * 2), c: fm.c.slice(0, n), count: n, cAbsMax: fm.cAbsMax },
+				frm: { xy: fm.xy.slice(0, n * 2), c: fm.c.slice(0, n), count: n, cAbsMax: fm.cAbsMax, cLo: fm.cLo, cHi: fm.cHi },
 				trace: { t: this.trace.t.slice(), fx: this.trace.fx.slice(), fy: this.trace.fy.slice(), fz: this.trace.fz.slice(),
 					sub: Object.fromEntries(Object.entries(this.trace.sub).map(([k, v]) => [k, v.slice()])) },
 				fft: this.fft ? { ...this.fft } : null,
@@ -179,6 +183,7 @@ export class RecordClient {
 					this.frm.c.set(c, 0);
 					this.frm.count = n;
 					this.frm.cAbsMax = snap.frm.cAbsMax;
+					this.frm.cLo = snap.frm.cLo; this.frm.cHi = snap.frm.cHi;
 				} else {
 					console.warn('[force-app] snapshot frm data too small: need xy[', n * 2, '], c[', n, ']');
 				}
@@ -312,7 +317,7 @@ export class RecordClient {
 
 	reset() {
 		this.trace = emptyTrace();
-		this.frm = { xy: new Float32Array(this.cap * 2), c: new Float32Array(this.cap), count: 0, cAbsMax: 1 };
+		this.frm = { xy: new Float32Array(this.cap * 2), c: new Float32Array(this.cap), count: 0, cAbsMax: 1, cLo: undefined, cHi: undefined };
 		this.fft = null; this.fftHistory = []; this.fftSeq.value++;
 		this.status.state = 'idle'; this.status.error = null; this.status.summary = null;
 		this.status.captureId = null; this.status.nTotal = 0; this.status.tSec = 0;

@@ -102,7 +102,13 @@ function frame() {
 	if (fm.count < uploaded) resetUpload();
 	const from = uploaded, to = fm.count;
 	if (to > from && posAttr && colAttr) {
-		const cMax = Math.max(1e-6, fm.cAbsMax);
+		// Prefer the percentile-based cLo/cHi playback sets at load time (matches the finished-cut
+		// view's own colour scale exactly, computed once over the whole cut). A true live recording
+		// never sets these — it can't know its final range while still acquiring — so it falls back
+		// to the running |max|, symmetric about zero.
+		const haveRange = fm.cHi !== undefined && fm.cLo !== undefined && fm.cHi > fm.cLo;
+		const cLo = haveRange ? fm.cLo! : -Math.max(1e-6, fm.cAbsMax);
+		const cSpan = haveRange ? (fm.cHi! - fm.cLo!) : 2 * Math.max(1e-6, fm.cAbsMax);
 		const pos = posAttr.array as Float32Array;
 		const col = colAttr.array as Float32Array;
 		// pointStride thins the LIVE map by keeping every Nth accumulated point (indexed on the
@@ -117,7 +123,7 @@ function frame() {
 			if (w >= CAP) break;
 			pos[w * 3] = x; pos[w * 3 + 1] = y; pos[w * 3 + 2] = 0;
 			if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
-			const tnorm = Math.min(1, Math.max(0, (fm.c[i] + cMax) / (2 * cMax)));
+			const tnorm = Math.min(1, Math.max(0, (fm.c[i] - cLo) / cSpan));
 			const [r, g, b] = cm(tnorm);
 			col[w * 3] = r; col[w * 3 + 1] = g; col[w * 3 + 2] = b;
 			rendered++;

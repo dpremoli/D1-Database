@@ -11,7 +11,7 @@
 // when it was drawn. That is the whole trick — it makes "seek to t" and "play through to t"
 // produce byte-identical buffers, which is the invariant engine.test.ts pins down.
 import { reactive } from 'vue';
-import type { Cache } from '@d1/force-plotting';
+import { axisAutoLimits, type Axis, type Cache } from '@d1/force-plotting';
 import { SUB_NAMES, type RecordClient } from '../liveClient';
 import { createSpectrumClient, type SpectrumClient } from './spectrum';
 
@@ -25,7 +25,7 @@ export interface PlaybackState {
 	loaded: boolean; playing: boolean; tSec: number; duration: number; speed: number; error: string | null;
 }
 export interface PlaybackEngine {
-	load(cache: Cache, o: { ppr: number; stride: number }): void;
+	load(cache: Cache, o: { ppr: number; innerDiam?: number; stride: number; axis?: Axis }): void;
 	play(): void; pause(): void; toggle(): void;
 	seek(tSec: number, o?: { commit?: boolean }): void;
 	setSpeed(x: number): void;
@@ -50,7 +50,8 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 	});
 
 	let cache: Cache | null = null;
-	let ppr = 1, stride = 1;
+	let ppr = 1, stride = 1, innerR = 0;
+	let colorAxis: Axis = 'Fz';
 	let csIdx = 0, revsCs = 0;         // FRM spiral origin (cache's own detected cut start)
 	let binSize = 1;                   // samples per envelope bin
 	// Two cursors, because the two buffers advance in different units. FRM points are per-sample,
@@ -86,7 +87,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		return lo;
 	}
 
-	function load(c: Cache, o: { ppr: number; stride: number }) {
+	function load(c: Cache, o: { ppr: number; innerDiam?: number; stride: number; axis?: Axis }) {
 		reset();
 		if (!c || c.N < 2 || !(c.Fs > 0)) {
 			state.loaded = false;
@@ -95,10 +96,21 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		}
 		cache = c;
 		ppr = o.ppr > 0 ? o.ppr : 1;
+		innerR = Math.max(0, (o.innerDiam || 0) / 2);
 		stride = Math.max(1, Math.round(o.stride) || 1);
+		colorAxis = o.axis ?? 'Fz';
 		csIdx = idxOfTime(c.csSec);
 		revsCs = c.revs[csIdx] ?? 0;
 		binSize = Math.max(1, Math.round(c.Fs / BINS_PER_SEC));
+		// Colour scale, once, over the WHOLE cut: the same prctile(1)/prctile(99) statistic the
+		// finished-cut view (liveCloud.ts's buildCloud) uses, via the same axisAutoLimits(). Unlike
+		// a true live recording, playback already has the entire cache, so there is no need to
+		// track a running max and recolour nothing retroactively (LiveFrm.vue's cAbsMax fallback,
+		// which locks in each point's colour against whatever range was known SO FAR — meaning
+		// early points read against a narrower range than the cut's real one and never get
+		// corrected. That is why a replayed spiral's colours didn't match the finished view's).
+		const [lo, hi] = axisAutoLimits(c, colorAxis);
+		client.frm.cLo = lo; client.frm.cHi = hi;
 		state.loaded = true;
 		state.error = null;
 		state.duration = c.t[c.N - 1];
@@ -158,14 +170,15 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		// become points never depends on where an append happens to begin.
 		const first = Math.max(i0, csIdx);
 		const rem = (first - csIdx) % stride;
+		const colArr = colorAxis === 'Fx' ? c.Fx : colorAxis === 'Fy' ? c.Fy : c.Fz;
 		for (let i = rem === 0 ? first : first + (stride - rem); i < i1; i += stride) {
 			const r = (c.revs[i] - revsCs) / ppr;
 			const rho = rho0 - F * r;
-			if (rho < 0) break;
+			if (rho < innerR) break;
 			const th = 2 * Math.PI * r;
 			client.frm.xy[n * 2] = rho * Math.cos(th);
 			client.frm.xy[n * 2 + 1] = rho * Math.sin(th);
-			const col = c.Fz[i];
+			const col = colArr[i];
 			client.frm.c[n] = col;
 			const a = Math.abs(col);
 			if (a > client.frm.cAbsMax) client.frm.cAbsMax = a;

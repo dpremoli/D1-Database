@@ -81,7 +81,12 @@ async function stubDirectusAndBypassLogin(window: Page, directusUrl: string, cac
   await window.route(`${origin}/**`, (route) => {
     const url = route.request().url();
     if (url.includes(`/assets/${CACHE_ID}`)) {
-      return route.fulfill({ status: 200, contentType: 'application/octet-stream', body: cache });
+      // A deliberate delay: fulfilled instantly, the download-loading spinner (TransportBar.vue's
+      // `w.replay.downloading`) would flip on and off inside a single Playwright poll interval —
+      // real enough to be untestable, not a reason to skip testing it.
+      return new Promise((resolve) => setTimeout(() => resolve(
+        route.fulfill({ status: 200, contentType: 'application/octet-stream', body: cache }),
+      ), 400));
     }
     if (url.includes('/items/machining_force_analysis')) {
       return route.fulfill({
@@ -92,6 +97,9 @@ async function stubDirectusAndBypassLogin(window: Page, directusUrl: string, cac
             id: 'mfa-1',
             live_cache_file: CACHE_ID,
             created_at: '2026-08-27T00:00:00Z',
+            pulses_per_rev: 4,
+            outer_diameter: 80,
+            inner_diameter: 0,
             operation_id: {
               operation_id: OPERATION_ID,
               pass_code: 'TEST-REPLAY-CUT',
@@ -168,9 +176,28 @@ test('replay plays as a video: play/pause/scrub drives the live viewers and writ
     await expect(window.locator('.btn.stop')).toHaveCount(0);
 
     // ---- Pick the cut; the playhead loads it and reports its real duration ----
-    const cut = window.locator('.cutlist .cut', { hasText: 'TEST-REPLAY-CUT' });
+    // The cut picker is a collapsible searchable dropdown (CutPicker.vue): the list of matches
+    // only renders once the search box is focused/open, then collapses to a plain label on pick.
+    const cutSearch = window.locator('.cutpicker input');
+    await cutSearch.click();
+    const cut = window.locator('.cutpicker .mi', { hasText: 'TEST-REPLAY-CUT' });
     await expect(cut).toBeVisible({ timeout: 15_000 });
     await cut.click();
+
+    // ---- Download-loading spinner: real info during the (deliberately delayed) asset fetch ----
+    await expect(window.locator('.transport .hint.loading')).toBeVisible({ timeout: 2_000 });
+    await expect(window.locator('.transport .hint.loading')).toHaveCount(0, { timeout: 5_000 });
+
+    // Collapses to the picked label, not the search box, once loaded.
+    await expect(window.locator('.cutpicker .chosen-label')).toHaveText('TEST-REPLAY-CUT', { timeout: 15_000 });
+
+    // ---- The cut's OWN parameters, not the recording form's ----
+    // Regression: these used to come from cfg.ppr/cfg.diam (whatever was left in the recording
+    // form), not the cut's real values — the exact mismatch that made a replayed FRM spiral wind
+    // at the wrong rate and stop short of the centre. Directly checks the value pickReplayCut
+    // fetched, independent of the geometry maths (engine.test.ts covers that).
+    const pprTile = window.locator('.cut-params .stat-tile', { hasText: 'Pulses/rev' });
+    await expect(pprTile.locator('.value-text')).toHaveText('4');
 
     const scrub = window.locator('.transport .scrub');
     await expect(scrub).toBeEnabled({ timeout: 10_000 });

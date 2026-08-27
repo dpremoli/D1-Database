@@ -231,4 +231,61 @@ describe('playback engine', () => {
 		await new Promise((r) => setTimeout(r, 0));
 		expect(h.engine.state.error).toBeNull();
 	});
+	it('regression: a non-1 ppr changes how fast the spiral winds in, not just a cosmetic scale', () => {
+		// pickReplayCut fetches the cut's real pulses-per-rev from Directus and passes it here.
+		// Before that fix it silently used cfg.ppr (the recording form's leftover value, usually
+		// 1) instead — on a cut whose real ppr was higher, the spiral wound in too slowly and
+		// visibly stopped short of the centre ("a donut that never reaches the middle") instead of
+		// reaching it, because r = revs / ppr grows slower the larger ppr is.
+		const wrong = harness();
+		wrong.engine.load(makeCache(), { ppr: 1, stride: 1 });   // as if ppr were left at 1
+		wrong.engine.seek(wrong.engine.state.duration);
+		const rWrong = Math.hypot(wrong.client.frm.xy[(wrong.client.frm.count - 1) * 2], wrong.client.frm.xy[(wrong.client.frm.count - 1) * 2 + 1]);
+
+		const right = harness();
+		right.engine.load(makeCache(), { ppr: 4, stride: 1 });   // the cut's real ppr
+		right.engine.seek(right.engine.state.duration);
+		const rRight = Math.hypot(right.client.frm.xy[(right.client.frm.count - 1) * 2], right.client.frm.xy[(right.client.frm.count - 1) * 2 + 1]);
+
+		// Same cache, same duration, different ppr: the two runs must NOT land at the same radius.
+		expect(Math.abs(rWrong - rRight)).toBeGreaterThan(1);
+	});
+
+	it('stops the spiral at the given inner radius instead of always reaching the centre', () => {
+		const h = harness();
+		h.engine.load(makeCache(), { ppr: 1, innerDiam: 40, stride: 1 });   // inner radius 20mm
+		h.engine.seek(h.engine.state.duration);
+		let minR = Infinity;
+		for (let i = 0; i < h.client.frm.count; i++) {
+			const r = Math.hypot(h.client.frm.xy[i * 2], h.client.frm.xy[i * 2 + 1]);
+			if (r < minR) minR = r;
+		}
+		expect(minR).toBeGreaterThanOrEqual(20 - 0.5);
+	});
+
+	it('sets frm.cLo/cHi from the whole cut at load, matching the finished-cut colour scale', () => {
+		// Regression: LiveFrm.vue previously coloured points against a RUNNING max as they arrived,
+		// so a point drawn early in playback locked in a colour computed against a narrower range
+		// than the cut's real one and was never recoloured once the true range was known. Playback
+		// has the whole cache up front, so it can (and now does) set the same percentile-based
+		// bounds the finished-cut view uses, once, before any point is drawn.
+		const h = harness();
+		expect(h.client.frm.cLo).toBeUndefined();
+		h.engine.load(makeCache(), { ppr: 1, stride: 1 });
+		expect(h.client.frm.cLo).toBeDefined();
+		expect(h.client.frm.cHi).toBeDefined();
+		expect(h.client.frm.cHi!).toBeGreaterThan(h.client.frm.cLo!);
+	});
+
+	it('colours FRM points from the requested axis, not a hardcoded one', () => {
+		const c = makeCache();
+		const h = harness();
+		h.engine.load(c, { ppr: 1, stride: 1, axis: 'Fx' });
+		h.engine.seek(h.engine.state.duration);
+		// makeCache sets Fx[i] = i (monotonic) and Fz[i] = a bounded sine — if colouring still fell
+		// back to Fz, every recorded colour value would sit inside [-100, 100]; Fx grows past that.
+		let sawLarge = false;
+		for (let i = 0; i < h.client.frm.count; i++) if (Math.abs(h.client.frm.c[i]) > 200) sawLarge = true;
+		expect(sawLarge).toBe(true);
+	});
 });

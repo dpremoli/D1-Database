@@ -1,0 +1,93 @@
+<script setup lang="ts">
+// Searchable dropdown for picking a cut to replay — the same combobox interaction as LookupField
+// (search input, absolute-positioned dropdown overlay, closes and collapses to the picked label on
+// selection), applied to the Replay cut list. Previously an always-visible list of buttons under
+// the search box, which cost real vertical space in the Recording panel whether or not you were
+// actively picking a cut. Wired directly to the workspace's `replay`/`searchCuts`/`pickReplayCut`
+// rather than taking props: the option shape (ppr/diameters alongside label/cacheId) is specific
+// to this one picker, so there is nothing generic here worth sharing with LookupField.
+import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { useWorkspace, type ReplayOption } from '../workspace';
+
+const w = useWorkspace();
+const open = ref(false);
+const inputEl = ref<HTMLInputElement | null>(null);
+const rootEl = ref<HTMLDivElement | null>(null);
+let t: any = null;
+
+function onDocPointerDown(e: PointerEvent) {
+	if (open.value && rootEl.value && e.target instanceof Node && !rootEl.value.contains(e.target)) {
+		open.value = false;
+	}
+}
+onMounted(() => document.addEventListener('pointerdown', onDocPointerDown, true));
+onBeforeUnmount(() => { document.removeEventListener('pointerdown', onDocPointerDown, true); clearTimeout(t); });
+
+function onInput() {
+	open.value = true;
+	clearTimeout(t);
+	t = setTimeout(() => w.searchCuts(w.replay.query), 300);
+}
+function focus() { open.value = true; if (w.replay.options.length === 0) w.searchCuts(w.replay.query); }
+function pick(o: ReplayOption) {
+	w.pickReplayCut(o);
+	close();
+}
+function close() { open.value = false; inputEl.value?.blur(); }
+function change() {
+	// Reopen search on the currently-loaded cut's label cleared back to blank — picking a new cut
+	// naturally replaces the loaded one (pickReplayCut / playback.load both start from a clean
+	// slate), so there is nothing to explicitly unload here.
+	w.replay.cacheId = '';
+	w.replay.query = '';
+	open.value = true;
+	w.searchCuts('');
+	requestAnimationFrame(() => inputEl.value?.focus());
+}
+function delayedBlurClose() { window.setTimeout(() => { open.value = false; }, 150); }
+</script>
+
+<template>
+	<div ref="rootEl" class="cutpicker">
+		<span class="lbl">Find a cut <span class="sub">(narrowed by Sample/Operation type/Machine above)</span></span>
+		<!-- Collapsed: the picked cut's label, one line, with a button to search again. -->
+		<div v-if="w.replay.cacheId && !open" class="chosen">
+			<span class="chosen-label">{{ w.replay.label }}</span>
+			<button type="button" class="change" :disabled="w.locked.value" @click="change">
+				<span class="material-symbols-rounded">search</span> change
+			</button>
+		</div>
+		<!-- Expanded: search box + dropdown, exactly while actively picking. -->
+		<div v-else class="box">
+			<input ref="inputEl" v-model="w.replay.query" placeholder="e.g. 10-AA-MF" :disabled="w.locked.value"
+				@input="onInput" @focus="focus" @keydown.esc.prevent="close"
+				@keydown.enter.prevent="w.replay.options[0] && pick(w.replay.options[0])" @blur="delayedBlurClose" />
+			<div v-if="open && !w.locked.value" class="menu">
+				<div v-if="w.replay.loading" class="mi hint">searching…</div>
+				<button v-for="o in w.replay.options" :key="o.cacheId" type="button" class="mi" @mousedown.prevent="pick(o)">
+					{{ o.label }}
+				</button>
+				<div v-if="!w.replay.loading && w.replay.options.length === 0" class="mi hint">no matches</div>
+			</div>
+		</div>
+	</div>
+</template>
+
+<style scoped>
+.cutpicker { position: relative; margin-bottom: 8px; }
+.lbl { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 3px; }
+.sub { font-weight: 400; }
+.box { display: flex; align-items: center; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 7px; }
+.box input { flex: 1; padding: 7px 9px; font-size: 13px; color: var(--text); background: transparent; border: none; outline: none; }
+.box input:disabled { opacity: 0.55; }
+.menu { position: absolute; z-index: 30; left: 0; right: 0; top: 100%; margin-top: 2px; max-height: 200px; overflow: auto; background: #0e162c; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
+.mi { display: block; width: 100%; text-align: left; padding: 7px 10px; font-size: 12.5px; font-family: var(--mono); color: var(--text); background: transparent; border: none; cursor: pointer; }
+.mi:hover { background: var(--surface); }
+.mi.hint { color: var(--text-dim); font-family: inherit; cursor: default; }
+.chosen { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.4); border-radius: 7px; }
+.chosen-label { font-size: 12.5px; font-family: var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.change { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; padding: 4px 8px; font-size: 11px; color: var(--text-dim); background: transparent; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.change:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.change:disabled { opacity: 0.5; cursor: not-allowed; }
+.change .material-symbols-rounded { font-size: 13px; }
+</style>

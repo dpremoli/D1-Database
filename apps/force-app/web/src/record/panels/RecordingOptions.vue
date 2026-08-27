@@ -3,10 +3,21 @@ import { computed, onMounted, watch } from 'vue';
 import { useWorkspace } from '../workspace';
 import LookupField from './LookupField.vue';
 import TransportBar from './TransportBar.vue';
+import CutPicker from './CutPicker.vue';
+import StatTile from './StatTile.vue';
 
 const w = useWorkspace();
-let t: any = null;
-function onSearch() { clearTimeout(t); t = setTimeout(() => w.searchCuts(w.replay.query), 300); }
+// Surface speed (m/min) = pi * diam(mm) * rpm / 1000 — the same formula buildRunPayload() already
+// logs to Directus as machining_cutting_speed_m_per_min, just surfaced here too.
+const replaySurfaceSpeed = computed(() => (Math.PI * w.replay.diam * w.replay.rpm) / 1000);
+// Depth of cut: the schema splits axial/radial: prefer radial (the conventional "depth of cut" in
+// turning) and fall back to axial when only that was recorded.
+const replayDepthOfCut = computed(() => w.machining.radial_doc || w.machining.axial_doc || '—');
+function fmtDuration(sec: number): string {
+	if (!Number.isFinite(sec) || sec <= 0) return '—';
+	const m = Math.floor(sec / 60), s = Math.round(sec % 60);
+	return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
 watch(() => w.source.value, (s) => { if (s === 'replay' && w.replay.options.length === 0) w.searchCuts(''); });
 onMounted(() => { if (w.source.value === 'replay') w.searchCuts(''); });
 // The cut list is also progressively filtered by Sample/Operation type/Machine (see
@@ -45,18 +56,16 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 
 		<!-- Recording parameters -->
 		<template v-if="w.source.value === 'sim' || w.source.value === 'nidaq'">
-			<div class="grid2">
-				<label>Spindle (RPM)<input type="number" v-model.number="w.cfg.rpm" :disabled="w.locked.value" /></label>
-				<label>Feed (mm/rev)<input type="number" step="0.01" v-model.number="w.cfg.feed" :disabled="w.locked.value" /></label>
-				<label>Outer Ø (mm)<input type="number" v-model.number="w.cfg.diam" :disabled="w.locked.value" /></label>
-				<label>Inner Ø (mm)<input type="number" v-model.number="w.cfg.inner_diam" :disabled="w.locked.value" /></label>
-				<label>Sample rate (Hz)<input type="number" v-model.number="w.cfg.sample_rate" :disabled="w.locked.value" /></label>
-				<label>
-					{{ w.source.value === 'sim' ? 'Duration (s)' : 'Planned duration (s)' }}
-					<input type="number" v-model.number="w.cfg.duration_sec" :disabled="w.locked.value"
-						:title="w.source.value === 'sim' ? '' : 'Not enforced for real recordings — used only to estimate disk space needed and warn before you start.'" />
-				</label>
-				<label>Pulses/rev<input type="number" v-model.number="w.cfg.ppr" :disabled="w.locked.value" /></label>
+			<div class="stat-grid">
+				<StatTile editable label="Spindle" unit="RPM" v-model="w.cfg.rpm" :disabled="w.locked.value" />
+				<StatTile editable label="Feed" unit="mm/rev" step="0.01" v-model="w.cfg.feed" :disabled="w.locked.value" />
+				<StatTile editable label="Outer Ø" unit="mm" v-model="w.cfg.diam" :disabled="w.locked.value" />
+				<StatTile editable label="Inner Ø" unit="mm" v-model="w.cfg.inner_diam" :disabled="w.locked.value" />
+				<StatTile editable label="Sample rate" unit="Hz" v-model="w.cfg.sample_rate" :disabled="w.locked.value" />
+				<StatTile editable :label="w.source.value === 'sim' ? 'Duration' : 'Planned duration'" unit="s"
+					v-model="w.cfg.duration_sec" :disabled="w.locked.value"
+					:title="w.source.value === 'sim' ? '' : 'Not enforced for real recordings — used only to estimate disk space needed and warn before you start.'" />
+				<StatTile editable label="Pulses/rev" v-model="w.cfg.ppr" :disabled="w.locked.value" />
 			</div>
 		</template>
 
@@ -101,19 +110,26 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 
 		<!-- Replay cut picker: filtered by Sample/Operation type/Machine above, further narrowed by
 			 free-text search. Picking one loads that operation's full original metadata (below). -->
-		<template v-if="w.source.value === 'replay'">
-			<label>Find a cut <span class="sub">(narrowed by Sample/Operation type/Machine above)</span>
-				<input v-model="w.replay.query" placeholder="e.g. 10-AA-MF" :disabled="w.locked.value" @input="onSearch" />
-			</label>
-			<div class="cutlist">
-				<div v-if="w.replay.loading" class="hint">searching…</div>
-				<button v-for="o in w.replay.options" :key="o.cacheId" class="cut" :class="{ on: w.replay.cacheId === o.cacheId }"
-					:disabled="w.locked.value" @click="w.pickReplayCut(o)">
-					{{ o.label }}
-				</button>
-				<div v-if="!w.replay.loading && w.replay.options.length === 0" class="hint">no matches</div>
-			</div>
-		</template>
+		<CutPicker v-if="w.source.value === 'replay'" />
+
+		<!-- The loaded cut's actual parameters — read-only: these describe the archived cut, not a
+			 config being set up. Feed/Outer Ø/Pulses-per-rev come from the cut's own Directus row
+			 (see workspace.ts's pickReplayCut) rather than the recording form, which is also what
+			 fixed the FRM spiral stopping short of centre on a cut whose real PPR wasn't 1. -->
+		<div v-if="w.source.value === 'replay' && w.replay.cacheId" class="stat-grid cut-params">
+			<!-- Read-only: :model-value, not v-model. These tiles never expose their input branch
+				 (no `editable`), so nothing ever emits update:modelValue — v-model would need every
+				 value here to be an assignable expression, which the derived ones (surface speed,
+				 depth of cut, capture, cut time) are not. -->
+			<StatTile label="Feed" unit="mm/rev" :model-value="w.replay.feed" />
+			<StatTile label="Diameter" unit="mm" :model-value="w.replay.diam" />
+			<StatTile label="Inner Ø" unit="mm" :model-value="w.replay.innerDiam" />
+			<StatTile label="Pulses/rev" :model-value="w.replay.ppr" />
+			<StatTile label="Surface speed" unit="m/min" :model-value="replaySurfaceSpeed.toFixed(1)" />
+			<StatTile label="Depth of cut" unit="mm" :model-value="replayDepthOfCut" />
+			<StatTile label="Capture" unit="kHz" :model-value="(w.replay.sampleRate / 1000).toFixed(1)" />
+			<StatTile label="Cut time" :model-value="fmtDuration(w.playback.state.duration)" />
+		</div>
 
 		<div class="links">
 			<LookupField v-model="w.link.toolId" :display-label="w.link.toolLabel" label="Tool" placeholder="search tool code…"
@@ -171,6 +187,8 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 .seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .seg button:disabled { opacity: 0.5; cursor: not-allowed; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.stat-grid.cut-params { margin-top: -2px; }
 label { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px; }
 label.wide { display: block; }
 input:not([type="checkbox"]), textarea, select { display: block; width: 100%; margin-top: 3px; padding: 7px 9px; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; outline: none; font-family: inherit; }
@@ -187,10 +205,6 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 .section-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
 .section-divider::before, .section-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 .links { display: flex; flex-direction: column; }
-.cutlist { max-height: 160px; overflow: auto; display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--border); border-radius: 8px; padding: 5px; }
-.cut { text-align: left; padding: 6px 8px; font-size: 12px; font-family: var(--mono); color: var(--text); background: transparent; border: 1px solid transparent; border-radius: 6px; cursor: pointer; }
-.cut:hover { background: var(--surface); }
-.cut.on { background: rgba(56,189,248,0.16); border-color: var(--accent); }
 .hint { font-size: 11.5px; color: var(--text-dim); margin: 0; }
 .actions { display: flex; gap: 8px; margin-top: 4px; }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; font-size: 13.5px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
