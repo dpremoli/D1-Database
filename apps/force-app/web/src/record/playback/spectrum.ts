@@ -36,7 +36,10 @@ export function createSpectrumClient(baseUrl: string, opts: { minIntervalMs?: nu
 		onError: () => {},
 		request(req) {
 			if (disposed) return;
-			if (!req.force && !inFlight && performance.now() - lastSent < minInterval) return;
+			// The throttle applies whether or not a call is in flight. Exempting the in-flight case
+			// defeated it entirely: during playback there is essentially always one in flight, so
+			// requests went out back-to-back at round-trip rate with ~300 KB bodies each.
+			if (!req.force && performance.now() - lastSent < minInterval) return;
 			pending = req;                       // newest wins; an older pending one is discarded
 			if (!inFlight) inFlight = pump();
 		},

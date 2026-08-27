@@ -1124,6 +1124,10 @@ async def dsp_spectrum(request: Request, fs: float, names: str, nperseg: int = 4
     if not chan_names:
         raise HTTPException(422, "names must list at least one channel")
     raw = await request.body()
+    # Validate BEFORE np.frombuffer: it raises ValueError on a partial element, which would
+    # surface as a 500 rather than the 422 a malformed body deserves.
+    if len(raw) % 4:
+        raise HTTPException(422, f"body is {len(raw)} bytes, not a whole number of float32s")
     flat = np.frombuffer(raw, dtype="<f4")
     if flat.size % len(chan_names):
         raise HTTPException(

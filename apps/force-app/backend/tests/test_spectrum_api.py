@@ -70,3 +70,14 @@ def test_spectrum_reports_no_bins_when_the_window_is_too_short():
     )
     assert res.status_code == 200
     assert res.json() == {"fs": 1000.0, "f": [], "spectra": {}}
+
+
+def test_spectrum_rejects_a_body_that_is_not_whole_float32s():
+    """A truncated body must be a 422, not an unhandled np.frombuffer ValueError (500)."""
+    res = client.post(
+        "/dsp/spectrum",
+        params={"fs": 1000.0, "names": "Fz"},
+        content=b"\x00\x00\x00",  # 3 bytes — not a whole float32
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    assert res.status_code == 422

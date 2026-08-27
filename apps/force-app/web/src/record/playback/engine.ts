@@ -53,11 +53,20 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 	let ppr = 1, stride = 1;
 	let csIdx = 0, revsCs = 0;         // FRM spiral origin (cache's own detected cut start)
 	let binSize = 1;                   // samples per envelope bin
-	let cursor = 0;                    // exclusive sample index already rendered
+	// Two cursors, because the two buffers advance in different units. FRM points are per-sample,
+	// so that cursor tracks the playhead exactly. Trace bins must stay WHOLE — emitting a partial
+	// bin at a frame boundary and the rest on the next frame would make the envelope depend on how
+	// playback happened to be chopped up, which breaks the seek-equals-play invariant. So the trace
+	// cursor only ever advances to a bin boundary, lagging the playhead by under one bin (5 ms).
+	let frmCursor = 0;                 // exclusive sample index whose FRM points are drawn
+	let traceCursor = 0;               // exclusive sample index, always a multiple of binSize
 	let frame: number | null = null;
 	let lastTick = 0;
 	const spectra: SpectrumClient = createSpectrumClient(opts.baseUrl);
 	spectra.onReply = (r) => {
+		// A success clears a previous transient failure; otherwise one blip left a permanent error
+		// banner on the transport bar for the rest of the session.
+		state.error = null;
 		if (!r.f.length) return;
 		client.fft = { axis: 'Fz', f: r.f, amp: r.spectra.Fz ?? [], fs: r.fs, spectra: r.spectra };
 		client.fftFreq = r.f;
@@ -100,19 +109,19 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 	function reset() {
 		pause();
 		client.reset();
-		cursor = 0;
+		frmCursor = 0; traceCursor = 0;
 		state.tSec = 0; state.duration = 0; state.loaded = false; state.error = null;
 		cache = null;
 	}
 
-	// Append samples [i0, i1) to the trace envelope and the FRM cloud. Bin boundaries are fixed
-	// multiples of binSize, so this is index-deterministic no matter how the range is chopped up.
-	function appendRange(i0: number, i1: number) {
+	// Append WHOLE envelope bins covering [i0, i1). i0 and i1 are both bin boundaries, so a bin is
+	// always built from the same samples however playback was chopped up — that is what makes
+	// seek-to-t and play-to-t produce identical buffers.
+	function appendTraceBins(i0: number, i1: number) {
 		if (!cache || i1 <= i0) return;
 		const c = cache;
-		const rho0 = c.diam / 2;
-		for (let b0 = Math.floor(i0 / binSize) * binSize; b0 < i1; b0 += binSize) {
-			const s = Math.max(b0, i0), e = Math.min(b0 + binSize, i1);
+		for (let b0 = i0; b0 < i1; b0 += binSize) {
+			const s = b0, e = Math.min(b0 + binSize, i1);
 			if (e <= s) continue;
 			let fxlo = Infinity, fxhi = -Infinity, fylo = Infinity, fyhi = -Infinity, fzlo = Infinity, fzhi = -Infinity;
 			for (let i = s; i < e; i++) {
@@ -134,14 +143,22 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 			for (const k of ['Fz1', 'Fz2', 'Fz3', 'Fz4']) sub[k].push([fzlo / 4, fzhi / 4]);
 			sub.Tacho.push([0, 0]);
 		}
-		// FRM: geometry is a pure function of the sample index given the fixed spiral origin, so
-		// this matches liveCloud's `measured` branch exactly and needs no carried state.
+	}
+
+	// Append the FRM points for samples [i0, i1). Geometry is a pure function of the sample index
+	// given the fixed spiral origin, so this matches liveCloud's `measured` branch exactly and
+	// needs no carried state — which is why scrubbing backwards is just a count reset.
+	function appendFrmPoints(i0: number, i1: number) {
+		if (!cache || i1 <= i0) return;
+		const c = cache;
+		const rho0 = c.diam / 2;
 		const F = c.feed;
 		let n = client.frm.count;
+		// Emit only samples on the global stride lattice measured from csIdx, so which samples
+		// become points never depends on where an append happens to begin.
 		const first = Math.max(i0, csIdx);
-		const off = first - ((first - csIdx) % stride);
-		for (let i = Math.max(off, csIdx); i < i1; i += stride) {
-			if (i < i0) continue;
+		const rem = (first - csIdx) % stride;
+		for (let i = rem === 0 ? first : first + (stride - rem); i < i1; i += stride) {
 			const r = (c.revs[i] - revsCs) / ppr;
 			const rho = rho0 - F * r;
 			if (rho < 0) break;
@@ -155,6 +172,19 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 			n++;
 		}
 		client.frm.count = n;
+	}
+
+	// Running |peak| per axis across [i0, i1), folded into whatever is already there.
+	function accumulatePeaks(i0: number, i1: number) {
+		if (!cache || i1 <= i0) return;
+		const c = cache;
+		let px = client.status.peaks.Fx, py = client.status.peaks.Fy, pz = client.status.peaks.Fz;
+		for (let i = i0; i < i1; i++) {
+			const x = Math.abs(c.Fx[i]); if (x > px) px = x;
+			const y = Math.abs(c.Fy[i]); if (y > py) py = y;
+			const z = Math.abs(c.Fz[i]); if (z > pz) pz = z;
+		}
+		client.status.peaks = { Fx: px, Fy: py, Fz: pz };
 	}
 
 	function trimWindow(tSec: number) {
@@ -175,23 +205,33 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 	function renderTo(tSec: number, requestSpectrum = true, forceSpectrum = false) {
 		if (!cache) return;
 		const target = idxOfTime(tSec);
-		if (target < cursor) {
+		if (target < frmCursor) {
 			client.trace = emptyTrace();
 			client.frm.count = 0; client.frm.cAbsMax = 1;
 			client.status.peaks = { Fx: 0, Fy: 0, Fz: 0 };
-			cursor = 0;
+			frmCursor = 0; traceCursor = 0;
 		}
-		appendRange(cursor, target);
-		cursor = target;
+		// fftHistory feeds the spectrogram / waterfall. Anything recorded ahead of the playhead is
+		// in the future and must go, or those two views keep showing spectra from later in the cut
+		// after a scrub. Checked in both directions (not just on a backward seek) so the invariant
+		// "history is never ahead of the playhead" holds however the playhead got here; during
+		// steady playback the guard is false and this costs nothing.
+		const hist = client.fftHistory;
+		if (hist.length && hist[hist.length - 1].t > tSec) {
+			client.fftHistory = hist.filter((e) => e.t <= tSec);
+			client.fftSeq.value++;
+		}
+		// Trace advances only to a whole-bin boundary; FRM advances to the playhead itself.
+		const binEnd = Math.floor(target / binSize) * binSize;
+		appendTraceBins(traceCursor, Math.max(traceCursor, binEnd));
+		traceCursor = Math.max(traceCursor, binEnd);
+		appendFrmPoints(frmCursor, target);
+		accumulatePeaks(frmCursor, target);
+		frmCursor = target;
 		trimWindow(tSec);
 
 		const c = cache;
 		const last = Math.max(0, Math.min(c.N - 1, target - 1));
-		let px = client.status.peaks.Fx, py = client.status.peaks.Fy, pz = client.status.peaks.Fz;
-		for (let i = Math.max(0, target - 1); i < target; i++) {
-			px = Math.max(px, Math.abs(c.Fx[i])); py = Math.max(py, Math.abs(c.Fy[i])); pz = Math.max(pz, Math.abs(c.Fz[i]));
-		}
-		client.status.peaks = { Fx: px, Fy: py, Fz: pz };
 		client.status.tSec = tSec;
 		client.status.rpm = c.rpm[last];        // straight from the cache; never re-derived
 		client.status.nTotal = target;

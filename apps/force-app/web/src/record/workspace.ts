@@ -66,8 +66,13 @@ export function createWorkspace() {
 		forceMode: 'time', frmAxis: 'Fz', colormap: 'viridis', pointSize: 1.8, windowSec: 12, liveFrmStride: 1,
 	});
 	watch(() => plot.windowSec, (v) => { client.windowSec = Math.max(1, v); });
-	const replay = reactive<{ query: string; options: ReplayOption[]; cacheId: string; label: string; speed: number; loading: boolean }>(
-		{ query: '', options: [], cacheId: '', label: '', speed: 1, loading: false },
+	// `rpm`/`feed`/`diam` here describe the CUT BEING PLAYED. They deliberately do not live on
+	// `cfg`: that is the config for the next real recording and is also serialised into the
+	// Directus write-back by buildRunPayload(), so letting a replay overwrite it would silently
+	// carry an archived cut's parameters — including the cache's already-DECIMATED sample rate —
+	// into the next NI-DAQ capture and its logged record.
+	const replay = reactive<{ query: string; options: ReplayOption[]; cacheId: string; label: string; speed: number; loading: boolean; rpm: number; feed: number; diam: number }>(
+		{ query: '', options: [], cacheId: '', label: '', speed: 1, loading: false, rpm: 0, feed: 0, diam: 0 },
 	);
 
 	// Replaying an archived cut is PLAYBACK, not recording: a local playhead over a cut already in
@@ -76,6 +81,9 @@ export function createWorkspace() {
 	// auditable place.
 	const mode = computed<'record' | 'playback'>(() => (source.value === 'replay' ? 'playback' : 'record'));
 	const playback = createPlaybackEngine(client, { baseUrl: client.baseUrl });
+	// The RPM gauge's reference line: the replayed cut's own spindle speed in playback, the
+	// configured target when recording. Panels read this rather than cfg.rpm directly.
+	const rpmTarget = computed(() => (mode.value === 'playback' ? replay.rpm : cfg.rpm));
 	watch(() => replay.speed, (s) => playback.setSpeed(s), { immediate: true });
 
 	const busy = ref(false);
@@ -483,7 +491,7 @@ export function createWorkspace() {
 			const res = await api.get(`/assets/${o.cacheId}`, { responseType: 'arraybuffer' });
 			const c = parseCache(res.data as ArrayBuffer);
 			playback.load(c, { ppr: cfg.ppr, stride: plot.liveFrmStride });
-			cfg.feed = c.feed; cfg.diam = c.diam; cfg.sample_rate = c.Fs;
+			replay.feed = c.feed; replay.diam = c.diam;
 		} catch (e: any) {
 			errMsg.value = `could not load that cut — ${e?.message || e}`;
 		}
@@ -509,9 +517,8 @@ export function createWorkspace() {
 			link.insertId = d.insert_edge_id?.insert_id?.insert_id || ''; link.insertLabel = d.insert_edge_id?.insert_id?.insert_code || '';
 			link.edgeId = d.insert_edge_id?.edge_id || ''; link.edgeLabel = d.insert_edge_id?.edge_code || '';
 			meta.op_type = d.machining_operation_subtype || '';
-			// The RPM gauge's target and the alarm threshold both read cfg.rpm; without this a
-			// replayed cut was measured against whatever was left in the form.
-			if (d.machining_spindle_speed_rpm != null) cfg.rpm = Number(d.machining_spindle_speed_rpm);
+			// Drives the RPM gauge's target in playback (see rpmTarget below) without touching cfg.
+			if (d.machining_spindle_speed_rpm != null) replay.rpm = Number(d.machining_spindle_speed_rpm);
 			meta.sample_name = rm.sample_name || link.sampleLabel || o.label;
 			meta.coolant = rm.coolant || '';
 			meta.notes = d.outcome_notes || rm.notes || '';
@@ -529,7 +536,7 @@ export function createWorkspace() {
 	return {
 		client, source, setSource, nidaqChannels, cfg, meta, machining, plot, replay, st, busy, errMsg, finishedCache,
 		isIdle, isRecording, isFinalizing, isDone, locked, saveOpen,
-		mode, playback,
+		mode, playback, rpmTarget,
 		start, stop, newRun, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
 		// 2d: Directus links + run write-back
 		link, logged, onSelectSample, logRunNow, syncStatus,

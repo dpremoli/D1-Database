@@ -50,6 +50,26 @@ describe('spectrum client', () => {
 		expect(f).toHaveBeenCalledTimes(2);
 	});
 
+	it('throttles even while a request is in flight (the steady state during playback)', async () => {
+		// Regression: the guard used to short-circuit on `!inFlight`, so once playback had a request
+		// in flight — which is essentially always — the 300 ms throttle stopped applying and
+		// /dsp/spectrum was hit back-to-back at round-trip rate with ~300 KB bodies.
+		let release!: (v: any) => void;
+		const gate = new Promise((r) => { release = r; });
+		const f = vi.fn(async (_u: any, _init: any) => {
+			await gate;
+			return { ok: true, status: 200, json: async () => REPLY } as any;
+		});
+		vi.stubGlobal('fetch', f);
+		const c = createSpectrumClient('http://x', { minIntervalMs: 300 });
+
+		c.request(req());                    // sent immediately
+		for (let i = 0; i < 20; i++) c.request(req());   // all inside the throttle window
+		release(null);
+		await c.flush();
+		expect(f).toHaveBeenCalledTimes(1);
+	});
+
 	it('force bypasses the throttle', async () => {
 		const f = okFetch();
 		vi.stubGlobal('fetch', f);
