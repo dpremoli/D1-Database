@@ -99,6 +99,7 @@ async function runDoctor() {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
+				directus_url: cfg.directusUrl,
 				filter_url: cfg.filterUrl,
 				octree_url: cfg.octreeUrl,
 			}),
@@ -267,7 +268,7 @@ h3 { margin: 24px 0 8px; font-size: 14px; }
 .ep-hint { display: block; font-size: 11.5px; color: var(--text-dim); margin-top: 3px; }
 .btn.save { background: var(--accent); color: var(--accent-ink); }
 .lead { margin: 0 0 18px; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
-.actions { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.actions { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; font-size: 13px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
 .btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -311,7 +312,7 @@ h3 { margin: 24px 0 8px; font-size: 14px; }
 .disk-stat b.mono { font-family: var(--mono); font-size: 11.5px; word-break: break-all; }
 .disk-stat b.warn { color: #fbbf24; }
 .disk-stat b.crit { color: #ef4444; }
-.disk-row { display: flex; gap: 20px; margin-top: 8px; }
+.disk-row { display: flex; gap: 20px; margin-top: 8px; flex-wrap: wrap; }
 .disk-bar-wrap { width: 100%; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; margin-top: 10px; }
 .disk-bar { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.3s; }
 .disk-bar.warn { background: #fbbf24; }

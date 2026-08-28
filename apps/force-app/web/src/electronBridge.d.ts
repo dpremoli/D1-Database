@@ -10,6 +10,7 @@ type UpdateStatus =
   | { state: 'not-available' }
   | { state: 'downloading'; percent: number }
   | { state: 'downloaded'; version: string }
+  | { state: 'installing'; version: string }
   | { state: 'error'; message: string };
 
 declare global {

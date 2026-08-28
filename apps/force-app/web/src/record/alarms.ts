@@ -26,6 +26,11 @@ export class AlarmController {
 	active = reactive<ActiveAlarm[]>([]);      // latched breaches (kept until reset)
 	acknowledged = ref(false);
 	private latched = new Set<string>();
+	// Whether alarms have been fired (via test() or a real breach) at least once since this app
+	// process started — gates the "alarms untested" prompt shown before the first recording.
+	// Deliberately module-lifetime, not per-recording: reset() (called at the start of every
+	// recording) must NOT clear it, or the prompt would nag on every single start.
+	testedSinceStart = ref(false);
 
 	// Web Audio attention tone
 	private ctx: AudioContext | null = null;
@@ -81,13 +86,21 @@ export class AlarmController {
 	acknowledge(): void { this.acknowledged.value = true; this.stopTone(); }
 	reset(): void { this.active.splice(0); this.latched.clear(); this.acknowledged.value = false; this.stopTone(); }
 
-	// Fire a synthetic alarm so operators can confirm the alert works.
+	// Fire a synthetic alarm so operators can confirm the alert works. Auto-clears after 5s —
+	// unlike a real breach, a test alarm has nothing to acknowledge, so previously it just rang
+	// forever until the operator found their way to the Record page's Acknowledge button (which
+	// isn't even visible from Settings, where "Test alarm" lives).
 	test(): void {
 		const key = `test:${Date.now()}`;
 		this.latched.add(key);
 		this.active.push({ key, kind: 'force', label: 'TEST alarm', value: 999, threshold: 0, at: Date.now() });
 		this.acknowledged.value = false;
+		this.testedSinceStart.value = true;
 		if (this.config.audioEnabled) this.startTone();
+		setTimeout(() => {
+			if (this.latched.has(key)) { this.latched.delete(key); this.active.splice(this.active.findIndex((a) => a.key === key), 1); }
+			if (this.active.length === 0) { this.acknowledged.value = false; this.stopTone(); }
+		}, 5000);
 	}
 
 	// ---- audio (looping beep) ----

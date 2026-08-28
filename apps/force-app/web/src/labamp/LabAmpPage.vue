@@ -268,9 +268,17 @@ input, select { display: block; width: 100%; margin-top: 4px; padding: 8px 10px;
 .btn.ghost { color: var(--text); background: var(--surface); border: 1px solid var(--border); }
 .btn.ghost:hover:not(:disabled) { background: var(--surface-2); }
 .err { color: var(--danger); font-size: 12px; margin: 8px 0 0; }
-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.card.wide { overflow-x: auto; }
+table { width: 100%; min-width: 480px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
 th { color: var(--text-dim); font-weight: 600; }
+
+@media (max-width: 640px) {
+	.grid, .two { grid-template-columns: 1fr; }
+	.head { flex-wrap: wrap; gap: 8px; padding: 16px; }
+	.ic { margin-left: 0; }
+	.grid { padding: 16px; }
+}
 .ar-source { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .ar-label { font-size: 12px; color: var(--text-dim); }
 .ar-source .seg { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
@@ -280,7 +288,7 @@ th { color: var(--text-dim); font-weight: 600; }
 .prev-peaks .tag { margin-bottom: 8px; }
 .prev-peaks :deep(.lookup) { flex: 1; min-width: 260px; margin-bottom: 0; }
 .prev-peaks .hint { flex-basis: 100%; margin: 0; }
-.ar-controls { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 12px; }
+.ar-controls { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 .ar-controls label { margin: 0; }
 .ar-controls input { width: 90px; }
 tr.clip td { background: rgba(239,68,68,0.08); }

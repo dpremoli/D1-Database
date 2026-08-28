@@ -90,6 +90,29 @@ const rowHeight = computed(() =>
 
 let gridRO: ResizeObserver | undefined;
 
+// Below this width the drag/resize grid has no room to lay panels side by side without squeezing
+// their contents unreadable — fall back to a plain single-column stack (drag/resize disabled,
+// since there's nothing left to rearrange against) instead of trying to force the 12-col grid
+// into a space it was never designed for.
+const NARROW_BREAKPOINT = 640;
+const narrow = ref(false);
+function checkNarrow() { narrow.value = window.innerWidth < NARROW_BREAKPOINT; }
+const stackedLayout = computed<Inst[]>(() => {
+	const sorted = [...layout.value].sort((a, b) => a.y - b.y || a.x - b.x);
+	let y = 0;
+	return sorted.map((p) => {
+		const item = { ...p, x: 0, y, w: 1 };
+		y += p.h;
+		return item;
+	});
+});
+// Two-way only in the normal (wide) case — the stacked view is a derived read-only projection,
+// and dragging is disabled there anyway so the setter never fires while narrow.
+const displayLayout = computed<Inst[]>({
+	get: () => (narrow.value ? stackedLayout.value : layout.value),
+	set: (v) => { if (!narrow.value) layout.value = v; },
+});
+
 const addOpen = ref(false);
 const hasType = (t: string) => layout.value.some((p) => p.type === t);
 const MODE_LABEL: Record<string, string> = { time: 'Force Plot', fft: 'FFT', psd: 'Power', spectrogram: 'Spectrogram', waterfall: 'Waterfall' };
@@ -273,6 +296,14 @@ async function discardSession(id: string) {
 	}
 }
 
+// Silencing a tripped alarm is a safety-relevant action (it stops the tone/overlay for a real
+// force/RPM/disk breach, not just a test) — a confirm gate prevents an accidental click while
+// reaching for something else on the overlay from instantly clearing it.
+function ackAlarm() {
+	if (!confirm('Acknowledge and silence this alarm?')) return;
+	w.alarms.acknowledge();
+}
+
 // Tabbing/alt-tabbing away mid-replay used to leave the playhead running in the background
 // (rAF still fires on a hidden tab, just throttled) — advancing invisibly so returning showed
 // a jump, or on some setups the engine's own state got left inconsistent. Pause (not reset —
@@ -292,7 +323,9 @@ onMounted(() => {
 	gridRO = new ResizeObserver(measureGrid);
 	if (gridEl.value) gridRO.observe(gridEl.value);
 	measureGrid();
+	checkNarrow();
 	window.addEventListener('resize', measureGrid);
+	window.addEventListener('resize', checkNarrow);
 	document.addEventListener('visibilitychange', onVisibilityChange);
 });
 onBeforeUnmount(() => {
@@ -304,6 +337,7 @@ onBeforeUnmount(() => {
 	if (recoveryTickTimer) clearInterval(recoveryTickTimer);
 	gridRO?.disconnect();
 	window.removeEventListener('resize', measureGrid);
+	window.removeEventListener('resize', checkNarrow);
 	// These chips only make sense while the Record page (and its backend connection/polling) is
 	// mounted — clear them so the sidebar doesn't show stale Record-page status on other routes.
 	hwStatus.connected = false;
@@ -331,7 +365,7 @@ onBeforeUnmount(() => {
 				<b>SAFETY ALARM</b>
 				<span v-for="al in w.alarms.active" :key="al.key" class="ao-item">{{ al.label }} {{ al.value.toFixed(al.kind === 'rpm' ? 0 : 1) }}{{ al.kind === 'rpm' ? '' : al.kind === 'disk' ? ' GB' : ' N' }}</span>
 			</div>
-			<button class="ao-ack" @click="w.alarms.acknowledge()">Acknowledge</button>
+			<button class="ao-ack" @click="ackAlarm">Acknowledge</button>
 		</div>
 
 		<!-- Recovery banner for incomplete recordings found on startup -->
@@ -369,10 +403,10 @@ onBeforeUnmount(() => {
 				</div>
 				<button class="reset" title="Reset panel layout" @click="resetLayout"><span class="material-symbols-rounded">grid_view</span></button>
 			</div>
-		<GridLayout v-model:layout="layout" :col-num="12" :row-height="rowHeight" :margin="[12, 12]"
-			:is-draggable="true" :is-resizable="true" :use-css-transforms="true" :vertical-compact="true">
-			<GridItem v-for="item in layout" :key="item.i" :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i"
-				drag-allow-from=".panel-handle" :min-w="2" :min-h="3">
+		<GridLayout v-model:layout="displayLayout" :col-num="narrow ? 1 : 12" :row-height="rowHeight" :margin="[12, 12]"
+			:is-draggable="!narrow" :is-resizable="!narrow" :use-css-transforms="true" :vertical-compact="true">
+			<GridItem v-for="item in displayLayout" :key="item.i" :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i"
+				drag-allow-from=".panel-handle" :min-w="narrow ? 1 : 2" :min-h="3">
 				<PanelFrame :title="panelTitle(item)" :icon="PANEL_TYPES[item.type].icon" closable @close="closePanel(item.i)">
 					<RecordingOptions v-if="item.type === 'options'" />
 					<OverviewPanel v-else-if="item.type === 'overview'" />
@@ -408,9 +442,9 @@ onBeforeUnmount(() => {
 .disk-action-banner .material-symbols-rounded { font-size: 20px; }
 .disk-action-ack { margin-left: auto; padding: 6px 14px; font-size: 12px; font-weight: 700; color: inherit; background: rgba(255,255,255,0.18); border: none; border-radius: 7px; cursor: pointer; }
 .disk-action-ack:hover { background: rgba(255,255,255,0.28); }
-.reset { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 9px; background: color-mix(in srgb, var(--surface) 55%, transparent); border: 1px solid var(--border); color: var(--text); cursor: pointer; backdrop-filter: blur(4px); transition: background 0.14s, opacity 0.14s; opacity: 0.72; }
+.reset { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 10px; background: color-mix(in srgb, var(--surface) 55%, transparent); border: 1px solid var(--border); color: var(--text); cursor: pointer; backdrop-filter: blur(4px); transition: background 0.14s, opacity 0.14s; opacity: 0.72; }
 .reset:hover { background: var(--surface-2); opacity: 1; }
-.reset .material-symbols-rounded { font-size: 19px; }
+.reset .material-symbols-rounded { font-size: 21px; }
 .panel-controls { position: fixed; right: 20px; bottom: 20px; z-index: 25; display: flex; align-items: center; gap: 8px; }
 .addwrap { position: relative; }
 .addmenu { position: absolute; top: 32px; right: 0; z-index: 30; min-width: 190px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 5px; box-shadow: 0 14px 40px rgba(0,0,0,0.3); }

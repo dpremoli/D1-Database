@@ -227,12 +227,11 @@ def test_discard_session_rejects_finalized(tmp_path):
         assert "finalized" in str(e)
 
 
-def test_discard_session_rejects_missing(tmp_path):
-    try:
-        discard_session(str(tmp_path), "ghost-session")
-        assert False, "should have raised FileNotFoundError"
-    except FileNotFoundError:
-        pass
+def test_discard_session_missing_is_idempotent(tmp_path):
+    # A session already gone (e.g. a prior discard finished after the caller stopped waiting on it)
+    # is a no-op, not an error — retrying/duplicating a discard request must not surface a 404 for
+    # work that already succeeded.
+    discard_session(str(tmp_path), "ghost-session")
 
 
 def test_scan_incomplete_survives_zero_column_header(tmp_path):

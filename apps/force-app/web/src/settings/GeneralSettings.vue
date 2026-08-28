@@ -148,7 +148,7 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .mt { margin-top: 32px; }
 .channels { display: block; width: 100%; padding: 9px 11px; font-size: 12px; font-family: var(--mono); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; outline: none; resize: vertical; }
 .channels:focus { border-color: var(--accent); }
-.theme-toggle { display: flex; gap: 0; margin-bottom: 20px; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; width: fit-content; }
+.theme-toggle { display: flex; gap: 0; margin-bottom: 20px; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; width: fit-content; max-width: 100%; }
 .theme-toggle button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 13px; font-weight: 600; color: var(--text-dim); background: transparent; border: none; cursor: pointer; }
 .theme-toggle button.on { background: var(--accent); color: var(--accent-ink); }
 .theme-toggle button .material-symbols-rounded { font-size: 17px; }
@@ -162,7 +162,7 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .drive-icon { font-size: 22px; color: var(--text-dim); }
 .drive.ssd .drive-icon { color: #22c55e; }
 .drive-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.drive-name { font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.drive-name { font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .drive-detail { font-size: 11.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .badge { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
 .ssd-badge { color: #15803d; background: rgba(34,197,94,0.15); }

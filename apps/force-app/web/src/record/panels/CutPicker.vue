@@ -68,7 +68,7 @@ function delayedBlurClose() { window.setTimeout(() => { open.value = false; }, 1
 
 <template>
 	<div ref="rootEl" class="cutpicker">
-		<span class="lbl">Find a cut <span class="sub">(narrowed by Sample/Operation type/Machine above)</span></span>
+		<span class="lbl">Find a cut <span class="sub">(narrowed by Sample/Operation type above, Machine below)</span></span>
 		<!-- Collapsed: the picked cut's label, one line, with a button to search again. -->
 		<div v-if="w.replay.cacheId && !reselecting" class="chosen">
 			<span class="chosen-label">{{ w.replay.label }}</span>

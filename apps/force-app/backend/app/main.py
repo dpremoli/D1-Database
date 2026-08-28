@@ -35,6 +35,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from . import backup as backup_mod
+from . import bug_report
 from . import channels as chan
 from . import nidaq_catalog, nidaq_enum, recovery, storage
 from .config import DEFAULT_NIDAQ_CHANNELS, RecordConfig
@@ -154,6 +155,16 @@ logging.basicConfig(level=logging.INFO, handlers=_handlers)
 log = logging.getLogger("force_app.main")
 if not LOG_PATH:
     log.warning("log file unavailable (%s not writable) — logging to stderr only", LOG_DIR)
+
+# Runtime-adjustable verbosity. Previously the level was fixed at import time, so reproducing an
+# intermittent bug meant restarting with an env var set and hoping it happened again — this lets
+# an operator turn on DEBUG from Settings > Logs while the problem is actually occurring.
+# Scoped to the "force_app" logger tree, not the root logger: the root's handlers still see
+# everything propagated up to them regardless, but setting the *level* on root would also lower
+# the threshold for uvicorn/httpx/asyncio/etc, flooding the log with third-party DEBUG noise that
+# has nothing to do with the bug being chased.
+_app_logger = logging.getLogger("force_app")
+_app_logger.setLevel(logging.INFO)  # explicit, not inherited NOTSET — GET /logs/level needs a real value
 
 # Pin the backup settings next to storage_config.json rather than inside the captures root. Both
 # have to survive the user changing the recording drive — a config stored on the drive it configures
@@ -374,6 +385,108 @@ async def download_logs() -> FileResponse:
     return FileResponse(LOG_PATH, media_type="text/plain", filename="force-app-backend.log")
 
 
+@app.get("/logs/level")
+async def get_log_level() -> dict:
+    return {"level": logging.getLevelName(_app_logger.level), "levels": LOG_LEVELS}
+
+
+@app.post("/logs/level")
+async def set_log_level(level: str = Form(...)) -> dict:
+    """Raise or lower verbosity without a restart — reverts to INFO next launch since it's not
+    persisted, which is intentional: DEBUG left on by accident would otherwise slowly fill the
+    rotating log with noise on every future run."""
+    lvl = level.strip().upper()
+    if lvl not in LOG_LEVELS:
+        raise HTTPException(400, f"level must be one of {LOG_LEVELS}")
+    _app_logger.setLevel(lvl)
+    log.info("log level changed to %s", lvl)
+    return {"level": lvl}
+
+
+# A frontend crash otherwise vanishes into the DevTools console the moment the window closes —
+# folding it into the same log file the backend already writes means one place to look, and one
+# support-bug-report attachment covers both sides of the app.
+_client_log = logging.getLogger("force_app.client")
+_last_client_error: dict[str, float] = {}
+_CLIENT_LOG_DEDUP_SECONDS = 30.0
+# Renderer-supplied text ends up in a plaintext log file that gets tailed/viewed raw (including as
+# a bug-report attachment) — strip ANSI escapes and other control chars so it can't manipulate a
+# terminal viewer, keeping ordinary newlines/tabs since real stack traces rely on them.
+_CONTROL_CHARS_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _strip_control_chars(s: str) -> str:
+    return _CONTROL_CHARS_RE.sub("", s)
+
+
+@app.post("/logs/client")
+async def post_client_log(payload: dict) -> dict:
+    message = _strip_control_chars(str(payload.get("message", "")).strip()[:4000])
+    if not message:
+        raise HTTPException(400, "message is required")
+    level = str(payload.get("level", "ERROR")).strip().upper()
+    if level not in LOG_LEVELS:
+        level = "ERROR"
+    source = _strip_control_chars(str(payload.get("source", "renderer"))[:80])
+    route = _strip_control_chars(str(payload.get("route", ""))[:200])
+
+    # A crash loop (e.g. a render error on every frame) would otherwise fill the rotating log and
+    # push out everything else within seconds — dedup identical messages per source+route.
+    key = f"{source}:{route}:{message[:200]}"
+    now = time.monotonic()
+    last = _last_client_error.get(key)
+    _last_client_error[key] = now
+    # Sweep stale entries opportunistically rather than let the dict grow for the life of the
+    # process — a wide variety of distinct client error messages over a long-running session would
+    # otherwise never be evicted.
+    if len(_last_client_error) > 500:
+        cutoff = now - _CLIENT_LOG_DEDUP_SECONDS
+        for stale_key, ts in list(_last_client_error.items()):
+            if ts < cutoff:
+                del _last_client_error[stale_key]
+    if last is not None and now - last < _CLIENT_LOG_DEDUP_SECONDS:
+        return {"ok": True, "deduped": True}
+
+    _client_log.log(getattr(logging, level), "[%s @ %s] %s", source, route or "?", message)
+    return {"ok": True, "deduped": False}
+
+
+# ---- Bug reporting ----
+@app.get("/support/report-bug")
+async def report_bug_status() -> dict:
+    return {"configured": bug_report.configured()}
+
+
+@app.post("/support/report-bug")
+async def report_bug(
+    title: str = Form(...),
+    description: str = Form(""),
+    app_version: str = Form(""),
+    platform: str = Form(""),
+    route: str = Form(""),
+    reporter_email: str = Form(""),
+    include_logs: bool = Form(True),
+) -> dict:
+    log_tail = ""
+    if include_logs:
+        raw = await run_in_threadpool(_read_log_tail, 400)
+        log_tail = "\n".join(raw)
+    result = await bug_report.create_issue(
+        title=title,
+        description=description,
+        app_version=app_version,
+        platform=platform,
+        route=route,
+        reporter_email=reporter_email,
+        log_tail=log_tail,
+    )
+    if not result["ok"]:
+        log.warning("bug report failed: %s", result.get("reason"))
+    else:
+        log.info("bug report filed: %s", result.get("url"))
+    return result
+
+
 # ---- Storage management ----
 @app.get("/storage/drives")
 async def storage_drives() -> dict:
@@ -588,8 +701,13 @@ async def health_doctor(request: Request) -> dict:
             }
         )
 
-    # 3. Directus / database
-    directus_url = os.environ.get("DIRECTUS_URL", "")
+    # 3. Directus / database. The backend process itself never talks to Directus — sample lookup
+    # and upload happen entirely in the browser, using the frontend's own resolved config (build-time
+    # VITE_DIRECTUS_URL, /config.json, or a Settings > General override) — so DIRECTUS_URL is normally
+    # unset in this process's environment even on a fully working setup. Prefer the URL the frontend
+    # actually uses (passed in the request body, same pattern as filter_url/octree_url below); only
+    # fall back to the backend's own env var for setups that still rely on it.
+    directus_url = body.get("directus_url") or os.environ.get("DIRECTUS_URL", "")
     if directus_url:
         parsed = urlparse(directus_url)
         host = parsed.hostname or ""
@@ -688,6 +806,19 @@ async def health_doctor(request: Request) -> dict:
     for svc_key, svc_label in [("filter_url", "Filter service"), ("octree_url", "Octree server")]:
         svc_url = body.get(svc_key, "")
         if not svc_url:
+            continue
+        try:
+            _validate_outbound_url(svc_url, svc_label)
+        except HTTPException as e:
+            findings.append(
+                {
+                    "service": svc_label,
+                    "status": "fail",
+                    "message": str(e.detail),
+                    "diagnosis": f"The configured {svc_label} URL is invalid or not allowed.",
+                    "fix": f"Check the {svc_label} URL in Settings > General.",
+                }
+            )
             continue
         parsed = urlparse(svc_url)
         host = parsed.hostname or ""
@@ -906,15 +1037,32 @@ async def recovery_recover(session_id: str) -> dict:
 
 @app.post("/recovery/discard/{session_id}")
 async def recovery_discard(session_id: str) -> dict:
-    t0 = time.perf_counter()
-    try:
-        await run_in_threadpool(recovery.discard_session, CAPTURES_ROOT, session_id)
-    except FileNotFoundError as e:
-        raise HTTPException(404, str(e))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    finally:
-        log.info("recovery_discard: id=%s took %.2fs", session_id, time.perf_counter() - t0)
+    # A large raw.d1raw can take a long time to unlink — awaiting the full rmtree here (even off the
+    # event loop, via run_in_threadpool) made the request itself hang for however long that takes,
+    # which read as "discard takes forever" and tempted an operator to force-close the app mid-delete
+    # (partial delete, then "failed to fetch" retrying against a backend that may still be shutting
+    # down). Kick the delete off in the background and return immediately instead; scan_incomplete
+    # excludes _discarding ids so the item just vanishes from the recovery list once it finishes.
+    if session_id in recovery._discarding:
+        return {"discarded": True, "session_id": session_id}  # already in flight — idempotent
+    capture_dir = os.path.join(CAPTURES_ROOT, session_id)
+    if not os.path.isdir(capture_dir):
+        raise HTTPException(404, f"session {session_id} not found")
+    if os.path.isfile(os.path.join(capture_dir, "summary.json")):
+        raise HTTPException(400, f"session {session_id} is finalized — use delete instead")
+
+    async def _run() -> None:
+        t0 = time.perf_counter()
+        recovery._discarding.add(session_id)
+        try:
+            await run_in_threadpool(recovery.discard_session, CAPTURES_ROOT, session_id)
+        except Exception:
+            log.exception("recovery_discard: background delete failed for id=%s", session_id)
+        finally:
+            recovery._discarding.discard(session_id)
+            log.info("recovery_discard: id=%s took %.2fs", session_id, time.perf_counter() - t0)
+
+    asyncio.create_task(_run())
     return {"discarded": True, "session_id": session_id}
 
 
@@ -931,10 +1079,10 @@ async def backup_get_config() -> dict:
 
 @app.post("/backup/config")
 async def backup_set_config(body: dict) -> dict:
-    cfg = backup_mod.save_config(
-        CAPTURES_ROOT,
-        {k: body[k] for k in ("enabled", "server_url", "retention_hours") if k in body},
-    )
+    updates = {k: body[k] for k in ("enabled", "server_url", "retention_hours") if k in body}
+    if updates.get("server_url"):
+        updates["server_url"] = _validate_outbound_url(str(updates["server_url"]), "backup server URL")
+    cfg = backup_mod.save_config(CAPTURES_ROOT, updates)
     return cfg
 
 
@@ -1529,28 +1677,31 @@ async def labamp_get_config() -> dict:
     return _labamp_cfg
 
 
-# The amp is legitimately on a link-local/private address, so we can't block those ranges (that IS
-# the target). We do reject non-http(s) schemes and the cloud-metadata address — the one dangerous
-# SSRF target inside link-local. The recorder is otherwise a loopback-bound, single-user local
-# hardware controller (bind 127.0.0.1), which is the mitigation for the lack of endpoint auth.
-_BLOCKED_AMP_HOSTS = {"169.254.169.254", "metadata.google.internal", "fd00:ec2::254"}
+# Shared by every endpoint that accepts a client-supplied URL the backend itself then fetches from
+# or streams to (amp base_url, backup server_url, doctor filter_url/octree_url): the amp/filter/
+# octree/backup servers are all legitimately on a link-local/private address, so we can't block
+# those ranges (that IS the target) — we can only reject scheme confusion and the cloud-metadata
+# address, the one dangerous SSRF target that would otherwise be reachable through any of them. The
+# recorder is otherwise a loopback-bound, single-user local hardware controller (bind 127.0.0.1),
+# which is the mitigation for the lack of endpoint auth.
+_BLOCKED_SSRF_HOSTS = {"169.254.169.254", "metadata.google.internal", "fd00:ec2::254"}
 
 
-def _validate_amp_url(url: str) -> str:
+def _validate_outbound_url(url: str, what: str = "URL") -> str:
     u = urlparse(url)
     if u.scheme not in ("http", "https"):
-        raise HTTPException(400, "amp URL must use http or https")
+        raise HTTPException(400, f"{what} must use http or https")
     if not u.hostname:
-        raise HTTPException(400, "amp URL must include a host")
-    if u.hostname.strip("[]").lower() in _BLOCKED_AMP_HOSTS:
-        raise HTTPException(400, "amp URL host is not allowed")
+        raise HTTPException(400, f"{what} must include a host")
+    if u.hostname.strip("[]").lower() in _BLOCKED_SSRF_HOSTS:
+        raise HTTPException(400, f"{what} host is not allowed")
     return url
 
 
 @app.post("/labamp/config")
 async def labamp_post_config(body: dict) -> dict:
     if "base_url" in body:
-        body["base_url"] = _validate_amp_url(str(body["base_url"]))
+        body["base_url"] = _validate_outbound_url(str(body["base_url"]), "amp URL")
     for k in (
         "base_url",
         "channels",

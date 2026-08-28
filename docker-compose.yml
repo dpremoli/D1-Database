@@ -346,6 +346,41 @@ services:
       start_period: 20s
     networks: [d1net]
 
+  # Relay that creates GitHub issues on behalf of force-app clients (apps/force-app/bug-report-relay).
+  # Holds the GitHub App private key centrally so no acquisition PC needs a GitHub credential of its
+  # own — the force-app backend on each machine calls this relay instead of api.github.com directly.
+  #
+  # Reached through Caddy at /bug-report-relay/* rather than by publishing its port, same as
+  # backup-server above: it has no auth of its own (see the Caddyfile comment) and relies on the
+  # tailnet-only entry point, so it must not be published directly.
+  #
+  # GITHUB_APP_PRIVATE_KEY_FILE_HOST points at the App's private key .pem on the host; it is bind-
+  # mounted read-only rather than passed as an env var so the key never ends up in `.env` or `docker
+  # inspect` output.
+  bug-report-relay:
+    build:
+      context: apps/force-app/bug-report-relay
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_PRIVATE_KEY_PATH: /run/secrets/github-app-private-key.pem
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
+      GITHUB_REPO: ${GITHUB_BUG_REPORT_REPO:-dpremoli/D1-Database}
+    volumes:
+      - ${GITHUB_APP_PRIVATE_KEY_FILE_HOST:-./secrets/github-app-private-key.pem}:/run/secrets/github-app-private-key.pem:ro
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8211/health')"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [d1net]
+
   # Reverse proxy: single HTTP entry point → Directus admin UI.
   # MinIO console and API remain directly accessible on their own ports.
   proxy:

@@ -9,6 +9,19 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.13',
+		date: '2026-08-28',
+		notes: [
+			'Fixed: dropdown search menus (Sample, Machine, Tool, Operator, Insert, Edge, replay cut picker) stayed dark in light mode.',
+			'Fixed: after picking a replay cut and clicking "change" to pick a different one, the list only ever showed one option instead of the full recent-cuts list.',
+			'Recording panel: Insert/Edge and Machine/Operator fields are now side by side to save vertical space; picking an Edge auto-fills its parent Insert.',
+			'The Tool field now shows the tool\'s name instead of its code.',
+			'Record page panels can now extend further down the window, and the floating add-panel/reset-layout buttons are slightly larger and fade to translucent until hovered.',
+			'The plotting window can now save a manually adjusted crop as the operation\'s official crop point, used automatically on future replays.',
+			'The sidebar\'s collapsed nav handle is easier to hover onto without shrinking its visible size.',
+		],
+	},
+	{
 		version: '0.1.12',
 		date: '2026-08-27',
 		notes: [

@@ -62,6 +62,18 @@
     handle_path /backup-ingest/* {
         reverse_proxy backup-server:8210
     }
+    # Bug-report relay (apps/force-app/bug-report-relay). Holds the GitHub App private key
+    # centrally so force-app clients never carry a GitHub credential of their own; the backend on
+    # each acquisition PC POSTs here instead of calling api.github.com directly. handle_path strips
+    # the prefix, mapping /bug-report-relay/report -> /report.
+    #
+    # NOTE: like /backup-ingest above, this relay has NO authentication of its own — anyone who can
+    # reach this route can file issues on the configured repo as the GitHub App. Same tailnet-trust
+    # posture (this Caddy is reachable only over Tailscale); must stay unpublished in docker-compose
+    # rather than exposed directly.
+    handle_path /bug-report-relay/* {
+        reverse_proxy bug-report-relay:8211
+    }
     # Electron auto-update feed (electron-updater, generic provider). Populated by a pull-based
     # publish script run on this host (apps/force-app/desktop/scripts/publish-release.ps1) — see
     # docs/superpowers/specs/2026-08-10-force-app-desktop-packaging-design.md. Tailnet-only by

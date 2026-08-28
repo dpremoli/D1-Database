@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain, type BrowserWindow } from 'electron';
+import { app, dialog, ipcMain, Notification, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
 
 export type UpdateStatus =
@@ -8,6 +8,7 @@ export type UpdateStatus =
   | { state: 'not-available' }
   | { state: 'downloading'; percent: number }
   | { state: 'downloaded'; version: string }
+  | { state: 'installing'; version: string }
   | { state: 'error'; message: string };
 
 let status: UpdateStatus = { state: 'idle' };
@@ -40,6 +41,33 @@ async function isRecording(): Promise<boolean> {
   }
 }
 
+// A silent NSIS install (see below) closes the window with no wizard and no taskbar progress of
+// any kind — from the operator's point of view the app just vanishes for several seconds before
+// reappearing, which reads as a crash. Two things soften that: an OS-level notification, which
+// survives the app process exiting (unlike anything drawn in the renderer), and a short pause
+// between "user clicked" and "process actually quits" so the renderer has a moment to show an
+// "Installing…" state — see AboutSettings.vue's `state === 'installing'` branch — before the
+// window closes out from under it.
+function performInstall(version: string): void {
+  push({ state: 'installing', version });
+  if (Notification.isSupported()) {
+    new Notification({
+      title: 'Force App is updating',
+      body: `Installing version ${version}. The app will close and reopen automatically — this takes a few seconds.`,
+    }).show();
+  }
+  setTimeout(() => {
+    // (isSilent, isForceRunAfter). Both matter. The default is a NON-silent install, which
+    // launches the full NSIS wizard — the operator answers "Update now" and is then made to
+    // click through a setup wizard, which is not what that button promises. Silent skips it;
+    // isForceRunAfter brings the app back up afterwards, since a silent NSIS run does not
+    // relaunch on its own and the operator would otherwise be left staring at a closed app.
+    // Safe here because the installer is perMachine: false — a per-user install needs no
+    // elevation, so there is no UAC prompt hiding behind the silent flag.
+    autoUpdater.quitAndInstall(true, true);
+  }, 800);
+}
+
 function showUpdateDialog(version: string): void {
   void dialog
     .showMessageBox({
@@ -51,14 +79,7 @@ function showUpdateDialog(version: string): void {
       detail: 'Choose "Not now" to keep working on the current version — you can install it anytime from Settings > About.',
     })
     .then(({ response }) => {
-      // (isSilent, isForceRunAfter). Both matter. The default is a NON-silent install, which
-      // launches the full NSIS wizard — the operator answers "Update now" and is then made to
-      // click through a setup wizard, which is not what that button promises. Silent skips it;
-      // isForceRunAfter brings the app back up afterwards, since a silent NSIS run does not
-      // relaunch on its own and the operator would otherwise be left staring at a closed app.
-      // Safe here because the installer is perMachine: false — a per-user install needs no
-      // elevation, so there is no UAC prompt hiding behind the silent flag.
-      if (response === 0) autoUpdater.quitAndInstall(true, true);
+      if (response === 0) performInstall(version);
     });
 }
 
@@ -107,7 +128,7 @@ export function initAutoUpdater(getMainWindow: () => BrowserWindow | null, getPo
   ipcMain.handle('update:install', async () => {
     if (status.state !== 'downloaded') return { ok: false, reason: 'no update downloaded yet' };
     if (await isRecording()) return { ok: false, reason: 'a recording is in progress — try again once it finishes' };
-    autoUpdater.quitAndInstall(true, true);
+    performInstall(status.version);
     return { ok: true };
   });
 

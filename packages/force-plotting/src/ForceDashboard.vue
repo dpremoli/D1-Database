@@ -2118,7 +2118,7 @@ function fmtDateTime(v: string | null | undefined) {
    taller than the viewport (adding/moving panels), so this is the scroll container — min-height:0 lets
    it shrink inside the fixed-height layout cell and overflow-y makes off-screen panels reachable. */
 .right-area { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; overflow-x: hidden; }
-.panel-toggles { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
+.panel-toggles { display: flex; align-items: center; gap: 8px; padding: 0 2px; flex-wrap: wrap; }
 .pt-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--theme--foreground-subdued, #98a2b3); margin-right: 2px; }
 .pt-chip {
 	display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 11.5px; font-weight: 650;

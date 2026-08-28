@@ -19,12 +19,45 @@ const loading = ref(false);
 const error = ref('');
 const copied = ref(false);
 
-const LEVELS = ['', 'INFO', 'WARNING', 'ERROR'] as const;
+const LEVELS = ['', 'DEBUG', 'INFO', 'WARNING', 'ERROR'] as const;
 const level = ref<string>('');
 const search = ref('');
 const limit = ref(500);
 const autoRefresh = ref(false);
 const follow = ref(true);
+
+// Runtime verbosity, separate from the `level` filter above (that filters what's already shown;
+// this controls what the backend writes in the first place, e.g. for reproducing an intermittent
+// issue). Not persisted server-side — reverts to INFO on the next backend launch.
+const RUNTIME_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR'] as const;
+const runtimeLevel = ref('');
+const settingLevel = ref(false);
+
+let runtimeLevelRetryT: ReturnType<typeof setTimeout> | null = null;
+
+async function loadRuntimeLevel() {
+	try {
+		const res = await fetch(`${base()}/logs/level`);
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const data = await res.json();
+		runtimeLevel.value = data.level || '';
+	} catch {
+		// Backend not reachable yet (e.g. sidecar still starting) — retry instead of leaving the
+		// control permanently disabled once it does come up.
+		runtimeLevelRetryT = setTimeout(loadRuntimeLevel, 3000);
+	}
+}
+
+async function setRuntimeLevel(lvl: string) {
+	settingLevel.value = true;
+	try {
+		const body = new URLSearchParams({ level: lvl });
+		const res = await fetch(`${base()}/logs/level`, { method: 'POST', body });
+		if (res.ok) runtimeLevel.value = lvl;
+	} finally {
+		settingLevel.value = false;
+	}
+}
 
 const listEl = ref<HTMLElement | null>(null);
 
@@ -75,9 +108,11 @@ watch(autoRefresh, (on) => {
 });
 
 onMounted(load);
+onMounted(loadRuntimeLevel);
 onUnmounted(() => {
 	if (pollT) clearInterval(pollT);
 	if (debounceT) clearTimeout(debounceT);
+	if (runtimeLevelRetryT) clearTimeout(runtimeLevelRetryT);
 });
 
 function copyAll() {
@@ -140,6 +175,12 @@ const problems = computed(() => counts.value.WARNING + counts.value.ERROR + coun
 					<option :value="5000">5000</option>
 				</select>
 			</label>
+			<label class="tb-field" title="How much detail the backend writes to the log right now — separate from the filter above, and not remembered across restarts.">
+				<span>Backend verbosity</span>
+				<select :value="runtimeLevel" :disabled="settingLevel || !runtimeLevel" @change="setRuntimeLevel(($event.target as HTMLSelectElement).value)">
+					<option v-for="l in RUNTIME_LEVELS" :key="l" :value="l">{{ l }}</option>
+				</select>
+			</label>
 		</div>
 
 		<div class="toolbar2">
@@ -197,7 +238,10 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .warnbox b { font-size: 13px; }
 .warnbox span { color: var(--text-dim); line-height: 1.45; }
 
-.toolbar { display: flex; gap: 10px; align-items: flex-end; }
+.toolbar { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.toolbar .tb-field { min-width: 0; }
+.toolbar .tb-field.grow { flex: 1 1 160px; }
+.toolbar .tb-field input, .toolbar .tb-field select { max-width: 100%; }
 .toolbar2 { display: flex; gap: 10px; align-items: center; margin: 10px 0 8px; flex-wrap: wrap; }
 .tb-field { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--text-dim); margin: 0; }
 .tb-field.grow { flex: 1; min-width: 160px; }

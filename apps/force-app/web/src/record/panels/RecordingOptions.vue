@@ -171,7 +171,12 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 .seg button { flex: 1; padding: 8px; font-size: 12.5px; background: transparent; color: var(--text-dim); border: none; cursor: pointer; }
 .seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .seg button:disabled { opacity: 0.5; cursor: not-allowed; }
+/* min-width: 0 on every grid item: grid tracks default to min-width:auto, sized to the child's
+   min-content width. A <label> wrapping an <input> doesn't shrink below that on its own, so a
+   narrow panel (PanelFrame resized small, or a LookupField's flex .box inside) pushed the second
+   column past the panel's right edge instead of the columns actually sharing 1fr each. */
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.grid2 > * { min-width: 0; }
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
 .stat-grid.cut-params { margin-top: -2px; }
 label { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px; }
@@ -190,6 +195,7 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 .section-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
 .section-divider::before, .section-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 .links { display: flex; flex-direction: column; }
+.links :deep(.lookup) { min-width: 0; }
 /* Two lookups side by side (Machine|Operator, Insert|Edge) to save vertical space. Each LookupField
    is position:relative with its own absolute dropdown, so the grid columns don't clip the menus. */
 .links.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }

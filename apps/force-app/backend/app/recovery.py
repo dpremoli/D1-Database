@@ -18,6 +18,11 @@ from .finalize import finalize
 
 MANIFEST = "manifest.json"
 
+# Session ids currently being deleted by discard_session, running in a background thread. A large
+# raw.d1raw can take a while to unlink — scan_incomplete excludes these so a still-deleting session
+# doesn't reappear in the recovery list and invite a second, overlapping discard of the same dir.
+_discarding: set[str] = set()
+
 
 def write_manifest(
     capture_dir: str, state: str, cfg: RecordConfig | None = None, error: str | None = None
@@ -84,6 +89,8 @@ def scan_incomplete(captures_root: str) -> list[dict]:
             continue
         if not os.path.isfile(raw_path):
             continue
+        if name in _discarding:
+            continue
 
         info = _raw_info(d)
         if info is None or info["n_rows"] == 0:
@@ -144,12 +151,15 @@ def recover_session(captures_root: str, session_id: str) -> dict:
 
 
 def discard_session(captures_root: str, session_id: str) -> None:
-    """Delete an incomplete session directory."""
+    """Delete an incomplete session directory. Idempotent: a session already gone (e.g. a prior
+    discard finished after the client gave up waiting on it) is treated as success, not an error —
+    otherwise a retried/duplicate request would surface a confusing 404 for a discard that actually
+    already worked."""
     if "/" in session_id or "\\" in session_id or ".." in session_id:
         raise ValueError("invalid session id")
     capture_dir = os.path.join(captures_root, session_id)
     if not os.path.isdir(capture_dir):
-        raise FileNotFoundError(f"session {session_id} not found")
+        return
     if os.path.isfile(os.path.join(capture_dir, "summary.json")):
         raise ValueError(f"session {session_id} is finalized — use delete instead")
     shutil.rmtree(capture_dir)

@@ -52,7 +52,20 @@ export function createWorkspace() {
 	// setSource() below writes to localStorage unconditionally and synchronously, and the
 	// auto-detect re-reads localStorage fresh (not a value captured before the click) right before
 	// it would apply, closing the race regardless of which finishes first.
-	function setSource(s: 'sim' | 'replay' | 'nidaq') { source.value = s; localStorage.setItem(SOURCE_LS_KEY, s); }
+	function setSource(s: 'sim' | 'replay' | 'nidaq') {
+		// Entering Replay fresh (no cut loaded yet): Sample/Machine left over from an earlier
+		// Sim/NI-DAQ setup in this same session would otherwise silently AND-narrow searchCuts to
+		// that exact sample+machine and return zero rows — "no matches" on every search, with no
+		// visible reason why. CutPicker's own `change()` already clears this for a manual reselect;
+		// this covers the same failure mode on first switch into Replay.
+		if (s === 'replay' && source.value !== 'replay' && !replay.cacheId) {
+			link.sampleId = ''; link.sampleLabel = '';
+			link.equipmentId = ''; link.equipmentLabel = '';
+			meta.op_type = '';
+		}
+		source.value = s;
+		localStorage.setItem(SOURCE_LS_KEY, s);
+	}
 	const NIDAQ_LS_KEY = 'force-app.nidaq.channels';
 	const defaultChannels = ['cDAQ1Mod1/ai0', 'cDAQ1Mod1/ai1', 'cDAQ1Mod1/ai2', 'cDAQ1Mod1/ai3',
 		'cDAQ1Mod2/ai0', 'cDAQ1Mod2/ai1', 'cDAQ1Mod2/ai2', 'cDAQ1Mod2/ai3', 'cDAQ1Mod3/ai0'].join('\n');
@@ -228,8 +241,23 @@ export function createWorkspace() {
 		} catch { return true; } // backend unreachable — the normal start() error path will explain that
 	}
 
+	// Gate the FIRST recording of the session (not every one — testedSinceStart is module-lifetime,
+	// see alarms.ts) behind an offer to test the alarms, so an operator doesn't discover a dead
+	// speaker/broken threshold only after a real breach goes unnoticed.
+	async function checkAlarmsBeforeStart(): Promise<boolean> {
+		if (source.value === 'replay') return true; // replay doesn't evaluate alarms
+		if (alarms.testedSinceStart.value) return true;
+		if (confirm('Alarms have not been tested yet this session. Test them now before starting?')) {
+			alarms.test();
+			return false; // let the operator hear/see the test fire before starting
+		}
+		alarms.testedSinceStart.value = true; // don't nag again this session
+		return true;
+	}
+
 	async function start() {
 		if (busy.value) return;
+		if (!(await checkAlarmsBeforeStart())) return;
 		if (!(await checkDiskBeforeStart())) return;
 		busy.value = true; errMsg.value = null; finishedCache.value = null;
 		alarms.reset();

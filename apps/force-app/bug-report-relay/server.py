@@ -1,0 +1,157 @@
+"""Relay that creates GitHub issues on behalf of force-app clients.
+
+Deployed on d1-server alongside the rest of the stack, behind Caddy's Tailscale-only entry point
+(see infra/caddy/Caddyfile) — like backup-server, it has no authentication of its own and relies
+entirely on the fact that only tailnet members can reach it. This is the point of the service: the
+GitHub App private key lives here, centrally, instead of on every acquisition PC that ships the
+force-app backend. Clients POST a ready-made {title, body, labels} to /report; this process mints
+a short-lived GitHub App installation token and creates the issue.
+
+Configure via env vars:
+
+    GITHUB_APP_ID                  numeric App ID
+    GITHUB_APP_PRIVATE_KEY_PATH    path to the App's private key .pem (preferred — mount as a file)
+    GITHUB_APP_PRIVATE_KEY         PEM content inline (fallback if a file mount isn't practical;
+                                    literal "\n" sequences are unescaped since most env-var
+                                    mechanisms can't carry real newlines)
+    GITHUB_APP_INSTALLATION_ID     installation ID from installing the App on the target repo
+    GITHUB_REPO                    "owner/repo", defaults to this monorepo
+
+If any of the App ID / private key / installation ID is missing, /report fails closed with a
+clear "not configured" reason rather than raising — callers should surface that as a runtime
+message, not a crash, since misconfiguration here shouldn't take down a client's error-reporting
+attempt with a 500.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+
+import httpx
+import jwt
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+GITHUB_API = "https://api.github.com"
+DEFAULT_REPO = "dpremoli/D1-Database"
+
+app = FastAPI()
+
+
+def _app_id() -> str:
+    return os.environ.get("GITHUB_APP_ID", "")
+
+
+def _private_key() -> str:
+    path = os.environ.get("GITHUB_APP_PRIVATE_KEY_PATH", "")
+    if path and os.path.isfile(path):
+        with open(path, "r") as f:
+            return f.read()
+    return os.environ.get("GITHUB_APP_PRIVATE_KEY", "").replace("\\n", "\n")
+
+
+def _installation_id() -> str:
+    return os.environ.get("GITHUB_APP_INSTALLATION_ID", "")
+
+
+def _repo() -> str:
+    return os.environ.get("GITHUB_REPO", DEFAULT_REPO)
+
+
+def configured() -> bool:
+    return bool(_app_id() and _private_key() and _installation_id())
+
+
+def _mint_jwt() -> str:
+    now = int(time.time())
+    payload = {
+        "iat": now - 60,  # clock drift between this host and GitHub's
+        "exp": now + 540,  # GitHub caps this at 10 minutes
+        "iss": _app_id(),
+    }
+    return jwt.encode(payload, _private_key(), algorithm="RS256")
+
+
+class _TokenCache:
+    """Installation access tokens last ~1h; minting a fresh JWT + exchange on every issue would
+    work but adds two network round-trips to every report for no reason, so cache and refresh
+    with a safety margin before the real expiry."""
+
+    def __init__(self) -> None:
+        self.token = ""
+        self.expires_at = 0.0
+
+    async def get(self) -> str:
+        if self.token and time.time() < self.expires_at - 300:
+            return self.token
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            res = await client.post(
+                f"{GITHUB_API}/app/installations/{_installation_id()}/access_tokens",
+                headers={
+                    "Authorization": f"Bearer {_mint_jwt()}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+        res.raise_for_status()
+        data = res.json()
+        self.token = data["token"]
+        self.expires_at = time.mktime(time.strptime(data["expires_at"], "%Y-%m-%dT%H:%M:%SZ"))
+        return self.token
+
+
+_token_cache = _TokenCache()
+
+
+class ReportRequest(BaseModel):
+    title: str
+    body: str
+    labels: list[str] = []
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {"ok": True, "configured": configured()}
+
+
+@app.post("/report")
+async def report(req: ReportRequest) -> dict:
+    """Returns {"ok": True, "url": ..., "number": ...} or {"ok": False, "reason": ...}. Never raises
+    — callers render "reason" directly to the user, so a 500 here would just show as a worse
+    message for no benefit."""
+    if not configured():
+        return {"ok": False, "reason": "Bug reporting relay is not configured (missing GitHub App credentials)."}
+    title = req.title.strip()
+    if not title:
+        return {"ok": False, "reason": "A title is required."}
+
+    try:
+        token = await _token_cache.get()
+    except httpx.HTTPError as e:
+        return {"ok": False, "reason": f"could not authenticate with GitHub: {e}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            res = await client.post(
+                f"{GITHUB_API}/repos/{_repo()}/issues",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                json={"title": title[:250], "body": req.body, "labels": req.labels},
+            )
+    except httpx.HTTPError as e:
+        return {"ok": False, "reason": f"could not reach GitHub: {e}"}
+
+    if res.status_code >= 300:
+        detail = ""
+        try:
+            detail = res.json().get("message", "")
+        except ValueError:
+            pass
+        return {"ok": False, "reason": f"GitHub rejected the report (HTTP {res.status_code}) {detail}".strip()}
+
+    data = res.json()
+    return {"ok": True, "url": data.get("html_url", ""), "number": data.get("number")}

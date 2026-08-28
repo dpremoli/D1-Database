@@ -90,7 +90,7 @@ function delayedBlurClose() { window.setTimeout(() => { open.value = false; }, 1
 .lbl { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 3px; }
 .box { display: flex; align-items: center; background: var(--bg-3); border: 1px solid var(--border); border-radius: 7px; }
 .box.set { border-color: rgba(56,189,248,0.5); }
-.box input { flex: 1; padding: 7px 9px; font-size: 13px; color: var(--text); background: transparent; border: none; outline: none; }
+.box input { flex: 1; min-width: 0; padding: 7px 9px; font-size: 13px; color: var(--text); background: transparent; border: none; outline: none; }
 .box input:disabled { opacity: 0.55; }
 .x { display: inline-flex; align-items: center; padding: 0 6px; background: transparent; border: none; color: var(--text-dim); cursor: pointer; }
 .x .material-symbols-rounded { font-size: 15px; }

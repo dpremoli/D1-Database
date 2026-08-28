@@ -1,15 +1,49 @@
 <script setup lang="ts">
 // Persistent app shell: a left vertical-tab sidebar (Record / Plot / Lab Amp / Settings) with the
 // active section rendered in the main area. Replaces the old select page.
-import { computed, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { authStore } from './authStore';
 import { syncStatus } from './record/directusSync';
 import { hwStatus } from './record/hwStatus';
 import { alarmController } from './record/alarms';
 import { appUrl } from './appUrl';
+import { getConfig } from './config';
 
 const router = useRouter();
+const route = useRoute();
+
+// Belt-and-suspenders: alarms are already a fresh module-lifetime singleton on a true app
+// relaunch (verified — no hide-to-tray/backend persistence to leak state across sessions), but
+// reset here too since AppShell is the one component guaranteed to mount exactly once per launch.
+onMounted(() => alarmController.reset());
+
+// Cross-page "recording in progress" banner. RecordPage.vue's own state (hwStatus, w.client) is
+// torn down on navigation away from /record (onBeforeUnmount there explicitly clears hwStatus and
+// disconnects the websocket) — recording itself is server-side and keeps running regardless, so
+// this polls the backend directly, independent of whether RecordPage is even mounted.
+const recording = ref<{ id: string; sampleName: string } | null>(null);
+const bannerDismissedFor = ref<string | null>(null);
+let recordingPollTimer: ReturnType<typeof setInterval> | null = null;
+async function pollRecordingStatus() {
+	try {
+		const base = getConfig().recorderUrl;
+		const res = await fetch(`${base}/record/status`);
+		if (!res.ok) { recording.value = null; return; }
+		const data = await res.json();
+		if (data.state === 'recording') {
+			recording.value = { id: data.id, sampleName: data.config?.sample_name || data.id };
+		} else {
+			recording.value = null;
+		}
+	} catch { recording.value = null; }
+}
+const showBanner = computed(() =>
+	!!recording.value && route.path !== '/record' && bannerDismissedFor.value !== recording.value.id,
+);
+function dismissBanner() { if (recording.value) bannerDismissedFor.value = recording.value.id; }
+onMounted(() => { pollRecordingStatus(); recordingPollTimer = setInterval(pollRecordingStatus, 5000); });
+onBeforeUnmount(() => { if (recordingPollTimer) clearInterval(recordingPollTimer); });
 const userName = computed(() => {
 	const u = authStore.currentUser.value;
 	if (!u) return '';
@@ -82,22 +116,39 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 				</div>
 			</div>
 		</nav>
-		<main class="content"><router-view /></main>
+		<main class="content">
+			<div v-if="showBanner" class="rec-banner">
+				<span class="rec-banner-dot"></span>
+				<span>Recording in progress — {{ recording!.sampleName }}</span>
+				<router-link to="/record" class="rec-banner-link">Go to Record</router-link>
+				<button class="rec-banner-dismiss" title="Dismiss" @click="dismissBanner"><span class="material-symbols-rounded">close</span></button>
+			</div>
+			<router-view />
+		</main>
 	</div>
 </template>
 
 <style scoped>
 .shell { display: flex; min-height: 100vh; }
 .sidebar {
+	/* Collapsed state is an invisible 30x120 hitbox (mouseenter/mouseleave live here) — much more
+	   forgiving to hover than the visible pill, which stays its original small size (see .trigger). */
 	position: fixed; top: 50%; left: 0; transform: translateY(-50%); z-index: 200;
-	width: 30px; height: 120px; overflow: hidden;
-	display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 8px 2px;
-	background: var(--bg-2); border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
-	border-radius: 0 14px 14px 0;
+	width: 30px; height: 120px; overflow: visible;
+	display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 4px; padding: 0;
 	transition: width 0.16s ease, height 0.16s ease, border-radius 0.16s ease, top 0.16s ease, transform 0.16s ease, padding 0.16s ease;
 }
-.sidebar.expanded { top: 0; transform: translateY(0); width: 96px; height: 100vh; padding: 8px; border-radius: 0; box-shadow: 8px 0 28px rgba(0,0,0,0.28); }
-.trigger { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; flex: 1; }
+.sidebar.expanded {
+	top: 0; transform: translateY(0); width: 96px; height: 100vh; padding: 8px; border-radius: 0; overflow: hidden;
+	background: var(--bg-2); border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+	box-shadow: 8px 0 28px rgba(0,0,0,0.28);
+}
+.trigger {
+	display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+	width: 14px; height: 64px; margin: 0 auto; padding: 8px 2px; overflow: hidden;
+	background: var(--bg-2); border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+	border-radius: 0 14px 14px 0;
+}
 .vdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
 .vdot.fx { background: var(--fx); } .vdot.fy { background: var(--fy); } .vdot.fz { background: var(--fz); }
 .navwrap { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 4px; }
@@ -136,4 +187,11 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 /* The sidebar is fixed/overlaid — it expands over the page on hover rather than pushing content —
    so content needs no reserved margin at all; the collapsed left-middle dot handle sits on top of it. */
 .content { flex: 1; min-width: 0; }
+.rec-banner { position: sticky; top: 0; z-index: 150; display: flex; align-items: center; gap: 10px; padding: 8px 16px; font-size: 12.5px; font-weight: 600; color: #fff; background: #dc2626; }
+.rec-banner-dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; flex-shrink: 0; animation: pulse 1.4s infinite; }
+.rec-banner-link { margin-left: auto; padding: 4px 10px; font-size: 11.5px; font-weight: 700; color: #dc2626; background: #fff; border-radius: 6px; text-decoration: none; }
+.rec-banner-dismiss { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border-radius: 6px; background: rgba(255,255,255,0.18); border: none; color: #fff; cursor: pointer; }
+.rec-banner-dismiss:hover { background: rgba(255,255,255,0.3); }
+.rec-banner-dismiss .material-symbols-rounded { font-size: 15px; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,255,255,0.5); } 70% { box-shadow: 0 0 0 6px rgba(255,255,255,0); } 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); } }
 </style>

@@ -95,6 +95,9 @@ def test_recovery_recover_400_for_already_finalized(tmp_path, monkeypatch):
 
 
 def test_recovery_discard_success(tmp_path, monkeypatch):
+    # The endpoint returns as soon as the delete is scheduled, not once it finishes (see
+    # recovery_discard in main.py — a large raw.d1raw shouldn't hang the request), so the directory
+    # removal is asserted with a short poll rather than immediately after the response.
     monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
     sid = "20240101-120000-disc01"
     _make_raw(str(tmp_path / sid), n_rows=100)
@@ -103,6 +106,9 @@ def test_recovery_discard_success(tmp_path, monkeypatch):
         r = client.post(f"/recovery/discard/{sid}")
         assert r.status_code == 200
         assert r.json()["discarded"] is True
+        deadline = time.time() + 5
+        while os.path.exists(str(tmp_path / sid)) and time.time() < deadline:
+            time.sleep(0.05)
         assert not os.path.exists(str(tmp_path / sid))
 
 

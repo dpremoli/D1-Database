@@ -11,6 +11,7 @@ type UpdateStatus =
 	| { state: 'not-available' }
 	| { state: 'downloading'; percent: number }
 	| { state: 'downloaded'; version: string }
+	| { state: 'installing'; version: string }
 	| { state: 'error'; message: string };
 
 const isElectron = !!window.forceApp;
@@ -87,6 +88,9 @@ onMounted(async () => {
 			<p v-else-if="updateStatus.state === 'downloaded'" class="hint">
 				<span class="material-symbols-rounded" style="font-size:14px">task_alt</span> Version {{ updateStatus.version }} downloaded — install whenever you're ready.
 			</p>
+			<p v-else-if="updateStatus.state === 'installing'" class="hint">
+				<span class="material-symbols-rounded" style="font-size:14px">hourglass_top</span> Installing version {{ updateStatus.version }}…
+			</p>
 			<p v-else-if="updateStatus.state === 'error'" class="err">
 				<span class="material-symbols-rounded" style="font-size:14px">error</span> {{ updateStatus.message }}
 			</p>
@@ -94,6 +98,18 @@ onMounted(async () => {
 				<span class="material-symbols-rounded" style="font-size:14px">error</span> {{ installNotice }}
 			</p>
 		</template>
+
+		<!-- The window is about to close and silently reinstall — without this the app just vanishes
+			 the instant "Restart and install" is clicked, which reads as a crash. The main process also
+			 fires an OS notification (covers the case where the update dialog is answered from outside
+			 this page), but this overlay is the clearer signal when the operator IS looking at this
+			 page. Held up for ~800ms by the main process before the process actually quits, so this has
+			 time to paint. -->
+		<div v-if="isElectron && updateStatus.state === 'installing'" class="install-overlay">
+			<span class="material-symbols-rounded spin">autorenew</span>
+			<p>Installing version {{ updateStatus.version }}…</p>
+			<p class="sub">The app will close and reopen automatically — this takes a few seconds.</p>
+		</div>
 
 		<h2 class="mt">What's new</h2>
 		<div class="changelog">
@@ -123,6 +139,14 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .btn.save { background: var(--accent); color: var(--accent-ink); }
 .btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.install-overlay { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column;
+	align-items: center; justify-content: center; gap: 6px; background: rgba(0,0,0,0.75); color: #fff; text-align: center; }
+.install-overlay .material-symbols-rounded { font-size: 34px; margin-bottom: 6px; }
+.install-overlay p { margin: 0; font-size: 14px; }
+.install-overlay .sub { font-size: 12px; color: rgba(255,255,255,0.7); }
+.spin { animation: spin 1.1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .changelog { display: flex; flex-direction: column; gap: 14px; }
 .entry { padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }

@@ -2,6 +2,7 @@ import { createApp } from 'vue';
 import { loadRuntimeConfig } from './config';
 import { router } from './router';
 import { setUnauthorizedHandler } from './directusClient';
+import { installGlobalErrorReporting, reportClientError } from './clientLog';
 import App from './App.vue';
 import VIcon from './shims/VIcon.vue';
 import VProgressCircular from './shims/VProgressCircular.vue';
@@ -19,6 +20,14 @@ async function bootstrap() {
 	app.component('v-progress-circular', VProgressCircular);
 
 	app.use(router);
+
+	// Vue-level errors (component render/setup/lifecycle) don't reach window.onerror, so they need
+	// their own hook; window.onerror/unhandledrejection catch everything else (plain JS, promises).
+	app.config.errorHandler = (err, _instance, info) => {
+		console.error(err, info);
+		reportClientError(`${(err as Error)?.stack || err} (${info})`, 'vue', router.currentRoute.value.fullPath);
+	};
+	installGlobalErrorReporting(() => router.currentRoute.value.fullPath);
 
 	// When a token refresh fails mid-request, drop the user back to the login screen.
 	setUnauthorizedHandler(() => {

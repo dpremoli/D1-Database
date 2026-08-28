@@ -8,6 +8,7 @@ import ConnectivitySettings from './ConnectivitySettings.vue';
 import BackupSettings from './BackupSettings.vue';
 import LogsSettings from './LogsSettings.vue';
 import CapturesSettings from './CapturesSettings.vue';
+import ReportBugSettings from './ReportBugSettings.vue';
 import AboutSettings from './AboutSettings.vue';
 
 const tabs = [
@@ -17,9 +18,10 @@ const tabs = [
 	{ id: 'backup', label: 'Live Backup', icon: 'cloud_upload' },
 	{ id: 'captures', label: 'Local Captures', icon: 'folder' },
 	{ id: 'logs', label: 'Logs', icon: 'receipt_long' },
+	{ id: 'report-bug', label: 'Report a Bug', icon: 'bug_report' },
 	{ id: 'about', label: 'About', icon: 'info' },
 ];
-const VALID_TABS = ['general', 'alarms', 'connectivity', 'backup', 'captures', 'logs', 'about'] as const;
+const VALID_TABS = ['general', 'alarms', 'connectivity', 'backup', 'captures', 'logs', 'report-bug', 'about'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 const route = useRoute();
@@ -46,6 +48,7 @@ const active = ref<SettingsTab>(initialTab);
 				<BackupSettings v-else-if="active === 'backup'" />
 				<CapturesSettings v-else-if="active === 'captures'" />
 				<LogsSettings v-else-if="active === 'logs'" />
+				<ReportBugSettings v-else-if="active === 'report-bug'" />
 				<AboutSettings v-else-if="active === 'about'" />
 			</section>
 		</div>
@@ -66,4 +69,13 @@ const active = ref<SettingsTab>(initialTab);
 .subtab:hover { background: var(--surface); color: var(--text); }
 .subtab.on { background: rgba(56,189,248,0.14); color: var(--accent); border-color: rgba(56,189,248,0.28); }
 .pane { flex: 1; min-width: 0; }
+
+/* Below this, the fixed 190px sidebar left too little room for .pane and every settings tab's
+   content started clipping/overflowing its container. Stacking the sidebar above the pane as a
+   horizontally-scrollable tab strip gives the pane the full window width instead. */
+@media (max-width: 640px) {
+	.body, .body.wide { flex-direction: column; padding: 16px; gap: 14px; }
+	.subtabs { flex-direction: row; width: 100%; overflow-x: auto; gap: 6px; padding-bottom: 2px; }
+	.subtab { flex-shrink: 0; }
+}
 </style>
