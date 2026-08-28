@@ -16,6 +16,7 @@ type UpdateStatus =
 declare global {
   interface Window {
     forceApp?: {
+      testHooks: boolean;
       onNavigate: (callback: (path: string) => void) => void;
       getUpdateInfo: () => Promise<{ version: string; packaged: boolean; status: UpdateStatus }>;
       checkForUpdates: () => Promise<{ ok: boolean; reason?: string }>;

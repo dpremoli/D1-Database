@@ -247,6 +247,10 @@ export function createWorkspace() {
 	async function checkAlarmsBeforeStart(): Promise<boolean> {
 		if (source.value === 'replay') return true; // replay doesn't evaluate alarms
 		if (alarms.testedSinceStart.value) return true;
+		// window.confirm() opens a native OS dialog in Electron that Playwright's e2e suite has no way
+		// to see or dismiss (unlike a plain Chromium page dialog) — it would hang forever. Test runs
+		// launch with FORCE_APP_TEST_HOOKS=1 and don't exercise the alarm-test UX, so skip the gate.
+		if (window.forceApp?.testHooks) { alarms.testedSinceStart.value = true; return true; }
 		if (confirm('Alarms have not been tested yet this session. Test them now before starting?')) {
 			alarms.test();
 			return false; // let the operator hear/see the test fire before starting

@@ -1048,8 +1048,10 @@ async def recovery_discard(session_id: str) -> dict:
         return {"discarded": True, "session_id": session_id}  # already in flight — idempotent
     capture_dir = os.path.join(CAPTURES_ROOT, session_id)
     if not os.path.isdir(capture_dir):
+        log.info("recovery_discard: id=%s not found", session_id)
         raise HTTPException(404, f"session {session_id} not found")
     if os.path.isfile(os.path.join(capture_dir, "summary.json")):
+        log.info("recovery_discard: id=%s is finalized, refusing", session_id)
         raise HTTPException(400, f"session {session_id} is finalized — use delete instead")
 
     async def _run() -> None:
