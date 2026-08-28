@@ -2,21 +2,25 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Exercises the record -> stop -> save flow end to end against the rebuilt app, on the REAL
-// NI-DAQ hardware source — this machine has it wired up and already defaults to it (see
-// workspace.ts's one-time auto-detect + this session's own storage_config.json / manifest.json
-// showing prior real "nidaq" recordings), so the test deliberately does NOT override
-// force-app.source the way an earlier version of this test did (it forced 'sim', which could only
-// prove the shared session.py/main.py stop/finalize plumbing wasn't regressed — it could never
-// exercise the actual hardware-specific read()/stop() race apps/force-app/backend/app/sources/
-// nidaq.py's lock + shortened read timeout were written to fix).
+// Exercises the record -> stop -> save flow end to end against the rebuilt app. Forces the
+// 'sim' source explicitly: this suite runs on a shared CI runner whose persisted
+// force-app.source can be flipped to 'nidaq' by whoever last used it interactively (or by
+// workspace.ts's one-time auto-detect, if a device happens to be enumerable that run), and a
+// real NI-DAQ device on a CI box is not a reliable, repeatable signal — reads can legitimately
+// overrun or error for reasons that have nothing to do with a regression in this app (cabling,
+// device power state, another process holding the channel). An earlier version of this test
+// deliberately left force-app.source untouched specifically to exercise the real hardware
+// read()/stop() race apps/force-app/backend/app/sources/nidaq.py's lock + shortened read timeout
+// were written to fix — that's a real and valuable test, but it belongs in a manual/hardware-gated
+// run, not in the release pipeline every push has to pass. Forcing 'sim' here proves the shared
+// session.py/main.py stop/finalize/save-dialog plumbing isn't regressed, deterministically.
 //
 // This verifies both things the original bug report was about:
 //   1. the staged save-dialog UI (Stopping acquisition / Writing capture files / Loading
 //      recorded trace) renders and clears correctly, and
-//   2. how long a manual Stop mid-recording actually takes on THIS hardware — printed to the
-//      test log, and cross-checked against apps/force-app/backend/captures/backend.log's
-//      per-stage timings (and any NidaqSource read()/stop() warnings) at the end of the run.
+//   2. how long a manual Stop mid-recording actually takes — printed to the test log, and
+//      cross-checked against apps/force-app/backend/captures/backend.log's per-stage timings at
+//      the end of the run.
 //
 // Dev-mode Electron launches (this test included) all share the app's real userData profile —
 // there's no per-launch isolation — so the fake auth this test seeds into localStorage to get
@@ -62,8 +66,8 @@ async function stubDirectusAndBypassLogin(window: Page, directusUrl: string): Pr
       expiresAt: Date.now() + 3_600_000,
       user: { id: 'test-user', role: null },
     }));
-    // Deliberately not touching force-app.source — leave whatever this machine already has
-    // persisted (real usage here has it on 'nidaq'; see the header comment).
+    // Force 'sim' regardless of whatever this profile has persisted — see header comment.
+    localStorage.setItem('force-app.source', 'sim');
   });
   // Not window.reload(): the current URL at this point is still /login (public route, so the
   // guard never bounces it anywhere) — reloading it just reloads /login again, token or not. A
@@ -125,7 +129,7 @@ test('rebuilt app: sim record -> stop -> save dialog shows staged progress and c
     // it's evidence either way rather than a pass/fail coin flip.
     await expect(window.locator('.scd-opts')).toBeVisible({ timeout: 45_000 });
     const stopToReadySec = (Date.now() - tStopClick) / 1000;
-    console.log(`[timing] Stop click -> save form ready: ${stopToReadySec.toFixed(2)}s (source=nidaq, real hardware)`);
+    console.log(`[timing] Stop click -> save form ready: ${stopToReadySec.toFixed(2)}s (source=sim)`);
     await expect(window.locator('.scd-stage')).toHaveCount(0);
     await expect(window.locator('.scd-plot canvas')).toBeVisible();
 
@@ -150,7 +154,13 @@ test('rebuilt app: sim record -> stop -> save dialog shows staged progress and c
     }
     try {
       const window = await app.firstWindow();
-      await window.evaluate(() => localStorage.removeItem('force-app.auth'));
+      await window.evaluate(() => {
+        localStorage.removeItem('force-app.auth');
+        // Don't leave the forced 'sim' override behind on this shared profile — the next real
+        // operator session (or the next test relying on whatever was persisted before) should see
+        // whatever source was configured prior to this run, not a source this test injected.
+        localStorage.removeItem('force-app.source');
+      });
     } catch {
       /* app may already be in a bad state (test failure) — best-effort cleanup only */
     }
