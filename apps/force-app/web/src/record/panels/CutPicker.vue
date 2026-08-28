@@ -49,6 +49,16 @@ function close() {
 function change() {
 	reselecting.value = true;
 	w.replay.query = '';
+	// pickReplayCut auto-fills Sample/Machine/Operation-type from the loaded cut, and searchCuts
+	// AND-narrows the list by all three (workspace.ts). Left set, they pin the reselect list to
+	// (essentially) the very cut we're trying to move away from — so "change" would only ever offer
+	// one option. Clearing them here (the explicit "find a different cut" action) restores the full
+	// recent list; the forward flow, where the user fills Sample first to deliberately narrow, is
+	// untouched since change() only fires on reselect. The replay metadata tiles read w.replay.*,
+	// not these w.link.* fields, so nothing the user is reading gets wiped.
+	w.link.sampleId = ''; w.link.sampleLabel = '';
+	w.link.equipmentId = ''; w.link.equipmentLabel = '';
+	w.meta.op_type = '';
 	open.value = true;
 	w.searchCuts('');
 	requestAnimationFrame(() => inputEl.value?.focus());
@@ -86,10 +96,10 @@ function delayedBlurClose() { window.setTimeout(() => { open.value = false; }, 1
 .cutpicker { position: relative; margin-bottom: 8px; }
 .lbl { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 3px; }
 .sub { font-weight: 400; }
-.box { display: flex; align-items: center; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 7px; }
+.box { display: flex; align-items: center; background: var(--bg-3); border: 1px solid var(--border); border-radius: 7px; }
 .box input { flex: 1; padding: 7px 9px; font-size: 13px; color: var(--text); background: transparent; border: none; outline: none; }
 .box input:disabled { opacity: 0.55; }
-.menu { position: absolute; z-index: 30; left: 0; right: 0; top: 100%; margin-top: 2px; max-height: 200px; overflow: auto; background: #0e162c; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
+.menu { position: absolute; z-index: 30; left: 0; right: 0; top: 100%; margin-top: 2px; max-height: 200px; overflow: auto; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
 .mi { display: block; width: 100%; text-align: left; padding: 7px 10px; font-size: 12.5px; font-family: var(--mono); color: var(--text); background: transparent; border: none; cursor: pointer; }
 .mi:hover { background: var(--surface); }
 .mi.hint { color: var(--text-dim); font-family: inherit; cursor: default; }

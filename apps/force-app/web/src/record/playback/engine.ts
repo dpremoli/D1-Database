@@ -25,7 +25,7 @@ export interface PlaybackState {
 	loaded: boolean; playing: boolean; tSec: number; duration: number; speed: number; error: string | null;
 }
 export interface PlaybackEngine {
-	load(cache: Cache, o: { ppr: number; innerDiam?: number; stride: number; axis?: Axis }): void;
+	load(cache: Cache, o: { ppr: number; innerDiam?: number; stride: number; axis?: Axis; cropStartSec?: number }): void;
 	play(): void; pause(): void; toggle(): void;
 	seek(tSec: number, o?: { commit?: boolean }): void;
 	setSpeed(x: number): void;
@@ -88,7 +88,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		return lo;
 	}
 
-	function load(c: Cache, o: { ppr: number; innerDiam?: number; stride: number; axis?: Axis }) {
+	function load(c: Cache, o: { ppr: number; innerDiam?: number; stride: number; axis?: Axis; cropStartSec?: number }) {
 		reset();
 		if (!c || c.N < 2 || !(c.Fs > 0)) {
 			state.loaded = false;
@@ -100,8 +100,22 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		innerR = Math.max(0, (o.innerDiam || 0) / 2);
 		stride = Math.max(1, Math.round(o.stride) || 1);
 		colorAxis = o.axis ?? 'Fz';
-		csIdx = idxOfTime(c.csSec);
+		// A human-saved crop override (plotting-window "Save crop as official") wins over the cache's
+		// own auto-detected start-of-cut. Both are in signal-seconds, so idxOfTime maps either onto
+		// the cache's time array regardless of the cache's decimated Fs.
+		csIdx = idxOfTime(o.cropStartSec != null ? o.cropStartSec : c.csSec);
 		revsCs = c.revs[csIdx] ?? 0;
+		// client.frm.xy/c are fixed-size preallocated buffers (RecordClient's cap). Unlike onFrame's
+		// live-decode path (which checks room/take per frame), appendFrmPoints below has no per-write
+		// bounds check — a stride too fine for a long/dense cut let n run past the buffer's real
+		// length. TypedArray writes past the end are silent no-ops, so points kept accumulating in
+		// `count` while only the FIRST cap-worth (the spiral's OUTER portion, played first) actually
+		// landed in the buffer — the finished view read as a doughnut even for a true full-disc cut,
+		// only because it never got the inner points at all. Force the stride fine enough for the
+		// requested resolution but never fine enough to overrun the buffer.
+		const cap = client.frmCapacity;
+		const worstCasePoints = Math.ceil((c.N - csIdx) / stride);
+		if (worstCasePoints > cap) stride = Math.ceil((c.N - csIdx) / cap);
 		binSize = Math.max(1, Math.round(c.Fs / BINS_PER_SEC));
 		// Colour scale, once, over the WHOLE cut: the same prctile(1)/prctile(99) statistic the
 		// finished-cut view (liveCloud.ts's buildCloud) uses, via the same axisAutoLimits(). Unlike
@@ -171,7 +185,8 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		// become points never depends on where an append happens to begin.
 		const first = Math.max(i0, csIdx);
 		const rem = (first - csIdx) % stride;
-		const colArr = colorAxis === 'Fx' ? c.Fx : colorAxis === 'Fy' ? c.Fy : c.Fz;
+		// All three axis forces are stored per point (not just the currently-selected one) so a
+		// later setAxis() can recolour the whole spiral instantly, the same way live recording does.
 		for (let i = rem === 0 ? first : first + (stride - rem); i < i1; i += stride) {
 			const r = (c.revs[i] - revsCs) / ppr;
 			const rho = rho0 - F * r;
@@ -179,10 +194,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 			const th = 2 * Math.PI * r;
 			client.frm.xy[n * 2] = rho * Math.cos(th);
 			client.frm.xy[n * 2 + 1] = rho * Math.sin(th);
-			const col = colArr[i];
-			client.frm.c[n] = col;
-			const a = Math.abs(col);
-			if (a > client.frm.cAbsMax) client.frm.cAbsMax = a;
+			client.frm.cx[n] = c.Fx[i]; client.frm.cy[n] = c.Fy[i]; client.frm.cz[n] = c.Fz[i];
 			n++;
 		}
 		client.frm.count = n;
@@ -221,7 +233,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		const target = idxOfTime(tSec);
 		if (target < frmCursor) {
 			client.trace = emptyTrace();
-			client.frm.count = 0; client.frm.cAbsMax = 1;
+			client.frm.count = 0; client.frm.cAbsMaxByAxis = { Fx: 1, Fy: 1, Fz: 1 };
 			client.status.peaks = { Fx: 0, Fy: 0, Fz: 0 };
 			frmCursor = 0; traceCursor = 0;
 		}
@@ -281,11 +293,13 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		if (next >= state.duration) {
 			state.tSec = state.duration;
 			renderTo(state.duration, true, true);
+			client.relayTick();
 			pause();
 			return;
 		}
 		state.tSec = next;
 		renderTo(next);
+		client.relayTick();
 		frame = schedule(tick);
 	}
 
@@ -318,24 +332,19 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 			const t = Math.max(0, Math.min(state.duration, tSec));
 			state.tSec = t;
 			renderTo(t, true, o?.commit !== false);
+			client.relayTick();
 			lastTick = now();
 		},
 		setSpeed(x) { state.speed = x > 0 ? x : 1; },
 		setAxis(axis) {
-			// FrmPanel's Fx/Fy/Fz toggle is always visible, not gated on mode, and for the
-			// finished-cut view it IS live (FrmCloud's :axis prop is reactive). Without this,
-			// clicking it during playback silently did nothing — colorAxis was set once at load()
-			// and never revisited, so the button's `on` state changed but the spiral's colours did
-			// not, which read as broken rather than merely unbuilt.
+			// client.frm.cx/cy/cz carry all three axis forces per point already (appendFrmPoints
+			// writes all three, not just whichever axis is selected), so unlike before this needs no
+			// data rebuild — only the percentile colour scale (cLo/cHi) is axis-specific. LiveFrm.vue
+			// itself watches its `axis` prop and recolours the already-uploaded points instantly.
 			if (!state.loaded || !cache || axis === colorAxis) return;
 			colorAxis = axis;
 			const [lo, hi] = axisAutoLimits(cache, axis);
 			client.frm.cLo = lo; client.frm.cHi = hi;
-			// Force renderTo's "target < frmCursor" rebuild branch regardless of tSec — this is the
-			// exact same full-rebuild path a backward seek already takes (cheap: a linear pass over
-			// typed arrays), just triggered by an axis change instead of a smaller playhead.
-			frmCursor = cache.N + 1;
-			renderTo(state.tSec, false);
 		},
 		dispose() { pause(); spectra.dispose(); cache = null; },
 	};

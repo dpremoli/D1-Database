@@ -367,10 +367,10 @@ defineExpose({ currentBounds, exportViewport });
 </template>
 
 <style scoped>
-.frm-octree { position: relative; width: 100%; height: 100%; min-height: 160px; background: #0b1020; border-radius: 6px; overflow: hidden; }
+.frm-octree { position: relative; width: 100%; height: 100%; min-height: 160px; background: var(--plot-bg, #0b1020); border-radius: 6px; overflow: hidden; }
 .frm-octree canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .frm-octree canvas:active { cursor: grabbing; }
-.fc-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: #94a3b8; }
-.fc-msg.err { color: #fca5a5; font-size: 12px; padding: 12px; text-align: center; }
-.fc-count { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,0.6); font-variant-numeric: tabular-nums; }
+.fc-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim, #94a3b8); }
+.fc-msg.err { color: var(--danger, #fca5a5); font-size: 12px; padding: 12px; text-align: center; }
+.fc-count { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: var(--text-dim, rgba(255,255,255,0.6)); font-variant-numeric: tabular-nums; }
 </style>

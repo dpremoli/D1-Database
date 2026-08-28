@@ -17,6 +17,11 @@ defineEmits<{ close: [] }>();
 			</button>
 		</div>
 		<div class="panel-body"><slot /></div>
+		<!-- Rendered as a flex-shrink:0 sibling AFTER panel-body (which is flex:1 and always fills the
+			 remaining height), not inside its scroll region — so footer content (e.g. transport/start-
+			 stop controls) stays pinned to the panel's bottom edge and visible without scrolling, like a
+			 frozen row, instead of trailing the scrollable content wherever it happens to end. -->
+		<div v-if="$slots.footer" class="panel-footer"><slot name="footer" /></div>
 	</div>
 </template>
 
@@ -30,4 +35,5 @@ defineEmits<{ close: [] }>();
 .panel-close:hover { color: var(--danger); background: rgba(239,68,68,0.12); }
 .panel-close .material-symbols-rounded { font-size: 15px; }
 .panel-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px; }
+.panel-footer { flex-shrink: 0; padding: 10px 12px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg-2) 80%, transparent); }
 </style>

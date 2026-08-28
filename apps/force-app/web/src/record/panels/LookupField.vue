@@ -88,13 +88,13 @@ function delayedBlurClose() { window.setTimeout(() => { open.value = false; }, 1
 <style scoped>
 .lookup { display: block; position: relative; margin-bottom: 8px; }
 .lbl { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 3px; }
-.box { display: flex; align-items: center; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 7px; }
+.box { display: flex; align-items: center; background: var(--bg-3); border: 1px solid var(--border); border-radius: 7px; }
 .box.set { border-color: rgba(56,189,248,0.5); }
 .box input { flex: 1; padding: 7px 9px; font-size: 13px; color: var(--text); background: transparent; border: none; outline: none; }
 .box input:disabled { opacity: 0.55; }
 .x { display: inline-flex; align-items: center; padding: 0 6px; background: transparent; border: none; color: var(--text-dim); cursor: pointer; }
 .x .material-symbols-rounded { font-size: 15px; }
-.menu { position: absolute; z-index: 30; left: 0; right: 0; top: 100%; margin-top: 2px; max-height: 200px; overflow: auto; background: #0e162c; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
+.menu { position: absolute; z-index: 30; left: 0; right: 0; top: 100%; margin-top: 2px; max-height: 200px; overflow: auto; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
 .mi { display: block; width: 100%; text-align: left; padding: 7px 10px; font-size: 12.5px; font-family: var(--mono); color: var(--text); background: transparent; border: none; cursor: pointer; }
 .mi:hover { background: var(--surface); }
 .mi.hint { color: var(--text-dim); font-family: inherit; cursor: default; }

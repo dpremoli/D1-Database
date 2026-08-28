@@ -26,6 +26,18 @@ const loading = ref(false);
 const err = ref<string | null>(null);
 let reqId = 0;
 
+function palette() {
+	const s = getComputedStyle(document.documentElement);
+	return {
+		bg: s.getPropertyValue('--plot-bg').trim() || '#0b1020',
+		text: s.getPropertyValue('--text-dim').trim() || 'rgba(148,163,184,0.75)',
+		textFaint: s.getPropertyValue('--text-faint').trim() || 'rgba(226,232,240,0.55)',
+	};
+}
+// This package has no import path into the host app's theme.ts, so watch the DOM attribute
+// the host toggles directly instead — cheap, and correct regardless of which app embeds this.
+let themeObserver: MutationObserver | null = null;
+
 async function load() {
 	if (!props.cacheFileId) { grid.value = null; return; }
 	const mine = ++reqId;
@@ -63,8 +75,9 @@ function resize() {
 function draw() {
 	const c = canvasEl.value; if (!c || !ctx) return;
 	const W = c.clientWidth, H = c.clientHeight;
+	const pal = palette();
 	ctx.clearRect(0, 0, W, H);
-	ctx.fillStyle = '#0b1020'; ctx.fillRect(0, 0, W, H);
+	ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, W, H);
 	const g = grid.value;
 	if (loading.value && !g) return note('computing spectrum…');
 	if (err.value) return note(err.value);
@@ -130,21 +143,25 @@ function draw() {
 
 function note(msg: string) {
 	if (!ctx) return;
-	ctx.fillStyle = 'rgba(148,163,184,0.75)'; ctx.font = '12px system-ui';
+	ctx.fillStyle = palette().text; ctx.font = '12px system-ui';
 	ctx.fillText(msg, 12, (canvasEl.value?.clientHeight || 40) / 2);
 }
 function label(text: string, col: string, W: number, H: number, g: Grid) {
 	if (!ctx) return;
 	ctx.fillStyle = col; ctx.font = '11px system-ui'; ctx.textAlign = 'left';
 	ctx.fillText(text, 8, 14);
-	ctx.fillStyle = 'rgba(226,232,240,0.55)'; ctx.textAlign = 'right';
+	ctx.fillStyle = palette().textFaint; ctx.textAlign = 'right';
 	ctx.fillText(`${Math.round(g.fmax)} Hz`, W - 6, H - 5); ctx.textAlign = 'left';
 }
 
 const key = () => `${props.cacheFileId}|${props.axis}|${props.mode === 'spectrogram' ? 's' : props.mode}|${JSON.stringify(props.chain)}`;
 watch(key, load);
-onMounted(() => { load(); resize(); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); });
-onBeforeUnmount(() => ro?.disconnect());
+onMounted(() => {
+	load(); resize(); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value);
+	themeObserver = new MutationObserver(draw);
+	themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+});
+onBeforeUnmount(() => { ro?.disconnect(); themeObserver?.disconnect(); });
 </script>
 
 <template>
@@ -152,6 +169,6 @@ onBeforeUnmount(() => ro?.disconnect());
 </template>
 
 <style scoped>
-.spec-view { width: 100%; height: 100%; min-height: 160px; border-radius: 8px; overflow: hidden; background: #0b1020; }
+.spec-view { width: 100%; height: 100%; min-height: 160px; border-radius: 8px; overflow: hidden; background: var(--plot-bg, #0b1020); }
 .spec-view canvas { width: 100%; height: 100%; display: block; }
 </style>

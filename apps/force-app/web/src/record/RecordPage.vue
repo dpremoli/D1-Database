@@ -2,12 +2,14 @@
 // Modular Recording workspace: a draggable/resizable grid of panels (Recording Options, Metadata,
 // Force Plot w/ FFT, FRM Map, Plot Options), mirroring the Directus force-analysis feel. Layout is
 // persisted to localStorage; panels share one workspace store via provide/inject.
-import { onMounted, onBeforeUnmount, provide, reactive, ref, watch, computed } from 'vue';
+import { onMounted, onBeforeUnmount, provide, reactive, ref, watch, watchEffect, computed } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import { createWorkspace, WORKSPACE } from './workspace';
 import { startSync, syncStatus } from './directusSync';
+import { hwStatus } from './hwStatus';
 import PanelFrame from './panels/PanelFrame.vue';
 import RecordingOptions from './panels/RecordingOptions.vue';
+import RecordingActions from './panels/RecordingActions.vue';
 import ForcePanel from './panels/ForcePanel.vue';
 import FrmPanel from './panels/FrmPanel.vue';
 import RpmPanel from './panels/RpmPanel.vue';
@@ -60,15 +62,16 @@ function resetLayout() { layout.value = DEFAULT_LAYOUT.map((x) => ({ ...x })); }
 // the window exactly instead.
 const GRID_MARGIN = 12;   // must match :margin="[12, 12]" on GridLayout below
 const MIN_ROW_H = 18;     // floor: past this a tall layout scrolls rather than squashing to nothing
-const BOTTOM_PAD = 16;    // breathing room under the last row
+const BOTTOM_PAD = 2;     // minimal breathing room — panels are allowed to run under the
+                          // floating panel-controls cluster rather than leaving a big gap
 
 const gridEl = ref<HTMLElement | null>(null);
 const availableHeight = ref(700);
 function measureGrid() {
 	if (!gridEl.value) return;
-	// Measured from the grid's own top, so the sticky topbar and the conditional disk-action /
-	// recovery banners (which push the grid down when they appear) are all accounted for
-	// automatically. .alarm-overlay is position:fixed and correctly costs no flow height.
+	// Measured from the grid's own top, so the conditional disk-action / recovery banners (which
+	// push the grid down when they appear) are accounted for automatically. .alarm-overlay is
+	// position:fixed and correctly costs no flow height.
 	//
 	// Document offset, not the viewport-relative rect: when the layout is taller than the window
 	// it scrolls (by design, past the min row height), and a scrolled rect has a negative top.
@@ -188,6 +191,19 @@ watch(() => st.state, (s) => {
 	}
 });
 
+// Mirror this page's local status state into the shared singleton AppShell's sidebar reads from,
+// since the sidebar is mounted on every route (not just Record) and has no access to this instance.
+watchEffect(() => {
+	hwStatus.connected = st.connected;
+	hwStatus.diskFreeGb = diskInfo.free_gb;
+	hwStatus.diskTotalGb = diskInfo.total_gb;
+	hwStatus.backupEnabled = backupStatus.enabled;
+	hwStatus.backupState = backupStatus.state;
+	hwStatus.backupProgress = backupStatus.progress;
+	hwStatus.backupConnected = backupStatus.connected;
+	hwStatus.backupError = backupStatus.error;
+});
+
 // ---- Recovery of incomplete recordings ----
 interface IncompleteSession {
 	id: string;
@@ -257,6 +273,17 @@ async function discardSession(id: string) {
 	}
 }
 
+// Tabbing/alt-tabbing away mid-replay used to leave the playhead running in the background
+// (rAF still fires on a hidden tab, just throttled) — advancing invisibly so returning showed
+// a jump, or on some setups the engine's own state got left inconsistent. Pause (not reset —
+// the loaded cache and playhead position must survive) whenever the page goes out of view, and
+// leave resuming to the user's own click rather than guessing they want it to keep going.
+function onVisibilityChange() {
+	if (document.hidden && w.mode.value === 'playback' && w.playback.state.playing) {
+		w.playback.pause();
+	}
+}
+
 onMounted(() => {
 	w.client.connect(); startSync(); checkDisk(); checkRecovery(); checkBackup();
 	// ResizeObserver catches content reflow (a banner appearing/dismissing shifts the grid's top);
@@ -266,8 +293,10 @@ onMounted(() => {
 	if (gridEl.value) gridRO.observe(gridEl.value);
 	measureGrid();
 	window.addEventListener('resize', measureGrid);
+	document.addEventListener('visibilitychange', onVisibilityChange);
 });
 onBeforeUnmount(() => {
+	document.removeEventListener('visibilitychange', onVisibilityChange);
 	w.client.disconnect();
 	w.playback.dispose();
 	if (diskTimer) clearInterval(diskTimer);
@@ -275,6 +304,11 @@ onBeforeUnmount(() => {
 	if (recoveryTickTimer) clearInterval(recoveryTickTimer);
 	gridRO?.disconnect();
 	window.removeEventListener('resize', measureGrid);
+	// These chips only make sense while the Record page (and its backend connection/polling) is
+	// mounted — clear them so the sidebar doesn't show stale Record-page status on other routes.
+	hwStatus.connected = false;
+	hwStatus.diskFreeGb = -1;
+	hwStatus.backupEnabled = false;
 });
 </script>
 
@@ -309,9 +343,9 @@ onBeforeUnmount(() => {
 			</div>
 			<div v-for="s in recoveryItems" :key="s.id" class="rb-item">
 				<div class="rb-info">
-					<span class="rb-id">{{ s.id }}</span>
-					<span class="rb-detail">{{ s.raw.duration_sec.toFixed(1) }}s · {{ s.raw.n_rows.toLocaleString() }} samples · {{ s.raw.raw_size_mb }} MB</span>
-					<span v-if="s.manifest?.config?.sample_name" class="rb-detail">{{ s.manifest.config.sample_name }}</span>
+					<span class="rb-id" :title="s.id">{{ s.id }}</span>
+					<span class="rb-detail" :title="`${s.raw.duration_sec.toFixed(1)}s · ${s.raw.n_rows.toLocaleString()} samples · ${s.raw.raw_size_mb} MB`">{{ s.raw.duration_sec.toFixed(1) }}s · {{ s.raw.n_rows.toLocaleString() }} samples · {{ s.raw.raw_size_mb }} MB</span>
+					<span v-if="s.manifest?.config?.sample_name" class="rb-detail" :title="s.manifest.config.sample_name">{{ s.manifest.config.sample_name }}</span>
 				</div>
 				<button class="rb-btn recover" :disabled="!!recoveryBusy[s.id]" @click="recoverSession(s.id)">
 					<span class="material-symbols-rounded" :class="{ spin: recoveryBusy[s.id] }">{{ recoveryBusy[s.id] ? 'progress_activity' : 'healing' }}</span>{{ recoveryBusy[s.id] ? `Recovering… ${recoveryElapsed(s.id).toFixed(0)}s` : 'Recover' }}
@@ -322,43 +356,19 @@ onBeforeUnmount(() => {
 			</div>
 		</div>
 
-		<header class="topbar">
-			<span class="rec-dot" :class="{ live: w.isRecording.value }" :title="w.st.state"></span>
-
-			<div class="spacer"></div>
-			<div v-if="syncStatus.pending > 0 || syncStatus.lastError" class="syncchip" :class="syncStatus.pending > 0 ? 'warn' : 'err'"
-				:title="syncStatus.lastError || `${syncStatus.pending} run record(s) queued offline`">
-				<span class="material-symbols-rounded">{{ syncStatus.pending > 0 ? 'cloud_queue' : 'error' }}</span>
-				<span v-if="syncStatus.pending > 0">{{ syncStatus.pending }}</span>
-			</div>
-			<div v-if="diskInfo.free_gb >= 0" class="diskchip" :class="{ warn: diskInfo.free_gb < 10, crit: diskInfo.free_gb < 5 }"
-				:title="`${diskInfo.free_gb.toFixed(1)} GB free of ${diskInfo.total_gb.toFixed(0)} GB`">
-				<span class="material-symbols-rounded">hard_drive</span>
-				<span>{{ diskInfo.free_gb < 100 ? diskInfo.free_gb.toFixed(1) : Math.round(diskInfo.free_gb) }} GB</span>
-			</div>
-			<div v-if="backupStatus.enabled" class="backupchip"
-				:class="{ streaming: backupStatus.state === 'streaming', paused: backupStatus.state === 'paused', done: backupStatus.state === 'done', err: backupStatus.state === 'error' }"
-				:title="backupStatus.error || `Backup ${backupStatus.state || 'idle'} · ${backupStatus.progress.toFixed(0)}%`">
-				<span class="material-symbols-rounded">{{ backupStatus.connected ? 'cloud_done' : 'cloud_off' }}</span>
-				<span v-if="backupStatus.state === 'streaming'">{{ backupStatus.progress.toFixed(0) }}%</span>
-				<span v-else-if="backupStatus.state === 'paused'">paused</span>
-				<span v-else-if="backupStatus.state">{{ backupStatus.state }}</span>
-			</div>
-			<div class="conn" :class="{ ok: st.connected }">
-				<span class="material-symbols-rounded">{{ st.connected ? 'sensors' : 'sensors_off' }}</span>
-			</div>
-			<div class="addwrap">
-				<button class="reset" title="Add a panel" @click.stop="addOpen = !addOpen"><span class="material-symbols-rounded">add</span></button>
-				<div v-if="addOpen" class="addmenu" @click.stop>
-					<button v-for="a in addable" :key="a.type" :disabled="a.disabled" @click="addPanel(a.type)">
-						<span class="material-symbols-rounded">{{ a.icon }}</span>{{ a.title }}<span v-if="a.disabled" class="added">added</span>
-					</button>
-				</div>
-			</div>
-			<button class="reset" title="Reset panel layout" @click="resetLayout"><span class="material-symbols-rounded">grid_view</span></button>
-		</header>
-
 		<div ref="gridEl" class="gridwrap">
+			<div class="panel-controls">
+				<span class="rec-dot" :class="{ live: w.isRecording.value }" :title="w.st.state"></span>
+				<div class="addwrap">
+					<button class="reset" title="Add a panel" @click.stop="addOpen = !addOpen"><span class="material-symbols-rounded">add</span></button>
+					<div v-if="addOpen" class="addmenu up" @click.stop>
+						<button v-for="a in addable" :key="a.type" :disabled="a.disabled" @click="addPanel(a.type)">
+							<span class="material-symbols-rounded">{{ a.icon }}</span>{{ a.title }}<span v-if="a.disabled" class="added">added</span>
+						</button>
+					</div>
+				</div>
+				<button class="reset" title="Reset panel layout" @click="resetLayout"><span class="material-symbols-rounded">grid_view</span></button>
+			</div>
 		<GridLayout v-model:layout="layout" :col-num="12" :row-height="rowHeight" :margin="[12, 12]"
 			:is-draggable="true" :is-resizable="true" :use-css-transforms="true" :vertical-compact="true">
 			<GridItem v-for="item in layout" :key="item.i" :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i"
@@ -369,6 +379,9 @@ onBeforeUnmount(() => {
 					<ForcePanel v-else-if="item.type === 'force'" :inst="item" />
 					<RpmPanel v-else-if="item.type === 'rpm'" />
 					<FrmPanel v-else-if="item.type === 'frm'" />
+					<template v-if="item.type === 'options'" #footer>
+						<RecordingActions />
+					</template>
 				</PanelFrame>
 			</GridItem>
 		</GridLayout>
@@ -395,12 +408,13 @@ onBeforeUnmount(() => {
 .disk-action-banner .material-symbols-rounded { font-size: 20px; }
 .disk-action-ack { margin-left: auto; padding: 6px 14px; font-size: 12px; font-weight: 700; color: inherit; background: rgba(255,255,255,0.18); border: none; border-radius: 7px; cursor: pointer; }
 .disk-action-ack:hover { background: rgba(255,255,255,0.28); }
-.topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(8px); }
-.back, .reset { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); color: var(--text); cursor: pointer; }
-.back:hover, .reset:hover { background: var(--surface-2); }
-.reset .material-symbols-rounded { font-size: 17px; }
+.reset { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 9px; background: color-mix(in srgb, var(--surface) 55%, transparent); border: 1px solid var(--border); color: var(--text); cursor: pointer; backdrop-filter: blur(4px); transition: background 0.14s, opacity 0.14s; opacity: 0.72; }
+.reset:hover { background: var(--surface-2); opacity: 1; }
+.reset .material-symbols-rounded { font-size: 19px; }
+.panel-controls { position: fixed; right: 20px; bottom: 20px; z-index: 25; display: flex; align-items: center; gap: 8px; }
 .addwrap { position: relative; }
 .addmenu { position: absolute; top: 32px; right: 0; z-index: 30; min-width: 190px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 5px; box-shadow: 0 14px 40px rgba(0,0,0,0.3); }
+.addmenu.up { top: auto; bottom: 32px; }
 .addmenu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 9px; font-size: 12.5px; color: var(--text); background: transparent; border: none; border-radius: 7px; cursor: pointer; text-align: left; }
 .addmenu button:hover:not(:disabled) { background: var(--surface-2); }
 .addmenu button:disabled { opacity: 0.45; cursor: default; }
@@ -409,23 +423,6 @@ onBeforeUnmount(() => {
 .rec-dot { width: 9px; height: 9px; border-radius: 50%; background: #64748b; flex-shrink: 0; }
 .rec-dot.live { background: #ef4444; animation: pulse 1.4s infinite; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); } 70% { box-shadow: 0 0 0 8px rgba(239,68,68,0); } 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); } }
-.spacer { flex: 1; }
-.syncchip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 8px; font-size: 12px; font-weight: 600; border: 1px solid var(--border); }
-.syncchip .material-symbols-rounded { font-size: 16px; }
-.syncchip.warn { color: #fbbf24; background: rgba(251,191,36,0.1); }
-.syncchip.err { color: var(--danger); background: rgba(252,165,165,0.1); }
-.diskchip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 8px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-dim); border: 1px solid var(--border); }
-.diskchip .material-symbols-rounded { font-size: 15px; }
-.diskchip.warn { color: #fbbf24; background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.3); }
-.diskchip.crit { color: #ef4444; background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); animation: alarmpulse 0.9s ease-in-out infinite; }
-.backupchip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 8px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-dim); border: 1px solid var(--border); }
-.backupchip .material-symbols-rounded { font-size: 15px; }
-.backupchip.streaming { color: #22c55e; background: rgba(34,197,94,0.1); border-color: rgba(34,197,94,0.3); }
-.backupchip.paused { color: #fbbf24; background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.3); }
-.backupchip.done { color: #4ade80; }
-.backupchip.err { color: var(--danger); background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); }
-.conn { display: inline-flex; align-items: center; color: var(--text-dim); }
-.conn.ok { color: #4ade80; }
 /* Recovery banner */
 .recovery-banner { background: color-mix(in srgb, var(--bg-2) 95%, #fbbf24 5%); border-bottom: 1px solid rgba(251,191,36,0.3); padding: 14px 18px; }
 .rb-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -434,6 +431,7 @@ onBeforeUnmount(() => {
 .rb-hint { font-size: 12px; color: var(--text-dim); }
 .rb-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 6px; }
 .rb-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.rb-id, .rb-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rb-id { font-size: 12px; font-weight: 600; font-family: var(--mono); color: var(--text); }
 .rb-detail { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .rb-btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 12px; font-weight: 600; border: none; border-radius: 7px; cursor: pointer; }

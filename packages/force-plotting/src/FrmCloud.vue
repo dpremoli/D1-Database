@@ -660,31 +660,31 @@ function onUp(ev: PointerEvent) {
 </template>
 
 <style scoped>
-.frm-cloud { position: relative; width: 100%; height: 100%; min-height: 160px; background: #0b1020; border-radius: 6px; overflow: hidden; }
+.frm-cloud { position: relative; width: 100%; height: 100%; min-height: 160px; background: var(--plot-bg, #0b1020); border-radius: 6px; overflow: hidden; }
 .frm-cloud canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .frm-cloud canvas:active { cursor: grabbing; }
 .frm-cloud canvas.rect { cursor: crosshair; }
 .fc-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: #94a3b8; }
 .fc-msg.err { color: #fca5a5; font-size: 12px; padding: 12px; text-align: center; }
-.fc-count { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,0.6); font-variant-numeric: tabular-nums; }
+.fc-count { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: var(--text-dim, #94a3b8); font-variant-numeric: tabular-nums; }
 .fc-swgl { position: absolute; left: 6px; bottom: 4px; font-size: 10px; font-weight: 700; color: #fbbf24; cursor: help; }
-.fc-pane { position: absolute; left: 6px; top: 4px; font-size: 10px; font-weight: 700; color: rgba(255,255,255,0.75); text-transform: uppercase; letter-spacing: 0.06em; }
+.fc-pane { position: absolute; left: 6px; top: 4px; font-size: 10px; font-weight: 700; color: var(--text-dim, rgba(255,255,255,0.75)); text-transform: uppercase; letter-spacing: 0.06em; }
 
 .fc-rect { position: absolute; border: 1px solid #38bdf8; background: rgba(56,189,248,0.14); pointer-events: none; border-radius: 2px; }
 
 .fc-cbar { position: absolute; top: 10px; right: 8px; display: flex; flex-direction: column; align-items: center; gap: 3px; pointer-events: none; }
-.fc-ramp { width: 10px; height: 96px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.25); }
-.fc-cval { font-size: 9px; color: rgba(255,255,255,0.82); font-variant-numeric: tabular-nums; }
-.fc-cunit { font-size: 9px; color: rgba(255,255,255,0.6); margin-top: 1px; }
+.fc-ramp { width: 10px; height: 96px; border-radius: 3px; border: 1px solid var(--border-2, rgba(255,255,255,0.25)); }
+.fc-cval { font-size: 9px; color: var(--text, rgba(255,255,255,0.82)); font-variant-numeric: tabular-nums; }
+.fc-cunit { font-size: 9px; color: var(--text-dim, rgba(255,255,255,0.6)); margin-top: 1px; }
 
 .fc-scale { position: absolute; left: 10px; bottom: 8px; display: flex; flex-direction: column; align-items: center; gap: 2px; pointer-events: none; }
-.fc-scale-line { height: 3px; background: rgba(255,255,255,0.85); border-left: 1px solid rgba(255,255,255,0.85); border-right: 1px solid rgba(255,255,255,0.85); box-sizing: border-box; }
-.fc-scale span { font-size: 9.5px; color: rgba(255,255,255,0.85); font-variant-numeric: tabular-nums; }
+.fc-scale-line { height: 3px; background: var(--text, rgba(255,255,255,0.85)); border-left: 1px solid var(--text, rgba(255,255,255,0.85)); border-right: 1px solid var(--text, rgba(255,255,255,0.85)); box-sizing: border-box; }
+.fc-scale span { font-size: 9.5px; color: var(--text, rgba(255,255,255,0.85)); font-variant-numeric: tabular-nums; }
 
 .fc-tools { position: absolute; top: 8px; left: 8px; display: flex; gap: 5px; }
 .fc-tbtn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; cursor: pointer;
-	color: rgba(255,255,255,0.85); background: rgba(15,23,42,0.55); border: 1px solid rgba(255,255,255,0.18); }
-.fc-tbtn:hover { background: rgba(15,23,42,0.8); }
+	color: var(--text, rgba(255,255,255,0.85)); background: var(--overlay, rgba(15,23,42,0.55)); border: 1px solid var(--border-2, rgba(255,255,255,0.18)); }
+.fc-tbtn:hover { background: var(--surface-2, rgba(15,23,42,0.8)); }
 .fc-tbtn.on { background: #38bdf8; border-color: #38bdf8; color: #0b1020; }
 .fc-tbtn:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

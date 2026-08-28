@@ -130,12 +130,15 @@ class FrmIntegrator:
         self._active = True
 
     def process(self, t: np.ndarray, axes: dict[str, np.ndarray], tacho: np.ndarray):
-        """Returns (points: (k,3) float32 [x,y,c], mean_rpm) for the NEW samples in this chunk."""
+        """Returns (points: (k,5) float32 [x,y,cx,cy,cz], mean_rpm) for the NEW samples in this
+        chunk. All three axis forces stream with every point — not just cfg.axis — so the client
+        can switch the FRM colour axis at any time and instantly recolour the whole accumulated
+        spiral, live points included, rather than only points drawn after the switch."""
         n = t.size
         rpm = rpm_from_tacho(tacho, self.fs, self.cfg.ppr, fallback=self._last_rpm)
         self._last_rpm = float(np.mean(rpm)) if n else self._last_rpm
         if not self._active:
-            return np.empty((0, 3), dtype=np.float32), self._last_rpm  # pre-cut: no spiral yet
+            return np.empty((0, 5), dtype=np.float32), self._last_rpm  # pre-cut: no spiral yet
         dt = 1.0 / self.fs
         theta = self._theta + np.cumsum(rpm * (2.0 * np.pi / 60.0) * dt)
         rho_off = self._rho_off + np.cumsum(-(self.cfg.feed / 10.0) * (rpm / 60.0) * dt)
@@ -146,10 +149,11 @@ class FrmIntegrator:
             rho = np.maximum(rho, self.r_inner)
         x = rho * np.cos(theta)
         y = rho * np.sin(theta)
-        c = axes[self.cfg.axis]  # colour by the chosen axis force (frontend normalises)
         stride = max(1, n // self.max_pts)
-        pts = np.empty((x[::stride].size, 3), dtype=np.float32)
+        pts = np.empty((x[::stride].size, 5), dtype=np.float32)
         pts[:, 0] = x[::stride]
         pts[:, 1] = y[::stride]
-        pts[:, 2] = c[::stride]
+        pts[:, 2] = axes["Fx"][::stride]
+        pts[:, 3] = axes["Fy"][::stride]
+        pts[:, 4] = axes["Fz"][::stride]
         return pts, self._last_rpm

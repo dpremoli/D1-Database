@@ -248,7 +248,7 @@ onMounted(refresh);
 .mock { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #fbbf24; background: rgba(251,191,36,0.12); padding: 1px 6px; border-radius: 10px; }
 .ic { margin-left: auto; display: inline-flex; width: 34px; height: 34px; align-items: center; justify-content: center; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; color: var(--text); cursor: pointer; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; padding: 22px 26px; max-width: 1100px; }
-.card { background: rgba(17,26,51,0.6); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
 .card.wide { grid-column: 1 / -1; }
 h2 { margin: 0 0 12px; font-size: 15px; }
 label { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 12px; }

@@ -77,6 +77,7 @@ BEGIN
             v_row_before ->> 'sample_id',
             v_row_before ->> 'operation_id',
             v_row_before ->> 'session_id',
+            v_row_before ->> 'campaign_id',
             v_row_before ->> 'lot_id',
             v_row_before ->> 'material_id',
             v_row_before ->> 'project_id',
@@ -100,6 +101,7 @@ BEGIN
             v_row_after ->> 'sample_id',
             v_row_after ->> 'operation_id',
             v_row_after ->> 'session_id',
+            v_row_after ->> 'campaign_id',
             v_row_after ->> 'lot_id',
             v_row_after ->> 'material_id',
             v_row_after ->> 'project_id',
@@ -117,13 +119,13 @@ BEGIN
         );
         v_changed := NULL;
     ELSE
-        -- UPDATE
         v_row_before := to_jsonb(OLD);
         v_row_after  := to_jsonb(NEW);
         v_record_id  := COALESCE(
             v_row_after ->> 'sample_id',
             v_row_after ->> 'operation_id',
             v_row_after ->> 'session_id',
+            v_row_after ->> 'campaign_id',
             v_row_after ->> 'lot_id',
             v_row_after ->> 'material_id',
             v_row_after ->> 'project_id',
@@ -149,26 +151,138 @@ BEGIN
     END IF;
 
     INSERT INTO audit_logs (
-        table_name,
-        record_id,
-        action_type,
-        actor_identity,
-        row_before,
-        row_after,
-        changed_fields
+        table_name, record_id, action_type, actor_identity,
+        row_before, row_after, changed_fields
     ) VALUES (
-        TG_TABLE_NAME,
-        v_record_id,
-        TG_OP,
+        TG_TABLE_NAME, v_record_id, TG_OP,
         current_setting('d1.actor_identity', TRUE),
-        v_row_before,
-        v_row_after,
-        v_changed
+        v_row_before, v_row_after, v_changed
     );
 
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: expand_tool_box_intake(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.expand_tool_box_intake(p_first_box_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    v_box          tool_boxes%ROWTYPE;
+    v_it           insert_types%ROWTYPE;
+    v_short_code   TEXT;
+    v_base_seq     INTEGER;   -- boxes of this type that existed before this batch
+    v_box_seq      INTEGER;
+    v_box_id       UUID;
+    v_box_code     TEXT;
+    v_insert_id    UUID;
+    v_insert_code  TEXT;
+    -- Supports up to 20 edges per insert (A–T). Extend if needed.
+    v_edge_letters TEXT[] := ARRAY[
+        'A','B','C','D','E','F','G','H','I','J',
+        'K','L','M','N','O','P','Q','R','S','T'
+    ];
+    v_ins_num      INTEGER;
+    v_edge_idx     INTEGER;
+BEGIN
+    -- Fetch the box Directus just created.
+    SELECT * INTO v_box FROM tool_boxes WHERE tool_box_id = p_first_box_id;
+    IF NOT FOUND OR v_box.insert_type_id IS NULL THEN
+        RETURN;  -- nothing to expand without an insert type
+    END IF;
+
+    -- Lock the insert_type row to serialise concurrent intakes of the same type,
+    -- preventing box-sequence collisions under simultaneous writes.
+    SELECT * INTO v_it
+    FROM   insert_types
+    WHERE  insert_type_id = v_box.insert_type_id
+    FOR UPDATE;
+
+    -- Resolve short code: explicit field preferred, auto-derive as fallback.
+    v_short_code := COALESCE(
+        NULLIF(TRIM(v_it.short_code), ''),
+        generate_insert_short_code(v_it.type_code)
+    );
+    IF v_short_code IS NULL OR v_short_code = '' THEN
+        RAISE EXCEPTION 'expand_tool_box_intake: cannot derive short_code for insert_type %', v_box.insert_type_id;
+    END IF;
+
+    -- Base sequence = boxes of this type that existed BEFORE this batch.
+    SELECT COUNT(*) INTO v_base_seq
+    FROM   tool_boxes
+    WHERE  insert_type_id = v_box.insert_type_id
+      AND  tool_box_id   <> p_first_box_id;
+
+    -- Create N boxes (1..package_quantity). Box 1 = the row Directus created.
+    FOR v_box_seq IN 1 .. GREATEST(COALESCE(v_box.package_quantity, 1), 1) LOOP
+
+        v_box_code := v_short_code || '-' || (v_base_seq + v_box_seq);
+
+        IF v_box_seq = 1 THEN
+            -- Overwrite the placeholder code on the first (existing) box.
+            UPDATE tool_boxes
+            SET    tool_box_code = v_box_code
+            WHERE  tool_box_id   = p_first_box_id;
+            v_box_id := p_first_box_id;
+
+        ELSE
+            -- Clone the first box's metadata into additional box rows.
+            -- package_quantity = 0 is the sentinel that prevents the hook from
+            -- re-expanding these clone rows.
+            v_box_id := uuid_generate_v4();
+            INSERT INTO tool_boxes (
+                tool_box_id,   tool_box_code,         insert_type_id,
+                description,   location,              owner,
+                notes,         package_quantity
+            ) VALUES (
+                v_box_id,      v_box_code,            v_box.insert_type_id,
+                v_box.description, v_box.location,    v_box.owner,
+                v_box.notes,   0
+            );
+        END IF;
+
+        -- ── Cutting inserts for this box ──────────────────────────────────────
+        FOR v_ins_num IN 1 .. GREATEST(COALESCE(v_it.inserts_per_box, 0), 0) LOOP
+            v_insert_id   := uuid_generate_v4();
+            v_insert_code := v_box_code || '-' || v_ins_num;
+
+            INSERT INTO cutting_inserts (
+                insert_id,    insert_code,   tool_box_id,
+                insert_type_id, insert_number
+            ) VALUES (
+                v_insert_id,  v_insert_code, v_box_id,
+                v_box.insert_type_id, v_ins_num
+            );
+
+            -- ── Edges for this insert ─────────────────────────────────────────
+            FOR v_edge_idx IN 1 .. GREATEST(COALESCE(v_it.edge_count, 0), 0) LOOP
+                INSERT INTO insert_edges (
+                    edge_id,           edge_code,
+                    insert_id,         edge_identifier
+                ) VALUES (
+                    uuid_generate_v4(),
+                    v_insert_code || v_edge_letters[v_edge_idx],
+                    v_insert_id,
+                    v_edge_letters[v_edge_idx]
+                );
+            END LOOP;
+
+        END LOOP;
+
+    END LOOP;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION expand_tool_box_intake(p_first_box_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.expand_tool_box_intake(p_first_box_id uuid) IS 'Called by the Directus box-intake hook after a tool_box is created with package_quantity >= 1. Generates codes in the pattern {short_code}-{box_seq}-{insert_pos}{edge_letter} and creates all child cutting_inserts and insert_edges. Clone boxes receive package_quantity=0 to prevent recursive re-expansion.';
 
 
 --
@@ -362,6 +476,24 @@ COMMENT ON FUNCTION public.generate_force_file_id(p_pass_code text, p_cutting_sp
 
 
 --
+-- Name: generate_insert_short_code(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.generate_insert_short_code(p_type_code text) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT
+    AS $$
+    SELECT LEFT(REGEXP_REPLACE(p_type_code, '[^A-Za-z0-9]', '', 'g'), 6)
+$$;
+
+
+--
+-- Name: FUNCTION generate_insert_short_code(p_type_code text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.generate_insert_short_code(p_type_code text) IS 'Strips non-alphanumeric chars from p_type_code and returns the first 6 characters. Used as a fallback when insert_types.short_code is not set.';
+
+
+--
 -- Name: generate_pass_code(text, text, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -402,6 +534,35 @@ COMMENT ON FUNCTION public.generate_sample_code(p_sequence integer, p_alloy_code
 
 
 --
+-- Name: mfg_op_link_genealogy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.mfg_op_link_genealogy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    rel  TEXT := 'derived_from';
+    code TEXT;
+BEGIN
+    IF NEW.sample_id IS NOT NULL AND NEW.output_sample_id IS NOT NULL
+       AND NEW.sample_id <> NEW.output_sample_id THEN
+        SELECT method_code INTO code FROM manufacturing_methods WHERE method_id = NEW.method_id;
+        rel := CASE
+            WHEN code IN ('MF','MHIP')                       THEN 'sintered_from'
+            WHEN code IN ('MC','MM','MC2','MEDM','MCO','MX','MS') THEN 'cut_from'
+            ELSE 'derived_from'
+        END;
+        INSERT INTO sample_genealogy (child_sample_id, parent_sample_id, relationship_type, notes)
+        VALUES (NEW.output_sample_id, NEW.sample_id, rel,
+                'Auto-linked from manufacturing operation ' || COALESCE(NEW.pass_code, NEW.operation_id::text))
+        ON CONFLICT (child_sample_id, parent_sample_id) DO NOTHING;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: occ_update_trigger_function(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -416,9 +577,71 @@ END;
 $$;
 
 
+--
+-- Name: refresh_project_rollup(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.refresh_project_rollup() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    DELETE FROM project_rollup;
+    INSERT INTO project_rollup (row_id, project_id, kind, code, detail, campaign_id)
+    SELECT row_id, project_id, kind, code, detail, campaign_id FROM v_project_rollup;
+END;
+$$;
+
+
+--
+-- Name: trg_refresh_project_rollup(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trg_refresh_project_rollup() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM refresh_project_rollup();
+    RETURN NULL;
+END;
+$$;
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
+
+--
+-- Name: Machine_Operators; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."Machine_Operators" (
+    id integer NOT NULL,
+    "Name" character varying(255),
+    equipment uuid,
+    photo uuid,
+    user_id uuid
+);
+
+
+--
+-- Name: Machine_Operators_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."Machine_Operators_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: Machine_Operators_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."Machine_Operators_id_seq" OWNED BY public."Machine_Operators".id;
+
 
 --
 -- Name: alloying_elements; Type: TABLE; Schema: public; Owner: -
@@ -508,6 +731,30 @@ COMMENT ON COLUMN public.alloying_elements.atomic_radius_pm IS 'Atomic radius in
 
 
 --
+-- Name: archive_metadata_edits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.archive_metadata_edits (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    directus_files_id uuid,
+    archive_path text NOT NULL,
+    field_path text NOT NULL,
+    old_value text,
+    new_value text NOT NULL,
+    reason text,
+    edited_by text,
+    edited_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE archive_metadata_edits; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.archive_metadata_edits IS 'Audit trail of in-place corrections made to metadata fields inside archive files (e.g. stale SampleName in a .mat capture). The archive itself has no version history, so this table is the only record of what changed.';
+
+
+--
 -- Name: audit_logs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -587,6 +834,56 @@ ALTER SEQUENCE public.audit_logs_log_id_seq OWNED BY public.audit_logs.log_id;
 
 
 --
+-- Name: campaign_samples; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.campaign_samples (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    campaign_id uuid NOT NULL,
+    sample_id uuid NOT NULL
+);
+
+
+--
+-- Name: TABLE campaign_samples; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.campaign_samples IS 'M2M junction: which physical samples belong to a campaign (a sample may span many campaigns).';
+
+
+--
+-- Name: campaigns; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.campaigns (
+    campaign_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    project_id uuid,
+    campaign_type text NOT NULL,
+    campaign_code text,
+    name text NOT NULL,
+    owner uuid,
+    default_equipment_id uuid,
+    default_material_id uuid,
+    start_date date,
+    end_date date,
+    status text,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    version integer DEFAULT 1 NOT NULL,
+    owner_person_id uuid,
+    CONSTRAINT campaigns_campaign_type_check CHECK ((campaign_type = ANY (ARRAY['machining_trial'::text, 'testing_campaign'::text])))
+);
+
+
+--
+-- Name: TABLE campaigns; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.campaigns IS 'Optional grouping under a project: machining trial (operations) or testing campaign (sessions).';
+
+
+--
 -- Name: cutting_inserts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -602,7 +899,9 @@ CREATE TABLE public.cutting_inserts (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     version integer DEFAULT 1 NOT NULL,
     location text,
-    owner text
+    owner uuid,
+    cascade_ownership boolean DEFAULT false NOT NULL,
+    owner_person_id uuid
 );
 
 
@@ -1409,7 +1708,13 @@ CREATE TABLE public.equipment (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     version integer DEFAULT 1 NOT NULL,
-    manufacturer text
+    manufacturer text,
+    project_id uuid,
+    capabilities text,
+    image uuid,
+    manufacturer_id uuid,
+    facility_id uuid,
+    image_url text
 );
 
 
@@ -1442,6 +1747,350 @@ COMMENT ON COLUMN public.equipment.manufacturer IS 'Machine/equipment manufactur
 
 
 --
+-- Name: COLUMN equipment.image; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.equipment.image IS 'Photo of the machine (Directus File Library / MinIO). URL imports are downloaded for offline viewing.';
+
+
+--
+-- Name: COLUMN equipment.facility_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.equipment.facility_id IS 'Lab / centre that houses this machine. Drives the tiered facility -> machine picker.';
+
+
+--
+-- Name: COLUMN equipment.image_url; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.equipment.image_url IS 'URL of an externally-sourced photo of the machine (manufacturer/facility page). The `image` file field is for uploaded photos.';
+
+
+--
+-- Name: etchants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.etchants (
+    etchant_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    name text NOT NULL,
+    composition text,
+    suited_metals text,
+    notes text,
+    owner uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    version integer DEFAULT 1 NOT NULL,
+    owner_person_id uuid
+);
+
+
+--
+-- Name: TABLE etchants; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.etchants IS 'Extensible list of metallographic etchants used in sample preparation.';
+
+
+--
+-- Name: facilities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.facilities (
+    facility_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    name text NOT NULL,
+    code character varying(16) NOT NULL,
+    notes text
+);
+
+
+--
+-- Name: TABLE facilities; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.facilities IS 'Physical labs / centres that house equipment. Used to group and filter the machine picker.';
+
+
+--
+-- Name: COLUMN facilities.code; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.facilities.code IS 'Short unique facility code, e.g. SORBY, RDC, RTC, METLAB, MECHLAB.';
+
+
+--
+-- Name: fast_log_qa_backup; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fast_log_qa_backup (
+    id bigint NOT NULL,
+    operation_id uuid,
+    operation_date timestamp with time zone,
+    recipe text,
+    batch text,
+    max_temp_celsius numeric,
+    max_force_kn numeric,
+    coshh_ref text,
+    ptc_top_celsius numeric,
+    ptc_bot_celsius numeric,
+    mass_grams numeric,
+    mould_diameter_mm numeric,
+    outcome_notes text,
+    backed_up_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: fast_log_qa_backup_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.fast_log_qa_backup_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: fast_log_qa_backup_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.fast_log_qa_backup_id_seq OWNED BY public.fast_log_qa_backup.id;
+
+
+--
+-- Name: fast_recipes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fast_recipes (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    machine character varying(8) NOT NULL,
+    program_nr integer,
+    name text NOT NULL,
+    group_name text,
+    source_file text,
+    target_temp_c numeric,
+    target_force_kn numeric,
+    hold_time_min numeric,
+    params jsonb,
+    date_created timestamp with time zone,
+    date_changed timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT fast_recipes_machine_chk CHECK (((machine)::text = ANY ((ARRAY['25'::character varying, '250'::character varying])::text[])))
+);
+
+
+--
+-- Name: TABLE fast_recipes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fast_recipes IS 'FAST sintering recipe definitions (ECS_Prog.mdb::Rezept for 25, PROGS/*.rcp for 250).';
+
+
+--
+-- Name: fast_run_data; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fast_run_data (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    operation_id uuid NOT NULL,
+    directus_files_id uuid,
+    staged_file uuid,
+    status character varying(16) DEFAULT 'pending'::character varying NOT NULL,
+    error_message text,
+    machine_format character varying(8),
+    import_archive_path text,
+    plant text,
+    recipe text,
+    run_start timestamp with time zone,
+    n_rows integer,
+    duration_s numeric,
+    series jsonb,
+    summary jsonb,
+    processed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT fast_run_data_status_chk CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'processing'::character varying, 'done'::character varying, 'error'::character varying, 'skipped'::character varying])::text[])))
+);
+
+
+--
+-- Name: TABLE fast_run_data; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.fast_run_data IS 'Normalised FAST sintering trace per operation (canonical CSV + series catalog + run metadata). Populated by scripts/fast_orchestrator.py.';
+
+
+--
+-- Name: COLUMN fast_run_data.staged_file; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fast_run_data.staged_file IS 'Raw browser-uploaded CSV awaiting host normalisation (deleted after processing).';
+
+
+--
+-- Name: COLUMN fast_run_data.status; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fast_run_data.status IS 'Import work-queue: pending -> processing -> done | error | skipped.';
+
+
+--
+-- Name: COLUMN fast_run_data.import_archive_path; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fast_run_data.import_archive_path IS 'Archive path to read+normalise on the host (host-only access).';
+
+
+--
+-- Name: filter_profiles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.filter_profiles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    chain jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE filter_profiles; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.filter_profiles IS 'Named FRM filter-chain library; applying a profile copies its chain onto an operation.';
+
+
+--
+-- Name: force_crawler_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.force_crawler_state (
+    id uuid DEFAULT '00000000-0000-0000-0000-000000000001'::uuid NOT NULL,
+    desired_state character varying(16) DEFAULT 'paused'::character varying NOT NULL,
+    workers integer DEFAULT 2 NOT NULL,
+    throttle_seconds numeric DEFAULT 5 NOT NULL,
+    file_like text,
+    op_code_like text,
+    daemon_pid integer,
+    daemon_started_at timestamp with time zone,
+    last_heartbeat_at timestamp with time zone,
+    current_activity text,
+    processed_count integer DEFAULT 0 NOT NULL,
+    error_count integer DEFAULT 0 NOT NULL,
+    last_discover_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    series_points integer DEFAULT 3000 NOT NULL,
+    fft_points integer DEFAULT 3000 NOT NULL,
+    frm_downsample_step integer DEFAULT 5 NOT NULL,
+    frm_dpi integer DEFAULT 300 NOT NULL,
+    live_cache_points integer DEFAULT 250000 NOT NULL,
+    pulses_per_rev integer DEFAULT 1 NOT NULL,
+    grid_density integer DEFAULT 2048 NOT NULL,
+    grid_method text DEFAULT 'splat'::text NOT NULL,
+    octree_threshold integer,
+    octree_min_node_px real DEFAULT 1 NOT NULL,
+    octree_budget_cap integer DEFAULT 25000000 NOT NULL,
+    grid_pregen boolean DEFAULT false NOT NULL,
+    CONSTRAINT force_crawler_state_desired_chk CHECK (((desired_state)::text = ANY ((ARRAY['running'::character varying, 'paused'::character varying])::text[]))),
+    CONSTRAINT force_crawler_state_singleton CHECK ((id = '00000000-0000-0000-0000-000000000001'::uuid))
+);
+
+
+--
+-- Name: TABLE force_crawler_state; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.force_crawler_state IS 'Singleton control+status row for the host-side force-crawler daemon. Admin edits desired_state/workers/throttle/scope; the daemon (scripts/force_orchestrator.py --daemon) reads it live and reports heartbeat/activity back.';
+
+
+--
+-- Name: COLUMN force_crawler_state.series_points; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.force_crawler_state.series_points IS 'Points per downsampled force/RPM envelope (series.json).';
+
+
+--
+-- Name: COLUMN force_crawler_state.fft_points; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.force_crawler_state.fft_points IS 'Points per FFT spectrum, spread across the full 0..Nyquist range.';
+
+
+--
+-- Name: COLUMN force_crawler_state.frm_downsample_step; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.force_crawler_state.frm_downsample_step IS 'FRM point-cloud stride: keeps every Nth sample (data(1:N:end)) — 1 = full density, higher = sparser/faster.';
+
+
+--
+-- Name: COLUMN force_crawler_state.frm_dpi; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.force_crawler_state.frm_dpi IS 'exportgraphics Resolution for the FRM PNGs.';
+
+
+--
+-- Name: COLUMN force_crawler_state.live_cache_points; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.force_crawler_state.live_cache_points IS 'Target points per axis in live_cache.bin (the browser Live-mode point cloud). Larger = finer signal/FRM but bigger download.';
+
+
+--
+-- Name: COLUMN force_crawler_state.pulses_per_rev; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.force_crawler_state.pulses_per_rev IS 'Global default tacho pulses-per-revolution for tachorpm (PulsesPerRev). Overridable per-row via machining_force_analysis.pulses_per_rev.';
+
+
+--
+-- Name: COLUMN force_crawler_state.grid_density; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.force_crawler_state.grid_density IS 'Interpolated-grid resolution N (N×N cells); capped at 8192.';
+
+
+--
+-- Name: COLUMN force_crawler_state.grid_method; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.force_crawler_state.grid_method IS 'Grid interpolation: splat (Gaussian, GPU) or natural (Delaunay).';
+
+
+--
+-- Name: COLUMN force_crawler_state.octree_threshold; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.force_crawler_state.octree_threshold IS 'Auto-route to the octree view above this many points.';
+
+
+--
+-- Name: COLUMN force_crawler_state.octree_min_node_px; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.force_crawler_state.octree_min_node_px IS 'Potree LOD: min projected node size (px) before culling.';
+
+
+--
+-- Name: COLUMN force_crawler_state.octree_budget_cap; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.force_crawler_state.octree_budget_cap IS 'Potree point-budget hard cap (GPU safety).';
+
+
+--
+-- Name: COLUMN force_crawler_state.grid_pregen; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.force_crawler_state.grid_pregen IS 'Pre-build the interpolated-grid octree during the crawl for ops above octree_threshold (heavier; off by default).';
+
+
+--
 -- Name: insert_edges; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1454,7 +2103,9 @@ CREATE TABLE public.insert_edges (
     notes text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    version integer DEFAULT 1 NOT NULL
+    version integer DEFAULT 1 NOT NULL,
+    owner uuid,
+    owner_person_id uuid
 );
 
 
@@ -1510,7 +2161,10 @@ CREATE TABLE public.insert_types (
     cutting_edge_length_mm numeric(8,3),
     included_angle_deg numeric(8,3),
     fixing_hole_diameter_mm numeric(8,3),
-    material_class text
+    material_class text,
+    short_code character varying(16),
+    image uuid,
+    manufacturer_id uuid
 );
 
 
@@ -1599,6 +2253,187 @@ COMMENT ON COLUMN public.insert_types.material_class IS 'ISO 513 TMC1 material c
 
 
 --
+-- Name: COLUMN insert_types.short_code; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.insert_types.short_code IS 'Short 4-8 char prefix used in auto-generated box/insert/edge codes (e.g. CCMT09). Auto-derived from type_code on first intake if left blank. Two types may not share the same short_code.';
+
+
+--
+-- Name: COLUMN insert_types.image; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.insert_types.image IS 'Photo of the insert type (Directus File Library / MinIO).';
+
+
+--
+-- Name: machining_force_analysis; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.machining_force_analysis (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    operation_id uuid NOT NULL,
+    directus_files_id uuid NOT NULL,
+    status character varying(16) DEFAULT 'pending'::character varying NOT NULL,
+    fingerprint text,
+    error_message text,
+    file_version numeric,
+    sample_rate integer,
+    feed numeric,
+    cut_diameter numeric,
+    surface_speed numeric,
+    depth_of_cut numeric,
+    max_rpm numeric,
+    dyno_gain numeric,
+    n_raw bigint,
+    cut_start_idx bigint,
+    cut_end_idx bigint,
+    peak_fx numeric,
+    peak_fy numeric,
+    peak_fz numeric,
+    mean_rpm numeric,
+    series jsonb,
+    fft jsonb,
+    matlab_version text,
+    processed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    frm_fx uuid,
+    frm_fy uuid,
+    frm_fz uuid,
+    trigger_time timestamp with time zone,
+    live_cache_file uuid,
+    live_render_points integer,
+    pulses_per_rev integer,
+    render_status text,
+    render_bounds jsonb,
+    render_axis text,
+    render_colormap text,
+    render_cmin numeric,
+    render_cmax numeric,
+    render_file uuid,
+    render_error text,
+    render_requested_at timestamp with time zone,
+    octree_status text,
+    octree_path text,
+    octree_points bigint,
+    octree_error text,
+    octree_requested_at timestamp with time zone,
+    grid_octree_status text,
+    grid_octree_path text,
+    grid_octree_points bigint,
+    grid_octree_error text,
+    grid_octree_requested_at timestamp with time zone,
+    grid_fidelity real,
+    grid_arm_ratio real,
+    grid_cell_mm real,
+    inner_diameter real DEFAULT 0 NOT NULL,
+    outer_diameter real,
+    filter_chain jsonb,
+    filter_baked boolean DEFAULT false NOT NULL,
+    crop_start_idx_override bigint,
+    crop_end_idx_override bigint,
+    CONSTRAINT machining_force_analysis_status_chk CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'processing'::character varying, 'done'::character varying, 'error'::character varying, 'skipped'::character varying])::text[])))
+);
+
+
+--
+-- Name: TABLE machining_force_analysis; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.machining_force_analysis IS 'ABFPA-faithful force-analysis results per machining .mat file (FRM fingerprint, force envelopes, spectra, cut metrics). Populated read-only by scripts/force_orchestrator.py.';
+
+
+--
+-- Name: COLUMN machining_force_analysis.status; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.machining_force_analysis.status IS 'Work-queue state: pending -> processing -> done | error | skipped.';
+
+
+--
+-- Name: COLUMN machining_force_analysis.dyno_gain; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.machining_force_analysis.dyno_gain IS 'Dynamometer gain (N/V) stored in the file metadata. A value of 1 means the capture was effectively uncalibrated.';
+
+
+--
+-- Name: COLUMN machining_force_analysis.trigger_time; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.machining_force_analysis.trigger_time IS 'metadata.TriggerTime read from the source .mat file, when present (the actual recording time, not the DB row creation time).';
+
+
+--
+-- Name: COLUMN machining_force_analysis.live_render_points; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.machining_force_analysis.live_render_points IS 'Client render request: desired live_cache.bin point count (1 = full 1:1). Consumed and cleared by the host orchestrator.';
+
+
+--
+-- Name: COLUMN machining_force_analysis.pulses_per_rev; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.machining_force_analysis.pulses_per_rev IS 'Tacho pulses-per-revolution actually used to produce this row''s current PNGs/metrics. NULL = never processed under this feature yet.';
+
+
+--
+-- Name: COLUMN machining_force_analysis.inner_diameter; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.machining_force_analysis.inner_diameter IS 'Inner diameter (mm) for donut/diaphragm discs; 0 = solid disc (spiral runs to radius 0).';
+
+
+--
+-- Name: COLUMN machining_force_analysis.outer_diameter; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.machining_force_analysis.outer_diameter IS 'Outer (cut) diameter override in mm; NULL/0 = use the .mat metadata CutDiameter.';
+
+
+--
+-- Name: COLUMN machining_force_analysis.filter_chain; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.machining_force_analysis.filter_chain IS 'Active signal-filter chain (despike/detrend/lowpass/notch JSON); NULL = raw. Baked into all derived outputs on reprocess.';
+
+
+--
+-- Name: COLUMN machining_force_analysis.filter_baked; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.machining_force_analysis.filter_baked IS 'True once every derived output (Lite cache, Full octree, FRM PNGs) has been reprocessed with filter_chain. False = light apply (chain saved; Lite recomputes live; other outputs still raw).';
+
+
+--
+-- Name: COLUMN machining_force_analysis.crop_start_idx_override; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.machining_force_analysis.crop_start_idx_override IS 'Human-corrected cut-start sample index; NULL = follow the derived cut_start_idx. Wins over the derived value in the viewer and on replay.';
+
+
+--
+-- Name: COLUMN machining_force_analysis.crop_end_idx_override; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.machining_force_analysis.crop_end_idx_override IS 'Human-corrected cut-end sample index; NULL = follow the derived cut_end_idx.';
+
+
+--
+-- Name: manufacturers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.manufacturers (
+    manufacturer_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    name text NOT NULL,
+    notes text,
+    "Logo" uuid
+);
+
+
+--
 -- Name: manufacturing_methods; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1633,7 +2468,7 @@ COMMENT ON COLUMN public.manufacturing_methods.method_code IS 'Short code used i
 
 CREATE TABLE public.manufacturing_operations (
     operation_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
-    sample_id uuid NOT NULL,
+    sample_id uuid,
     method_id uuid NOT NULL,
     project_id uuid,
     equipment_id uuid,
@@ -1653,7 +2488,79 @@ CREATE TABLE public.manufacturing_operations (
     outcome_notes text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    version integer DEFAULT 1 NOT NULL
+    version integer DEFAULT 1 NOT NULL,
+    operator integer,
+    process_category text,
+    machining_operation_subtype text,
+    machining_spindle_speed_rpm numeric(8,2),
+    machining_cutting_speed_m_per_min numeric(8,3),
+    machining_feed_mm_per_rev numeric(8,4),
+    machining_axial_depth_of_cut_mm numeric(8,4),
+    machining_radial_depth_of_cut_mm numeric(8,4),
+    machining_cutting_length_mm numeric(8,2),
+    machining_workpiece_diameter_mm numeric(8,3),
+    machining_new_edge boolean,
+    machining_coolant_used boolean,
+    machining_coolant_pressure_bar numeric(6,2),
+    machining_tacho_used boolean,
+    machining_force_captured boolean,
+    machining_chips_collected boolean,
+    machining_chips_ref_code text,
+    machining_experiment_sheet_url text,
+    machining_legacy_insert_edge_id text,
+    machining_legacy_machining_uid text,
+    sintering_recipe_number text,
+    sintering_batch_number text,
+    sintering_mould_diameter_mm numeric(8,3),
+    sintering_atmosphere text,
+    sintering_tc_pyro_control text,
+    sintering_max_temp_celsius numeric(8,2),
+    sintering_max_force_kn numeric(8,3),
+    sintering_voltage_at_max_t_v numeric(8,3),
+    sintering_power_at_max_t_kw numeric(8,3),
+    sintering_ptc_top_celsius numeric(8,2),
+    sintering_ptc_bot_celsius numeric(8,2),
+    sintering_coshh_ref text,
+    sintering_material_type_note text,
+    ht_treatment_type text,
+    ht_atmosphere text,
+    ht_peak_temp_celsius numeric(8,2),
+    ht_hold_time_min numeric(8,2),
+    ht_heating_rate_c_per_min numeric(8,3),
+    ht_cooling_method text,
+    ht_cooling_rate_c_per_min numeric(8,3),
+    ht_quench_medium text,
+    deform_deformation_type text,
+    deform_deformation_temp_celsius numeric(8,2),
+    deform_pass_count integer,
+    deform_total_reduction_pct numeric(6,2),
+    deform_reduction_per_pass_pct numeric(6,2),
+    deform_strain_rate_per_sec numeric(10,4),
+    deform_roll_speed_m_per_min numeric(8,3),
+    deform_lubricant text,
+    am_process_variant text,
+    am_layer_thickness_mm numeric(8,4),
+    am_laser_power_w numeric(8,2),
+    am_scan_speed_mm_per_s numeric(8,2),
+    am_hatch_spacing_mm numeric(8,4),
+    am_energy_density_j_per_mm3 numeric(10,4),
+    am_build_atmosphere text,
+    am_preheat_temp_celsius numeric(8,2),
+    owner uuid,
+    output_sample_id uuid,
+    source_recipe_id uuid,
+    gcode_file uuid,
+    source_run_uid text,
+    source_system text,
+    sintering_mass_grams numeric(10,3),
+    material_id uuid,
+    campaign_id uuid,
+    owner_person_id uuid,
+    operator_person_id uuid,
+    code_sort text GENERATED ALWAYS AS ((lpad(COALESCE((regexp_match((pass_code)::text, '^\d+'::text))[1], ''::text), 8, '0'::text) || regexp_replace((COALESCE(pass_code, ''::character varying))::text, '^\d+'::text, ''::text))) STORED,
+    fast_recipe_id uuid,
+    CONSTRAINT manufacturing_operations_has_sample CHECK (((sample_id IS NOT NULL) OR (output_sample_id IS NOT NULL) OR (source_system IS NOT NULL))),
+    CONSTRAINT manufacturing_operations_process_category_check CHECK ((process_category = ANY (ARRAY['machining'::text, 'sintering'::text, 'heat_treatment'::text, 'deformation'::text, 'additive'::text, 'sample_prep'::text])))
 );
 
 
@@ -1668,7 +2575,7 @@ COMMENT ON TABLE public.manufacturing_operations IS 'Unified operation log for a
 -- Name: COLUMN manufacturing_operations.sample_id; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.manufacturing_operations.sample_id IS 'The sample this operation was performed on. FK to physical_samples.';
+COMMENT ON COLUMN public.manufacturing_operations.sample_id IS 'Input sample / workpiece consumed or acted on (machining, FAST-embed). NULL for purely generative steps (additive from powder).';
 
 
 --
@@ -1742,12 +2649,43 @@ COMMENT ON COLUMN public.manufacturing_operations.nc_program_file_uri IS 'MinIO 
 
 
 --
+-- Name: COLUMN manufacturing_operations.process_category; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.manufacturing_operations.process_category IS 'Process family that selects the typed parameter panel in the UI (machining / sintering / heat_treatment / deformation / additive).';
+
+
+--
+-- Name: COLUMN manufacturing_operations.owner; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.manufacturing_operations.owner IS 'Researcher who owns this operation (defaults to the creating user; editable). Distinct from operator_name (the technician who ran it).';
+
+
+--
+-- Name: COLUMN manufacturing_operations.output_sample_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.manufacturing_operations.output_sample_id IS 'New sample produced by this operation (additive, FAST). NULL when the step only modifies the input in place (machining).';
+
+
+--
+-- Name: COLUMN manufacturing_operations.source_recipe_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.manufacturing_operations.source_recipe_id IS 'Prep recipe this operation was pre-filled from (steps are copied into prep_steps, then editable).';
+
+
+--
 -- Name: material_alloying_elements; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.material_alloying_elements (
     material_id uuid NOT NULL,
-    symbol character varying(4) NOT NULL
+    symbol character varying(4) NOT NULL,
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    weight_percent numeric(6,3),
+    CONSTRAINT material_alloying_elements_weight_percent_check CHECK (((weight_percent IS NULL) OR ((weight_percent >= (0)::numeric) AND (weight_percent <= (100)::numeric))))
 );
 
 
@@ -1843,49 +2781,74 @@ COMMENT ON COLUMN public.materials.export_controlled IS 'TRUE if subject to ITAR
 
 
 --
--- Name: method_parameters; Type: TABLE; Schema: public; Owner: -
+-- Name: operation_data_files; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.method_parameters (
-    parameter_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
-    method_id uuid NOT NULL,
-    parameter_name text NOT NULL,
-    display_name text NOT NULL,
-    data_type text NOT NULL,
-    unit_of_measure text,
-    is_required boolean DEFAULT false NOT NULL,
-    sort_order integer DEFAULT 0 NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT method_parameters_data_type_check CHECK ((data_type = ANY (ARRAY['numeric'::text, 'integer'::text, 'text'::text, 'boolean'::text, 'file_uri'::text, 'timestamp'::text])))
+CREATE TABLE public.operation_data_files (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    operation_id uuid NOT NULL,
+    directus_files_id uuid NOT NULL
 );
 
 
 --
--- Name: TABLE method_parameters; Type: COMMENT; Schema: public; Owner: -
+-- Name: operation_files; Type: TABLE; Schema: public; Owner: -
 --
 
-COMMENT ON TABLE public.method_parameters IS 'Template: which JSONB keys are expected in manufacturing_operations.recorded_metadata for each manufacturing_method. Validates the dynamic-template pattern.';
-
-
---
--- Name: COLUMN method_parameters.parameter_name; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.method_parameters.parameter_name IS 'JSONB key used in recorded_metadata, e.g. peak_temperature_celsius.';
-
-
---
--- Name: COLUMN method_parameters.data_type; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.method_parameters.data_type IS 'Expected data type: numeric, integer, text, boolean, file_uri, or timestamp.';
+CREATE TABLE public.operation_files (
+    file_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    operation_id uuid NOT NULL,
+    file_path text NOT NULL,
+    file_name text,
+    file_kind text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
 
 
 --
--- Name: COLUMN method_parameters.unit_of_measure; Type: COMMENT; Schema: public; Owner: -
+-- Name: TABLE operation_files; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.method_parameters.unit_of_measure IS 'Physical unit, e.g. degC, mm_per_min, bar, rpm. NULL if dimensionless.';
+COMMENT ON TABLE public.operation_files IS 'External file links (network-share paths) attached to a manufacturing operation.';
+
+
+--
+-- Name: people; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.people (
+    person_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    full_name text NOT NULL,
+    email text,
+    user_id uuid,
+    is_operator boolean DEFAULT false NOT NULL,
+    is_researcher boolean DEFAULT false NOT NULL,
+    active boolean DEFAULT true NOT NULL,
+    notes text,
+    legacy_machine_operator_id integer,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE people; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.people IS 'Unified identity for anyone attributed on a record (operator, researcher, owner). Optionally linked to a Directus login via user_id; pure technicians have none.';
+
+
+--
+-- Name: COLUMN people.user_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.people.user_id IS 'Directus login, if this person is an app user. NULL for operators without an account.';
+
+
+--
+-- Name: COLUMN people.legacy_machine_operator_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.people.legacy_machine_operator_id IS 'Source Machine_Operators.id, kept so operator FKs can be remapped and for provenance.';
 
 
 --
@@ -1914,14 +2877,20 @@ CREATE TABLE public.physical_samples (
     surface_finish text,
     legacy_notes text,
     width_mm numeric(10,4),
-    owner text,
-    co_owners text,
+    owner uuid,
     manufacturing_route text,
     mounted boolean,
     mounting_method text,
     item_type text,
+    stock_category text,
+    primary_method_id uuid,
+    owner_person_id uuid,
+    gauge_length_mm numeric(8,3),
+    gauge_width_mm numeric(8,3),
+    code_sort text GENERATED ALWAYS AS ((lpad(COALESCE((regexp_match((sample_code)::text, '^\d+'::text))[1], ''::text), 8, '0'::text) || regexp_replace((COALESCE(sample_code, ''::character varying))::text, '^\d+'::text, ''::text))) STORED,
     CONSTRAINT physical_samples_item_type_check CHECK ((item_type = ANY (ARRAY['sample'::text, 'equipment'::text, 'miscellaneous'::text]))),
-    CONSTRAINT physical_samples_status_check CHECK ((current_status = ANY (ARRAY['active'::text, 'consumed'::text, 'destroyed'::text, 'archived'::text])))
+    CONSTRAINT physical_samples_status_check CHECK ((current_status = ANY (ARRAY['active'::text, 'consumed'::text, 'destroyed'::text, 'archived'::text]))),
+    CONSTRAINT physical_samples_stock_category_check CHECK ((stock_category = ANY (ARRAY['bulk'::text, 'powder'::text, 'specialty'::text])))
 );
 
 
@@ -2038,13 +3007,6 @@ COMMENT ON COLUMN public.physical_samples.owner IS 'Primary owner / responsible 
 
 
 --
--- Name: COLUMN physical_samples.co_owners; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.physical_samples.co_owners IS 'Comma-separated list of co-owners.';
-
-
---
 -- Name: COLUMN physical_samples.manufacturing_route; Type: COMMENT; Schema: public; Owner: -
 --
 
@@ -2073,6 +3035,131 @@ COMMENT ON COLUMN public.physical_samples.item_type IS 'AppSheet Item Type: samp
 
 
 --
+-- Name: COLUMN physical_samples.gauge_length_mm; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.physical_samples.gauge_length_mm IS 'Gauge length of a test coupon (e.g. ISO 6892 tensile). NULL for non-specimen forms.';
+
+
+--
+-- Name: COLUMN physical_samples.gauge_width_mm; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.physical_samples.gauge_width_mm IS 'Gauge (reduced-section) width of a test coupon. NULL for non-specimen forms.';
+
+
+--
+-- Name: prep_recipe_steps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.prep_recipe_steps (
+    step_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    recipe_id uuid NOT NULL,
+    step_order integer DEFAULT 1 NOT NULL,
+    step_type text,
+    grit text,
+    suspension_um numeric(8,3),
+    cloth text,
+    etchant_id uuid,
+    duration_s numeric(8,2),
+    force_n numeric(8,2),
+    rpm numeric(8,2),
+    temperature_c numeric(8,2),
+    lubricant text,
+    resin_type text,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    version integer DEFAULT 1 NOT NULL,
+    CONSTRAINT prep_recipe_steps_step_type_check CHECK ((step_type = ANY (ARRAY['sectioning'::text, 'mounting'::text, 'grinding'::text, 'polishing'::text, 'etching'::text, 'cleaning'::text, 'other'::text])))
+);
+
+
+--
+-- Name: prep_recipes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.prep_recipes (
+    recipe_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    name text NOT NULL,
+    description text,
+    suited_materials text,
+    owner uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    version integer DEFAULT 1 NOT NULL,
+    owner_person_id uuid
+);
+
+
+--
+-- Name: TABLE prep_recipes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.prep_recipes IS 'Reusable sample-preparation recipe (an ordered set of prep steps).';
+
+
+--
+-- Name: prep_steps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.prep_steps (
+    step_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    operation_id uuid NOT NULL,
+    step_order integer DEFAULT 1 NOT NULL,
+    step_type text,
+    grit text,
+    suspension_um numeric(8,3),
+    cloth text,
+    etchant_id uuid,
+    duration_s numeric(8,2),
+    force_n numeric(8,2),
+    rpm numeric(8,2),
+    temperature_c numeric(8,2),
+    lubricant text,
+    resin_type text,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    version integer DEFAULT 1 NOT NULL,
+    CONSTRAINT prep_steps_step_type_check CHECK ((step_type = ANY (ARRAY['sectioning'::text, 'mounting'::text, 'grinding'::text, 'polishing'::text, 'etching'::text, 'cleaning'::text, 'other'::text])))
+);
+
+
+--
+-- Name: project_investigators; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_investigators (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    project_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    person_id uuid
+);
+
+
+--
+-- Name: TABLE project_investigators; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.project_investigators IS 'M2M junction: Directus users who are secondary investigators on a project.';
+
+
+--
+-- Name: project_rollup; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_rollup (
+    row_id text NOT NULL,
+    project_id uuid,
+    kind text,
+    code text,
+    detail text,
+    campaign_id uuid
+);
+
+
+--
 -- Name: projects; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2089,7 +3176,10 @@ CREATE TABLE public.projects (
     is_active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    version integer DEFAULT 1 NOT NULL
+    version integer DEFAULT 1 NOT NULL,
+    principal_investigator uuid,
+    "Image" uuid,
+    principal_investigator_person uuid
 );
 
 
@@ -2203,6 +3293,43 @@ COMMENT ON COLUMN public.raw_stock_lots.remaining_mass_grams IS 'Current remaini
 --
 
 COMMENT ON COLUMN public.raw_stock_lots.certificate_url IS 'URI to material certificate or datasheet in MinIO or external source.';
+
+
+--
+-- Name: sample_co_owners; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sample_co_owners (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    sample_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    person_id uuid
+);
+
+
+--
+-- Name: TABLE sample_co_owners; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.sample_co_owners IS 'M2M junction: which Directus users are co-owners of a given physical sample.';
+
+
+--
+-- Name: COLUMN sample_co_owners.user_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sample_co_owners.user_id IS 'UUID of a directus_users record. No hard FK so the auth layer stays swappable.';
+
+
+--
+-- Name: sample_data_files; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sample_data_files (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    sample_id uuid NOT NULL,
+    directus_files_id uuid NOT NULL
+);
 
 
 --
@@ -2355,12 +3482,23 @@ COMMENT ON COLUMN public.semantic_embeddings.model_name IS 'Embedding model that
 
 
 --
+-- Name: session_data_files; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.session_data_files (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    session_id uuid NOT NULL,
+    directus_files_id uuid NOT NULL
+);
+
+
+--
 -- Name: test_sessions; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.test_sessions (
     session_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
-    sample_id uuid NOT NULL,
+    sample_id uuid,
     equipment_id uuid,
     insert_edge_id uuid,
     project_id uuid,
@@ -2378,7 +3516,152 @@ CREATE TABLE public.test_sessions (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     version integer DEFAULT 1 NOT NULL,
-    CONSTRAINT test_sessions_status_check CHECK ((status = ANY (ARRAY['registered'::text, 'pending_processing'::text, 'processing'::text, 'processed'::text, 'analysing'::text, 'analysed'::text, 'failed'::text])))
+    data_file_uri text,
+    data_file_size_gb numeric(10,4),
+    tensile_specimen_geometry text,
+    tensile_gauge_length_mm numeric(8,3),
+    tensile_gauge_diameter_mm numeric(8,3),
+    tensile_gauge_width_mm numeric(8,3),
+    tensile_gauge_thickness_mm numeric(8,3),
+    tensile_crosshead_speed_mm_per_min numeric(8,3),
+    tensile_strain_rate_per_s numeric(10,6),
+    tensile_test_temp_celsius numeric(8,2),
+    tensile_extensometer_used boolean,
+    tensile_yield_strength_mpa numeric(10,3),
+    tensile_uts_mpa numeric(10,3),
+    tensile_elongation_pct numeric(8,3),
+    tensile_reduction_of_area_pct numeric(8,3),
+    tensile_youngs_modulus_gpa numeric(8,3),
+    tensile_fracture_mode text,
+    hardness_hardness_scale text,
+    hardness_load_gf numeric(10,3),
+    hardness_dwell_time_s numeric(6,2),
+    hardness_indenter_type text,
+    hardness_n_indentations integer,
+    hardness_surface_finish text,
+    hardness_mean_hardness numeric(10,3),
+    hardness_std_dev_hardness numeric(10,3),
+    hardness_min_hardness numeric(10,3),
+    hardness_max_hardness numeric(10,3),
+    charpy_specimen_standard text,
+    charpy_notch_type text,
+    charpy_notch_depth_mm numeric(6,3),
+    charpy_specimen_width_mm numeric(6,3),
+    charpy_specimen_height_mm numeric(6,3),
+    charpy_test_temp_celsius numeric(8,2),
+    charpy_orientation text,
+    charpy_absorbed_energy_j numeric(8,3),
+    charpy_lateral_expansion_mm numeric(6,3),
+    charpy_shear_fracture_pct numeric(6,2),
+    compression_specimen_diameter_mm numeric(8,3),
+    compression_specimen_height_mm numeric(8,3),
+    compression_crosshead_speed_mm_per_min numeric(8,3),
+    compression_strain_rate_per_s numeric(10,6),
+    compression_test_temp_celsius numeric(8,2),
+    compression_lubrication text,
+    compression_yield_strength_mpa numeric(10,3),
+    compression_peak_stress_mpa numeric(10,3),
+    compression_strain_at_fracture_pct numeric(8,3),
+    sem_imaging_mode text,
+    sem_accelerating_voltage_kv numeric(6,2),
+    sem_working_distance_mm numeric(6,2),
+    sem_magnification_range text,
+    sem_beam_current_na numeric(8,4),
+    sem_coating_material text,
+    sem_coating_thickness_nm numeric(8,2),
+    sem_etchant text,
+    sem_step_size_um numeric(8,4),
+    xrd_radiation_source text,
+    xrd_wavelength_angstrom numeric(8,5),
+    xrd_two_theta_range_deg text,
+    xrd_step_size_deg numeric(6,4),
+    xrd_scan_speed_deg_per_min numeric(6,3),
+    xrd_detector_type text,
+    xrd_sample_prep text,
+    test_category text,
+    owner uuid,
+    operator integer,
+    campaign_id uuid,
+    tribology_test_standard text,
+    tribology_configuration text,
+    tribology_counterface_material text,
+    tribology_normal_load_n numeric(10,3),
+    tribology_sliding_speed_m_per_s numeric(10,4),
+    tribology_sliding_distance_m numeric(12,3),
+    tribology_lubrication text,
+    tribology_test_temp_celsius numeric(8,2),
+    tribology_coefficient_of_friction numeric(8,4),
+    tribology_wear_rate_mm3_per_nm numeric(14,8),
+    tribology_wear_volume_mm3 numeric(12,6),
+    optical_microscopy_mode text,
+    optical_microscopy_objective_magnification text,
+    optical_microscopy_etchant text,
+    optical_microscopy_etch_time_s numeric(8,2),
+    optical_microscopy_image_scale_um_per_px numeric(10,5),
+    optical_microscopy_notable_features text,
+    tem_operating_voltage_kv numeric(6,1),
+    tem_imaging_mode text,
+    tem_camera_length_mm numeric(8,2),
+    tem_specimen_prep text,
+    tem_magnification_range text,
+    tem_notable_features text,
+    alicona_objective_magnification text,
+    alicona_vertical_resolution_nm numeric(10,2),
+    alicona_lateral_resolution_um numeric(10,4),
+    alicona_measured_area text,
+    alicona_sa_um numeric(10,4),
+    alicona_sz_um numeric(10,4),
+    clemx_analysis_type text,
+    clemx_objective_magnification text,
+    clemx_n_fields_analysed integer,
+    clemx_etchant text,
+    clemx_mean_grain_size_um numeric(10,3),
+    clemx_astm_grain_size_number numeric(6,2),
+    clemx_phase_fraction_pct numeric(6,2),
+    dct_beam_energy_kev numeric(8,2),
+    dct_voxel_size_um numeric(10,4),
+    dct_n_projections integer,
+    dct_scan_time_min numeric(8,2),
+    dct_n_grains_indexed integer,
+    dct_notable_features text,
+    ct_scan_tube_voltage_kv numeric(8,2),
+    ct_scan_tube_current_ua numeric(10,2),
+    ct_scan_voxel_size_um numeric(10,4),
+    ct_scan_n_projections integer,
+    ct_scan_exposure_time_ms numeric(10,2),
+    ct_scan_filter_material text,
+    ct_scan_porosity_pct numeric(8,4),
+    ct_scan_notable_features text,
+    fatigue_loading_mode text,
+    fatigue_stress_ratio_r numeric(6,3),
+    fatigue_max_stress_mpa numeric(10,3),
+    fatigue_stress_amplitude_mpa numeric(10,3),
+    fatigue_frequency_hz numeric(10,3),
+    fatigue_waveform text,
+    fatigue_test_temp_celsius numeric(8,2),
+    fatigue_cycles_to_failure bigint,
+    fatigue_runout boolean,
+    creep_applied_stress_mpa numeric(10,3),
+    creep_test_temp_celsius numeric(8,2),
+    creep_atmosphere text,
+    creep_time_to_rupture_h numeric(12,3),
+    creep_steady_state_creep_rate_per_s numeric(16,12),
+    creep_rupture_elongation_pct numeric(8,3),
+    creep_reduction_of_area_pct numeric(8,3),
+    dma_deformation_mode text,
+    dma_frequency_hz numeric(10,3),
+    dma_temperature_range text,
+    dma_heating_rate_c_per_min numeric(8,3),
+    dma_amplitude_um numeric(10,3),
+    dma_storage_modulus_mpa numeric(12,3),
+    dma_loss_modulus_mpa numeric(12,3),
+    dma_tan_delta numeric(10,5),
+    dma_glass_transition_celsius numeric(8,2),
+    owner_person_id uuid,
+    operator_person_id uuid,
+    CONSTRAINT test_sessions_status_check CHECK ((status = ANY (ARRAY['registered'::text, 'pending_processing'::text, 'processing'::text, 'processed'::text, 'analysing'::text, 'analysed'::text, 'failed'::text]))),
+    CONSTRAINT test_sessions_test_category_check CHECK ((test_category = ANY (ARRAY['nde'::text, 'destructive'::text, 'dynamic'::text, 'other'::text]))),
+    CONSTRAINT test_sessions_test_type_check CHECK ((test_type = ANY (ARRAY['tensile'::text, 'hardness'::text, 'charpy'::text, 'compression'::text, 'tribology'::text, 'optical_microscopy'::text, 'sem'::text, 'tem'::text, 'xrd'::text, 'alicona'::text, 'clemx'::text, 'dct'::text, 'ct_scan'::text, 'fatigue'::text, 'creep'::text, 'dma'::text, 'other'::text])))
 );
 
 
@@ -2460,21 +3743,49 @@ COMMENT ON COLUMN public.test_sessions.status IS 'Pipeline lifecycle status. Can
 
 
 --
+-- Name: COLUMN test_sessions.owner; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.test_sessions.owner IS 'Researcher who owns this test session (defaults to the creating user; editable).';
+
+
+--
+-- Name: test_sessions_subject; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.test_sessions_subject (
+    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    test_sessions_id uuid NOT NULL,
+    collection character varying(64) NOT NULL,
+    item character varying(255) NOT NULL
+);
+
+
+--
+-- Name: TABLE test_sessions_subject; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.test_sessions_subject IS 'M2A junction: the subject(s) a test targets — a physical_sample, an insert_edge, or a future testable collection.';
+
+
+--
 -- Name: tool_boxes; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.tool_boxes (
     tool_box_id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
-    tool_box_code character varying(64) NOT NULL,
+    tool_box_code character varying(64) DEFAULT ('TMP-'::text || (public.uuid_generate_v4())::text) NOT NULL,
     description text,
     location text,
     insert_type_id uuid,
     notes text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    version integer DEFAULT 1 NOT NULL,
     package_quantity integer,
-    owner text
+    owner uuid,
+    cascade_ownership boolean DEFAULT false NOT NULL,
+    project_id uuid,
+    owner_person_id uuid
 );
 
 
@@ -2503,7 +3814,7 @@ COMMENT ON COLUMN public.tool_boxes.insert_type_id IS 'Default insert type for t
 -- Name: COLUMN tool_boxes.package_quantity; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.tool_boxes.package_quantity IS 'Number of inserts in the original manufacturer package.';
+COMMENT ON COLUMN public.tool_boxes.package_quantity IS 'Number of boxes received in this delivery (intake batch size). expand_tool_box_intake() creates this many box records plus their inserts and edges. Set to 0 or NULL to skip auto-expansion (manual entry or legacy import).';
 
 
 --
@@ -2536,7 +3847,10 @@ CREATE TABLE public.tools (
     overall_length_mm numeric(8,3),
     shank_type text,
     cutting_direction text,
-    insert_clamping_system text
+    insert_clamping_system text,
+    project_id uuid,
+    image uuid,
+    manufacturer_id uuid
 );
 
 
@@ -2622,6 +3936,13 @@ COMMENT ON COLUMN public.tools.cutting_direction IS 'Cutting direction: Right-Ha
 --
 
 COMMENT ON COLUMN public.tools.insert_clamping_system IS 'Insert clamping system code, e.g. P-clamp, S-clamp.';
+
+
+--
+-- Name: COLUMN tools.image; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tools.image IS 'Photo of the tool (Directus File Library / MinIO).';
 
 
 --
@@ -2751,7 +4072,37 @@ CREATE VIEW public.v_manufacturing_operations_full AS
     t.tool_code,
     ie.edge_code AS insert_edge_code,
     ci.insert_code,
-    tb.tool_box_code
+    tb.tool_box_code,
+    mo.process_category,
+    mo.machining_operation_subtype,
+    mo.machining_feed_mm_per_rev,
+    mo.machining_cutting_speed_m_per_min,
+    mo.machining_spindle_speed_rpm,
+    mo.machining_axial_depth_of_cut_mm,
+    mo.machining_radial_depth_of_cut_mm,
+    mo.machining_coolant_pressure_bar,
+    mo.machining_workpiece_diameter_mm,
+    mo.machining_cutting_length_mm,
+    mo.am_process_variant,
+    mo.am_laser_power_w,
+    mo.am_scan_speed_mm_per_s,
+    mo.am_energy_density_j_per_mm3,
+    mo.am_hatch_spacing_mm,
+    mo.am_layer_thickness_mm,
+    mo.sintering_max_force_kn,
+    mo.sintering_max_temp_celsius,
+    mo.sintering_power_at_max_t_kw,
+    mo.sintering_mould_diameter_mm,
+    mo.deform_deformation_type,
+    mo.deform_deformation_temp_celsius,
+    mo.deform_strain_rate_per_sec,
+    mo.deform_roll_speed_m_per_min,
+    mo.deform_total_reduction_pct,
+    mo.ht_treatment_type,
+    mo.ht_peak_temp_celsius,
+    mo.ht_heating_rate_c_per_min,
+    mo.ht_cooling_rate_c_per_min,
+    mo.ht_hold_time_min
    FROM ((((((((public.manufacturing_operations mo
      JOIN public.physical_samples ps ON ((mo.sample_id = ps.sample_id)))
      JOIN public.manufacturing_methods mm ON ((mo.method_id = mm.method_id)))
@@ -2768,6 +4119,190 @@ CREATE VIEW public.v_manufacturing_operations_full AS
 --
 
 COMMENT ON VIEW public.v_manufacturing_operations_full IS 'Operations with fully denormalized method, sample, tooling, and project context. Use recorded_metadata JSONB for method-specific parameters.';
+
+
+--
+-- Name: COLUMN v_manufacturing_operations_full.process_category; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.v_manufacturing_operations_full.process_category IS 'Process type discriminator: which family of parameters applies (machining, sintering, additive, deformation, heat_treatment).';
+
+
+--
+-- Name: COLUMN v_manufacturing_operations_full.machining_operation_subtype; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.v_manufacturing_operations_full.machining_operation_subtype IS 'Machining sub-type (e.g. turning, milling) when process_category = machining.';
+
+
+--
+-- Name: v_project_rollup; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_project_rollup AS
+ WITH ops AS (
+         SELECT o.operation_id,
+            o.sample_id,
+            o.method_id,
+            o.project_id,
+            o.equipment_id,
+            o.tool_id,
+            o.insert_edge_id,
+            o.operator_name,
+            o.operation_sequence,
+            o.pass_code,
+            o.operation_date,
+            o.recorded_metadata,
+            o.capture_software,
+            o.capture_frequency_khz,
+            o.file_storage_pointer,
+            o.force_file_id,
+            o.nc_program_text,
+            o.nc_program_file_uri,
+            o.outcome_notes,
+            o.created_at,
+            o.updated_at,
+            o.version,
+            o.operator,
+            o.process_category,
+            o.machining_operation_subtype,
+            o.machining_spindle_speed_rpm,
+            o.machining_cutting_speed_m_per_min,
+            o.machining_feed_mm_per_rev,
+            o.machining_axial_depth_of_cut_mm,
+            o.machining_radial_depth_of_cut_mm,
+            o.machining_cutting_length_mm,
+            o.machining_workpiece_diameter_mm,
+            o.machining_new_edge,
+            o.machining_coolant_used,
+            o.machining_coolant_pressure_bar,
+            o.machining_tacho_used,
+            o.machining_force_captured,
+            o.machining_chips_collected,
+            o.machining_chips_ref_code,
+            o.machining_experiment_sheet_url,
+            o.machining_legacy_insert_edge_id,
+            o.machining_legacy_machining_uid,
+            o.sintering_recipe_number,
+            o.sintering_batch_number,
+            o.sintering_mould_diameter_mm,
+            o.sintering_atmosphere,
+            o.sintering_tc_pyro_control,
+            o.sintering_max_temp_celsius,
+            o.sintering_max_force_kn,
+            o.sintering_voltage_at_max_t_v,
+            o.sintering_power_at_max_t_kw,
+            o.sintering_ptc_top_celsius,
+            o.sintering_ptc_bot_celsius,
+            o.sintering_coshh_ref,
+            o.sintering_material_type_note,
+            o.ht_treatment_type,
+            o.ht_atmosphere,
+            o.ht_peak_temp_celsius,
+            o.ht_hold_time_min,
+            o.ht_heating_rate_c_per_min,
+            o.ht_cooling_method,
+            o.ht_cooling_rate_c_per_min,
+            o.ht_quench_medium,
+            o.deform_deformation_type,
+            o.deform_deformation_temp_celsius,
+            o.deform_pass_count,
+            o.deform_total_reduction_pct,
+            o.deform_reduction_per_pass_pct,
+            o.deform_strain_rate_per_sec,
+            o.deform_roll_speed_m_per_min,
+            o.deform_lubricant,
+            o.am_process_variant,
+            o.am_layer_thickness_mm,
+            o.am_laser_power_w,
+            o.am_scan_speed_mm_per_s,
+            o.am_hatch_spacing_mm,
+            o.am_energy_density_j_per_mm3,
+            o.am_build_atmosphere,
+            o.am_preheat_temp_celsius,
+            o.owner,
+            o.output_sample_id,
+            o.source_recipe_id,
+            o.gcode_file,
+            o.source_run_uid,
+            o.source_system,
+            o.sintering_mass_grams,
+            o.material_id,
+            o.campaign_id,
+            COALESCE(o.project_id, c.project_id) AS proj
+           FROM (public.manufacturing_operations o
+             LEFT JOIN public.campaigns c ON ((c.campaign_id = o.campaign_id)))
+          WHERE (COALESCE(o.project_id, c.project_id) IS NOT NULL)
+        )
+ SELECT md5(('operation:'::text || (ops.operation_id)::text)) AS row_id,
+    ops.proj AS project_id,
+    'operation'::text AS kind,
+    ops.pass_code AS code,
+    ops.machining_operation_subtype AS detail,
+    ops.campaign_id
+   FROM ops
+UNION ALL
+ SELECT DISTINCT md5(((('tool:'::text || (ops.proj)::text) || ':'::text) || (t.tool_id)::text)) AS row_id,
+    ops.proj AS project_id,
+    'tool'::text AS kind,
+    t.tool_code AS code,
+    t.tool_name AS detail,
+    NULL::uuid AS campaign_id
+   FROM (ops
+     JOIN public.tools t ON ((t.tool_id = ops.tool_id)))
+UNION ALL
+ SELECT DISTINCT md5(((('edge:'::text || (ops.proj)::text) || ':'::text) || (e.edge_id)::text)) AS row_id,
+    ops.proj AS project_id,
+    'insert_edge'::text AS kind,
+    e.edge_code AS code,
+    NULL::text AS detail,
+    NULL::uuid AS campaign_id
+   FROM (ops
+     JOIN public.insert_edges e ON ((e.edge_id = ops.insert_edge_id)))
+UNION ALL
+ SELECT DISTINCT md5(((('insert:'::text || (ops.proj)::text) || ':'::text) || (ci.insert_id)::text)) AS row_id,
+    ops.proj AS project_id,
+    'cutting_insert'::text AS kind,
+    ci.insert_code AS code,
+    NULL::text AS detail,
+    NULL::uuid AS campaign_id
+   FROM ((ops
+     JOIN public.insert_edges e ON ((e.edge_id = ops.insert_edge_id)))
+     JOIN public.cutting_inserts ci ON ((ci.insert_id = e.insert_id)))
+UNION ALL
+ SELECT DISTINCT md5(((('sample:'::text || (ops.proj)::text) || ':'::text) || (s.sample_id)::text)) AS row_id,
+    ops.proj AS project_id,
+    'sample'::text AS kind,
+    s.sample_code AS code,
+    s.nickname AS detail,
+    NULL::uuid AS campaign_id
+   FROM (ops
+     JOIN public.physical_samples s ON ((s.sample_id = ops.sample_id)))
+UNION ALL
+ SELECT DISTINCT md5(((('material:'::text || (ops.proj)::text) || ':'::text) || (m.material_id)::text)) AS row_id,
+    ops.proj AS project_id,
+    'material'::text AS kind,
+    m.alloy_code AS code,
+    m.common_name AS detail,
+    NULL::uuid AS campaign_id
+   FROM (ops
+     JOIN public.materials m ON ((m.material_id = ops.material_id)))
+UNION ALL
+ SELECT DISTINCT md5(((('equipment:'::text || (ops.proj)::text) || ':'::text) || (eq.equipment_id)::text)) AS row_id,
+    ops.proj AS project_id,
+    'equipment'::text AS kind,
+    eq.equipment_code AS code,
+    eq.equipment_name AS detail,
+    NULL::uuid AS campaign_id
+   FROM (ops
+     JOIN public.equipment eq ON ((eq.equipment_id = ops.equipment_id)));
+
+
+--
+-- Name: VIEW v_project_rollup; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_project_rollup IS 'Live read-only rollup of a project: operations (direct + via campaign) and the distinct tooling/samples/materials/equipment used. Provenance, not ownership.';
 
 
 --
@@ -2934,6 +4469,13 @@ COMMENT ON VIEW public.v_tooling_hierarchy IS 'Full denormalized view of the 3-t
 
 
 --
+-- Name: Machine_Operators id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Machine_Operators" ALTER COLUMN id SET DEFAULT nextval('public."Machine_Operators_id_seq"'::regclass);
+
+
+--
 -- Name: audit_logs log_id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -2997,6 +4539,21 @@ ALTER TABLE ONLY public.directus_settings ALTER COLUMN id SET DEFAULT nextval('p
 
 
 --
+-- Name: fast_log_qa_backup id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fast_log_qa_backup ALTER COLUMN id SET DEFAULT nextval('public.fast_log_qa_backup_id_seq'::regclass);
+
+
+--
+-- Name: Machine_Operators Machine_Operators_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Machine_Operators"
+    ADD CONSTRAINT "Machine_Operators_pkey" PRIMARY KEY (id);
+
+
+--
 -- Name: alloying_elements alloying_elements_atomic_number_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3013,11 +4570,43 @@ ALTER TABLE ONLY public.alloying_elements
 
 
 --
+-- Name: archive_metadata_edits archive_metadata_edits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.archive_metadata_edits
+    ADD CONSTRAINT archive_metadata_edits_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: audit_logs audit_logs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.audit_logs
     ADD CONSTRAINT audit_logs_pkey PRIMARY KEY (log_id);
+
+
+--
+-- Name: campaign_samples campaign_samples_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campaign_samples
+    ADD CONSTRAINT campaign_samples_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: campaign_samples campaign_samples_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campaign_samples
+    ADD CONSTRAINT campaign_samples_unique UNIQUE (campaign_id, sample_id);
+
+
+--
+-- Name: campaigns campaigns_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campaigns
+    ADD CONSTRAINT campaigns_pkey PRIMARY KEY (campaign_id);
 
 
 --
@@ -3349,6 +4938,102 @@ ALTER TABLE ONLY public.equipment
 
 
 --
+-- Name: etchants etchants_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.etchants
+    ADD CONSTRAINT etchants_name_key UNIQUE (name);
+
+
+--
+-- Name: etchants etchants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.etchants
+    ADD CONSTRAINT etchants_pkey PRIMARY KEY (etchant_id);
+
+
+--
+-- Name: facilities facilities_code_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facilities
+    ADD CONSTRAINT facilities_code_unique UNIQUE (code);
+
+
+--
+-- Name: facilities facilities_name_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facilities
+    ADD CONSTRAINT facilities_name_unique UNIQUE (name);
+
+
+--
+-- Name: facilities facilities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.facilities
+    ADD CONSTRAINT facilities_pkey PRIMARY KEY (facility_id);
+
+
+--
+-- Name: fast_log_qa_backup fast_log_qa_backup_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fast_log_qa_backup
+    ADD CONSTRAINT fast_log_qa_backup_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fast_recipes fast_recipes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fast_recipes
+    ADD CONSTRAINT fast_recipes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: fast_run_data fast_run_data_operation_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fast_run_data
+    ADD CONSTRAINT fast_run_data_operation_uniq UNIQUE (operation_id);
+
+
+--
+-- Name: fast_run_data fast_run_data_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fast_run_data
+    ADD CONSTRAINT fast_run_data_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: filter_profiles filter_profiles_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.filter_profiles
+    ADD CONSTRAINT filter_profiles_name_key UNIQUE (name);
+
+
+--
+-- Name: filter_profiles filter_profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.filter_profiles
+    ADD CONSTRAINT filter_profiles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: force_crawler_state force_crawler_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.force_crawler_state
+    ADD CONSTRAINT force_crawler_state_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: insert_edges insert_edges_code_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3381,6 +5066,38 @@ ALTER TABLE ONLY public.insert_types
 
 
 --
+-- Name: machining_force_analysis machining_force_analysis_file_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.machining_force_analysis
+    ADD CONSTRAINT machining_force_analysis_file_unique UNIQUE (directus_files_id);
+
+
+--
+-- Name: machining_force_analysis machining_force_analysis_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.machining_force_analysis
+    ADD CONSTRAINT machining_force_analysis_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: manufacturers manufacturers_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manufacturers
+    ADD CONSTRAINT manufacturers_name_key UNIQUE (name);
+
+
+--
+-- Name: manufacturers manufacturers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manufacturers
+    ADD CONSTRAINT manufacturers_pkey PRIMARY KEY (manufacturer_id);
+
+
+--
 -- Name: manufacturing_methods manufacturing_methods_code_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3405,11 +5122,19 @@ ALTER TABLE ONLY public.manufacturing_operations
 
 
 --
+-- Name: material_alloying_elements material_alloying_elements_natural_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.material_alloying_elements
+    ADD CONSTRAINT material_alloying_elements_natural_key UNIQUE (material_id, symbol);
+
+
+--
 -- Name: material_alloying_elements material_alloying_elements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.material_alloying_elements
-    ADD CONSTRAINT material_alloying_elements_pkey PRIMARY KEY (material_id, symbol);
+    ADD CONSTRAINT material_alloying_elements_pkey PRIMARY KEY (id);
 
 
 --
@@ -3437,19 +5162,59 @@ ALTER TABLE ONLY public.materials
 
 
 --
--- Name: method_parameters method_parameters_method_param_unique; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: operation_data_files operation_data_files_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.method_parameters
-    ADD CONSTRAINT method_parameters_method_param_unique UNIQUE (method_id, parameter_name);
+ALTER TABLE ONLY public.operation_data_files
+    ADD CONSTRAINT operation_data_files_pkey PRIMARY KEY (id);
 
 
 --
--- Name: method_parameters method_parameters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: operation_data_files operation_data_files_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.method_parameters
-    ADD CONSTRAINT method_parameters_pkey PRIMARY KEY (parameter_id);
+ALTER TABLE ONLY public.operation_data_files
+    ADD CONSTRAINT operation_data_files_unique UNIQUE (operation_id, directus_files_id);
+
+
+--
+-- Name: operation_files operation_files_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operation_files
+    ADD CONSTRAINT operation_files_pkey PRIMARY KEY (file_id);
+
+
+--
+-- Name: operation_files operation_files_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operation_files
+    ADD CONSTRAINT operation_files_unique UNIQUE (operation_id, file_path);
+
+
+--
+-- Name: people people_legacy_mo_id_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.people
+    ADD CONSTRAINT people_legacy_mo_id_unique UNIQUE (legacy_machine_operator_id);
+
+
+--
+-- Name: people people_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.people
+    ADD CONSTRAINT people_pkey PRIMARY KEY (person_id);
+
+
+--
+-- Name: people people_user_id_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.people
+    ADD CONSTRAINT people_user_id_unique UNIQUE (user_id);
 
 
 --
@@ -3466,6 +5231,62 @@ ALTER TABLE ONLY public.physical_samples
 
 ALTER TABLE ONLY public.physical_samples
     ADD CONSTRAINT physical_samples_pkey PRIMARY KEY (sample_id);
+
+
+--
+-- Name: prep_recipe_steps prep_recipe_steps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.prep_recipe_steps
+    ADD CONSTRAINT prep_recipe_steps_pkey PRIMARY KEY (step_id);
+
+
+--
+-- Name: prep_recipes prep_recipes_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.prep_recipes
+    ADD CONSTRAINT prep_recipes_name_key UNIQUE (name);
+
+
+--
+-- Name: prep_recipes prep_recipes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.prep_recipes
+    ADD CONSTRAINT prep_recipes_pkey PRIMARY KEY (recipe_id);
+
+
+--
+-- Name: prep_steps prep_steps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.prep_steps
+    ADD CONSTRAINT prep_steps_pkey PRIMARY KEY (step_id);
+
+
+--
+-- Name: project_investigators project_investigators_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_investigators
+    ADD CONSTRAINT project_investigators_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: project_investigators project_investigators_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_investigators
+    ADD CONSTRAINT project_investigators_unique UNIQUE (project_id, user_id);
+
+
+--
+-- Name: project_rollup project_rollup_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_rollup
+    ADD CONSTRAINT project_rollup_pkey PRIMARY KEY (row_id);
 
 
 --
@@ -3498,6 +5319,38 @@ ALTER TABLE ONLY public.raw_stock_lots
 
 ALTER TABLE ONLY public.raw_stock_lots
     ADD CONSTRAINT raw_stock_lots_pkey PRIMARY KEY (lot_id);
+
+
+--
+-- Name: sample_co_owners sample_co_owners_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sample_co_owners
+    ADD CONSTRAINT sample_co_owners_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sample_co_owners sample_co_owners_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sample_co_owners
+    ADD CONSTRAINT sample_co_owners_unique UNIQUE (sample_id, user_id);
+
+
+--
+-- Name: sample_data_files sample_data_files_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sample_data_files
+    ADD CONSTRAINT sample_data_files_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sample_data_files sample_data_files_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sample_data_files
+    ADD CONSTRAINT sample_data_files_unique UNIQUE (sample_id, directus_files_id);
 
 
 --
@@ -3557,11 +5410,35 @@ ALTER TABLE ONLY public.semantic_embeddings
 
 
 --
+-- Name: session_data_files session_data_files_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.session_data_files
+    ADD CONSTRAINT session_data_files_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: session_data_files session_data_files_unique; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.session_data_files
+    ADD CONSTRAINT session_data_files_unique UNIQUE (session_id, directus_files_id);
+
+
+--
 -- Name: test_sessions test_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.test_sessions
     ADD CONSTRAINT test_sessions_pkey PRIMARY KEY (session_id);
+
+
+--
+-- Name: test_sessions_subject test_sessions_subject_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.test_sessions_subject
+    ADD CONSTRAINT test_sessions_subject_pkey PRIMARY KEY (id);
 
 
 --
@@ -3597,6 +5474,27 @@ ALTER TABLE ONLY public.tools
 
 
 --
+-- Name: archive_metadata_edits_file_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX archive_metadata_edits_file_idx ON public.archive_metadata_edits USING btree (directus_files_id);
+
+
+--
+-- Name: campaign_samples_campaign_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX campaign_samples_campaign_idx ON public.campaign_samples USING btree (campaign_id);
+
+
+--
+-- Name: campaign_samples_sample_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX campaign_samples_sample_idx ON public.campaign_samples USING btree (sample_id);
+
+
+--
 -- Name: directus_activity_timestamp_index; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3618,6 +5516,111 @@ CREATE INDEX directus_revisions_parent_index ON public.directus_revisions USING 
 
 
 --
+-- Name: fast_recipes_name_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX fast_recipes_name_uniq ON public.fast_recipes USING btree (machine, lower(name)) WHERE (program_nr IS NULL);
+
+
+--
+-- Name: fast_recipes_prog_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX fast_recipes_prog_uniq ON public.fast_recipes USING btree (machine, program_nr) WHERE (program_nr IS NOT NULL);
+
+
+--
+-- Name: fast_run_data_operation_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fast_run_data_operation_id_idx ON public.fast_run_data USING btree (operation_id);
+
+
+--
+-- Name: fast_run_data_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX fast_run_data_status_idx ON public.fast_run_data USING btree (status);
+
+
+--
+-- Name: idx_campaigns_campaign_type; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_campaigns_campaign_type ON public.campaigns USING btree (campaign_type);
+
+
+--
+-- Name: idx_campaigns_project_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_campaigns_project_id ON public.campaigns USING btree (project_id);
+
+
+--
+-- Name: idx_mfg_ops_campaign_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_mfg_ops_campaign_id ON public.manufacturing_operations USING btree (campaign_id);
+
+
+--
+-- Name: idx_operation_files_operation_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_operation_files_operation_id ON public.operation_files USING btree (operation_id);
+
+
+--
+-- Name: idx_project_rollup_project_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_project_rollup_project_id ON public.project_rollup USING btree (project_id);
+
+
+--
+-- Name: idx_test_sessions_campaign_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_test_sessions_campaign_id ON public.test_sessions USING btree (campaign_id);
+
+
+--
+-- Name: insert_types_short_code_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX insert_types_short_code_unique ON public.insert_types USING btree (short_code) WHERE (short_code IS NOT NULL);
+
+
+--
+-- Name: machining_force_analysis_operation_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX machining_force_analysis_operation_id_idx ON public.machining_force_analysis USING btree (operation_id);
+
+
+--
+-- Name: machining_force_analysis_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX machining_force_analysis_status_idx ON public.machining_force_analysis USING btree (status);
+
+
+--
+-- Name: manufacturing_operations_code_sort_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX manufacturing_operations_code_sort_idx ON public.manufacturing_operations USING btree (code_sort);
+
+
+--
+-- Name: manufacturing_operations_fast_recipe_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX manufacturing_operations_fast_recipe_idx ON public.manufacturing_operations USING btree (fast_recipe_id);
+
+
+--
 -- Name: manufacturing_operations_metadata_gin_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3625,10 +5628,45 @@ CREATE INDEX manufacturing_operations_metadata_gin_idx ON public.manufacturing_o
 
 
 --
+-- Name: manufacturing_operations_output_sample_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX manufacturing_operations_output_sample_idx ON public.manufacturing_operations USING btree (output_sample_id);
+
+
+--
 -- Name: manufacturing_operations_sample_seq_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX manufacturing_operations_sample_seq_idx ON public.manufacturing_operations USING btree (sample_id, operation_sequence);
+
+
+--
+-- Name: manufacturing_operations_source_run_uid_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX manufacturing_operations_source_run_uid_key ON public.manufacturing_operations USING btree (source_run_uid) WHERE (source_run_uid IS NOT NULL);
+
+
+--
+-- Name: physical_samples_code_sort_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX physical_samples_code_sort_idx ON public.physical_samples USING btree (code_sort);
+
+
+--
+-- Name: prep_recipe_steps_recipe_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX prep_recipe_steps_recipe_idx ON public.prep_recipe_steps USING btree (recipe_id, step_order);
+
+
+--
+-- Name: prep_steps_operation_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX prep_steps_operation_idx ON public.prep_steps USING btree (operation_id, step_order);
 
 
 --
@@ -3646,6 +5684,20 @@ CREATE INDEX semantic_embeddings_source_idx ON public.semantic_embeddings USING 
 
 
 --
+-- Name: test_sessions_subject_parent_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX test_sessions_subject_parent_idx ON public.test_sessions_subject USING btree (test_sessions_id);
+
+
+--
+-- Name: test_sessions_subject_target_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX test_sessions_subject_target_idx ON public.test_sessions_subject USING btree (collection, item);
+
+
+--
 -- Name: audit_logs audit_logs_no_delete; Type: RULE; Schema: public; Owner: -
 --
 
@@ -3659,6 +5711,13 @@ CREATE RULE audit_logs_no_delete AS
 
 CREATE RULE audit_logs_no_update AS
     ON UPDATE TO public.audit_logs DO INSTEAD NOTHING;
+
+
+--
+-- Name: campaigns audit_campaigns; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER audit_campaigns AFTER INSERT OR DELETE OR UPDATE ON public.campaigns FOR EACH ROW EXECUTE FUNCTION public.audit_trigger_function();
 
 
 --
@@ -3715,6 +5774,27 @@ CREATE TRIGGER audit_test_sessions AFTER INSERT OR DELETE OR UPDATE ON public.te
 --
 
 CREATE TRIGGER audit_tool_boxes AFTER INSERT OR DELETE OR UPDATE ON public.tool_boxes FOR EACH ROW EXECUTE FUNCTION public.audit_trigger_function();
+
+
+--
+-- Name: etchants etchants_occ; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER etchants_occ BEFORE UPDATE ON public.etchants FOR EACH ROW EXECUTE FUNCTION public.occ_update_trigger_function();
+
+
+--
+-- Name: manufacturing_operations mfg_op_genealogy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER mfg_op_genealogy AFTER INSERT OR UPDATE OF sample_id, output_sample_id, method_id ON public.manufacturing_operations FOR EACH ROW EXECUTE FUNCTION public.mfg_op_link_genealogy();
+
+
+--
+-- Name: campaigns occ_campaigns; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER occ_campaigns BEFORE UPDATE ON public.campaigns FOR EACH ROW EXECUTE FUNCTION public.occ_update_trigger_function();
 
 
 --
@@ -3802,11 +5882,126 @@ CREATE TRIGGER occ_tools BEFORE UPDATE ON public.tools FOR EACH ROW EXECUTE FUNC
 
 
 --
+-- Name: prep_recipe_steps prep_recipe_steps_occ; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER prep_recipe_steps_occ BEFORE UPDATE ON public.prep_recipe_steps FOR EACH ROW EXECUTE FUNCTION public.occ_update_trigger_function();
+
+
+--
+-- Name: prep_recipes prep_recipes_occ; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER prep_recipes_occ BEFORE UPDATE ON public.prep_recipes FOR EACH ROW EXECUTE FUNCTION public.occ_update_trigger_function();
+
+
+--
+-- Name: prep_steps prep_steps_occ; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER prep_steps_occ BEFORE UPDATE ON public.prep_steps FOR EACH ROW EXECUTE FUNCTION public.occ_update_trigger_function();
+
+
+--
+-- Name: campaigns refresh_rollup_campaigns; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER refresh_rollup_campaigns AFTER INSERT OR DELETE OR UPDATE ON public.campaigns FOR EACH STATEMENT EXECUTE FUNCTION public.trg_refresh_project_rollup();
+
+
+--
+-- Name: manufacturing_operations refresh_rollup_ops; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER refresh_rollup_ops AFTER INSERT OR DELETE OR UPDATE ON public.manufacturing_operations FOR EACH STATEMENT EXECUTE FUNCTION public.trg_refresh_project_rollup();
+
+
+--
+-- Name: Machine_Operators Machine_Operators_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Machine_Operators"
+    ADD CONSTRAINT "Machine_Operators_user_id_fkey" FOREIGN KEY (user_id) REFERENCES public.directus_users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: archive_metadata_edits archive_metadata_edits_directus_files_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.archive_metadata_edits
+    ADD CONSTRAINT archive_metadata_edits_directus_files_id_fkey FOREIGN KEY (directus_files_id) REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
+-- Name: campaign_samples campaign_samples_campaign_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campaign_samples
+    ADD CONSTRAINT campaign_samples_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(campaign_id) ON DELETE CASCADE;
+
+
+--
+-- Name: campaign_samples campaign_samples_sample_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campaign_samples
+    ADD CONSTRAINT campaign_samples_sample_id_fkey FOREIGN KEY (sample_id) REFERENCES public.physical_samples(sample_id) ON DELETE CASCADE;
+
+
+--
+-- Name: campaigns campaigns_default_equipment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campaigns
+    ADD CONSTRAINT campaigns_default_equipment_id_fkey FOREIGN KEY (default_equipment_id) REFERENCES public.equipment(equipment_id) ON DELETE SET NULL;
+
+
+--
+-- Name: campaigns campaigns_default_material_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campaigns
+    ADD CONSTRAINT campaigns_default_material_id_fkey FOREIGN KEY (default_material_id) REFERENCES public.materials(material_id) ON DELETE SET NULL;
+
+
+--
+-- Name: campaigns campaigns_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campaigns
+    ADD CONSTRAINT campaigns_owner_fkey FOREIGN KEY (owner) REFERENCES public.directus_users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: campaigns campaigns_owner_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campaigns
+    ADD CONSTRAINT campaigns_owner_person_id_fkey FOREIGN KEY (owner_person_id) REFERENCES public.people(person_id) ON DELETE SET NULL;
+
+
+--
+-- Name: campaigns campaigns_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.campaigns
+    ADD CONSTRAINT campaigns_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(project_id) ON DELETE SET NULL;
+
+
+--
 -- Name: cutting_inserts cutting_inserts_insert_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.cutting_inserts
-    ADD CONSTRAINT cutting_inserts_insert_type_id_fkey FOREIGN KEY (insert_type_id) REFERENCES public.insert_types(insert_type_id);
+    ADD CONSTRAINT cutting_inserts_insert_type_id_fkey FOREIGN KEY (insert_type_id) REFERENCES public.insert_types(insert_type_id) ON DELETE SET NULL;
+
+
+--
+-- Name: cutting_inserts cutting_inserts_owner_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cutting_inserts
+    ADD CONSTRAINT cutting_inserts_owner_person_id_fkey FOREIGN KEY (owner_person_id) REFERENCES public.people(person_id) ON DELETE SET NULL;
 
 
 --
@@ -3814,7 +6009,7 @@ ALTER TABLE ONLY public.cutting_inserts
 --
 
 ALTER TABLE ONLY public.cutting_inserts
-    ADD CONSTRAINT cutting_inserts_tool_box_id_fkey FOREIGN KEY (tool_box_id) REFERENCES public.tool_boxes(tool_box_id);
+    ADD CONSTRAINT cutting_inserts_tool_box_id_fkey FOREIGN KEY (tool_box_id) REFERENCES public.tool_boxes(tool_box_id) ON DELETE CASCADE;
 
 
 --
@@ -4194,11 +6389,187 @@ ALTER TABLE ONLY public.directus_versions
 
 
 --
+-- Name: equipment equipment_facility_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.equipment
+    ADD CONSTRAINT equipment_facility_id_fkey FOREIGN KEY (facility_id) REFERENCES public.facilities(facility_id) ON DELETE SET NULL;
+
+
+--
+-- Name: equipment equipment_image_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.equipment
+    ADD CONSTRAINT equipment_image_fkey FOREIGN KEY (image) REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
+-- Name: equipment equipment_manufacturer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.equipment
+    ADD CONSTRAINT equipment_manufacturer_id_fkey FOREIGN KEY (manufacturer_id) REFERENCES public.manufacturers(manufacturer_id) ON DELETE SET NULL;
+
+
+--
+-- Name: equipment equipment_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.equipment
+    ADD CONSTRAINT equipment_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(project_id) ON DELETE SET NULL;
+
+
+--
+-- Name: etchants etchants_owner_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.etchants
+    ADD CONSTRAINT etchants_owner_person_id_fkey FOREIGN KEY (owner_person_id) REFERENCES public.people(person_id) ON DELETE SET NULL;
+
+
+--
+-- Name: fast_run_data fast_run_data_directus_files_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fast_run_data
+    ADD CONSTRAINT fast_run_data_directus_files_id_fkey FOREIGN KEY (directus_files_id) REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
+-- Name: fast_run_data fast_run_data_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fast_run_data
+    ADD CONSTRAINT fast_run_data_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.manufacturing_operations(operation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: fast_run_data fast_run_data_staged_file_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.fast_run_data
+    ADD CONSTRAINT fast_run_data_staged_file_fkey FOREIGN KEY (staged_file) REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
 -- Name: insert_edges insert_edges_insert_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.insert_edges
-    ADD CONSTRAINT insert_edges_insert_id_fkey FOREIGN KEY (insert_id) REFERENCES public.cutting_inserts(insert_id);
+    ADD CONSTRAINT insert_edges_insert_id_fkey FOREIGN KEY (insert_id) REFERENCES public.cutting_inserts(insert_id) ON DELETE CASCADE;
+
+
+--
+-- Name: insert_edges insert_edges_owner_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.insert_edges
+    ADD CONSTRAINT insert_edges_owner_person_id_fkey FOREIGN KEY (owner_person_id) REFERENCES public.people(person_id) ON DELETE SET NULL;
+
+
+--
+-- Name: insert_types insert_types_image_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.insert_types
+    ADD CONSTRAINT insert_types_image_fkey FOREIGN KEY (image) REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
+-- Name: insert_types insert_types_manufacturer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.insert_types
+    ADD CONSTRAINT insert_types_manufacturer_id_fkey FOREIGN KEY (manufacturer_id) REFERENCES public.manufacturers(manufacturer_id) ON DELETE SET NULL;
+
+
+--
+-- Name: Machine_Operators machine_operators_equipment_foreign; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Machine_Operators"
+    ADD CONSTRAINT machine_operators_equipment_foreign FOREIGN KEY (equipment) REFERENCES public.equipment(equipment_id) ON DELETE SET NULL;
+
+
+--
+-- Name: Machine_Operators machine_operators_photo_foreign; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."Machine_Operators"
+    ADD CONSTRAINT machine_operators_photo_foreign FOREIGN KEY (photo) REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
+-- Name: machining_force_analysis machining_force_analysis_directus_files_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.machining_force_analysis
+    ADD CONSTRAINT machining_force_analysis_directus_files_id_fkey FOREIGN KEY (directus_files_id) REFERENCES public.directus_files(id) ON DELETE CASCADE;
+
+
+--
+-- Name: machining_force_analysis machining_force_analysis_frm_fx_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.machining_force_analysis
+    ADD CONSTRAINT machining_force_analysis_frm_fx_fkey FOREIGN KEY (frm_fx) REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
+-- Name: machining_force_analysis machining_force_analysis_frm_fy_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.machining_force_analysis
+    ADD CONSTRAINT machining_force_analysis_frm_fy_fkey FOREIGN KEY (frm_fy) REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
+-- Name: machining_force_analysis machining_force_analysis_frm_fz_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.machining_force_analysis
+    ADD CONSTRAINT machining_force_analysis_frm_fz_fkey FOREIGN KEY (frm_fz) REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
+-- Name: machining_force_analysis machining_force_analysis_live_cache_file_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.machining_force_analysis
+    ADD CONSTRAINT machining_force_analysis_live_cache_file_fkey FOREIGN KEY (live_cache_file) REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
+-- Name: machining_force_analysis machining_force_analysis_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.machining_force_analysis
+    ADD CONSTRAINT machining_force_analysis_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.manufacturing_operations(operation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: machining_force_analysis machining_force_analysis_render_file_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.machining_force_analysis
+    ADD CONSTRAINT machining_force_analysis_render_file_fkey FOREIGN KEY (render_file) REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
+-- Name: manufacturers manufacturers_logo_foreign; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manufacturers
+    ADD CONSTRAINT manufacturers_logo_foreign FOREIGN KEY ("Logo") REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
+-- Name: manufacturing_operations manufacturing_operations_campaign_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manufacturing_operations
+    ADD CONSTRAINT manufacturing_operations_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(campaign_id) ON DELETE SET NULL;
 
 
 --
@@ -4210,6 +6581,22 @@ ALTER TABLE ONLY public.manufacturing_operations
 
 
 --
+-- Name: manufacturing_operations manufacturing_operations_fast_recipe_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manufacturing_operations
+    ADD CONSTRAINT manufacturing_operations_fast_recipe_id_fkey FOREIGN KEY (fast_recipe_id) REFERENCES public.fast_recipes(id) ON DELETE SET NULL;
+
+
+--
+-- Name: manufacturing_operations manufacturing_operations_gcode_file_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manufacturing_operations
+    ADD CONSTRAINT manufacturing_operations_gcode_file_fkey FOREIGN KEY (gcode_file) REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
 -- Name: manufacturing_operations manufacturing_operations_insert_edge_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4218,11 +6605,51 @@ ALTER TABLE ONLY public.manufacturing_operations
 
 
 --
+-- Name: manufacturing_operations manufacturing_operations_material_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manufacturing_operations
+    ADD CONSTRAINT manufacturing_operations_material_id_fkey FOREIGN KEY (material_id) REFERENCES public.materials(material_id) ON DELETE SET NULL;
+
+
+--
 -- Name: manufacturing_operations manufacturing_operations_method_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.manufacturing_operations
     ADD CONSTRAINT manufacturing_operations_method_fkey FOREIGN KEY (method_id) REFERENCES public.manufacturing_methods(method_id);
+
+
+--
+-- Name: manufacturing_operations manufacturing_operations_operator_foreign; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manufacturing_operations
+    ADD CONSTRAINT manufacturing_operations_operator_foreign FOREIGN KEY (operator) REFERENCES public."Machine_Operators"(id) ON DELETE SET NULL;
+
+
+--
+-- Name: manufacturing_operations manufacturing_operations_operator_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manufacturing_operations
+    ADD CONSTRAINT manufacturing_operations_operator_person_id_fkey FOREIGN KEY (operator_person_id) REFERENCES public.people(person_id) ON DELETE SET NULL;
+
+
+--
+-- Name: manufacturing_operations manufacturing_operations_output_sample_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manufacturing_operations
+    ADD CONSTRAINT manufacturing_operations_output_sample_id_fkey FOREIGN KEY (output_sample_id) REFERENCES public.physical_samples(sample_id) ON DELETE SET NULL;
+
+
+--
+-- Name: manufacturing_operations manufacturing_operations_owner_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manufacturing_operations
+    ADD CONSTRAINT manufacturing_operations_owner_person_id_fkey FOREIGN KEY (owner_person_id) REFERENCES public.people(person_id) ON DELETE SET NULL;
 
 
 --
@@ -4238,7 +6665,15 @@ ALTER TABLE ONLY public.manufacturing_operations
 --
 
 ALTER TABLE ONLY public.manufacturing_operations
-    ADD CONSTRAINT manufacturing_operations_sample_fkey FOREIGN KEY (sample_id) REFERENCES public.physical_samples(sample_id);
+    ADD CONSTRAINT manufacturing_operations_sample_fkey FOREIGN KEY (sample_id) REFERENCES public.physical_samples(sample_id) ON DELETE CASCADE;
+
+
+--
+-- Name: manufacturing_operations manufacturing_operations_source_recipe_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.manufacturing_operations
+    ADD CONSTRAINT manufacturing_operations_source_recipe_id_fkey FOREIGN KEY (source_recipe_id) REFERENCES public.prep_recipes(recipe_id) ON DELETE SET NULL;
 
 
 --
@@ -4274,11 +6709,35 @@ ALTER TABLE ONLY public.materials
 
 
 --
--- Name: method_parameters method_parameters_method_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: operation_data_files operation_data_files_directus_files_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.method_parameters
-    ADD CONSTRAINT method_parameters_method_id_fkey FOREIGN KEY (method_id) REFERENCES public.manufacturing_methods(method_id);
+ALTER TABLE ONLY public.operation_data_files
+    ADD CONSTRAINT operation_data_files_directus_files_id_fkey FOREIGN KEY (directus_files_id) REFERENCES public.directus_files(id) ON DELETE CASCADE;
+
+
+--
+-- Name: operation_data_files operation_data_files_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operation_data_files
+    ADD CONSTRAINT operation_data_files_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.manufacturing_operations(operation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: operation_files operation_files_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operation_files
+    ADD CONSTRAINT operation_files_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.manufacturing_operations(operation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: people people_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.people
+    ADD CONSTRAINT people_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.directus_users(id) ON DELETE SET NULL;
 
 
 --
@@ -4290,11 +6749,107 @@ ALTER TABLE ONLY public.physical_samples
 
 
 --
+-- Name: physical_samples physical_samples_owner_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.physical_samples
+    ADD CONSTRAINT physical_samples_owner_person_id_fkey FOREIGN KEY (owner_person_id) REFERENCES public.people(person_id) ON DELETE SET NULL;
+
+
+--
+-- Name: physical_samples physical_samples_primary_method_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.physical_samples
+    ADD CONSTRAINT physical_samples_primary_method_id_fkey FOREIGN KEY (primary_method_id) REFERENCES public.manufacturing_methods(method_id) ON DELETE SET NULL;
+
+
+--
 -- Name: physical_samples physical_samples_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.physical_samples
     ADD CONSTRAINT physical_samples_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(project_id);
+
+
+--
+-- Name: prep_recipe_steps prep_recipe_steps_etchant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.prep_recipe_steps
+    ADD CONSTRAINT prep_recipe_steps_etchant_id_fkey FOREIGN KEY (etchant_id) REFERENCES public.etchants(etchant_id) ON DELETE SET NULL;
+
+
+--
+-- Name: prep_recipe_steps prep_recipe_steps_recipe_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.prep_recipe_steps
+    ADD CONSTRAINT prep_recipe_steps_recipe_id_fkey FOREIGN KEY (recipe_id) REFERENCES public.prep_recipes(recipe_id) ON DELETE CASCADE;
+
+
+--
+-- Name: prep_recipes prep_recipes_owner_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.prep_recipes
+    ADD CONSTRAINT prep_recipes_owner_person_id_fkey FOREIGN KEY (owner_person_id) REFERENCES public.people(person_id) ON DELETE SET NULL;
+
+
+--
+-- Name: prep_steps prep_steps_etchant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.prep_steps
+    ADD CONSTRAINT prep_steps_etchant_id_fkey FOREIGN KEY (etchant_id) REFERENCES public.etchants(etchant_id) ON DELETE SET NULL;
+
+
+--
+-- Name: prep_steps prep_steps_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.prep_steps
+    ADD CONSTRAINT prep_steps_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.manufacturing_operations(operation_id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_investigators project_investigators_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_investigators
+    ADD CONSTRAINT project_investigators_person_id_fkey FOREIGN KEY (person_id) REFERENCES public.people(person_id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_investigators project_investigators_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_investigators
+    ADD CONSTRAINT project_investigators_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(project_id) ON DELETE CASCADE;
+
+
+--
+-- Name: projects projects_image_foreign; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.projects
+    ADD CONSTRAINT projects_image_foreign FOREIGN KEY ("Image") REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
+-- Name: projects projects_principal_investigator_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.projects
+    ADD CONSTRAINT projects_principal_investigator_fkey FOREIGN KEY (principal_investigator) REFERENCES public.directus_users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: projects projects_principal_investigator_person_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.projects
+    ADD CONSTRAINT projects_principal_investigator_person_fkey FOREIGN KEY (principal_investigator_person) REFERENCES public.people(person_id) ON DELETE SET NULL;
 
 
 --
@@ -4306,11 +6861,43 @@ ALTER TABLE ONLY public.raw_stock_lots
 
 
 --
+-- Name: sample_co_owners sample_co_owners_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sample_co_owners
+    ADD CONSTRAINT sample_co_owners_person_id_fkey FOREIGN KEY (person_id) REFERENCES public.people(person_id) ON DELETE CASCADE;
+
+
+--
+-- Name: sample_co_owners sample_co_owners_sample_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sample_co_owners
+    ADD CONSTRAINT sample_co_owners_sample_id_fkey FOREIGN KEY (sample_id) REFERENCES public.physical_samples(sample_id) ON DELETE CASCADE;
+
+
+--
+-- Name: sample_data_files sample_data_files_directus_files_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sample_data_files
+    ADD CONSTRAINT sample_data_files_directus_files_id_fkey FOREIGN KEY (directus_files_id) REFERENCES public.directus_files(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sample_data_files sample_data_files_sample_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sample_data_files
+    ADD CONSTRAINT sample_data_files_sample_id_fkey FOREIGN KEY (sample_id) REFERENCES public.physical_samples(sample_id) ON DELETE CASCADE;
+
+
+--
 -- Name: sample_genealogy sample_genealogy_child_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.sample_genealogy
-    ADD CONSTRAINT sample_genealogy_child_fkey FOREIGN KEY (child_sample_id) REFERENCES public.physical_samples(sample_id);
+    ADD CONSTRAINT sample_genealogy_child_fkey FOREIGN KEY (child_sample_id) REFERENCES public.physical_samples(sample_id) ON DELETE CASCADE;
 
 
 --
@@ -4318,7 +6905,7 @@ ALTER TABLE ONLY public.sample_genealogy
 --
 
 ALTER TABLE ONLY public.sample_genealogy
-    ADD CONSTRAINT sample_genealogy_parent_fkey FOREIGN KEY (parent_sample_id) REFERENCES public.physical_samples(sample_id);
+    ADD CONSTRAINT sample_genealogy_parent_fkey FOREIGN KEY (parent_sample_id) REFERENCES public.physical_samples(sample_id) ON DELETE CASCADE;
 
 
 --
@@ -4326,7 +6913,7 @@ ALTER TABLE ONLY public.sample_genealogy
 --
 
 ALTER TABLE ONLY public.sample_stock_provenance
-    ADD CONSTRAINT sample_stock_provenance_lot_fkey FOREIGN KEY (lot_id) REFERENCES public.raw_stock_lots(lot_id);
+    ADD CONSTRAINT sample_stock_provenance_lot_fkey FOREIGN KEY (lot_id) REFERENCES public.raw_stock_lots(lot_id) ON DELETE CASCADE;
 
 
 --
@@ -4334,7 +6921,31 @@ ALTER TABLE ONLY public.sample_stock_provenance
 --
 
 ALTER TABLE ONLY public.sample_stock_provenance
-    ADD CONSTRAINT sample_stock_provenance_sample_fkey FOREIGN KEY (sample_id) REFERENCES public.physical_samples(sample_id);
+    ADD CONSTRAINT sample_stock_provenance_sample_fkey FOREIGN KEY (sample_id) REFERENCES public.physical_samples(sample_id) ON DELETE CASCADE;
+
+
+--
+-- Name: session_data_files session_data_files_directus_files_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.session_data_files
+    ADD CONSTRAINT session_data_files_directus_files_id_fkey FOREIGN KEY (directus_files_id) REFERENCES public.directus_files(id) ON DELETE CASCADE;
+
+
+--
+-- Name: session_data_files session_data_files_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.session_data_files
+    ADD CONSTRAINT session_data_files_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.test_sessions(session_id) ON DELETE CASCADE;
+
+
+--
+-- Name: test_sessions test_sessions_campaign_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.test_sessions
+    ADD CONSTRAINT test_sessions_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(campaign_id) ON DELETE SET NULL;
 
 
 --
@@ -4354,6 +6965,30 @@ ALTER TABLE ONLY public.test_sessions
 
 
 --
+-- Name: test_sessions test_sessions_operator_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.test_sessions
+    ADD CONSTRAINT test_sessions_operator_fkey FOREIGN KEY (operator) REFERENCES public."Machine_Operators"(id) ON DELETE SET NULL;
+
+
+--
+-- Name: test_sessions test_sessions_operator_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.test_sessions
+    ADD CONSTRAINT test_sessions_operator_person_id_fkey FOREIGN KEY (operator_person_id) REFERENCES public.people(person_id) ON DELETE SET NULL;
+
+
+--
+-- Name: test_sessions test_sessions_owner_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.test_sessions
+    ADD CONSTRAINT test_sessions_owner_person_id_fkey FOREIGN KEY (owner_person_id) REFERENCES public.people(person_id) ON DELETE SET NULL;
+
+
+--
 -- Name: test_sessions test_sessions_project_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4366,7 +7001,15 @@ ALTER TABLE ONLY public.test_sessions
 --
 
 ALTER TABLE ONLY public.test_sessions
-    ADD CONSTRAINT test_sessions_sample_fkey FOREIGN KEY (sample_id) REFERENCES public.physical_samples(sample_id);
+    ADD CONSTRAINT test_sessions_sample_fkey FOREIGN KEY (sample_id) REFERENCES public.physical_samples(sample_id) ON DELETE CASCADE;
+
+
+--
+-- Name: test_sessions_subject test_sessions_subject_test_sessions_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.test_sessions_subject
+    ADD CONSTRAINT test_sessions_subject_test_sessions_id_fkey FOREIGN KEY (test_sessions_id) REFERENCES public.test_sessions(session_id) ON DELETE CASCADE;
 
 
 --
@@ -4375,6 +7018,46 @@ ALTER TABLE ONLY public.test_sessions
 
 ALTER TABLE ONLY public.tool_boxes
     ADD CONSTRAINT tool_boxes_insert_type_id_fkey FOREIGN KEY (insert_type_id) REFERENCES public.insert_types(insert_type_id);
+
+
+--
+-- Name: tool_boxes tool_boxes_owner_person_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_boxes
+    ADD CONSTRAINT tool_boxes_owner_person_id_fkey FOREIGN KEY (owner_person_id) REFERENCES public.people(person_id) ON DELETE SET NULL;
+
+
+--
+-- Name: tool_boxes tool_boxes_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_boxes
+    ADD CONSTRAINT tool_boxes_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(project_id) ON DELETE SET NULL;
+
+
+--
+-- Name: tools tools_image_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tools
+    ADD CONSTRAINT tools_image_fkey FOREIGN KEY (image) REFERENCES public.directus_files(id) ON DELETE SET NULL;
+
+
+--
+-- Name: tools tools_manufacturer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tools
+    ADD CONSTRAINT tools_manufacturer_id_fkey FOREIGN KEY (manufacturer_id) REFERENCES public.manufacturers(manufacturer_id) ON DELETE SET NULL;
+
+
+--
+-- Name: tools tools_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tools
+    ADD CONSTRAINT tools_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(project_id) ON DELETE SET NULL;
 
 
 --
@@ -4409,4 +7092,90 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260620000018'),
     ('20260620000019'),
     ('20260620000020'),
-    ('20260620000021');
+    ('20260620000021'),
+    ('20260621000022'),
+    ('20260621000023'),
+    ('20260621000024'),
+    ('20260621000025'),
+    ('20260621000026'),
+    ('20260621000027'),
+    ('20260621000028'),
+    ('20260622000029'),
+    ('20260623000030'),
+    ('20260623000031'),
+    ('20260623000032'),
+    ('20260624000030'),
+    ('20260624000031'),
+    ('20260624000032'),
+    ('20260624000033'),
+    ('20260624000034'),
+    ('20260624000035'),
+    ('20260625000036'),
+    ('20260625000037'),
+    ('20260625000038'),
+    ('20260626000039'),
+    ('20260627000040'),
+    ('20260627000041'),
+    ('20260627000042'),
+    ('20260627000043'),
+    ('20260627000044'),
+    ('20260627000045'),
+    ('20260627000046'),
+    ('20260628000047'),
+    ('20260628000048'),
+    ('20260628000049'),
+    ('20260629000050'),
+    ('20260629000051'),
+    ('20260701000052'),
+    ('20260701000053'),
+    ('20260703000054'),
+    ('20260703000055'),
+    ('20260703000056'),
+    ('20260703000057'),
+    ('20260703000058'),
+    ('20260703000059'),
+    ('20260703000060'),
+    ('20260703000061'),
+    ('20260703000062'),
+    ('20260703000063'),
+    ('20260703000064'),
+    ('20260703000065'),
+    ('20260703000066'),
+    ('20260703000067'),
+    ('20260704000068'),
+    ('20260704000069'),
+    ('20260704000070'),
+    ('20260704000071'),
+    ('20260704000072'),
+    ('20260704000073'),
+    ('20260705000035'),
+    ('20260705000074'),
+    ('20260705000075'),
+    ('20260705000076'),
+    ('20260705000077'),
+    ('20260705000078'),
+    ('20260706000079'),
+    ('20260706000080'),
+    ('20260708000081'),
+    ('20260708000082'),
+    ('20260708000083'),
+    ('20260709000084'),
+    ('20260710000085'),
+    ('20260710000086'),
+    ('20260710000087'),
+    ('20260710000088'),
+    ('20260710000089'),
+    ('20260711000090'),
+    ('20260711000091'),
+    ('20260711000092'),
+    ('20260712000093'),
+    ('20260713000094'),
+    ('20260717000095'),
+    ('20260721000096'),
+    ('20260721000097'),
+    ('20260722000098'),
+    ('20260722000099'),
+    ('20260722000100'),
+    ('20260722000101'),
+    ('20260723000102'),
+    ('20260828000103');

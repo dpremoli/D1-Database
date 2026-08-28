@@ -278,32 +278,37 @@ describe('playback engine', () => {
 	});
 
 	it('colours FRM points from the requested axis, not a hardcoded one', () => {
+		// makeCache sets Fx[i] = i (monotonic) and Fz[i] = a bounded sine. client.frm.cx/cy/cz now
+		// always carry all three axis forces (so the colour axis can switch instantly at render time
+		// without a data rebuild) — what `axis` at load() actually controls is the percentile colour
+		// scale (cLo/cHi), which must reflect the requested axis's own range, not a hardcoded one.
 		const c = makeCache();
-		const h = harness();
-		h.engine.load(c, { ppr: 1, stride: 1, axis: 'Fx' });
-		h.engine.seek(h.engine.state.duration);
-		// makeCache sets Fx[i] = i (monotonic) and Fz[i] = a bounded sine — if colouring still fell
-		// back to Fz, every recorded colour value would sit inside [-100, 100]; Fx grows past that.
-		let sawLarge = false;
-		for (let i = 0; i < h.client.frm.count; i++) if (Math.abs(h.client.frm.c[i]) > 200) sawLarge = true;
-		expect(sawLarge).toBe(true);
+		const hFx = harness();
+		hFx.engine.load(c, { ppr: 1, stride: 1, axis: 'Fx' });
+		hFx.engine.seek(hFx.engine.state.duration);
+		const hFz = harness();
+		hFz.engine.load(c, { ppr: 1, stride: 1, axis: 'Fz' });
+		hFz.engine.seek(hFz.engine.state.duration);
+		// Fx grows unbounded with the cut; Fz stays inside [-100, 100]. If colouring still fell back
+		// to a hardcoded axis, both scales would come out identical.
+		expect(hFx.client.frm.cHi!).toBeGreaterThan(200);
+		expect(hFz.client.frm.cHi!).toBeLessThan(200);
 	});
 	it('setAxis recolours already-drawn points, not just future ones', () => {
 		// Regression: colorAxis was frozen at load() with nothing watching a later change, so
 		// FrmPanel's Fx/Fy/Fz toggle silently did nothing once a cut was already loaded and points
-		// had been drawn.
+		// had been drawn. client.frm.cx/cy/cz never change (all three are always stored up front) —
+		// what setAxis must update is the colour SCALE (cLo/cHi), which LiveFrm.vue then re-reads to
+		// recolour the whole accumulated spiral from the already-resident cx/cy/cz.
 		const h = harness();
 		h.engine.load(makeDenseCache(), { ppr: 1, stride: 1, axis: 'Fz' });
 		h.engine.seek(5);
-		const beforeC0 = h.client.frm.c[0];
 		const beforeCLo = h.client.frm.cLo, beforeCHi = h.client.frm.cHi;
 
 		h.engine.setAxis('Fx');
 
-		// Same playhead, same point count, but the colour SOURCE (and its scale) must have changed —
-		// makeDenseCache's Fx and Fz series are unrelated (Fx = i, Fz = a bounded sine), so a
-		// genuine recolour changes both the raw value at index 0 and the axis's own cLo/cHi.
-		expect(h.client.frm.c[0]).not.toBe(beforeC0);
+		// makeDenseCache's Fx and Fz series are unrelated (Fx = i, Fz = a bounded sine), so a genuine
+		// recolour changes the axis's own cLo/cHi.
 		expect(h.client.frm.cLo === beforeCLo && h.client.frm.cHi === beforeCHi).toBe(false);
 	});
 });

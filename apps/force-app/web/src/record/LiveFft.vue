@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { RecordClient } from './liveClient';
 import { CH_COLOR } from './types';
+import { theme } from '../theme';
 
 const props = defineProps<{ client: RecordClient; channels?: string[]; scale?: 'amp' | 'psd' }>();
 const canvasEl = ref<HTMLCanvasElement | null>(null);
@@ -35,17 +36,28 @@ function niceStep(range: number, ticks: number): number {
 	return (r <= 1.5 ? 1 : r <= 3 ? 2 : r <= 7 ? 5 : 10) * mag;
 }
 
+function palette() {
+	const s = getComputedStyle(document.documentElement);
+	return {
+		bg: s.getPropertyValue('--plot-bg').trim() || '#0b1020',
+		grid: s.getPropertyValue('--border').trim() || 'rgba(255,255,255,0.06)',
+		text: s.getPropertyValue('--text-dim').trim() || 'rgba(226,232,240,0.55)',
+		textFaint: s.getPropertyValue('--text-faint').trim() || 'rgba(226,232,240,0.45)',
+	};
+}
+
 function draw() {
 	const c = canvasEl.value; if (!c || !ctx) return;
 	const CW = c.clientWidth, CH = c.clientHeight;
 	const W = CW - ML - MR, H = CH - MT - MB;
+	const pal = palette();
 	ctx.clearRect(0, 0, CW, CH);
-	ctx.fillStyle = '#0b1020'; ctx.fillRect(0, 0, CW, CH);
+	ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, CW, CH);
 
 	const fft = props.client.fft;
 	const f = fft?.f;
 	if (!fft || !f || f.length < 2) {
-		ctx.fillStyle = 'rgba(148,163,184,0.7)'; ctx.font = '12px system-ui';
+		ctx.fillStyle = pal.text; ctx.font = '12px system-ui';
 		ctx.fillText('waiting for spectrum…', ML + 8, MT + H / 2);
 		return;
 	}
@@ -71,14 +83,14 @@ function draw() {
 
 	// X-axis ticks (frequency)
 	ctx.font = '10px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-	ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
+	ctx.strokeStyle = pal.grid; ctx.lineWidth = 1;
 	const xStep = niceStep(fmax, Math.max(2, Math.floor(W / 80)));
 	for (let freq = 0; freq <= fmax; freq += xStep) {
 		if (freq === 0) continue;
 		const x = xOf(freq);
 		if (x < ML || x > ML + W) continue;
 		ctx.beginPath(); ctx.moveTo(x, MT); ctx.lineTo(x, MT + H); ctx.stroke();
-		ctx.fillStyle = 'rgba(226,232,240,0.55)';
+		ctx.fillStyle = pal.text;
 		ctx.fillText(freq >= 1000 ? (freq / 1000).toFixed(freq >= 10000 ? 0 : 1) + 'k' : String(Math.round(freq)), x, MT + H + 4);
 	}
 
@@ -90,7 +102,7 @@ function draw() {
 			const n = (db - floorDb) / -floorDb;
 			const y = MT + H - n * H;
 			ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + W, y); ctx.stroke();
-			ctx.fillStyle = 'rgba(226,232,240,0.55)';
+			ctx.fillStyle = pal.text;
 			ctx.fillText(`${db}`, ML - 5, y);
 		}
 	} else {
@@ -113,7 +125,7 @@ function draw() {
 	}
 
 	// Axis labels
-	ctx.fillStyle = 'rgba(226,232,240,0.45)'; ctx.font = '10px system-ui';
+	ctx.fillStyle = pal.textFaint; ctx.font = '10px system-ui';
 	ctx.textAlign = 'center'; ctx.textBaseline = 'top';
 	ctx.fillText('Frequency (Hz)', ML + W / 2, CH - 4);
 	ctx.save(); ctx.translate(10, MT + H / 2); ctx.rotate(-Math.PI / 2);
@@ -131,6 +143,7 @@ function draw() {
 watch(() => props.client.fftSeq.value, draw);
 watch(() => props.scale, draw);
 watch(chans, draw, { deep: true });
+watch(theme, draw);
 onMounted(() => { resize(); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); });
 onBeforeUnmount(() => ro?.disconnect());
 </script>
@@ -140,6 +153,6 @@ onBeforeUnmount(() => ro?.disconnect());
 </template>
 
 <style scoped>
-.live-fft { width: 100%; height: 100%; min-height: 140px; border-radius: 8px; overflow: hidden; background: #0b1020; }
+.live-fft { width: 100%; height: 100%; min-height: 140px; border-radius: 8px; overflow: hidden; background: var(--plot-bg); }
 .live-fft canvas { width: 100%; height: 100%; display: block; }
 </style>

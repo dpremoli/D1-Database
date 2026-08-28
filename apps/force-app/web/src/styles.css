@@ -1,19 +1,27 @@
 /* Global base + design tokens. The palette matches the plotting components (deep-navy canvas,
    cyan accent, Fx/Fy/Fz red/green/blue) so the shell and the explorer read as one product. */
 :root {
+	color-scheme: dark;
 	--bg: #0b1020;
 	--bg-2: #111a33;
+	--bg-3: rgba(255, 255, 255, 0.03);
 	--surface: rgba(255, 255, 255, 0.04);
 	--surface-2: rgba(255, 255, 255, 0.07);
 	--border: rgba(255, 255, 255, 0.12);
+	--border-2: rgba(255, 255, 255, 0.18);
 	--text: #e2e8f0;
 	--text-dim: #94a3b8;
+	--text-faint: #64748b;
 	--accent: #38bdf8;
 	--accent-ink: #0b1020;
 	--danger: #fca5a5;
 	--fx: #dc2626;
 	--fy: #16a34a;
 	--fz: #2563eb;
+	--overlay: rgba(0, 0, 0, 0.55);
+	/* Plot canvases (force plots, FRM map, FFT, spectrogram, waterfall) follow the theme rather
+	   than staying permanently dark as a fixed "instrument display" — single toggle point. */
+	--plot-bg: #0b1020;
 	--radius: 14px;
 	--font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 	--mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
@@ -36,19 +44,25 @@
 }
 
 [data-theme="light"] {
+	color-scheme: light;
 	--bg: #f4f6f9;
 	--bg-2: #eaecf2;
+	--bg-3: rgba(0, 0, 0, 0.03);
 	--surface: rgba(0, 0, 0, 0.04);
 	--surface-2: rgba(0, 0, 0, 0.07);
 	--border: rgba(0, 0, 0, 0.12);
+	--border-2: rgba(0, 0, 0, 0.18);
 	--text: #1e293b;
 	--text-dim: #64748b;
+	--text-faint: #94a3b8;
 	--accent: #0284c7;
 	--accent-ink: #fff;
 	--danger: #dc2626;
 	--fx: #dc2626;
 	--fy: #16a34a;
 	--fz: #2563eb;
+	--overlay: rgba(15, 23, 42, 0.4);
+	--plot-bg: #eef1f6;
 	--theme--foreground: var(--text);
 	--theme--foreground-subdued: var(--text-dim);
 	--theme--primary: var(--accent);

@@ -5,6 +5,7 @@
 // history grid, then stretched to the canvas — cheap even for ~220 frames × ~240 bins.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { RecordClient } from './liveClient';
+import { theme } from '../theme';
 
 const props = withDefaults(defineProps<{ client: RecordClient; channels?: string[]; windowSec?: number }>(), { windowSec: 12 });
 // The backend publishes a spectrum roughly every 0.3s (session.py's fft throttle) — convert the
@@ -46,8 +47,9 @@ function resize() {
 function draw() {
 	const c = canvasEl.value; if (!c || !ctx || !offCtx) return;
 	const W = c.clientWidth, H = c.clientHeight;
+	const plotBg = getComputedStyle(document.documentElement).getPropertyValue('--plot-bg').trim() || '#0b1020';
 	ctx.clearRect(0, 0, W, H);
-	ctx.fillStyle = '#0b1020'; ctx.fillRect(0, 0, W, H);
+	ctx.fillStyle = plotBg; ctx.fillRect(0, 0, W, H);
 	const hist = props.client.fftHistory;
 	const ch = chan.value;
 	const wanted = Math.max(2, Math.round(props.windowSec * FFT_PUBLISH_HZ));
@@ -91,6 +93,7 @@ function draw() {
 watch(() => props.client.fftSeq.value, draw);
 watch(() => props.windowSec, draw);
 watch(chan, draw);
+watch(theme, draw);
 onMounted(() => { resize(); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); });
 onBeforeUnmount(() => ro?.disconnect());
 </script>
@@ -100,6 +103,6 @@ onBeforeUnmount(() => ro?.disconnect());
 </template>
 
 <style scoped>
-.live-spec { width: 100%; height: 100%; min-height: 140px; border-radius: 8px; overflow: hidden; background: #0b1020; }
+.live-spec { width: 100%; height: 100%; min-height: 140px; border-radius: 8px; overflow: hidden; background: var(--plot-bg); }
 .live-spec canvas { width: 100%; height: 100%; display: block; }
 </style>

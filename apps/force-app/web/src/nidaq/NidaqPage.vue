@@ -246,32 +246,32 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 /* Portrait modules — real C-series geometry: tall + narrow. */
 .mod { flex: 0 0 116px; min-height: 230px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 8px; display: flex; flex-direction: column; }
 .mod-head { display: flex; align-items: center; }
-.slotno { font-size: 9px; color: #5f6f92; letter-spacing: .05em; }
-.mod .rm { margin-left: auto; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; color: #5f6f92; cursor: pointer; border-radius: 4px; }
+.slotno { font-size: 9px; color: var(--text-faint); letter-spacing: .05em; }
+.mod .rm { margin-left: auto; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; color: var(--text-faint); cursor: pointer; border-radius: 4px; }
 .mod .rm:hover { color: var(--danger); background: rgba(239,68,68,.1); }
 .mod .rm .material-symbols-rounded { font-size: 13px; }
 .model { font-size: 12px; font-weight: 700; margin: 1px 0 1px; display: flex; align-items: center; gap: 5px; }
 .iepe { font-size: 8px; font-weight: 700; padding: 1px 4px; border-radius: 4px; background: rgba(96,165,250,.16); color: #60a5fa; }
-.conn-note { font-size: 9px; color: #8ba0c4; margin-bottom: 8px; }
+.conn-note { font-size: 9px; color: var(--text-dim); margin-bottom: 8px; }
 .ports { display: flex; flex-direction: column; gap: 5px; }
 .ports.terminal { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.port-row { display: flex; align-items: center; gap: 6px; padding: 4px 5px; border-radius: 7px; background: #0f1730; border: 1px solid #26314e; cursor: pointer; color: inherit; }
-.port-row:hover { border-color: #46557d; }
+.port-row { display: flex; align-items: center; gap: 6px; padding: 4px 5px; border-radius: 7px; background: var(--surface-2); border: 1px solid var(--border-2); cursor: pointer; color: inherit; }
+.port-row:hover { border-color: var(--text-faint); }
 .port-row.assigned { border-color: var(--c); }
 .jack { flex: 0 0 auto; }
-.jack.bnc { width: 15px; height: 15px; border-radius: 50%; background: radial-gradient(circle at 45% 40%,#33405f,#141b2e 70%); border: 2px solid #52618c; box-shadow: inset 0 0 0 3px #0b1020; }
+.jack.bnc { width: 15px; height: 15px; border-radius: 50%; background: radial-gradient(circle at 45% 40%,#33405f,#141b2e 70%); border: 2px solid #52618c; box-shadow: inset 0 0 0 3px var(--plot-bg); }
 .jack.terminal { width: 9px; height: 9px; border-radius: 2px; background: #2a3550; border: 1px solid #46557d; }
 .jack.dsub { width: 9px; height: 9px; border-radius: 50%; background: #2a3550; border: 1px solid #46557d; }
 .port-row.assigned .jack { border-color: var(--c); }
-.pid { font-size: 9.5px; color: #7f92b6; }
+.pid { font-size: 9.5px; color: var(--text-dim); }
 .port-row.terminal .pid, .ports.terminal .pid { width: 20px; }
 .chip { margin-left: auto; font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 5px; color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); }
-.chip.none { color: #5f6f92; background: transparent; }
-.mod.empty { align-items: stretch; justify-content: flex-start; border-style: dashed; color: #4a5878; cursor: pointer; }
-.mod.empty:hover { border-color: #38bdf8; background: rgba(56,189,248,.05); }
-.plus-wrap { flex: 1; display: flex; align-items: center; justify-content: center; }
-.mod.empty .plus { width: 34px; height: 34px; border-radius: 9px; background: #12305a; border: 1px solid #38bdf8; color: #7dd3fc; font-size: 22px; display: flex; align-items: center; justify-content: center; }
-.mod.empty:hover .plus { background: #1a3f6e; }
+.chip.none { color: var(--text-faint); background: transparent; }
+.mod.empty { position: relative; align-items: stretch; justify-content: flex-start; border-style: dashed; color: var(--text-faint); cursor: pointer; }
+.mod.empty:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.plus-wrap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.mod.empty .plus { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); border: 1px solid var(--accent); color: var(--accent-ink); font-size: 22px; display: flex; align-items: center; justify-content: center; }
+.mod.empty:hover .plus { background: color-mix(in srgb, var(--accent) 85%, black); }
 .hint { font-size: 12px; color: var(--text-dim); margin: 4px 2px 0; }
 /* channel list */
 .channels { flex: 0 0 300px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
@@ -281,9 +281,9 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
 .cname { font-weight: 700; width: 46px; }
 .crole { color: var(--text-dim); font-size: 10.5px; width: 38px; }
-.cbind { flex: 1; font-family: var(--mono); font-size: 10px; color: #9fb2d4; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cbind.unbound { color: #5f6f92; font-style: italic; }
-.chrow .rm { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; color: #5f6f92; cursor: pointer; }
+.cbind { flex: 1; font-family: var(--mono); font-size: 10px; color: var(--text-dim); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cbind.unbound { color: var(--text-faint); font-style: italic; }
+.chrow .rm { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; color: var(--text-faint); cursor: pointer; }
 .chrow .rm:hover { color: var(--danger); }
 .chrow .rm .material-symbols-rounded { font-size: 13px; }
 /* buttons */
@@ -294,26 +294,26 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .btn .material-symbols-rounded { font-size: 17px; }
 .btn.tiny { padding: 4px 8px; font-size: 11px; color: #7dd3fc; background: rgba(56,189,248,.1); border: 1px solid rgba(56,189,248,.3); }
 /* popover */
-.popover { position: fixed; z-index: 60; width: 234px; background: #0f1730; border: 1px solid #35507d; border-radius: 10px; padding: 8px; box-shadow: 0 14px 40px rgba(0,0,0,.55); max-height: 60vh; overflow: auto; }
+.popover { position: fixed; z-index: 60; width: 234px; background: var(--surface-2); border: 1px solid var(--border-2); border-radius: 10px; padding: 8px; box-shadow: 0 14px 40px rgba(0,0,0,.55); max-height: 60vh; overflow: auto; }
 .popover h4 { margin: 2px 4px 8px; font-size: 11.5px; font-weight: 600; color: var(--text-dim); }
-.popover code { color: #cfe0ff; }
+.popover code { color: var(--text); }
 .roleopt { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 7px; border-radius: 6px; font-size: 12px; background: transparent; border: none; color: var(--text); cursor: pointer; text-align: left; }
-.roleopt:hover { background: #16203c; }
+.roleopt:hover { background: var(--bg-3); }
 .roleopt em { color: var(--text-dim); font-style: normal; font-size: 10px; }
 .roleopt .cur { margin-left: auto; font-size: 9px; color: #4ade80; }
-.roleopt.add { color: #9fb2d4; }
+.roleopt.add { color: var(--text-dim); }
 .roleopt .material-symbols-rounded { font-size: 15px; }
 .pop-sep { height: 1px; background: var(--border); margin: 5px 0; }
 /* modal */
-.modal { position: fixed; inset: 0; z-index: 70; background: rgba(4,8,18,.6); display: flex; align-items: center; justify-content: center; padding: 24px; }
-.catalog { width: min(720px, 96vw); max-height: 82vh; overflow: auto; background: #0d1424; border: 1px solid #33507d; border-radius: 12px; padding: 16px; box-shadow: 0 20px 50px rgba(0,0,0,.6); }
+.modal { position: fixed; inset: 0; z-index: 70; background: var(--overlay); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.catalog { width: min(720px, 96vw); max-height: 82vh; overflow: auto; background: var(--surface-2); border: 1px solid var(--border-2); border-radius: 12px; padding: 16px; box-shadow: 0 20px 50px rgba(0,0,0,.6); }
 .cat-head { display: flex; align-items: center; margin-bottom: 12px; }
 .cat-head b { flex: 1; font-size: 14px; }
 .cat-head .rm { background: transparent; border: none; color: var(--text-dim); cursor: pointer; }
 .catgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(158px,1fr)); gap: 10px; }
-.cattile { text-align: left; background: #0b1020; border: 1px solid #2a3550; border-radius: 9px; padding: 10px; cursor: pointer; color: var(--text); }
+.cattile { text-align: left; background: var(--surface); border: 1px solid var(--border-2); border-radius: 9px; padding: 10px; cursor: pointer; color: var(--text); }
 .cattile:hover { border-color: #38bdf8; transform: translateY(-2px); transition: all .12s; }
-.ctag { float: right; font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: #1b2540; color: #9fb2d4; border: 1px solid #2f3c5c; }
+.ctag { float: right; font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: var(--bg-3); color: var(--text-dim); border: 1px solid var(--border-2); }
 .cattile .cname { font-size: 12.5px; font-weight: 700; }
-.cattile .cspec { font-size: 9.5px; color: #8ba0c4; margin-top: 2px; }
+.cattile .cspec { font-size: 9.5px; color: var(--text-dim); margin-top: 2px; }
 </style>

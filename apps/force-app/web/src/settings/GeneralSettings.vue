@@ -1,14 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { getConfig } from '../config';
-
-const theme = ref<'dark' | 'light'>(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
-function setTheme(t: 'dark' | 'light') {
-	theme.value = t;
-	if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
-	else document.documentElement.removeAttribute('data-theme');
-	localStorage.setItem('force-app.theme', t);
-}
+import { theme, applyTheme } from '../theme';
 
 // ---- Storage location ----
 interface DriveInfo {
@@ -98,8 +91,8 @@ onMounted(() => { loadDrives(); });
 	<div class="general">
 		<h2>Appearance</h2>
 		<div class="theme-toggle">
-			<button :class="{ on: theme === 'dark' }" @click="setTheme('dark')"><span class="material-symbols-rounded">dark_mode</span> Dark</button>
-			<button :class="{ on: theme === 'light' }" @click="setTheme('light')"><span class="material-symbols-rounded">light_mode</span> Light</button>
+			<button :class="{ on: theme === 'dark' }" @click="applyTheme('dark')"><span class="material-symbols-rounded">dark_mode</span> Dark</button>
+			<button :class="{ on: theme === 'light' }" @click="applyTheme('light')"><span class="material-symbols-rounded">light_mode</span> Light</button>
 		</div>
 
 		<h2 class="mt">Recording storage</h2>

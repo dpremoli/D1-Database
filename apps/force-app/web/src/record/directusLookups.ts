@@ -85,12 +85,17 @@ export async function searchEdges(q: string, insertId?: string): Promise<LookupI
 	if (insertId) filter.insert_id = { _eq: insertId };
 	if (q?.trim()) filter.edge_code = { _icontains: q.trim() };
 	const res = await api.get('/items/insert_edges', {
-		params: { filter, limit: 20, sort: 'edge_code', fields: ['edge_id', 'edge_code', 'edge_identifier'] },
+		params: { filter, limit: 20, sort: 'edge_code',
+			// Pull the parent insert alongside each edge so picking an edge directly can auto-fill the
+			// Insert field (an edge belongs to exactly one insert) — lets the user skip picking the
+			// insert first.
+			fields: ['edge_id', 'edge_code', 'edge_identifier', 'insert_id.insert_id', 'insert_id.insert_code'] },
 	});
 	return (res.data?.data ?? []).map((r: any) => ({
 		id: r.edge_id,
 		label: r.edge_code || r.edge_id,
 		sublabel: r.edge_identifier || undefined,
+		extra: { insertId: r.insert_id?.insert_id || '', insertLabel: r.insert_id?.insert_code || '' },
 	}));
 }
 
@@ -206,10 +211,12 @@ export async function searchTools(q: string, category?: string | null): Promise<
 	return rows.map(toToolItem);
 }
 function toToolItem(r: any): LookupItem {
+	// Show the tool's name as the primary label (more recognisable than the code); keep the code as
+	// the sublabel so it's still visible/searchable.
 	return {
 		id: r.tool_id,
-		label: r.tool_code || r.tool_name || r.tool_id,
-		sublabel: r.tool_name && r.tool_name !== r.tool_code ? r.tool_name : (r.tool_type || undefined),
+		label: r.tool_name || r.tool_code || r.tool_id,
+		sublabel: r.tool_code && r.tool_code !== r.tool_name ? r.tool_code : (r.tool_type || undefined),
 		extra: { tool_type: r.tool_type },
 	};
 }

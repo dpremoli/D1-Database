@@ -5,12 +5,10 @@ import { setUnauthorizedHandler } from './directusClient';
 import App from './App.vue';
 import VIcon from './shims/VIcon.vue';
 import VProgressCircular from './shims/VProgressCircular.vue';
+import './theme'; // applies the persisted theme attribute before first paint
 import './styles.css';
 
 async function bootstrap() {
-	const saved = localStorage.getItem('force-app.theme');
-	if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
-
 	// Honour an optional runtime /config.json before anything reads the service URLs.
 	await loadRuntimeConfig();
 

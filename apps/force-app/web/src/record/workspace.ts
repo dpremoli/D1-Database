@@ -20,6 +20,10 @@ export interface ReplayOption {
 	// sampleRate is the TRUE acquisition rate; the cache's own Fs is decimated for a force-app cut
 	// (finalize.py's fs_eff = fs/stride) and can read several times too low if used directly.
 	ppr: number | null; outerDiam: number | null; innerDiam: number | null; sampleRate: number | null;
+	// Human-saved crop start (seconds), from crop_start_idx_override ÷ sample_rate. When set it
+	// overrides the cache's own auto-detected start-of-cut on replay (see the plotting-window
+	// "Save crop as official" flow); null = play from the cache's detected csSec as before.
+	cropStartSec: number | null;
 }
 
 // The "Operation type" select's values are short codes (MT-* = machining/turning, MM-* =
@@ -103,6 +107,12 @@ export function createWorkspace() {
 	// configured target when recording. Panels read this rather than cfg.rpm directly.
 	const rpmTarget = computed(() => (mode.value === 'playback' ? replay.rpm : cfg.rpm));
 	watch(() => replay.speed, (s) => playback.setSpeed(s), { immediate: true });
+	// FrmPanel's Fx/Fy/Fz toggle just sets plot.frmAxis — nothing else reacted to it during
+	// playback, so the button's `on` state changed but the spiral's colour scale (cLo/cHi, set once
+	// per axis at load()) never updated. LiveFrm.vue itself now recolours from the already-streamed
+	// cx/cy/cz on any axis change (live and playback alike); this only keeps playback's percentile
+	// colour scale in step with whichever axis is currently selected.
+	watch(() => plot.frmAxis, (axis) => { if (mode.value === 'playback') playback.setAxis(axis); });
 
 	const busy = ref(false);
 	const errMsg = ref<string | null>(null);
@@ -464,6 +474,8 @@ export function createWorkspace() {
 	// searching narrows straight to "operations on this sample, this type, this machine" instead of
 	// free-text search being the only way in. Re-run (see the watch in RecordingOptions.vue)
 	// whenever any of those three change while in replay mode.
+	// Flipped off the first time Directus rejects crop_start_idx_override (pre-migration); see below.
+	let cropFieldAvailable = true;
 	async function searchCuts(q: string) {
 		replay.loading = true;
 		try {
@@ -482,14 +494,25 @@ export function createWorkspace() {
 			const category = opTypeCategory(meta.op_type);
 			if (category) and.push({ operation_id: { machining_operation_subtype: { _starts_with: category === 'turning' ? 'MT' : 'MM' } } });
 			if (and.length) filter._and = and;
-			const res = await api.get('/items/machining_force_analysis', {
-				params: {
-					filter, limit: 25, sort: '-created_at',
-					fields: ['id', 'live_cache_file', 'created_at', 'pulses_per_rev', 'outer_diameter', 'inner_diameter', 'sample_rate',
-						'operation_id.operation_id', 'operation_id.pass_code',
-						'operation_id.sample_id.sample_code', 'operation_id.sample_id.nickname'],
-				},
-			});
+			const baseFields = ['id', 'live_cache_file', 'created_at', 'pulses_per_rev', 'outer_diameter', 'inner_diameter', 'sample_rate',
+				'operation_id.operation_id', 'operation_id.pass_code',
+				'operation_id.sample_id.sample_code', 'operation_id.sample_id.nickname'];
+			// crop_start_idx_override arrives with migration 20260828000103. Until that's applied the
+			// column doesn't exist and Directus 400s the whole query on the unknown field — which would
+			// break replay search entirely. So request it optimistically and, if it's rejected, drop it
+			// and retry: search keeps working pre-migration, and the crop override auto-activates the
+			// moment the column exists, with no code change.
+			const params: any = { filter, limit: 25, sort: '-created_at',
+				fields: cropFieldAvailable ? [...baseFields, 'crop_start_idx_override'] : baseFields };
+			let res;
+			try {
+				res = await api.get('/items/machining_force_analysis', { params });
+			} catch (e: any) {
+				if (cropFieldAvailable && e?.response?.status === 400) {
+					cropFieldAvailable = false;
+					res = await api.get('/items/machining_force_analysis', { params: { ...params, fields: baseFields } });
+				} else { throw e; }
+			}
 			replay.options = (res.data?.data ?? []).map((r: any) => ({
 				label: r.operation_id?.pass_code || r.operation_id?.sample_id?.sample_code || r.operation_id?.sample_id?.nickname || r.id,
 				cacheId: r.live_cache_file, opId: r.id, operationId: r.operation_id?.operation_id ?? null,
@@ -497,6 +520,7 @@ export function createWorkspace() {
 				outerDiam: r.outer_diameter != null ? Number(r.outer_diameter) : null,
 				innerDiam: r.inner_diameter != null ? Number(r.inner_diameter) : null,
 				sampleRate: r.sample_rate != null ? Number(r.sample_rate) : null,
+				cropStartSec: (r.crop_start_idx_override != null && r.sample_rate) ? Number(r.crop_start_idx_override) / Number(r.sample_rate) : null,
 			})).filter((o: ReplayOption) => o.cacheId);
 		} catch { replay.options = []; } finally { replay.loading = false; }
 	}
@@ -533,7 +557,7 @@ export function createWorkspace() {
 		// or overshoot, instead of tracking the real geometry.
 		const ppr = o.ppr ?? 1;
 		const innerDiam = o.innerDiam ?? 0;
-		playback.load(c, { ppr, innerDiam, stride: plot.liveFrmStride, axis: plot.frmAxis });
+		playback.load(c, { ppr, innerDiam, stride: plot.liveFrmStride, axis: plot.frmAxis, cropStartSec: o.cropStartSec ?? undefined });
 		replay.cacheId = o.cacheId; replay.label = o.label;
 		replay.ppr = ppr; replay.innerDiam = innerDiam; replay.feed = c.feed;
 		// 0 is a real, common outer_diameter value on this table meaning "use the .mat metadata",
@@ -571,7 +595,7 @@ export function createWorkspace() {
 			link.sampleId = d.sample_id?.sample_id || ''; link.sampleLabel = d.sample_id?.sample_code || d.sample_id?.nickname || '';
 			link.operatorId = d.operator_person_id?.person_id || ''; link.operatorLabel = d.operator_person_id?.full_name || '';
 			link.equipmentId = d.equipment_id?.equipment_id || ''; link.equipmentLabel = d.equipment_id?.equipment_name || '';
-			link.toolId = d.tool_id?.tool_id || ''; link.toolLabel = d.tool_id?.tool_code || d.tool_id?.tool_name || '';
+			link.toolId = d.tool_id?.tool_id || ''; link.toolLabel = d.tool_id?.tool_name || d.tool_id?.tool_code || '';
 			link.insertId = d.insert_edge_id?.insert_id?.insert_id || ''; link.insertLabel = d.insert_edge_id?.insert_id?.insert_code || '';
 			link.edgeId = d.insert_edge_id?.edge_id || ''; link.edgeLabel = d.insert_edge_id?.edge_code || '';
 			meta.op_type = d.machining_operation_subtype || '';

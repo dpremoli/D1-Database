@@ -2,7 +2,6 @@
 import { computed, onMounted, watch } from 'vue';
 import { useWorkspace } from '../workspace';
 import LookupField from './LookupField.vue';
-import TransportBar from './TransportBar.vue';
 import CutPicker from './CutPicker.vue';
 import StatTile from './StatTile.vue';
 
@@ -54,7 +53,24 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 			<button :class="{ on: w.source.value === 'nidaq' }" :disabled="w.locked.value" @click="w.setSource('nidaq')">NI-DAQ</button>
 		</div>
 
-		<!-- Recording parameters -->
+		<!-- ─── Sample, then its operation type — always first: this is "what am I recording/
+			 replaying", the identity of the cut. ─── -->
+		<div class="links">
+			<LookupField v-model="w.link.sampleId" :display-label="w.link.sampleLabel" label="Sample" placeholder="search sample code…"
+				:search="w.searchSamples" :disabled="w.locked.value" @select="w.onSelectSample" />
+		</div>
+		<div class="grid2">
+			<label>Operation type
+				<select v-model="w.meta.op_type" :disabled="w.locked.value">
+					<option value="">—</option>
+					<option v-for="t in MACHINING_SUBTYPES" :key="t.value" :value="t.value">{{ t.text }}</option>
+				</select>
+			</label>
+		</div>
+
+		<!-- ─── Feed & speed — the key numeric readout, right after identity. For sim/nidaq this is
+			 the editable recording config; for replay it's the picked cut's own recorded values, so
+			 the cut picker (which supplies that data) sits immediately above it. ─── -->
 		<template v-if="w.source.value === 'sim' || w.source.value === 'nidaq'">
 			<div class="stat-grid">
 				<StatTile editable label="Spindle" unit="RPM" v-model="w.cfg.rpm" :disabled="w.locked.value" />
@@ -68,6 +84,37 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 				<StatTile editable label="Pulses/rev" v-model="w.cfg.ppr" :disabled="w.locked.value" />
 			</div>
 		</template>
+
+		<template v-if="w.source.value === 'replay'">
+			<!-- Cut picker: filtered by Sample/Operation type above, further narrowed by free-text
+				 search. Picking one loads that operation's full original metadata (below) and the
+				 readout right here. -->
+			<CutPicker />
+			<!-- Read-only: :model-value, not v-model. These tiles never expose their input branch
+				 (no `editable`), so nothing ever emits update:modelValue — v-model would need every
+				 value here to be an assignable expression, which the derived ones (surface speed,
+				 depth of cut, capture, cut time) are not. -->
+			<div v-if="w.replay.cacheId" class="stat-grid cut-params">
+				<StatTile label="Feed" unit="mm/rev" :model-value="w.replay.feed" />
+				<StatTile label="Diameter" unit="mm" :model-value="w.replay.diam" />
+				<StatTile label="Inner Ø" unit="mm" :model-value="w.replay.innerDiam" />
+				<StatTile label="Pulses/rev" :model-value="w.replay.ppr" />
+				<StatTile label="Surface speed" unit="m/min" :model-value="replaySurfaceSpeed.toFixed(1)" />
+				<StatTile label="Depth of cut" unit="mm" :model-value="replayDepthOfCut" />
+				<StatTile label="Capture" unit="kHz" :model-value="(w.replay.sampleRate / 1000).toFixed(1)" />
+				<StatTile label="Cut time" :model-value="fmtDuration(w.playback.state.duration)" />
+			</div>
+		</template>
+
+		<!-- ─── Everything else ─── -->
+		<div class="section-divider"><span>Details</span></div>
+
+		<div class="links pair">
+			<LookupField v-model="w.link.equipmentId" :display-label="w.link.equipmentLabel" label="Machine" placeholder="search machine…"
+				:search="w.searchEquipmentForOp" :disabled="w.locked.value" @select="(i: any) => (w.link.equipmentLabel = i.label)" />
+			<LookupField v-model="w.link.operatorId" :display-label="w.link.operatorLabel" label="Operator" placeholder="search operator…"
+				:search="w.searchOperators" :disabled="w.locked.value" @select="(i: any) => (w.link.operatorLabel = i.label)" />
+		</div>
 
 		<!-- NI-DAQ channel summary (configured in Settings) -->
 		<p v-if="w.source.value === 'nidaq'" class="hint nidaq-hint">
@@ -85,63 +132,16 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 			<p v-if="w.converge.status" class="sync" :class="w.converge.busy ? 'warn' : 'ok'"><span class="material-symbols-rounded">tune</span>{{ w.converge.status }}</p>
 		</div>
 
-		<!-- ─── Metadata ─── -->
-		<!-- Sample -> Operation type -> Machine first: for a replay, these three progressively
-			 filter the cut list right below Machine (see workspace.ts's searchCuts); for sim/nidaq
-			 there's no cut list, so this just flows straight into Tool/Operator/Insert/Edge. -->
-		<div class="section-divider"><span>Metadata</span></div>
-
-		<div class="links">
-			<LookupField v-model="w.link.sampleId" :display-label="w.link.sampleLabel" label="Sample" placeholder="search sample code…"
-				:search="w.searchSamples" :disabled="w.locked.value" @select="w.onSelectSample" />
-		</div>
-		<div class="grid2">
-			<label>Operation type
-				<select v-model="w.meta.op_type" :disabled="w.locked.value">
-					<option value="">—</option>
-					<option v-for="t in MACHINING_SUBTYPES" :key="t.value" :value="t.value">{{ t.text }}</option>
-				</select>
-			</label>
-		</div>
-		<div class="links">
-			<LookupField v-model="w.link.equipmentId" :display-label="w.link.equipmentLabel" label="Machine" placeholder="search machine…"
-				:search="w.searchEquipmentForOp" :disabled="w.locked.value" @select="(i: any) => (w.link.equipmentLabel = i.label)" />
-		</div>
-
-		<!-- Replay cut picker: filtered by Sample/Operation type/Machine above, further narrowed by
-			 free-text search. Picking one loads that operation's full original metadata (below). -->
-		<CutPicker v-if="w.source.value === 'replay'" />
-
-		<!-- The loaded cut's actual parameters — read-only: these describe the archived cut, not a
-			 config being set up. Feed/Outer Ø/Pulses-per-rev come from the cut's own Directus row
-			 (see workspace.ts's pickReplayCut) rather than the recording form, which is also what
-			 fixed the FRM spiral stopping short of centre on a cut whose real PPR wasn't 1. -->
-		<div v-if="w.source.value === 'replay' && w.replay.cacheId" class="stat-grid cut-params">
-			<!-- Read-only: :model-value, not v-model. These tiles never expose their input branch
-				 (no `editable`), so nothing ever emits update:modelValue — v-model would need every
-				 value here to be an assignable expression, which the derived ones (surface speed,
-				 depth of cut, capture, cut time) are not. -->
-			<StatTile label="Feed" unit="mm/rev" :model-value="w.replay.feed" />
-			<StatTile label="Diameter" unit="mm" :model-value="w.replay.diam" />
-			<StatTile label="Inner Ø" unit="mm" :model-value="w.replay.innerDiam" />
-			<StatTile label="Pulses/rev" :model-value="w.replay.ppr" />
-			<StatTile label="Surface speed" unit="m/min" :model-value="replaySurfaceSpeed.toFixed(1)" />
-			<StatTile label="Depth of cut" unit="mm" :model-value="replayDepthOfCut" />
-			<StatTile label="Capture" unit="kHz" :model-value="(w.replay.sampleRate / 1000).toFixed(1)" />
-			<StatTile label="Cut time" :model-value="fmtDuration(w.playback.state.duration)" />
-		</div>
-
-		<div class="links">
-			<LookupField v-model="w.link.toolId" :display-label="w.link.toolLabel" label="Tool" placeholder="search tool code…"
-				:search="w.searchToolsForOp" :disabled="w.locked.value" @select="(i: any) => (w.link.toolLabel = i.label)" />
-			<LookupField v-model="w.link.operatorId" :display-label="w.link.operatorLabel" label="Operator" placeholder="search operator…"
-				:search="w.searchOperators" :disabled="w.locked.value" @select="(i: any) => (w.link.operatorLabel = i.label)" />
-		</div>
-		<div class="links">
+		<div class="links pair">
 			<LookupField v-model="w.link.insertId" :display-label="w.link.insertLabel" label="Insert" placeholder="search insert code…"
 				:search="w.searchInserts" :disabled="w.locked.value" @select="(i: any) => { w.link.insertLabel = i.label; w.link.edgeId = ''; w.link.edgeLabel = ''; }" />
 			<LookupField v-model="w.link.edgeId" :display-label="w.link.edgeLabel" label="Edge" placeholder="search edge code…"
-				:search="searchEdgesForInsert" :disabled="w.locked.value" @select="(i: any) => (w.link.edgeLabel = i.label)" />
+				:search="searchEdgesForInsert" :disabled="w.locked.value"
+				@select="(i: any) => { w.link.edgeLabel = i.label; if (i.extra?.insertId) { w.link.insertId = i.extra.insertId; w.link.insertLabel = i.extra.insertLabel; } }" />
+		</div>
+		<div class="links">
+			<LookupField v-model="w.link.toolId" :display-label="w.link.toolLabel" label="Tool" placeholder="search tool name…"
+				:search="w.searchToolsForOp" :disabled="w.locked.value" @select="(i: any) => (w.link.toolLabel = i.label)" />
 		</div>
 		<div class="grid2">
 			<label>Coolant<input v-model="w.meta.coolant" :disabled="w.locked.value" /></label>
@@ -158,21 +158,6 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 		<label class="wide">Notes
 			<textarea v-model="w.meta.notes" rows="2" :disabled="w.locked.value"></textarea>
 		</label>
-
-		<!-- ─── Actions ─── -->
-		<TransportBar v-if="w.mode.value === 'playback'" />
-		<div v-else class="actions">
-			<button v-if="!w.locked.value" class="btn start" :disabled="w.busy.value || !w.st.connected" @click="w.start()">
-				<span class="material-symbols-rounded">fiber_manual_record</span> Start
-			</button>
-			<button v-else class="btn stop" :disabled="w.busy.value || w.isFinalizing.value" @click="w.stop()">
-				<span class="material-symbols-rounded">stop</span> {{ w.isFinalizing.value ? 'Finalizing…' : 'Stop' }}
-			</button>
-			<button v-if="w.isDone.value" class="btn ghost" @click="w.newRun()">New</button>
-		</div>
-		<p v-if="w.errMsg.value" class="err">{{ w.errMsg.value }}</p>
-		<p v-if="w.st.state === 'error' && w.st.error" class="err">{{ w.st.error.split('\n')[0] }}</p>
-
 	</div>
 </template>
 
@@ -205,16 +190,10 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 .section-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
 .section-divider::before, .section-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 .links { display: flex; flex-direction: column; }
+/* Two lookups side by side (Machine|Operator, Insert|Edge) to save vertical space. Each LookupField
+   is position:relative with its own absolute dropdown, so the grid columns don't clip the menus. */
+.links.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
 .hint { font-size: 11.5px; color: var(--text-dim); margin: 0; }
-.actions { display: flex; gap: 8px; margin-top: 4px; }
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; font-size: 13.5px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
-.btn .material-symbols-rounded { font-size: 18px; }
-.btn.start { background: #22c55e; color: #05210f; }
-.btn.stop { background: #ef4444; color: #2a0808; }
-.btn.save { background: var(--accent); color: var(--accent-ink); }
-.btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.err { color: var(--danger); font-size: 12px; margin: 4px 0 0; }
 .chks { display: flex; gap: 16px; margin-top: 4px; }
 .chk { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text); cursor: pointer; }
 .chk input { accent-color: var(--accent); }

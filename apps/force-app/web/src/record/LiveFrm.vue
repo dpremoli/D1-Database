@@ -6,10 +6,10 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import type { RecordClient } from './liveClient';
-import { COLORMAPS } from '@d1/force-plotting';
+import { COLORMAPS, type Axis } from '@d1/force-plotting';
 
-const props = withDefaults(defineProps<{ client: RecordClient; diam: number; colormap?: string; pointSize?: number; pointStride?: number }>(), {
-	colormap: 'viridis', pointSize: 1.8, pointStride: 1,
+const props = withDefaults(defineProps<{ client: RecordClient; diam: number; colormap?: string; pointSize?: number; pointStride?: number; axis?: Axis }>(), {
+	colormap: 'viridis', pointSize: 1.8, pointStride: 1, axis: 'Fz',
 });
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
@@ -106,9 +106,11 @@ function frame() {
 		// view's own colour scale exactly, computed once over the whole cut). A true live recording
 		// never sets these — it can't know its final range while still acquiring — so it falls back
 		// to the running |max|, symmetric about zero.
+		const axisMax = fm.cAbsMaxByAxis[props.axis];
 		const haveRange = fm.cHi !== undefined && fm.cLo !== undefined && fm.cHi > fm.cLo;
-		const cLo = haveRange ? fm.cLo! : -Math.max(1e-6, fm.cAbsMax);
-		const cSpan = haveRange ? (fm.cHi! - fm.cLo!) : 2 * Math.max(1e-6, fm.cAbsMax);
+		const cLo = haveRange ? fm.cLo! : -Math.max(1e-6, axisMax);
+		const cSpan = haveRange ? (fm.cHi! - fm.cLo!) : 2 * Math.max(1e-6, axisMax);
+		const cArr = props.axis === 'Fx' ? fm.cx : props.axis === 'Fy' ? fm.cy : fm.cz;
 		const pos = posAttr.array as Float32Array;
 		const col = colAttr.array as Float32Array;
 		// pointStride thins the LIVE map by keeping every Nth accumulated point (indexed on the
@@ -117,20 +119,29 @@ function frame() {
 		// the coarser decimation the backend already applies per-chunk.
 		const stride = Math.max(1, Math.round(props.pointStride) || 1);
 		const firstKept = from + ((stride - (from % stride)) % stride);
+		const writeStart = rendered;
 		for (let i = firstKept; i < to; i += stride) {
 			const x = fm.xy[i * 2], y = fm.xy[i * 2 + 1];
 			const w = rendered;
 			if (w >= CAP) break;
 			pos[w * 3] = x; pos[w * 3 + 1] = y; pos[w * 3 + 2] = 0;
 			if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
-			const tnorm = Math.min(1, Math.max(0, (fm.c[i] - cLo) / cSpan));
+			const tnorm = Math.min(1, Math.max(0, (cArr[i] - cLo) / cSpan));
 			const [r, g, b] = cm(tnorm);
 			col[w * 3] = r; col[w * 3 + 1] = g; col[w * 3 + 2] = b;
 			rendered++;
 		}
-		// Re-upload the attribute buffers (full upload — robust across three versions; point
-		// counts in 2a are modest and this only runs on frames that actually added points).
-		posAttr.needsUpdate = true; colAttr.needsUpdate = true;
+		// Only re-upload the newly-written slice, not the whole CAP-sized buffer — a plain
+		// needsUpdate=true (default updateRange covers the entire array) re-transfers the full
+		// 2M-point buffer to the GPU on every frame that adds even one point, which is what made
+		// long replays/recordings visibly stutter as the spiral grew. addUpdateRange restricts the
+		// upload to [writeStart, rendered) so transfer cost stays proportional to new points only.
+		if (rendered > writeStart) {
+			posAttr.clearUpdateRanges(); colAttr.clearUpdateRanges();
+			posAttr.addUpdateRange(writeStart * 3, (rendered - writeStart) * 3);
+			colAttr.addUpdateRange(writeStart * 3, (rendered - writeStart) * 3);
+			posAttr.needsUpdate = true; colAttr.needsUpdate = true;
+		}
 		geom!.setDrawRange(0, rendered);
 		uploaded = to;
 	}
@@ -151,6 +162,9 @@ watch(() => props.diam, () => sizeCanvas());
 // Changing the decimation live re-renders the WHOLE accumulated spiral at the new density
 // (not just future points) so the displayed map is consistent at a single stride throughout.
 watch(() => props.pointStride, () => resetUpload());
+// Switching axis must recolour the entire accumulated spiral (all cx/cy/cz are already
+// resident client-side), not just future points — same rebuild as a stride change.
+watch(() => props.axis, () => resetUpload());
 onMounted(() => { setup(); window.addEventListener('resize', sizeCanvas); ro = new ResizeObserver(sizeCanvas); if (canvasEl.value) ro.observe(canvasEl.value); nextTick(sizeCanvas); });
 onBeforeUnmount(() => {
 	cancelAnimationFrame(raf);
@@ -170,7 +184,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.live-frm { position: relative; width: 100%; height: 100%; min-height: 200px; border-radius: 8px; overflow: hidden; background: #0b1020; }
+.live-frm { position: relative; width: 100%; height: 100%; min-height: 200px; border-radius: 8px; overflow: hidden; background: var(--plot-bg); }
 .live-frm canvas { width: 100%; height: 100%; display: block; }
-.pts { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,0.6); font-variant-numeric: tabular-nums; }
+.pts { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 </style>

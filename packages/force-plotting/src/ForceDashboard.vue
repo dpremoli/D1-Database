@@ -97,6 +97,11 @@ const frmMode = ref<'figure' | 'lite' | 'full'>(fastConnection() ? 'lite' : 'fig
 // Editable geometry (seeded from the cache on load; user edits drive the cloud).
 const cropStartSec = ref(0);
 const cropEndSec = ref(0);
+// "Save crop as official" flow (see saveCropAsOfficial). Two-step: the button reveals an inline
+// Confirm so the write only ever happens on an explicit apply, never mid-drag.
+const cropSavePrompt = ref(false);
+const cropSaving = ref(false);
+const cropSavedMsg = ref('');
 const editFeed = ref(0.1);
 const editDiam = ref(80);
 const editInnerDiam = ref(0);   // donut/diaphragm inner Ø (mm); 0 = solid disc
@@ -261,10 +266,12 @@ function pickDefaultMode(): 'figure' | 'lite' | 'full' {
 watch(() => detail.value?.id, () => {
 	displayedPoints.value = 0;
 	octreeMsg.value = null;   // clear any stale build message from the previous op
-	// Reset the Live crop handles to the new op's auto-crop immediately (else the
-	// previous op's crop lines linger until its live cache reloads). onCloudLoaded then
-	// refines these from the cache once it arrives.
-	if (cropWindow.value) { cropStartSec.value = cropWindow.value.start; cropEndSec.value = cropWindow.value.end; }
+	// Reset the Live crop handles to the new op's crop immediately (else the previous op's crop
+	// lines linger until its live cache reloads). A saved override wins over the derived auto-crop;
+	// onCloudLoaded then refines from the cache (but only when there's no override to respect).
+	cropSavePrompt.value = false; cropSavedMsg.value = '';
+	const initCrop = savedCropSec.value || cropWindow.value;
+	if (initCrop) { cropStartSec.value = initCrop.start; cropEndSec.value = initCrop.end; }
 	else { cropStartSec.value = 0; cropEndSec.value = 0; }
 	gridFull.value = false;
 	frmMode.value = pickDefaultMode();
@@ -1111,6 +1118,48 @@ const cropWindow = computed(() => {
 	return { start: d.cut_start_idx / d.sample_rate, end: d.cut_end_idx / d.sample_rate };
 });
 
+// A human-saved crop override (crop_start_idx_override / crop_end_idx_override on the op record),
+// in seconds. When present it wins over both the derived cut_start_idx and the cache's own csSec —
+// mirroring how outer_diameter overrides the cache's diameter. NULL columns = follow the derived
+// auto-crop, so "reset to auto" and a reprocess both still land on the machine-detected window.
+const savedCropSec = computed(() => {
+	const d = detail.value;
+	if (!d || !d.sample_rate || d.crop_start_idx_override == null || d.crop_end_idx_override == null) return null;
+	return { start: d.crop_start_idx_override / d.sample_rate, end: d.crop_end_idx_override / d.sample_rate };
+});
+// The current handle position differs from what's persisted (override if saved, else the auto
+// window) by more than a sample — i.e. there's something worth offering to save. Only meaningful
+// in Live mode, where the handles are actually editable.
+const cropDirty = computed(() => {
+	const d = detail.value;
+	if (!liveOn.value || !d || !d.sample_rate) return false;
+	const base = savedCropSec.value || cropWindow.value;
+	if (!base) return cropStartSec.value > 0 || cropEndSec.value > 0;
+	const tol = 1 / d.sample_rate;   // one sample
+	return Math.abs(cropStartSec.value - base.start) > tol || Math.abs(cropEndSec.value - base.end) > tol;
+});
+// Persist the current crop handles as the op's official crop (see the migration
+// 20260828000103_force_crop_override). Writes sample indices, not seconds, to match cut_start_idx.
+// Editing the handles back to the auto window and saving clears the override (NULL = follow auto).
+async function saveCropAsOfficial() {
+	const d = detail.value;
+	if (!d?.id || !d.sample_rate || cropSaving.value) return;
+	cropSaving.value = true; cropSavedMsg.value = '';
+	const auto = cropWindow.value;
+	const tol = 1 / d.sample_rate;
+	const backToAuto = !!auto && Math.abs(cropStartSec.value - auto.start) <= tol && Math.abs(cropEndSec.value - auto.end) <= tol;
+	const startIdx = backToAuto ? null : Math.max(0, Math.round(cropStartSec.value * d.sample_rate));
+	const endIdx = backToAuto ? null : Math.max(0, Math.round(cropEndSec.value * d.sample_rate));
+	try {
+		await api.patch(`/items/machining_force_analysis/${d.id}`, { crop_start_idx_override: startIdx, crop_end_idx_override: endIdx });
+		d.crop_start_idx_override = startIdx; d.crop_end_idx_override = endIdx;   // so cropDirty/savedCropSec update
+		cropSavedMsg.value = backToAuto ? 'Reverted to auto crop' : 'Saved as official crop';
+		window.setTimeout(() => { cropSavedMsg.value = ''; }, 2500);
+	} catch (e: any) {
+		cropSavedMsg.value = e?.response?.status === 403 ? 'Not permitted to save' : 'Save failed';
+	} finally { cropSaving.value = false; cropSavePrompt.value = false; }
+}
+
 // Live and the chart mode (Force/FFT) are independent: Live drives the FRM cloud +
 // editable crop, while the signal graphs can still be flipped to FFT. The crop
 // range the force plots shade/drag is the live editable one when Live is on.
@@ -1224,8 +1273,11 @@ watch(chartMode, (m) => {
 // Seed the editable controls from the loaded cache (FrmCloud emits this once the
 // binary is parsed). User edits thereafter drive the cloud; Reset restores these.
 function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam: number; rpm: number; Fs: number; N: number }) {
-	cropStartSec.value = meta.csSec;
-	cropEndSec.value = meta.ceSec;
+	// A human-saved override beats the cache's own auto-detected csSec/ceSec (the cache was baked
+	// before the correction, so its header is stale) — same "override beats cache header" rule as
+	// the diameter below. Absent an override, the cache's crop is the best available.
+	if (savedCropSec.value) { cropStartSec.value = savedCropSec.value.start; cropEndSec.value = savedCropSec.value.end; }
+	else { cropStartSec.value = meta.csSec; cropEndSec.value = meta.ceSec; }
 	editFeed.value = cleanFloat(meta.feed);
 	editDiam.value = cleanFloat(meta.diam);
 	const od = Number(detail.value?.outer_diameter);
@@ -1676,7 +1728,17 @@ function fmtDateTime(v: string | null | undefined) {
 						<div v-if="item.type === 'signals'" class="card col-charts pg-card">
 							<div class="pg-bar">
 								<span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span>
-								<span class="pg-title"><v-icon name="insights" x-small /> Signals<span v-if="liveOn" class="live-badge">LIVE · drag to crop</span></span>
+								<span class="pg-title"><v-icon name="insights" x-small /> Signals<span v-if="liveOn" class="live-badge">LIVE · drag to crop</span>
+									<template v-if="liveOn && (cropDirty || cropSavePrompt || cropSavedMsg)">
+										<button v-if="!cropSavePrompt && !cropSavedMsg" class="crop-save" title="Persist this crop as the operation's official crop window" @click.stop="cropSavePrompt = true">Save crop</button>
+										<span v-if="cropSavePrompt" class="crop-confirm" @click.stop>
+											Save as official crop?
+											<button class="cc-yes" :disabled="cropSaving" @click="saveCropAsOfficial">{{ cropSaving ? '…' : 'Save' }}</button>
+											<button class="cc-no" :disabled="cropSaving" @click="cropSavePrompt = false">Cancel</button>
+										</span>
+										<span v-if="cropSavedMsg" class="crop-msg">{{ cropSavedMsg }}</span>
+									</template>
+								</span>
 								<div class="toggle pg-tools">
 									<button class="tbtn icobtn" :class="{ on: rectZoomTool }" title="Rectangular zoom — drag a box on any graph"
 										:style="rectZoomTool ? { background: '#0ea5e9', borderColor: '#0ea5e9' } : {}"
@@ -2164,6 +2226,17 @@ function fmtDateTime(v: string | null | undefined) {
 /* Live badge + collapse chevrons */
 .live-badge { margin-left: 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.06em; color: #7c3aed;
 	background: color-mix(in srgb, #7c3aed 12%, transparent); padding: 2px 7px; border-radius: 99px; }
+/* "Save crop as official" affordance — only appears once the handles have been moved (cropDirty). */
+.crop-save { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: #0ea5e9; cursor: pointer;
+	background: color-mix(in srgb, #0ea5e9 12%, transparent); border: 1px solid color-mix(in srgb, #0ea5e9 45%, transparent);
+	padding: 2px 8px; border-radius: 99px; }
+.crop-save:hover { background: color-mix(in srgb, #0ea5e9 22%, transparent); }
+.crop-confirm { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: var(--theme--foreground, #e2e8f0); display: inline-flex; align-items: center; gap: 6px; }
+.crop-confirm .cc-yes, .crop-confirm .cc-no { font-size: 9.5px; font-weight: 700; cursor: pointer; padding: 2px 8px; border-radius: 99px; border: 1px solid transparent; }
+.crop-confirm .cc-yes { color: #fff; background: #0ea5e9; }
+.crop-confirm .cc-yes:disabled { opacity: 0.6; cursor: default; }
+.crop-confirm .cc-no { color: var(--theme--foreground-subdued, #94a3b8); background: transparent; border-color: color-mix(in srgb, currentColor 40%, transparent); }
+.crop-msg { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: #22c55e; }
 .collapsebtn, .chevbtn {
 	display: inline-flex; align-items: center; justify-content: center; border: 0; cursor: pointer; padding: 1px;
 	margin-left: 4px; color: var(--theme--foreground-subdued, #94a3b8); background: transparent; border-radius: 6px;

@@ -61,22 +61,33 @@ export class RecordClient {
 	trace = emptyTrace();
 	windowSec = 12;
 
-	// FRM points, preallocated; filled incrementally. count = live points; cCap for colour scaling
+	// FRM points, preallocated; filled incrementally. count = live points; cCap for colour scaling.
+	// cx/cy/cz carry ALL three axis forces per point (not just whichever axis was selected when the
+	// point was drawn) so the FRM colour axis can be switched at any time and instantly recolour the
+	// whole accumulated spiral — see LiveFrm.vue, which picks one of the three at render time.
 	private cap = 2_000_000;
 	// cLo/cHi: optional percentile-based colour bounds, set once by playback (which has the whole
 	// cut up front and can match the finished-cut view's colour scale exactly) and left undefined
 	// for a true live recording (which cannot know its own final range ahead of time and falls
-	// back to cAbsMax's running-max, symmetric-about-zero scheme — see LiveFrm.vue's frame()).
-	frm = { xy: new Float32Array(this.cap * 2), c: new Float32Array(this.cap), count: 0, cAbsMax: 1, cLo: undefined as number | undefined, cHi: undefined as number | undefined };
+	// back to cAbsMaxByAxis's running-max, symmetric-about-zero scheme — see LiveFrm.vue's frame()).
+	frm = {
+		xy: new Float32Array(this.cap * 2), cx: new Float32Array(this.cap), cy: new Float32Array(this.cap), cz: new Float32Array(this.cap),
+		count: 0, cAbsMaxByAxis: { Fx: 1, Fy: 1, Fz: 1 } as Record<'Fx' | 'Fy' | 'Fz', number>,
+		cLo: undefined as number | undefined, cHi: undefined as number | undefined,
+	};
 
 	private ws: WebSocket | null = null;
 	private base = getConfig().recorderUrl;
 	get baseUrl() { return this.base; }
+	// Playback (engine.ts) has no per-frame room check like onFrame's below — it needs to know the
+	// buffer's real size up front so it can pick a stride that can never overflow it.
+	get frmCapacity() { return this.cap; }
 	private relay: BroadcastChannel | null = null;
 	// Whether a pop-out window has ever announced itself on the channel. Until one does, relaying
 	// every decoded frame is pure overhead on the acquisition PC (a structured clone per frame, at
 	// full frame rate, that nothing receives) — and the common case is that no pop-out is open.
 	private hasRelayPeer = false;
+	private lastRelayAt = 0;
 
 	// Build the absolute ws(s):// stream URL. `base` may be an absolute http(s) URL (dev, e.g.
 	// http://localhost:8200) or a same-origin relative path (deploy, /recorder proxied by Caddy).
@@ -150,6 +161,20 @@ export class RecordClient {
 		return JSON.parse(JSON.stringify(this.status));
 	}
 
+	// Playback (engine.ts) never touches `ws` — it writes frm/trace directly and bumps frameSeq
+	// itself — so the ws.onmessage raw-frame relay above, which only fires on real WebSocket
+	// traffic, never runs during a replay. That left a pop-out/cloned window frozen on whatever
+	// frame it had when playback started. Called from the playback tick loop instead, throttled
+	// so a full snapshot (structured-clone of the growing typed arrays) goes out at most 5x/sec —
+	// plenty for a viewer window, and far cheaper than snapshotting every animation frame.
+	relayTick() {
+		if (!this.hasRelayPeer) return;
+		const now = performance.now();
+		if (now - this.lastRelayAt < 200) return;
+		this.lastRelayAt = now;
+		this.sendSnapshot();
+	}
+
 	private sendSnapshot() {
 		try {
 			const fm = this.frm;
@@ -157,7 +182,10 @@ export class RecordClient {
 			const snap = {
 				type: 'snapshot',
 				status: this.plainStatus(),
-				frm: { xy: fm.xy.slice(0, n * 2), c: fm.c.slice(0, n), count: n, cAbsMax: fm.cAbsMax, cLo: fm.cLo, cHi: fm.cHi },
+				frm: {
+					xy: fm.xy.slice(0, n * 2), cx: fm.cx.slice(0, n), cy: fm.cy.slice(0, n), cz: fm.cz.slice(0, n),
+					count: n, cAbsMaxByAxis: { ...fm.cAbsMaxByAxis }, cLo: fm.cLo, cHi: fm.cHi,
+				},
 				trace: { t: this.trace.t.slice(), fx: this.trace.fx.slice(), fy: this.trace.fy.slice(), fz: this.trace.fz.slice(),
 					sub: Object.fromEntries(Object.entries(this.trace.sub).map(([k, v]) => [k, v.slice()])) },
 				fft: this.fft ? { ...this.fft } : null,
@@ -167,7 +195,7 @@ export class RecordClient {
 			this.relay?.postMessage(snap);
 		} catch (e) {
 			console.warn('[force-app] snapshot sync to pop-out window failed:', e);
-			this.relay?.postMessage({ type: 'snapshot', status: this.plainStatus(), frm: { xy: new Float32Array(0), c: new Float32Array(0), count: 0, cAbsMax: 1 }, trace: null, fft: null, fftFreq: [], fftHistory: [] });
+			this.relay?.postMessage({ type: 'snapshot', status: this.plainStatus(), frm: { xy: new Float32Array(0), cx: new Float32Array(0), cy: new Float32Array(0), cz: new Float32Array(0), count: 0, cAbsMaxByAxis: { Fx: 1, Fy: 1, Fz: 1 } }, trace: null, fft: null, fftFreq: [], fftHistory: [] });
 		}
 	}
 
@@ -177,15 +205,17 @@ export class RecordClient {
 			const n = snap.frm.count || 0;
 			if (n > 0) {
 				const xy = snap.frm.xy instanceof Float32Array ? snap.frm.xy : Float32Array.from(snap.frm.xy);
-				const c = snap.frm.c instanceof Float32Array ? snap.frm.c : Float32Array.from(snap.frm.c);
-				if (xy.length >= n * 2 && c.length >= n) {
+				const cx = snap.frm.cx instanceof Float32Array ? snap.frm.cx : Float32Array.from(snap.frm.cx ?? []);
+				const cy = snap.frm.cy instanceof Float32Array ? snap.frm.cy : Float32Array.from(snap.frm.cy ?? []);
+				const cz = snap.frm.cz instanceof Float32Array ? snap.frm.cz : Float32Array.from(snap.frm.cz ?? []);
+				if (xy.length >= n * 2 && cx.length >= n && cy.length >= n && cz.length >= n) {
 					this.frm.xy.set(xy, 0);
-					this.frm.c.set(c, 0);
+					this.frm.cx.set(cx, 0); this.frm.cy.set(cy, 0); this.frm.cz.set(cz, 0);
 					this.frm.count = n;
-					this.frm.cAbsMax = snap.frm.cAbsMax;
+					this.frm.cAbsMaxByAxis = snap.frm.cAbsMaxByAxis ?? { Fx: 1, Fy: 1, Fz: 1 };
 					this.frm.cLo = snap.frm.cLo; this.frm.cHi = snap.frm.cHi;
 				} else {
-					console.warn('[force-app] snapshot frm data too small: need xy[', n * 2, '], c[', n, ']');
+					console.warn('[force-app] snapshot frm data too small: need xy[', n * 2, '], cx/cy/cz[', n, ']');
 				}
 			}
 		}
@@ -243,7 +273,7 @@ export class RecordClient {
 		off += nTrace * 7 * 4;
 		const sub = nSub ? new Float32Array(buf, off, nTrace * nSub * 2) : null;
 		off += nSub ? nTrace * nSub * 2 * 4 : 0;
-		const pts = new Float32Array(buf, off, nPts * 3);
+		const pts = new Float32Array(buf, off, nPts * 5); // x, y, cx, cy, cz (D1LF v3)
 
 		const nSubUse = Math.min(nSub, SUB_NAMES.length);
 		for (let i = 0; i < nTrace; i++) {
@@ -270,14 +300,17 @@ export class RecordClient {
 		const start = this.frm.count;
 		const room = this.cap - start;
 		const take = Math.min(nPts, room);
+		const peaksByAxis = this.frm.cAbsMaxByAxis;
 		for (let i = 0; i < take; i++) {
-			const s = i * 3;
+			const s = i * 5;
 			this.frm.xy[(start + i) * 2] = pts[s];
 			this.frm.xy[(start + i) * 2 + 1] = pts[s + 1];
-			const c = pts[s + 2];
-			this.frm.c[start + i] = c;
-			const a = Math.abs(c);
-			if (a > this.frm.cAbsMax) this.frm.cAbsMax = a;
+			const cx = pts[s + 2], cy = pts[s + 3], cz = pts[s + 4];
+			this.frm.cx[start + i] = cx; this.frm.cy[start + i] = cy; this.frm.cz[start + i] = cz;
+			const ax = Math.abs(cx), ay = Math.abs(cy), az = Math.abs(cz);
+			if (ax > peaksByAxis.Fx) peaksByAxis.Fx = ax;
+			if (ay > peaksByAxis.Fy) peaksByAxis.Fy = ay;
+			if (az > peaksByAxis.Fz) peaksByAxis.Fz = az;
 		}
 		this.frm.count = start + take;
 		this.frameSeq.value++;
@@ -317,7 +350,10 @@ export class RecordClient {
 
 	reset() {
 		this.trace = emptyTrace();
-		this.frm = { xy: new Float32Array(this.cap * 2), c: new Float32Array(this.cap), count: 0, cAbsMax: 1, cLo: undefined, cHi: undefined };
+		this.frm = {
+			xy: new Float32Array(this.cap * 2), cx: new Float32Array(this.cap), cy: new Float32Array(this.cap), cz: new Float32Array(this.cap),
+			count: 0, cAbsMaxByAxis: { Fx: 1, Fy: 1, Fz: 1 }, cLo: undefined, cHi: undefined,
+		};
 		this.fft = null; this.fftHistory = []; this.fftSeq.value++;
 		this.status.state = 'idle'; this.status.error = null; this.status.summary = null;
 		this.status.captureId = null; this.status.nTotal = 0; this.status.tSec = 0;

@@ -24,7 +24,7 @@ const channels = ref<string[]>(q.get('channels')?.split(',').filter(Boolean) || 
 const windowSec = ref(Number(q.get('window')) || 12);
 const initColormap = ref<string>(q.get('colormap') || 'viridis');
 const initPointSize = ref(Number(q.get('pointSize')) || 2.2);
-const initFrmAxis = ref<string>(q.get('frmAxis') || 'Fz');
+const frmAxis = ref<'Fx' | 'Fy' | 'Fz'>((q.get('frmAxis') as 'Fx' | 'Fy' | 'Fz') || 'Fz');
 const initStride = ref(Number(q.get('stride')) || 1);
 
 const MODES: { key: string; label: string }[] = [
@@ -73,6 +73,11 @@ onBeforeUnmount(() => client.disconnect());
 			<span class="title">{{ title }}</span>
 			<span class="state" :class="st.state">{{ st.state }}</span>
 			<template v-if="isFrm">
+				<div class="segmode">
+					<button class="segbtn" :class="{ on: frmAxis === 'Fx' }" @click="frmAxis = 'Fx'">Fx</button>
+					<button class="segbtn" :class="{ on: frmAxis === 'Fy' }" @click="frmAxis = 'Fy'">Fy</button>
+					<button class="segbtn" :class="{ on: frmAxis === 'Fz' }" @click="frmAxis = 'Fz'">Fz</button>
+				</div>
 				<select v-model="colormap" class="cm"><option v-for="m in maps" :key="m">{{ m }}</option></select>
 			</template>
 			<template v-else>
@@ -116,7 +121,7 @@ onBeforeUnmount(() => client.disconnect());
 				<span>Syncing with parent…</span>
 			</div>
 			<template v-else>
-				<LiveFrm v-if="isFrm" :client="client" :diam="80" :colormap="colormap" :point-size="pointSize" :point-stride="initStride" />
+				<LiveFrm v-if="isFrm" :client="client" :diam="80" :colormap="colormap" :point-size="pointSize" :point-stride="initStride" :axis="frmAxis" />
 				<LiveForcePlot v-else-if="mode === 'time'" :client="client" :channels="channels" />
 				<LiveFft v-else-if="mode === 'fft' || mode === 'psd'" :client="client" :channels="channels" :scale="mode === 'psd' ? 'psd' : 'amp'" />
 				<LiveSpectrogram v-else-if="mode === 'spectrogram'" :client="client" :channels="channels" :window-sec="windowSec" />

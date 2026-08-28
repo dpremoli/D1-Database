@@ -36,14 +36,15 @@ function openLive() {
 		</div>
 		<div class="frm-body">
 		<FrmCloud v-if="w.isDone.value && w.finishedCache.value" cache-file-id="" :cache-override="w.finishedCache.value"
-			:axis="w.plot.frmAxis" :feed="w.finishedCache.value.feed" :diam="w.finishedCache.value.diam" :inner-diam="w.cfg.inner_diam"
+			:axis="w.plot.frmAxis" :feed="w.finishedCache.value.feed" :diam="w.finishedCache.value.diam"
+			:inner-diam="w.mode.value === 'playback' ? (w.replay.innerDiam ?? 0) : w.cfg.inner_diam"
 			speed-mode="measured" :rpm="w.cfg.rpm" :vc="0" :time-scale="1" :ppr="w.cfg.ppr"
 			:crop-start-sec="w.finishedCache.value.csSec" :crop-end-sec="w.finishedCache.value.ceSec"
 			:stride="1" :gridding="false" :grid-n="600" :point-size="w.plot.pointSize" :colormap="w.plot.colormap" pane-label="captured" />
 		<!-- diam is only the empty-canvas fallback (LiveFrm auto-fits to the real point bounds), but
 			 in playback it should still describe the cut being played, not the recording form. -->
 		<LiveFrm v-else :client="w.client" :diam="w.mode.value === 'playback' ? (w.replay.diam || w.cfg.diam) : w.cfg.diam"
-			:colormap="w.plot.colormap" :point-size="w.plot.pointSize" :point-stride="w.plot.liveFrmStride" />
+			:colormap="w.plot.colormap" :point-size="w.plot.pointSize" :point-stride="w.plot.liveFrmStride" :axis="w.plot.frmAxis" />
 		</div>
 	</div>
 </template>

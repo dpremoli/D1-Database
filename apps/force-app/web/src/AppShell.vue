@@ -5,6 +5,7 @@ import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { authStore } from './authStore';
 import { syncStatus } from './record/directusSync';
+import { hwStatus } from './record/hwStatus';
 import { alarmController } from './record/alarms';
 import { appUrl } from './appUrl';
 
@@ -22,8 +23,8 @@ const nav = [
 	{ to: '/settings', icon: 'settings', label: 'Settings' },
 ];
 async function signOut() { await authStore.logout(); router.replace('/login'); }
-// Collapsed to just the brand-mark (the 3 Fx/Fy/Fz dots) in the top-left corner most of the time —
-// it overlays the page rather than reserving a permanent 96px column, expanding on hover so it
+// Collapsed to a 3-vertical-dot handle at the left-middle of the screen most of the time — it
+// overlays the page rather than reserving a permanent 96px column, sliding out on hover so it
 // doesn't compete with the recording panels for width.
 const expanded = ref(false);
 // Multi-monitor: pop a section into its own window (e.g. Plot while recording). Same origin, so the
@@ -34,11 +35,14 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 <template>
 	<div class="shell">
 		<nav class="sidebar" :class="{ expanded }" @mouseenter="expanded = true" @mouseleave="expanded = false">
-			<div class="brand">
-				<span class="brand-mark"><i class="dot fx"></i><i class="dot fy"></i><i class="dot fz"></i></span>
-				<span class="brand-name" v-show="expanded">Force</span>
+			<div class="trigger" v-show="!expanded">
+				<span class="vdot fx"></span><span class="vdot fy"></span><span class="vdot fz"></span>
 			</div>
 			<div class="navwrap" v-show="expanded">
+				<div class="brand">
+					<span class="brand-mark"><i class="dot fx"></i><i class="dot fy"></i><i class="dot fz"></i></span>
+					<span class="brand-name">Force</span>
+				</div>
 				<div v-for="n in nav" :key="n.to" class="navrow">
 					<router-link :to="n.to" class="navitem" active-class="active">
 						<span class="material-symbols-rounded">{{ n.icon }}</span>
@@ -51,6 +55,27 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 					</button>
 				</div>
 				<div class="spacer"></div>
+				<div class="statuswrap">
+					<div v-if="syncStatus.pending > 0 || syncStatus.lastError" class="chip" :class="syncStatus.pending > 0 ? 'warn' : 'err'"
+						:title="syncStatus.lastError || `${syncStatus.pending} run record(s) queued offline`">
+						<span class="material-symbols-rounded">{{ syncStatus.pending > 0 ? 'cloud_queue' : 'error' }}</span>
+						<span v-if="syncStatus.pending > 0" class="chip-lbl">{{ syncStatus.pending }}</span>
+					</div>
+					<div v-if="hwStatus.diskFreeGb >= 0" class="chip" :class="{ warn: hwStatus.diskFreeGb < 10, crit: hwStatus.diskFreeGb < 5 }"
+						:title="`${hwStatus.diskFreeGb.toFixed(1)} GB free of ${hwStatus.diskTotalGb.toFixed(0)} GB`">
+						<span class="material-symbols-rounded">hard_drive</span>
+						<span class="chip-lbl">{{ hwStatus.diskFreeGb < 100 ? hwStatus.diskFreeGb.toFixed(1) : Math.round(hwStatus.diskFreeGb) }} GB</span>
+					</div>
+					<div v-if="hwStatus.backupEnabled" class="chip"
+						:class="{ warn: hwStatus.backupState === 'paused', ok: hwStatus.backupState === 'streaming', err: hwStatus.backupState === 'error' }"
+						:title="hwStatus.backupError || `Backup ${hwStatus.backupState || 'idle'} · ${hwStatus.backupProgress.toFixed(0)}%`">
+						<span class="material-symbols-rounded">{{ hwStatus.backupConnected ? 'cloud_done' : 'cloud_off' }}</span>
+						<span v-if="hwStatus.backupState === 'streaming'" class="chip-lbl">{{ hwStatus.backupProgress.toFixed(0) }}%</span>
+					</div>
+					<div v-if="hwStatus.diskFreeGb >= 0" class="chip" :class="{ ok: hwStatus.connected }" :title="hwStatus.connected ? 'Backend connected' : 'Backend disconnected'">
+						<span class="material-symbols-rounded">{{ hwStatus.connected ? 'sensors' : 'sensors_off' }}</span>
+					</div>
+				</div>
 				<div class="user">
 					<span class="who">{{ userName }}</span>
 					<button class="signout" title="Sign out" @click="signOut"><span class="material-symbols-rounded">logout</span></button>
@@ -64,14 +89,17 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 <style scoped>
 .shell { display: flex; min-height: 100vh; }
 .sidebar {
-	position: fixed; top: 0; left: 0; z-index: 200;
-	width: 40px; height: 40px; overflow: hidden;
-	display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 8px;
-	background: var(--bg-2); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
-	border-bottom-right-radius: 14px;
-	transition: width 0.16s ease, height 0.16s ease, border-radius 0.16s ease;
+	position: fixed; top: 50%; left: 0; transform: translateY(-50%); z-index: 200;
+	width: 30px; height: 120px; overflow: hidden;
+	display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 8px 2px;
+	background: var(--bg-2); border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+	border-radius: 0 14px 14px 0;
+	transition: width 0.16s ease, height 0.16s ease, border-radius 0.16s ease, top 0.16s ease, transform 0.16s ease, padding 0.16s ease;
 }
-.sidebar.expanded { width: 96px; height: 100vh; border-bottom-right-radius: 0; box-shadow: 8px 0 28px rgba(0,0,0,0.28); }
+.sidebar.expanded { top: 0; transform: translateY(0); width: 96px; height: 100vh; padding: 8px; border-radius: 0; box-shadow: 8px 0 28px rgba(0,0,0,0.28); }
+.trigger { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; flex: 1; }
+.vdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.vdot.fx { background: var(--fx); } .vdot.fy { background: var(--fy); } .vdot.fz { background: var(--fz); }
 .navwrap { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 4px; }
 .brand { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 0 0 8px; flex-shrink: 0; }
 .brand-mark { display: inline-flex; gap: 3px; padding: 6px; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); }
@@ -93,11 +121,19 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 .badge.alarm { color: #fff; background: #ef4444; animation: b 0.8s infinite; }
 @keyframes b { 50% { opacity: 0.35; } }
 .spacer { flex: 1; }
+.statuswrap { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
+.chip { display: inline-flex; align-items: center; justify-content: center; gap: 3px; width: 100%; padding: 4px 2px; border-radius: 7px; font-size: 9.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-dim); border: 1px solid var(--border); }
+.chip .material-symbols-rounded { font-size: 15px; }
+.chip.ok { color: #4ade80; }
+.chip.warn { color: #fbbf24; background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.3); }
+.chip.crit { color: #ef4444; background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); animation: alarmpulse 0.9s ease-in-out infinite; }
+.chip.err { color: var(--danger); background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); }
+@keyframes alarmpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 .user { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
 .who { font-size: 9.5px; color: var(--text-dim); text-align: center; word-break: break-word; max-width: 82px; }
 .signout { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); color: var(--text); cursor: pointer; }
 .signout:hover { background: var(--surface-2); }
 /* The sidebar is fixed/overlaid — it expands over the page on hover rather than pushing content —
-   so content needs no reserved margin at all; the collapsed 40px corner badge sits on top of it. */
+   so content needs no reserved margin at all; the collapsed left-middle dot handle sits on top of it. */
 .content { flex: 1; min-width: 0; }
 </style>

@@ -5,11 +5,18 @@ Layout: 48-byte header
     peakFx f32 | peakFy f32 | peakFz f32 | nTotal u32 | nTrace u32 | nSub u32 | nPts u32
 then trace float32[nTrace*7]            (t, fxmin,fxmax, fymin,fymax, fzmin,fzmax)   — summed axes
 then sub   float32[nTrace*nSub*2]       (min,max per sub-channel per bin)            — per-channel
-then pts   float32[nPts*3]              (x, y, c)
+then pts   float32[nPts*5]              (x, y, cx, cy, cz)
 
 v2 adds the per-sub-channel envelope block (nSub channels, min/max per bin, same bins as trace) so
 the client can plot any individual dyno sub-channel live, not just the summed axes. nSub=0 => no
 block (backward-compatible with callers that don't pass one).
+
+v3 widens pts from (x, y, c) to (x, y, cx, cy, cz): a live/replayed frame used to bake in whichever
+axis was selected when the point was FIRST drawn, so switching the FRM colour axis mid-recording
+silently did nothing to already-plotted points (FrmIntegrator.process baked one axis into the wire
+format at stream time). Streaming all three lets the client recolour the whole accumulated spiral
+instantly, the same way the finished-cut view (which reads Fx/Fy/Fz straight from the D1LC cache)
+already can.
 """
 
 from __future__ import annotations
@@ -21,7 +28,7 @@ import numpy as np
 MAGIC = b"D1LF"
 _HEADER = "<4sIIfffffIIII"
 HEADER_SIZE = struct.calcsize(_HEADER)  # 48
-VERSION = 2
+VERSION = 3
 
 
 def encode_frame(
@@ -31,7 +38,7 @@ def encode_frame(
     peaks: tuple[float, float, float],
     n_total: int,
     trace: np.ndarray,  # (nTrace, 7) float32
-    pts: np.ndarray,  # (nPts, 3) float32
+    pts: np.ndarray,  # (nPts, 5) float32 — x, y, cx, cy, cz
     sub: np.ndarray | None = None,  # (nTrace, nSub*2) float32 min/max per sub-channel, or None
 ) -> bytes:
     n_trace = int(trace.shape[0])
@@ -75,7 +82,7 @@ def decode_frame(buf: bytes) -> dict:
             n_trace, n_sub * 2
         )
         off += n_trace * n_sub * 2 * 4
-    pts = np.frombuffer(buf, dtype="<f4", count=n_pts * 3, offset=off).reshape(n_pts, 3)
+    pts = np.frombuffer(buf, dtype="<f4", count=n_pts * 5, offset=off).reshape(n_pts, 5)
     return {
         "version": version,
         "seq": seq,

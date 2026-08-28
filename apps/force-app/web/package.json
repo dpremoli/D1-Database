@@ -10,7 +10,8 @@
     "build:desktop": "vite build --mode desktop --outDir dist-desktop",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "lint:theme": "node scripts/check-theme-colors.mjs"
   },
   "dependencies": {
     "@d1/force-plotting": "*",

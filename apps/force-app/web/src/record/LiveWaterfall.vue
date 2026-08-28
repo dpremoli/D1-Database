@@ -4,6 +4,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { RecordClient } from './liveClient';
 import { CH_COLOR } from './types';
+import { theme } from '../theme';
 
 const props = withDefaults(defineProps<{ client: RecordClient; channels?: string[]; windowSec?: number }>(), { windowSec: 12 });
 const canvasEl = ref<HTMLCanvasElement | null>(null);
@@ -34,8 +35,9 @@ function resize() {
 function draw() {
 	const c = canvasEl.value; if (!c || !ctx) return;
 	const W = c.clientWidth, H = c.clientHeight;
+	const plotBg = getComputedStyle(document.documentElement).getPropertyValue('--plot-bg').trim() || '#0b1020';
 	ctx.clearRect(0, 0, W, H);
-	ctx.fillStyle = '#0b1020'; ctx.fillRect(0, 0, W, H);
+	ctx.fillStyle = plotBg; ctx.fillRect(0, 0, W, H);
 	const ch = chan.value;
 	const f = props.client.fft?.f;
 	const all = props.client.fftHistory.filter((h) => h.spectra[ch] && h.spectra[ch].length);
@@ -71,13 +73,15 @@ function draw() {
 	ctx.globalAlpha = 1;
 	ctx.fillStyle = base; ctx.font = '11px system-ui'; ctx.textAlign = 'left';
 	ctx.fillText(`${ch} waterfall`, 8, 14);
-	ctx.fillStyle = 'rgba(226,232,240,0.55)'; ctx.textAlign = 'right';
+	ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-dim').trim() || 'rgba(226,232,240,0.55)';
+	ctx.textAlign = 'right';
 	ctx.fillText(`${Math.round(fmax)} Hz`, W - 6, H - 4); ctx.textAlign = 'left';
 }
 
 watch(() => props.client.fftSeq.value, draw);
 watch(chan, draw);
 watch(() => props.windowSec, draw);
+watch(theme, draw);
 onMounted(() => { resize(); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); });
 onBeforeUnmount(() => ro?.disconnect());
 </script>
@@ -87,6 +91,6 @@ onBeforeUnmount(() => ro?.disconnect());
 </template>
 
 <style scoped>
-.live-wf { width: 100%; height: 100%; min-height: 140px; border-radius: 8px; overflow: hidden; background: #0b1020; }
+.live-wf { width: 100%; height: 100%; min-height: 140px; border-radius: 8px; overflow: hidden; background: var(--plot-bg); }
 .live-wf canvas { width: 100%; height: 100%; display: block; }
 </style>
