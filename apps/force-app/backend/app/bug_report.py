@@ -55,7 +55,9 @@ def build_body(
         # controlled text, so a literal ``` sequence in it would otherwise close our fence early
         # and let the rest of the tail render as raw markdown/HTML in the issue body — break up
         # any run of backticks with a zero-width space so it can't.
-        safe_tail = log_tail.strip()[-8000:].replace("```", "`​`​`")  # GitHub issue bodies cap at 65536 chars; leave headroom
+        safe_tail = log_tail.strip()[-8000:].replace(
+            "```", "`​`​`"
+        )  # GitHub issue bodies cap at 65536 chars; leave headroom
         parts += [
             "",
             "<details><summary>Recent backend log (auto-attached)</summary>",

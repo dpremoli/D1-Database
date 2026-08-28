@@ -46,7 +46,7 @@ def _app_id() -> str:
 def _private_key() -> str:
     path = os.environ.get("GITHUB_APP_PRIVATE_KEY_PATH", "")
     if path and os.path.isfile(path):
-        with open(path, "r") as f:
+        with open(path) as f:
             return f.read()
     return os.environ.get("GITHUB_APP_PRIVATE_KEY", "").replace("\\n", "\n")
 
@@ -97,7 +97,9 @@ class _TokenCache:
         res.raise_for_status()
         data = res.json()
         self.token = data["token"]
-        self.expires_at = time.mktime(time.strptime(data["expires_at"], "%Y-%m-%dT%H:%M:%SZ"))
+        self.expires_at = time.mktime(
+            time.strptime(data["expires_at"], "%Y-%m-%dT%H:%M:%SZ")
+        )
         return self.token
 
 
@@ -121,7 +123,10 @@ async def report(req: ReportRequest) -> dict:
     — callers render "reason" directly to the user, so a 500 here would just show as a worse
     message for no benefit."""
     if not configured():
-        return {"ok": False, "reason": "Bug reporting relay is not configured (missing GitHub App credentials)."}
+        return {
+            "ok": False,
+            "reason": "Bug reporting relay is not configured (missing GitHub App credentials).",
+        }
     title = req.title.strip()
     if not title:
         return {"ok": False, "reason": "A title is required."}
@@ -151,7 +156,10 @@ async def report(req: ReportRequest) -> dict:
             detail = res.json().get("message", "")
         except ValueError:
             pass
-        return {"ok": False, "reason": f"GitHub rejected the report (HTTP {res.status_code}) {detail}".strip()}
+        return {
+            "ok": False,
+            "reason": f"GitHub rejected the report (HTTP {res.status_code}) {detail}".strip(),
+        }
 
     data = res.json()
     return {"ok": True, "url": data.get("html_url", ""), "number": data.get("number")}

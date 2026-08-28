@@ -294,7 +294,12 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .btn .material-symbols-rounded { font-size: 17px; }
 .btn.tiny { padding: 4px 8px; font-size: 11px; color: #7dd3fc; background: rgba(56,189,248,.1); border: 1px solid rgba(56,189,248,.3); }
 /* popover */
-.popover { position: fixed; z-index: 60; width: 234px; background: var(--surface-2); border: 1px solid var(--border-2); border-radius: 10px; padding: 8px; box-shadow: 0 14px 40px rgba(0,0,0,.55); max-height: 60vh; overflow: auto; }
+/* --surface-2 is a translucent overlay TINT (rgba, ~7% alpha in both themes) meant to sit atop an
+   already-opaque parent — not a panel colour on its own. Used here for a position:fixed popover
+   with nothing opaque behind it, it read as almost fully see-through (the slot cards showed right
+   through the assign menu). --bg-2 is the token other floating menus in this panel already use
+   correctly for exactly this (CutPicker.vue's .menu). */
+.popover { position: fixed; z-index: 60; width: 234px; background: var(--bg-2); border: 1px solid var(--border-2); border-radius: 10px; padding: 8px; box-shadow: 0 14px 40px rgba(0,0,0,.55); max-height: 60vh; overflow: auto; }
 .popover h4 { margin: 2px 4px 8px; font-size: 11.5px; font-weight: 600; color: var(--text-dim); }
 .popover code { color: var(--text); }
 .roleopt { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 7px; border-radius: 6px; font-size: 12px; background: transparent; border: none; color: var(--text); cursor: pointer; text-align: left; }

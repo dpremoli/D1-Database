@@ -35,9 +35,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from . import backup as backup_mod
-from . import bug_report
+from . import bug_report, nidaq_catalog, nidaq_enum, recovery, storage
 from . import channels as chan
-from . import nidaq_catalog, nidaq_enum, recovery, storage
 from .config import DEFAULT_NIDAQ_CHANNELS, RecordConfig
 from .d1lc import read_d1lc_header
 from .dsp import welch_spectra
@@ -164,7 +163,9 @@ if not LOG_PATH:
 # the threshold for uvicorn/httpx/asyncio/etc, flooding the log with third-party DEBUG noise that
 # has nothing to do with the bug being chased.
 _app_logger = logging.getLogger("force_app")
-_app_logger.setLevel(logging.INFO)  # explicit, not inherited NOTSET — GET /logs/level needs a real value
+_app_logger.setLevel(
+    logging.INFO
+)  # explicit, not inherited NOTSET — GET /logs/level needs a real value
 
 # Pin the backup settings next to storage_config.json rather than inside the captures root. Both
 # have to survive the user changing the recording drive — a config stored on the drive it configures
@@ -1081,7 +1082,9 @@ async def backup_get_config() -> dict:
 async def backup_set_config(body: dict) -> dict:
     updates = {k: body[k] for k in ("enabled", "server_url", "retention_hours") if k in body}
     if updates.get("server_url"):
-        updates["server_url"] = _validate_outbound_url(str(updates["server_url"]), "backup server URL")
+        updates["server_url"] = _validate_outbound_url(
+            str(updates["server_url"]), "backup server URL"
+        )
     cfg = backup_mod.save_config(CAPTURES_ROOT, updates)
     return cfg
 

@@ -71,7 +71,15 @@ function backendCommand(port: number): {
     return {
       exePath: path.join(process.resourcesPath, 'backend', 'force-app-backend.exe'),
       args: ['--port', String(port)],
-      env: recorderEnv(),
+      // A packaged install IS an acquisition rig — the backend's own default (main.py:
+      // LABAMP_MODE, unset => "mock") exists for dev/CI, where no charge amp is attached, and
+      // was never meant to reach a real deployment silently. Without this, a fresh install (or
+      // one running on whatever ambient environment the app happened to be launched with) talks
+      // to a MOCK amp with no indication anything is wrong — /labamp/status still reports a
+      // plausible-looking "MEASURE" mode, just fabricated, not read from the real hardware.
+      // `?? 'real'` only supplies the default: an operator who deliberately sets LABAMP_MODE in
+      // the environment (e.g. to test without an amp connected) is still respected.
+      env: { ...recorderEnv(), LABAMP_MODE: process.env.LABAMP_MODE ?? 'real' },
     };
   }
   // Dev mode: the same venv + uvicorn invocation apps/force-app/backend/scripts/start_recorder.ps1

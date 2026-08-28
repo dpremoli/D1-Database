@@ -2,9 +2,8 @@
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-
 import server as srv
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
@@ -51,12 +50,23 @@ def test_report_creates_issue(client, monkeypatch):
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Bearer installation-token"
-        return httpx.Response(201, json={"html_url": "https://github.com/x/y/issues/1", "number": 1})
+        return httpx.Response(
+            201, json={"html_url": "https://github.com/x/y/issues/1", "number": 1}
+        )
 
     real_async_client = httpx.AsyncClient
-    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_async_client(transport=httpx.MockTransport(handler), **{k: v for k, v in kw.items() if k != "transport"}))
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kw: real_async_client(
+            transport=httpx.MockTransport(handler),
+            **{k: v for k, v in kw.items() if k != "transport"},
+        ),
+    )
 
-    r = client.post("/report", json={"title": "Bug", "body": "Body text", "labels": ["force-app"]})
+    r = client.post(
+        "/report", json={"title": "Bug", "body": "Body text", "labels": ["force-app"]}
+    )
     assert r.status_code == 200
     data = r.json()
     assert data["ok"] is True
@@ -76,7 +86,14 @@ def test_report_surfaces_github_rejection(client, monkeypatch):
         return httpx.Response(422, json={"message": "Validation failed"})
 
     real_async_client = httpx.AsyncClient
-    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_async_client(transport=httpx.MockTransport(handler), **{k: v for k, v in kw.items() if k != "transport"}))
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kw: real_async_client(
+            transport=httpx.MockTransport(handler),
+            **{k: v for k, v in kw.items() if k != "transport"},
+        ),
+    )
 
     r = client.post("/report", json={"title": "Bug", "body": "Body text"})
     data = r.json()
