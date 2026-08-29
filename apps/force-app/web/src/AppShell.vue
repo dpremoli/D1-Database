@@ -9,6 +9,7 @@ import { hwStatus } from './record/hwStatus';
 import { alarmController } from './record/alarms';
 import { appUrl } from './appUrl';
 import { getConfig } from './config';
+import { formatDuration } from './format';
 
 const router = useRouter();
 const route = useRoute();
@@ -22,7 +23,13 @@ onMounted(() => alarmController.reset());
 // torn down on navigation away from /record (onBeforeUnmount there explicitly clears hwStatus and
 // disconnects the websocket) — recording itself is server-side and keeps running regardless, so
 // this polls the backend directly, independent of whether RecordPage is even mounted.
-const recording = ref<{ id: string; sampleName: string } | null>(null);
+const recording = ref<{
+	id: string;
+	sampleName: string;
+	elapsedSec: number;
+	samples: number;
+	peakN: number;
+} | null>(null);
 const bannerDismissedFor = ref<string | null>(null);
 let recordingPollTimer: ReturnType<typeof setInterval> | null = null;
 async function pollRecordingStatus() {
@@ -32,7 +39,16 @@ async function pollRecordingStatus() {
 		if (!res.ok) { recording.value = null; return; }
 		const data = await res.json();
 		if (data.state === 'recording') {
-			recording.value = { id: data.id, sampleName: data.config?.sample_name || data.id };
+			const p = data.peaks ?? {};
+			recording.value = {
+				id: data.id,
+				sampleName: data.config?.sample_name || data.id,
+				elapsedSec: Number(data.elapsed_sec ?? 0),
+				samples: Number(data.n_total ?? 0),
+				// One headline number rather than three: the banner is a reassurance strip on
+				// another page, not the Record page's readout.
+				peakN: Math.max(Math.abs(p.Fx ?? 0), Math.abs(p.Fy ?? 0), Math.abs(p.Fz ?? 0)),
+			};
 		} else {
 			recording.value = null;
 		}
@@ -42,6 +58,9 @@ const showBanner = computed(() =>
 	!!recording.value && route.path !== '/record' && bannerDismissedFor.value !== recording.value.id,
 );
 function dismissBanner() { if (recording.value) bannerDismissedFor.value = recording.value.id; }
+function fmtSamples(n: number): string {
+	return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : String(n);
+}
 onMounted(() => { pollRecordingStatus(); recordingPollTimer = setInterval(pollRecordingStatus, 5000); });
 onBeforeUnmount(() => { if (recordingPollTimer) clearInterval(recordingPollTimer); });
 const userName = computed(() => {
@@ -119,7 +138,12 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 		<main class="content">
 			<div v-if="showBanner" class="rec-banner">
 				<span class="rec-banner-dot"></span>
-				<span>Recording in progress — {{ recording!.sampleName }}</span>
+				<span class="rec-banner-name">Recording — {{ recording!.sampleName }}</span>
+				<span class="rec-banner-stats">
+					<span class="rec-stat"><b>{{ formatDuration(recording!.elapsedSec) }}</b> elapsed</span>
+					<span class="rec-stat"><b>{{ fmtSamples(recording!.samples) }}</b> samples</span>
+					<span class="rec-stat"><b>{{ recording!.peakN.toFixed(0) }} N</b> peak</span>
+				</span>
 				<router-link to="/record" class="rec-banner-link">Go to Record</router-link>
 				<button class="rec-banner-dismiss" title="Dismiss" @click="dismissBanner"><span class="material-symbols-rounded">close</span></button>
 			</div>
@@ -187,9 +211,16 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 /* The sidebar is fixed/overlaid — it expands over the page on hover rather than pushing content —
    so content needs no reserved margin at all; the collapsed left-middle dot handle sits on top of it. */
 .content { flex: 1; min-width: 0; }
-.rec-banner { position: sticky; top: 0; z-index: 150; display: flex; align-items: center; gap: 10px; padding: 8px 16px; font-size: 12.5px; font-weight: 600; color: #fff; background: #dc2626; }
+/* Blue, not red. A healthy recording in progress is information, not a fault — #dc2626 here was the
+   exact colour the forced-stop and safety-alarm banners use, so a normal run looked like a failure
+   every time the operator left the Record page. #2563eb is the same informational blue
+   .disk-action-banner.backup_started already uses. The pulsing dot still reads as "live". */
+.rec-banner { position: sticky; top: 0; z-index: 150; display: flex; align-items: center; gap: 12px; padding: 8px 16px; font-size: 12.5px; font-weight: 600; color: #fff; background: #2563eb; }
 .rec-banner-dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; flex-shrink: 0; animation: pulse 1.4s infinite; }
-.rec-banner-link { margin-left: auto; padding: 4px 10px; font-size: 11.5px; font-weight: 700; color: #dc2626; background: #fff; border-radius: 6px; text-decoration: none; }
+.rec-banner-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rec-banner-stats { display: flex; align-items: center; gap: 14px; font-weight: 500; color: rgba(255,255,255,0.85); font-variant-numeric: tabular-nums; }
+.rec-stat b { font-weight: 700; color: #fff; }
+.rec-banner-link { margin-left: auto; padding: 4px 10px; font-size: 11.5px; font-weight: 700; color: #2563eb; background: #fff; border-radius: 6px; text-decoration: none; }
 .rec-banner-dismiss { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border-radius: 6px; background: rgba(255,255,255,0.18); border: none; color: #fff; cursor: pointer; }
 .rec-banner-dismiss:hover { background: rgba(255,255,255,0.3); }
 .rec-banner-dismiss .material-symbols-rounded { font-size: 15px; }

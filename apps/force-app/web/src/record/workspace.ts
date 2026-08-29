@@ -10,6 +10,7 @@ import { logRun, syncStatus } from './directusSync';
 import { alarmController } from './alarms';
 import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
+import { confirmAction } from '../ui/confirm';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 
@@ -148,7 +149,12 @@ export function createWorkspace() {
 	// cutting. Playback drove this with RPM that was also wrong by the decimation stride, so every
 	// replay raised the full-screen overlay.
 	watch(() => client.frameSeq.value, () => {
-		if (mode.value === 'record' && st.state === 'recording') alarms.evaluate(st.peaks, st.rpm, cfg.rpm);
+		if (mode.value === 'record' && st.state === 'recording') {
+			alarms.evaluate(st.peaks, st.rpm, cfg.rpm);
+			// Only meaningful on the real acquisition path: sim and replay synthesise their own
+			// pulse train, and a source with no tacho hardware at all shouldn't raise a sensor fault.
+			if (source.value === 'nidaq') alarms.evaluateTacho(st.tachoOk);
+		}
 	});
 
 	// Converging between-cuts auto-range: after each cut, recommend + apply the next-pass per-channel
@@ -231,11 +237,17 @@ export function createWorkspace() {
 			// Leave headroom: warn if the plan would eat into the last ~10% of what's free, not just
 			// if it would exactly fill the disk — finalize() also needs room for capture.mat/live_cache.
 			if (neededGb > freeGb * 0.9) {
-				return confirm(
-					`This recording is planned for ${cfg.duration_sec}s at ${cfg.sample_rate} Hz, which needs ` +
-					`roughly ${neededGb.toFixed(1)} GB — but only ${freeGb.toFixed(1)} GB is free.\n\n` +
-					`Continue anyway? The recording may be cut short if the disk fills up.`,
-				);
+				return await confirmAction({
+					title: 'Not enough free disk space',
+					message: 'The recording may be cut short if the drive fills up.',
+					stats: [
+						{ label: 'Planned run', value: `${cfg.duration_sec}s at ${cfg.sample_rate} Hz` },
+						{ label: 'Estimated size', value: `${neededGb.toFixed(1)} GB` },
+						{ label: 'Free space', value: `${freeGb.toFixed(1)} GB` },
+					],
+					confirmLabel: 'Record anyway',
+					tone: 'warning',
+				});
 			}
 			return true;
 		} catch { return true; } // backend unreachable — the normal start() error path will explain that
@@ -247,11 +259,18 @@ export function createWorkspace() {
 	async function checkAlarmsBeforeStart(): Promise<boolean> {
 		if (source.value === 'replay') return true; // replay doesn't evaluate alarms
 		if (alarms.testedSinceStart.value) return true;
-		// window.confirm() opens a native OS dialog in Electron that Playwright's e2e suite has no way
-		// to see or dismiss (unlike a plain Chromium page dialog) — it would hang forever. Test runs
-		// launch with FORCE_APP_TEST_HOOKS=1 and don't exercise the alarm-test UX, so skip the gate.
-		if (window.forceApp?.testHooks) { alarms.testedSinceStart.value = true; return true; }
-		if (confirm('Alarms have not been tested yet this session. Test them now before starting?')) {
+		// An in-app dialog, not window.confirm(): the native one opened an OS dialog that Playwright's
+		// CDP interception cannot see, so this gate had to be SKIPPED under FORCE_APP_TEST_HOOKS
+		// rather than tested (commit d0b075c). A DOM dialog is a real button the e2e suite can click,
+		// so the gate is now exercised the same way an operator meets it.
+		if (await confirmAction({
+			title: 'Test the alarms first?',
+			message: 'Alarms have not been tested yet this session. A test fires the banner and tone so you can confirm you would actually notice them.',
+			detail: 'Skipping is fine if you have already checked them on this machine today.',
+			confirmLabel: 'Test alarms now',
+			cancelLabel: 'Start without testing',
+			tone: 'warning',
+		})) {
 			alarms.test();
 			return false; // let the operator hear/see the test fire before starting
 		}

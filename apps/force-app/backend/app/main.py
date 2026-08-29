@@ -12,8 +12,12 @@ import asyncio
 import json
 import logging
 import os
+
+# aliased: `platform` is also a form field name on /support/report-bug (the renderer's UA string)
+import platform as platform_mod
 import re
 import shutil
+import sys
 import time
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
@@ -222,6 +226,14 @@ def _rebuild_labamp() -> None:
         if _labamp_cfg.get("mode") == "mock"
         else LabAmpClient(_labamp_cfg["base_url"])
     )
+
+
+def _probe_amp_mode(base_url: str, timeout: float = 3.0) -> str | None:
+    """A real protocol call (get_operation_mode), bounded to a short timeout of its own —
+    independent of `_labamp`'s default 10s. Shared by health_doctor() and the bug-report
+    diagnostics probe, both of which need to ask "does the amp actually answer" without risking a
+    10s stall on the exact request most likely to be filed while the amp is unreachable."""
+    return LabAmpClient(base_url, timeout=timeout).get_operation_mode()
 
 
 _rebuild_labamp()
@@ -458,6 +470,60 @@ async def report_bug_status() -> dict:
     return {"configured": bug_report.configured()}
 
 
+def _diag_lines() -> list[str]:
+    """Machine state worth having on every bug report, gathered best-effort.
+
+    Every probe is individually guarded: a report filed BECAUSE the amp or the DAQ is misbehaving
+    is exactly the one where these calls are most likely to throw, and losing the whole report to
+    a failing probe would be perverse. A probe that fails records why, which is itself a clue.
+    """
+    out: list[str] = []
+
+    def probe(label: str, fn) -> None:
+        try:
+            out.append(f"{label}: {fn()}")
+        except Exception as e:  # noqa: BLE001 — a diagnostic must never break the report
+            out.append(f"{label}: <unavailable: {e.__class__.__name__}: {e}>")
+
+    probe("python", lambda: sys.version.split()[0])
+    probe("os", lambda: f"{platform_mod.system()} {platform_mod.release()}")
+    probe("captures_root", lambda: CAPTURES_ROOT)
+    probe("disk_free_gb", lambda: round(shutil.disk_usage(CAPTURES_ROOT).free / 1e9, 2))
+    probe("recorder_state", lambda: (_session.status() if _session else {"state": "idle"})["state"])
+    # The env var AND the resolved client, because they can disagree: the mode is read once at
+    # startup, so an operator who changed LABAMP_MODE without restarting sees the old client. That
+    # exact mismatch (a packaged install silently talking to a MOCK amp) is what this line is for.
+    probe("labamp_mode_env", lambda: os.environ.get("LABAMP_MODE", "<unset, defaults to mock>"))
+
+    def _amp_diag() -> str:
+        if isinstance(_labamp, MockLabAmp):
+            return f"mock=True mode={_labamp.get_operation_mode()}"
+        # A short, BOUNDED timeout, not the shared `_labamp` client's default 10s — this probe is
+        # exactly the one most likely to run while the amp is unreachable (an operator filing a
+        # report because the amp is misbehaving), and a report-bug request stalling for up to 10s
+        # extra on that account is its own small failure. See _probe_amp_mode.
+        base_url = _labamp_cfg.get("base_url", "")
+        return f"mock=False base_url={base_url} mode={_probe_amp_mode(base_url)}"
+
+    probe("labamp", _amp_diag)
+    probe("log_level", lambda: logging.getLevelName(logging.getLogger("force_app").level))
+
+    def _daq() -> str:
+        if not nidaq_available():
+            return "NI-DAQmx runtime not available on this host"
+        cat = _devices()
+        chassis = cat.get("chassis") or []
+        mods = [f"{c.get('name')}({len(c.get('modules') or [])} modules)" for c in chassis]
+        return f"simulated={cat.get('simulated')} chassis=[{', '.join(mods)}]"
+
+    probe("nidaq", _daq)
+    probe(
+        "channels",
+        lambda: ", ".join(f"{c['name']}->{c['physical']}" for c in _channel_config()),
+    )
+    return out
+
+
 @app.post("/support/report-bug")
 async def report_bug(
     title: str = Form(...),
@@ -467,11 +533,22 @@ async def report_bug(
     route: str = Form(""),
     reporter_email: str = Form(""),
     include_logs: bool = Form(True),
+    console_tail: str = Form(""),
 ) -> dict:
     log_tail = ""
+    diagnostics = ""
+    # The UI only SENDS console_tail when this checkbox is on — enforce that here too, not just in
+    # the client, so the "declining logs also declines the console" guarantee the checkbox promises
+    # holds regardless of what actually arrives in the request (a modified or future client
+    # included).
+    console_tail = _strip_control_chars(console_tail) if include_logs else ""
     if include_logs:
-        raw = await run_in_threadpool(_read_log_tail, 400)
+        # 2000 lines, not 400: at the rate this backend logs during a recording, 400 lines can be
+        # under a minute of history, so the failure being reported has often already scrolled out
+        # of the attachment by the time someone gets round to filing.
+        raw = await run_in_threadpool(_read_log_tail, 2000)
         log_tail = "\n".join(raw)
+        diagnostics = "\n".join(await run_in_threadpool(_diag_lines))
     result = await bug_report.create_issue(
         title=title,
         description=description,
@@ -480,6 +557,8 @@ async def report_bug(
         route=route,
         reporter_email=reporter_email,
         log_tail=log_tail,
+        diagnostics=diagnostics,
+        console_tail=console_tail,
     )
     if not result["ok"]:
         log.warning("bug report failed: %s", result.get("reason"))
@@ -751,29 +830,38 @@ async def health_doctor(request: Request) -> dict:
             }
         )
 
-    # 4. LabAmp
+    # 4. LabAmp — a real protocol call (get_operation_mode), not just an open TCP socket. A bare
+    # port probe passes for anything answering on that IP:port at all, including a stray device on
+    # a link-local address that isn't the amp; it never confirms the thing on the other end actually
+    # IS a LabAmp. LabAmpClient.get_operation_mode() is the same call ping() makes internally, and
+    # raises LabAmpError with a specific reason (unreachable / bad HTTP / non-JSON / device-level
+    # error), so a device that accepts the connection but doesn't speak the protocol is now
+    # distinguishable from one that's genuinely off the network.
     amp_url = _labamp_cfg.get("base_url", "")
     amp_mode = _labamp_cfg.get("mode", "mock")
     if amp_mode == "mock":
         findings.append({"service": "LabAmp", "status": "ok", "message": "Mock mode (no hardware)"})
     elif amp_url:
-        parsed = urlparse(amp_url)
-        host = parsed.hostname or ""
-        port = parsed.port or 80
-        port_ok = await _check_port(host, port, 3.0)
-        if port_ok:
+        host = urlparse(amp_url).hostname or ""
+        is_link_local = host.startswith("169.254.")
+
+        try:
+            mode = await run_in_threadpool(_probe_amp_mode, amp_url)
             findings.append(
-                {"service": "LabAmp", "status": "ok", "message": f"Reachable at {amp_url}"}
+                {
+                    "service": "LabAmp",
+                    "status": "ok",
+                    "message": f"Responding at {amp_url} (mode: {mode or 'unknown'})",
+                }
             )
-        else:
-            is_link_local = host.startswith("169.254.")
+        except LabAmpError as e:
             findings.append(
                 {
                     "service": "LabAmp",
                     "status": "fail",
-                    "message": f"Cannot reach {host}:{port}",
+                    "message": f"Not responding at {amp_url}",
                     "diagnosis": (
-                        f"LabAmp at {amp_url} is not responding. "
+                        f"{e} "
                         + (
                             "This is a link-local address — ensure the Ethernet cable is connected directly to the amp and the NIC has a 169.254.x.x address."
                             if is_link_local
@@ -790,6 +878,52 @@ async def health_doctor(request: Request) -> dict:
         findings.append(
             {"service": "NI-DAQ runtime", "status": "ok", "message": "NI-DAQmx driver detected"}
         )
+
+        # 5b. NI-DAQ hardware — the driver being installed says nothing about a chassis actually
+        # being plugged in, powered, and enumerable: that's exactly the "software present, hardware
+        # absent" gap this finding closes. _devices() (the same enumeration the NI-DAQ config page
+        # uses) falls back to a SIMULATED layout whenever no real chassis answers, which is the
+        # signal to use — nidaq_available() alone reports "ok" in that state. Only checked once the
+        # driver is confirmed present: without it, enumeration always falls back to simulated for
+        # the same underlying reason already reported above, and a second finding would just repeat
+        # it under a different name.
+        devices = await run_in_threadpool(_devices)
+        chassis = devices.get("chassis") or []
+        standalone = devices.get("standalone") or []
+        if devices.get("simulated"):
+            findings.append(
+                {
+                    "service": "NI-DAQ hardware",
+                    "status": "warn",
+                    "message": "No chassis responded — using the simulated NI-DAQ layout",
+                    "diagnosis": "The driver is installed, but no cDAQ chassis answered, so the "
+                    "app fell back to a simulated device layout (fine for a dev machine; if this "
+                    "IS the acquisition PC, the chassis is not actually reachable).",
+                    "fix": "Power on the cDAQ chassis and check its USB/Ethernet connection, "
+                    "confirm it appears in NI MAX, then re-run the doctor.",
+                }
+            )
+        elif not chassis and not standalone:
+            findings.append(
+                {
+                    "service": "NI-DAQ hardware",
+                    "status": "warn",
+                    "message": "Driver detected but no devices enumerated",
+                    "diagnosis": "NI-DAQmx is installed but System.local() returned no devices at "
+                    "all — different from the simulated-fallback case above.",
+                    "fix": "Check Device Manager and NI MAX for the chassis; reseat the "
+                    "USB/Ethernet connection if it is not listed there either.",
+                }
+            )
+        else:
+            names = ", ".join(d.get("name", "?") for d in (*chassis, *standalone))
+            findings.append(
+                {
+                    "service": "NI-DAQ hardware",
+                    "status": "ok",
+                    "message": f"{len(chassis) + len(standalone)} device(s) detected: {names}",
+                }
+            )
     else:
         findings.append(
             {

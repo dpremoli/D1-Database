@@ -339,3 +339,240 @@ def test_health_doctor_reports_nidaq_runtime_ok_when_available(tmp_path, monkeyp
         findings = r.json()["findings"]
         nidaq = next(f for f in findings if f["service"] == "NI-DAQ runtime")
         assert nidaq["status"] == "ok"
+
+
+# ---- Connectivity Doctor: NI-DAQ hardware finding ----
+#
+# The driver being installed says nothing about a chassis actually being plugged in and powered —
+# that's the "software present, hardware absent" gap these tests cover. _devices() is mocked
+# directly (rather than the underlying nidaqmx System) since it's the exact seam health_doctor()
+# reads from, and it already unifies the real/simulated-fallback paths into one {simulated, chassis,
+# standalone} shape.
+
+
+def test_health_doctor_warns_when_nidaq_hardware_is_simulated(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    monkeypatch.setattr(main, "nidaq_available", lambda: True)
+    monkeypatch.setattr(
+        main, "_devices", lambda: {"simulated": True, "chassis": [], "standalone": []}
+    )
+    with TestClient(fastapi_app) as client:
+        r = client.post("/health/doctor", json={})
+        findings = r.json()["findings"]
+        hw = next(f for f in findings if f["service"] == "NI-DAQ hardware")
+        # warn, not fail: a dev machine with no rig attached is a normal, expected state.
+        assert hw["status"] == "warn"
+        assert "simulated" in hw["message"].lower()
+
+
+def test_health_doctor_oks_nidaq_hardware_when_a_real_chassis_answers(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    monkeypatch.setattr(main, "nidaq_available", lambda: True)
+    monkeypatch.setattr(
+        main,
+        "_devices",
+        lambda: {"simulated": False, "chassis": [{"name": "STAR_DAQ"}], "standalone": []},
+    )
+    with TestClient(fastapi_app) as client:
+        r = client.post("/health/doctor", json={})
+        findings = r.json()["findings"]
+        hw = next(f for f in findings if f["service"] == "NI-DAQ hardware")
+        assert hw["status"] == "ok"
+        assert "STAR_DAQ" in hw["message"]
+
+
+def test_health_doctor_warns_when_nidaq_enumerates_nothing_at_all(tmp_path, monkeypatch):
+    """Not the same as the simulated-fallback case: simulated=False but genuinely empty means
+    System.local() itself returned no devices, a different failure worth a different message."""
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    monkeypatch.setattr(main, "nidaq_available", lambda: True)
+    monkeypatch.setattr(
+        main, "_devices", lambda: {"simulated": False, "chassis": [], "standalone": []}
+    )
+    with TestClient(fastapi_app) as client:
+        r = client.post("/health/doctor", json={})
+        findings = r.json()["findings"]
+        hw = next(f for f in findings if f["service"] == "NI-DAQ hardware")
+        assert hw["status"] == "warn"
+
+
+def test_health_doctor_skips_nidaq_hardware_check_without_the_runtime(tmp_path, monkeypatch):
+    """No driver => enumeration always falls back to simulated for that same reason, so a second
+    finding would just repeat the runtime warning under a different name."""
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    monkeypatch.setattr(main, "nidaq_available", lambda: False)
+    with TestClient(fastapi_app) as client:
+        r = client.post("/health/doctor", json={})
+        findings = r.json()["findings"]
+        assert not any(f["service"] == "NI-DAQ hardware" for f in findings)
+
+
+# ---- Connectivity Doctor: LabAmp finding ----
+#
+# Regression coverage for replacing a bare TCP-port probe with a real protocol call
+# (get_operation_mode()): a device answering on the port without speaking the LabAmp protocol must
+# now be distinguishable from one that's genuinely unreachable, and from mock mode.
+
+
+class _FakeAmpClient:
+    """Stands in for LabAmpClient so the doctor's own timeout/retry logic is exercised without a
+    real network call. main.py imports LabAmpClient by name, so patching that name is the seam."""
+
+    def __init__(self, base_url, timeout=10.0, **_):
+        self.base_url = base_url
+
+    def get_operation_mode(self):
+        return _FakeAmpClient.mode
+
+
+def test_health_doctor_oks_labamp_when_it_answers(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    monkeypatch.setattr(main, "_labamp_cfg", {"base_url": "http://169.254.143.59", "mode": "real"})
+    _FakeAmpClient.mode = "MEASURE"
+    monkeypatch.setattr(main, "LabAmpClient", _FakeAmpClient)
+    with TestClient(fastapi_app) as client:
+        r = client.post("/health/doctor", json={})
+        findings = r.json()["findings"]
+        amp = next(f for f in findings if f["service"] == "LabAmp")
+        assert amp["status"] == "ok"
+        assert "MEASURE" in amp["message"]
+
+
+def test_health_doctor_fails_labamp_when_something_else_answers_the_port(tmp_path, monkeypatch):
+    """The old TCP-only probe would have called this 'ok' — anything accepting the connection
+    passed. A real protocol call must fail it instead."""
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    monkeypatch.setattr(main, "_labamp_cfg", {"base_url": "http://169.254.143.59", "mode": "real"})
+
+    class _WrongDevice(_FakeAmpClient):
+        def get_operation_mode(self):
+            from app.labamp import LabAmpError
+
+            raise LabAmpError("LabAmp non-JSON response for /api/$/operationMode/get")
+
+    monkeypatch.setattr(main, "LabAmpClient", _WrongDevice)
+    with TestClient(fastapi_app) as client:
+        r = client.post("/health/doctor", json={})
+        findings = r.json()["findings"]
+        amp = next(f for f in findings if f["service"] == "LabAmp")
+        assert amp["status"] == "fail"
+        assert "link-local" in amp["diagnosis"]  # 169.254.x.x — the guidance must still fire
+
+
+def test_health_doctor_labamp_diagnosis_skips_link_local_hint_for_a_normal_ip(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    monkeypatch.setattr(main, "_labamp_cfg", {"base_url": "http://192.168.1.50", "mode": "real"})
+
+    class _Unreachable(_FakeAmpClient):
+        def get_operation_mode(self):
+            from app.labamp import LabAmpError
+
+            raise LabAmpError("LabAmp unreachable at http://192.168.1.50: connection refused")
+
+    monkeypatch.setattr(main, "LabAmpClient", _Unreachable)
+    with TestClient(fastapi_app) as client:
+        r = client.post("/health/doctor", json={})
+        findings = r.json()["findings"]
+        amp = next(f for f in findings if f["service"] == "LabAmp")
+        assert amp["status"] == "fail"
+        assert "link-local" not in amp["diagnosis"]
+
+
+# ---- /support/report-bug: LabAmp probe timeout + console_tail privacy gate ----
+#
+# `create_issue` (which would otherwise POST to the real bug-report relay over the network) is
+# faked so these tests are deterministic and don't touch the network; the fake just records what
+# it was called with so the test can inspect it.
+
+
+def _install_fake_create_issue(monkeypatch):
+    calls: list[dict] = []
+
+    async def _fake(**kwargs):
+        calls.append(kwargs)
+        return {"ok": True, "url": "https://example.invalid/issues/1"}
+
+    monkeypatch.setattr(main.bug_report, "create_issue", _fake)
+    return calls
+
+
+def test_report_bug_labamp_probe_uses_a_bounded_timeout_not_the_shared_clients_10s(
+    tmp_path, monkeypatch
+):
+    """Regression: the diagnostics probe used to call the SHARED `_labamp` client directly, which
+    defaults to a 10s timeout — so filing a report while the amp is unreachable (exactly the
+    scenario this diagnostic exists for) could stall the request for up to 10s. It must build its
+    own client with a short, explicit timeout instead, same as health_doctor()'s equivalent check.
+    """
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    monkeypatch.setattr(main, "_labamp_cfg", {"base_url": "http://169.254.9.9", "mode": "real"})
+    monkeypatch.setattr(main, "_labamp", object())  # anything that isn't a MockLabAmp
+
+    seen_timeouts: list[float] = []
+
+    class _SlowAmp:
+        def __init__(self, base_url, timeout=10.0, **_):
+            seen_timeouts.append(timeout)
+
+        def get_operation_mode(self):
+            from app.labamp import LabAmpError
+
+            raise LabAmpError("simulated: amp unreachable")
+
+    monkeypatch.setattr(main, "LabAmpClient", _SlowAmp)
+    calls = _install_fake_create_issue(monkeypatch)
+
+    with TestClient(fastapi_app) as client:
+        r = client.post(
+            "/support/report-bug",
+            data={"title": "amp seems dead", "include_logs": "true"},
+        )
+        assert r.status_code == 200, r.text
+
+    assert seen_timeouts == [3.0], "the diagnostics probe must use its own short timeout"
+    diagnostics = calls[0]["diagnostics"]
+    assert "labamp:" in diagnostics
+    assert "<unavailable:" in diagnostics  # the probe's failure is recorded, not raised
+
+
+def test_report_bug_omits_console_tail_when_logs_are_declined(tmp_path, monkeypatch):
+    """Regression: the server forwarded console_tail unconditionally regardless of include_logs —
+    the UI only sends it when that checkbox is on, but nothing enforced the guarantee server-side.
+    A modified or future client could attach the renderer console even when logs were declined."""
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    calls = _install_fake_create_issue(monkeypatch)
+
+    with TestClient(fastapi_app) as client:
+        r = client.post(
+            "/support/report-bug",
+            data={
+                "title": "something broke",
+                "include_logs": "false",
+                "console_tail": "this should never be attached",
+            },
+        )
+        assert r.status_code == 200, r.text
+
+    assert calls[0]["console_tail"] == ""
+    assert calls[0]["log_tail"] == ""
+    assert calls[0]["diagnostics"] == ""
+
+
+def test_report_bug_includes_console_tail_when_logs_are_included(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    calls = _install_fake_create_issue(monkeypatch)
+
+    with TestClient(fastapi_app) as client:
+        r = client.post(
+            "/support/report-bug",
+            data={
+                "title": "something broke",
+                "include_logs": "true",
+                "console_tail": "console line 1\nconsole line 2",
+            },
+        )
+        assert r.status_code == 200, r.text
+
+    assert "console line 1" in calls[0]["console_tail"]

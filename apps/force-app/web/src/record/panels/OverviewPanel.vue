@@ -2,19 +2,19 @@
 import { computed } from 'vue';
 import { useWorkspace } from '../workspace';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS } from '../liveClient';
+import { formatDuration } from '../../format';
 const w = useWorkspace();
 const st = w.st;
 const ROW_BYTES = RAW_COLUMNS * RAW_BYTES_PER_SAMPLE;
 
+// Sub-second precision under a minute is a deliberate choice for this live tile (ticking
+// "3.42s" reads as more alive than "0:03" while a cut is still short) — everything else here
+// delegates to the shared formatter so a fix to the mm:ss/h:mm:ss logic doesn't need to be found
+// and re-applied in three near-identical local copies.
 function fmtTime(s: number): string {
 	if (!Number.isFinite(s) || s < 0) return '—';
 	if (s < 60) return s.toFixed(2) + 's';
-	const m = Math.floor(s / 60);
-	const sec = Math.floor(s % 60);
-	if (m < 60) return `${m}:${String(sec).padStart(2, '0')}`;
-	const h = Math.floor(m / 60);
-	const rm = m % 60;
-	return `${h}:${String(rm).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+	return formatDuration(s);
 }
 
 const estSizeMb = computed(() => {

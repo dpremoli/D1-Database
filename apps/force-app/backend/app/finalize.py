@@ -72,7 +72,11 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
 
     axes = sum_axes(signals)
     tacho = tacho_column(signals)
-    rpm = rpm_from_tacho(tacho, fs, cfg.ppr, fallback=cfg.rpm)
+    # No fallback to cfg.rpm: this is the ARCHIVED record. Substituting the configured spindle speed
+    # for an unmeasured one wrote a fabricated rate into capture.mat and the revs column, where
+    # nothing downstream could tell it apart from a real measurement. Unmeasured stays 0 and is
+    # recorded as such in summary.json (tacho_measured) so the gap is visible rather than papered over.
+    rpm, tacho_measured = rpm_from_tacho(tacho, fs, cfg.ppr)
     dt = 1.0 / fs
     revs_cum = np.cumsum(rpm / 60.0 * dt)
     cs_sec, ce_sec = _cut_window(axes["Fz"], t)
@@ -138,6 +142,11 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         "peaks": {ax: float(np.max(np.abs(axes[ax]))) for ax in ("Fx", "Fy", "Fz")},
         "cut_window_sec": [cs_sec, ce_sec],
         "drift_comp": bool(cfg.drift_comp),
+        # False => the tacho produced no timable edge pair, so the rpm/revs columns in capture.mat
+        # and live_cache are zeros rather than a measurement. Recorded explicitly so an analysis
+        # reading this capture later can tell "spindle genuinely stopped / sensor dead" apart from
+        # a real 0, instead of trusting a number that was never measured.
+        "tacho_measured": bool(tacho_measured),
         "file_sizes_mb": file_sizes,
         # Per-channel ranging (drives converging between-cuts auto-range + records the per-cut N/V).
         "channels_ranging": {

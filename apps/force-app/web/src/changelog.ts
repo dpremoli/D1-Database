@@ -9,6 +9,19 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.18',
+		date: '2026-08-29',
+		notes: [
+			'The "recording in progress" banner shown when you navigate away from Record is now blue with live elapsed time, sample count, and peak force, instead of looking like a red error banner.',
+			'Disabling a safety alarm in Settings, or silencing one that has tripped, now explains exactly what you are turning off and asks you to confirm.',
+			'Quitting the app while a recording is in progress now warns you and lets you cancel, instead of silently stopping the acquisition.',
+			'Fixed: a healthy tacho sensor could trigger a false "No tacho signal" alarm in the first couple of seconds of every real recording.',
+			'Fixed: acknowledging one safety alarm could silently silence a different alarm that fired at the same moment, without ever showing it to you.',
+			'Bug reports can now include more diagnostic detail (amp mode, NI-DAQ hardware, disk space, more log history, and this window\'s console) to make problems easier to diagnose remotely.',
+			'Connectivity Doctor now checks that the NI-DAQ chassis and the Lab Amp are actually connected and responding, not just that the drivers/software are installed.',
+		],
+	},
+	{
 		version: '0.1.13',
 		date: '2026-08-28',
 		notes: [

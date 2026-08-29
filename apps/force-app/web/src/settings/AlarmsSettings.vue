@@ -1,8 +1,60 @@
 <script setup lang="ts">
 // Safety-alarm thresholds (the app-wide controller the Record page evaluates on the live stream).
-import { alarmController } from '../record/alarms';
+import { alarmController, type AlarmConfig } from '../record/alarms';
+import { confirmAction } from '../ui/confirm';
 const a = alarmController;
 function save() { a.saveCfg(); }
+
+type ToggleKey = 'forceEnabled' | 'rpmEnabled' | 'diskEnabled' | 'audioEnabled';
+
+// What the operator gives up by switching each one off. Spelled out per alarm rather than a generic
+// "are you sure?" — the point of the prompt is that they read the specific consequence.
+const DISABLE_WARNING: Record<ToggleKey, { title: string; message: string }> = {
+	forceEnabled: {
+		title: 'Disable the high-force alarm?',
+		message: 'Nothing will warn you if cutting force exceeds the threshold. Overload can damage the dynamometer, the tool, or the workpiece.',
+	},
+	rpmEnabled: {
+		title: 'Disable the high-RPM alarm?',
+		message: 'Nothing will warn you if the spindle overspeeds, and the app will stop checking that the tacho is actually reporting.',
+	},
+	diskEnabled: {
+		title: 'Disable the low-disk alarm?',
+		message: 'A recording can fill the captures drive and be cut short. You will get no warning before it happens.',
+	},
+	audioEnabled: {
+		title: 'Turn off the audible alert?',
+		message: 'Alarms will still latch and show on screen, but make no sound — easy to miss if you are at the machine rather than the screen.',
+	},
+};
+
+/** Confirm before turning a safety alarm OFF; turning one back ON is never gated.
+ *
+ * Takes the event so the checkbox can be forced back to the model's value when the operator
+ * declines. The browser has already flipped the box by the time @change fires, and leaving the
+ * reactive value untouched does NOT undo that: Vue diffs vnodes, sees no change in `:checked`, and
+ * patches nothing — so the box would sit unchecked while the alarm is still armed. */
+async function setEnabled(key: ToggleKey, ev: Event) {
+	const el = ev.target as HTMLInputElement;
+	const next = el.checked;
+	if (!next) {
+		const { title, message } = DISABLE_WARNING[key];
+		const ok = await confirmAction({
+			title,
+			message,
+			detail: 'You can turn it back on here at any time.',
+			confirmLabel: 'Disable',
+			cancelLabel: 'Keep it on',
+			tone: 'danger',
+		});
+		if (!ok) {
+			el.checked = a.config[key]; // undo the browser's optimistic toggle
+			return;
+		}
+	}
+	(a.config as AlarmConfig)[key] = next;
+	save();
+}
 </script>
 
 <template>
@@ -12,25 +64,25 @@ function save() { a.saveCfg(); }
 			alarm latches (with a full-screen banner + optional tone on the Record page) until acknowledged.</p>
 
 		<div class="grp">
-			<label class="chk"><input type="checkbox" v-model="a.config.forceEnabled" @change="save" /> High-force alarm</label>
+			<label class="chk"><input type="checkbox" :checked="a.config.forceEnabled" @change="setEnabled('forceEnabled', $event)" /> High-force alarm</label>
 			<label class="thr">Trip at ≥ <input type="number" v-model.number="a.config.forceThreshold" :disabled="!a.config.forceEnabled" @change="save" /> N (per-axis peak)</label>
 			<p class="hint">Default ~400 N peak; set to a safe fraction of your dynamometer / setup limit.</p>
 		</div>
 
 		<div class="grp">
-			<label class="chk"><input type="checkbox" v-model="a.config.rpmEnabled" @change="save" /> High-RPM alarm</label>
+			<label class="chk"><input type="checkbox" :checked="a.config.rpmEnabled" @change="setEnabled('rpmEnabled', $event)" /> High-RPM alarm</label>
 			<label class="thr">Trip at ≥ <input type="number" v-model.number="a.config.rpmThreshold" :disabled="!a.config.rpmEnabled" placeholder="0 = auto" @change="save" /> RPM</label>
 			<p class="hint">0 = auto: the configured spindle speed × 1.02. Set an explicit value to cap regardless of the programmed RPM.</p>
 		</div>
 
 		<div class="grp">
-			<label class="chk"><input type="checkbox" v-model="a.config.diskEnabled" @change="save" /> Low disk space alarm</label>
+			<label class="chk"><input type="checkbox" :checked="a.config.diskEnabled" @change="setEnabled('diskEnabled', $event)" /> Low disk space alarm</label>
 			<label class="thr">Alert when free space &lt; <input type="number" v-model.number="a.config.diskThresholdGb" :disabled="!a.config.diskEnabled" @change="save" /> GB</label>
 			<p class="hint">Fires during recording if the captures drive runs low. Recording will stop gracefully to prevent data loss.</p>
 		</div>
 
 		<div class="grp">
-			<label class="chk"><input type="checkbox" v-model="a.config.audioEnabled" @change="save" /> Audible alert (looping tone)</label>
+			<label class="chk"><input type="checkbox" :checked="a.config.audioEnabled" @change="setEnabled('audioEnabled', $event)" /> Audible alert (looping tone)</label>
 		</div>
 
 		<button class="btn ghost" @click="a.test()">Test alarm</button>

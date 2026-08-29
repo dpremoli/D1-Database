@@ -6,6 +6,7 @@ import { onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { getConfig } from '../config';
 import { authStore } from '../authStore';
+import { getConsoleTail } from '../clientLog';
 
 const base = () => getConfig().recorderUrl;
 const route = useRoute();
@@ -45,6 +46,9 @@ async function submit() {
 			route: route.fullPath,
 			reporter_email: authStore.currentUser.value?.email || '',
 			include_logs: String(includeLogs.value),
+			// Gated on the same checkbox as the backend log: both are diagnostic attachments, and
+			// an operator who declines to attach logs has not agreed to send their console either.
+			console_tail: includeLogs.value ? getConsoleTail() : '',
 		});
 		const res = await fetch(`${base()}/support/report-bug`, {
 			method: 'POST',
@@ -94,8 +98,9 @@ async function submit() {
 			</label>
 			<label class="chk">
 				<input type="checkbox" v-model="includeLogs" :disabled="submitting" />
-				Include recent backend log (helps a lot — no personal data beyond your login email, which
-				is included separately below)
+				Include diagnostics: recent backend log, this window's console, and machine state
+				(amp mode, NI-DAQ devices, channel map, disk space). Helps a lot — no personal data
+				beyond your login email, which is included separately below.
 			</label>
 
 			<button class="btn save" :disabled="!title.trim() || submitting || configured === null" @click="submit">

@@ -4,6 +4,7 @@
 // already in the database, so there is no Stop and no Save.
 import { computed } from 'vue';
 import { useWorkspace } from '../workspace';
+import { formatDuration as fmt } from '../../format';
 
 const w = useWorkspace();
 const p = computed(() => w.playback.state);
@@ -14,11 +15,6 @@ function onScrub(e: Event) { w.playback.seek(Number((e.target as HTMLInputElemen
 function onScrubEnd(e: Event) { w.playback.seek(Number((e.target as HTMLInputElement).value), { commit: true }); }
 
 const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
-function fmt(sec: number): string {
-	if (!Number.isFinite(sec) || sec < 0) return '0:00';
-	const m = Math.floor(sec / 60);
-	return `${m}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
-}
 </script>
 
 <template>

@@ -23,14 +23,31 @@ def test_rpm_from_tacho_constant():
     t = np.arange(n) / fs
     pulse_f = rpm_true * ppr / 60.0
     tacho = ((pulse_f * t) % 1.0 < 0.15).astype(float) * 5.0
-    rpm = rpm_from_tacho(tacho, fs, ppr, fallback=0.0)
+    rpm, measured = rpm_from_tacho(tacho, fs, ppr)
     # steady-state RPM should recover the truth within ~2%
+    assert measured is True
     assert abs(np.median(rpm) - rpm_true) / rpm_true < 0.02
 
 
-def test_rpm_fallback_when_flat():
-    rpm = rpm_from_tacho(np.zeros(50), 1000.0, 1, fallback=999.0)
-    assert np.allclose(rpm, 999.0)
+def test_rpm_is_zero_and_flagged_unmeasured_when_tacho_is_flat():
+    """A stationary (or disconnected) tacho must read 0 and say so — never invent a number.
+
+    Regression for a real acquisition-rig finding: with the hall-effect sensor sitting still on the
+    bench, live RPM reported the CONFIGURED spindle speed, bit-exact and unvarying, because the old
+    signature took a `fallback` that callers seeded with cfg.rpm.
+    """
+    rpm, measured = rpm_from_tacho(np.zeros(50), 1000.0, 1)
+    assert measured is False
+    assert np.allclose(rpm, 0.0)
+
+
+def test_rpm_unmeasured_when_fewer_than_two_edges():
+    """One rising edge cannot time an interval — there is no rate to report yet."""
+    tacho = np.zeros(100)
+    tacho[50:60] = 5.0  # a single pulse
+    rpm, measured = rpm_from_tacho(tacho, 1000.0, 1)
+    assert measured is False
+    assert np.allclose(rpm, 0.0)
 
 
 def test_frm_spiral_revs():

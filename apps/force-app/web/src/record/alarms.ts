@@ -12,7 +12,7 @@ export interface AlarmConfig {
 	diskEnabled: boolean;
 	diskThresholdGb: number;  // warn when free space drops below this (GB)
 }
-export interface ActiveAlarm { key: string; kind: 'force' | 'rpm' | 'disk'; label: string; value: number; threshold: number; at: number; }
+export interface ActiveAlarm { key: string; kind: 'force' | 'rpm' | 'disk' | 'tacho'; label: string; value: number; threshold: number; at: number; }
 
 const LS_KEY = 'force-app.alarms.config';
 const DEFAULTS: AlarmConfig = { forceEnabled: true, forceThreshold: 400, rpmEnabled: true, rpmThreshold: 0, audioEnabled: true, diskEnabled: true, diskThresholdGb: 5 };
@@ -24,7 +24,13 @@ function loadCfg(): AlarmConfig {
 export class AlarmController {
 	config = reactive<AlarmConfig>(loadCfg());
 	active = reactive<ActiveAlarm[]>([]);      // latched breaches (kept until reset)
-	acknowledged = ref(false);
+	// Per-key acknowledgment, not a single global flag. RecordPage.vue's confirmation dialog is
+	// async (unlike the window.confirm() it replaced, which blocked the whole renderer) — an alarm
+	// can fire in the gap between the dialog opening and the operator clicking Silence. A single
+	// `acknowledged` boolean would silence THAT alarm too, even though it was never shown or
+	// consented to; tracking which specific keys were acknowledged means a key that arrives mid-dialog
+	// stays tripped regardless of what the operator just confirmed.
+	private ackedKeys = reactive(new Set<string>());
 	private latched = new Set<string>();
 	// Whether alarms have been fired (via test() or a real breach) at least once since this app
 	// process started — gates the "alarms untested" prompt shown before the first recording.
@@ -40,7 +46,7 @@ export class AlarmController {
 
 	saveCfg() { localStorage.setItem(LS_KEY, JSON.stringify(this.config)); }
 
-	get tripped(): boolean { return this.active.length > 0 && !this.acknowledged.value; }
+	get tripped(): boolean { return this.active.some((a) => !this.ackedKeys.has(a.key)); }
 
 	rpmLimit(spindleRpm: number): number {
 		return this.config.rpmThreshold > 0 ? this.config.rpmThreshold : spindleRpm * 1.02;
@@ -69,7 +75,25 @@ export class AlarmController {
 				fired = true;
 			}
 		}
-		if (fired) { this.acknowledged.value = false; if (this.config.audioEnabled) this.startTone(); }
+		// No need to un-acknowledge anything explicitly: a freshly-pushed key is by construction
+		// absent from ackedKeys, so `tripped` already reads true for it.
+		if (fired && this.config.audioEnabled) this.startTone();
+	}
+
+	/** A tacho that reports no readable pulses while recording is a fault, not a quiet spindle.
+	 *
+	 * Gated on rpmEnabled because this IS the high-RPM alarm's integrity check: that alarm compares
+	 * measured RPM against a limit, so a silent tacho leaves it permanently unable to trip. Before
+	 * the backend fix, an unreadable tacho reported the configured spindle speed instead of nothing,
+	 * so the alarm sat at a plausible-looking value and could never fire — the failure was invisible
+	 * from the UI. Latched like every other alarm so it survives a momentary recovery. */
+	evaluateTacho(ok: boolean | null): void {
+		if (!this.config.rpmEnabled || ok !== false) return;
+		const key = 'tacho';
+		if (this.latched.has(key)) return;
+		this.latched.add(key);
+		this.active.push({ key, kind: 'tacho', label: 'No tacho signal — RPM alarm cannot protect', value: 0, threshold: 0, at: Date.now() });
+		if (this.config.audioEnabled) this.startTone();
 	}
 
 	evaluateDisk(freeGb: number): void {
@@ -78,13 +102,20 @@ export class AlarmController {
 		if (freeGb < this.config.diskThresholdGb && !this.latched.has(key)) {
 			this.latched.add(key);
 			this.active.push({ key, kind: 'disk', label: 'Low disk space', value: freeGb, threshold: this.config.diskThresholdGb, at: Date.now() });
-			this.acknowledged.value = false;
 			if (this.config.audioEnabled) this.startTone();
 		}
 	}
 
-	acknowledge(): void { this.acknowledged.value = true; this.stopTone(); }
-	reset(): void { this.active.splice(0); this.latched.clear(); this.acknowledged.value = false; this.stopTone(); }
+	/** Acknowledge specific alarms by key — normally exactly the ones the confirmation dialog just
+	 * showed, so an alarm that fired while the dialog was open (and so was never shown or
+	 * consented to) is left tripped rather than swept into "acknowledged" alongside it. Omit `keys`
+	 * to acknowledge everything currently active. The tone only stops once nothing is left
+	 * unacknowledged — if `keys` didn't cover everything, the alert correctly keeps going. */
+	acknowledge(keys?: string[]): void {
+		for (const k of keys ?? this.active.map((a) => a.key)) this.ackedKeys.add(k);
+		if (!this.tripped) this.stopTone();
+	}
+	reset(): void { this.active.splice(0); this.latched.clear(); this.ackedKeys.clear(); this.stopTone(); }
 
 	// Fire a synthetic alarm so operators can confirm the alert works. Auto-clears after 5s —
 	// unlike a real breach, a test alarm has nothing to acknowledge, so previously it just rang
@@ -94,12 +125,15 @@ export class AlarmController {
 		const key = `test:${Date.now()}`;
 		this.latched.add(key);
 		this.active.push({ key, kind: 'force', label: 'TEST alarm', value: 999, threshold: 0, at: Date.now() });
-		this.acknowledged.value = false;
 		this.testedSinceStart.value = true;
 		if (this.config.audioEnabled) this.startTone();
 		setTimeout(() => {
-			if (this.latched.has(key)) { this.latched.delete(key); this.active.splice(this.active.findIndex((a) => a.key === key), 1); }
-			if (this.active.length === 0) { this.acknowledged.value = false; this.stopTone(); }
+			if (this.latched.has(key)) {
+				this.latched.delete(key);
+				this.ackedKeys.delete(key); // avoid unbounded growth if it happened to get acked first
+				this.active.splice(this.active.findIndex((a) => a.key === key), 1);
+			}
+			if (!this.tripped) this.stopTone();
 		}, 5000);
 	}
 

@@ -33,6 +33,68 @@ registerAppScheme();
 
 let mainWindow: BrowserWindow | null = null;
 let supervisor: SidecarSupervisor | null = null;
+let recorderPort: number | null = null;
+// Set once the operator has confirmed quitting mid-recording (or once there was nothing to confirm).
+// Both the window 'close' and app 'before-quit' paths check it, so the prompt appears exactly once
+// however the quit was triggered — window X, Alt+F4, or the application menu.
+let quitConfirmed = false;
+
+/** Is the backend mid-recording, and what has it captured so far? Null when it is not.
+ *
+ * Asks the backend rather than the renderer: recording is server-side and keeps running even when
+ * RecordPage is unmounted (navigating away tears down its websocket), so renderer state would
+ * report "idle" for a recording that is very much still going.
+ */
+async function activeRecording(): Promise<{ sample: string; elapsed: number; samples: number } | null> {
+  if (recorderPort == null) return null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${recorderPort}/record/status`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return null;
+    const s = (await res.json()) as {
+      state?: string;
+      elapsed_sec?: number;
+      n_total?: number;
+      config?: { sample_name?: string };
+    };
+    if (s.state !== 'recording') return null;
+    return {
+      sample: s.config?.sample_name || 'the current run',
+      elapsed: Number(s.elapsed_sec ?? 0),
+      samples: Number(s.n_total ?? 0),
+    };
+  } catch {
+    // Backend unreachable => fail OPEN and allow the quit. Failing closed would trap the operator
+    // in an app they cannot close whenever the sidecar has already died, which is precisely when
+    // they most want to restart it.
+    return null;
+  }
+}
+
+/** True if it is safe to proceed with quitting. Prompts only when a recording is actually running. */
+async function confirmQuitDuringRecording(): Promise<boolean> {
+  // Native dialogs are invisible to Playwright's CDP dialog interception and would hang the e2e
+  // suite for its full timeout — the same trap window.confirm() gates fell into (commit d0b075c).
+  if (process.env.FORCE_APP_TEST_HOOKS === '1') return true;
+  const rec = await activeRecording();
+  if (!rec) return true;
+  const mins = Math.floor(rec.elapsed / 60);
+  const secs = Math.floor(rec.elapsed % 60);
+  const { response } = await dialog.showMessageBox({
+    type: 'warning',
+    buttons: ['Keep recording', 'Stop recording and quit'],
+    defaultId: 0, // safe option focused, so a stray Enter does not end a run
+    cancelId: 0,
+    title: 'A recording is in progress',
+    message: `"${rec.sample}" is still recording.`,
+    detail:
+      `${mins}:${String(secs).padStart(2, '0')} elapsed, ${rec.samples.toLocaleString()} samples captured.\n\n` +
+      'Quitting stops acquisition now. Data captured so far is written to disk and can be recovered, ' +
+      'but the rest of the cut will not be recorded.',
+  });
+  return response === 1;
+}
 Menu.setApplicationMenu(buildMenu(() => mainWindow));
 
 function webDistDir(): string {
@@ -149,8 +211,20 @@ async function createWindow(): Promise<void> {
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   // Bounds while maximized are the whole-screen size, not a meaningful "last used" size to
   // restore into next launch — save the pre-maximize bounds instead and just reapply maximize().
-  mainWindow.on('close', () => {
+  mainWindow.on('close', (event) => {
     if (!mainWindow) return;
+    // Guard here, not only in 'before-quit': clicking the window X destroys the window first, so a
+    // prompt raised from before-quit would appear with nothing behind it and the app already
+    // half torn down. Deferring the close is safe — nothing else has run yet.
+    if (!quitConfirmed) {
+      event.preventDefault();
+      void confirmQuitDuringRecording().then((ok) => {
+        if (!ok) return; // operator chose to keep recording; the window simply stays open
+        quitConfirmed = true;
+        mainWindow?.close(); // re-enter, now past the guard
+      });
+      return;
+    }
     const maximized = mainWindow.isMaximized();
     // getNormalBounds() for minimized too, not just maximized: Windows reports x/y ≈ -32000 for a
     // minimized window, so closing while minimized would persist an off-screen position and the
@@ -171,6 +245,7 @@ async function createWindow(): Promise<void> {
   await mainWindow.loadFile(path.join(__dirname, '..', 'static', 'loading.html'));
 
   const port = await findAvailablePort(PREFERRED_PORT);
+  recorderPort = port; // so the quit guard can ask the backend whether a recording is running
   configStore.setRecorderPort(port);
   const cmd = backendCommand(port);
 
@@ -230,6 +305,17 @@ if (gotLock) {
   });
 
   app.on('before-quit', (event) => {
+    // Covers the quit paths that never touch the window's own 'close' handler — the application
+    // menu and Alt+F4. quitConfirmed makes this a no-op when the window guard already asked.
+    if (!quitConfirmed) {
+      event.preventDefault();
+      void confirmQuitDuringRecording().then((ok) => {
+        if (!ok) return;
+        quitConfirmed = true;
+        app.quit();
+      });
+      return;
+    }
     if (!supervisor || supervisor.getState() === 'stopped') return;
     event.preventDefault();
     void supervisor.stop().then(() => app.quit());

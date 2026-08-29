@@ -76,6 +76,9 @@ class RecordingSession:
         self._finalize_thread: threading.Thread | None = None
         self._disk_thread: threading.Thread | None = None
         self.disk_action: dict | None = None  # last thing the disk watcher did, for the UI
+        # None (not False) so the first chunk always publishes, giving the client its initial state
+        # instead of leaving it to assume one. False => the tacho is not producing readable pulses.
+        self._tacho_ok: bool | None = None
 
         # Rolling windows per channel for the live spectra (per-channel FFT / power / spectrogram /
         # waterfall), plus a wall-clock throttle. We keep the 3 summed axes AND the 8 dyno
@@ -282,7 +285,12 @@ class RecordingSession:
             # Per-sub-channel envelopes (the 8 dyno columns) so the client can plot any single
             # sensor live, not just the summed axes.
             sub = self.decimator.process_cols(t, np.asarray(data[:, :9], dtype=np.float64))
-            pts, rpm = self.frm.process(t, axes, tacho_column(data))
+            pts, rpm, tacho_ok = self.frm.process(t, axes, tacho_column(data))
+            # Only on a transition — this runs per chunk (tens of times a second), and the client
+            # only needs to know when the tacho starts or stops being readable.
+            if tacho_ok != self._tacho_ok:
+                self._tacho_ok = tacho_ok
+                self._publish_control({"type": "tacho", "ok": tacho_ok})
             self.n_total += t.size
             self._t_last = float(t[-1])
             if self.broadcaster is not None:
@@ -344,6 +352,8 @@ class RecordingSession:
             "n_total": self.n_total,
             "peaks": {"Fx": self.peaks[0], "Fy": self.peaks[1], "Fz": self.peaks[2]},
             "config": self.cfg.model_dump(),
+            # None until the first chunk is processed; False => tacho producing no readable pulses.
+            "tacho_ok": self._tacho_ok,
         }
         if self.backup:
             s["backup"] = self.backup.status()

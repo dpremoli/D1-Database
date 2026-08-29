@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { getConfig } from '../config';
+import { confirmAction } from '../ui/confirm';
 
 interface BackupConfig {
 	enabled: boolean;
@@ -96,7 +97,13 @@ async function loadSessions() {
 }
 
 async function restoreSession(id: string) {
-	if (!confirm(`Restore backup ${id}? This will download the raw data and finalize it locally.`)) return;
+	const ok = await confirmAction({
+		title: 'Restore this backup?',
+		message: `Backup ${id} will be downloaded and finalized on this machine.`,
+		detail: 'Downloading raw data can take a while and use significant disk space.',
+		confirmLabel: 'Restore',
+	});
+	if (!ok) return;
 	restoreBusy.value[id] = true;
 	try {
 		const res = await fetch(`${base()}/backup/restore/${id}`, { method: 'POST' });

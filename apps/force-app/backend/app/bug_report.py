@@ -30,6 +30,16 @@ def configured() -> bool:
     return bool(_relay_url())
 
 
+def _fence(text: str, limit: int) -> list[str]:
+    """A fenced block of renderer/host-supplied text, tail-truncated and made fence-safe.
+
+    The text is not trusted: a literal ``` inside it would close our fence early and let the rest
+    render as raw markdown/HTML in the issue body, so any run of backticks is broken up with a
+    zero-width space.
+    """
+    return ["```", text.strip()[-limit:].replace("```", "`​`​`"), "```"]
+
+
 def build_body(
     *,
     description: str,
@@ -38,6 +48,8 @@ def build_body(
     route: str,
     reporter_email: str,
     log_tail: str,
+    diagnostics: str = "",
+    console_tail: str = "",
 ) -> str:
     parts = [
         description.strip() or "_(no description provided)_",
@@ -49,22 +61,28 @@ def build_body(
     ]
     if reporter_email:
         parts.append(f"**Reported by:** {reporter_email}  ")
+    # Machine state first: it is short, and it answers the questions that otherwise cost a
+    # round-trip with the operator ("is the amp in real or mock mode?", "which DAQ is attached?",
+    # "was it actually recording?"). Not collapsed, unlike the two long tails below.
+    if diagnostics.strip():
+        parts += ["", "**Machine state at time of report**", "", *_fence(diagnostics, 6000)]
+    if console_tail.strip():
+        parts += [
+            "",
+            "<details><summary>Renderer console (auto-attached)</summary>",
+            "",
+            *_fence(console_tail, 8000),
+            "</details>",
+        ]
     if log_tail.strip():
         # <details> keeps a long tail from burying the description in the GitHub UI, while still
-        # making it one click away instead of a separate download. The log tail is renderer-
-        # controlled text, so a literal ``` sequence in it would otherwise close our fence early
-        # and let the rest of the tail render as raw markdown/HTML in the issue body — break up
-        # any run of backticks with a zero-width space so it can't.
-        safe_tail = log_tail.strip()[-8000:].replace(
-            "```", "`​`​`"
-        )  # GitHub issue bodies cap at 65536 chars; leave headroom
+        # making it one click away instead of a separate download. GitHub issue bodies cap at
+        # 65536 chars; the per-section limits here leave headroom for all three tails together.
         parts += [
             "",
             "<details><summary>Recent backend log (auto-attached)</summary>",
             "",
-            "```",
-            safe_tail,
-            "```",
+            *_fence(log_tail, 20000),
             "</details>",
         ]
     return "\n".join(parts)
@@ -79,6 +97,8 @@ async def create_issue(
     route: str,
     reporter_email: str,
     log_tail: str,
+    diagnostics: str = "",
+    console_tail: str = "",
 ) -> dict:
     """Returns {"ok": True, "url": ...} or {"ok": False, "reason": ...}. Never raises."""
     title = title.strip()
@@ -92,6 +112,8 @@ async def create_issue(
         route=route,
         reporter_email=reporter_email,
         log_tail=log_tail,
+        diagnostics=diagnostics,
+        console_tail=console_tail,
     )
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:

@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..config import RecordConfig
-from ..dsp import rpm_from_tacho
+from ..dsp import tacho_rising_edges
 
 
 class CutDetector:
@@ -101,8 +101,19 @@ class Decimator:
 
 class FrmIntegrator:
     """Accumulate the FRM spiral across chunks. Carries θ/ρ between calls so the fingerprint winds
-    continuously. RPM is derived from the tacho pulse train each chunk (real path), falling back to
-    the last-known RPM when a chunk is too short to time an edge."""
+    continuously. RPM is derived from the tacho pulse train each chunk (real path), holding the last
+    MEASURED rate when a chunk is too short to time an edge pair, and reporting no-signal once that
+    has gone on longer than TACHO_STALE_SEC — measured from the last successful edge, or from
+    recording start if there has never been one, so a tacho that's silent from the very beginning is
+    judged by the same rule as one that goes silent partway through, not flagged instantly on the
+    first chunk. It never substitutes the configured spindle speed."""
+
+    # How long to keep reporting the last measured rate before declaring the tacho lost. This is a
+    # floor on measurable speed as well as a fault timeout: pulses arrive every 2 s at 30 RPM / 1
+    # PPR, so anything slower than that reads as no-signal. Machining spindles run far above it, and
+    # the alternative — a longer window — means an operator keeps seeing a plausible number for
+    # seconds after the sensor dies.
+    TACHO_STALE_SEC = 2.0
 
     def __init__(
         self, cfg: RecordConfig, *, fs: float | None = None, max_points_per_frame: int = 300
@@ -118,7 +129,25 @@ class FrmIntegrator:
         self.r_inner = cfg.inner_diam / 2.0 if cfg.inner_diam > 0 else 0.0
         self._theta = 0.0  # accumulated spindle angle (rad)
         self._rho_off = 0.0  # accumulated inward wind (mm, negative)
-        self._last_rpm = cfg.rpm
+        # Seeded at 0 (= "nothing measured yet"), NOT cfg.rpm. Seeding from the configured spindle
+        # speed meant a tacho that never produced a pulse reported the nominal forever: the value
+        # was handed to rpm_from_tacho as its fallback, came straight back, and was written to
+        # _last_rpm again each chunk. See test_frm_integrator_reports_zero_rpm_for_a_stationary_tacho.
+        self._last_rpm = 0.0
+        # None = not yet known (warm-up: timing an edge-pair takes at least one pulse period, which
+        # almost always spans a chunk boundary, so there is genuinely nothing to report yet).
+        # Seeding this False meant the very first chunk of every real recording reported "no
+        # signal" before there had been any chance to measure a pulse — see
+        # test_frm_integrator_does_not_flag_a_healthy_tacho_during_warm_up.
+        self._tacho_ok: bool | None = None
+        # Cross-chunk edge timing state. A chunk is typically far shorter than the pulse period
+        # (20 ms chunks vs a 40 ms period at 1500 RPM), so the interval that yields the rate almost
+        # always spans a chunk boundary — these carry it. `_thr` is latched from the first chunk
+        # that actually shows a transition, so a chunk sitting wholly high or wholly low is measured
+        # against the real pulse levels instead of its own noise.
+        self._prev_above: bool | None = None
+        self._last_edge_t: float | None = None
+        self._thr: float | None = None
         # When frm_from_cut, the spiral is held at the origin until the cut start is detected, so
         # air-cut revolutions don't offset the geometry (the FRM assumes the cut starts at the rim).
         self._active = not cfg.frm_from_cut
@@ -129,16 +158,69 @@ class FrmIntegrator:
         self._rho_off = 0.0
         self._active = True
 
+    def _rpm_for_chunk(self, t: np.ndarray, tacho: np.ndarray) -> np.ndarray:
+        """Per-sample RPM for this chunk, timing rising edges across chunk boundaries.
+
+        Each edge is timed against the PREVIOUS edge wherever that fell — usually in an earlier
+        chunk. The rate then steps at each edge and holds between them. Sets `_tacho_ok`/`_last_rpm`
+        as a side effect; `_last_rpm` stays 0 and `_tacho_ok` stays None (not yet known) until a
+        real interval has been timed, so an absent pulse train can never be reported as the
+        configured spindle speed.
+        """
+        n = t.size
+        if n == 0:
+            return np.zeros(0, dtype=np.float64)
+
+        # Latch a stable threshold from the first chunk that contains a genuine transition. Without
+        # it, a chunk resting entirely at one level would threshold against its own noise floor and
+        # manufacture edges out of it.
+        lo, hi = float(np.min(tacho)), float(np.max(tacho))
+        if self._thr is None and hi - lo > 1e-9:
+            self._thr = lo + 0.5 * (hi - lo)
+
+        edges, last_above = tacho_rising_edges(tacho, self._prev_above, thr=self._thr)
+        self._prev_above = last_above
+
+        rpm = np.full(n, self._last_rpm, dtype=np.float64)
+        for idx in edges:
+            edge_t = float(t[idx])
+            if self._last_edge_t is not None:
+                dt_edge = edge_t - self._last_edge_t
+                if dt_edge > 0:
+                    self._last_rpm = 60.0 / (self.cfg.ppr * dt_edge)
+                    self._tacho_ok = True
+            self._last_edge_t = edge_t
+            rpm[idx:] = self._last_rpm
+
+        # No edge for longer than the stale window => the tacho is not reporting. Zero it rather
+        # than holding the last good value: a stale-but-plausible readout is what made the original
+        # fault invisible, and the high-RPM alarm compares against this number.
+        #
+        # The reference point is the last successful edge, OR t=0 if there has never been one —
+        # deliberately the SAME rule for "never measured yet" as for "was measuring, then went
+        # silent". A tacho that hasn't produced a single pulse in the first TACHO_STALE_SEC of a
+        # recording is exactly as untrustworthy as one that stops partway through; treating
+        # "just started, still warming up" as an instant confirmed fault (the previous behaviour —
+        # this branch used to require `_last_edge_t is not None`, so a never-measured tacho was
+        # `_tacho_ok = False` from the very first chunk) raised a spurious alarm on every single
+        # healthy nidaq recording.
+        reference_t = self._last_edge_t if self._last_edge_t is not None else 0.0
+        if n and float(t[-1]) - reference_t > self.TACHO_STALE_SEC:
+            self._tacho_ok = False
+            self._last_rpm = 0.0
+            rpm[:] = 0.0
+        return rpm
+
     def process(self, t: np.ndarray, axes: dict[str, np.ndarray], tacho: np.ndarray):
         """Returns (points: (k,5) float32 [x,y,cx,cy,cz], mean_rpm) for the NEW samples in this
         chunk. All three axis forces stream with every point — not just cfg.axis — so the client
         can switch the FRM colour axis at any time and instantly recolour the whole accumulated
         spiral, live points included, rather than only points drawn after the switch."""
         n = t.size
-        rpm = rpm_from_tacho(tacho, self.fs, self.cfg.ppr, fallback=self._last_rpm)
-        self._last_rpm = float(np.mean(rpm)) if n else self._last_rpm
+        rpm = self._rpm_for_chunk(t, tacho)
         if not self._active:
-            return np.empty((0, 5), dtype=np.float32), self._last_rpm  # pre-cut: no spiral yet
+            # pre-cut: no spiral yet
+            return np.empty((0, 5), dtype=np.float32), self._last_rpm, self._tacho_ok
         dt = 1.0 / self.fs
         theta = self._theta + np.cumsum(rpm * (2.0 * np.pi / 60.0) * dt)
         rho_off = self._rho_off + np.cumsum(-(self.cfg.feed / 10.0) * (rpm / 60.0) * dt)
@@ -156,4 +238,4 @@ class FrmIntegrator:
         pts[:, 2] = axes["Fx"][::stride]
         pts[:, 3] = axes["Fy"][::stride]
         pts[:, 4] = axes["Fz"][::stride]
-        return pts, self._last_rpm
+        return pts, self._last_rpm, self._tacho_ok

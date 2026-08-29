@@ -30,6 +30,8 @@ export interface LiveStatus {
 	seq: number;
 	tSec: number;
 	rpm: number;
+	/** null until the first chunk is processed; false => tacho not producing readable pulses. */
+	tachoOk: boolean | null;
 	peaks: { Fx: number; Fy: number; Fz: number };
 	nTotal: number;
 	error: string | null;
@@ -41,7 +43,7 @@ export interface LiveStatus {
 
 export class RecordClient {
 	status = reactive<LiveStatus>({
-		connected: false, state: 'idle', seq: 0, tSec: 0, rpm: 0,
+		connected: false, state: 'idle', seq: 0, tSec: 0, rpm: 0, tachoOk: null,
 		peaks: { Fx: 0, Fy: 0, Fz: 0 }, nTotal: 0, error: null, captureId: null, summary: null, cutStartSec: null,
 		diskAction: null,
 	});
@@ -249,6 +251,12 @@ export class RecordClient {
 			this.status.cutStartSec = msg.t;
 		} else if (msg.type === 'disk_action') {
 			this.status.diskAction = { action: msg.action, freeGb: msg.free_gb };
+		} else if (msg.type === 'tacho') {
+			// Sent only on a transition. false => the tacho produced no timable pulse pair, so the
+			// rpm field in the binary frames is 0 because nothing was measured — NOT because the
+			// spindle is confirmed stopped. The distinction matters: the backend used to report the
+			// configured spindle speed here, which looked healthy while the sensor was dead.
+			this.status.tachoOk = msg.ok === true;
 		}
 	}
 

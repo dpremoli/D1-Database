@@ -101,6 +101,15 @@ test('rebuilt app: sim record -> stop -> save dialog shows staged progress and c
     await expect(startBtn).toBeEnabled({ timeout: 15_000 }); // waits on w.st.connected (WS to the recorder)
     await startBtn.click();
 
+    // The first start of a session asks whether to test the alarms first (workspace.ts,
+    // checkAlarmsBeforeStart). This used to be a window.confirm() that opened a native OS dialog
+    // Playwright could not see, so the gate had to be skipped outright under FORCE_APP_TEST_HOOKS;
+    // now it is a real DOM dialog, so the test meets it exactly as an operator does and declines.
+    const alarmGate = window.locator('[data-testid="confirm-dialog"]');
+    await expect(alarmGate).toBeVisible({ timeout: 10_000 });
+    await window.locator('[data-testid="confirm-cancel"]').click(); // "Start without testing"
+    await expect(alarmGate).toBeHidden();
+
     const stopBtn = window.locator('.btn.stop');
     await expect(stopBtn).toBeVisible({ timeout: 10_000 });
 

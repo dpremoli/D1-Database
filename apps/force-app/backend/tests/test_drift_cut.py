@@ -98,8 +98,8 @@ def test_frm_defer_until_cut():
     t = np.arange(n) / 4000.0
     axes = {"Fx": np.zeros(n), "Fy": np.zeros(n), "Fz": np.full(n, 100.0)}
     tacho = ((np.cumsum(np.full(n, 1200 / 60.0 / 4000)) % 1.0) < 0.15) * 5.0
-    pts, _ = frm.process(t, axes, tacho)
+    pts, _, _ = frm.process(t, axes, tacho)
     assert pts.shape[0] == 0  # deferred — no spiral before cut start
     frm.mark_cut_start()
-    pts2, _ = frm.process(t, axes, tacho)
+    pts2, _, _ = frm.process(t, axes, tacho)
     assert pts2.shape[0] > 0  # accumulates after cut start

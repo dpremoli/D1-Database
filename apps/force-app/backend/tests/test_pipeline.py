@@ -1,6 +1,7 @@
 """End-to-end: run a short non-realtime session, then assert the finalized artifacts are correct
 and that the live_cache.bin parses back through the shared D1LC format."""
 
+import json
 import os
 
 import numpy as np
@@ -74,6 +75,45 @@ def test_session_end_to_end(tmp_path):
     assert arr[5][-1] > arr[5][0]
     # extra metadata was stamped into the .mat struct (scipy nests strings in arrays)
     assert "CNMG-1204" in str(m["metadata"]["Insert"])
+
+
+def test_session_does_not_publish_a_tacho_fault_during_warm_up(tmp_path):
+    """Regression: FrmIntegrator used to seed _tacho_ok=False, so the very first chunk processed by
+    ANY real recording published {"type": "tacho", "ok": false} over the control channel before
+    there had been any chance to measure a pulse — timing an edge-pair takes at least one pulse
+    period, almost always spanning a chunk boundary. alarms.ts::evaluateTacho() latches that
+    immediately with no grace period, so this raised a false "No tacho signal" alarm at the start
+    of every single healthy nidaq recording. SimSource stands in for real hardware here — it
+    genuinely emits a pulse train (see test_frm_integrator_continuity), so this is exercising the
+    real session/broadcaster wiring, not just FrmIntegrator in isolation.
+    """
+
+    class FakeBroadcaster:
+        def __init__(self):
+            self.published: list = []
+
+        def publish(self, msg) -> None:
+            self.published.append(msg)
+
+    cfg = RecordConfig(sample_rate=5000, duration_sec=1.0, rpm=1500, ppr=1)
+    bc = FakeBroadcaster()
+    sess = RecordingSession(cfg, str(tmp_path), SimSource(cfg, realtime=False), broadcaster=bc)
+    sess.start()
+    sess._thread.join(15)
+    sess.join_finalize(15)
+    assert sess.state == "done", sess.error
+
+    control_msgs = []
+    for m in bc.published:
+        if isinstance(m, str):  # binary D1LF frames are also published — skip those
+            try:
+                control_msgs.append(json.loads(m))
+            except ValueError:
+                pass
+    tacho_msgs = [m for m in control_msgs if m.get("type") == "tacho"]
+    assert not any(
+        m.get("ok") is False for m in tacho_msgs
+    ), f"a healthy, genuinely-pulsing tacho must never be reported as a confirmed fault: {tacho_msgs}"
 
 
 def test_start_writes_raw_header(tmp_path):

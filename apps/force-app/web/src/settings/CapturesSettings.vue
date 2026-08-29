@@ -8,6 +8,7 @@ import { getConfig } from '../config';
 import { api } from '../directusClient';
 import { uploadCaptureColdStart } from '../record/uploadCapture';
 import { discardQueued, listQueue, retryQueued, syncStatus, type QueuedRun } from '../record/directusSync';
+import { confirmAction } from '../ui/confirm';
 
 interface Capture {
 	id: string;
@@ -93,7 +94,19 @@ async function remove(c: Capture) {
 		: known
 			? 'It has NOT been uploaded — this is the only copy and it cannot be recovered.'
 			: "Its upload status is unknown (the database is unreachable), so this may be the only copy.";
-	if (!confirm(`Delete ${c.sample_name || c.id}? (${fmtSize(c.size_mb)})\n\n${warning}\n\nThis cannot be undone.`)) return;
+	const ok = await confirmAction({
+		title: 'Delete this capture?',
+		message: warning,
+		detail: 'This cannot be undone.',
+		stats: [
+			{ label: 'Capture', value: c.sample_name || c.id },
+			{ label: 'Size', value: fmtSize(c.size_mb) },
+			{ label: 'Uploaded to database', value: isUp ? 'yes' : known ? 'no' : 'unknown' },
+		],
+		confirmLabel: 'Delete permanently',
+		tone: 'danger',
+	});
+	if (!ok) return;
 	busy.value[c.id] = 'deleting';
 	rowMsg.value[c.id] = '';
 	try {
@@ -135,7 +148,12 @@ async function upload(c: Capture) {
 async function uploadAllUnsynced() {
 	const pending = unsynced.value.slice();
 	if (!pending.length) return;
-	if (!confirm(`Upload ${pending.length} capture${pending.length === 1 ? '' : 's'} to the database?`)) return;
+	const ok = await confirmAction({
+		title: `Upload ${pending.length} capture${pending.length === 1 ? '' : 's'}?`,
+		message: 'Each is sent to the database in turn. Large captures can take a while.',
+		confirmLabel: 'Upload',
+	});
+	if (!ok) return;
 	for (const c of pending) await upload(c);   // sequential: each is a multi-MB file upload
 }
 
@@ -183,9 +201,16 @@ async function retryOne(id: string) {
 		if (!attempted) rowMsg.value[id] = 'a sync is already running — this run is next in line';
 	} finally { queueBusy.value = null; refreshQueue(); }
 }
-function discardOne(item: QueuedRun) {
+async function discardOne(item: QueuedRun) {
 	const name = item.payload?.recorded_metadata?.sample_name || item.payload?.recorded_metadata?.capture_id || item.id;
-	if (!confirm(`Discard the queued database record for ${name}?\n\nThe recording itself stays on disk — only the pending database write is abandoned.`)) return;
+	const ok = await confirmAction({
+		title: 'Discard this queued database record?',
+		message: `The pending database write for "${name}" is abandoned.`,
+		detail: 'The recording itself stays on disk — only the database record is dropped. You can upload it again later from Captures.',
+		confirmLabel: 'Discard record',
+		tone: 'danger',
+	});
+	if (!ok) return;
 	discardQueued(item.id);
 	refreshQueue();
 }

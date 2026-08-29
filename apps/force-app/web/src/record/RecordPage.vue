@@ -15,6 +15,7 @@ import FrmPanel from './panels/FrmPanel.vue';
 import RpmPanel from './panels/RpmPanel.vue';
 import OverviewPanel from './panels/OverviewPanel.vue';
 import SaveCutDialog from './panels/SaveCutDialog.vue';
+import { confirmAction } from '../ui/confirm';
 
 
 const w = createWorkspace();
@@ -283,7 +284,14 @@ async function recoverSession(id: string) {
 }
 
 async function discardSession(id: string) {
-	if (!confirm(`Discard incomplete recording ${id}? This cannot be undone.`)) return;
+	const ok = await confirmAction({
+		title: 'Discard this incomplete recording?',
+		message: `Recording ${id} and its captured data will be deleted. This cannot be undone.`,
+		detail: 'Recover it instead if you are not certain — an interrupted recording usually still holds usable data.',
+		confirmLabel: 'Discard permanently',
+		tone: 'danger',
+	});
+	if (!ok) return;
 	beginRecoveryBusy(id);
 	try {
 		const res = await fetch(`${w.client.baseUrl}/recovery/discard/${id}`, { method: 'POST' });
@@ -297,11 +305,36 @@ async function discardSession(id: string) {
 }
 
 // Silencing a tripped alarm is a safety-relevant action (it stops the tone/overlay for a real
-// force/RPM/disk breach, not just a test) — a confirm gate prevents an accidental click while
-// reaching for something else on the overlay from instantly clearing it.
-function ackAlarm() {
-	if (!confirm('Acknowledge and silence this alarm?')) return;
-	w.alarms.acknowledge();
+// force/RPM/disk/tacho breach, not just a test) — a confirm gate prevents an accidental click while
+// reaching for something else on the overlay from instantly clearing it. The prompt lists what
+// actually tripped and the value that tripped it, so the decision is made against the measurements
+// rather than a generic "are you sure?" the operator learns to dismiss reflexively.
+async function ackAlarm() {
+	// Snapshot both the display stats AND the keys being acknowledged synchronously, before the
+	// await below — confirmAction() is a non-blocking DOM dialog (unlike the window.confirm() it
+	// replaced, which blocked the whole renderer), so an alarm can fire while it's open. Passing
+	// these specific `keys` to acknowledge() afterward means that new alarm — never shown here,
+	// never consented to — stays tripped instead of being silently swept in.
+	const tripped = w.alarms.active;
+	const keys = tripped.map((al) => al.key);
+	const ok = await confirmAction({
+		title: tripped.length > 1 ? `Silence ${tripped.length} active alarms?` : 'Silence this alarm?',
+		message: 'The tone stops and the banner clears. This does not fix the underlying condition, and the recording keeps running.',
+		stats: tripped.map((al) => ({
+			label: al.label,
+			value: al.kind === 'tacho'
+				? 'no signal'
+				: al.kind === 'rpm'
+					? `${al.value.toFixed(0)} RPM (limit ${al.threshold.toFixed(0)})`
+					: al.kind === 'disk'
+						? `${al.value.toFixed(1)} GB free (limit ${al.threshold.toFixed(1)} GB)`
+						: `${al.value.toFixed(1)} N (limit ${al.threshold.toFixed(1)} N)`,
+		})),
+		confirmLabel: 'Silence',
+		cancelLabel: 'Keep alerting',
+		tone: 'danger',
+	});
+	if (ok) w.alarms.acknowledge(keys);
 }
 
 // Tabbing/alt-tabbing away mid-replay used to leave the playhead running in the background

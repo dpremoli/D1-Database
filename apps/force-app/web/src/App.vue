@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from 'vue';
+import ConfirmDialog from './ui/ConfirmDialog.vue';
 
 // Best-effort offline indicator (Phase 1). Plotting needs the network to reach Directus; when
 // the browser reports offline we surface a clear banner rather than letting requests hang
@@ -30,6 +31,9 @@ onBeforeUnmount(() => {
 			</div>
 		</transition>
 		<router-view />
+		<!-- Single host for confirmAction(); mounted at the root so every route, including login,
+			 can prompt without owning dialog markup. -->
+		<ConfirmDialog />
 	</div>
 </template>
 
