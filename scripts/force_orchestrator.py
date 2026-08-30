@@ -84,6 +84,13 @@ OCTREE_DIR = Path(
     os.environ.get("OCTREE_DIR", str(SCRIPT_DIR.parent / "infra" / "octrees"))
 )
 
+# Diagnostics Workbench: the analysis needs a far denser live cache than the dashboard's
+# (the orchestrator sets live_cache_points=250000 for that). 5M matches process_force.m's own
+# default and _octree_threshold's fallback, and is the WorkingSet floor the browser expects.
+DIAG_CACHE_POINTS = 5_000_000
+DIAG_VERSION = 1
+DIAG_SAMPLES_PER_REV = 256
+
 
 def detect_potree_converter() -> str | None:
     env = os.environ.get("POTREE_CONVERTER")
@@ -645,6 +652,32 @@ def claim_octree(conn, limit: int = 2):
     return rows
 
 
+# ------------------------------------------------------- Diagnostics Workbench octree build
+def claim_diag(conn, limit: int = 1):
+    """Claim pending diagnostics rows. Concurrency is deliberately 1 by default: this host
+    also serves Directus, and a clustering pass that starves the database mid-experiment is
+    a worse outcome than a slow queue."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            WITH picked AS (
+                SELECT id FROM machining_force_analysis
+                 WHERE diag_status='pending'
+                 ORDER BY diag_requested_at NULLS FIRST
+                 LIMIT %s FOR UPDATE SKIP LOCKED
+            )
+            UPDATE machining_force_analysis a SET diag_status='processing', updated_at=now()
+              FROM picked WHERE a.id = picked.id
+         RETURNING a.id, a.operation_id, a.pulses_per_rev, a.inner_diameter, a.outer_diameter, a.filter_chain::text AS filter_chain,
+                   (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
+        """,
+            [limit],
+        )
+        rows = cur.fetchall()
+    conn.commit()
+    return rows
+
+
 def _read_octree_bin(path: str):
     import numpy as np
 
@@ -814,6 +847,168 @@ def process_octree_row(
         return "error"
     finally:
         shutil.rmtree(outdir, ignore_errors=True)
+
+
+def process_diag_row(
+    conn, row, exe: str, timeout: int, matlab_opts: dict, potree_exe: str
+) -> str:
+    """One MATLAB launch emits both the spiral cloud and a dense live cache; the diag package
+    turns them into D1AN attribute columns; laspy + PotreeConverter publish the diag octree
+    under OCTREE_DIR/diag/<op_id>/."""
+    import laspy
+    import numpy as np
+
+    sys.path.insert(0, str(SCRIPT_DIR))
+    from diag.angular import angular_resample
+    from diag.d1an import write_d1an
+    from diag.pipeline import analyse, read_d1lc
+
+    outdir = tempfile.mkdtemp(prefix="diag_", dir=os.environ.get("FORCE_WORKDIR"))
+    try:
+        if not row.get("archive_path"):
+            raise ValueError("no archive .mat linked to this analysis row")
+        binp = str(Path(outdir) / "cloud.bin")
+        opts = {k: int(v) for k, v in matlab_opts.items()}
+        ppr = row.get("pulses_per_rev")
+        if ppr and int(ppr) > 0:
+            opts["pulses_per_rev"] = int(ppr)
+        inner = row.get("inner_diameter")
+        if inner and float(inner) > 0:
+            opts["inner_diam"] = float(inner)
+        outer = row.get("outer_diameter")
+        if outer and float(outer) > 0:
+            opts["outer_diam"] = float(outer)
+        fchain = row.get("filter_chain")
+        if fchain:
+            opts["filter_chain"] = str(fchain)
+        opts["octree_out"] = binp
+        opts["live_cache_points"] = DIAG_CACHE_POINTS
+        stmt = (
+            f"addpath('{mlq(str(MATLAB_SRC))}'); "
+            f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})"
+        )
+        p = subprocess.run(
+            [exe, "-batch", stmt], capture_output=True, text=True, timeout=timeout
+        )
+        cache_path = Path(outdir) / "live_cache.bin"
+        if p.returncode != 0 or not Path(binp).exists() or not cache_path.exists():
+            tail = (p.stderr or p.stdout or "").strip().splitlines()[-5:]
+            raise RuntimeError("matlab diag emit failed: " + " | ".join(tail))
+
+        n_pts, x, y, fx, fy, fz = _read_octree_bin(binp)
+        if n_pts == 0:
+            raise RuntimeError("empty cloud")
+        cache = read_d1lc(str(cache_path))
+        if cache["n"] != n_pts:
+            raise RuntimeError(
+                f"cache/cloud length mismatch: {cache['n']} vs {n_pts} — the live cache and "
+                "the octree cloud must come from the same decimation to be index-aligned"
+            )
+
+        columns, metrics = analyse(cache, x, y, samples_per_rev=DIAG_SAMPLES_PER_REV)
+        n = columns["t"].size
+        write_d1an(str(Path(outdir) / "attrs.d1an"), columns)
+
+        # The analysis grid is shorter than the cloud (TSA truncates to whole revolutions and
+        # resampling moves onto an angular grid), so re-sample the spatial coordinates onto
+        # the same grid rather than assuming a 1:1 index match.
+        revs = np.asarray(cache["revs"], dtype=np.float64)
+        _, xa = angular_resample(revs, np.asarray(x, np.float64), DIAG_SAMPLES_PER_REV)
+        _, ya = angular_resample(revs, np.asarray(y, np.float64), DIAG_SAMPLES_PER_REV)
+        _, fza = angular_resample(
+            revs, np.asarray(fz, np.float64), DIAG_SAMPLES_PER_REV
+        )
+        xa, ya, fza = xa[:n], ya[:n], fza[:n]
+
+        las_path = str(Path(outdir) / "diag.las")
+        h = laspy.LasHeader(point_format=3)
+        h.offsets = [float(xa.min()), float(ya.min()), 0.0]
+        h.scales = [0.001, 0.001, 0.001]
+        # float32 extra dims, never int16: PotreeConverter ignores extra-dim scale/offset and
+        # stores the raw codes, so an int16-packed attribute reaches the viewer as codes
+        # rather than physical values. This was tried for the grid octree and reverted.
+        for nm in columns:
+            h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.float32))
+        las = laspy.LasData(h)
+        las.x = xa.astype(np.float64)
+        las.y = ya.astype(np.float64)
+        las.z = np.zeros(n)
+        for nm, arr in columns.items():
+            setattr(las, nm, arr)
+        lo, hi = float(fza.min()), float(fza.max())
+        las.intensity = np.clip(
+            (fza - lo) / ((hi - lo) or 1.0) * 65535, 0, 65535
+        ).astype(np.uint16)
+        las.write(las_path)
+
+        octmp = str(Path(outdir) / "octree")
+        pc = subprocess.run(
+            [potree_exe, las_path, "-o", octmp],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if pc.returncode != 0 or not (Path(octmp) / "metadata.json").exists():
+            tail = (pc.stderr or pc.stdout or "").strip().splitlines()[-5:]
+            raise RuntimeError("PotreeConverter failed: " + " | ".join(tail))
+
+        op = str(row["operation_id"])
+        dst = OCTREE_DIR / "diag" / op
+        if dst.exists():
+            shutil.rmtree(dst, ignore_errors=True)
+        dst.mkdir(parents=True, exist_ok=True)
+        for fn in ("metadata.json", "hierarchy.bin", "octree.bin"):
+            shutil.copy2(Path(octmp) / fn, dst / fn)
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE machining_force_analysis SET diag_status='done', diag_path=%s, "
+                "diag_points=%s, diag_version=%s, diag_metrics=%s, diag_error=NULL, "
+                "updated_at=now() WHERE id=%s",
+                [op, int(n), DIAG_VERSION, json.dumps(metrics), row["id"]],
+            )
+        conn.commit()
+        log.info("[DIAG] %s -> %s (%d pts)", Path(row["archive_path"]).stem, op, n)
+        return "done"
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE machining_force_analysis SET diag_status='error', diag_error=%s, "
+                "updated_at=now() WHERE id=%s",
+                [str(e)[:2000], row["id"]],
+            )
+        conn.commit()
+        log.error("[DIAG-ERR] %s", e)
+        return "error"
+    finally:
+        shutil.rmtree(outdir, ignore_errors=True)
+
+
+def handle_diags(conn, exe: str) -> int:
+    """Build diagnostics octrees for any pending requests. Needs PotreeConverter + laspy +
+    the diag package; if any is missing, requests are left pending (logged once)."""
+    potree_exe = detect_potree_converter()
+    if not potree_exe:
+        return 0
+    try:
+        import laspy  # noqa: F401
+    except ImportError:
+        log.warning(
+            "laspy not installed (pip install laspy) — diag requests left pending"
+        )
+        return 0
+    rows = claim_diag(conn, limit=1)
+    done = 0
+    for row in rows:
+        # process_diag_row returns "done" or "error" — both truthy, so compare explicitly
+        # or an errored row would be counted as a success and mask a broken queue.
+        if (
+            process_diag_row(conn, row, exe, 3600, load_sampling_opts(conn), potree_exe)
+            == "done"
+        ):
+            done += 1
+    return done
 
 
 def handle_octrees(conn, exe: str) -> int:
@@ -1342,6 +1537,7 @@ def run_queue(conn, args, exe, mrelease):
     handle_renders(conn, exe, directus)  # process any pending viewport-download renders
     handle_octrees(conn, exe)  # build any pending Potree octrees
     handle_grids(conn, exe)  # build any pending interpolated-grid octrees
+    handle_diags(conn, exe)  # build any pending diagnostics octrees
 
     total = 0
     while True:
@@ -1451,6 +1647,10 @@ def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
                 ng = handle_grids(conn, exe)
                 if ng:
                     log.info("daemon: built %d interpolated-grid octree(s)", ng)
+
+                nd = handle_diags(conn, exe)
+                if nd:
+                    log.info("daemon: built %d diagnostics octree(s)", nd)
 
                 if state["desired_state"] != "running":
                     mark("paused")
