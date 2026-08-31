@@ -91,7 +91,7 @@ DIAG_CACHE_POINTS = 5_000_000
 # Bump whenever analyse()'s column set or its parameters change in a way that makes an
 # already-'done' row's diag_metrics/D1AN stale. claim_diag requeues 'done' rows with an
 # older diag_version automatically -- see claim_diag's WHERE clause below.
-DIAG_VERSION = 2
+DIAG_VERSION = 3
 DIAG_SAMPLES_PER_REV = 256
 
 
