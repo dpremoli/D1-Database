@@ -76,6 +76,11 @@ def test_session_end_to_end(tmp_path):
     # extra metadata was stamped into the .mat struct (scipy nests strings in arrays)
     assert "CNMG-1204" in str(m["metadata"]["Insert"])
 
+    summ = json.load(open(os.path.join(d, "summary.json")))
+    assert summ["local_diag"]["order_spectrum_status"] == "computed"
+    assert len(summ["local_diag"]["order_spectrum"]["orders"]) > 0
+    assert "detected" in summ["local_diag"]["drift"]
+
 
 def test_session_does_not_publish_a_tacho_fault_during_warm_up(tmp_path):
     """Regression: FrmIntegrator used to seed _tacho_ok=False, so the very first chunk processed by

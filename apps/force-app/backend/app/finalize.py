@@ -18,7 +18,7 @@ from scipy.signal import detrend
 from .config import SIGNAL_CHANNELS, RecordConfig
 from .d1lc import write_d1lc
 from .d1rw import memmap_rows, read_header
-from .dsp import rpm_from_tacho, sum_axes, tacho_column
+from .dsp import drift_check, order_spectrum_quick, rpm_from_tacho, sum_axes, tacho_column
 
 VAR_NAMES = ["Time"] + SIGNAL_CHANNELS  # 10 columns
 LIVE_CACHE_TARGET = 300_000  # decimate the cache to ~this many points for the client
@@ -81,6 +81,26 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     revs_cum = np.cumsum(rpm / 60.0 * dt)
     cs_sec, ce_sec = _cut_window(axes["Fz"], t)
 
+    # Local tier (Component 8, deliberately thin): a quick order spectrum + a drift-detection
+    # flag, computed here because finalize() only ever runs after the acquisition loop has
+    # stopped (see session.py's _run -> self.raw.close() -> _finalize_async) -- this is what
+    # makes "never runs during recording" structural rather than a rule this function has to
+    # separately enforce. The order spectrum needs a real revs_cum to resample against; without
+    # a measured tacho there is no revolution axis to resample onto, so it refuses rather than
+    # guessing one (same refusal-over-aliasing pattern as scripts/diag/pipeline.py's envelope
+    # analysis).
+    if tacho_measured:
+        os_orders, os_amp = order_spectrum_quick(revs_cum, axes["Fz"])
+        os_status = "computed" if os_orders else "refused: cut too short for a revolution grid"
+    else:
+        os_orders, os_amp = [], []
+        os_status = "refused: tacho not measured"
+    local_diag = {
+        "order_spectrum_status": os_status,
+        "order_spectrum": {"orders": os_orders, "amplitude": os_amp} if os_orders else None,
+        "drift": drift_check(t, axes),
+    }
+
     # --- .mat (v1.0), full resolution ---
     data = np.empty((n, 10), dtype=np.float64)
     data[:, 0] = t
@@ -142,6 +162,7 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         "peaks": {ax: float(np.max(np.abs(axes[ax]))) for ax in ("Fx", "Fy", "Fz")},
         "cut_window_sec": [cs_sec, ce_sec],
         "drift_comp": bool(cfg.drift_comp),
+        "local_diag": local_diag,
         # False => the tacho produced no timable edge pair, so the rpm/revs columns in capture.mat
         # and live_cache are zeros rather than a measurement. Recorded explicitly so an analysis
         # reading this capture later can tell "spindle genuinely stopped / sensor dead" apart from

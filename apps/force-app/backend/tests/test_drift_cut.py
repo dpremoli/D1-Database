@@ -8,6 +8,7 @@ from app import d1lc
 from app.acquisition.consumers import CutDetector, FrmIntegrator
 from app.config import SIGNAL_CHANNELS, RecordConfig
 from app.d1rw import RawWriter
+from app.dsp import drift_check, order_spectrum_quick
 from app.finalize import finalize
 
 
@@ -103,3 +104,45 @@ def test_frm_defer_until_cut():
     frm.mark_cut_start()
     pts2, _, _ = frm.process(t, axes, tacho)
     assert pts2.shape[0] > 0  # accumulates after cut start
+
+
+def test_drift_check_flags_a_strong_linear_trend():
+    fs, n = 4000, 8000
+    t = np.arange(n) / fs
+    axes = {
+        "Fx": np.full(n, 40.0),
+        "Fy": np.full(n, 60.0),
+        "Fz": 5.0 + 40.0 * t,  # same strong drift as test_drift_comp_removes_linear_trend
+    }
+    result = drift_check(t, axes)
+    assert result["Fz"]["detected"] is True
+    assert result["detected"] is True
+    assert result["Fx"]["detected"] is False
+
+
+def test_drift_check_clean_signal_not_flagged():
+    fs, n = 4000, 8000
+    t = np.arange(n) / fs
+    rng = np.random.default_rng(3)
+    axes = {
+        "Fx": 40.0 + rng.normal(scale=1.0, size=n),
+        "Fy": 60.0 + rng.normal(scale=1.0, size=n),
+        "Fz": 120.0 + rng.normal(scale=1.0, size=n),
+    }
+    result = drift_check(t, axes)
+    assert result["detected"] is False
+
+
+def test_order_spectrum_quick_recovers_known_order():
+    # 5 revolutions/sec worth of angle, a force with a clean 3rd-order component.
+    spr = 64
+    n_rev = 40
+    revs = np.arange(n_rev * spr, dtype=np.float64) / spr
+    sig = 100.0 + 8.0 * np.sin(2 * np.pi * 3.0 * revs)  # order 3
+    orders, amp = order_spectrum_quick(revs, sig, samples_per_rev=spr)
+    orders = np.asarray(orders)
+    amp = np.asarray(amp)
+    mask = orders > 0.5  # drop DC
+    orders_f, amp_f = orders[mask], amp[mask]
+    peak_order = orders_f[np.argmax(amp_f)]
+    assert abs(peak_order - 3.0) < 0.2

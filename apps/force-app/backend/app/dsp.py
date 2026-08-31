@@ -152,3 +152,66 @@ def welch_spectra(
     step = max(1, f.size // max_bins)
     fout = f[::step].round(2).tolist()
     return fout, {n: np.sqrt(p[::step]).round(4).tolist() for n, p in psd.items()}
+
+
+def order_spectrum_quick(
+    revs: np.ndarray, sig: np.ndarray, samples_per_rev: int = 64, max_order: float = 16.0
+) -> tuple[list[float], list[float]]:
+    """A deliberately cheap order spectrum for the local tier (Component 8): resample onto a
+    uniform revolution grid at a coarse `samples_per_rev`, then rfft. Independent of (and much
+    lower-resolution than) scripts/diag/angular.py's order_spectrum -- that one runs server-side
+    against a >=5M-point cache; this one runs at the machine, against whatever a single cut's
+    live_cache holds, and only needs to answer "is there an obvious repeating pattern" before the
+    operator walks away from the part.
+
+    `revs` must be monotonically non-decreasing (revs_cum). Returns (orders, amplitude), orders
+    capped to `max_order` -- consistent with the server pipeline's own metrics-payload cap, and
+    for the same reason: everything diagnostically interesting (insert passing, its harmonics,
+    the non-integer chatter orders between them) lives in the low orders.
+    """
+    revs = np.asarray(revs, dtype=np.float64)
+    sig = np.asarray(sig, dtype=np.float64)
+    if revs.size < samples_per_rev * 2:
+        return [], []
+    n_rev = int(revs[-1] - revs[0])
+    if n_rev < 2:
+        return [], []
+    grid = revs[0] + np.arange(n_rev * samples_per_rev) / samples_per_rev
+    resampled = np.interp(grid, revs, sig)
+    spec = np.fft.rfft(resampled - np.mean(resampled))
+    orders = np.fft.rfftfreq(resampled.size, d=1.0 / samples_per_rev)
+    amp = np.abs(spec) / resampled.size
+    keep = orders <= max_order
+    return orders[keep].tolist(), amp[keep].tolist()
+
+
+def drift_check(t: np.ndarray, axes: dict[str, np.ndarray], thresh_frac: float = 0.1) -> dict:
+    """Flag whether each summed axis shows a linear baseline drift large enough to matter,
+    independent of whether drift_comp correction is enabled -- this is a diagnostic check, not
+    the correction itself (see finalize.py's drift_comp, which unconditionally detrends when the
+    operator opts in). "Large enough to matter" is the trend's total excursion over the capture
+    (|slope| * duration) exceeding `thresh_frac` of the axis's own peak-to-peak amplitude, so a
+    small drift on a small, quiet signal isn't judged by the same absolute-Newtons yardstick as
+    a small drift on a violently noisy one.
+    """
+    t = np.asarray(t, dtype=np.float64)
+    duration = float(t[-1] - t[0]) if t.size > 1 else 0.0
+    out: dict = {}
+    any_detected = False
+    for name, sig in axes.items():
+        sig = np.asarray(sig, dtype=np.float64)
+        if sig.size < 2 or duration <= 0:
+            out[name] = {"slope_n_per_sec": 0.0, "excursion_frac": 0.0, "detected": False}
+            continue
+        slope = float(np.polyfit(t, sig, 1)[0])
+        ptp = float(np.ptp(sig))
+        excursion_frac = (abs(slope) * duration / ptp) if ptp > 1e-9 else 0.0
+        detected = excursion_frac > thresh_frac
+        any_detected = any_detected or detected
+        out[name] = {
+            "slope_n_per_sec": slope,
+            "excursion_frac": excursion_frac,
+            "detected": detected,
+        }
+    out["detected"] = any_detected
+    return out
