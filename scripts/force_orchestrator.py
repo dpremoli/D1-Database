@@ -88,7 +88,10 @@ OCTREE_DIR = Path(
 # (the orchestrator sets live_cache_points=250000 for that). 5M matches process_force.m's own
 # default and _octree_threshold's fallback, and is the WorkingSet floor the browser expects.
 DIAG_CACHE_POINTS = 5_000_000
-DIAG_VERSION = 1
+# Bump whenever analyse()'s column set or its parameters change in a way that makes an
+# already-'done' row's diag_metrics/D1AN stale. claim_diag requeues 'done' rows with an
+# older diag_version automatically -- see claim_diag's WHERE clause below.
+DIAG_VERSION = 2
 DIAG_SAMPLES_PER_REV = 256
 
 
@@ -654,15 +657,19 @@ def claim_octree(conn, limit: int = 2):
 
 # ------------------------------------------------------- Diagnostics Workbench octree build
 def claim_diag(conn, limit: int = 1):
-    """Claim pending diagnostics rows. Concurrency is deliberately 1 by default: this host
-    also serves Directus, and a clustering pass that starves the database mid-experiment is
-    a worse outcome than a slow queue."""
+    """Claim pending diagnostics rows, PLUS previously-'done' rows whose diag_version is
+    older than the current DIAG_VERSION -- a version bump alone changes nothing without this;
+    it is what makes "bump DIAG_VERSION to invalidate and requeue" (see the migration's own
+    comment on the diag_version column) actually true. Concurrency is deliberately 1 by
+    default: this host also serves Directus, and a clustering pass that starves the database
+    mid-experiment is a worse outcome than a slow queue."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
             WITH picked AS (
                 SELECT id FROM machining_force_analysis
                  WHERE diag_status='pending'
+                    OR (diag_status='done' AND (diag_version IS NULL OR diag_version < %s))
                  ORDER BY diag_requested_at NULLS FIRST
                  LIMIT %s FOR UPDATE SKIP LOCKED
             )
@@ -671,7 +678,7 @@ def claim_diag(conn, limit: int = 1):
          RETURNING a.id, a.operation_id, a.pulses_per_rev, a.inner_diameter, a.outer_diameter, a.filter_chain::text AS filter_chain,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
         """,
-            [limit],
+            [DIAG_VERSION, limit],
         )
         rows = cur.fetchall()
     conn.commit()
