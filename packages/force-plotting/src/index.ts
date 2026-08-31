@@ -27,3 +27,6 @@ export { fetchD1an, parseD1an, D1AN_MAGIC } from './diagAttrs';
 export type { DiagAttrs } from './diagAttrs';
 export { workingSetFromD1an, matches, computeStats } from './selection';
 export type { WorkingSet, Selection, SelectionStats } from './selection';
+
+export { alignAndDiff } from './compare';
+export type { AlignedDiff } from './compare';
