@@ -133,12 +133,88 @@ def test_pipeline_columns_include_spatial_coordinates():
         "gi_sig",
         "cluster_id",
         "glosh",
+        "env_band",
     }
     # x/y must land on the same radius the spiral actually has at that revolution --
     # not just be finite/present. rho = 40.0 - 0.05*revs in _synthetic_cut.
     r = np.hypot(cols["x"], cols["y"])
     expected_r = 40.0 - 0.05 * cols["rev"]
     np.testing.assert_allclose(r, expected_r, atol=0.05)
+
+
+def test_env_band_refused_when_fn_hz_not_provided():
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
+    cache = {
+        "n": t.size,
+        "fs": fs,
+        "feed": 0.05,
+        "diam": 80.0,
+        "cs_sec": 0.0,
+        "ce_sec": float(t[-1]),
+        "t": t,
+        "fx": fx,
+        "fy": fy,
+        "fz": fz,
+        "rpm": rpm,
+        "revs": revs,
+    }
+    cols, metrics = analyse(cache, x, y, samples_per_rev=SPR)
+    assert metrics["env_band_status"] == "refused: dyno_fn_hz not provided"
+    assert "envelope_spectrum" not in metrics
+    assert np.all(cols["env_band"] == 0.0)
+
+
+def test_env_band_refused_when_nyquist_too_low_for_the_band():
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
+    cache = {
+        "n": t.size,
+        "fs": fs,
+        "feed": 0.05,
+        "diam": 80.0,
+        "cs_sec": 0.0,
+        "ce_sec": float(t[-1]),
+        "t": t,
+        "fx": fx,
+        "fy": fy,
+        "fz": fz,
+        "rpm": rpm,
+        "revs": revs,
+    }
+    # fs is 25000 Hz (Nyquist 12500 Hz) in _synthetic_cut; a resonance far above that cannot
+    # be band-passed no matter the bandwidth fraction.
+    cols, metrics = analyse(cache, x, y, samples_per_rev=SPR, fn_hz=20_000.0)
+    assert metrics["env_band_status"].startswith("refused: effective_nyquist_hz")
+    assert "envelope_spectrum" not in metrics
+    assert np.all(cols["env_band"] == 0.0)
+
+
+def test_env_band_computed_when_fn_hz_fits_within_nyquist():
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
+    cache = {
+        "n": t.size,
+        "fs": fs,
+        "feed": 0.05,
+        "diam": 80.0,
+        "cs_sec": 0.0,
+        "ce_sec": float(t[-1]),
+        "t": t,
+        "fx": fx,
+        "fy": fy,
+        "fz": fz,
+        "rpm": rpm,
+        "revs": revs,
+    }
+    # fs=25000 Hz -> Nyquist 12500 Hz; 2300 Hz with a 20% band comfortably fits.
+    cols, metrics = analyse(cache, x, y, samples_per_rev=SPR, fn_hz=2300.0)
+    assert metrics["env_band_status"] == "computed"
+    assert "envelope_spectrum" in metrics
+    assert len(metrics["envelope_spectrum"]["freqs"]) > 0
+    assert len(metrics["envelope_spectrum"]["freqs"]) == len(
+        metrics["envelope_spectrum"]["amplitude"]
+    )
+    assert cols["env_band"].shape == cols["resid_z"].shape
+    assert np.all(np.isfinite(cols["env_band"]))
+    assert np.all(cols["env_band"] >= 0.0)
 
 
 def test_metrics_record_effective_nyquist_and_validity():

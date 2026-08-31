@@ -1,7 +1,7 @@
 """One analysis pass: D1LC cache + spiral coordinates -> D1AN columns + metrics.
 
-Phase 1-3 scope. Emits t, rev, x, y, tsa_resid, resid_z, gi_star, gi_sig, cluster_id and
-glosh. env_band (envelope analysis) arrives in Phase 4.
+Phase 1-4 scope. Emits t, rev, x, y, tsa_resid, resid_z, gi_star, gi_sig, cluster_id, glosh
+and env_band -- the full column set the design spec's D1AN contract calls for.
 
 No geometry is recomputed here. process_force.m owns the spiral, the cut window and drift
 compensation; this module consumes revs_cum and (x, y) as given. Recomputing either would
@@ -22,6 +22,7 @@ import numpy as np
 from .angular import angular_resample, order_spectrum, tsa
 from .d1lc import read_d1lc
 from .detrend import radial_detrend
+from .envelope import bandpass_envelope, envelope_spectrum
 from .frames import frame_transform
 from .spatial import (
     assign_from_grid,
@@ -49,6 +50,7 @@ def analyse(
     gi_k: int = 30,
     hdbscan_grid_target: int = 20_000,
     hdbscan_min_cluster_size: int = 10,
+    envelope_bandwidth_frac: float = 0.2,
 ) -> tuple[dict[str, np.ndarray], dict]:
     """Run the Phase 1 analysis.
 
@@ -138,6 +140,38 @@ def analyse(
         metrics["dyno_fn_hz"] = float(fn_hz)
         metrics["quantitative_limit_hz"] = float(fn_hz) / 5.0
 
+    # Event-band (envelope) analysis runs on `sig` -- the full-rate signal, NOT sig_ang/
+    # resid_z/anything angular-domain. It needs the same precondition quantitative_limit_hz
+    # already requires (a real dyno_fn_hz), plus a Nyquist check specific to whether the
+    # requested band actually fits: silently aliasing a band that doesn't fit is worse than
+    # refusing, so refusal is recorded, never guessed past.
+    env_band = np.zeros(n)
+    if fn_hz is None or fn_hz <= 0:
+        env_band_status = "refused: dyno_fn_hz not provided"
+    else:
+        half_bw = fn_hz * (envelope_bandwidth_frac / 2.0)
+        hi_needed = fn_hz + half_bw
+        nyquist = eff_fs / 2.0
+        if nyquist < hi_needed:
+            env_band_status = (
+                f"refused: effective_nyquist_hz ({nyquist:.1f}) below required "
+                f"{hi_needed:.1f} Hz for the resonance band"
+            )
+        else:
+            envelope = bandpass_envelope(
+                sig, eff_fs, f_center=fn_hz, bandwidth_frac=envelope_bandwidth_frac
+            )
+            _, env_ang = angular_resample(revs, envelope, samples_per_rev)
+            env_band = env_ang[:n]
+            env_band_status = "computed"
+            env_f, env_amp = envelope_spectrum(envelope, eff_fs, max_freq=nyquist)
+    metrics["env_band_status"] = env_band_status
+    if env_band_status == "computed":
+        metrics["envelope_spectrum"] = {
+            "freqs": [float(v) for v in env_f],
+            "amplitude": [float(v) for v in env_amp],
+        }
+
     columns = {
         "t": t_ang.astype(np.float32),
         "rev": rev_grid.astype(np.float32),
@@ -149,5 +183,6 @@ def analyse(
         "gi_sig": gi_sig.astype(np.float32),
         "cluster_id": cluster_id.astype(np.float32),
         "glosh": glosh.astype(np.float32),
+        "env_band": env_band.astype(np.float32),
     }
     return columns, metrics
