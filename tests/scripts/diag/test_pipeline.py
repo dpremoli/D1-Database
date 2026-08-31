@@ -53,7 +53,8 @@ def test_d1lc_round_trip(tmp_path):
 
 def test_pipeline_recovers_implanted_anomaly_location():
     """The test that validates the science: an anomaly implanted at a known revolution
-    must come back as the strongest residual at that same revolution."""
+    must come back as the strongest residual at that same revolution, AND as a
+    significant spatial hotspot with its own cluster."""
     t, fx, fy, fz, rpm, revs, x, y, fs, hit = _synthetic_cut()
     cache = {
         "n": t.size,
@@ -73,6 +74,11 @@ def test_pipeline_recovers_implanted_anomaly_location():
     peak_rev = cols["rev"][int(np.argmax(np.abs(cols["resid_z"])))]
     assert abs(peak_rev - 25.0) < 0.2
     assert metrics["n_points"] == cols["resid_z"].size
+
+    # the point of peak residual must also read as a significant spatial hotspot
+    peak_idx = int(np.argmax(np.abs(cols["resid_z"])))
+    assert cols["gi_sig"][peak_idx] == 1.0
+    assert cols["gi_star"][peak_idx] > 0
 
 
 def test_pipeline_columns_are_aligned_and_finite():
@@ -116,7 +122,18 @@ def test_pipeline_columns_include_spatial_coordinates():
         "revs": revs,
     }
     cols, _ = analyse(cache, x, y, samples_per_rev=SPR)
-    assert set(cols) == {"t", "rev", "x", "y", "tsa_resid", "resid_z"}
+    assert set(cols) == {
+        "t",
+        "rev",
+        "x",
+        "y",
+        "tsa_resid",
+        "resid_z",
+        "gi_star",
+        "gi_sig",
+        "cluster_id",
+        "glosh",
+    }
     # x/y must land on the same radius the spiral actually has at that revolution --
     # not just be finite/present. rho = 40.0 - 0.05*revs in _synthetic_cut.
     r = np.hypot(cols["x"], cols["y"])

@@ -1,7 +1,7 @@
 """One analysis pass: D1LC cache + spiral coordinates -> D1AN columns + metrics.
 
-Phase 1 scope. Emits t, rev, x, y, tsa_resid and resid_z; the spatial statistics columns
-(gi_star, gi_sig, glosh, cluster_id) and env_band arrive in later phases.
+Phase 1-3 scope. Emits t, rev, x, y, tsa_resid, resid_z, gi_star, gi_sig, cluster_id and
+glosh. env_band (envelope analysis) arrives in Phase 4.
 
 No geometry is recomputed here. process_force.m owns the spiral, the cut window and drift
 compensation; this module consumes revs_cum and (x, y) as given. Recomputing either would
@@ -23,6 +23,13 @@ from .angular import angular_resample, order_spectrum, tsa
 from .d1lc import read_d1lc
 from .detrend import radial_detrend
 from .frames import frame_transform
+from .spatial import (
+    assign_from_grid,
+    benjamini_hochberg,
+    cluster_hdbscan,
+    getis_ord_gi_star,
+    grid_reduce,
+)
 
 __all__ = ["analyse", "read_d1lc"]
 
@@ -39,6 +46,9 @@ def analyse(
     samples_per_rev: int = DEFAULT_SAMPLES_PER_REV,
     fn_hz: float | None = None,
     channel: str = "fp",
+    gi_k: int = 30,
+    hdbscan_grid_target: int = 20_000,
+    hdbscan_min_cluster_size: int = 10,
 ) -> tuple[dict[str, np.ndarray], dict]:
     """Run the Phase 1 analysis.
 
@@ -74,6 +84,29 @@ def analyse(
 
     r = np.hypot(x_ang, y_ang)
     resid_z = radial_detrend(r, residual)
+
+    # Spatial statistics run on the same (x_ang, y_ang, resid_z) the detrend already used.
+    # Gi* needs at least gi_k+1 points; short test cuts can fall under that, so degrade to
+    # "nothing significant" rather than raising -- a two-revolution synthetic cut should not
+    # crash the whole pipeline over a statistic it has too few points to compute.
+    if n > gi_k:
+        gi_star, gi_p = getis_ord_gi_star(x_ang, y_ang, resid_z, k=gi_k)
+        gi_sig = benjamini_hochberg(gi_p, alpha=0.05).astype(np.float64)
+    else:
+        gi_star = np.zeros(n)
+        gi_sig = np.zeros(n)
+
+    xr, yr, vr, cell_id = grid_reduce(
+        x_ang, y_ang, resid_z, target_n=hdbscan_grid_target
+    )
+    if xr.size >= hdbscan_min_cluster_size:
+        labels_r, glosh_r = cluster_hdbscan(
+            xr, yr, vr, min_cluster_size=hdbscan_min_cluster_size
+        )
+        cluster_id, glosh = assign_from_grid(cell_id, labels_r, glosh_r)
+    else:
+        cluster_id = np.full(n, -1.0)
+        glosh = np.zeros(n)
 
     orders, amp = order_spectrum(sig_ang, samples_per_rev)
     # Keep only the low orders for the metrics payload — everything diagnostically
@@ -112,5 +145,9 @@ def analyse(
         "y": y_ang.astype(np.float32),
         "tsa_resid": residual.astype(np.float32),
         "resid_z": resid_z.astype(np.float32),
+        "gi_star": gi_star.astype(np.float32),
+        "gi_sig": gi_sig.astype(np.float32),
+        "cluster_id": cluster_id.astype(np.float32),
+        "glosh": glosh.astype(np.float32),
     }
     return columns, metrics

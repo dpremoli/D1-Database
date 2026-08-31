@@ -20,6 +20,8 @@ import numpy as np
 from scipy.spatial import cKDTree
 from scipy.stats import norm
 
+_MAD_TO_SIGMA = 1.4826
+
 
 def getis_ord_gi_star(
     x: np.ndarray, y: np.ndarray, v: np.ndarray, k: int = 30
@@ -29,6 +31,15 @@ def getis_ord_gi_star(
 
     Returns (gi_star, p_values): p_values are two-sided, from the standard normal
     approximation Gi* is asymptotically distributed under.
+
+    The textbook formula normalises by the GLOBAL mean/std of `v`. That is exactly wrong for
+    this pipeline's actual input: `v` is a residual that may already carry a handful of
+    extreme, sparse outliers -- the very things being searched for. A non-robust std is
+    dominated by those outliers (verified against this pipeline's own synthetic ground-truth
+    cut: a single implanted anomaly of 25 points out of ~10000 inflated the global std from
+    ~1 to ~3.6, which alone dropped every Gi* score below significance, including the
+    anomaly's own). Median and MAD-based sigma are used instead, the same substitution
+    detrend.py already makes for the same reason.
     """
     x = np.asarray(x, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
@@ -42,8 +53,8 @@ def getis_ord_gi_star(
     tree = cKDTree(np.column_stack([x, y]))
     _, idx = tree.query(np.column_stack([x, y]), k=k)  # idx includes the point itself
 
-    vbar = float(v.mean())
-    s = float(v.std())
+    vbar = float(np.median(v))
+    s = float(np.median(np.abs(v - vbar))) * _MAD_TO_SIGMA
     if s == 0.0:
         # A perfectly uniform field has no spatial structure to detect; Gi* is undefined
         # (division by zero) and every point is equally "not a hotspot".
