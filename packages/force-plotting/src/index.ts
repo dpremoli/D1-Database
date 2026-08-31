@@ -20,3 +20,10 @@ export { chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFf
 export type { FilterChain } from './filterChain';
 
 export { default as ForceDashboard } from './ForceDashboard.vue';
+
+export { default as DiagnosticsWorkbench } from './DiagnosticsWorkbench.vue';
+export { default as DiagOctreeView } from './DiagOctreeView.vue';
+export { fetchD1an, parseD1an, D1AN_MAGIC } from './diagAttrs';
+export type { DiagAttrs } from './diagAttrs';
+export { workingSetFromD1an, matches, computeStats } from './selection';
+export type { WorkingSet, Selection, SelectionStats } from './selection';
