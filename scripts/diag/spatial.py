@@ -74,3 +74,81 @@ def benjamini_hochberg(p_values: np.ndarray, alpha: float = 0.05) -> np.ndarray:
     significant = np.zeros(n, dtype=bool)
     significant[order[: k_max + 1]] = True
     return significant
+
+
+def grid_reduce(
+    x: np.ndarray, y: np.ndarray, v: np.ndarray, target_n: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Bin points into a square grid sized so the number of occupied cells is roughly
+    `target_n`, and collapse each cell to the mean (x, y, v) of the points inside it.
+
+    Returns (xr, yr, vr, cell_id): the reduced representative points, and `cell_id` -- one
+    entry per input point, the index into xr/yr/vr it was collapsed into. `cell_id` is what
+    lets assign_from_grid broadcast a clustering computed on the reduced set back onto every
+    original point exactly, with no further nearest-neighbour search needed.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    v = np.asarray(v, dtype=np.float64)
+    if target_n < 1:
+        raise ValueError("target_n must be >= 1")
+
+    xlo, xhi = float(x.min()), float(x.max())
+    ylo, yhi = float(y.min()), float(y.max())
+    xspan = (xhi - xlo) or 1.0
+    yspan = (yhi - ylo) or 1.0
+    # Aim for a roughly square grid whose total cell count is target_n, split between axes by
+    # their relative span so cells are roughly square in data units, not just in index count.
+    aspect = xspan / yspan
+    ny = max(1, int(round(np.sqrt(target_n / aspect))))
+    nx = max(1, int(round(target_n / ny)))
+
+    ix = np.clip(((x - xlo) / xspan * nx).astype(np.int64), 0, nx - 1)
+    iy = np.clip(((y - ylo) / yspan * ny).astype(np.int64), 0, ny - 1)
+    flat = ix * ny + iy
+
+    unique_flat, cell_id = np.unique(flat, return_inverse=True)
+    n_cells = unique_flat.size
+
+    xr = np.zeros(n_cells)
+    yr = np.zeros(n_cells)
+    vr = np.zeros(n_cells)
+    counts = np.zeros(n_cells)
+    np.add.at(xr, cell_id, x)
+    np.add.at(yr, cell_id, y)
+    np.add.at(vr, cell_id, v)
+    np.add.at(counts, cell_id, 1.0)
+    xr /= counts
+    yr /= counts
+    vr /= counts
+    return xr, yr, vr, cell_id.astype(np.int64)
+
+
+def cluster_hdbscan(
+    xr: np.ndarray, yr: np.ndarray, vr: np.ndarray, min_cluster_size: int = 10
+) -> tuple[np.ndarray, np.ndarray]:
+    """HDBSCAN on the reduced (xr, yr, vr) point set. Returns (labels, glosh):
+    `labels` is HDBSCAN's own cluster id per point (-1 = noise); `glosh` is `1 -
+    probabilities_`, a proxy for outlier-ness (see module docstring -- this is not the
+    literal GLOSH algorithm, which sklearn's HDBSCAN does not implement).
+    """
+    from sklearn.cluster import HDBSCAN
+
+    xr = np.asarray(xr, dtype=np.float64)
+    yr = np.asarray(yr, dtype=np.float64)
+    vr = np.asarray(vr, dtype=np.float64)
+    features = np.column_stack([xr, yr, vr])
+    # copy=False pins today's default explicitly -- sklearn warns that it flips to True in
+    # 1.10; behaviour is unchanged, this just silences the FutureWarning ahead of that.
+    h = HDBSCAN(min_cluster_size=min_cluster_size, copy=False).fit(features)
+    glosh = 1.0 - h.probabilities_
+    return h.labels_.astype(np.float64), glosh.astype(np.float64)
+
+
+def assign_from_grid(
+    cell_id: np.ndarray, labels_reduced: np.ndarray, glosh_reduced: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Broadcast the reduced set's cluster labels/glosh to every full-resolution point via
+    its grid cell (exact -- see grid_reduce's docstring)."""
+    cell_id = np.asarray(cell_id, dtype=np.int64)
+    return labels_reduced[cell_id], glosh_reduced[cell_id]
