@@ -1,6 +1,6 @@
 """One analysis pass: D1LC cache + spiral coordinates -> D1AN columns + metrics.
 
-Phase 1 scope. Emits t, rev, tsa_resid and resid_z; the spatial statistics columns
+Phase 1 scope. Emits t, rev, x, y, tsa_resid and resid_z; the spatial statistics columns
 (gi_star, gi_sig, glosh, cluster_id) and env_band arrive in later phases.
 
 No geometry is recomputed here. process_force.m owns the spiral, the cut window and drift
@@ -108,6 +108,8 @@ def analyse(
     columns = {
         "t": t_ang.astype(np.float32),
         "rev": rev_grid.astype(np.float32),
+        "x": x_ang.astype(np.float32),
+        "y": y_ang.astype(np.float32),
         "tsa_resid": residual.astype(np.float32),
         "resid_z": resid_z.astype(np.float32),
     }

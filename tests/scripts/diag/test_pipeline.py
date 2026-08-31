@@ -99,6 +99,31 @@ def test_pipeline_columns_are_aligned_and_finite():
         assert v.dtype == np.float32, k
 
 
+def test_pipeline_columns_include_spatial_coordinates():
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
+    cache = {
+        "n": t.size,
+        "fs": fs,
+        "feed": 0.05,
+        "diam": 80.0,
+        "cs_sec": 0.0,
+        "ce_sec": float(t[-1]),
+        "t": t,
+        "fx": fx,
+        "fy": fy,
+        "fz": fz,
+        "rpm": rpm,
+        "revs": revs,
+    }
+    cols, _ = analyse(cache, x, y, samples_per_rev=SPR)
+    assert set(cols) == {"t", "rev", "x", "y", "tsa_resid", "resid_z"}
+    # x/y must land on the same radius the spiral actually has at that revolution --
+    # not just be finite/present. rho = 40.0 - 0.05*revs in _synthetic_cut.
+    r = np.hypot(cols["x"], cols["y"])
+    expected_r = 40.0 - 0.05 * cols["rev"]
+    np.testing.assert_allclose(r, expected_r, atol=0.05)
+
+
 def test_metrics_record_effective_nyquist_and_validity():
     t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
     cache = {

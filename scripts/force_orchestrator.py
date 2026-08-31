@@ -907,18 +907,18 @@ def process_diag_row(
 
         columns, metrics = analyse(cache, x, y, samples_per_rev=DIAG_SAMPLES_PER_REV)
         n = columns["t"].size
-        write_d1an(str(Path(outdir) / "attrs.d1an"), columns)
+        d1an_path = Path(outdir) / "attrs.d1an"
+        write_d1an(str(d1an_path), columns)
 
-        # The analysis grid is shorter than the cloud (TSA truncates to whole revolutions and
-        # resampling moves onto an angular grid), so re-sample the spatial coordinates onto
-        # the same grid rather than assuming a 1:1 index match.
+        # analyse() now returns x/y on the same angular grid as every other column (Diagnostics
+        # Workbench Phase 2, Task 1) -- reuse them instead of re-resampling. Force (for the LAS
+        # intensity ramp) still needs its own resample: it isn't one of analyse()'s columns.
+        xa, ya = columns["x"].astype(np.float64), columns["y"].astype(np.float64)
         revs = np.asarray(cache["revs"], dtype=np.float64)
-        _, xa = angular_resample(revs, np.asarray(x, np.float64), DIAG_SAMPLES_PER_REV)
-        _, ya = angular_resample(revs, np.asarray(y, np.float64), DIAG_SAMPLES_PER_REV)
         _, fza = angular_resample(
             revs, np.asarray(fz, np.float64), DIAG_SAMPLES_PER_REV
         )
-        xa, ya, fza = xa[:n], ya[:n], fza[:n]
+        fza = fza[:n]
 
         las_path = str(Path(outdir) / "diag.las")
         h = laspy.LasHeader(point_format=3)
@@ -927,13 +927,17 @@ def process_diag_row(
         # float32 extra dims, never int16: PotreeConverter ignores extra-dim scale/offset and
         # stores the raw codes, so an int16-packed attribute reaches the viewer as codes
         # rather than physical values. This was tried for the grid octree and reverted.
-        for nm in columns:
+        # x/y are excluded here: they become the LAS's core positional fields (las.x/las.y
+        # below), and registering an extra dim literally named 'x' or 'y' collides with
+        # laspy's own reserved field names.
+        extra_cols = {k: v for k, v in columns.items() if k not in ("x", "y")}
+        for nm in extra_cols:
             h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.float32))
         las = laspy.LasData(h)
         las.x = xa.astype(np.float64)
         las.y = ya.astype(np.float64)
         las.z = np.zeros(n)
-        for nm, arr in columns.items():
+        for nm, arr in extra_cols.items():
             setattr(las, nm, arr)
         lo, hi = float(fza.min()), float(fza.max())
         las.intensity = np.clip(
@@ -959,6 +963,12 @@ def process_diag_row(
         dst.mkdir(parents=True, exist_ok=True)
         for fn in ("metadata.json", "hierarchy.bin", "octree.bin"):
             shutil.copy2(Path(octmp) / fn, dst / fn)
+        # WorkingSet data source for the browser (Diagnostics Workbench Phase 2, Task 1): the
+        # octree files above carry these same attribute values too, but only as LAS extra dims
+        # streamed per-LOD-node through potree-core -- there is no way to fetch "all points'
+        # resid_z" from that path. attrs.d1an is the flat, directly-fetchable array the
+        # Selection Inspector's JS-side statistics read.
+        shutil.copy2(d1an_path, dst / "attrs.d1an")
 
         with conn.cursor() as cur:
             cur.execute(
