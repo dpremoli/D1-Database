@@ -91,7 +91,7 @@ DIAG_CACHE_POINTS = 5_000_000
 # Bump whenever analyse()'s column set or its parameters change in a way that makes an
 # already-'done' row's diag_metrics/D1AN stale. claim_diag requeues 'done' rows with an
 # older diag_version automatically -- see claim_diag's WHERE clause below.
-DIAG_VERSION = 3
+DIAG_VERSION = 4
 DIAG_SAMPLES_PER_REV = 256
 
 
@@ -676,7 +676,9 @@ def claim_diag(conn, limit: int = 1):
             UPDATE machining_force_analysis a SET diag_status='processing', updated_at=now()
               FROM picked WHERE a.id = picked.id
          RETURNING a.id, a.operation_id, a.pulses_per_rev, a.inner_diameter, a.outer_diameter, a.filter_chain::text AS filter_chain,
-                   (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
+                   (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path,
+                   (SELECT mount_deg FROM tool_setup WHERE setup_id = a.tool_setup_id) AS setup_mount_deg,
+                   (SELECT h_matrix FROM tool_setup WHERE setup_id = a.tool_setup_id) AS setup_h_matrix
         """,
             [DIAG_VERSION, limit],
         )
@@ -912,7 +914,26 @@ def process_diag_row(
                 "the octree cloud must come from the same decimation to be index-aligned"
             )
 
-        columns, metrics = analyse(cache, x, y, samples_per_rev=DIAG_SAMPLES_PER_REV)
+        mount_deg = (
+            float(row["setup_mount_deg"])
+            if row.get("setup_mount_deg") is not None
+            else 0.0
+        )
+        h_matrix_raw = row.get("setup_h_matrix")
+        h_matrix = (
+            np.array(h_matrix_raw, dtype=np.float64)
+            if h_matrix_raw is not None
+            else None
+        )
+
+        columns, metrics = analyse(
+            cache,
+            x,
+            y,
+            mount_deg=mount_deg,
+            h_matrix=h_matrix,
+            samples_per_rev=DIAG_SAMPLES_PER_REV,
+        )
         n = columns["t"].size
         d1an_path = Path(outdir) / "attrs.d1an"
         write_d1an(str(d1an_path), columns)

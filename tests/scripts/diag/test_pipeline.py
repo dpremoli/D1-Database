@@ -238,3 +238,57 @@ def test_metrics_record_effective_nyquist_and_validity():
     assert metrics["effective_nyquist_hz"] == metrics["effective_fs_hz"] / 2
     # Kistler's own guidance: valid quantitative range is fn/5.
     assert abs(metrics["quantitative_limit_hz"] - 460.0) < 1e-6
+
+
+def test_h_matrix_correction_moves_signal_between_channels():
+    """A synthetic case where the ONLY way the anomaly-bearing signal ends up on Ff is
+    through the H-matrix correction: fx carries the signature, fy is flat. An h_matrix that
+    swaps x<->y must move that signature onto ff; without it (h_matrix=None), ff stays flat.
+    This is the ground-truth test for Task 1 -- it fails if h_matrix is silently ignored.
+    """
+    n_rev, spr = 30, SPR
+    n = n_rev * spr
+    revs = np.arange(n, dtype=np.float64) / spr
+    fs = 25_000.0
+    t = revs * 60.0 / 1200.0
+    phase = 2 * np.pi * revs
+    signature = 50.0 + 5.0 * np.sin(phase) + 2.0 * np.sin(3 * phase)
+    fx = signature
+    fy = np.zeros(n)
+    fz = np.full(n, 10.0)  # placeholder, channel under test is 'ff'
+    rpm = np.full(n, 1200.0)
+    rho = 40.0 - 0.05 * revs / (2 * np.pi)
+    theta = 2 * np.pi * revs
+    x = rho * np.cos(theta)
+    y = rho * np.sin(theta)
+
+    cache = dict(
+        n=n,
+        fs=fs,
+        feed=0.05,
+        diam=80.0,
+        cs_sec=0.0,
+        ce_sec=float(t[-1]),
+        t=t,
+        fx=fx,
+        fy=fy,
+        fz=fz,
+        rpm=rpm,
+        revs=revs,
+    )
+
+    # No correction: ff = fy = 0 throughout -- no signature to find.
+    _, metrics_plain = analyse(cache, x, y, channel="ff", samples_per_rev=spr)
+    assert metrics_plain["h_matrix_applied"] is False
+    assert max(abs(v) for v in metrics_plain["tsa_signature"]) < 1e-6
+
+    # h_matrix swaps x and y: corrected fx' = fy = 0, fy' = fx = signature.
+    # With mount_deg=0 (identity rotation), ff = fy' = signature.
+    swap = np.array([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    columns, metrics = analyse(
+        cache, x, y, channel="ff", h_matrix=swap, samples_per_rev=spr
+    )
+    assert metrics["h_matrix_applied"] is True
+    assert (
+        max(abs(v) for v in metrics["tsa_signature"]) > 3.0
+    )  # the signature is now on ff

@@ -44,6 +44,7 @@ def analyse(
     y: np.ndarray,
     *,
     mount_deg: float = 0.0,
+    h_matrix: np.ndarray | None = None,
     samples_per_rev: int = DEFAULT_SAMPLES_PER_REV,
     fn_hz: float | None = None,
     channel: str = "fp",
@@ -57,6 +58,9 @@ def analyse(
     `cache` is a read_d1lc() result. `x`/`y` are the spiral coordinates for the same samples.
     `channel` selects which of the frame-transformed axes ('fc', 'ff', 'fp') drives the TSA /
     order-spectrum / detrend pipeline; see the module docstring for why this defaults to 'fp'.
+    `h_matrix` is an optional 3x3 FRF correction applied to (Fx,Fy,Fz) before the frame
+    transform -- the worker applies a supplied matrix, it does not estimate one (see
+    Component 4/8 non-goals in the design spec).
     Returns (columns, metrics): `columns` is the D1AN column dict (all float32, all the same
     length), `metrics` is JSON-serialisable.
 
@@ -68,11 +72,17 @@ def analyse(
         raise ValueError(f"channel must be one of {_CHANNELS}, got {channel!r}")
     revs = np.asarray(cache["revs"], dtype=np.float64)
     t_in = np.asarray(cache["t"], dtype=np.float64)
-    frame = dict(
-        zip(
-            _CHANNELS, frame_transform(cache["fx"], cache["fy"], cache["fz"], mount_deg)
-        )
-    )
+    fx_raw = np.asarray(cache["fx"], dtype=np.float64)
+    fy_raw = np.asarray(cache["fy"], dtype=np.float64)
+    fz_raw = np.asarray(cache["fz"], dtype=np.float64)
+    h_applied = h_matrix is not None
+    if h_applied:
+        h = np.asarray(h_matrix, dtype=np.float64)
+        if h.shape != (3, 3):
+            raise ValueError(f"h_matrix must be 3x3, got shape {h.shape}")
+        corrected = h @ np.vstack([fx_raw, fy_raw, fz_raw])
+        fx_raw, fy_raw, fz_raw = corrected[0], corrected[1], corrected[2]
+    frame = dict(zip(_CHANNELS, frame_transform(fx_raw, fy_raw, fz_raw, mount_deg)))
     sig = frame[channel]
 
     rev_grid, sig_ang = angular_resample(revs, sig, samples_per_rev)
@@ -126,6 +136,7 @@ def analyse(
         "effective_fs_hz": eff_fs,
         "effective_nyquist_hz": eff_fs / 2.0,
         "mount_deg": float(mount_deg),
+        "h_matrix_applied": h_applied,
         "channel": channel,
         "tsa_signature": [float(v) for v in signature],
         "order_spectrum": {
