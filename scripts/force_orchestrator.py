@@ -84,9 +84,14 @@ OCTREE_DIR = Path(
     os.environ.get("OCTREE_DIR", str(SCRIPT_DIR.parent / "infra" / "octrees"))
 )
 
-# Diagnostics Workbench: the analysis needs a far denser live cache than the dashboard's
-# (the orchestrator sets live_cache_points=250000 for that). 5M matches process_force.m's own
-# default and _octree_threshold's fallback, and is the WorkingSet floor the browser expects.
+# Diagnostics Workbench: the analysis needs a denser live cache than a coarsely-configured
+# crawler might ask for. This is a FLOOR applied over force_crawler_state.live_cache_points,
+# not a replacement for it (see process_diag_row): 5M matches process_force.m's own default
+# and is the WorkingSet floor the browser expects, but the configured value is routinely
+# HIGHER (7M on d1-server today), and clamping down to 5M there costs resolution for nothing.
+# Note this floor does not by itself guarantee the cache is unstrided -- no constant can,
+# since the cut window's length is unknown until MATLAB has run. process_diag_row handles the
+# strided case explicitly.
 DIAG_CACHE_POINTS = 5_000_000
 # Bump whenever analyse()'s column set or its parameters change in a way that makes an
 # already-'done' row's diag_metrics/D1AN stale. claim_diag requeues 'done' rows with an
@@ -891,7 +896,12 @@ def process_diag_row(
         if fchain:
             opts["filter_chain"] = str(fchain)
         opts["octree_out"] = binp
-        opts["live_cache_points"] = DIAG_CACHE_POINTS
+        # A floor, not an override: the configured live_cache_points is 7M on d1-server today,
+        # and assigning DIAG_CACHE_POINTS unconditionally clamped that DOWN to 5M -- which is
+        # what pushed 5.0-5.1M-sample cuts from an unstrided cache (step 1) into a strided one
+        # (step 2) for no benefit. The design spec asks for ">= 5,000,000", so take the max.
+        cache_target = max(int(opts.get("live_cache_points") or 0), DIAG_CACHE_POINTS)
+        opts["live_cache_points"] = cache_target
         stmt = (
             f"addpath('{mlq(str(MATLAB_SRC))}'); "
             f"process_force('{mlq(unc_for(row['archive_path']))}','{mlq(outdir)}',{_ml_literal(opts)})"
@@ -908,10 +918,27 @@ def process_diag_row(
         if n_pts == 0:
             raise RuntimeError("empty cloud")
         cache = read_d1lc(str(cache_path))
-        if cache["n"] != n_pts:
+        # Both files cover the SAME cut window (process_force.m: the octree emit uses
+        # theta/rho truncated to 1:cutend, write_live_cache uses cutstart:abs_cut_end, and
+        # abs_cut_end = cutstart+cutend-1), but only the cache is strided:
+        #     step = ceil(N0 / live_cache_points);  idx = 1:step:N0
+        # The octree emit never strides. So the two are equal in length only when the window
+        # fits the target, and for any longer cut the cloud is a superset the cache samples at
+        # that stride. Requiring equality (as this did) therefore fails every cut whose
+        # engagement window exceeds live_cache_points -- and no constant target avoids it,
+        # since the window length is not known until MATLAB has already run. Take the same
+        # stride instead, which keeps x/y/fz index-aligned with the cache's own arrays as
+        # analyse() and the angular resample below both require. Verified against real MATLAB
+        # by scripts/matlab/test_octree_out.m's step>1 case.
+        step = max(1, (n_pts + cache_target - 1) // cache_target)
+        if step > 1:
+            x, y, fz = x[::step], y[::step], fz[::step]
+        if cache["n"] != x.size:
             raise RuntimeError(
-                f"cache/cloud length mismatch: {cache['n']} vs {n_pts} — the live cache and "
-                "the octree cloud must come from the same decimation to be index-aligned"
+                f"cache/cloud length mismatch: cache {cache['n']} vs cloud {x.size} "
+                f"(raw {n_pts} at step {step}, target {cache_target}) — write_live_cache's "
+                "decimation no longer matches ceil(N0/live_cache_points); re-run "
+                "scripts/matlab/test_octree_out.m"
             )
 
         mount_deg = (
@@ -1619,6 +1646,39 @@ def _load_state(conn):
         return cur.fetchone()
 
 
+def _reconnect(conn):
+    """Return a usable connection, replacing `conn` if the current one is dead.
+
+    The daemon holds ONE connection for its entire life, so a single dropped connection (a
+    Postgres restart, a network blip, an idle timeout) used to be terminal -- but invisibly
+    so. Every subsequent psycopg2 call raises InterfaceError('connection already closed'),
+    the iteration catch-all logged it, slept 15 s, and retried with the SAME dead handle,
+    forever. The result was not a crash but a live-lock: no work claimed, no heartbeat
+    written (mark() fails silently on the same dead handle), and force_crawler_state still
+    reading desired_state='running' -- so the admin module showed "daemon offline" while the
+    process was very much alive. logs/force_orchestrator.err.log is 16 MB of exactly that
+    one traceback repeating every 15 s. Reconnect instead of retrying a corpse.
+    """
+    try:
+        if conn is not None and not conn.closed:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            conn.commit()
+            return conn
+    except psycopg2.Error:
+        pass
+    try:
+        if conn is not None:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        pass
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        raise RuntimeError("DATABASE_URL unset — cannot reconnect")
+    log.warning("database connection lost — reconnecting")
+    return psycopg2.connect(dsn)
+
+
 def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
     """Long-running loop for the host: polls force_crawler_state for live settings
     (workers/throttle/scope) and desired_state (running/paused), processes a batch
@@ -1763,6 +1823,14 @@ def run_daemon(conn, exe, mrelease, discover_every: int) -> int:
                     conn.rollback()
                 except Exception:  # noqa: BLE001
                     pass
+                # Surviving the iteration is not enough if what broke was the connection
+                # itself: retrying the same dead handle is what turned a transient blip into
+                # six weeks of silent live-lock (see _reconnect). Do this BEFORE mark() so the
+                # recovery is actually visible as a heartbeat in the admin module.
+                try:
+                    conn = _reconnect(conn)
+                except Exception:  # noqa: BLE001
+                    log.exception("reconnect failed; retrying next iteration")
                 mark(f"error (retrying): {e}")
                 time.sleep(15)
     except KeyboardInterrupt:

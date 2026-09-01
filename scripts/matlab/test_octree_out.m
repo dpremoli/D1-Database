@@ -42,19 +42,89 @@ assert(strcmp(summ.status, 'done'), 'summary.json status=%s (expected done): %s'
 % rendering three figures per file is wasted work at the scale the diag handler runs at.
 assert(exist(fullfile(tmp, 'frm_Fx.png'), 'file') == 0, 'octree_out mode must skip FRM PNGs');
 
-% cloud.bin (D1OC) and live_cache.bin (D1LC) must be index-aligned: process_diag_row reads
-% both and treats a length mismatch as fatal (see force_orchestrator.py's process_diag_row).
-fid = fopen(octp, 'r', 'l');
-octmagic = fread(fid, 1, 'uint32'); octN = fread(fid, 1, 'uint32');
-fclose(fid);
-assert(octmagic == hex2dec('44314F43'), 'bad D1OC magic');
+% cloud.bin (D1OC) and live_cache.bin (D1LC) cover the SAME cut window, but the cache is
+% strided by write_live_cache's own decimation and the octree emit is not. They are therefore
+% only equal in length when the window fits in live_cache_points (step == 1) -- which is the
+% case here, and the case process_diag_row's index-aligned x/y pairing relies on directly.
+octN   = read_bin_n(octp,   hex2dec('44314F43'), 1);   % D1OC: magic, N
+cacheN = read_bin_n(cachep, hex2dec('44314C43'), 2);   % D1LC: magic, version, N
+assert(octN == cacheN, ...
+    'cloud.bin (%d pts) and live_cache.bin (%d pts) length mismatch at step=1', octN, cacheN);
 
-fid = fopen(cachep, 'r', 'l');
-cachemagic = fread(fid, 1, 'uint32'); cachever = fread(fid, 1, 'uint32'); cacheN = fread(fid, 1, 'uint32'); %#ok<NASGU>
-fclose(fid);
-assert(cachemagic == hex2dec('44314C43'), 'bad D1LC magic');
-assert(octN == cacheN, 'cloud.bin (%d pts) and live_cache.bin (%d pts) length mismatch', octN, cacheN);
+fprintf('PASS octree_out + live_cache.bin (step=1): N=%d, status=%s\n', octN, summ.status);
 
-fprintf('PASS octree_out + live_cache.bin: N=%d, status=%s\n', octN, summ.status);
+% ---- step > 1: the decimated case the step=1 assertion above cannot reach ----------------
+% The original version of this test only ever ran the block above, with live_cache_points at
+% 5,000,000 against a 60,000-sample fixture -- so `step` was always 1 and `octN == cacheN` was
+% vacuously true. That is why this file did not catch the real defect: for a cut window LARGER
+% than live_cache_points, write_live_cache strides (step = ceil(N0/target)) while the octree
+% emit does not, so the two files legitimately differ in length and process_diag_row must
+% decimate the cloud to match rather than treat it as fatal.
+%
+% Forcing a small live_cache_points on the SAME fixture is what makes this cheap: no large
+% synthetic is needed to exercise the strided path, only a target below the window length.
+tmp2 = tempname; mkdir(tmp2);
+octp2 = fullfile(tmp2, 'cloud.bin');
+cachep2 = fullfile(tmp2, 'live_cache.bin');
+target2 = 5000;
+process_force(matp, tmp2, struct('octree_out', octp2, 'live_cache_points', target2));
+
+octN2   = read_bin_n(octp2,   hex2dec('44314F43'), 1);
+cacheN2 = read_bin_n(cachep2, hex2dec('44314C43'), 2);
+assert(octN2 > target2, ...
+    'fixture window (%d) must exceed target (%d) to exercise the strided path', octN2, target2);
+
+% The contract process_diag_row's decimation depends on: the cache is exactly the cloud
+% window sampled at 1:step:N0, so its length is fully determined by the cloud's.
+step2 = max(1, ceil(octN2 / target2));
+assert(step2 > 1, 'expected step > 1 for target=%d over a %d-point window', target2, octN2);
+expectedN2 = numel(1:step2:octN2);
+assert(cacheN2 == expectedN2, ...
+    ['live_cache.bin length %d does not match the strided cloud: expected %d ' ...
+     '(= numel(1:%d:%d)). process_diag_row derives its decimation from exactly this ' ...
+     'relationship.'], cacheN2, expectedN2, step2, octN2);
+
+% Matching LENGTHS is not enough. process_diag_row slices the cloud as x[::step] and pairs it
+% with the cache POSITIONALLY, so an off-by-one in the stride's PHASE (x[1::step] rather than
+% x[0::step]) would still produce the right count while silently pairing every point with the
+% wrong sample -- garbage statistics presented as science, with no error raised anywhere. So
+% assert the stride's actual VALUES, not just its length: the strided run's cache must be the
+% unstrided run's cache sampled at 1:step:end, on the same fixture. Combined with the step=1
+% block above (where cache and cloud are index-aligned one-to-one), this is what establishes
+% that cloud(1:step:end) corresponds to the strided cache element for element.
+tA = read_d1lc_t(cachep);       % step 1: index-aligned with cloud.bin, asserted above
+tB = read_d1lc_t(cachep2);      % step 7
+assert(numel(tA) == octN2, 'unstrided cache (%d) should match the cloud (%d)', numel(tA), octN2);
+assert(isequal(tB, tA(1:step2:end)), ...
+    ['strided live_cache.bin is not the unstrided cache sampled at 1:%d:end -- ' ...
+     'write_live_cache''s stride phase/formula has changed, and process_diag_row''s ' ...
+     'x[::step] pairing is no longer valid.'], step2);
+
+fprintf('PASS octree_out + live_cache.bin (step=%d): cloud=%d, cache=%d, stride phase verified\n', ...
+    step2, octN2, cacheN2);
 fprintf('ALL OCTREE_OUT TESTS PASSED\n');
+end
+
+function t = read_d1lc_t(path)
+%READ_D1LC_T  The `t` column out of a live_cache.bin. 32-byte header (magic, version, N as
+% uint32; Fs, feed, diam, cs_sec, ce_sec as float32) then six float32[N] arrays, t first.
+fid = fopen(path, 'r', 'l');
+assert(fid >= 0, 'cannot open %s', path);
+c = onCleanup(@() fclose(fid));
+hdr = fread(fid, 3, 'uint32');
+assert(hdr(1) == hex2dec('44314C43'), 'bad D1LC magic in %s', path);
+fread(fid, 5, 'single');                 % Fs, feed, diam, cs_sec, ce_sec
+t = fread(fid, hdr(3), 'single');
+end
+
+function n = read_bin_n(path, magic, n_before)
+%READ_BIN_N  Little-endian header reader: check the magic, then return the point count that
+% sits `n_before` uint32 fields in (D1OC has N immediately after the magic; D1LC has a
+% version field between them).
+fid = fopen(path, 'r', 'l');
+assert(fid >= 0, 'cannot open %s', path);
+c = onCleanup(@() fclose(fid));
+hdr = fread(fid, n_before + 1, 'uint32');
+assert(hdr(1) == magic, 'bad magic %#x in %s (expected %#x)', hdr(1), path, magic);
+n = hdr(end);
 end
