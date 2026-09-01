@@ -217,7 +217,12 @@ async function load() {
 	// The octree host is configured, not assumed to be the SPA origin: the standalone app is
 	// served from a different origin than the octree server, while the Directus module is
 	// same-origin. The host supplies whichever applies.
-	const base = `${useForceHost().octreeUrl}/${props.octreePath}/`;
+	// "/octrees/diag/<octreePath>/" per this component's own prop contract above: octreePath is
+	// the bare operation id that diag_path stores, and the "diag/" segment is this component's
+	// to add -- it is what distinguishes the diagnostics octree from the raw spiral octree
+	// FrmOctree.vue serves at /octrees/<octreePath>/. Dropping it silently loads that raw
+	// octree instead (200, not 404) for any operation that has one.
+	const base = `${useForceHost().octreeUrl}/diag/${props.octreePath}/`;
 	try {
 		await loadMeta(base);
 		potree = new Potree();

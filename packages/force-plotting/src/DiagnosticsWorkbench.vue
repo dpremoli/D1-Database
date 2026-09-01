@@ -27,7 +27,13 @@ async function loadWorkingSet() {
 	loadError.value = null;
 	workingSet.value = null;
 	try {
-		const base = `${useForceHost().octreeUrl}/${props.diagPath}/`;
+		// The diag octree is a THIRD variant, published by process_diag_row under
+		// OCTREE_DIR/diag/<operation_id>/ -- and diag_path holds the bare operation id, not
+		// the "diag/" prefix (see the migration's comment on the column). Omitting the
+		// segment here does not merely 404: for an operation that also has a raw spiral
+		// octree, /octrees/<id>/ resolves 200 to THAT octree instead, and the workbench
+		// would silently render the wrong cloud with none of the analysis attributes.
+		const base = `${useForceHost().octreeUrl}/diag/${props.diagPath}/`;
 		const attrs = await fetchD1an(`${base}attrs.d1an`);
 		workingSet.value = workingSetFromD1an(attrs);
 	} catch (e: any) {
