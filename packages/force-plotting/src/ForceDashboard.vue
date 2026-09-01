@@ -7,6 +7,7 @@ import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
 import WearTrend from './WearTrend.vue';
+import DiagnosticsWorkbench from './DiagnosticsWorkbench.vue';
 import type { SpeedMode } from './liveCloud';
 import { cacheGet, cachePut, decimateCache, parseCache, type Cache } from './liveCache';
 import { computeSignalStats, type SignalStats } from './signalStats';
@@ -223,6 +224,38 @@ async function buildGridOctree() {
 watch(() => [gridFull.value, frmMode.value], () => {
 	if (gridFull.value && frmMode.value === 'full' && !gridAvailable.value && !buildingOctree.value) buildGridOctree();
 });
+
+// ---- Diagnostics Workbench (statistical outlier / spatial-hotspot analysis) --------
+// Same request/poll shape as buildOctree/buildGridOctree above -- diag_status is a third,
+// independent host build queued the identical way (see scripts/force_orchestrator.py's
+// claim_diag/process_diag_row). buildingDiag is its own flag, not shared with buildingOctree:
+// requesting a diag build must not disable the (unrelated) octree/grid buttons.
+const buildingDiag = ref(false);
+const diagMsg = ref<string | null>(null);
+const diagAvailable = computed(() => detail.value?.diag_status === 'done' && !!detail.value?.diag_path);
+async function buildDiag() {
+	const d = detail.value;
+	if (!d?.id || buildingDiag.value) return;
+	buildingDiag.value = true; diagMsg.value = 'Requesting diagnostics build on the host…';
+	try {
+		await api.patch(`/items/machining_force_analysis/${d.id}`, { diag_status: 'pending', diag_requested_at: new Date().toISOString() });
+		diagMsg.value = 'Analysing on the host (minutes for large ops)…';
+		const deadline = Date.now() + 15 * 60 * 1000;
+		while (Date.now() < deadline) {
+			await new Promise((r) => setTimeout(r, 3000));
+			const res = await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['diag_status', 'diag_path', 'diag_points', 'diag_error', 'diag_metrics'] } });
+			const row = res.data?.data;
+			if (row?.diag_status === 'done' && row.diag_path) {
+				detail.value = { ...detail.value, diag_status: 'done', diag_path: row.diag_path, diag_points: row.diag_points, diag_metrics: row.diag_metrics };
+				diagMsg.value = null; return;
+			}
+			if (row?.diag_status === 'error') { diagMsg.value = `Analysis failed: ${row.diag_error || 'unknown'}`; return; }
+		}
+		diagMsg.value = 'Still analysing — check back shortly (is the force orchestrator running?).';
+	} catch (e: any) {
+		diagMsg.value = e?.response?.status === 403 ? 'Not permitted (admin only) to request a host build.' : (e?.message || 'diagnostics request failed');
+	} finally { buildingDiag.value = false; }
+}
 
 // Displayed-vs-full resolution readout. "Full" = the map's native resolution (the octree
 // total when built, else the cut-window sample count); "displayed" = what the active
@@ -711,7 +744,7 @@ onBeforeUnmount(() => {
 // Samples/Operations + detail stay as the docked left rail; only the plots are flexible.
 // Per-instance panel state: a Signals panel carries its own selected channels + RPM toggle so
 // duplicated panels can differ (e.g. one showing only Fz next to one showing Fx/Fy).
-type RPanel = { i: string; type: 'signals' | 'frm' | 'wear'; x: number; y: number; w: number; h: number; channels?: Axis[]; rpm?: boolean };
+type RPanel = { i: string; type: 'signals' | 'frm' | 'wear' | 'diag'; x: number; y: number; w: number; h: number; channels?: Axis[]; rpm?: boolean };
 const RIGHT_KEY = 'd1-force-right-layout-v2';
 const RIGHT_DEFAULT: RPanel[] = [
 	{ i: 'signals', type: 'signals', x: 0, y: 0, w: 6, h: 20, channels: ['Fx', 'Fy', 'Fz'], rpm: false },
@@ -721,6 +754,7 @@ const R_META: Record<string, { title: string; icon: string }> = {
 	signals: { title: 'Signals', icon: 'insights' },
 	frm: { title: 'FRM map', icon: 'fingerprint' },
 	wear: { title: 'Wear trend', icon: 'trending_up' },
+	diag: { title: 'Diagnostics', icon: 'query_stats' },
 };
 function loadRight(): RPanel[] {
 	try {
@@ -750,7 +784,7 @@ const rightRowH = computed(() =>
 );
 const rightAddOpen = ref(false);
 const hasPanel = (t: string) => rightLayout.value.some((p) => p.type === t);
-function addRightPanel(type: 'signals' | 'frm' | 'wear') {
+function addRightPanel(type: 'signals' | 'frm' | 'wear' | 'diag') {
 	rightAddOpen.value = false;
 	// Place a new panel beside the shortest existing column when there's room on the top row,
 	// otherwise start a fresh row below. Half-height (h:10) so a stacked pair fits one screen and
@@ -771,7 +805,7 @@ function addRightPanel(type: 'signals' | 'frm' | 'wear') {
 	});
 }
 function closeRightPanel(i: string) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.i !== i); }
-function toggleRightType(type: 'signals' | 'frm' | 'wear') {
+function toggleRightType(type: 'signals' | 'frm' | 'wear' | 'diag') {
 	if (hasPanel(type)) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.type !== type); }
 	else addRightPanel(type);
 }
@@ -1424,6 +1458,7 @@ function fmtDateTime(v: string | null | undefined) {
 							<button @click="addRightPanel('signals')"><v-icon name="insights" x-small /> Signals</button>
 							<button @click="addRightPanel('frm')"><v-icon name="fingerprint" x-small /> FRM map</button>
 							<button @click="addRightPanel('wear')"><v-icon name="trending_up" x-small /> Wear trend</button>
+							<button @click="addRightPanel('diag')"><v-icon name="query_stats" x-small /> Diagnostics</button>
 						</div>
 					</div>
 					<button class="pt-chip" title="Reset panel layout" @click="resetRightLayout"><v-icon name="grid_view" x-small /></button>
@@ -1812,6 +1847,25 @@ function fmtDateTime(v: string | null | undefined) {
 								<button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button>
 							</div>
 							<WearTrend :detail="detail" />
+						</div>
+
+						<div v-else-if="item.type === 'diag'" class="card pg-card">
+							<div class="pg-bar">
+								<span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span>
+								<span class="pg-title"><v-icon name="query_stats" x-small /> Diagnostics</span>
+								<button v-if="!diagAvailable" class="tbtn" :disabled="!detail || buildingDiag" :title="detail?.diag_status === 'error' ? 'Retry the diagnostics build' : 'Build the diagnostics analysis on the host'" @click="buildDiag">
+									<v-icon v-if="buildingDiag" name="hourglass_top" x-small /><v-icon v-else name="play_arrow" x-small /> {{ detail?.diag_status === 'error' ? 'Retry' : 'Build' }}
+								</button>
+								<button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button>
+							</div>
+							<div v-if="!detail" class="empty">Select an operation</div>
+							<DiagnosticsWorkbench v-else-if="diagAvailable" :diag-path="detail.diag_path" :diag-metrics="detail.diag_metrics" :total-points="Number(detail.diag_points) || 0" />
+							<div v-else class="empty diag-empty">
+								<p>{{ diagMsg || 'No diagnostics analysis yet for this operation.' }}</p>
+								<button class="diag-build-btn" :disabled="!detail || buildingDiag" @click="buildDiag">
+									<v-icon v-if="buildingDiag" name="hourglass_top" x-small /> {{ buildingDiag ? 'Requesting…' : 'Build diagnostics analysis' }}
+								</button>
+							</div>
 						</div>
 
 						<div v-else-if="item.type === 'frm'" class="card col-frm frm-col pg-card">
@@ -2285,4 +2339,12 @@ function fmtDateTime(v: string | null | undefined) {
 }
 .applybtn:disabled { opacity: 0.5; cursor: not-allowed; }
 .render-msg { margin-top: 7px; font-size: 11px; color: var(--theme--foreground-subdued, #6b7684); font-style: italic; }
+.diag-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.diag-build-btn {
+	display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 13px; font-weight: 600;
+	color: #fff; background: var(--theme--primary, #1d4ed8); border: 1px solid var(--theme--primary, #1d4ed8);
+	border-radius: 8px; cursor: pointer;
+}
+.diag-build-btn:hover { background: color-mix(in srgb, var(--theme--primary, #1d4ed8) 85%, black); }
+.diag-build-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
