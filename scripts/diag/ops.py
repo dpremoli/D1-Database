@@ -1,0 +1,186 @@
+"""The seven analysis stages, registered as recipe steps.
+
+Thin adapters only. Every algorithm still lives in angular.py / detrend.py / frames.py /
+spatial.py / envelope.py, which this module does not modify -- their unit tests remain the
+authority on the science. What is added here is the contract (produces / requires / tier)
+that makes the sequence editable and the produced channels discoverable.
+
+Column vocabulary:
+    seeded    t_raw fx fy fz rpm revs x_raw y_raw      (D1LC cache + D1OC spiral)
+    derived   fc ff fp                                  frame_transform
+              t rev x y sig                             angular_resample
+              tsa_resid                                 tsa
+              resid_z                                   radial_detrend
+              gi_star gi_sig                            getis_ord
+              cluster_id glosh                          hdbscan
+              env_band                                  envelope
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+from .angular import angular_resample, order_spectrum
+from .angular import tsa as _tsa
+from .detrend import radial_detrend as _radial_detrend
+from .envelope import bandpass_envelope, envelope_spectrum
+from .frames import frame_transform as _frame_transform
+from .registry import Columns, step
+from .spatial import (
+    assign_from_grid,
+    benjamini_hochberg,
+    cluster_hdbscan,
+    getis_ord_gi_star,
+    grid_reduce,
+)
+
+_CHANNELS = ("fc", "ff", "fp")
+
+
+@step("frame_transform", produces=["fc", "ff", "fp"],
+      requires=["fx", "fy", "fz"], tier="base")
+def _op_frame_transform(cols: Columns, params: dict, inputs: dict):
+    h = params.get("h_matrix")
+    fx, fy, fz = cols["fx"], cols["fy"], cols["fz"]
+    if h is not None:
+        hm = np.asarray(h, dtype=np.float64)
+        if hm.shape != (3, 3):
+            raise ValueError(f"h_matrix must be 3x3, got shape {hm.shape}")
+        corrected = hm @ np.vstack([fx, fy, fz])
+        fx, fy, fz = corrected[0], corrected[1], corrected[2]
+    mount_deg = float(params.get("mount_deg", 0.0))
+    fc, ff, fp = _frame_transform(fx, fy, fz, mount_deg)
+    return {"fc": fc, "ff": ff, "fp": fp}, {
+        "mount_deg": mount_deg,
+        "h_matrix_applied": h is not None,
+        "channel": params.get("channel", "fp"),
+    }
+
+
+@step("angular_resample", produces=["t", "rev", "x", "y", "sig"],
+      requires=["revs", "t_raw", "x_raw", "y_raw", "fc", "ff", "fp"], tier="base")
+def _op_angular_resample(cols: Columns, params: dict, inputs: dict):
+    spr = int(params.get("samples_per_rev", 256))
+    channel = str(params.get("channel", "fp"))
+    if channel not in _CHANNELS:
+        raise ValueError(f"channel must be one of {_CHANNELS}, got {channel!r}")
+    revs = np.asarray(cols["revs"], dtype=np.float64)
+    rev_grid, sig = angular_resample(revs, cols[channel], spr)
+    _, t = angular_resample(revs, np.asarray(cols["t_raw"], dtype=np.float64), spr)
+    _, x = angular_resample(revs, np.asarray(cols["x_raw"], dtype=np.float64), spr)
+    _, y = angular_resample(revs, np.asarray(cols["y_raw"], dtype=np.float64), spr)
+    return {"t": t, "rev": rev_grid, "x": x, "y": y, "sig": sig}, {
+        "samples_per_rev": spr,
+    }
+
+
+@step("tsa", produces=["tsa_resid"], requires=["sig", "rev"], tier="derived")
+def _op_tsa(cols: Columns, params: dict, inputs: dict):
+    spr = int(params.get("samples_per_rev") or 0)
+    if not spr:
+        spr = int(round(1.0 / float(cols["rev"][1] - cols["rev"][0])))
+    signature, residual = _tsa(cols["sig"], spr)
+    n = residual.size
+    orders, amp = order_spectrum(cols["sig"], spr)
+    keep = orders <= 16.0
+    # TSA truncates to whole revolutions, so every column carried forward must be cut to
+    # the residual's length. The runner applies this via the returned "__truncate__" key.
+    return {"tsa_resid": residual, "__truncate__": np.array(n)}, {
+        "n_points": int(n),
+        "n_revolutions": int(n // spr),
+        "tsa_signature": [float(v) for v in signature],
+        "order_spectrum": {
+            "orders": [float(v) for v in orders[keep]],
+            "amplitude": [float(v) for v in amp[keep]],
+        },
+    }
+
+
+@step("radial_detrend", produces=["resid_z"],
+      requires=["tsa_resid", "x", "y"], tier="derived")
+def _op_radial_detrend(cols: Columns, params: dict, inputs: dict):
+    r = np.hypot(cols["x"], cols["y"])
+    z = _radial_detrend(
+        r, cols["tsa_resid"],
+        n_bins=int(params.get("n_bins", 200)),
+        min_per_bin=int(params.get("min_per_bin", 8)),
+    )
+    return {"resid_z": z}, {
+        "resid_z_p99": float(np.percentile(np.abs(z), 99)) if z.size else 0.0,
+    }
+
+
+@step("getis_ord", produces=["gi_star", "gi_sig"],
+      requires=["x", "y", "resid_z"], tier="derived")
+def _op_getis_ord(cols: Columns, params: dict, inputs: dict):
+    k = int(params.get("k", 30))
+    alpha = float(params.get("alpha", 0.05))
+    n = cols["resid_z"].size
+    # Degrade rather than raise: a short test cut can have fewer points than Gi* needs, and
+    # crashing the whole pipeline over one statistic is the wrong trade. Matches analyse().
+    if n > k:
+        gi, p = getis_ord_gi_star(cols["x"], cols["y"], cols["resid_z"], k=k)
+        sig = benjamini_hochberg(p, alpha=alpha).astype(np.float64)
+    else:
+        gi, sig = np.zeros(n), np.zeros(n)
+    return {"gi_star": gi, "gi_sig": sig}, {}
+
+
+@step("hdbscan", produces=["cluster_id", "glosh"],
+      requires=["x", "y", "resid_z"], tier="derived")
+def _op_hdbscan(cols: Columns, params: dict, inputs: dict):
+    target = int(params.get("grid_target", 20000))
+    min_size = int(params.get("min_cluster_size", 10))
+    n = cols["resid_z"].size
+    xr, yr, vr, cell_id = grid_reduce(cols["x"], cols["y"], cols["resid_z"], target_n=target)
+    if xr.size >= min_size:
+        labels, glosh = cluster_hdbscan(xr, yr, vr, min_cluster_size=min_size)
+        cluster_id, glosh = assign_from_grid(cell_id, labels, glosh)
+    else:
+        cluster_id, glosh = np.full(n, -1.0), np.zeros(n)
+    return {"cluster_id": cluster_id, "glosh": glosh}, {}
+
+
+@step("envelope", produces=["env_band"],
+      requires=["fc", "ff", "fp", "revs", "t_raw", "tsa_resid"], tier="base")
+def _op_envelope(cols: Columns, params: dict, inputs: dict):
+    """Full-rate, time-domain. This is why the step is 'base' tier despite running last:
+    the modulation rate it recovers lives in Hz, which the angular domain discards."""
+    n = cols["tsa_resid"].size
+    fn_hz = params.get("fn_hz")
+    channel = str(params.get("channel", "fp"))
+    spr = int(params.get("samples_per_rev", 256))
+    t_in = np.asarray(cols["t_raw"], dtype=np.float64)
+    span = float(t_in[-1] - t_in[0]) if t_in.size > 1 else 0.0
+    eff_fs = (t_in.size / span) if span > 0 else 0.0
+    if fn_hz is None or float(fn_hz) <= 0:
+        return {"env_band": np.zeros(n)}, {
+            "env_band_status": "refused: dyno_fn_hz not provided",
+        }
+    fn_hz = float(fn_hz)
+    frac = float(params.get("bandwidth_frac", 0.2))
+    hi_needed = fn_hz + fn_hz * (frac / 2.0)
+    nyquist = eff_fs / 2.0
+    if nyquist <= hi_needed:
+        # analyse() sets dyno_fn_hz / quantitative_limit_hz before the envelope block,
+        # gated only on fn_hz > 0, so they are emitted even on this refusal branch.
+        return {"env_band": np.zeros(n)}, {
+            "env_band_status": (
+                f"refused: effective_nyquist_hz ({nyquist:.1f}) below required "
+                f"{hi_needed:.1f} Hz for the resonance band"
+            ),
+            "dyno_fn_hz": fn_hz,
+            "quantitative_limit_hz": fn_hz / 5.0,
+        }
+    env = bandpass_envelope(cols[channel], eff_fs, f_center=fn_hz, bandwidth_frac=frac)
+    _, env_ang = angular_resample(np.asarray(cols["revs"], dtype=np.float64), env, spr)
+    ef, ea = envelope_spectrum(env, eff_fs, max_freq=nyquist)
+    return {"env_band": env_ang[:n]}, {
+        "env_band_status": "computed",
+        "dyno_fn_hz": fn_hz,
+        "quantitative_limit_hz": fn_hz / 5.0,
+        "envelope_spectrum": {
+            "freqs": [float(v) for v in ef],
+            "amplitude": [float(v) for v in ea],
+        },
+    }

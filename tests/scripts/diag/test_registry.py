@@ -1,18 +1,30 @@
 """Tests for the step registry MECHANISM.
 
-Per controller ruling R1, these tests must not depend on the real algorithms
-(`diag.ops`, which does not exist until Task 4) nor on `diag.recipe.DEFAULT_RECIPE`.
-The mechanism is exercised with dummy steps registered inside a fixture that restores
-the module-global ``STEPS`` dict afterwards, so nothing leaks into other test modules.
+Per controller ruling R1, the MECHANISM tests must not depend on the real algorithms:
+they are exercised with dummy steps registered inside the ``dummy_steps`` fixture, which
+restores the module-global ``STEPS`` dict afterwards so nothing leaks between modules.
+
+Task 4 appended a second group (below the mechanism tests) that DOES exercise the real
+seven ops. Those import ``diag.ops`` at module load -- registering the real steps once,
+before any snapshot is taken -- and deliberately do not request ``dummy_steps``.
 """
 
 from dataclasses import FrozenInstanceError
 
+import diag.ops  # noqa: F401  -- import-time side effect: registers the seven real steps
 import numpy as np
 import pytest
-
 from diag import registry
-from diag.registry import STEPS, RecipeError, StepSpec, step, validate_recipe
+from diag.recipe import DEFAULT_RECIPE
+from diag.registry import (
+    SEED_COLUMNS,
+    STEPS,
+    TIERS,
+    RecipeError,
+    StepSpec,
+    step,
+    validate_recipe,
+)
 
 
 @pytest.fixture
@@ -120,3 +132,67 @@ def test_seed_columns_and_tiers_are_exported():
         "t_raw", "fx", "fy", "fz", "rpm", "revs", "x_raw", "y_raw",
     )
     assert registry.TIERS == ("base", "derived")
+
+
+# --------------------------------------------------------------------------------------
+# Task 4: the real ops (diag.ops) are registered at import time. These tests deliberately
+# do NOT request the `dummy_steps` fixture -- they want the real STEPS, unmodified.
+# --------------------------------------------------------------------------------------
+
+
+def test_all_default_recipe_ops_are_registered():
+    for s in DEFAULT_RECIPE["steps"]:
+        assert s["op"] in STEPS, f"{s['op']} not registered"
+
+
+def test_default_recipe_validates():
+    validate_recipe(DEFAULT_RECIPE)  # must not raise
+
+
+def test_every_step_declares_a_valid_tier():
+    for name, spec in STEPS.items():
+        assert spec.tier in TIERS, f"{name} has bad tier {spec.tier!r}"
+
+
+def test_envelope_is_base_tier():
+    # envelope.py is explicitly full-rate time-domain (the Hz content the angular domain
+    # discards), so retuning it forces a re-bake. The UI depends on this declaration.
+    assert STEPS["envelope"].tier == "base"
+
+
+def test_seed_column_requirement_is_satisfied_by_seeding():
+    """A recipe whose first enabled step requires only seed columns must validate.
+    Pins that validate_recipe actually seeds `have` from SEED_COLUMNS (frame_transform
+    requires fx/fy/fz, which exist only because of the seed)."""
+    assert {"fx", "fy", "fz"}.issubset(set(SEED_COLUMNS))
+    r = {"recipe_version": 1, "name": "x", "steps": [
+        {"id": "a", "op": "frame_transform", "on": True,
+         "params": {"channel": "fp", "mount_deg": 0.0}},
+    ]}
+    validate_recipe(r)  # must not raise
+
+
+def test_step_functions_return_columns_and_metrics():
+    from diag.angular import angular_resample
+    from diag.ops import _op_frame_transform, _op_tsa
+
+    rng = np.random.default_rng(0)
+    n_raw = 256 * 5 + 40  # 5 whole revs + a partial
+    fx = rng.standard_normal(n_raw)
+    fy = rng.standard_normal(n_raw)
+    fz = rng.standard_normal(n_raw)
+
+    new_cols, metrics = _op_frame_transform({"fx": fx, "fy": fy, "fz": fz}, {}, {})
+    assert isinstance(new_cols, dict) and isinstance(metrics, dict)
+    for c in STEPS["frame_transform"].produces:
+        assert c in new_cols
+
+    revs = np.linspace(0.0, n_raw / 256.0, n_raw)
+    rev_grid, sig = angular_resample(revs, fz, 256)
+    new_cols, metrics = _op_tsa({"sig": sig, "rev": rev_grid}, {}, {})
+    assert isinstance(new_cols, dict) and isinstance(metrics, dict)
+    for c in STEPS["tsa"].produces:
+        assert c in new_cols
+    # spr-fallback (1 / rev-grid spacing) must land exactly on 256, not 255.999
+    assert metrics["n_revolutions"] == new_cols["tsa_resid"].size // 256
+    assert metrics["n_revolutions"] >= 4
