@@ -6,9 +6,13 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "scripts"))
 
+from conftest import cache_of, synthetic_cut  # noqa: F401
+
 from diag.pipeline import analyse, read_d1lc
 
 SPR = 256
+
+_synthetic_cut = synthetic_cut
 
 
 def _write_d1lc(path, t, fx, fy, fz, rpm, revs, fs):
@@ -19,27 +23,6 @@ def _write_d1lc(path, t, fx, fy, fz, rpm, revs, fs):
         f.write(head)
         for a in (t, fx, fy, fz, rpm, revs):
             f.write(np.ascontiguousarray(a, dtype="<f4").tobytes())
-
-
-def _synthetic_cut(n_rev=40, spr=SPR, anomaly_rev=25.0, anomaly_span=0.05):
-    """A clean spiral with one implanted force anomaly at a known revolution."""
-    n = n_rev * spr
-    revs = np.arange(n, dtype=np.float64) / spr
-    fs = 25_000.0
-    t = revs * 60.0 / 1200.0
-    # repeatable per-rev signature + noise
-    phase = 2 * np.pi * revs
-    fz = 120.0 + 4.0 * np.sin(phase) + 1.5 * np.sin(3 * phase)
-    rng = np.random.default_rng(7)
-    fz = fz + rng.normal(scale=0.4, size=n)
-    hit = np.abs(revs - anomaly_rev) < anomaly_span
-    fz[hit] += 30.0
-    fx = np.zeros(n)
-    fy = np.zeros(n)
-    rpm = np.full(n, 1200.0)
-    rho = 40.0 - 0.05 * revs
-    x, y = rho * np.cos(phase), rho * np.sin(phase)
-    return t, fx, fy, fz, rpm, revs, x, y, fs, hit
 
 
 def test_d1lc_round_trip(tmp_path):
