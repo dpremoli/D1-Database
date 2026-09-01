@@ -224,8 +224,14 @@ Client side: 400 ms debounce, `AbortController` cancelling in-flight requests --
 alongside `attrs.d1an`, and records `diag_recipe_hash`.
 
 Preview cannot invoke MATLAB (it needs the archive, and costs ~20 s), which is why `base.d1an`
-exists: the state after angular resampling and before any statistics (`t, rev, x, y, fc, ff, fp`
-at 204,800 points, about 5.7 MB).
+exists: the state after angular resampling and before any statistics — `t, rev, x, y, sig` at
+204,800 points, about 4 MB.
+
+An earlier draft of this document specified that set as `t, rev, x, y, fc, ff, fp`. That is not
+writable: `fc/ff/fp` are full-rate channels while `t/rev/x/y` are on the angular grid, and the
+D1AN format requires every column to share one length. The angular state is also the correct
+thing to store, because it is precisely what a `derived`-tier step resumes from — and the only
+consumer of full-rate channels, `envelope`, is `base` tier and therefore never previewed at all.
 
 The rejected alternative deserves recording. `x`/`y` *could* be reconstructed inside the service
 from the D1LC cache alone, using `r = revs_cum/PPR; theta = wrapTo2Pi(2*pi*r); rho = Diam/2 -
