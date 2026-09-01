@@ -71,6 +71,7 @@ const userName = computed(() => {
 const nav = [
 	{ to: '/record', icon: 'fiber_manual_record', label: 'Record' },
 	{ to: '/plot', icon: 'insights', label: 'Plot' },
+	{ to: '/diagnostics', icon: 'query_stats', label: 'Diagnostics' },
 	{ to: '/labamp', icon: 'memory', label: 'Lab Amp' },
 	{ to: '/nidaq', icon: 'cable', label: 'NI-DAQ' },
 	{ to: '/settings', icon: 'settings', label: 'Settings' },

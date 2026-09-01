@@ -12,6 +12,11 @@ const routes: RouteRecordRaw[] = [
 			{ path: 'record', name: 'record', component: () => import('./record/RecordPage.vue') },
 			{ path: 'plot', name: 'plot', component: () => import('./force/StandaloneForceDashboard.vue') },
 			{ path: 'plot/local/:captureId', name: 'plot-local', component: () => import('./force/LocalCaptureView.vue') },
+			// Its own section, not a panel inside Plot: the workbench is a specialist analysis
+			// surface under active development, and it is only mounted in this app (the Directus
+			// module no longer hosts it at all). AppShell's per-item popout gives it a second
+			// monitor for free.
+			{ path: 'diagnostics', name: 'diagnostics', component: () => import('./force/DiagnosticsPage.vue') },
 			{ path: 'labamp', name: 'labamp', component: () => import('./labamp/LabAmpPage.vue') },
 			{ path: 'nidaq', name: 'nidaq', component: () => import('./nidaq/NidaqPage.vue') },
 			{ path: 'settings', name: 'settings', component: () => import('./settings/SettingsPage.vue') },
