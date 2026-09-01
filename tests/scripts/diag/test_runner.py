@@ -1,4 +1,5 @@
 import copy
+import os
 
 import numpy as np
 import pytest
@@ -133,3 +134,61 @@ def test_from_step_reuses_supplied_columns():
     assert np.mean(close) > 0.85
     assert np.corrcoef(resumed["gi_star"], full["gi_star"])[0, 1] > 0.99
     assert np.mean(resumed["cluster_id"] == full["cluster_id"]) > 0.99
+
+
+# --- Equivalence gate ---------------------------------------------------------
+#
+# These two fixtures were captured from pipeline.analyse() BEFORE the registry existed
+# (see the plan's Task 1). They compare the new recipe pipeline against the old one's
+# recorded behaviour, not against itself. Exact equality, never allclose: this is a
+# refactor, so any numerical difference at all is a defect.
+#
+# PORTABILITY CAVEAT: the fixtures are bit-valid on the machine that captured them only.
+# Cross-machine BLAS differences, thread-reduction ordering, and numpy/scipy version drift
+# can perturb the low bits of the float results. A failure of these tests on different
+# hardware or a different dependency set should first be diagnosed as an environment
+# difference, NOT assumed to be a code regression. Do not regenerate the fixtures to make
+# a failure go green -- they are the only evidence the refactor is safe.
+
+_FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
+GOLDEN_DEFAULT = os.path.join(_FIXTURES, "golden_default_recipe.npz")
+GOLDEN_ENVELOPE = os.path.join(_FIXTURES, "golden_envelope.npz")
+
+
+def _assert_equivalent_to_golden(recipe, golden_path):
+    golden = np.load(golden_path, allow_pickle=False)
+    cols, metrics = run_recipe(recipe, _seed())
+    expected = {k: golden[k] for k in golden.files if not k.startswith("__")}
+    assert set(cols) == set(expected), "column set drifted from the frozen reference"
+    for name, want in expected.items():
+        got = cols[name]
+        assert got.dtype == want.dtype, f"column {name!r} dtype drifted"
+        np.testing.assert_array_equal(
+            got, want, err_msg=f"column {name!r} differs from the golden reference"
+        )
+    # The metrics blob is frozen too: analyse() emits columns AND a JSON-serialisable
+    # metrics dict, and the runner must reproduce both. Stored as repr(sorted(items())).
+    assert repr(sorted(metrics.items())) == str(golden["__metrics__"]), (
+        "metrics payload differs from the golden reference"
+    )
+
+
+def test_default_recipe_reproduces_the_frozen_analyse_output_exactly():
+    """The equivalence gate. If this FAILS, the registry pipeline is not equivalent and
+    the code is what must change -- never the fixture."""
+    _assert_equivalent_to_golden(copy.deepcopy(DEFAULT_RECIPE), GOLDEN_DEFAULT)
+
+
+def test_default_recipe_with_envelope_on_reproduces_analyse_exactly():
+    """Second gate. In golden_default_recipe.npz the env_band column is entirely zeros
+    (the default recipe disables the envelope step, so analyse() took its 'refused'
+    branch) -- a byte-for-byte check there verifies nothing about the envelope compute
+    path. golden_envelope.npz was captured from
+    analyse(cache, x, y, samples_per_rev=256, fn_hz=1000.0), which in recipe terms is
+    DEFAULT_RECIPE with step s7 ('envelope') turned on and its fn_hz param set to 1000.0.
+    deepcopy so the shared DEFAULT_RECIPE constant is never mutated."""
+    recipe = copy.deepcopy(DEFAULT_RECIPE)
+    s7 = next(s for s in recipe["steps"] if s["id"] == "s7")
+    s7["on"] = True
+    s7["params"]["fn_hz"] = 1000.0
+    _assert_equivalent_to_golden(recipe, GOLDEN_ENVELOPE)
