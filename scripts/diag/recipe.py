@@ -18,7 +18,8 @@ from typing import Any
 RECIPE_VERSION = 1
 
 # Reproduces analyse()'s hardcoded sequence exactly, including its defaults. Changing any
-# value here changes every cut's recipe_hash, so treat it as a schema change.
+# step's op, params, or inputs changes the recipe_hash (treat schema changes carefully).
+# Top-level keys recipe_version and name do not affect the hash.
 DEFAULT_RECIPE: dict[str, Any] = {
     "recipe_version": RECIPE_VERSION,
     "name": "Default",
@@ -43,8 +44,13 @@ DEFAULT_RECIPE: dict[str, Any] = {
 }
 
 
+def _is_on(step: dict) -> bool:
+    """Predicate: is this step enabled?"""
+    return step.get("on", True)
+
+
 def enabled_steps(recipe: dict) -> list[dict]:
-    return [s for s in recipe.get("steps", []) if s.get("on", True)]
+    return [s for s in recipe.get("steps", []) if _is_on(s)]
 
 
 def _canonical(step: dict) -> dict:
@@ -68,7 +74,7 @@ def prefix_hash(recipe: dict, upto_index: int | None = None) -> str:
     steps = recipe.get("steps", [])
     if upto_index is not None:
         steps = steps[: upto_index + 1]
-    payload = [_canonical(s) for s in steps if s.get("on", True)]
+    payload = [_canonical(s) for s in steps if _is_on(s)]
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 

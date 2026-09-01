@@ -7,9 +7,16 @@ def test_default_recipe_is_well_formed():
     assert DEFAULT_RECIPE["recipe_version"] == 1
     ids = [s["id"] for s in DEFAULT_RECIPE["steps"]]
     assert len(ids) == len(set(ids)), "step ids must be unique"
-    assert [s["op"] for s in DEFAULT_RECIPE["steps"]][:3] == [
+    # Assert complete op sequence
+    assert [s["op"] for s in DEFAULT_RECIPE["steps"]] == [
         "frame_transform", "angular_resample", "tsa",
+        "radial_detrend", "getis_ord", "hdbscan", "envelope",
     ]
+    # Assert step ids are exactly s1..s7
+    assert ids == ["s1", "s2", "s3", "s4", "s5", "s6", "s7"]
+    # Assert envelope is disabled
+    envelope = next(s for s in DEFAULT_RECIPE["steps"] if s["op"] == "envelope")
+    assert envelope["on"] is False
 
 
 def test_disabled_step_params_do_not_change_the_hash():
@@ -60,3 +67,10 @@ def test_prefix_hash_is_stable_for_later_edits():
 def test_enabled_steps_filters():
     n_on = sum(1 for s in DEFAULT_RECIPE["steps"] if s.get("on", True))
     assert len(enabled_steps(DEFAULT_RECIPE)) == n_on
+
+
+def test_prefix_hash_format():
+    """Assert that prefix_hash returns 16 hex characters."""
+    h = prefix_hash(DEFAULT_RECIPE)
+    assert len(h) == 16, f"expected 16 hex chars, got {len(h)}"
+    assert all(c in "0123456789abcdef" for c in h), f"expected hex chars only, got {h}"
