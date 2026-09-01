@@ -226,9 +226,17 @@ end
 
 [xx0, yy0] = pol2cart(theta, rho);               % full-resolution spiral (shared by octree/grid emit)
 
+% skip_frm_png: the octree_out path was written for the Phase 2 raw-spiral-octree caller
+% (process_octree_row), which never used the FRM PNGs -- hence the "then STOP" below used to
+% return right after the octree write. The Diagnostics Workbench's diag handler
+% (process_diag_row) needs BOTH the octree emit (cloud.bin) AND live_cache.bin from the SAME
+% MATLAB pass, so octree_out can no longer mean "stop here": what it still means is "skip the
+% FRM PNG rendering", which neither caller needs.
+skip_frm_png = isfield(opts, 'octree_out') && ~isempty(opts.octree_out);
+
 % ---- octree emit (Phase 2): dump the FULL-resolution FRM cloud (x,y + all three
 %      force axes) as a little-endian binary for the host to convert to a Potree
-%      octree (LAS -> PotreeConverter). No stride: every cut-window sample. Then STOP.
+%      octree (LAS -> PotreeConverter). No stride: every cut-window sample.
 %      Format: uint32 magic 0x44314F43 'D1OC', uint32 N, then float32 x,y,Fx,Fy,Fz [N].
 if isfield(opts, 'octree_out') && ~isempty(opts.octree_out)
     ox = xx0; oy = yy0;                          % full resolution (shared)
@@ -245,7 +253,6 @@ if isfield(opts, 'octree_out') && ~isempty(opts.octree_out)
     fwrite(fid, single(ofy(:)), 'single');
     fwrite(fid, single(ofz(:)), 'single');
     clear cleaner;                                   % flush+close now
-    return;                                          % octree-only: skip full processing
 end
 
 % ---- interpolated-grid emit: interpolate the FULL-resolution spiral onto a fine N×N grid
@@ -282,6 +289,7 @@ if isfield(opts, 'grid_out') && ~isempty(opts.grid_out)
     return;                                         % grid-only: skip full processing
 end
 
+if ~skip_frm_png
 for k = 1:3
     cc  = axes_cut{k}(1:step:end);
     fig = figure('Visible','off','Position',[0 0 1120 1000],'Color','w');
@@ -315,6 +323,7 @@ for k = 1:3
 
     exportgraphics(fig, fullfile(outdir, ['frm_' axes_name{k} '.png']), 'Resolution', opts.frm_dpi);
     close(fig);
+end
 end
 
 % ---- live cache: decimated point cloud for the browser's Live mode ----
