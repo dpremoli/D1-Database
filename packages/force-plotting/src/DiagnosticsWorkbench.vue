@@ -7,6 +7,7 @@ import WorkbenchPanel from './WorkbenchPanel.vue';
 import SelectionInspector from './SelectionInspector.vue';
 import BandwidthStrip from './BandwidthStrip.vue';
 import { fetchD1an } from './diagAttrs';
+import { bucketEnvelope } from './liveCache';
 import { computeStats, workingSetFromD1an } from './selection';
 import type { Selection, WorkingSet } from './selection';
 import { useForceHost } from './host';
@@ -20,7 +21,7 @@ const props = defineProps<{
 const workingSet = ref<WorkingSet | null>(null);
 const loadError = ref<string | null>(null);
 const selection = ref<Selection>(null);
-const channel = ref<'Fx' | 'Fy' | 'Fz' | 'tsaResid' | 'residZ'>('residZ');
+const channel = ref<'tsaResid' | 'residZ'>('residZ');
 
 async function loadWorkingSet() {
 	loadError.value = null;
@@ -55,11 +56,16 @@ watch(() => props.diagPath, loadWorkingSet);
 // are read back in the same units it was given on `d.t` -- plotting against revolution here
 // while Selection means seconds would silently desynchronise the Panel A brush from what
 // Panel B and the Inspector actually filter on.
+//
+// Bucketed via bucketEnvelope, not the raw WorkingSet (>=5M points, per the WorkingSet floor):
+// ForceChart does no decimation of its own and rebuilds its SVG path from `data` on every
+// crop-drag pointer frame, so feeding it one point per WorkingSet sample redraws a multi-MB
+// path per frame. min===max per bucket collapses to the same degenerate-envelope case
+// buildSeriesEnvelope already handles for a constant signal -- still a visible line, not blank.
 const chartData = computed(() => {
 	const ws = workingSet.value;
 	if (!ws) return null;
-	const resid = Array.from(ws.residZ);
-	return { t: Array.from(ws.t), min: resid, max: resid };
+	return bucketEnvelope(ws.t, ws.residZ);
 });
 function onCropStart(v: number) {
 	const cur = selection.value;
@@ -98,9 +104,6 @@ const layout = ref([
 						<select v-model="channel" class="dw-channel-select">
 							<option value="residZ">resid_z (anomaly)</option>
 							<option value="tsaResid">tsa_resid (residual)</option>
-							<option value="Fx">Fx</option>
-							<option value="Fy">Fy</option>
-							<option value="Fz">Fz</option>
 						</select>
 					</template>
 				</WorkbenchPanel>

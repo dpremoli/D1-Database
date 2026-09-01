@@ -167,7 +167,9 @@ def order_spectrum_quick(
     `revs` must be monotonically non-decreasing (revs_cum). Returns (orders, amplitude), orders
     capped to `max_order` -- consistent with the server pipeline's own metrics-payload cap, and
     for the same reason: everything diagnostically interesting (insert passing, its harmonics,
-    the non-integer chatter orders between them) lives in the low orders.
+    the non-integer chatter orders between them) lives in the low orders. Windowed (Hann) and
+    normalized the same way as scripts/diag/angular.py's order_spectrum (2/sum(w), single-sided)
+    so the two aren't just structurally similar but numerically comparable.
     """
     revs = np.asarray(revs, dtype=np.float64)
     sig = np.asarray(sig, dtype=np.float64)
@@ -178,9 +180,10 @@ def order_spectrum_quick(
         return [], []
     grid = revs[0] + np.arange(n_rev * samples_per_rev) / samples_per_rev
     resampled = np.interp(grid, revs, sig)
-    spec = np.fft.rfft(resampled - np.mean(resampled))
+    w = np.hanning(resampled.size)
+    spec = np.abs(np.fft.rfft((resampled - resampled.mean()) * w))
+    amp = spec * (2.0 / w.sum())
     orders = np.fft.rfftfreq(resampled.size, d=1.0 / samples_per_rev)
-    amp = np.abs(spec) / resampled.size
     keep = orders <= max_order
     return orders[keep].tolist(), amp[keep].tolist()
 

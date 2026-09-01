@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSeriesEnvelope, decimateCache, parseCache, type Cache } from './liveCache';
+import { bucketEnvelope, buildSeriesEnvelope, decimateCache, parseCache, type Cache } from './liveCache';
 
 const MAGIC = 0x44314c43;
 
@@ -146,5 +146,35 @@ describe('buildSeriesEnvelope', () => {
 		const env = buildSeriesEnvelope(makeCache(5), 2000);
 		expect(env.Fx.t.length).toBe(5);
 		for (let i = 0; i < 5; i++) expect(env.Fx.min[i]).toBe(env.Fx.max[i]); // one sample per bucket
+	});
+});
+
+// bucketEnvelope is buildSeriesEnvelope's generic single-series sibling for non-Cache callers
+// (the Diagnostics Workbench's WorkingSet), so it gets the same shape/coverage guarantees.
+describe('bucketEnvelope', () => {
+	it('never produces more buckets than requested, and covers the full time range', () => {
+		const n = 10_000;
+		const t = Float32Array.from({ length: n }, (_, i) => i * 0.001);
+		const v = Float32Array.from({ length: n }, (_, i) => Math.sin(i));
+		const env = bucketEnvelope(t, v, 2000);
+		expect(env.t.length).toBeLessThanOrEqual(2000);
+		expect(env.t[0]).toBe(t[0]);
+	});
+
+	it('each bucket max >= min, and bounds the real min/max within that bucket', () => {
+		const n = 300;
+		const t = Float32Array.from({ length: n }, (_, i) => i * 0.01);
+		const v = Float32Array.from({ length: n }, (_, i) => i); // monotonically increasing
+		const env = bucketEnvelope(t, v, 30);
+		for (let i = 0; i < env.t.length; i++) expect(env.max[i]).toBeGreaterThanOrEqual(env.min[i]);
+		expect(env.min[0]).toBe(0);
+	});
+
+	it('a large un-decimated series buckets down to a small, chart-sized point count', () => {
+		const n = 5_000_000; // WorkingSet floor
+		const t = Float32Array.from({ length: n }, (_, i) => i * 1e-5);
+		const v = Float32Array.from({ length: n }, () => 1.0);
+		const env = bucketEnvelope(t, v, 2000);
+		expect(env.t.length).toBeLessThanOrEqual(2000);
 	});
 });

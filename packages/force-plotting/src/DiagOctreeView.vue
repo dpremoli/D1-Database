@@ -1,10 +1,12 @@
 <script setup lang="ts">
 /*
  * Diagnostics octree viewer. Streams a host-built Potree octree with potree-core LOD, top-down
- * orthographic, and colours it with OUR OWN ShaderMaterial that reads the Fx/Fy/Fz force
- * attributes plus the new diag attributes (tsa_resid, resid_z) and applies viridis — bypassing
- * potree-core 2.0.15's broken 2.0-octree colour pipeline, same as FrmOctree.vue. potree-core is
- * used purely for octree management/streaming.
+ * orthographic, and colours it with OUR OWN ShaderMaterial that reads the diag attributes
+ * (tsa_resid, resid_z) and applies viridis — bypassing potree-core 2.0.15's broken 2.0-octree
+ * colour pipeline, same as FrmOctree.vue. potree-core is used purely for octree management/
+ * streaming. Only analyse()'s own columns are ever registered as LAS extra dims by
+ * process_diag_row (see scripts/force_orchestrator.py) — Fx/Fy/Fz are deliberately NOT among
+ * the channel options here, unlike FrmOctree.vue's raw-cloud octrees which do carry them.
  *
  * This is FrmOctree.vue's pattern generalized two ways: the axis uniform becomes a wider
  * "channel" uniform covering the diag attributes too, and a selection-highlight uniform dims
@@ -23,7 +25,7 @@ import type { Selection } from './selection';
 
 const props = defineProps<{
 	octreePath: string;                       // served subdir: /octrees/diag/<octreePath>/
-	channel: 'Fx' | 'Fy' | 'Fz' | 'tsaResid' | 'residZ';
+	channel: 'tsaResid' | 'residZ';
 	colormap: string;
 	pointSize: number;
 	cmin?: number | null;
@@ -58,9 +60,12 @@ let cssW = 1, cssH = 1;
 let needsRender = true;
 let lastVisibleN = -1;
 function invalidate() { needsRender = true; }
-// per-channel value ranges (from the octree metadata) for auto colour limits
-const ranges: Record<string, [number, number]> = { Fx: [0, 1], Fy: [0, 1], Fz: [0, 1], tsaResid: [0, 1], residZ: [0, 1] };
-const CHANNEL_IDX: Record<string, number> = { Fx: 0, Fy: 1, Fz: 2, tsaResid: 3, residZ: 4 };
+// per-channel value ranges (from the octree metadata) for auto colour limits. Keyed by the
+// prop's camelCase channel names; ATTR_NAME maps each to the octree's actual (snake_case) LAS
+// extra-dim attribute name for matching against metadata.json's `attributes[].name`.
+const ranges: Record<string, [number, number]> = { tsaResid: [0, 1], residZ: [0, 1] };
+const ATTR_NAME: Record<string, string> = { tsaResid: 'tsa_resid', residZ: 'resid_z' };
+const CHANNEL_IDX: Record<string, number> = { tsaResid: 0, residZ: 1 };
 const SEL_KIND_IDX: Record<string, number> = { time: 1, attribute: 2, lasso: 3 };
 
 function gradientTexture(name: string): THREE.DataTexture {
@@ -75,8 +80,8 @@ function gradientTexture(name: string): THREE.DataTexture {
 	return t;
 }
 
-// One material reads Fx/Fy/Fz plus tsa_resid/resid_z; a uChannel uniform selects which drives
-// the colour, and uRange normalises it before the viridis lookup. A separate selection-highlight
+// One material reads tsa_resid/resid_z; a uChannel uniform selects which drives the colour, and
+// uRange normalises it before the viridis lookup. A separate selection-highlight
 // path (uSelKind/uSelTimeRange/uSelAttrRange/uSelAttrChannel) dims points outside the active
 // cross-panel selection -- evaluated per-vertex here rather than in JS, since re-testing every
 // rendered point against the WorkingSet on every camera move would defeat LOD streaming
@@ -89,7 +94,7 @@ function makeMaterial(): THREE.ShaderMaterial {
 		uniforms: {
 			uGradient: { value: gradientTexture(props.colormap) },
 			uRange: { value: new THREE.Vector2(0, 1) },
-			uChannel: { value: CHANNEL_IDX[props.channel] ?? 4 },
+			uChannel: { value: CHANNEL_IDX[props.channel] ?? 1 },
 			uSize: { value: props.pointSize || 1.5 },
 			uSelKind: { value: 0 },                          // 0=none, 1=time, 2=attribute, 3=lasso
 			uSelTimeRange: { value: new THREE.Vector2(0, 0) },
@@ -97,7 +102,6 @@ function makeMaterial(): THREE.ShaderMaterial {
 			uSelAttrChannel: { value: 0 },                   // 0=residZ, 1=tsaResid
 		},
 		vertexShader: `
-			attribute float Fx; attribute float Fy; attribute float Fz;
 			attribute float tsa_resid; attribute float resid_z;
 			attribute float t;
 			uniform vec2 uRange; uniform float uChannel; uniform float uSize;
@@ -108,10 +112,7 @@ function makeMaterial(): THREE.ShaderMaterial {
 			varying float vT;
 			varying float vSelected;
 			float pick(float i) {
-				if (i < 0.5) return Fx;
-				if (i < 1.5) return Fy;
-				if (i < 2.5) return Fz;
-				if (i < 3.5) return tsa_resid;
+				if (i < 0.5) return tsa_resid;
 				return resid_z;
 			}
 			void main() {
@@ -141,6 +142,24 @@ function makeMaterial(): THREE.ShaderMaterial {
 	});
 	(m as any).updateMaterial = () => { /* potree calls this per frame; fixed-size = no-op */ };
 	return m;
+}
+
+// Shared teardown for the two GPU resources this component owns outright (potree-core owns
+// `pco`'s own geometry buffers via its own dispose(), but never touches OUR material/texture).
+// Used both on unmount and whenever octreePath swaps in a new octree -- without this, switching
+// between operations leaked a full material + gradient texture + the old octree's geometry
+// buffers on every switch, pushing the GL context toward exhaustion over a long session.
+function disposeMaterial() {
+	if (!material) return;
+	(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
+	material.dispose();
+	material = null;
+}
+function disposePco() {
+	if (!pco) return;
+	scene?.remove(pco);
+	pco.dispose();
+	pco = null;
 }
 
 let appliedLo = 0, appliedHi = 1;   // the colour range currently applied (for the figure export)
@@ -179,9 +198,15 @@ async function loadMeta(base: string) {
 		// (a pre-repatch metadata.json would show the wrong, un-clipped colour range).
 		const res = await fetch(`${base}metadata.json`, { cache: 'no-store' });
 		const meta = await res.json();
+		// meta.attributes[].name is the octree's own (snake_case) LAS extra-dim name, e.g.
+		// 'resid_z' -- ranges/ATTR_NAME are keyed by the prop's camelCase channel name, so match
+		// via ATTR_NAME rather than `a.name in ranges` (which never matches, since 'resid_z' is
+		// never a key of `ranges`; this silently left every channel on the [0,1] placeholder).
+		const byAttrName = Object.fromEntries(Object.entries(ATTR_NAME).map(([k, v]) => [v, k]));
 		for (const a of meta.attributes || []) {
-			if (a.name in ranges && Array.isArray(a.min) && Array.isArray(a.max)) {
-				ranges[a.name] = [Number(a.min[0]), Number(a.max[0])];
+			const propKey = byAttrName[a.name];
+			if (propKey && Array.isArray(a.min) && Array.isArray(a.max)) {
+				ranges[propKey] = [Number(a.min[0]), Number(a.max[0])];
 			}
 		}
 	} catch { /* fall back to defaults */ }
@@ -283,14 +308,20 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
 	if (raf) cancelAnimationFrame(raf);
-	ro?.disconnect(); controls?.dispose(); material?.dispose();
+	ro?.disconnect(); controls?.dispose();
+	disposePco(); disposeMaterial();
 	try { renderer?.forceContextLoss(); } catch { /* ignore */ }   // release the GL context (not freed by dispose())
 	renderer?.dispose();
 });
 
-watch(() => props.octreePath, () => { if (pco) { scene?.remove(pco); pco = null; } load(); });
-watch(() => props.channel, () => { if (material) { material.uniforms.uChannel.value = CHANNEL_IDX[props.channel] ?? 4; applyRange(); } });
-watch(() => props.colormap, () => { if (material) { material.uniforms.uGradient.value = gradientTexture(props.colormap); invalidate(); } });
+watch(() => props.octreePath, () => { disposePco(); disposeMaterial(); load(); });
+watch(() => props.channel, () => { if (material) { material.uniforms.uChannel.value = CHANNEL_IDX[props.channel] ?? 1; applyRange(); } });
+watch(() => props.colormap, () => {
+	if (!material) return;
+	(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
+	material.uniforms.uGradient.value = gradientTexture(props.colormap);
+	invalidate();
+});
 watch(() => props.pointSize, () => { if (material) { material.uniforms.uSize.value = props.pointSize || 1.5; invalidate(); } });
 watch(() => [props.cmin, props.cmax], applyRange);
 watch(() => props.selection, applySelection, { deep: true });

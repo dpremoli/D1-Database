@@ -188,6 +188,44 @@ def test_env_band_refused_when_nyquist_too_low_for_the_band():
     assert np.all(cols["env_band"] == 0.0)
 
 
+def test_env_band_refused_exactly_at_the_nyquist_boundary():
+    """Regression: bandpass_envelope's own rejection is `hi >= nyquist` (strict), so the
+    refusal check here must trigger at hi_needed == nyquist too, not just strictly above --
+    otherwise the exact-equality case falls through and bandpass_envelope's ValueError
+    escapes analyse() instead of being recorded as a graceful refusal.
+    """
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
+    cache = {
+        "n": t.size,
+        "fs": fs,
+        "feed": 0.05,
+        "diam": 80.0,
+        "cs_sec": 0.0,
+        "ce_sec": float(t[-1]),
+        "t": t,
+        "fx": fx,
+        "fy": fy,
+        "fz": fz,
+        "rpm": rpm,
+        "revs": revs,
+    }
+    _, probe = analyse(cache, x, y, samples_per_rev=SPR)
+    nyquist = probe["effective_nyquist_hz"]
+    bandwidth_frac = 0.2
+    # Solve fn_hz so hi_needed == nyquist exactly.
+    fn_hz = nyquist / (1.0 + bandwidth_frac / 2.0)
+    _, metrics = analyse(
+        cache,
+        x,
+        y,
+        samples_per_rev=SPR,
+        fn_hz=fn_hz,
+        envelope_bandwidth_frac=bandwidth_frac,
+    )
+    assert metrics["env_band_status"].startswith("refused: effective_nyquist_hz")
+    assert "envelope_spectrum" not in metrics
+
+
 def test_env_band_computed_when_fn_hz_fits_within_nyquist():
     t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
     cache = {

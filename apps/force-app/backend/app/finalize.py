@@ -65,6 +65,12 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         for i in range(8)
     ]
 
+    # Snapshot the pre-correction axes for local_diag.drift below: that check must answer "did
+    # this capture actually drift", independent of whether drift_comp correction is enabled --
+    # sum_axes() returns freshly summed arrays, not views, so this is unaffected by the in-place
+    # detrend() two lines down.
+    raw_axes = sum_axes(signals)
+
     # Optional linear drift compensation on the 8 dyno channels (like the MATLAB app's driftComp).
     # Only affects the derived outputs (.mat DATA + live_cache); the raw .d1raw is never touched.
     if cfg.drift_comp and n > 1:
@@ -85,12 +91,17 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     # flag, computed here because finalize() only ever runs after the acquisition loop has
     # stopped (see session.py's _run -> self.raw.close() -> _finalize_async) -- this is what
     # makes "never runs during recording" structural rather than a rule this function has to
-    # separately enforce. The order spectrum needs a real revs_cum to resample against; without
-    # a measured tacho there is no revolution axis to resample onto, so it refuses rather than
-    # guessing one (same refusal-over-aliasing pattern as scripts/diag/pipeline.py's envelope
-    # analysis).
+    # separately enforce. Both are restricted to the cut window (cs_sec..ce_sec) just detected
+    # above: without that, a quiet air-cut lead-in ahead of a steady, genuinely non-drifting cut
+    # reads as one large linear "drift" (the step between the two regions), and the order
+    # spectrum gets diluted by non-cutting revolutions that were never in the material. The
+    # order spectrum also needs a real revs_cum to resample against; without a measured tacho
+    # there is no revolution axis to resample onto, so it refuses rather than guessing one (same
+    # refusal-over-aliasing pattern as scripts/diag/pipeline.py's envelope analysis).
+    cut_mask = (t >= cs_sec) & (t <= ce_sec)
+    t_cut = t[cut_mask]
     if tacho_measured:
-        os_orders, os_amp = order_spectrum_quick(revs_cum, axes["Fz"])
+        os_orders, os_amp = order_spectrum_quick(revs_cum[cut_mask], axes["Fz"][cut_mask])
         os_status = "computed" if os_orders else "refused: cut too short for a revolution grid"
     else:
         os_orders, os_amp = [], []
@@ -98,7 +109,7 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     local_diag = {
         "order_spectrum_status": os_status,
         "order_spectrum": {"orders": os_orders, "amplitude": os_amp} if os_orders else None,
-        "drift": drift_check(t, axes),
+        "drift": drift_check(t_cut, {k: v[cut_mask] for k, v in raw_axes.items()}),
     }
 
     # --- .mat (v1.0), full resolution ---

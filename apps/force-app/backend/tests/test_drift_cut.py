@@ -53,6 +53,10 @@ def test_drift_comp_removes_linear_trend(tmp_path):
 
     summ = json.load(open(f"{d}/summary.json"))
     assert summ["drift_comp"] is True
+    # Regression: local_diag.drift is a diagnostic on the RAW signal, independent of whether
+    # drift_comp correction is enabled -- it must still report the real drift here even though
+    # drift_comp has just flattened the corrected output above.
+    assert summ["local_diag"]["drift"]["Fz"]["detected"] is True
 
 
 def test_cut_detector_absolute():
@@ -133,6 +137,21 @@ def test_drift_check_clean_signal_not_flagged():
     assert result["detected"] is False
 
 
+def test_local_diag_drift_check_ignores_air_cut_lead_in(tmp_path):
+    """Regression: local_diag.drift must be restricted to the detected cut window
+    (cs_sec..ce_sec), not the whole record -- otherwise a quiet air-cut lead-in followed by a
+    steady, genuinely non-drifting cut reads as one large linear "drift" via np.polyfit over
+    the step between the two, a false positive on a cut with no real drift.
+    """
+    fs, n_air, n_cut = 4000, 4000, 4000  # 1s quiet air-cut, then 1s of a steady cut
+    n = n_air + n_cut
+    fz_full = np.concatenate([np.full(n_air, 1.0), np.full(n_cut, 120.0)])
+    d = _write_raw(tmp_path, n, fs, fz_full / 4.0)
+    cfg = RecordConfig(sample_rate=fs, feed=0.05, diam=80)
+    summ = finalize(d, cfg)
+    assert summ["local_diag"]["drift"]["Fz"]["detected"] is False
+
+
 def test_order_spectrum_quick_recovers_known_order():
     # 5 revolutions/sec worth of angle, a force with a clean 3rd-order component.
     spr = 64
@@ -144,5 +163,11 @@ def test_order_spectrum_quick_recovers_known_order():
     amp = np.asarray(amp)
     mask = orders > 0.5  # drop DC
     orders_f, amp_f = orders[mask], amp[mask]
-    peak_order = orders_f[np.argmax(amp_f)]
+    peak_idx = np.argmax(amp_f)
+    peak_order = orders_f[peak_idx]
     assert abs(peak_order - 3.0) < 0.2
+    # Amplitude, not just location: regression for the un-doubled/unwindowed normalization
+    # that read exactly half the true 8.0 N amplitude (scripts/diag/angular.py's
+    # order_spectrum, which this claims consistency with, uses Hann + 2/sum(w) -- an
+    # unwindowed |spec|/N recovers only A/2 for a pure sinusoid).
+    assert abs(amp_f[peak_idx] - 8.0) < 1.5

@@ -74,6 +74,26 @@ export function buildSeriesEnvelope(c: Cache, buckets = 2000): { Fx: EnvSeries; 
 	return out;
 }
 
+// Generic single-series version of buildSeriesEnvelope's min/max bucketing, for callers that
+// aren't a D1LC Cache -- e.g. the Diagnostics Workbench's WorkingSet (t, resid_z), which is
+// already decimated to the WorkingSet floor (>=5M points) but still far too many for ForceChart
+// to render one SVG path point per sample without redrawing a multi-MB path on every crop-drag
+// pointer frame.
+export function bucketEnvelope(t: Float32Array, v: Float32Array, buckets = 2000): EnvSeries {
+	const n = Math.min(t.length, v.length);
+	const stride = Math.max(1, Math.ceil(n / buckets));
+	const nb = Math.ceil(n / stride);
+	const out: EnvSeries = { t: new Array(nb), min: new Array(nb), max: new Array(nb) };
+	for (let b = 0, i0 = 0; i0 < n; b++, i0 += stride) {
+		const i1 = Math.min(n, i0 + stride);
+		out.t[b] = t[i0];
+		let lo = Infinity, hi = -Infinity;
+		for (let i = i0; i < i1; i++) { const x = v[i]; if (x < lo) lo = x; if (x > hi) hi = x; }
+		out.min[b] = lo; out.max[b] = hi;
+	}
+	return out;
+}
+
 // Module-scoped LRU: survives component unmount, so revisiting a recently-viewed
 // operation is instant and issues no network request.
 const MEM = new Map<string, Cache>();

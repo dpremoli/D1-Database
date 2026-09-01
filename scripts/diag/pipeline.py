@@ -163,7 +163,7 @@ def analyse(
         half_bw = fn_hz * (envelope_bandwidth_frac / 2.0)
         hi_needed = fn_hz + half_bw
         nyquist = eff_fs / 2.0
-        if nyquist < hi_needed:
+        if nyquist <= hi_needed:
             env_band_status = (
                 f"refused: effective_nyquist_hz ({nyquist:.1f}) below required "
                 f"{hi_needed:.1f} Hz for the resonance band"
