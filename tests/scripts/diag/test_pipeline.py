@@ -313,3 +313,48 @@ def test_h_matrix_correction_moves_signal_between_channels():
     assert (
         max(abs(v) for v in metrics["tsa_signature"]) > 3.0
     )  # the signature is now on ff
+
+
+# --- analyse() equivalence gate ----------------------------------------------
+#
+# Task 6's gate tests call run_recipe() directly -- they prove the executor is
+# equivalent, not that analyse()'s kwargs->recipe translation is correct. A wrong
+# mapping (dropped mount_deg, mis-wired gi_k, wrong envelope enable condition) would
+# leave those green while analyse() itself silently changed for every caller. These
+# two tests close that gap: they drive analyse() with the exact calls the fixtures
+# were captured from and demand byte-for-byte agreement. Exact equality, never
+# allclose -- this is a refactor, any difference is a defect. Do NOT regenerate the
+# fixtures to make a failure go green.
+
+_FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
+GOLDEN_DEFAULT = os.path.join(_FIXTURES, "golden_default_recipe.npz")
+GOLDEN_ENVELOPE = os.path.join(_FIXTURES, "golden_envelope.npz")
+
+
+def _assert_analyse_matches_golden(golden_path, **kwargs):
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut()
+    cache = cache_of(t, fx, fy, fz, rpm, revs, fs)
+    cols, metrics = analyse(cache, x, y, **kwargs)
+
+    golden = np.load(golden_path, allow_pickle=False)
+    expected = {k: golden[k] for k in golden.files if not k.startswith("__")}
+    assert set(cols) == set(expected), "column set drifted from the frozen reference"
+    for name, want in expected.items():
+        got = cols[name]
+        assert got.dtype == want.dtype, f"column {name!r} dtype drifted"
+        np.testing.assert_array_equal(
+            got, want, err_msg=f"column {name!r} differs from the golden reference"
+        )
+    assert repr(sorted(metrics.items())) == str(golden["__metrics__"]), (
+        "metrics payload differs from the golden reference"
+    )
+
+
+def test_analyse_default_reproduces_the_frozen_golden_exactly():
+    _assert_analyse_matches_golden(GOLDEN_DEFAULT, samples_per_rev=256)
+
+
+def test_analyse_with_fn_hz_reproduces_the_frozen_envelope_golden_exactly():
+    _assert_analyse_matches_golden(
+        GOLDEN_ENVELOPE, samples_per_rev=256, fn_hz=1000.0
+    )
