@@ -108,6 +108,13 @@ def run_recipe(
     metrics: dict = {}
     work: Columns = dict(cols)
 
+    lo = from_step if from_step is not None else 0
+    hi = stop_after if stop_after is not None else len(steps) - 1
+    # Which ops the runner actually walked this call. A step outside [lo, hi] was neither
+    # run nor consciously skipped, so any metric that stands in for "this step was
+    # evaluated" (env_band_status) must not be synthesised on its behalf.
+    considered_ops = {steps[i].get("op") for i in range(len(steps)) if lo <= i <= hi}
+
     for i, s in enumerate(steps):
         if from_step is not None and i < from_step:
             continue
@@ -140,31 +147,45 @@ def run_recipe(
 
     # Metrics analyse() emits unconditionally that no single op can reach. eff_fs is
     # computed exactly as analyse() does -- explicit float(), Python division -- so the
-    # frozen `repr(sorted(metrics.items()))` golden matches value-for-value.
-    t_in = work.get("t_raw")
-    if t_in is not None and t_in.size > 1:
-        span_sec = float(t_in[-1] - t_in[0])
-        eff_fs = (t_in.size / span_sec) if span_sec > 0 else 0.0
-    else:
-        eff_fs = 0.0
+    # frozen `repr(sorted(metrics.items()))` golden matches value-for-value. Each key is
+    # emitted ONLY when its input is present: on a `from_step` resume the seed columns are
+    # gone, and a synthesised `0.0` there is a plausible-looking lie, not a sentinel.
     fs_val = work.get(_CACHE_FS_KEY)
-    metrics["cached_fs_hz"] = float(fs_val) if fs_val is not None else 0.0
-    metrics["effective_fs_hz"] = eff_fs
-    metrics["effective_nyquist_hz"] = eff_fs / 2.0
+    if fs_val is not None:
+        metrics["cached_fs_hz"] = float(fs_val)
+    t_in = work.get("t_raw")
+    if t_in is not None:
+        if t_in.size > 1:
+            span_sec = float(t_in[-1] - t_in[0])
+            eff_fs = (t_in.size / span_sec) if span_sec > 0 else 0.0
+        else:
+            eff_fs = 0.0
+        metrics["effective_fs_hz"] = eff_fs
+        metrics["effective_nyquist_hz"] = eff_fs / 2.0
     # An enabled envelope step already set this to "computed" (or its own refusal string);
-    # setdefault must not clobber it. When the step is off, analyse()'s default applies.
-    metrics.setdefault("env_band_status", "refused: dyno_fn_hz not provided")
+    # setdefault must not clobber it. When the step is off but was walked, analyse()'s
+    # default applies. When `stop_after`/`from_step` excluded the envelope step entirely,
+    # no status is true -- omit it rather than assert a false refusal reason.
+    if "envelope" in considered_ops:
+        metrics.setdefault("env_band_status", "refused: dyno_fn_hz not provided")
     # samples_per_rev is emitted by analyse() always; the angular_resample fragment only
     # carries it when that step actually ran this call.
     if "samples_per_rev" not in metrics and "samples_per_rev" in resample_params:
         metrics["samples_per_rev"] = int(resample_params["samples_per_rev"])
 
-    n = int(work["tsa_resid"].size) if "tsa_resid" in work else 0
+    if "tsa_resid" not in work:
+        raise ValueError(
+            "run_recipe stopped before the 'tsa' step, so no angular column length is "
+            "defined; cannot assemble the public column set. Widen stop_after past tsa."
+        )
+    n = int(work["tsa_resid"].size)
     out: Columns = {}
     for name in PUBLIC_COLUMNS:
         col = work.get(name)
+        # .astype(np.float32) always copies (matching analyse()); np.asarray would hand
+        # back a VIEW into the caller's prefix-cache dict when col is already float32.
         out[name] = (
-            np.asarray(col[:n], dtype=np.float32) if col is not None
+            col[:n].astype(np.float32) if col is not None
             else np.zeros(n, dtype=np.float32)
         )
     return out, metrics

@@ -6,8 +6,8 @@ import pytest
 from conftest import cache_of, synthetic_cut
 
 from diag.recipe import DEFAULT_RECIPE
-from diag.registry import RecipeError
-from diag.runner import run_recipe, seed_columns
+from diag.registry import STEPS, RecipeError
+from diag.runner import _TRUNCATABLE, run_recipe, seed_columns
 
 PUBLIC_COLUMNS = {
     "t", "rev", "x", "y", "tsa_resid", "resid_z",
@@ -62,6 +62,54 @@ def test_invalid_recipe_is_refused_before_any_work():
     bad["steps"] = [s for s in bad["steps"] if s["op"] != "tsa"]
     with pytest.raises(RecipeError, match="requires"):
         run_recipe(bad, _seed())
+
+
+def test_stop_after_before_tsa_raises_not_returns_empties():
+    """stop_after cutting before tsa leaves no angular length defined. The runner must fail
+    loudly rather than hand back eleven zero-length columns that a caller would persist."""
+    idx = next(
+        i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "angular_resample"
+    )
+    with pytest.raises(ValueError, match="before the 'tsa' step"):
+        run_recipe(DEFAULT_RECIPE, _seed(), stop_after=idx)
+
+
+def test_stop_after_at_radial_detrend_produces_the_full_column_set():
+    """Directly exercise stop_after (a later task builds intermediate artifacts with it):
+    stopping at radial_detrend still yields all eleven columns, one length, later steps
+    zero-filled."""
+    idx = next(
+        i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "radial_detrend"
+    )
+    cols, _ = run_recipe(DEFAULT_RECIPE, _seed(), stop_after=idx)
+    assert set(cols) == PUBLIC_COLUMNS
+    assert len({c.size for c in cols.values()}) == 1
+    assert cols["resid_z"].size > 0
+    assert np.count_nonzero(cols["gi_star"]) == 0
+    assert np.count_nonzero(cols["cluster_id"]) == 0
+
+
+def test_resume_path_omits_metrics_it_cannot_truthfully_compute():
+    """cached_fs_hz / effective_fs_hz / effective_nyquist_hz derive from seed columns that
+    a from_step resume does not carry. Absent keys, not zeros -- a zero Nyquist is a lie a
+    consumer would plot."""
+    idx = next(i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "getis_ord")
+    prefix, _ = run_recipe(DEFAULT_RECIPE, _seed(), stop_after=idx - 1)
+    _, metrics = run_recipe(DEFAULT_RECIPE, prefix, from_step=idx)
+    assert "cached_fs_hz" not in metrics
+    assert "effective_fs_hz" not in metrics
+    assert "effective_nyquist_hz" not in metrics
+
+
+def test_truncation_allowlist_covers_every_registered_angular_column():
+    """Pins the hardcoded allowlist: if a future step is registered that produces an
+    angular-domain column, this fails until _TRUNCATABLE covers it (or `sig`, the one
+    deliberate exclusion)."""
+    covered = set(_TRUNCATABLE) | {"sig"}
+    angular = {
+        c for s in STEPS.values() if s.tier == "derived" for c in s.produces
+    } | set(STEPS["angular_resample"].produces)
+    assert covered >= angular
 
 
 def test_from_step_reuses_supplied_columns():
