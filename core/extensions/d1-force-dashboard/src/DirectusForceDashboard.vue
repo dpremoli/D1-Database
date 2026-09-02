@@ -15,6 +15,7 @@ setForceHost({
 	api,
 	currentUser: () => userStore.currentUser,
 	filterUrl: '/filter',
+	diagUrl: '/diag',
 	octreeUrl: `${window.location.origin}/octrees`,
 	authHeaders: () => ({}),
 	fetchCredentials: 'include',

@@ -18,6 +18,7 @@
 // process_diag_row, which bakes every per-point statistic into attrs.d1an and the diag octree.
 // The browser only thresholds and highlights what the server already computed.
 import { computed, onMounted, ref } from 'vue';
+import type { Recipe } from '@d1/force-plotting';
 import { api } from '../directusClient';
 import StandaloneDiagnosticsWorkbench from './StandaloneDiagnosticsWorkbench.vue';
 
@@ -30,6 +31,7 @@ interface Row {
 	diag_points: number | null;
 	diag_error: string | null;
 	diag_metrics: Record<string, unknown> | null;
+	diag_recipe: Recipe | null;
 	operation_id?: { operation_id?: string; pass_code?: string; operation_date?: string } | null;
 }
 
@@ -41,7 +43,7 @@ const building = ref(false);
 const buildMsg = ref<string | null>(null);
 
 const DIAG_FIELDS = [
-	'id', 'diag_status', 'diag_path', 'diag_points', 'diag_error', 'diag_metrics',
+	'id', 'diag_status', 'diag_path', 'diag_points', 'diag_error', 'diag_metrics', 'diag_recipe',
 	'operation_id.operation_id', 'operation_id.pass_code', 'operation_id.operation_date',
 ];
 
@@ -93,14 +95,19 @@ onMounted(loadRows);
 // 'pending' and let the host orchestrator daemon claim it (scripts/force_orchestrator.py's
 // claim_diag). If nothing is polling, the row simply stays pending -- hence the hint in the
 // timeout message.
-async function build() {
+async function build(recipe?: Recipe) {
 	const r = selected.value;
 	if (!r?.id || building.value) return;
 	building.value = true; buildMsg.value = 'Requesting diagnostics build on the host…';
 	try {
-		await api.patch(`/items/machining_force_analysis/${r.id}`, {
+		const patch: Record<string, unknown> = {
 			diag_status: 'pending', diag_requested_at: new Date().toISOString(),
-		});
+		};
+		// A Bake from the workbench carries the edited recipe; persist it so process_diag_row
+		// bakes it and claim_diag's hash reflects it. A plain Build/Retry leaves diag_recipe
+		// untouched (NULL = the built-in default).
+		if (recipe) { patch.diag_recipe = recipe; r.diag_recipe = recipe; }
+		await api.patch(`/items/machining_force_analysis/${r.id}`, patch);
 		buildMsg.value = 'Analysing on the host (minutes for large ops)…';
 		const deadline = Date.now() + 15 * 60 * 1000;
 		while (Date.now() < deadline) {
@@ -144,7 +151,7 @@ async function build() {
 				class="diag-btn"
 				:disabled="building"
 				:title="ready ? 'Rebuild the diagnostics analysis on the host' : 'Build the diagnostics analysis on the host'"
-				@click="build"
+				@click="build()"
 			>
 				{{ building ? 'Requesting…' : (selected.diag_status === 'error' ? 'Retry' : ready ? 'Rebuild' : 'Build') }}
 			</button>
@@ -159,8 +166,12 @@ async function build() {
 				v-if="ready && selected"
 				:key="selected.id"
 				:diag-path="selected.diag_path as string"
+				:analysis-id="selected.id"
 				:diag-metrics="selected.diag_metrics"
 				:total-points="Number(selected.diag_points) || 0"
+				:initial-recipe="selected.diag_recipe"
+				:baked-recipe="selected.diag_recipe"
+				@bake="build"
 			/>
 			<div v-else class="diag-empty">
 				<p v-if="!selected">Select an operation to diagnose.</p>

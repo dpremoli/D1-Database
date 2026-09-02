@@ -23,10 +23,22 @@ export { default as ForceDashboard } from './ForceDashboard.vue';
 
 export { default as DiagnosticsWorkbench } from './DiagnosticsWorkbench.vue';
 export { default as DiagOctreeView } from './DiagOctreeView.vue';
+export { default as DiagScatter } from './DiagScatter.vue';
+export { default as ClusterTable } from './ClusterTable.vue';
+export { default as RecipePanel } from './RecipePanel.vue';
+export { CLUSTER_PALETTE, clusterColorCss } from './clusterPalette';
 export { fetchD1an, parseD1an, D1AN_MAGIC } from './diagAttrs';
 export type { DiagAttrs } from './diagAttrs';
-export { workingSetFromD1an, matches, computeStats } from './selection';
-export type { WorkingSet, Selection, SelectionStats } from './selection';
+export { workingSetFromD1an, matches, computeStats, clusterStats, CHANNEL_ACCESSOR } from './selection';
+export type { WorkingSet, Selection, SelectionStats, ChannelKey, ClusterRow } from './selection';
+
+export {
+	DEFAULT_RECIPE, STEP_META, recipeChannels, recipesEquivalent,
+} from './recipeChannels';
+export type { Recipe, RecipeStep, ParamSpec, StepMeta, ChannelOption } from './recipeChannels';
+
+export { fetchDiagPreview } from './diagPreview';
+export type { DiagPreview } from './diagPreview';
 
 export { alignAndDiff } from './compare';
 export type { AlignedDiff } from './compare';

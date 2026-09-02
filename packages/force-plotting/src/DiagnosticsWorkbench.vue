@@ -1,95 +1,144 @@
 <script setup lang="ts">
+// The Diagnostics Workbench: tune-and-see. Three columns — the editable recipe, the spatial
+// analysis cloud (channel-selectable, cluster overlay), and the signal brush — plus the
+// selection inspector and a state strip that is honest about preview vs bake.
+//
+// The recipe is a client-side object. Editing a parameter debounce-fires POST /diag/preview,
+// whose D1AN bytes replace the WorkingSet everything downstream reads. The bake stays the
+// existing diag_status='pending' PATCH flow, emitted upward.
 import { computed, onMounted, ref, watch } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import ForceChart from './ForceChart.vue';
-import DiagOctreeView from './DiagOctreeView.vue';
+import DiagScatter from './DiagScatter.vue';
+import ClusterTable from './ClusterTable.vue';
+import RecipePanel from './RecipePanel.vue';
 import WorkbenchPanel from './WorkbenchPanel.vue';
 import SelectionInspector from './SelectionInspector.vue';
 import BandwidthStrip from './BandwidthStrip.vue';
 import { fetchD1an } from './diagAttrs';
+import { fetchDiagPreview } from './diagPreview';
 import { bucketEnvelope } from './liveCache';
-import { computeStats, workingSetFromD1an } from './selection';
-import type { Selection, WorkingSet } from './selection';
+import { clusterStats, computeStats, workingSetFromD1an } from './selection';
+import type { ChannelKey, Selection, WorkingSet } from './selection';
+import { DEFAULT_RECIPE, recipeChannels, recipesEquivalent, type Recipe } from './recipeChannels';
 import { useForceHost } from './host';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
 	diagPath: string;
+	analysisId: string;
 	diagMetrics: Record<string, unknown> | null;
 	totalPoints: number;
-}>();
+	initialRecipe?: Recipe | null;
+	bakedRecipe?: Recipe | null;
+}>(), { initialRecipe: null, bakedRecipe: null });
 
-const workingSet = ref<WorkingSet | null>(null);
+const emit = defineEmits<{ (e: 'bake', recipe: Recipe): void }>();
+
+const recipe = ref<Recipe>(structuredClone(props.initialRecipe ?? DEFAULT_RECIPE));
+const bakedWS = ref<WorkingSet | null>(null);
+const previewWS = ref<WorkingSet | null>(null);
 const loadError = ref<string | null>(null);
+const previewing = ref(false);
+const previewMs = ref<number | null>(null);
+const previewErr = ref<string | null>(null);
 const selection = ref<Selection>(null);
-const channel = ref<'tsaResid' | 'residZ'>('residZ');
+const channel = ref<ChannelKey>('residZ');
 
-async function loadWorkingSet() {
+const activeWS = computed(() => previewWS.value ?? bakedWS.value);
+const bakeStale = computed(() =>
+	!recipesEquivalent(recipe.value, props.bakedRecipe ?? DEFAULT_RECIPE));
+const channelOptions = computed(() => recipeChannels(recipe.value));
+const clusterMode = computed(() => channel.value === 'clusterId');
+
+async function loadBaked() {
 	loadError.value = null;
-	workingSet.value = null;
+	bakedWS.value = null;
 	try {
-		// The diag octree is a THIRD variant, published by process_diag_row under
-		// OCTREE_DIR/diag/<operation_id>/ -- and diag_path holds the bare operation id, not
-		// the "diag/" prefix (see the migration's comment on the column). Omitting the
-		// segment here does not merely 404: for an operation that also has a raw spiral
-		// octree, /octrees/<id>/ resolves 200 to THAT octree instead, and the workbench
-		// would silently render the wrong cloud with none of the analysis attributes.
+		// diag_path is the bare operation id; the "diag/" segment is this component's to add —
+		// /octrees/<id>/ is the raw spiral octree, a different artifact (200, not 404).
 		const base = `${useForceHost().octreeUrl}/diag/${props.diagPath}/`;
-		const attrs = await fetchD1an(`${base}attrs.d1an`);
-		workingSet.value = workingSetFromD1an(attrs);
+		bakedWS.value = workingSetFromD1an(await fetchD1an(`${base}attrs.d1an`));
 	} catch (e: any) {
 		loadError.value = e?.message || 'failed to load analysis attributes';
 	}
 }
-onMounted(loadWorkingSet);
-watch(() => props.diagPath, loadWorkingSet);
+onMounted(loadBaked);
+watch(() => props.diagPath, () => { previewWS.value = null; loadBaked(); });
 
-// ForceChart plots resid_z against time and doubles as the time-range brush -- its existing
-// cropStart/cropEnd drag handles ARE the Panel A selection mechanism; no new brushing code is
-// needed.
-//
-// ForceChart's `data` shape is kind-specific (confirmed by reading its `geom` computed):
-// kind='env' reads `d.t` (x-axis) plus `d.min[i]`/`d.max[i]` (envelope bounds); kind='line'
-// reads `d.f`/`d.amp[i]` instead. The crop-drag rendering (the shaded [cropStart,cropEnd]
-// overlay this component relies on for the brush) is only implemented for kind='env' (see
-// ForceChart.vue's `if (props.kind === 'env')` branch around its cropArea computation) --
-// kind='line' has no equivalent. There is only one resid_z series here, not a min/max band,
-// so min and max are set equal: `geom.area`'s stroke still renders at 0.6px width regardless
-// of the band's height, so a degenerate envelope still reads as a visible line, not a blank
-// fill.
-//
-// The x-axis MUST be ws.t (real time, seconds), not ws.rev: Selection{kind:'time'} and its
-// tested matches()/computeStats() compare against ws.t, and ForceChart's cropStart/cropEnd
-// are read back in the same units it was given on `d.t` -- plotting against revolution here
-// while Selection means seconds would silently desynchronise the Panel A brush from what
-// Panel B and the Inspector actually filter on.
-//
-// Bucketed via bucketEnvelope, not the raw WorkingSet (>=5M points, per the WorkingSet floor):
-// ForceChart does no decimation of its own and rebuilds its SVG path from `data` on every
-// crop-drag pointer frame, so feeding it one point per WorkingSet sample redraws a multi-MB
-// path per frame. min===max per bucket collapses to the same degenerate-envelope case
-// buildSeriesEnvelope already handles for a constant signal -- still a visible line, not blank.
+// Debounced preview: any recipe edit fires POST /diag/preview after 400 ms of quiet, with the
+// previous request aborted. The pattern filterChain.ts uses.
+let previewTimer: ReturnType<typeof setTimeout> | null = null;
+let previewAbort: AbortController | null = null;
+watch(recipe, () => {
+	if (previewTimer) clearTimeout(previewTimer);
+	previewTimer = setTimeout(runPreview, 400);
+}, { deep: true });
+
+async function runPreview() {
+	previewAbort?.abort();
+	// An unedited recipe (equivalent to the bake) needs no preview — show the bake.
+	if (!bakeStale.value) {
+		previewWS.value = null;
+		previewErr.value = null;
+		previewMs.value = null;
+		return;
+	}
+	const ac = new AbortController();
+	previewAbort = ac;
+	previewing.value = true;
+	previewErr.value = null;
+	try {
+		const r = await fetchDiagPreview(props.analysisId, recipe.value, null, ac.signal);
+		if (ac.signal.aborted) return;
+		previewWS.value = workingSetFromD1an(r.attrs);
+		previewMs.value = r.ms;
+	} catch (e: any) {
+		if (ac.signal.aborted || e?.name === 'AbortError') return;
+		previewErr.value = e?.message || 'preview failed';
+	} finally {
+		if (previewAbort === ac) previewing.value = false;
+	}
+}
+
+// If a produced-channel is deselected out from under the current view, fall back to resid_z.
+watch(channelOptions, (opts) => {
+	const cur = opts.find((o) => o.key === channel.value);
+	if (cur && !cur.produced) channel.value = 'residZ';
+});
+
 const chartData = computed(() => {
-	const ws = workingSet.value;
-	if (!ws) return null;
-	return bucketEnvelope(ws.t, ws.residZ);
+	const ws = activeWS.value;
+	return ws ? bucketEnvelope(ws.t, ws.residZ) : null;
 });
 function onCropStart(v: number) {
 	const cur = selection.value;
-	const t1 = cur && cur.kind === 'time' ? cur.t1 : (workingSet.value?.t.at(-1) ?? v);
+	const t1 = cur && cur.kind === 'time' ? cur.t1 : (activeWS.value?.t.at(-1) ?? v);
 	selection.value = { kind: 'time', t0: v, t1 };
 }
 function onCropEnd(v: number) {
 	const cur = selection.value;
-	const t0 = cur && cur.kind === 'time' ? cur.t0 : (workingSet.value?.t[0] ?? v);
+	const t0 = cur && cur.kind === 'time' ? cur.t0 : (activeWS.value?.t[0] ?? v);
 	selection.value = { kind: 'time', t0, t1: v };
 }
+function onClusterSelect(id: number | null) {
+	selection.value = id == null ? null : { kind: 'cluster', id };
+}
 
-const stats = computed(() => (workingSet.value ? computeStats(workingSet.value, selection.value) : null));
+const stats = computed(() => (activeWS.value ? computeStats(activeWS.value, selection.value) : null));
+const clusters = computed(() => (activeWS.value ? clusterStats(activeWS.value) : []));
 
 const layout = ref([
-	{ x: 0, y: 0, w: 7, h: 8, i: 'spatial' },
-	{ x: 7, y: 0, w: 5, h: 8, i: 'signal' },
+	{ x: 0, y: 0, w: 3, h: 8, i: 'recipe' },
+	{ x: 3, y: 0, w: 6, h: 8, i: 'spatial' },
+	{ x: 9, y: 0, w: 3, h: 8, i: 'signal' },
 ]);
+
+const stateLabel = computed(() => {
+	if (previewing.value) return 'previewing recipe · approximate — Bake for exact numbers';
+	if (previewWS.value) return `previewing recipe · ${previewMs.value ?? '?'} ms · approximate`;
+	if (bakeStale.value) return 'showing last bake · recipe edited since — Bake to apply';
+	return 'baked';
+});
 </script>
 
 <template>
@@ -97,22 +146,43 @@ const layout = ref([
 		<div v-if="loadError" class="dw-error">{{ loadError }}</div>
 		<GridLayout v-model:layout="layout" :col-num="12" :row-height="40" :margin="[10, 10]" :is-resizable="true" :is-draggable="true">
 			<GridItem v-for="item in layout" :key="item.i" :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i" drag-allow-from=".wb-panel-handle">
-				<WorkbenchPanel v-if="item.i === 'spatial'" title="Spatial" icon="scatter_plot">
-					<DiagOctreeView
-						:octree-path="props.diagPath"
+				<WorkbenchPanel v-if="item.i === 'recipe'" title="Recipe" icon="tune">
+					<RecipePanel
+						v-model:recipe="recipe"
+						:baked="!!bakedWS"
+						:bake-stale="bakeStale"
+						:previewing="previewing"
+						:preview-ms="previewMs"
+						:preview-error="previewErr"
+						@bake="emit('bake', recipe)"
+					/>
+				</WorkbenchPanel>
+
+				<WorkbenchPanel v-else-if="item.i === 'spatial'" title="Spatial" icon="scatter_plot">
+					<DiagScatter
+						:working-set="activeWS"
 						:channel="channel"
-						colormap="viridis"
-						:point-size="2.2"
-						:total-points="props.totalPoints"
+						:cluster-mode="clusterMode"
 						:selection="selection"
+						:point-size="2.6"
 					/>
 					<template #footer>
-						<select v-model="channel" class="dw-channel-select">
-							<option value="residZ">resid_z (anomaly)</option>
-							<option value="tsaResid">tsa_resid (residual)</option>
-						</select>
+						<div class="dw-spatial-footer">
+							<select v-model="channel" class="dw-channel-select">
+								<option v-for="o in channelOptions" :key="o.key" :value="o.key" :disabled="!o.produced">
+									{{ o.label }}{{ o.produced ? '' : ' — step off' }}
+								</option>
+							</select>
+							<ClusterTable
+								v-if="clusterMode"
+								:rows="clusters"
+								:active-id="selection?.kind === 'cluster' ? selection.id : null"
+								@select="onClusterSelect"
+							/>
+						</div>
 					</template>
 				</WorkbenchPanel>
+
 				<WorkbenchPanel v-else-if="item.i === 'signal'" title="Signal" icon="show_chart">
 					<ForceChart
 						v-if="chartData"
@@ -132,7 +202,11 @@ const layout = ref([
 				</WorkbenchPanel>
 			</GridItem>
 		</GridLayout>
+
 		<SelectionInspector v-if="stats" :stats="stats" />
+		<div class="dw-state" :class="{ preview: previewing || previewWS, stale: bakeStale && !previewWS && !previewing }">
+			{{ stateLabel }}
+		</div>
 		<BandwidthStrip :metrics="props.diagMetrics as any" />
 	</div>
 </template>
@@ -142,5 +216,9 @@ const layout = ref([
 .diag-workbench :deep(.vgl-layout) { flex: 1; min-height: 0; }
 .dw-error { padding: 8px 12px; color: var(--danger, #fca5a5); font-size: 12px; }
 .dw-loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-dim); font-size: 12px; }
-.dw-channel-select { width: 100%; font-size: 12px; padding: 4px 6px; background: var(--bg-2); color: var(--text, #e5e7eb); border: 1px solid var(--border); border-radius: 6px; }
+.dw-spatial-footer { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow: auto; }
+.dw-channel-select { width: 100%; font-size: 12px; padding: 4px 6px; background: var(--bg-2, #111a33); color: var(--text, #e5e7eb); border: 1px solid var(--border, rgba(255,255,255,0.14)); border-radius: 6px; }
+.dw-state { padding: 4px 12px; font-size: 11px; color: var(--text-dim, #94a3b8); border-top: 1px solid var(--border, rgba(255,255,255,0.1)); }
+.dw-state.preview { color: #fcd34d; background: color-mix(in srgb, #d97706 12%, transparent); }
+.dw-state.stale { color: #fca5a5; }
 </style>
