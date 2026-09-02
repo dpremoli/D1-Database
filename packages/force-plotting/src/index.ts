@@ -23,6 +23,10 @@ export { default as ForceDashboard } from './ForceDashboard.vue';
 
 export { default as DiagnosticsWorkbench } from './DiagnosticsWorkbench.vue';
 export { default as DiagOctreeView } from './DiagOctreeView.vue';
+export { default as DiagScatter } from './DiagScatter.vue';
+export { default as ClusterTable } from './ClusterTable.vue';
+export { default as RecipePanel } from './RecipePanel.vue';
+export { CLUSTER_PALETTE, clusterColorCss } from './clusterPalette';
 export { fetchD1an, parseD1an, D1AN_MAGIC } from './diagAttrs';
 export type { DiagAttrs } from './diagAttrs';
 export { workingSetFromD1an, matches, computeStats, clusterStats, CHANNEL_ACCESSOR } from './selection';
