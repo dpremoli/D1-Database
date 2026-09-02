@@ -103,9 +103,13 @@ def test_preview_approximates_a_full_bake(client):
     authoritative (spec Component 4). This pins the C-4 acceptance criterion.
 
     The tolerances here accommodate the SYNTHETIC cut, whose perfect Archimedean spiral
-    creates exact k-NN ties that float32 quantisation flips. On real process_force.m geometry
-    the divergence is ~100x tighter — validated against operation ffe1286d this session:
-    resid_z max|abs| 1.6e-4, gi_star corr 0.9997, and gi_sig / cluster_id BYTE-IDENTICAL.
+    creates exact k-NN ties that float32 quantisation flips. Measured against real
+    process_force.m geometry (operation ffe1286d, this session):
+      - continuous channels ~100x tighter: resid_z max|abs| 1.6e-4, tsa_resid 1.5e-8
+      - gi_sig BYTE-IDENTICAL to the bake
+      - cluster_id agrees 99.87% (a few boundary points reassign under float32 either way)
+      - gi_star correlation 0.9997 (a uniform tiny scaling, not structural)
+    The bake stays authoritative for every number a user records.
     """
     r = client.post(
         "/preview",

@@ -37,6 +37,13 @@
     handle_path /filter/* {
         reverse_proxy filter-service:8000
     }
+    # diag-service (interactive diagnostics-recipe previews). Same-origin so the workbench can
+    # call it under Directus's CSP; the service forwards the caller's Directus credentials when
+    # resolving the analysis row, so authz stays Directus's. handle_path strips /diag, mapping
+    # /diag/preview → /preview (the service routes are /health and /preview in-container).
+    handle_path /diag/* {
+        reverse_proxy diag-service:8000
+    }
     # Recording backend (FastAPI on the acquisition host, needs the DAQ hardware so it is NOT a
     # container). Proxied same-origin at /recorder → host.docker.internal:8200, so the SPA's REST
     # calls AND the /record/stream WebSocket reach it without CORS or HTTPS mixed-content blocks
