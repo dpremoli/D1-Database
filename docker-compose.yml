@@ -313,6 +313,38 @@ services:
       start_period: 20s
     networks: [d1net]
 
+  # diag-service: interactive diagnostics-recipe previews for the Diagnostics Workbench
+  # (docs/superpowers/specs/2026-09-01-diagnostics-recipe-workbench-design.md, Component 4).
+  # Re-runs a recipe from the published base.d1an using the SAME scripts/diag engine the
+  # orchestrator's bake uses. Forwards the caller's Directus credentials for authz (no service
+  # account). Served same-origin via Caddy at /diag/* — no published ports.
+  diag-service:
+    build:
+      context: .
+      dockerfile: plugins/diag-service/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      directus:
+        condition: service_healthy
+    environment:
+      DIRECTUS_URL: http://directus:8055
+      OCTREE_ROOT: /srv/octrees
+      # CORS for the standalone Force App, which calls /diag/* cross-origin with a Bearer token.
+      DIAG_CORS_ORIGINS: ${FORCE_APP_ORIGIN:-http://localhost:5180}
+    volumes:
+      - ./infra/octrees:/srv/octrees:ro   # read base.d1an off the same mount Caddy serves
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+    networks: [d1net]
+
   # Remote live-backup receiver for force-app recordings (apps/force-app/backup-server). The
   # acquisition PC streams raw D1RW chunks here for the duration of a recording, so a local disk
   # failure, power cut or crash on that machine can't take the capture with it; the same machine
