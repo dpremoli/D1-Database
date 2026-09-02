@@ -160,6 +160,8 @@ def test_emit_works_when_stopped_before_tsa():
     """The default assembly deliberately raises when stopped before tsa; `emit` must not --
     emitting a pre-tsa state is its entire reason to exist."""
     idx = _angular_resample_idx()
+    with pytest.raises(ValueError, match="stopped before the 'tsa' step"):
+        run_recipe(DEFAULT_RECIPE, _seed(), stop_after=idx)
     cols, _ = run_recipe(DEFAULT_RECIPE, _seed(), stop_after=idx, emit=("t", "sig"))
     assert set(cols) == {"t", "sig"}
 

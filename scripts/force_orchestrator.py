@@ -96,7 +96,10 @@ DIAG_CACHE_POINTS = 5_000_000
 # Bump whenever analyse()'s column set or its parameters change in a way that makes an
 # already-'done' row's diag_metrics/D1AN stale. claim_diag requeues 'done' rows with an
 # older diag_version automatically -- see claim_diag's WHERE clause below.
-DIAG_VERSION = 4
+# v5: the published artifact set gained base.d1an (t, rev, x, y, sig -- the pre-tsa state a
+# preview service resumes a recipe from). Version-4 rows have complete-looking DB rows but
+# no base.d1an on disk, so they must requeue to gain it.
+DIAG_VERSION = 5
 DIAG_SAMPLES_PER_REV = 256
 
 

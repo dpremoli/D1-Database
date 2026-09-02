@@ -106,8 +106,10 @@ def run_recipe(
     already holds everything the earlier steps produced -- that is the preview path, where
     a cached prefix is resumed rather than recomputed.
 
-    Returns `(columns, metrics)`: `columns` is exactly `PUBLIC_COLUMNS`, float32, all one
-    length; `metrics` is JSON-serialisable and reproduces analyse()'s payload.
+    Returns `(columns, metrics)`: when `emit` is None, `columns` is exactly
+    `PUBLIC_COLUMNS`, float32, all one length; when `emit` is given, `columns` is exactly
+    the named columns, float32, at their natural length. `metrics` is JSON-serialisable and
+    reproduces analyse()'s payload.
     """
     validate_recipe(recipe)
     steps = list(recipe.get("steps", []))
