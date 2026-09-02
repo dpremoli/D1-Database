@@ -1,9 +1,14 @@
 // Shared selection state for the Diagnostics Workbench: a WorkingSet is the decimated,
 // off-GPU point set the D1AN file provides; a Selection is a predicate over it, evaluated the
-// same way regardless of which panel produced it (time brush in Panel A, attribute threshold
-// or spatial lasso in Panel B) -- that symmetry is what makes cross-panel highlighting work
-// without each panel needing to know about the others.
+// same way regardless of which panel produced it (time brush in the Signal panel, attribute
+// threshold or spatial lasso or a cluster pick in the Spatial panel) -- that symmetry is what
+// makes cross-panel highlighting work without each panel needing to know about the others.
 import type { DiagAttrs } from './diagAttrs';
+
+/** Every per-point channel the diag pipeline produces, camelCased. Defined once here and
+ *  imported wherever a channel is named (the Spatial selector, DiagScatter, RecipePanel). */
+export type ChannelKey =
+	| 'tsaResid' | 'residZ' | 'giStar' | 'giSig' | 'clusterId' | 'glosh' | 'envBand';
 
 export interface WorkingSet {
 	n: number;
@@ -13,31 +18,50 @@ export interface WorkingSet {
 	y: Float32Array;
 	tsaResid: Float32Array;
 	residZ: Float32Array;
+	giStar: Float32Array;
+	giSig: Float32Array;
+	clusterId: Float32Array;
+	glosh: Float32Array;
+	envBand: Float32Array;
 }
 
-const REQUIRED_COLUMNS = ['t', 'rev', 'x', 'y', 'tsa_resid', 'resid_z'] as const;
+// snake_case D1AN column -> camelCase WorkingSet field. The full contract; a file missing any
+// of these is not a usable diag artifact.
+const COLUMN_MAP: Record<string, keyof WorkingSet> = {
+	t: 't', rev: 'rev', x: 'x', y: 'y',
+	tsa_resid: 'tsaResid', resid_z: 'residZ', gi_star: 'giStar', gi_sig: 'giSig',
+	cluster_id: 'clusterId', glosh: 'glosh', env_band: 'envBand',
+};
 
 export function workingSetFromD1an(attrs: DiagAttrs): WorkingSet {
-	for (const col of REQUIRED_COLUMNS) {
+	for (const col of Object.keys(COLUMN_MAP)) {
 		if (!(col in attrs.columns)) {
 			throw new Error(`D1AN file is missing required column '${col}'`);
 		}
 	}
-	return {
-		n: attrs.n,
-		t: attrs.columns.t,
-		rev: attrs.columns.rev,
-		x: attrs.columns.x,
-		y: attrs.columns.y,
-		tsaResid: attrs.columns.tsa_resid,
-		residZ: attrs.columns.resid_z,
-	};
+	const ws = { n: attrs.n } as WorkingSet;
+	for (const [snake, camel] of Object.entries(COLUMN_MAP)) {
+		(ws as unknown as Record<string, Float32Array>)[camel] = attrs.columns[snake];
+	}
+	return ws;
 }
+
+/** Read one channel's value for point `i`. Used by the shader-free JS predicate path. */
+export const CHANNEL_ACCESSOR: Record<ChannelKey, (ws: WorkingSet, i: number) => number> = {
+	tsaResid: (ws, i) => ws.tsaResid[i],
+	residZ: (ws, i) => ws.residZ[i],
+	giStar: (ws, i) => ws.giStar[i],
+	giSig: (ws, i) => ws.giSig[i],
+	clusterId: (ws, i) => ws.clusterId[i],
+	glosh: (ws, i) => ws.glosh[i],
+	envBand: (ws, i) => ws.envBand[i],
+};
 
 export type Selection =
 	| { kind: 'time'; t0: number; t1: number }
-	| { kind: 'attribute'; column: 'residZ' | 'tsaResid'; min: number; max: number }
+	| { kind: 'attribute'; column: ChannelKey; min: number; max: number }
 	| { kind: 'lasso'; polygon: [number, number][] }
+	| { kind: 'cluster'; id: number }
 	| null;
 
 // Standard even-odd ray-casting point-in-polygon test.
@@ -58,11 +82,13 @@ export function matches(ws: WorkingSet, sel: Selection, i: number): boolean {
 		case 'time':
 			return ws.t[i] >= sel.t0 && ws.t[i] <= sel.t1;
 		case 'attribute': {
-			const v = sel.column === 'residZ' ? ws.residZ[i] : ws.tsaResid[i];
+			const v = CHANNEL_ACCESSOR[sel.column](ws, i);
 			return v >= sel.min && v <= sel.max;
 		}
 		case 'lasso':
 			return pointInPolygon(ws.x[i], ws.y[i], sel.polygon);
+		case 'cluster':
+			return ws.clusterId[i] === sel.id;
 		default:
 			return false;
 	}
@@ -99,4 +125,54 @@ export function computeStats(ws: WorkingSet, sel: Selection): SelectionStats {
 	}
 	if (n === 0) return { ...ZERO_STATS };
 	return { n, tMin, tMax, rMin, rMax, meanResidZ: sum / n };
+}
+
+export interface ClusterRow {
+	/** HDBSCAN cluster id; -1 is the noise "cluster". */
+	id: number;
+	n: number;
+	/** n / ws.n, so the rows sum to 1. */
+	fraction: number;
+	meanAbsResidZ: number;
+	maxGiStar: number;
+	rMin: number;
+	rMax: number;
+}
+
+/** Per-cluster summary over the whole WorkingSet. Sorted by size descending; the noise row
+ *  (id -1), if present, always sorts last regardless of size. */
+export function clusterStats(ws: WorkingSet): ClusterRow[] {
+	const acc = new Map<number, { n: number; sumAbs: number; maxGi: number; rMin: number; rMax: number }>();
+	for (let i = 0; i < ws.n; i++) {
+		const id = ws.clusterId[i];
+		let a = acc.get(id);
+		if (!a) {
+			a = { n: 0, sumAbs: 0, maxGi: -Infinity, rMin: Infinity, rMax: -Infinity };
+			acc.set(id, a);
+		}
+		a.n++;
+		a.sumAbs += Math.abs(ws.residZ[i]);
+		if (ws.giStar[i] > a.maxGi) a.maxGi = ws.giStar[i];
+		const r = Math.hypot(ws.x[i], ws.y[i]);
+		if (r < a.rMin) a.rMin = r;
+		if (r > a.rMax) a.rMax = r;
+	}
+	const rows: ClusterRow[] = [];
+	for (const [id, a] of acc) {
+		rows.push({
+			id,
+			n: a.n,
+			fraction: ws.n ? a.n / ws.n : 0,
+			meanAbsResidZ: a.n ? a.sumAbs / a.n : 0,
+			maxGiStar: a.maxGi === -Infinity ? 0 : a.maxGi,
+			rMin: a.rMin === Infinity ? 0 : a.rMin,
+			rMax: a.rMax === -Infinity ? 0 : a.rMax,
+		});
+	}
+	rows.sort((p, q) => {
+		if (p.id === -1) return 1;
+		if (q.id === -1) return -1;
+		return q.n - p.n;
+	});
+	return rows;
 }
