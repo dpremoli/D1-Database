@@ -667,7 +667,16 @@ def claim_diag(conn, limit: int = 1):
     it is what makes "bump DIAG_VERSION to invalidate and requeue" (see the migration's own
     comment on the diag_version column) actually true. Concurrency is deliberately 1 by
     default: this host also serves Directus, and a clustering pass that starves the database
-    mid-experiment is a worse outcome than a slow queue."""
+    mid-experiment is a worse outcome than a slow queue.
+
+    Staleness has two independent axes: an older diag_version (the pipeline CODE changed) or
+    a diag_recipe_hash differing from the current default's (the CONFIGURATION changed). Note
+    `IS DISTINCT FROM` rather than `!=`: diag_recipe_hash is NULL on every row baked before the
+    recipe columns existed, and `NULL != 'abc'` is NULL, not true -- those rows would never
+    requeue."""
+    sys.path.insert(0, str(SCRIPT_DIR))
+    from diag.recipe import DEFAULT_RECIPE, recipe_hash
+
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
@@ -675,17 +684,19 @@ def claim_diag(conn, limit: int = 1):
                 SELECT id FROM machining_force_analysis
                  WHERE diag_status='pending'
                     OR (diag_status='done' AND (diag_version IS NULL OR diag_version < %s))
+                    OR (diag_status='done' AND diag_recipe_hash IS DISTINCT FROM %s)
                  ORDER BY diag_requested_at NULLS FIRST
                  LIMIT %s FOR UPDATE SKIP LOCKED
             )
             UPDATE machining_force_analysis a SET diag_status='processing', updated_at=now()
               FROM picked WHERE a.id = picked.id
          RETURNING a.id, a.operation_id, a.pulses_per_rev, a.inner_diameter, a.outer_diameter, a.filter_chain::text AS filter_chain,
+                   a.diag_recipe,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path,
                    (SELECT mount_deg FROM tool_setup WHERE setup_id = a.tool_setup_id) AS setup_mount_deg,
                    (SELECT h_matrix FROM tool_setup WHERE setup_id = a.tool_setup_id) AS setup_h_matrix
         """,
-            [DIAG_VERSION, limit],
+            [DIAG_VERSION, recipe_hash(DEFAULT_RECIPE), limit],
         )
         rows = cur.fetchall()
     conn.commit()
@@ -875,9 +886,14 @@ def process_diag_row(
     sys.path.insert(0, str(SCRIPT_DIR))
     from diag.angular import angular_resample
     from diag.d1an import write_d1an
-    from diag.pipeline import analyse, read_d1lc
+    from diag.pipeline import read_d1lc
+    from diag.recipe import DEFAULT_RECIPE, recipe_hash
+    from diag.runner import run_recipe, seed_columns
 
     outdir = tempfile.mkdtemp(prefix="diag_", dir=os.environ.get("FORCE_WORKDIR"))
+    # NULL diag_recipe means "the built-in default", so every row baked before the recipe
+    # engine keeps working untouched and no backfill migration is needed.
+    recipe = row.get("diag_recipe") or DEFAULT_RECIPE
     try:
         if not row.get("archive_path"):
             raise ValueError("no archive .mat linked to this analysis row")
@@ -947,20 +963,27 @@ def process_diag_row(
             else 0.0
         )
         h_matrix_raw = row.get("setup_h_matrix")
-        h_matrix = (
-            np.array(h_matrix_raw, dtype=np.float64)
-            if h_matrix_raw is not None
-            else None
-        )
 
-        columns, metrics = analyse(
-            cache,
-            x,
-            y,
-            mount_deg=mount_deg,
-            h_matrix=h_matrix,
-            samples_per_rev=DIAG_SAMPLES_PER_REV,
-        )
+        # Translate the tool-setup knobs onto the recipe's own steps -- the same mapping
+        # analyse() did with its mount_deg / h_matrix / samples_per_rev keyword arguments.
+        # frame_transform's op does np.asarray() on h_matrix, so the raw DB value is fine.
+        # deepcopy is load-bearing: process_diag_row runs in a long-lived daemon loop and
+        # claim_diag hashes DEFAULT_RECIPE in the same process, so an in-place mutation would
+        # leak this row's setup into the next row and shift the staleness comparator.
+        import copy
+
+        recipe = copy.deepcopy(recipe)
+        _by_op = {s["op"]: s for s in recipe["steps"]}
+        _ft = _by_op["frame_transform"]["params"]
+        if row.get("setup_mount_deg") is not None:
+            _ft["mount_deg"] = mount_deg
+        if h_matrix_raw is not None:
+            # the raw list, not np.array: recipe_hash() json-encodes params. A custom
+            # recipe's own samples_per_rev is overridden here (see report / fz resample).
+            _ft["h_matrix"] = h_matrix_raw
+        _by_op["angular_resample"]["params"]["samples_per_rev"] = DIAG_SAMPLES_PER_REV
+
+        columns, metrics = run_recipe(recipe, seed_columns(cache, x, y))
         n = columns["t"].size
         d1an_path = Path(outdir) / "attrs.d1an"
         write_d1an(str(d1an_path), columns)
@@ -1028,9 +1051,16 @@ def process_diag_row(
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE machining_force_analysis SET diag_status='done', diag_path=%s, "
-                "diag_points=%s, diag_version=%s, diag_metrics=%s, diag_error=NULL, "
-                "updated_at=now() WHERE id=%s",
-                [op, int(n), DIAG_VERSION, json.dumps(metrics), row["id"]],
+                "diag_points=%s, diag_version=%s, diag_metrics=%s, diag_recipe_hash=%s, "
+                "diag_error=NULL, updated_at=now() WHERE id=%s",
+                [
+                    op,
+                    int(n),
+                    DIAG_VERSION,
+                    json.dumps(metrics),
+                    recipe_hash(recipe),
+                    row["id"],
+                ],
             )
         conn.commit()
         log.info("[DIAG] %s -> %s (%d pts)", Path(row["archive_path"]).stem, op, n)
