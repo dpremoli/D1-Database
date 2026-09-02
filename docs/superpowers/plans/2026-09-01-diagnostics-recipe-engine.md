@@ -1353,7 +1353,7 @@ Requeue an operation that already has a working octree and drain it, then confir
 ```bash
 docker exec d1-database-postgres-1 psql -U d1 -d d1_database -c \
   "update machining_force_analysis set diag_status='pending', diag_requested_at=now(), diag_error=null where operation_id='ffe1286d-b636-53b4-b8da-e8c3a6d07bba';"
-py scripts/_diag_smoke_test.py
+py scripts/diag_smoke_check.py
 docker exec d1-database-postgres-1 psql -U d1 -d d1_database -c \
   "select diag_status, diag_points, diag_recipe_hash from machining_force_analysis where operation_id='ffe1286d-b636-53b4-b8da-e8c3a6d07bba';"
 ls infra/octrees/diag/ffe1286d-b636-53b4-b8da-e8c3a6d07bba/

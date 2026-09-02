@@ -3,7 +3,11 @@ nothing else in the orchestrator's queue. Deliberately bypasses run_queue/--run/
 which would also process the 74 pending base analyses and 4 pending octrees already queued.
 
 Usage (from the repo root, with POTREE_CONVERTER set in the environment):
-    py scripts/_diag_smoke_test.py
+    py scripts/diag_smoke_check.py
+
+Named *_check.py, not *_test.py: it is a manual developer utility, not part of the pytest
+suite, and must not be collected by a bare `pytest` run (it imports force_orchestrator and
+psycopg2 at module scope).
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ import force_orchestrator as fo
 import psycopg2
 
 # Prefer the ambient DATABASE_URL (same one dbmate / the daemon use); fall back to the
-# local stack DSN only for a bare `py scripts/_diag_smoke_test.py` on d1-server itself.
+# local stack DSN only for a bare `py scripts/diag_smoke_check.py` on d1-server itself.
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     "postgres://d1:change_me@localhost:5432/d1_database?sslmode=disable",

@@ -37,7 +37,16 @@ PUBLIC_COLUMNS: tuple[str, ...] = (
 # stay at its full resampled length so `order_spectrum` (inside the tsa step) and the
 # full-rate `envelope` step are unaffected. Seed columns (`t_raw`, `revs`, `fx/fy/fz` ...)
 # and the frame channels (`fc/ff/fp`) are likewise left untouched.
-_TRUNCATABLE: tuple[str, ...] = PUBLIC_COLUMNS
+#
+# "Columns that shorten under TSA truncation" and "columns the D1AN file must contain"
+# (PUBLIC_COLUMNS) are INDEPENDENT concepts that happen to hold the same values today. Do
+# NOT alias one to the other: a new derived step could produce an angular column that must
+# truncate without being part of the fixed D1AN contract, and widening _TRUNCATABLE is not
+# a licence to widen PUBLIC_COLUMNS (the D1AN contract is fixed) or vice versa.
+_TRUNCATABLE: tuple[str, ...] = (
+    "t", "rev", "x", "y", "tsa_resid", "resid_z",
+    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band",
+)
 
 # Internal, non-array-contract key: the D1LC cache sample rate, stashed by seed_columns so
 # run_recipe can reproduce analyse()'s `cached_fs_hz` metric without being handed the cache.

@@ -10,7 +10,7 @@ ALTER TABLE machining_force_analysis
 COMMENT ON COLUMN machining_force_analysis.diag_recipe IS
     'The recipe this cut''s diagnostics were built from. NULL means the built-in default (scripts/diag/recipe.py DEFAULT_RECIPE).';
 COMMENT ON COLUMN machining_force_analysis.diag_recipe_hash IS
-    'Identity of the recipe the CURRENT diag artifacts were baked from. Staleness has two independent axes: diag_version tracks code changes, this tracks configuration changes. A baked artifact is reusable only when both match.';
+    'Identity of the recipe the CURRENT diag artifacts were baked from. Staleness has two independent axes: diag_version tracks code changes, this tracks configuration changes. A baked artifact is reusable only when both match. This hash covers the EFFECTIVE recipe actually executed -- the stored diag_recipe plus the per-cut tool_setup injection (mount_deg / h_matrix) -- so it is NOT comparable to a hash computed over the stored diag_recipe alone.';
 
 CREATE TABLE IF NOT EXISTS diag_recipes (
     recipe_id   UUID        NOT NULL DEFAULT uuid_generate_v4(),

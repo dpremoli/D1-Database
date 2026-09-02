@@ -46,3 +46,54 @@ def standard_cut():
     """(cache, x, y) for the 40-revolution reference cut."""
     t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut()
     return cache_of(t, fx, fy, fz, rpm, revs, fs), x, y
+
+
+# --- Equivalence gate: shared golden comparison ------------------------------
+#
+# The two golden .npz fixtures were captured from pipeline.analyse() BEFORE the registry
+# existed (see the plan's Task 1). They compare the new recipe pipeline against the old
+# one's recorded behaviour, not against itself. Exact equality, never allclose: this is a
+# refactor, so any numerical difference at all is a defect.
+#
+# PORTABILITY CAVEAT: the fixtures are bit-valid on the machine that captured them only.
+# Cross-machine BLAS differences, thread-reduction ordering, and numpy/scipy version drift
+# can perturb the low bits of the float results. A failure of these tests on different
+# hardware or a different dependency set should first be diagnosed as an environment
+# difference, NOT assumed to be a code regression. Do not regenerate the fixtures to make a
+# failure go green -- they are the only evidence the refactor is safe. Note also that
+# conftest.synthetic_cut is a co-dependency of BOTH fixtures: it defines the exact input
+# they were captured from, so editing it breaks all four equivalence gates at once in a way
+# that reads as a pipeline regression rather than a fixture-input change.
+
+_FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
+GOLDEN_DEFAULT = os.path.join(_FIXTURES, "golden_default_recipe.npz")
+GOLDEN_ENVELOPE = os.path.join(_FIXTURES, "golden_envelope.npz")
+
+
+def assert_columns_match_golden(cols, metrics, golden_path, nondegenerate=()):
+    """Assert (cols, metrics) reproduce the frozen golden reference byte-for-byte.
+
+    `nondegenerate` names columns whose golden side MUST contain a nonzero value -- the
+    canary that catches a fixture regenerated from a broken pipeline emitting zeros, which
+    would otherwise let a zeros-vs-zeros comparison pass while verifying nothing. The
+    assertion is on the GOLDEN side deliberately: the claim is "this fixture is
+    non-degenerate", not "this run is".
+    """
+    golden = np.load(golden_path, allow_pickle=False)
+    expected = {k: golden[k] for k in golden.files if not k.startswith("__")}
+    for name in nondegenerate:
+        assert np.count_nonzero(golden[name]) > 0, (
+            f"golden {name!r} is degenerate -- fixture regenerated from a broken pipeline?"
+        )
+    assert set(cols) == set(expected), "column set drifted from the frozen reference"
+    for name, want in expected.items():
+        got = cols[name]
+        assert got.dtype == want.dtype, f"column {name!r} dtype drifted"
+        np.testing.assert_array_equal(
+            got, want, err_msg=f"column {name!r} differs from the golden reference"
+        )
+    # The metrics blob is frozen too: analyse() emits columns AND a JSON-serialisable
+    # metrics dict, and the runner must reproduce both. Stored as repr(sorted(items())).
+    assert repr(sorted(metrics.items())) == str(golden["__metrics__"]), (
+        "metrics payload differs from the golden reference"
+    )

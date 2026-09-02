@@ -984,10 +984,17 @@ def process_diag_row(
         if row.get("setup_mount_deg") is not None:
             _ft["mount_deg"] = mount_deg
         if h_matrix_raw is not None:
-            # the raw list, not np.array: recipe_hash() json-encodes params. A custom
-            # recipe's own samples_per_rev is overridden here (see report / fz resample).
+            # the raw list, not np.array: recipe_hash() json-encodes params.
             _ft["h_matrix"] = h_matrix_raw
-        _by_op["angular_resample"]["params"]["samples_per_rev"] = DIAG_SAMPLES_PER_REV
+        # The effective angular grid: whatever the recipe declares, defaulting to the host
+        # constant only when the recipe is silent. NOT written back over the recipe -- a
+        # recipe that tunes samples_per_rev must be honoured, and recipe_hash(recipe) must
+        # reflect what it asked for rather than this constant.
+        spr = int(
+            _by_op["angular_resample"]["params"].get(
+                "samples_per_rev", DIAG_SAMPLES_PER_REV
+            )
+        )
 
         columns, metrics = run_recipe(recipe, seed_columns(cache, x, y))
         n = columns["t"].size
@@ -1019,9 +1026,11 @@ def process_diag_row(
         # intensity ramp) still needs its own resample: it isn't one of analyse()'s columns.
         xa, ya = columns["x"].astype(np.float64), columns["y"].astype(np.float64)
         revs = np.asarray(cache["revs"], dtype=np.float64)
-        _, fza = angular_resample(
-            revs, np.asarray(fz, np.float64), DIAG_SAMPLES_PER_REV
-        )
+        # MUST resample onto the same grid as the recipe's angular_resample step (spr):
+        # fza drives the LAS intensity ramp and is sliced to `n` (the recipe columns'
+        # length) below. A different sample count makes fza[:n] a truncated / misaligned
+        # ramp against every other column in the LAS.
+        _, fza = angular_resample(revs, np.asarray(fz, np.float64), spr)
         fza = fza[:n]
 
         las_path = str(Path(outdir) / "diag.las")

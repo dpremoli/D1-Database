@@ -1,18 +1,18 @@
-import os
 import struct
-import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "scripts"))
-
-from conftest import cache_of, synthetic_cut  # noqa: F401
+from conftest import (
+    GOLDEN_DEFAULT,
+    GOLDEN_ENVELOPE,
+    assert_columns_match_golden,
+    cache_of,
+    synthetic_cut,
+)
 
 from diag.pipeline import analyse, read_d1lc
 
 SPR = 256
-
-_synthetic_cut = synthetic_cut
 
 
 def _write_d1lc(path, t, fx, fy, fz, rpm, revs, fs):
@@ -26,7 +26,7 @@ def _write_d1lc(path, t, fx, fy, fz, rpm, revs, fs):
 
 
 def test_d1lc_round_trip(tmp_path):
-    t, fx, fy, fz, rpm, revs, _, _, fs, _ = _synthetic_cut(n_rev=4)
+    t, fx, fy, fz, rpm, revs, _, _, fs, _ = synthetic_cut(n_rev=4)
     p = str(tmp_path / "c.bin")
     _write_d1lc(p, t, fx, fy, fz, rpm, revs, fs)
     c = read_d1lc(p)
@@ -38,7 +38,7 @@ def test_pipeline_recovers_implanted_anomaly_location():
     """The test that validates the science: an anomaly implanted at a known revolution
     must come back as the strongest residual at that same revolution, AND as a
     significant spatial hotspot with its own cluster."""
-    t, fx, fy, fz, rpm, revs, x, y, fs, hit = _synthetic_cut()
+    t, fx, fy, fz, rpm, revs, x, y, fs, hit = synthetic_cut()
     cache = {
         "n": t.size,
         "fs": fs,
@@ -65,7 +65,7 @@ def test_pipeline_recovers_implanted_anomaly_location():
 
 
 def test_pipeline_columns_are_aligned_and_finite():
-    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut(n_rev=8)
     cache = {
         "n": t.size,
         "fs": fs,
@@ -89,7 +89,7 @@ def test_pipeline_columns_are_aligned_and_finite():
 
 
 def test_pipeline_columns_include_spatial_coordinates():
-    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut(n_rev=8)
     cache = {
         "n": t.size,
         "fs": fs,
@@ -119,14 +119,14 @@ def test_pipeline_columns_include_spatial_coordinates():
         "env_band",
     }
     # x/y must land on the same radius the spiral actually has at that revolution --
-    # not just be finite/present. rho = 40.0 - 0.05*revs in _synthetic_cut.
+    # not just be finite/present. rho = 40.0 - 0.05*revs in synthetic_cut.
     r = np.hypot(cols["x"], cols["y"])
     expected_r = 40.0 - 0.05 * cols["rev"]
     np.testing.assert_allclose(r, expected_r, atol=0.05)
 
 
 def test_env_band_refused_when_fn_hz_not_provided():
-    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut(n_rev=8)
     cache = {
         "n": t.size,
         "fs": fs,
@@ -148,7 +148,7 @@ def test_env_band_refused_when_fn_hz_not_provided():
 
 
 def test_env_band_refused_when_nyquist_too_low_for_the_band():
-    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut(n_rev=8)
     cache = {
         "n": t.size,
         "fs": fs,
@@ -163,7 +163,7 @@ def test_env_band_refused_when_nyquist_too_low_for_the_band():
         "rpm": rpm,
         "revs": revs,
     }
-    # fs is 25000 Hz (Nyquist 12500 Hz) in _synthetic_cut; a resonance far above that cannot
+    # fs is 25000 Hz (Nyquist 12500 Hz) in synthetic_cut; a resonance far above that cannot
     # be band-passed no matter the bandwidth fraction.
     cols, metrics = analyse(cache, x, y, samples_per_rev=SPR, fn_hz=20_000.0)
     assert metrics["env_band_status"].startswith("refused: effective_nyquist_hz")
@@ -177,7 +177,7 @@ def test_env_band_refused_exactly_at_the_nyquist_boundary():
     otherwise the exact-equality case falls through and bandpass_envelope's ValueError
     escapes analyse() instead of being recorded as a graceful refusal.
     """
-    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut(n_rev=8)
     cache = {
         "n": t.size,
         "fs": fs,
@@ -210,7 +210,7 @@ def test_env_band_refused_exactly_at_the_nyquist_boundary():
 
 
 def test_env_band_computed_when_fn_hz_fits_within_nyquist():
-    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut(n_rev=8)
     cache = {
         "n": t.size,
         "fs": fs,
@@ -239,7 +239,7 @@ def test_env_band_computed_when_fn_hz_fits_within_nyquist():
 
 
 def test_metrics_record_effective_nyquist_and_validity():
-    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut(n_rev=8)
     cache = {
         "n": t.size,
         "fs": fs,
@@ -322,39 +322,26 @@ def test_h_matrix_correction_moves_signal_between_channels():
 # mapping (dropped mount_deg, mis-wired gi_k, wrong envelope enable condition) would
 # leave those green while analyse() itself silently changed for every caller. These
 # two tests close that gap: they drive analyse() with the exact calls the fixtures
-# were captured from and demand byte-for-byte agreement. Exact equality, never
-# allclose -- this is a refactor, any difference is a defect. Do NOT regenerate the
-# fixtures to make a failure go green.
-
-_FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
-GOLDEN_DEFAULT = os.path.join(_FIXTURES, "golden_default_recipe.npz")
-GOLDEN_ENVELOPE = os.path.join(_FIXTURES, "golden_envelope.npz")
+# were captured from and demand byte-for-byte agreement. The shared golden comparison
+# (and its portability caveat) lives in conftest as assert_columns_match_golden.
 
 
-def _assert_analyse_matches_golden(golden_path, **kwargs):
-    t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut()
+def _assert_analyse_matches_golden(golden_path, nondegenerate=(), **kwargs):
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut()
     cache = cache_of(t, fx, fy, fz, rpm, revs, fs)
     cols, metrics = analyse(cache, x, y, **kwargs)
-
-    golden = np.load(golden_path, allow_pickle=False)
-    expected = {k: golden[k] for k in golden.files if not k.startswith("__")}
-    assert set(cols) == set(expected), "column set drifted from the frozen reference"
-    for name, want in expected.items():
-        got = cols[name]
-        assert got.dtype == want.dtype, f"column {name!r} dtype drifted"
-        np.testing.assert_array_equal(
-            got, want, err_msg=f"column {name!r} differs from the golden reference"
-        )
-    assert repr(sorted(metrics.items())) == str(golden["__metrics__"]), (
-        "metrics payload differs from the golden reference"
-    )
+    assert_columns_match_golden(cols, metrics, golden_path, nondegenerate)
 
 
 def test_analyse_default_reproduces_the_frozen_golden_exactly():
-    _assert_analyse_matches_golden(GOLDEN_DEFAULT, samples_per_rev=256)
+    _assert_analyse_matches_golden(
+        GOLDEN_DEFAULT,
+        nondegenerate=("tsa_resid", "resid_z", "gi_star"),
+        samples_per_rev=256,
+    )
 
 
 def test_analyse_with_fn_hz_reproduces_the_frozen_envelope_golden_exactly():
     _assert_analyse_matches_golden(
-        GOLDEN_ENVELOPE, samples_per_rev=256, fn_hz=1000.0
+        GOLDEN_ENVELOPE, nondegenerate=("env_band",), samples_per_rev=256, fn_hz=1000.0
     )
