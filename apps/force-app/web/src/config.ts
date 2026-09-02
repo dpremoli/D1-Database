@@ -10,6 +10,8 @@ export interface AppConfig {
 	directusUrl: string;
 	/** Filter sidecar base (/run, /fft). No trailing slash. */
 	filterUrl: string;
+	/** Diag preview sidecar base (/preview). No trailing slash. */
+	diagUrl: string;
 	/** Octree static server base. No trailing slash; the app appends /<octreePath>/. */
 	octreeUrl: string;
 	/** Local recording backend (Phase 2). No trailing slash. */
@@ -18,12 +20,13 @@ export interface AppConfig {
 
 const stripSlash = (s: string) => s.replace(/\/+$/, '');
 const LS_OVERRIDE = 'force-app.config.override';
-const KEYS: (keyof AppConfig)[] = ['directusUrl', 'filterUrl', 'octreeUrl', 'recorderUrl'];
+const KEYS: (keyof AppConfig)[] = ['directusUrl', 'filterUrl', 'diagUrl', 'octreeUrl', 'recorderUrl'];
 
 // Build-time defaults from env (fall back to same-origin relative paths for a co-hosted setup).
 const defaults: AppConfig = {
 	directusUrl: stripSlash(import.meta.env.VITE_DIRECTUS_URL ?? ''),
 	filterUrl: stripSlash(import.meta.env.VITE_FILTER_URL ?? '/filter'),
+	diagUrl: stripSlash(import.meta.env.VITE_DIAG_URL ?? '/diag'),
 	octreeUrl: stripSlash(import.meta.env.VITE_OCTREE_URL ?? '/octrees'),
 	recorderUrl: stripSlash(import.meta.env.VITE_RECORDER_URL ?? 'http://localhost:8200'),
 };

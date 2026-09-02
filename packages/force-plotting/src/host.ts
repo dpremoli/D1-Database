@@ -35,6 +35,9 @@ export interface ForceHost {
 	currentUser(): ForceHostUser | null;
 	/** Base URL for the filter sidecar (/run, /fft, /spectrogram). No trailing slash. */
 	readonly filterUrl: string;
+	/** Base URL for the diag preview sidecar (/preview). No trailing slash. Same runtime-
+	 *  reconfigurable getter treatment as filterUrl. */
+	readonly diagUrl: string;
 	/** Base URL for the octree static server. No trailing slash. */
 	readonly octreeUrl: string;
 	/** Extra headers for raw `fetch` calls. Bearer token standalone; empty in Directus (cookie). */

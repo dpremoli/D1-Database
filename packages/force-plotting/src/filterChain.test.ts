@@ -7,6 +7,7 @@ function hostWith(over: Partial<ForceHost>): ForceHost {
 		api: {} as ForceHost['api'],
 		currentUser: () => null,
 		filterUrl: '/filter',
+		diagUrl: '/diag',
 		octreeUrl: '/octrees',
 		authHeaders: () => ({}),
 		fetchCredentials: 'include',

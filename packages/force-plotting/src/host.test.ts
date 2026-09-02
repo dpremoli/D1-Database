@@ -5,6 +5,7 @@ const stub: ForceHost = {
 	api: {} as ForceHost['api'],
 	currentUser: () => ({ admin_access: true }),
 	filterUrl: '/filter',
+	diagUrl: '/diag',
 	octreeUrl: '/octrees',
 	authHeaders: () => ({}),
 	fetchCredentials: 'include',

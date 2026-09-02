@@ -13,6 +13,7 @@ setForceHost({
 	currentUser: () => authStore.currentUser.value,
 	// Getters, not captured values: Settings > General can retarget these at runtime.
 	get filterUrl() { return getConfig().filterUrl; },
+	get diagUrl() { return getConfig().diagUrl; },
 	get octreeUrl() { return getConfig().octreeUrl; },
 	authHeaders,
 	fetchCredentials: 'omit',
