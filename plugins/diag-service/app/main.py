@@ -18,6 +18,7 @@ routes are /health and /preview.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 import time
@@ -104,7 +105,16 @@ async def _resolve_and_authorize(analysis_id: str, req: Request) -> dict:
     return (r.json() or {}).get("data") or {}
 
 
+# diag_path is written by process_diag_row as str(operation_id) — a UUID — but it is a
+# text column with no DB constraint and is editable from the Directus admin, so a crafted
+# value ("../../..") must not be able to escape the octree root. Operation ids are hex +
+# hyphens; anything with a separator or dot is rejected before it reaches os.path.join.
+_DIAG_PATH_RE = re.compile(r"[A-Za-z0-9_-]+")
+
+
 def _load_base(diag_path: str) -> dict:
+    if not _DIAG_PATH_RE.fullmatch(diag_path):
+        raise HTTPException(400, "invalid diag_path")
     hit = _base_lru.get(diag_path)
     if hit is not None:
         _base_lru.move_to_end(diag_path)

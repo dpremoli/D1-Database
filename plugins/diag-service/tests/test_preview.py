@@ -200,3 +200,18 @@ def test_missing_base_d1an_is_409(client, monkeypatch):
         json={"analysis_id": "x", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None},
     )
     assert r.status_code == 409
+
+
+@pytest.mark.parametrize("evil", ["../secret", "a/b", "..", "op\\win", "/abs", "with.dot"])
+def test_path_traversal_in_diag_path_is_400(client, monkeypatch, evil):
+    import app.main as m
+
+    async def _crafted(analysis_id, req):
+        return {"diag_path": evil, "diag_status": "done"}
+
+    monkeypatch.setattr(m, "_resolve_and_authorize", _crafted)
+    r = client.post(
+        "/preview",
+        json={"analysis_id": "x", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None},
+    )
+    assert r.status_code == 400
