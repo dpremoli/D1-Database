@@ -991,6 +991,26 @@ def process_diag_row(
         d1an_path = Path(outdir) / "attrs.d1an"
         write_d1an(str(d1an_path), columns)
 
+        # base.d1an: the state after angular resampling and before any statistics. It is
+        # what a preview service re-runs a recipe from, so tuning a derived step needs
+        # neither MATLAB (~20 s) nor the archive. Published rather than reconstructed on the
+        # fly: deriving x/y from the cache instead would re-implement cut geometry outside
+        # process_force.m, the divergence risk this codebase guards against throughout.
+        # `sig` (the resampled channel) is internal, not a PUBLIC_COLUMN, so it is emitted
+        # via run_recipe's `emit` seam rather than the default assembly -- which also
+        # deliberately refuses a stop before `tsa`.
+        base_stop = next(
+            i for i, s in enumerate(recipe["steps"]) if s["op"] == "angular_resample"
+        )
+        base_cols, _ = run_recipe(
+            recipe,
+            seed_columns(cache, x, y),
+            stop_after=base_stop,
+            emit=("t", "rev", "x", "y", "sig"),
+        )
+        base_path = Path(outdir) / "base.d1an"
+        write_d1an(str(base_path), base_cols)
+
         # analyse() now returns x/y on the same angular grid as every other column (Diagnostics
         # Workbench Phase 2, Task 1) -- reuse them instead of re-resampling. Force (for the LAS
         # intensity ramp) still needs its own resample: it isn't one of analyse()'s columns.
@@ -1050,6 +1070,9 @@ def process_diag_row(
         # resid_z" from that path. attrs.d1an is the flat, directly-fetchable array the
         # Selection Inspector's JS-side statistics read.
         shutil.copy2(d1an_path, dst / "attrs.d1an")
+        # base.d1an: pre-statistics state (t, rev, x, y, sig) for a future preview service
+        # to resume a recipe from without MATLAB or the archive.
+        shutil.copy2(base_path, dst / "base.d1an")
 
         with conn.cursor() as cur:
             cur.execute(

@@ -91,8 +91,15 @@ def run_recipe(
     layers: dict[str, Any] | None = None,
     from_step: int | None = None,
     stop_after: int | None = None,
+    emit: tuple[str, ...] | None = None,
 ) -> tuple[Columns, dict]:
     """Execute `recipe` over `cols`.
+
+    `emit` overrides the return contract: instead of `PUBLIC_COLUMNS`, return exactly the
+    named columns taken from the internal work dict at their natural length, cast to
+    float32. The `tsa_resid`-present requirement is NOT applied in this mode -- its whole
+    purpose is to emit a pre-`tsa` state (e.g. `base.d1an` after `angular_resample`). A
+    requested column absent from the work dict raises rather than being zero-filled.
 
     `from_step` and `stop_after` index the FULL step list (disabled steps included), so a
     caller can address a step positionally as the UI does. `from_step` assumes `cols`
@@ -172,6 +179,21 @@ def run_recipe(
     # carries it when that step actually ran this call.
     if "samples_per_rev" not in metrics and "samples_per_rev" in resample_params:
         metrics["samples_per_rev"] = int(resample_params["samples_per_rev"])
+
+    if emit is not None:
+        picked: Columns = {}
+        for name in emit:
+            col = work.get(name)
+            if col is None:
+                available = sorted(k for k in work if not k.startswith("__"))
+                raise ValueError(
+                    f"run_recipe(emit=...): requested column {name!r} is not present in "
+                    f"the work dict; available columns are {available}"
+                )
+            # .astype always copies, matching the PUBLIC_COLUMNS assembly below and never
+            # handing back a view into a caller's prefix-cache dict.
+            picked[name] = np.asarray(col).astype(np.float32)
+        return picked, metrics
 
     if "tsa_resid" not in work:
         raise ValueError(

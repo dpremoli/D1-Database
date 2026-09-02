@@ -136,6 +136,46 @@ def test_from_step_reuses_supplied_columns():
     assert np.mean(resumed["cluster_id"] == full["cluster_id"]) > 0.99
 
 
+def _angular_resample_idx():
+    return next(
+        i for i, s in enumerate(DEFAULT_RECIPE["steps"])
+        if s["op"] == "angular_resample"
+    )
+
+
+def test_emit_returns_exactly_the_requested_columns_at_natural_length():
+    """`emit` bypasses PUBLIC_COLUMNS: it returns the named work-dict columns, float32,
+    at their own length -- this is what base.d1an is built from."""
+    idx = _angular_resample_idx()
+    cols, _ = run_recipe(
+        DEFAULT_RECIPE, _seed(), stop_after=idx, emit=("t", "rev", "x", "y", "sig")
+    )
+    assert list(cols) == ["t", "rev", "x", "y", "sig"]
+    assert all(c.dtype == np.float32 for c in cols.values())
+    assert len({c.size for c in cols.values()}) == 1
+    assert cols["t"].size > 0
+
+
+def test_emit_works_when_stopped_before_tsa():
+    """The default assembly deliberately raises when stopped before tsa; `emit` must not --
+    emitting a pre-tsa state is its entire reason to exist."""
+    idx = _angular_resample_idx()
+    cols, _ = run_recipe(DEFAULT_RECIPE, _seed(), stop_after=idx, emit=("t", "sig"))
+    assert set(cols) == {"t", "sig"}
+
+
+def test_emit_missing_column_raises_clearly():
+    idx = _angular_resample_idx()
+    with pytest.raises(ValueError, match="not present in the work dict"):
+        run_recipe(DEFAULT_RECIPE, _seed(), stop_after=idx, emit=("t", "resid_z"))
+
+
+def test_emit_none_still_yields_the_full_public_column_set():
+    """Guard against accidental coupling: the default path is unchanged by the emit seam."""
+    cols, _ = run_recipe(DEFAULT_RECIPE, _seed())
+    assert set(cols) == PUBLIC_COLUMNS
+
+
 # --- Equivalence gate ---------------------------------------------------------
 #
 # These two fixtures were captured from pipeline.analyse() BEFORE the registry existed
