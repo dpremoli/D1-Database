@@ -669,14 +669,17 @@ def claim_diag(conn, limit: int = 1):
     default: this host also serves Directus, and a clustering pass that starves the database
     mid-experiment is a worse outcome than a slow queue.
 
-    Staleness has two independent axes: an older diag_version (the pipeline CODE changed) or
-    a diag_recipe_hash differing from the current default's (the CONFIGURATION changed). Note
-    `IS DISTINCT FROM` rather than `!=`: diag_recipe_hash is NULL on every row baked before the
-    recipe columns existed, and `NULL != 'abc'` is NULL, not true -- those rows would never
-    requeue."""
-    sys.path.insert(0, str(SCRIPT_DIR))
-    from diag.recipe import DEFAULT_RECIPE, recipe_hash
+    Staleness has two axes. The CODE axis: an older diag_version (bump DIAG_VERSION to
+    invalidate). The RECIPE-ENGINE axis: `diag_recipe_hash IS NULL`, i.e. the row has never
+    been baked under the recipe engine at all -- those requeue exactly once and thereafter
+    carry a non-NULL hash, so this clause is self-terminating and cannot loop no matter what
+    the row's effective recipe (or any injected tool_setup parameter) hashes to.
 
+    Two consequences of that shape, both deliberate:
+      * Editing DEFAULT_RECIPE no longer auto-requeues anything. A change to it MUST be
+        paired with a DIAG_VERSION bump -- the same convention the code axis already uses.
+      * Invalidation on a configuration change belongs to the writer: whoever edits a row's
+        diag_recipe or tool_setup_id is responsible for setting diag_status='pending'."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
@@ -684,7 +687,7 @@ def claim_diag(conn, limit: int = 1):
                 SELECT id FROM machining_force_analysis
                  WHERE diag_status='pending'
                     OR (diag_status='done' AND (diag_version IS NULL OR diag_version < %s))
-                    OR (diag_status='done' AND diag_recipe_hash IS DISTINCT FROM %s)
+                    OR (diag_status='done' AND diag_recipe_hash IS NULL)
                  ORDER BY diag_requested_at NULLS FIRST
                  LIMIT %s FOR UPDATE SKIP LOCKED
             )
@@ -696,7 +699,7 @@ def claim_diag(conn, limit: int = 1):
                    (SELECT mount_deg FROM tool_setup WHERE setup_id = a.tool_setup_id) AS setup_mount_deg,
                    (SELECT h_matrix FROM tool_setup WHERE setup_id = a.tool_setup_id) AS setup_h_matrix
         """,
-            [DIAG_VERSION, recipe_hash(DEFAULT_RECIPE), limit],
+            [DIAG_VERSION, limit],
         )
         rows = cur.fetchall()
     conn.commit()
