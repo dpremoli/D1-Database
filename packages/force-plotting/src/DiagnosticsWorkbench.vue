@@ -12,6 +12,7 @@ import ForceChart from './ForceChart.vue';
 import DiagScatter from './DiagScatter.vue';
 import ClusterTable from './ClusterTable.vue';
 import RecipePanel from './RecipePanel.vue';
+import LayerPanel from './LayerPanel.vue';
 import WorkbenchPanel from './WorkbenchPanel.vue';
 import SelectionInspector from './SelectionInspector.vue';
 import BandwidthStrip from './BandwidthStrip.vue';
@@ -21,6 +22,9 @@ import { bucketEnvelope } from './liveCache';
 import { clusterStats, computeStats, workingSetFromD1an } from './selection';
 import type { ChannelKey, Selection, WorkingSet } from './selection';
 import { DEFAULT_RECIPE, recipeChannels, recipesEquivalent, type Recipe } from './recipeChannels';
+import {
+	fetchLayers, saveLayer, deleteLayer, layersForRequest, type DiagLayer, type LayerRole,
+} from './diagLayers';
 import { useForceHost } from './host';
 
 const props = withDefaults(defineProps<{
@@ -43,6 +47,23 @@ const previewMs = ref<number | null>(null);
 const previewErr = ref<string | null>(null);
 const selection = ref<Selection>(null);
 const channel = ref<ChannelKey>('residZ');
+
+// --- paint layers ---------------------------------------------------------------------------
+const layers = ref<DiagLayer[]>([]);
+const activeLayerName = ref<string | null>(null);
+const drawing = ref(false);
+async function loadLayers() {
+	try { layers.value = await fetchLayers(props.analysisId); }
+	catch { layers.value = []; }
+}
+onMounted(loadLayers);
+watch(() => props.analysisId, () => { activeLayerName.value = null; drawing.value = false; loadLayers(); });
+
+// Only masks with real geometry can bind to compute; an empty just-created layer is inert.
+const boundMasks = computed(() =>
+	layers.value.filter((l) => l.role === 'mask' && (l.geometry?.polygons?.length ?? 0) > 0));
+const activeMask = computed(() =>
+	boundMasks.value.find((l) => l.name === activeLayerName.value) ?? boundMasks.value[0] ?? null);
 
 const activeWS = computed(() => previewWS.value ?? bakedWS.value);
 const bakeStale = computed(() =>
@@ -69,15 +90,41 @@ watch(() => props.diagPath, () => { previewWS.value = null; loadBaked(); });
 // previous request aborted. The pattern filterChain.ts uses.
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
 let previewAbort: AbortController | null = null;
-watch(recipe, () => {
+watch([recipe, () => layers.value, activeLayerName], () => {
 	if (previewTimer) clearTimeout(previewTimer);
 	previewTimer = setTimeout(runPreview, 400);
 }, { deep: true });
 
+// The recipe as sent to the preview service: a plain-JSON clone (never the reactive proxy —
+// structuredClone throws on it) with the active mask bound onto radial_detrend. recipe.value
+// itself is never mutated, so the bake payload and its hash are unaffected.
+function recipeWithMask(): Recipe {
+	if (!activeMask.value) return recipe.value;
+	const r = JSON.parse(JSON.stringify(recipe.value)) as Recipe;
+	for (const s of r.steps) {
+		if (s.op === 'radial_detrend') {
+			(s as { inputs?: unknown }).inputs = {
+				mask: { layer: activeMask.value.name, required: false },
+			};
+		}
+	}
+	return r;
+}
+
+// Bake persists the recipe INCLUDING the mask binding (the geometry lives in diag_layer,
+// which process_diag_row reads separately). Adopt that recipe as the local current one so
+// the bake-stale comparator settles instead of reading "stale" forever.
+function onBake() {
+	const baked = recipeWithMask();
+	recipe.value = JSON.parse(JSON.stringify(baked));
+	emit('bake', baked);
+}
+
 async function runPreview() {
 	previewAbort?.abort();
-	// An unedited recipe (equivalent to the bake) needs no preview — show the bake.
-	if (!bakeStale.value) {
+	// Show the bake when the recipe is unedited AND no mask is applied — either is a
+	// non-baked state that needs a preview.
+	if (!bakeStale.value && !activeMask.value) {
 		previewWS.value = null;
 		previewErr.value = null;
 		previewMs.value = null;
@@ -88,7 +135,10 @@ async function runPreview() {
 	previewing.value = true;
 	previewErr.value = null;
 	try {
-		const r = await fetchDiagPreview(props.analysisId, recipe.value, null, ac.signal);
+		const r = await fetchDiagPreview(
+			props.analysisId, recipeWithMask(), null, ac.signal,
+			activeMask.value ? layersForRequest([activeMask.value]) : undefined,
+		);
 		if (ac.signal.aborted) return;
 		previewWS.value = workingSetFromD1an(r.attrs);
 		previewMs.value = r.ms;
@@ -108,7 +158,21 @@ watch(channelOptions, (opts) => {
 
 const chartData = computed(() => {
 	const ws = activeWS.value;
-	return ws ? bucketEnvelope(ws.t, ws.residZ) : null;
+	if (!ws) return null;
+	// A paint mask leaves NaN in residZ for the excluded region; drop those points so the
+	// envelope buckets (and the SVG path they feed) stay finite.
+	let t = ws.t;
+	let z = ws.residZ;
+	if (!z.every((v) => Number.isFinite(v))) {
+		const ti: number[] = [];
+		const zi: number[] = [];
+		for (let i = 0; i < ws.n; i++) {
+			if (Number.isFinite(z[i])) { ti.push(t[i]); zi.push(z[i]); }
+		}
+		t = Float32Array.from(ti);
+		z = Float32Array.from(zi);
+	}
+	return bucketEnvelope(t, z);
 });
 function onCropStart(v: number) {
 	const cur = selection.value;
@@ -124,6 +188,43 @@ function onClusterSelect(id: number | null) {
 	selection.value = id == null ? null : { kind: 'cluster', id };
 }
 
+function _upsert(saved: DiagLayer) {
+	const i = layers.value.findIndex((l) => l.layer_id === saved.layer_id);
+	layers.value = i >= 0
+		? layers.value.map((l) => (l.layer_id === saved.layer_id ? saved : l))
+		: [...layers.value, saved];
+}
+async function onAddLayer(role: LayerRole): Promise<DiagLayer> {
+	const existing = layers.value.filter((l) => l.role === role).length;
+	const saved = await saveLayer({
+		analysis_id: props.analysisId,
+		name: `${role}-${existing + 1}`,
+		role,
+		geometry: { polygons: [] },
+	});
+	_upsert(saved);
+	activeLayerName.value = saved.name;
+	drawing.value = true;
+	return saved;
+}
+async function onPolygon(ring: [number, number][]) {
+	let target = layers.value.find((l) => l.name === activeLayerName.value);
+	if (!target) target = await onAddLayer('mask');
+	const geometry = { polygons: [...(target.geometry?.polygons ?? []), ring] };
+	_upsert(await saveLayer({ ...target, geometry }));
+}
+async function onRenameLayer({ layer, name }: { layer: DiagLayer; name: string }) {
+	const wasActive = activeLayerName.value === layer.name;
+	const saved = await saveLayer({ ...layer, name });
+	_upsert(saved);
+	if (wasActive) activeLayerName.value = saved.name;
+}
+async function onDeleteLayer(layer: DiagLayer) {
+	await deleteLayer(layer.layer_id);
+	layers.value = layers.value.filter((l) => l.layer_id !== layer.layer_id);
+	if (activeLayerName.value === layer.name) activeLayerName.value = null;
+}
+
 const stats = computed(() => (activeWS.value ? computeStats(activeWS.value, selection.value) : null));
 const clusters = computed(() => (activeWS.value ? clusterStats(activeWS.value) : []));
 
@@ -133,10 +234,13 @@ const layout = ref([
 	{ x: 9, y: 0, w: 3, h: 8, i: 'signal' },
 ]);
 
+const multiMaskNote = computed(() =>
+	boundMasks.value.length > 1 ? ' · only the selected mask is applied' : '');
 const stateLabel = computed(() => {
-	if (previewing.value) return 'previewing recipe · approximate — Bake for exact numbers';
-	if (previewWS.value) return `previewing recipe · ${previewMs.value ?? '?'} ms · approximate`;
+	if (previewing.value) return `previewing recipe · approximate — Bake for exact numbers${multiMaskNote.value}`;
+	if (previewWS.value) return `previewing recipe · ${previewMs.value ?? '?'} ms · approximate${multiMaskNote.value}`;
 	if (bakeStale.value) return 'showing last bake · recipe edited since — Bake to apply';
+	if (activeMask.value) return `mask applied in preview · Bake to persist${multiMaskNote.value}`;
 	return 'baked';
 });
 </script>
@@ -154,7 +258,7 @@ const stateLabel = computed(() => {
 						:previewing="previewing"
 						:preview-ms="previewMs"
 						:preview-error="previewErr"
-						@bake="emit('bake', recipe)"
+						@bake="onBake"
 					/>
 				</WorkbenchPanel>
 
@@ -165,9 +269,21 @@ const stateLabel = computed(() => {
 						:cluster-mode="clusterMode"
 						:selection="selection"
 						:point-size="2.6"
+						:layers="layers"
+						:active-layer-name="activeLayerName"
+						:paint-mode="drawing ? 'draw' : 'off'"
+						@polygon="onPolygon"
 					/>
 					<template #footer>
 						<div class="dw-spatial-footer">
+							<LayerPanel
+								:layers="layers"
+								v-model:active-name="activeLayerName"
+								v-model:drawing="drawing"
+								@add="onAddLayer"
+								@rename="onRenameLayer"
+								@delete="onDeleteLayer"
+							/>
 							<select v-model="channel" class="dw-channel-select">
 								<option v-for="o in channelOptions" :key="o.key" :value="o.key" :disabled="!o.produced">
 									{{ o.label }}{{ o.produced ? '' : ' — step off' }}

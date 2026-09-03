@@ -41,6 +41,7 @@ for _p in (
         sys.path.insert(0, _abs)
 
 from diag.d1an import read_d1an, write_d1an  # noqa: E402
+from diag.layers import validate_geometry  # noqa: E402
 from diag.recipe import recipe_hash  # noqa: E402
 from diag.registry import STEPS  # noqa: E402
 from diag.runner import run_recipe  # noqa: E402
@@ -152,6 +153,19 @@ async def preview(req: Request):
     layers = body.get("layers") or None
     if not analysis_id or not isinstance(recipe, dict):
         raise HTTPException(422, "analysis_id and recipe are required")
+
+    # Inline layers are the authoritative mask/label/seed input for THIS request (spec
+    # Component 4: "a mask is most useful while you are still drawing it"). Validate the
+    # geometry shape here so a malformed polygon set is a clean 422, not a 500 from deep in
+    # run_recipe. The service never persists these -- that is a separate explicit action.
+    if layers is not None:
+        if not isinstance(layers, dict):
+            raise HTTPException(422, "layers must be an object keyed by layer name")
+        for lname, layer in layers.items():
+            try:
+                validate_geometry((layer or {}).get("geometry") or {})
+            except (ValueError, AttributeError, TypeError) as e:
+                raise HTTPException(422, f"layer '{lname}': {e}") from e
 
     row = await _resolve_and_authorize(str(analysis_id), req)
     if row.get("diag_status") != "done" or not row.get("diag_path"):

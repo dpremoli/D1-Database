@@ -100,13 +100,22 @@ def _op_tsa(cols: Columns, params: dict, inputs: dict):
       requires=["tsa_resid", "x", "y"], tier="derived")
 def _op_radial_detrend(cols: Columns, params: dict, inputs: dict):
     r = np.hypot(cols["x"], cols["y"])
-    z = _radial_detrend(
-        r, cols["tsa_resid"],
-        n_bins=int(params.get("n_bins", 200)),
-        min_per_bin=int(params.get("min_per_bin", 8)),
-    )
+    tsa = cols["tsa_resid"]
+    n_bins = int(params.get("n_bins", 200))
+    min_per_bin = int(params.get("min_per_bin", 8))
+    mask = inputs.get("mask")  # True = an excluded region (chuck mark / fixture artefact)
+    if mask is not None and np.any(mask):
+        # Hold masked points out of the radial-bin fit entirely and give them NaN: the
+        # detrend, Gi* and clustering downstream must never see a fixture artefact. NaN is
+        # the D1AN value; the orchestrator sanitises it before the LAS/octree write.
+        keep = ~np.asarray(mask, dtype=bool)
+        z = np.full(r.shape, np.nan)
+        z[keep] = _radial_detrend(r[keep], tsa[keep], n_bins=n_bins, min_per_bin=min_per_bin)
+    else:
+        z = _radial_detrend(r, tsa, n_bins=n_bins, min_per_bin=min_per_bin)
+    finite = z[np.isfinite(z)]
     return {"resid_z": z}, {
-        "resid_z_p99": float(np.percentile(np.abs(z), 99)) if z.size else 0.0,
+        "resid_z_p99": float(np.percentile(np.abs(finite), 99)) if finite.size else 0.0,
     }
 
 
@@ -115,14 +124,20 @@ def _op_radial_detrend(cols: Columns, params: dict, inputs: dict):
 def _op_getis_ord(cols: Columns, params: dict, inputs: dict):
     k = int(params.get("k", 30))
     alpha = float(params.get("alpha", 0.05))
-    n = cols["resid_z"].size
+    z = cols["resid_z"]
+    n = z.size
+    # Compute only over finite resid_z: a mask on radial_detrend leaves NaN where a fixture
+    # artefact was excluded, and Gi* must not see it. With no mask every point is finite and
+    # this is byte-identical to before.
+    fin = np.isfinite(z)
+    gi = np.full(n, np.nan) if not fin.all() else np.zeros(n)
+    sig = np.zeros(n)
     # Degrade rather than raise: a short test cut can have fewer points than Gi* needs, and
     # crashing the whole pipeline over one statistic is the wrong trade. Matches analyse().
-    if n > k:
-        gi, p = getis_ord_gi_star(cols["x"], cols["y"], cols["resid_z"], k=k)
-        sig = benjamini_hochberg(p, alpha=alpha).astype(np.float64)
-    else:
-        gi, sig = np.zeros(n), np.zeros(n)
+    if int(fin.sum()) > k:
+        g, p = getis_ord_gi_star(cols["x"][fin], cols["y"][fin], z[fin], k=k)
+        gi[fin] = g
+        sig[fin] = benjamini_hochberg(p, alpha=alpha).astype(np.float64)
     return {"gi_star": gi, "gi_sig": sig}, {}
 
 
@@ -131,13 +146,20 @@ def _op_getis_ord(cols: Columns, params: dict, inputs: dict):
 def _op_hdbscan(cols: Columns, params: dict, inputs: dict):
     target = int(params.get("grid_target", 20000))
     min_size = int(params.get("min_cluster_size", 10))
-    n = cols["resid_z"].size
-    xr, yr, vr, cell_id = grid_reduce(cols["x"], cols["y"], cols["resid_z"], target_n=target)
-    if xr.size >= min_size:
-        labels, glosh = cluster_hdbscan(xr, yr, vr, min_cluster_size=min_size)
-        cluster_id, glosh = assign_from_grid(cell_id, labels, glosh)
-    else:
-        cluster_id, glosh = np.full(n, -1.0), np.zeros(n)
+    z = cols["resid_z"]
+    n = z.size
+    # Cluster only finite points: a masked-out fixture artefact is NaN in resid_z and must
+    # not join a cluster. With no mask, fin is all-True and this is byte-identical.
+    fin = np.isfinite(z)
+    cluster_id = np.full(n, -1.0)
+    glosh = np.zeros(n)
+    if int(fin.sum()) >= min_size:
+        xr, yr, vr, cell_id = grid_reduce(cols["x"][fin], cols["y"][fin], z[fin], target_n=target)
+        if xr.size >= min_size:
+            labels, gl = cluster_hdbscan(xr, yr, vr, min_cluster_size=min_size)
+            cid_fin, gl_fin = assign_from_grid(cell_id, labels, gl)
+            cluster_id[fin] = cid_fin
+            glosh[fin] = gl_fin
     return {"cluster_id": cluster_id, "glosh": glosh}, {}
 
 

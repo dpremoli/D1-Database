@@ -215,3 +215,55 @@ def test_path_traversal_in_diag_path_is_400(client, monkeypatch, evil):
         json={"analysis_id": "x", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None},
     )
     assert r.status_code == 400
+
+
+def _mask_recipe():
+    import copy
+
+    r = copy.deepcopy(DEFAULT_RECIPE)
+    for s in r["steps"]:
+        if s["op"] == "radial_detrend":
+            s["inputs"] = {"mask": {"layer": "art", "required": False}}
+    return r
+
+
+def test_preview_applies_an_inline_mask(client):
+    r0 = client.post(
+        "/preview", json={"analysis_id": "a1", "recipe": DEFAULT_RECIPE, "layers": None}
+    )
+    assert r0.status_code == 200
+
+    big = [[[-1e9, -1e9], [1e9, -1e9], [1e9, 1e9], [-1e9, 1e9]]]
+    r1 = client.post(
+        "/preview",
+        json={
+            "analysis_id": "a1",
+            "recipe": _mask_recipe(),
+            "layers": {
+                "art": {
+                    "role": "mask",
+                    "geometry": {"polygons": big},
+                    "value": {"mode": "exclude"},
+                    "version": 1,
+                }
+            },
+        },
+    )
+    assert r1.status_code == 200, r1.text
+    # an all-covering mask -> every resid_z is NaN -> different D1AN bytes
+    assert r0.content != r1.content
+    got = _read_bytes(r1.content)
+    assert np.all(np.isnan(got["resid_z"]))
+
+
+def test_preview_rejects_malformed_layer_geometry(client):
+    r = client.post(
+        "/preview",
+        json={
+            "analysis_id": "a1",
+            "recipe": DEFAULT_RECIPE,
+            "layers": {"bad": {"role": "mask", "geometry": {"polygons": "nope"}}},
+        },
+    )
+    assert r.status_code == 422
+    assert "bad" in r.text

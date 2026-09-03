@@ -19,6 +19,7 @@ export async function fetchDiagPreview(
 	recipe: Recipe,
 	fromStep: number | null,
 	signal?: AbortSignal,
+	layers?: Record<string, unknown>,
 ): Promise<DiagPreview> {
 	const host = useForceHost();
 	const res = await fetch(`${host.diagUrl}/preview`, {
@@ -30,7 +31,7 @@ export async function fetchDiagPreview(
 			analysis_id: analysisId,
 			recipe,
 			from_step: fromStep,
-			layers: null,
+			layers: layers ?? null,
 		}),
 	});
 	if (!res.ok) {

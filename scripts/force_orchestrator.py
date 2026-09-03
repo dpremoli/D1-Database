@@ -880,6 +880,24 @@ def process_octree_row(
         shutil.rmtree(outdir, ignore_errors=True)
 
 
+def _layer_fingerprint(rows) -> str:
+    """Identity of the painted layers bound to a cut, folded into diag_recipe_hash.
+
+    Order-independent; changes when a layer is added, removed, renamed or re-versioned.
+    Geometry is not hashed directly -- the workbench bumps `version` on every geometry edit,
+    so version stands in for content and keeps this cheap. Empty (falsy) when the cut has no
+    layers, so a no-layer cut's stored hash is byte-identical to the pre-Phase-E value.
+    """
+    import hashlib
+
+    if not rows:
+        return ""
+    key = json.dumps(
+        sorted((r["name"], r["role"], int(r["version"])) for r in rows)
+    )
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
 def process_diag_row(
     conn, row, exe: str, timeout: int, matlab_opts: dict, potree_exe: str
 ) -> str:
@@ -996,7 +1014,29 @@ def process_diag_row(
             )
         )
 
-        columns, metrics = run_recipe(recipe, seed_columns(cache, x, y))
+        # Persisted paint layers for this cut. The client sends inline layers to the preview
+        # service while drawing; the bake reads whatever has been saved. base.d1an is pre-
+        # radial_detrend so a mask is inert in that run -- pass it anyway for uniformity.
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT name, role, geometry, value, version FROM diag_layer "
+                "WHERE analysis_id = %s",
+                [row["id"]],
+            )
+            layer_rows = cur.fetchall()
+        diag_layers = {
+            r["name"]: {
+                "role": r["role"],
+                "geometry": r["geometry"],
+                "value": r["value"],
+                "version": r["version"],
+            }
+            for r in layer_rows
+        } or None
+
+        columns, metrics = run_recipe(
+            recipe, seed_columns(cache, x, y), layers=diag_layers
+        )
         n = columns["t"].size
         d1an_path = Path(outdir) / "attrs.d1an"
         write_d1an(str(d1an_path), columns)
@@ -1015,6 +1055,7 @@ def process_diag_row(
         base_cols, _ = run_recipe(
             recipe,
             seed_columns(cache, x, y),
+            layers=diag_layers,
             stop_after=base_stop,
             emit=("t", "rev", "x", "y", "sig"),
         )
@@ -1043,7 +1084,16 @@ def process_diag_row(
         # x/y are excluded here: they become the LAS's core positional fields (las.x/las.y
         # below), and registering an extra dim literally named 'x' or 'y' collides with
         # laspy's own reserved field names.
-        extra_cols = {k: v for k, v in columns.items() if k not in ("x", "y")}
+        # nan_to_num: a paint mask leaves NaN in resid_z/gi_star for the excluded region.
+        # attrs.d1an keeps the NaN (it is authoritative and the workbench renders it as a
+        # masked point); the octree extra dims must be finite or PotreeConverter's per-
+        # attribute min/max -- and hence DiagOctreeView's colour range -- go NaN and the
+        # whole octree renders blank.
+        extra_cols = {
+            k: np.nan_to_num(v, nan=0.0)
+            for k, v in columns.items()
+            if k not in ("x", "y")
+        }
         for nm in extra_cols:
             h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.float32))
         las = laspy.LasData(h)
@@ -1052,7 +1102,7 @@ def process_diag_row(
         las.z = np.zeros(n)
         for nm, arr in extra_cols.items():
             setattr(las, nm, arr)
-        lo, hi = float(fza.min()), float(fza.max())
+        lo, hi = float(np.nanmin(fza)), float(np.nanmax(fza))
         las.intensity = np.clip(
             (fza - lo) / ((hi - lo) or 1.0) * 65535, 0, 65535
         ).astype(np.uint16)
@@ -1086,6 +1136,14 @@ def process_diag_row(
         # to resume a recipe from without MATLAB or the archive.
         shutil.copy2(base_path, dst / "base.d1an")
 
+        # The stored identity of these artifacts: the effective recipe hash, plus a layer
+        # fingerprint when the cut has painted layers. claim_diag's staleness clause requeues
+        # a 'done' row whose diag_recipe_hash no longer matches, so an explicit Bake after
+        # editing a layer (which bumps its version) re-bakes this cut and no one else's.
+        # A no-layer cut keeps exactly the pre-Phase-E hash, so nothing spuriously requeues.
+        fp = _layer_fingerprint(layer_rows)
+        stored_hash = f"{recipe_hash(recipe)}:{fp}" if fp else recipe_hash(recipe)
+
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE machining_force_analysis SET diag_status='done', diag_path=%s, "
@@ -1096,7 +1154,7 @@ def process_diag_row(
                     int(n),
                     DIAG_VERSION,
                     json.dumps(metrics),
-                    recipe_hash(recipe),
+                    stored_hash,
                     row["id"],
                 ],
             )

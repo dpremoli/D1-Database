@@ -20,8 +20,15 @@ from typing import Any
 
 import numpy as np
 
+from .layers import rasterize_polygons
+
 Columns = dict[str, np.ndarray]
 StepFn = Callable[[Columns, dict[str, Any], dict[str, Any]], tuple[Columns, dict]]
+
+# The RESOLVED shape a step's fn receives as its third argument: each declared input name
+# mapped to a per-point boolean array (True = inside the painted region) or None when the
+# bound layer is absent and the binding is optional.
+Inputs = dict[str, "np.ndarray | None"]
 
 # Columns present before any step runs, seeded by the runner from the D1LC cache and the
 # D1OC spiral. x_raw/y_raw are MATLAB's own geometry, never recomputed here.
@@ -61,6 +68,47 @@ def step(name: str, *, produces: list[str], requires: list[str], tier: str):
         return fn
 
     return deco
+
+
+def resolve_inputs(step: dict, layers: dict | None, x, y) -> Inputs:
+    """Resolve a step's declared `inputs` bindings into per-point boolean arrays.
+
+    At rest a binding is {"layer": <name>, "required": <bool>}. This looks the named layer up
+    in `layers` (the request/DB-supplied {name: {role, geometry, value, version}} dict),
+    rasterises its polygons against (x, y) -- the angular-grid coords AT THIS STEP -- and
+    hands the step {key: bool_array}. True = the point is inside the painted region.
+
+    A binding on a 'base'-tier step raises: before angular_resample, (x, y) are the
+    cache-resolution coords, wrong in both length and coordinate space. DEFAULT_RECIPE binds
+    nothing, so neither this nor the length assertion fires today.
+    """
+    bindings = step.get("inputs") or {}
+    if not bindings:
+        return {}
+    op = step.get("op")
+    if op in STEPS and STEPS[op].tier == "base":
+        raise RecipeError(
+            f"layer bindings are only valid on derived-tier steps; {op!r} is base"
+        )
+    xa = np.asarray(x)
+    out: Inputs = {}
+    for key, binding in bindings.items():
+        name = binding.get("layer")
+        layer = (layers or {}).get(name)
+        if layer is None:
+            if binding.get("required"):
+                raise RecipeError(
+                    f"step {op!r} requires layer {name!r} but the cut has none"
+                )
+            out[key] = None
+            continue
+        arr = rasterize_polygons(layer["geometry"], x, y)
+        if arr.shape != xa.shape:
+            raise RecipeError(
+                f"layer {name!r} rasterised to {arr.shape}, step {op!r} expects {xa.shape}"
+            )
+        out[key] = arr
+    return out
 
 
 def validate_recipe(recipe: dict) -> None:

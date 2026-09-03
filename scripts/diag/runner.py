@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 
 from . import ops  # noqa: F401  -- import for its registration side effects
-from .registry import STEPS, Columns, validate_recipe
+from .registry import STEPS, Columns, resolve_inputs, validate_recipe
 
 # The D1AN contract: exactly these columns, always, in this order. A disabled step still
 # contributes its column (zero-filled) because the browser's reader indexes by name and a
@@ -156,7 +156,12 @@ def run_recipe(
                         "channel", (earlier.get("params") or {}).get("channel", "fp")
                     )
                     break
-        produced, frag = spec.fn(work, params, (layers or {}))
+        # Resolve this step's painted-layer bindings (if any) into per-point boolean arrays
+        # against the CURRENT angular-grid coords. A step with no `inputs` key gets {} --
+        # byte-for-byte identical to the pre-Phase-E behaviour where every step got `layers`
+        # raw and no step read it.
+        resolved = resolve_inputs(s, layers, work.get("x"), work.get("y"))
+        produced, frag = spec.fn(work, params, resolved)
         n_trunc = produced.pop("__truncate__", None)
         work.update(produced)
         if n_trunc is not None:

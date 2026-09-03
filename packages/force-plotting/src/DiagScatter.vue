@@ -23,6 +23,7 @@ import { COLORMAPS } from './liveCloud';
 import { CLUSTER_PALETTE } from './clusterPalette';
 import { matches } from './selection';
 import type { ChannelKey, Selection, WorkingSet } from './selection';
+import type { DiagLayer } from './diagLayers';
 
 const props = withDefaults(defineProps<{
 	workingSet: WorkingSet | null;
@@ -31,11 +32,23 @@ const props = withDefaults(defineProps<{
 	pointSize?: number;
 	selection?: Selection;
 	clusterMode?: boolean;
-}>(), { colormap: 'viridis', pointSize: 3, selection: null, clusterMode: false });
+	layers?: DiagLayer[];
+	activeLayerName?: string | null;
+	paintMode?: 'off' | 'draw';
+}>(), {
+	colormap: 'viridis', pointSize: 3, selection: null, clusterMode: false,
+	layers: () => [], activeLayerName: null, paintMode: 'off',
+});
 
-const emit = defineEmits<{ (e: 'climits', v: { cmin: number; cmax: number }): void }>();
+const emit = defineEmits<{
+	(e: 'climits', v: { cmin: number; cmax: number }): void;
+	(e: 'polygon', ring: [number, number][]): void;
+}>();
+
+const draft = ref<[number, number][]>([]);
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
+const paintEl = ref<HTMLDivElement | null>(null);
 const error = ref<string | null>(null);
 
 let renderer: THREE.WebGLRenderer | null = null;
@@ -86,7 +99,10 @@ function makeMaterial(): THREE.ShaderMaterial {
 			varying vec3 vColor;
 			varying float vDim;
 			void main() {
-				if (uCluster > 0.5) {
+				bool isNan = (aValue != aValue);
+				if (isNan) {
+					vColor = vec3(0.12);
+				} else if (uCluster > 0.5) {
 					if (aValue < 0.0) {
 						vColor = vec3(0.30);
 					} else {
@@ -97,7 +113,7 @@ function makeMaterial(): THREE.ShaderMaterial {
 					float u = clamp((aValue - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
 					vColor = texture2D(uGradient, vec2(u, 0.5)).rgb;
 				}
-				vDim = (uSelActive > 0.5 && aSelected < 0.5) ? 0.15 : 1.0;
+				vDim = isNan ? 0.25 : ((uSelActive > 0.5 && aSelected < 0.5) ? 0.15 : 1.0);
 				gl_PointSize = uSize;
 				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 			}
@@ -116,8 +132,9 @@ function makeMaterial(): THREE.ShaderMaterial {
 }
 
 function percentileRange(a: Float32Array): [number, number] {
-	if (a.length === 0) return [0, 1];
-	const s = Float32Array.from(a).sort();
+	// filter out NaN: a masked channel (resid_z under a paint mask) is full of them.
+	const s = Float32Array.from(a).filter((v) => Number.isFinite(v)).sort();
+	if (s.length === 0) return [0, 1];
 	const lo = s[Math.floor(0.01 * (s.length - 1))];
 	const hi = s[Math.floor(0.99 * (s.length - 1))];
 	return hi > lo ? [lo, hi] : [lo, lo + 1];
@@ -177,9 +194,11 @@ function frameCamera() {
 	if (!camera || !controls || !ws || ws.n === 0) return;
 	let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
 	for (let i = 0; i < ws.n; i++) {
+		if (!Number.isFinite(ws.x[i]) || !Number.isFinite(ws.y[i])) continue;
 		if (ws.x[i] < xmin) xmin = ws.x[i]; if (ws.x[i] > xmax) xmax = ws.x[i];
 		if (ws.y[i] < ymin) ymin = ws.y[i]; if (ws.y[i] > ymax) ymax = ws.y[i];
 	}
+	if (!Number.isFinite(xmin)) return;
 	const cx = (xmin + xmax) / 2, cy = (ymin + ymax) / 2;
 	const span = Math.max(xmax - xmin, ymax - ymin, 1) * 1.08;
 	const aspect = cssW / cssH;
@@ -188,6 +207,78 @@ function frameCamera() {
 	camera.position.set(cx, cy, 1e5); camera.up.set(0, 1, 0); camera.lookAt(cx, cy, 0);
 	camera.zoom = 1; camera.updateProjectionMatrix();
 	controls.target.set(cx, cy, 0); controls.update();
+	invalidate();
+}
+
+// --- paint layers ------------------------------------------------------------------------
+// Saved layers render as THREE.LineLoop rings (one material per role colour). Drawing happens
+// on a transparent sibling <div> (template) so OrbitControls never contends for the pointer;
+// controls.enabled is also flipped off while paintMode === 'draw'. canvasToWorld unprojects a
+// screen point to angular-grid mm via the same ortho camera the points use.
+let overlayGroup: THREE.Group | null = null;
+let draftLine: THREE.Line | null = null;
+const ROLE_COLOR: Record<string, number> = { mask: 0xf59e0b, label: 0x38bdf8, seed: 0xa78bfa };
+
+function canvasToWorld(clientX: number, clientY: number): [number, number] {
+	const el = canvasEl.value!;
+	const r = el.getBoundingClientRect();
+	const nx = ((clientX - r.left) / r.width) * 2 - 1;
+	const ny = -(((clientY - r.top) / r.height) * 2 - 1);
+	const v = new THREE.Vector3(nx, ny, 0).unproject(camera!);
+	return [v.x, v.y];
+}
+
+function redrawDraft() {
+	if (!scene) return;
+	if (draftLine) { scene.remove(draftLine); (draftLine.geometry as THREE.BufferGeometry).dispose(); draftLine = null; }
+	if (draft.value.length >= 2) {
+		const pts = draft.value.map(([x, y]) => new THREE.Vector3(x, y, 2));
+		const mat = new THREE.LineBasicMaterial({ color: 0xffffff });
+		draftLine = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat);
+		scene.add(draftLine);
+	}
+	invalidate();
+}
+
+function onPaintClick(ev: PointerEvent) {
+	if (props.paintMode !== 'draw' || !camera) return;
+	draft.value = [...draft.value, canvasToWorld(ev.clientX, ev.clientY)];
+	redrawDraft();
+}
+function finishRing() {
+	if (draft.value.length >= 3) emit('polygon', draft.value.slice());
+	draft.value = [];
+	redrawDraft();
+}
+function cancelRing() {
+	draft.value = [];
+	redrawDraft();
+}
+
+function rebuildOverlay() {
+	if (!scene) return;
+	if (overlayGroup) {
+		scene.remove(overlayGroup);
+		overlayGroup.traverse((o) => {
+			const m = o as THREE.Mesh;
+			m.geometry?.dispose?.();
+			(m.material as THREE.Material | undefined)?.dispose?.();
+		});
+	}
+	overlayGroup = new THREE.Group();
+	for (const layer of props.layers ?? []) {
+		const isActive = layer.name === props.activeLayerName;
+		const mat = new THREE.LineBasicMaterial({
+			color: ROLE_COLOR[layer.role] ?? 0xffffff,
+			transparent: true,
+			opacity: isActive ? 1 : 0.55,
+		});
+		for (const ring of layer.geometry?.polygons ?? []) {
+			const pts = ring.map(([x, y]) => new THREE.Vector3(x, y, 1));
+			if (pts.length >= 2) overlayGroup.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat));
+		}
+	}
+	scene.add(overlayGroup);
 	invalidate();
 }
 
@@ -211,6 +302,8 @@ function setupGL() {
 	points.frustumCulled = false;
 	scene.add(points);
 	rebuildGeometry();
+	rebuildOverlay();
+	controls.enabled = props.paintMode !== 'draw';
 	const loop = () => {
 		raf = requestAnimationFrame(loop);
 		controls!.update();
@@ -236,6 +329,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
 	if (raf) cancelAnimationFrame(raf);
 	ro?.disconnect(); controls?.dispose();
+	if (overlayGroup) overlayGroup.traverse((o) => { const m = o as THREE.Mesh; m.geometry?.dispose?.(); (m.material as THREE.Material | undefined)?.dispose?.(); });
+	(draftLine?.geometry as THREE.BufferGeometry | undefined)?.dispose?.();
 	geom?.dispose(); material?.dispose();
 	(material?.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
 	try { renderer?.forceContextLoss(); } catch { /* ignore */ }
@@ -256,6 +351,12 @@ watch(() => props.colormap, () => {
 });
 watch(() => props.pointSize, () => { if (material) { material.uniforms.uSize.value = props.pointSize; invalidate(); } });
 watch(() => props.selection, packSelected, { deep: true });
+watch(() => [props.layers, props.activeLayerName], rebuildOverlay, { deep: true });
+watch(() => props.paintMode, () => {
+	if (controls) controls.enabled = props.paintMode !== 'draw';
+	if (props.paintMode !== 'draw') cancelRing();
+	else nextTick(() => paintEl.value?.focus());
+});
 </script>
 
 <template>
@@ -263,6 +364,19 @@ watch(() => props.selection, packSelected, { deep: true });
 		<div v-if="error" class="ds-msg err">{{ error }}</div>
 		<div v-else-if="!workingSet" class="ds-msg">no analysis loaded</div>
 		<canvas v-show="!error" ref="canvasEl"></canvas>
+		<div
+			v-if="paintMode === 'draw'"
+			ref="paintEl"
+			class="ds-paint"
+			tabindex="0"
+			@pointerdown.prevent="onPaintClick"
+			@keyup.enter="finishRing"
+			@keyup.esc="cancelRing"
+		>
+			<span class="ds-paint-hint">
+				click to add points · Enter to close ({{ draft.length }}) · Esc to cancel
+			</span>
+		</div>
 		<span v-if="workingSet && !error" class="ds-count">{{ workingSet.n.toLocaleString() }} pts</span>
 	</div>
 </template>
@@ -273,4 +387,6 @@ watch(() => props.selection, packSelected, { deep: true });
 .ds-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-dim, #94a3b8); font-size: 12px; }
 .ds-msg.err { color: var(--danger, #fca5a5); }
 .ds-count { position: absolute; right: 8px; bottom: 6px; font-size: 10px; color: var(--text-dim, #94a3b8); background: rgba(0,0,0,0.35); padding: 1px 5px; border-radius: 4px; font-variant-numeric: tabular-nums; }
+.ds-paint { position: absolute; inset: 0; cursor: crosshair; outline: none; }
+.ds-paint-hint { position: absolute; left: 8px; top: 6px; font-size: 10px; color: #fcd34d; background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 4px; pointer-events: none; }
 </style>

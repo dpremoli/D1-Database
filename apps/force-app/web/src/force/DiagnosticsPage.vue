@@ -105,7 +105,8 @@ async function build(recipe?: Recipe) {
 		};
 		// A Bake from the workbench carries the edited recipe; persist it so process_diag_row
 		// bakes it and claim_diag's hash reflects it. A plain Build/Retry leaves diag_recipe
-		// untouched (NULL = the built-in default).
+		// untouched (NULL = the built-in default). Painted layers need no plumbing here: the
+		// workbench writes diag_layer rows directly, and process_diag_row reads them at bake.
 		if (recipe) { patch.diag_recipe = recipe; r.diag_recipe = recipe; }
 		await api.patch(`/items/machining_force_analysis/${r.id}`, patch);
 		buildMsg.value = 'Analysing on the host (minutes for large ops)…';

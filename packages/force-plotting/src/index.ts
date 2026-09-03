@@ -26,6 +26,7 @@ export { default as DiagOctreeView } from './DiagOctreeView.vue';
 export { default as DiagScatter } from './DiagScatter.vue';
 export { default as ClusterTable } from './ClusterTable.vue';
 export { default as RecipePanel } from './RecipePanel.vue';
+export { default as LayerPanel } from './LayerPanel.vue';
 export { CLUSTER_PALETTE, clusterColorCss } from './clusterPalette';
 export { fetchD1an, parseD1an, D1AN_MAGIC } from './diagAttrs';
 export type { DiagAttrs } from './diagAttrs';
@@ -39,6 +40,9 @@ export type { Recipe, RecipeStep, ParamSpec, StepMeta, ChannelOption } from './r
 
 export { fetchDiagPreview } from './diagPreview';
 export type { DiagPreview } from './diagPreview';
+
+export { fetchLayers, saveLayer, deleteLayer, layersForRequest } from './diagLayers';
+export type { DiagLayer, LayerRole, LayerGeometry } from './diagLayers';
 
 export { alignAndDiff } from './compare';
 export type { AlignedDiff } from './compare';
