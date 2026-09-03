@@ -9,7 +9,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import ForceChart from './ForceChart.vue';
-import DiagScatter from './DiagScatter.vue';
+import DiagOctreeView from './DiagOctreeView.vue';
 import ClusterTable from './ClusterTable.vue';
 import RecipePanel from './RecipePanel.vue';
 import LayerPanel from './LayerPanel.vue';
@@ -18,6 +18,7 @@ import SelectionInspector from './SelectionInspector.vue';
 import BandwidthStrip from './BandwidthStrip.vue';
 import { fetchD1an } from './diagAttrs';
 import { fetchDiagPreview } from './diagPreview';
+import { fetchViewportCompute, type ViewportResult, type ViewportStep } from './diagViewport';
 import { bucketEnvelope } from './liveCache';
 import { clusterStats, computeStats, workingSetFromD1an } from './selection';
 import type { ChannelKey, Selection, WorkingSet } from './selection';
@@ -177,6 +178,100 @@ async function runPreview() {
 	}
 }
 
+// --- Phase G: full-resolution viewport recompute -------------------------------------------
+// The Spatial panel is the full-res octree (resid_z). Framing a region and settling fires a
+// Gi* recompute on just those points; HDBSCAN / segmentation run on a button. The 256/rev
+// bake stays authoritative -- this overlay is a preview at the resolution being looked at.
+const analysisResult = ref<ViewportResult | null>(null);
+const viewportBounds = ref<[number, number, number, number] | null>(null);
+const viewportBusy = ref(false);
+let viewportAbort: AbortController | null = null;
+const recipeCollapsed = ref(false);
+
+const OUTPUT_OF: Record<string, ChannelKey> = {
+	getis_ord: 'giStar', hdbscan: 'clusterId', grow_segmentation: 'segmentId',
+};
+const OP_OF: Partial<Record<ChannelKey, 'getis_ord' | 'hdbscan' | 'grow_segmentation'>> = {
+	giStar: 'getis_ord', clusterId: 'hdbscan', segmentId: 'grow_segmentation',
+};
+const analysisMode = computed<'continuous' | 'categorical'>(() =>
+	channel.value === 'clusterId' || channel.value === 'segmentId' ? 'categorical' : 'continuous');
+
+function stepParams(op: string): Record<string, unknown> {
+	const s = recipe.value.steps.find((x) => x.op === op && x.on);
+	return s ? { ...s.params } : {};
+}
+function stepInputs(op: string): Record<string, unknown> | undefined {
+	const s = recipe.value.steps.find((x) => x.op === op && x.on);
+	return s?.inputs as Record<string, unknown> | undefined;
+}
+
+async function runViewport(
+	op: 'getis_ord' | 'hdbscan' | 'grow_segmentation',
+	{ focus }: { focus: boolean } = { focus: true },
+) {
+	if (!viewportBounds.value) return;
+	viewportAbort?.abort();
+	const ac = new AbortController();
+	viewportAbort = ac;
+	viewportBusy.value = true;
+	previewErr.value = null;
+	try {
+		const step: ViewportStep = { op, params: stepParams(op), inputs: stepInputs(op) };
+		const r = await fetchViewportCompute(props.analysisId, viewportBounds.value, step, {
+			layers: layers.value.length ? layersForRequest(layers.value) : undefined,
+			signal: ac.signal,
+			output: op === 'getis_ord' ? 'gi_star' : undefined,
+		});
+		if (ac.signal.aborted) return;
+		analysisResult.value = r;
+		if (focus) channel.value = OUTPUT_OF[op];
+	} catch (e: any) {
+		if (!ac.signal.aborted && e?.name !== 'AbortError') {
+			previewErr.value = e?.message || 'viewport compute failed';
+		}
+	} finally {
+		if (viewportAbort === ac) viewportBusy.value = false;
+	}
+}
+
+function onBounds(b: [number, number, number, number]) {
+	viewportBounds.value = b;
+}
+
+// Manual run buttons for the enabled spatial steps (Gi* also auto-fires on settle).
+const runButtons = computed(() => {
+	const labels: Record<string, string> = {
+		getis_ord: 'Run Gi*', hdbscan: 'Run HDBSCAN', grow_segmentation: 'Run segmentation',
+	};
+	return recipe.value.steps
+		.filter((s) => s.on && s.op in labels)
+		.map((s) => ({ op: s.op as 'getis_ord' | 'hdbscan' | 'grow_segmentation', label: labels[s.op] }));
+});
+
+// Auto Gi* on settle -- only while the analyst is actually viewing Gi*. Panning while
+// studying a HDBSCAN result must not silently recompute or yank the channel back.
+let giTimer: ReturnType<typeof setTimeout> | null = null;
+function maybeAutoGi() {
+	const gi = recipe.value.steps.find((s) => s.op === 'getis_ord' && s.on);
+	if (!gi || channel.value !== 'giStar' || !viewportBounds.value) return;
+	if (giTimer) clearTimeout(giTimer);
+	giTimer = setTimeout(() => runViewport('getis_ord', { focus: false }), 600);
+}
+watch(viewportBounds, maybeAutoGi);
+// Switching the channel to a spatial output with no current result kicks a compute for it.
+watch(channel, (c) => {
+	const op = OP_OF[c];
+	if (op && !analysisResult.value && viewportBounds.value) {
+		runViewport(op, { focus: false });
+	}
+});
+// A recipe param edit to the shown spatial step re-runs it on the current view.
+watch(recipe, () => {
+	const op = OP_OF[channel.value];
+	if (op && analysisResult.value) runViewport(op, { focus: false });
+}, { deep: true });
+
 // If a produced-channel is deselected out from under the current view, fall back to resid_z.
 watch(channelOptions, (opts) => {
 	const cur = opts.find((o) => o.key === channel.value);
@@ -258,10 +353,12 @@ async function onDeleteLayer(layer: DiagLayer) {
 const stats = computed(() => (activeWS.value ? computeStats(activeWS.value, selection.value) : null));
 const clusters = computed(() => (activeWS.value ? clusterStats(activeWS.value) : []));
 
+// Spatial is the hero: the full-res octree carries the interaction now. Recipe collapses to
+// a rail; Signal sits under it.
 const layout = ref([
-	{ x: 0, y: 0, w: 3, h: 8, i: 'recipe' },
-	{ x: 3, y: 0, w: 6, h: 8, i: 'spatial' },
-	{ x: 9, y: 0, w: 3, h: 8, i: 'signal' },
+	{ x: 0, y: 0, w: 9, h: 12, i: 'spatial' },
+	{ x: 9, y: 0, w: 3, h: 7, i: 'recipe' },
+	{ x: 9, y: 7, w: 3, h: 5, i: 'signal' },
 ]);
 
 const multiMaskNote = computed(() =>
@@ -283,6 +380,7 @@ const stateLabel = computed(() => {
 				<WorkbenchPanel v-if="item.i === 'recipe'" title="Recipe" icon="tune">
 					<RecipePanel
 						v-model:recipe="recipe"
+						v-model:collapsed="recipeCollapsed"
 						:baked="!!bakedWS"
 						:bake-stale="bakeStale"
 						:previewing="previewing"
@@ -293,20 +391,23 @@ const stateLabel = computed(() => {
 						@bake="onBake"
 						@apply="onApplyRecipe"
 						@library-changed="loadLibrary"
+						@run-step="(op) => runViewport(op, { focus: true })"
 					/>
 				</WorkbenchPanel>
 
 				<WorkbenchPanel v-else-if="item.i === 'spatial'" title="Spatial" icon="scatter_plot">
-					<DiagScatter
-						:working-set="activeWS"
-						:channel="channel"
-						:cluster-mode="clusterMode"
-						:selection="selection"
-						:point-size="2.6"
+					<DiagOctreeView
+						:octree-path="`${diagPath}/full`"
+						:channel="'residZ'"
+						:colormap="'viridis'"
+						:point-size="1.5"
+						:analysis-result="analysisResult"
+						:analysis-mode="analysisMode"
 						:layers="layers"
 						:active-layer-name="activeLayerName"
 						:paint-mode="drawing ? 'draw' : 'off'"
 						@polygon="onPolygon"
+						@bounds="onBounds"
 					/>
 					<template #footer>
 						<div class="dw-spatial-footer">
@@ -323,6 +424,17 @@ const stateLabel = computed(() => {
 									{{ o.label }}{{ o.produced ? '' : ' — step off' }}
 								</option>
 							</select>
+							<div class="dw-vp-row">
+								<button
+									v-for="rb in runButtons" :key="rb.op"
+									class="dw-vp-btn" :disabled="viewportBusy || !viewportBounds"
+									@click="runViewport(rb.op, { focus: true })"
+								>{{ rb.label }}</button>
+								<span v-if="viewportBusy" class="dw-vp-busy">computing…</span>
+								<span v-else-if="analysisResult" class="dw-vp-n">
+									{{ analysisResult.n.toLocaleString() }} pts{{ analysisResult.ms != null ? ` · ${analysisResult.ms} ms` : '' }}
+								</span>
+							</div>
 							<ClusterTable
 								v-if="clusterMode"
 								:rows="clusters"
@@ -377,6 +489,11 @@ const stateLabel = computed(() => {
 .dw-seg-row { display: inline-flex; align-items: center; gap: 4px; }
 .dw-seg-swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 .dw-channel-select { width: 100%; font-size: 12px; padding: 4px 6px; background: var(--bg-2, #111a33); color: var(--text, #e5e7eb); border: 1px solid var(--border, rgba(255,255,255,0.14)); border-radius: 6px; }
+.dw-vp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dw-vp-btn { font: inherit; font-size: 11px; cursor: pointer; padding: 3px 8px; border-radius: 6px; color: var(--text, #e5e7eb); background: var(--bg-2, #111a33); border: 1px solid var(--border, rgba(255,255,255,0.18)); }
+.dw-vp-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.dw-vp-busy { font-size: 10px; color: #fcd34d; }
+.dw-vp-n { font-size: 10px; color: var(--text-dim, #94a3b8); font-variant-numeric: tabular-nums; }
 .dw-state { padding: 4px 12px; font-size: 11px; color: var(--text-dim, #94a3b8); border-top: 1px solid var(--border, rgba(255,255,255,0.1)); }
 .dw-state.preview { color: #fcd34d; background: color-mix(in srgb, #d97706 12%, transparent); }
 .dw-state.stale { color: #fca5a5; }

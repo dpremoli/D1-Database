@@ -836,7 +836,9 @@ watch(viewportBounds, maybeAutoGi);
 watch(channel, (c) => { if (c === 'giStar' && !analysisResult.value) maybeAutoGi(); });
 ```
 
-Keep `bakedWS` (from `attrs.d1an`) for the Signal chart + Selection Inspector; the debounced `runPreview` (256/rev diag-service preview) can stay for the Signal chart's `resid_z` tuning, OR be dropped — **decision:** drop `runPreview` and the `previewWS`; the Signal chart reads `bakedWS.residZ` (baked `resid_z` vs time is enough for the time-brush). Removes a whole code path.
+Keep `bakedWS` (from `attrs.d1an`) for the Signal chart + Selection Inspector; the debounced `runPreview` (256/rev diag-service preview) can stay for the Signal chart's `resid_z` tuning, OR be dropped.
+
+**Ruling during execution:** `runPreview` / `previewWS` KEPT, not dropped. Dropping them would remove all live feedback for non-spatial param edits (radial_detrend, tsa) — the Signal panel would only update on bake. The path is already written and tested; keeping it costs a little workbench state and can be removed later if it proves confusing. `previewWS` now only feeds the Signal chart + Selection Inspector + ClusterTable (DiagScatter, its former consumer, is gone); the Spatial panel is the octree + viewport overlay and ignores it. Cost if wrong: minor extra complexity, easily reverted.
 
 - [ ] **Step 3: Template + layout**
 
