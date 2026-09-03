@@ -29,7 +29,7 @@ from .registry import STEPS, Columns, resolve_inputs, validate_recipe
 # missing column is a parse error, not an absence.
 PUBLIC_COLUMNS: tuple[str, ...] = (
     "t", "rev", "x", "y", "tsa_resid", "resid_z",
-    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band",
+    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band", "segment_id",
 )
 
 # Angular-domain columns that shorten with the TSA truncation. Deliberately hardcoded and
@@ -43,9 +43,14 @@ PUBLIC_COLUMNS: tuple[str, ...] = (
 # NOT alias one to the other: a new derived step could produce an angular column that must
 # truncate without being part of the fixed D1AN contract, and widening _TRUNCATABLE is not
 # a licence to widen PUBLIC_COLUMNS (the D1AN contract is fixed) or vice versa.
+#
+# `segment_id` is listed here for consistency with `cluster_id` and because
+# test_truncation_allowlist_covers_every_registered_angular_column pins that every derived
+# step's angular output appears -- though like every column produced AFTER `tsa` it is
+# created at the already-truncated length, so its presence has no runtime effect today.
 _TRUNCATABLE: tuple[str, ...] = (
     "t", "rev", "x", "y", "tsa_resid", "resid_z",
-    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band",
+    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band", "segment_id",
 )
 
 # Internal, non-array-contract key: the D1LC cache sample rate, stashed by seed_columns so
@@ -222,8 +227,11 @@ def run_recipe(
         col = work.get(name)
         # .astype(np.float32) always copies (matching analyse()); np.asarray would hand
         # back a VIEW into the caller's prefix-cache dict when col is already float32.
+        # segment_id defaults to -1 ("unsegmented" -- 0 is a valid class index); every other
+        # missing/disabled column zero-fills as before.
+        fill = -1.0 if name == "segment_id" else 0.0
         out[name] = (
             col[:n].astype(np.float32) if col is not None
-            else np.zeros(n, dtype=np.float32)
+            else np.full(n, fill, dtype=np.float32)
         )
     return out, metrics

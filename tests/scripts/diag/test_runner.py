@@ -17,7 +17,7 @@ from diag.runner import _TRUNCATABLE, run_recipe, seed_columns
 
 PUBLIC_COLUMNS = {
     "t", "rev", "x", "y", "tsa_resid", "resid_z",
-    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band",
+    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band", "segment_id",
 }
 
 
@@ -218,3 +218,10 @@ def test_default_recipe_with_envelope_on_reproduces_analyse_exactly():
     _assert_equivalent_to_golden(
         recipe, GOLDEN_ENVELOPE, nondegenerate=("env_band",)
     )
+
+
+def test_default_recipe_emits_segment_id_all_minus_one():
+    cols, _ = run_recipe(DEFAULT_RECIPE, _seed())
+    assert "segment_id" in cols
+    assert np.all(cols["segment_id"] == -1)
+    assert cols["segment_id"].dtype == np.float32
