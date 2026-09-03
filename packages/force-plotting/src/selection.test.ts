@@ -116,4 +116,31 @@ describe('clusterStats', () => {
 		expect(rows[0].id).toBe(-1);
 		expect(rows[0].n).toBe(5);
 	});
+
+	it('ignores NaN (masked) points in the residZ / giStar accumulators', () => {
+		const attrs = makeAttrs();
+		attrs.columns.resid_z = new Float32Array([NaN, -1, 0, 1, NaN]);
+		attrs.columns.gi_star = new Float32Array([NaN, 0, 0, 1, NaN]);
+		attrs.columns.cluster_id = new Float32Array([0, 0, -1, 1, 1]);
+		const rows = clusterStats(workingSetFromD1an(attrs));
+		const c0 = rows.find((r) => r.id === 0)!;
+		expect(c0.n).toBe(2);                       // membership unchanged
+		expect(c0.meanAbsResidZ).toBe(1);           // only the finite -1 contributes
+		expect(Number.isFinite(c0.maxGiStar)).toBe(true);
+		const c1 = rows.find((r) => r.id === 1)!;
+		expect(c1.meanAbsResidZ).toBe(1);           // one NaN, one finite (1)
+		expect(rows.reduce((s, r) => s + r.fraction, 0)).toBeCloseTo(1, 6);
+	});
+});
+
+describe('NaN-safe stats', () => {
+	it('computeStats skips NaN points; attribute selection never matches NaN', () => {
+		const attrs = makeAttrs();
+		attrs.columns.resid_z = new Float32Array([NaN, -1, 0, 1, NaN]);
+		const ws = workingSetFromD1an(attrs);
+		const s = computeStats(ws, null);
+		expect(s.n).toBe(3);
+		expect(Number.isFinite(s.meanResidZ)).toBe(true);
+		expect(matches(ws, { kind: 'attribute', column: 'residZ', min: -100, max: 100 }, 0)).toBe(false);
+	});
 });

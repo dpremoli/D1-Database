@@ -83,7 +83,8 @@ export function matches(ws: WorkingSet, sel: Selection, i: number): boolean {
 			return ws.t[i] >= sel.t0 && ws.t[i] <= sel.t1;
 		case 'attribute': {
 			const v = CHANNEL_ACCESSOR[sel.column](ws, i);
-			return v >= sel.min && v <= sel.max;
+			// A NaN (a masked-out point) is never "in range".
+			return Number.isFinite(v) && v >= sel.min && v <= sel.max;
 		}
 		case 'lasso':
 			return pointInPolygon(ws.x[i], ws.y[i], sel.polygon);
@@ -114,6 +115,8 @@ export function computeStats(ws: WorkingSet, sel: Selection): SelectionStats {
 	let sum = 0;
 	for (let i = 0; i < ws.n; i++) {
 		if (!matches(ws, sel, i)) continue;
+		// Skip masked-out points (NaN residZ): they must not pull the mean or count.
+		if (!Number.isFinite(ws.residZ[i])) continue;
 		n++;
 		const t = ws.t[i];
 		if (t < tMin) tMin = t;
@@ -142,17 +145,24 @@ export interface ClusterRow {
 /** Per-cluster summary over the whole WorkingSet. Sorted by size descending; the noise row
  *  (id -1), if present, always sorts last regardless of size. */
 export function clusterStats(ws: WorkingSet): ClusterRow[] {
-	const acc = new Map<number, { n: number; sumAbs: number; maxGi: number; rMin: number; rMax: number }>();
+	// n counts cluster membership (from cluster_id, valid even for a masked point); the
+	// residZ / giStar accumulators only take finite contributions, so a partly- or
+	// fully-masked cluster yields a real number, never NaN (mirrors the maxGi === -Infinity
+	// guard below).
+	const acc = new Map<number, { n: number; nFinite: number; sumAbs: number; maxGi: number; rMin: number; rMax: number }>();
 	for (let i = 0; i < ws.n; i++) {
 		const id = ws.clusterId[i];
 		let a = acc.get(id);
 		if (!a) {
-			a = { n: 0, sumAbs: 0, maxGi: -Infinity, rMin: Infinity, rMax: -Infinity };
+			a = { n: 0, nFinite: 0, sumAbs: 0, maxGi: -Infinity, rMin: Infinity, rMax: -Infinity };
 			acc.set(id, a);
 		}
 		a.n++;
-		a.sumAbs += Math.abs(ws.residZ[i]);
-		if (ws.giStar[i] > a.maxGi) a.maxGi = ws.giStar[i];
+		if (Number.isFinite(ws.residZ[i])) {
+			a.nFinite++;
+			a.sumAbs += Math.abs(ws.residZ[i]);
+		}
+		if (Number.isFinite(ws.giStar[i]) && ws.giStar[i] > a.maxGi) a.maxGi = ws.giStar[i];
 		const r = Math.hypot(ws.x[i], ws.y[i]);
 		if (r < a.rMin) a.rMin = r;
 		if (r > a.rMax) a.rMax = r;
@@ -163,7 +173,7 @@ export function clusterStats(ws: WorkingSet): ClusterRow[] {
 			id,
 			n: a.n,
 			fraction: ws.n ? a.n / ws.n : 0,
-			meanAbsResidZ: a.n ? a.sumAbs / a.n : 0,
+			meanAbsResidZ: a.nFinite ? a.sumAbs / a.nFinite : 0,
 			maxGiStar: a.maxGi === -Infinity ? 0 : a.maxGi,
 			rMin: a.rMin === Infinity ? 0 : a.rMin,
 			rMax: a.rMax === -Infinity ? 0 : a.rMax,
