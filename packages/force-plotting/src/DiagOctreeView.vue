@@ -387,8 +387,12 @@ function disposeOverlay() {
 }
 
 // The world rectangle the camera shows, as [x0, y0, x1, y1]. Emitted undebounced -- the
-// workbench debounces before firing a viewport compute.
+// workbench debounces before firing a viewport compute. Suppressed until the octree has
+// loaded and framed: OrbitControls can emit 'change' during the first loop tick while the
+// camera is still the constructor's (-1,1,1,-1), which would emit a 2x2 mm box and (if the
+// channel is already Gi*) fire a /diag/viewport that 422s "empty viewport".
 function emitBounds() {
+	if (!pco || loading.value) return;
 	const b = currentBounds();
 	emit('bounds', [b.xmin, b.ymin, b.xmax, b.ymax]);
 }
@@ -447,11 +451,11 @@ async function load() {
 		applySelection();
 		scene!.add(pco);
 		pco.updateMatrixWorld(true);
+		loading.value = false;   // before frameCamera(): emitBounds() is gated on !loading
 		frameCamera();
 		rebuildAnalysis();
 		rebuildOverlay();
 		if (controls) controls.enabled = (props.paintMode ?? 'off') !== 'draw';
-		loading.value = false;
 	} catch (e: any) {
 		error.value = e?.message || 'failed to load octree';
 		loading.value = false;

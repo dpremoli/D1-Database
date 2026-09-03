@@ -266,10 +266,15 @@ watch(channel, (c) => {
 		runViewport(op, { focus: false });
 	}
 });
-// A recipe param edit to the shown spatial step re-runs it on the current view.
+// A recipe param edit to the shown spatial step re-runs it on the current view. Debounced:
+// toggleSeed / addStep mutate the recipe deeply too, and three quick seed toggles must not
+// fire three full-resolution segmentation computes.
+let vpRecipeTimer: ReturnType<typeof setTimeout> | null = null;
 watch(recipe, () => {
 	const op = OP_OF[channel.value];
-	if (op && analysisResult.value) runViewport(op, { focus: false });
+	if (!op || !analysisResult.value) return;
+	if (vpRecipeTimer) clearTimeout(vpRecipeTimer);
+	vpRecipeTimer = setTimeout(() => runViewport(op, { focus: false }), 500);
 }, { deep: true });
 
 // If a produced-channel is deselected out from under the current view, fall back to resid_z.
