@@ -98,7 +98,7 @@ watch([recipe, () => layers.value, activeLayerName], () => {
 // The recipe as sent to the preview service: a plain-JSON clone (never the reactive proxy —
 // structuredClone throws on it) with the active mask bound onto radial_detrend. recipe.value
 // itself is never mutated, so the bake payload and its hash are unaffected.
-function recipeForPreview(): Recipe {
+function recipeWithMask(): Recipe {
 	if (!activeMask.value) return recipe.value;
 	const r = JSON.parse(JSON.stringify(recipe.value)) as Recipe;
 	for (const s of r.steps) {
@@ -109,6 +109,15 @@ function recipeForPreview(): Recipe {
 		}
 	}
 	return r;
+}
+
+// Bake persists the recipe INCLUDING the mask binding (the geometry lives in diag_layer,
+// which process_diag_row reads separately). Adopt that recipe as the local current one so
+// the bake-stale comparator settles instead of reading "stale" forever.
+function onBake() {
+	const baked = recipeWithMask();
+	recipe.value = JSON.parse(JSON.stringify(baked));
+	emit('bake', baked);
 }
 
 async function runPreview() {
@@ -127,7 +136,7 @@ async function runPreview() {
 	previewErr.value = null;
 	try {
 		const r = await fetchDiagPreview(
-			props.analysisId, recipeForPreview(), null, ac.signal,
+			props.analysisId, recipeWithMask(), null, ac.signal,
 			activeMask.value ? layersForRequest([activeMask.value]) : undefined,
 		);
 		if (ac.signal.aborted) return;
@@ -149,7 +158,21 @@ watch(channelOptions, (opts) => {
 
 const chartData = computed(() => {
 	const ws = activeWS.value;
-	return ws ? bucketEnvelope(ws.t, ws.residZ) : null;
+	if (!ws) return null;
+	// A paint mask leaves NaN in residZ for the excluded region; drop those points so the
+	// envelope buckets (and the SVG path they feed) stay finite.
+	let t = ws.t;
+	let z = ws.residZ;
+	if (!z.every((v) => Number.isFinite(v))) {
+		const ti: number[] = [];
+		const zi: number[] = [];
+		for (let i = 0; i < ws.n; i++) {
+			if (Number.isFinite(z[i])) { ti.push(t[i]); zi.push(z[i]); }
+		}
+		t = Float32Array.from(ti);
+		z = Float32Array.from(zi);
+	}
+	return bucketEnvelope(t, z);
 });
 function onCropStart(v: number) {
 	const cur = selection.value;
@@ -235,7 +258,7 @@ const stateLabel = computed(() => {
 						:previewing="previewing"
 						:preview-ms="previewMs"
 						:preview-error="previewErr"
-						@bake="emit('bake', recipe)"
+						@bake="onBake"
 					/>
 				</WorkbenchPanel>
 
