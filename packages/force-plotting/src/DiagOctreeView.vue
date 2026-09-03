@@ -19,9 +19,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Potree, type PointCloudOctree } from 'potree-core';
 import { COLORMAPS } from './liveCloud';
+import { CLUSTER_PALETTE } from './clusterPalette';
 import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
 import type { Selection } from './selection';
+import type { DiagLayer } from './diagLayers';
+import type { ViewportResult } from './diagViewport';
 
 const props = defineProps<{
 	octreePath: string;                       // served subdir: /octrees/diag/<octreePath>/
@@ -34,16 +37,31 @@ const props = defineProps<{
 	minNodePx?: number;                       // Potree LOD cutoff (settings; default 1)
 	budgetCap?: number;                       // Potree point-budget hard cap (settings; default 25M)
 	selection?: Selection;
+	// Phase G: a full-resolution viewport recompute (Gi* / cluster_id / segment_id on the
+	// framed region), rendered as a flat THREE.Points ABOVE the octree in this same scene --
+	// a second canvas would need its own WebGL context and camera sync.
+	analysisResult?: ViewportResult | null;
+	analysisMode?: 'continuous' | 'categorical';
+	// Phase G: paint layers, ported verbatim from DiagScatter (same top-down ortho unproject).
+	layers?: DiagLayer[];
+	activeLayerName?: string | null;
+	paintMode?: 'off' | 'draw';
 }>();
 const emit = defineEmits<{
 	(e: 'climits', v: { cmin: number; cmax: number }): void;
 	(e: 'points', n: number): void;   // LOD-visible point count (for the resolution readout)
+	(e: 'polygon', ring: [number, number][]): void;
+	// the x/y mm rectangle the camera currently shows -- emitted UNDEBOUNCED on every camera
+	// change; the workbench owns the single settle debounce before it fires a viewport compute.
+	(e: 'bounds', b: [number, number, number, number]): void;
 }>();
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
+const paintEl = ref<HTMLDivElement | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const pointCount = ref(0);
+const draft = ref<[number, number][]>([]);
 
 let renderer: THREE.WebGLRenderer | null = null;
 let scene: THREE.Scene | null = null;
@@ -192,6 +210,189 @@ function applySelection() {
 	invalidate();
 }
 
+// --- Phase G: full-resolution analysis overlay -----------------------------------------
+// A separate THREE.Points (not potree-managed) fed by props.analysisResult. Reuses
+// DiagScatter's viridis / cluster-palette shader, minus the selection-dim path.
+let analysisPoints: THREE.Points | null = null;
+
+function percentileRange(a: Float32Array): [number, number] {
+	const s = Float32Array.from(a).filter((v) => Number.isFinite(v)).sort();
+	if (s.length === 0) return [0, 1];
+	const lo = s[Math.floor(0.01 * (s.length - 1))];
+	const hi = s[Math.floor(0.99 * (s.length - 1))];
+	return hi > lo ? [lo, hi] : [lo, lo + 1];
+}
+
+function makeAnalysisMaterial(): THREE.ShaderMaterial {
+	const paletteFlat = new Float32Array(CLUSTER_PALETTE.flat());
+	const categorical = props.analysisMode === 'categorical';
+	return new THREE.ShaderMaterial({
+		transparent: true,
+		uniforms: {
+			uGradient: { value: gradientTexture('viridis') },
+			uRange: { value: new THREE.Vector2(0, 1) },
+			uSize: { value: (props.pointSize || 1.5) + 1.5 },   // read on top of the octree
+			uCluster: { value: categorical ? 1 : 0 },
+			uPalette: { value: paletteFlat },
+		},
+		vertexShader: `
+			attribute float aValue;
+			uniform sampler2D uGradient;
+			uniform vec2 uRange;
+			uniform float uSize;
+			uniform float uCluster;
+			uniform float uPalette[36];
+			varying vec3 vColor;
+			varying float vDim;
+			void main() {
+				bool isNan = (aValue != aValue);
+				if (isNan) {
+					vColor = vec3(0.12); vDim = 0.25;
+				} else if (uCluster > 0.5) {
+					if (aValue < 0.0) { vColor = vec3(0.30); }
+					else {
+						int idx = int(mod(aValue, 12.0));
+						vColor = vec3(uPalette[idx*3], uPalette[idx*3+1], uPalette[idx*3+2]);
+					}
+					vDim = 1.0;
+				} else {
+					float u = clamp((aValue - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
+					vColor = texture2D(uGradient, vec2(u, 0.5)).rgb;
+					vDim = 1.0;
+				}
+				gl_PointSize = uSize;
+				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+			}`,
+		fragmentShader: `
+			precision mediump float;
+			varying vec3 vColor; varying float vDim;
+			void main() {
+				vec2 d = gl_PointCoord - vec2(0.5);
+				if (dot(d, d) > 0.25) discard;
+				gl_FragColor = vec4(vColor * vDim, vDim < 1.0 ? 0.5 : 1.0);
+			}`,
+	});
+}
+
+function disposeAnalysis() {
+	if (!analysisPoints) return;
+	scene?.remove(analysisPoints);
+	analysisPoints.geometry.dispose();
+	const m = analysisPoints.material as THREE.ShaderMaterial;
+	(m.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
+	m.dispose();
+	analysisPoints = null;
+}
+
+function rebuildAnalysis() {
+	disposeAnalysis();
+	const r = props.analysisResult;
+	if (!r || r.n === 0 || !scene) { invalidate(); return; }
+	const g = new THREE.BufferGeometry();
+	const pos = new Float32Array(r.n * 3);
+	for (let i = 0; i < r.n; i++) { pos[i * 3] = r.x[i]; pos[i * 3 + 1] = r.y[i]; pos[i * 3 + 2] = 1; }
+	g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+	g.setAttribute('aValue', new THREE.BufferAttribute(Float32Array.from(r.value), 1));
+	const mat = makeAnalysisMaterial();
+	if (props.analysisMode !== 'categorical') {
+		const [lo, hi] = percentileRange(r.value);
+		mat.uniforms.uRange.value.set(lo, hi);
+	}
+	analysisPoints = new THREE.Points(g, mat);
+	analysisPoints.renderOrder = 1;
+	analysisPoints.frustumCulled = false;
+	scene.add(analysisPoints);
+	invalidate();
+}
+
+// --- Phase G: paint layers (ported verbatim from DiagScatter.vue) -----------------------
+let overlayGroup: THREE.Group | null = null;
+let draftLine: THREE.Line | null = null;
+const ROLE_COLOR: Record<string, number> = { mask: 0xf59e0b, label: 0x38bdf8, seed: 0xa78bfa };
+
+function canvasToWorld(clientX: number, clientY: number): [number, number] {
+	const el = canvasEl.value!;
+	const r = el.getBoundingClientRect();
+	const nx = ((clientX - r.left) / r.width) * 2 - 1;
+	const ny = -(((clientY - r.top) / r.height) * 2 - 1);
+	const v = new THREE.Vector3(nx, ny, 0).unproject(camera!);
+	return [v.x, v.y];
+}
+
+function redrawDraft() {
+	if (!scene) return;
+	if (draftLine) { scene.remove(draftLine); (draftLine.geometry as THREE.BufferGeometry).dispose(); draftLine = null; }
+	if (draft.value.length >= 2) {
+		const pts = draft.value.map(([x, y]) => new THREE.Vector3(x, y, 2));
+		const mat = new THREE.LineBasicMaterial({ color: 0xffffff });
+		draftLine = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat);
+		scene.add(draftLine);
+	}
+	invalidate();
+}
+
+function onPaintClick(ev: PointerEvent) {
+	if ((props.paintMode ?? 'off') !== 'draw' || !camera) return;
+	draft.value = [...draft.value, canvasToWorld(ev.clientX, ev.clientY)];
+	redrawDraft();
+}
+function finishRing() {
+	if (draft.value.length >= 3) emit('polygon', draft.value.slice());
+	draft.value = [];
+	redrawDraft();
+}
+function cancelRing() {
+	draft.value = [];
+	redrawDraft();
+}
+
+function rebuildOverlay() {
+	if (!scene) return;
+	if (overlayGroup) {
+		scene.remove(overlayGroup);
+		overlayGroup.traverse((o) => {
+			const m = o as THREE.Mesh;
+			m.geometry?.dispose?.();
+			(m.material as THREE.Material | undefined)?.dispose?.();
+		});
+	}
+	overlayGroup = new THREE.Group();
+	for (const layer of props.layers ?? []) {
+		const isActive = layer.name === props.activeLayerName;
+		const mat = new THREE.LineBasicMaterial({
+			color: ROLE_COLOR[layer.role] ?? 0xffffff,
+			transparent: true,
+			opacity: isActive ? 1 : 0.55,
+		});
+		for (const ring of layer.geometry?.polygons ?? []) {
+			const pts = ring.map(([x, y]) => new THREE.Vector3(x, y, 1));
+			if (pts.length >= 2) overlayGroup.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat));
+		}
+	}
+	scene.add(overlayGroup);
+	invalidate();
+}
+
+function disposeOverlay() {
+	if (overlayGroup) {
+		overlayGroup.traverse((o) => {
+			const m = o as THREE.Mesh;
+			m.geometry?.dispose?.();
+			(m.material as THREE.Material | undefined)?.dispose?.();
+		});
+		overlayGroup = null;
+	}
+	(draftLine?.geometry as THREE.BufferGeometry | undefined)?.dispose?.();
+	draftLine = null;
+}
+
+// The world rectangle the camera shows, as [x0, y0, x1, y1]. Emitted undebounced -- the
+// workbench debounces before firing a viewport compute.
+function emitBounds() {
+	const b = currentBounds();
+	emit('bounds', [b.xmin, b.ymin, b.xmax, b.ymax]);
+}
+
 async function loadMeta(base: string) {
 	try {
 		// no-store: this metadata drives the colour limits; never risk a stale cached copy
@@ -247,6 +448,9 @@ async function load() {
 		scene!.add(pco);
 		pco.updateMatrixWorld(true);
 		frameCamera();
+		rebuildAnalysis();
+		rebuildOverlay();
+		if (controls) controls.enabled = (props.paintMode ?? 'off') !== 'draw';
 		loading.value = false;
 	} catch (e: any) {
 		error.value = e?.message || 'failed to load octree';
@@ -266,6 +470,7 @@ function frameCamera() {
 	camera.updateProjectionMatrix();
 	controls.target.set(c.x, c.y, c.z); controls.update();
 	invalidate();
+	emitBounds();
 }
 
 function setupGL() {
@@ -282,7 +487,8 @@ function setupGL() {
 	controls.enableRotate = false;
 	controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
 	controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
-	controls.addEventListener('change', invalidate);
+	controls.addEventListener('change', () => { invalidate(); emitBounds(); });
+	controls.enabled = (props.paintMode ?? 'off') !== 'draw';
 	const loop = () => {
 		raf = requestAnimationFrame(loop);
 		controls!.update();
@@ -314,12 +520,20 @@ onMounted(() => {
 onBeforeUnmount(() => {
 	if (raf) cancelAnimationFrame(raf);
 	ro?.disconnect(); controls?.dispose();
-	disposePco(); disposeMaterial();
+	disposePco(); disposeMaterial(); disposeAnalysis(); disposeOverlay();
 	try { renderer?.forceContextLoss(); } catch { /* ignore */ }   // release the GL context (not freed by dispose())
 	renderer?.dispose();
 });
 
 watch(() => props.octreePath, () => { disposePco(); disposeMaterial(); load(); });
+watch(() => props.analysisResult, rebuildAnalysis);
+watch(() => props.analysisMode, rebuildAnalysis);
+watch(() => [props.layers, props.activeLayerName], rebuildOverlay, { deep: true });
+watch(() => props.paintMode, () => {
+	if (controls) controls.enabled = (props.paintMode ?? 'off') !== 'draw';
+	if ((props.paintMode ?? 'off') !== 'draw') cancelRing();
+	else nextTick(() => paintEl.value?.focus());
+});
 watch(() => props.channel, () => { if (material) { material.uniforms.uChannel.value = CHANNEL_IDX[props.channel] ?? 1; applyRange(); } });
 watch(() => props.colormap, () => {
 	if (!material) return;
@@ -362,6 +576,19 @@ defineExpose({ currentBounds, exportViewport });
 		<div v-if="loading" class="fc-msg"><v-progress-circular indeterminate small /> streaming diagnostics…</div>
 		<div v-else-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
 		<canvas v-show="!error" ref="canvasEl"></canvas>
+		<div
+			v-if="(paintMode ?? 'off') === 'draw'"
+			ref="paintEl"
+			class="do-paint"
+			tabindex="0"
+			@pointerdown.prevent="onPaintClick"
+			@keyup.enter="finishRing"
+			@keyup.esc="cancelRing"
+		>
+			<span class="do-paint-hint">
+				click to add points · Enter to close ({{ draft.length }}) · Esc to cancel
+			</span>
+		</div>
 		<span v-if="!loading && !error" class="fc-count">{{ pointCount.toLocaleString() }} pts (LOD)</span>
 	</div>
 </template>
@@ -373,4 +600,6 @@ defineExpose({ currentBounds, exportViewport });
 .fc-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim, #94a3b8); }
 .fc-msg.err { color: var(--danger, #fca5a5); font-size: 12px; padding: 12px; text-align: center; }
 .fc-count { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: var(--text-dim, rgba(255,255,255,0.6)); font-variant-numeric: tabular-nums; }
+.do-paint { position: absolute; inset: 0; cursor: crosshair; outline: none; }
+.do-paint-hint { position: absolute; left: 8px; top: 6px; font-size: 10px; color: #fcd34d; background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 4px; pointer-events: none; }
 </style>
