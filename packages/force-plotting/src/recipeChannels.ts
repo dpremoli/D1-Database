@@ -102,13 +102,21 @@ export const STEP_META: Record<string, StepMeta> = {
 			{ key: 'bandwidth_frac', label: 'Band width frac', kind: 'number', min: 0.05, max: 0.5, step: 0.05 },
 		],
 	},
+	grow_segmentation: {
+		label: 'Seeded segmentation', tier: 'derived', produces: ['segment_id'],
+		params: [
+			{ key: 'k', label: 'Neighbours k', kind: 'number', min: 3, max: 100, step: 1 },
+			{ key: 'alpha', label: 'Clamping α', kind: 'number', min: 0.01, max: 0.9, step: 0.05 },
+			{ key: 'attr_weight', label: 'Attr weight', kind: 'number', min: 0.1, max: 10, step: 0.1 },
+		],
+	},
 };
 
 // snake_case produced column -> the selectable ChannelKey it corresponds to. Only the
 // per-point analysis channels; fc/ff/fp/sig are intermediates with no channel.
 const PRODUCED_TO_CHANNEL: Record<string, ChannelKey> = {
 	tsa_resid: 'tsaResid', resid_z: 'residZ', gi_star: 'giStar', gi_sig: 'giSig',
-	cluster_id: 'clusterId', glosh: 'glosh', env_band: 'envBand',
+	cluster_id: 'clusterId', glosh: 'glosh', env_band: 'envBand', segment_id: 'segmentId',
 };
 
 const ALL_CHANNELS: { key: ChannelKey; label: string }[] = [
@@ -119,6 +127,7 @@ const ALL_CHANNELS: { key: ChannelKey; label: string }[] = [
 	{ key: 'glosh', label: 'glosh — outlier score' },
 	{ key: 'tsaResid', label: 'tsa_resid — TSA residual' },
 	{ key: 'envBand', label: 'env_band — resonance envelope' },
+	{ key: 'segmentId', label: 'segment_id — seeded regions' },
 ];
 
 export interface ChannelOption {
