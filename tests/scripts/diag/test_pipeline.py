@@ -262,6 +262,74 @@ def test_metrics_record_effective_nyquist_and_validity():
     assert abs(metrics["quantitative_limit_hz"] - 460.0) < 1e-6
 
 
+def test_mount_deg_rotates_the_signature_between_fc_and_ff():
+    """Ground truth for the mount_deg translation. frame_transform at 90 deg maps
+    ff = -fx*sin(90) + fy*cos(90) = -fx, so a signature that sits on Fx with Fy flat is
+    invisible on Ff at mount_deg=0 and fully present on Ff at mount_deg=90. This is the
+    gate the design's Phase 6 asks for before a real tool_setup supplies a non-zero angle:
+    if frame_transform silently ignored mount_deg, the bake would keep shipping the tool
+    frame as a pass-through for every linked cut.
+    """
+    n_rev, spr = 30, SPR
+    n = n_rev * spr
+    revs = np.arange(n, dtype=np.float64) / spr
+    fs = 25_000.0
+    t = revs * 60.0 / 1200.0
+    phase = 2 * np.pi * revs
+    signature = 50.0 + 5.0 * np.sin(phase) + 2.0 * np.sin(3 * phase)
+    fx = signature
+    fy = np.zeros(n)
+    fz = np.full(n, 10.0)
+    rpm = np.full(n, 1200.0)
+    rho = 40.0 - 0.05 * revs / (2 * np.pi)
+    theta = 2 * np.pi * revs
+    x = rho * np.cos(theta)
+    y = rho * np.sin(theta)
+    cache = dict(n=n, fs=fs, feed=0.05, diam=80.0, cs_sec=0.0, ce_sec=float(t[-1]),
+                 t=t, fx=fx, fy=fy, fz=fz, rpm=rpm, revs=revs)
+
+    _, m0 = analyse(cache, x, y, channel="ff", mount_deg=0.0, samples_per_rev=spr)
+    assert m0["mount_deg"] == 0.0
+    assert max(abs(v) for v in m0["tsa_signature"]) < 1e-6      # Ff = Fy = 0
+
+    _, m90 = analyse(cache, x, y, channel="ff", mount_deg=90.0, samples_per_rev=spr)
+    assert m90["mount_deg"] == 90.0
+    assert max(abs(v) for v in m90["tsa_signature"]) > 3.0      # Ff = -Fx = the signature
+
+
+def test_analyse_kwargs_translate_to_the_recipe_frame_transform_reads():
+    """analyse() builds a recipe from its kwargs; process_diag_row injects mount_deg /
+    h_matrix onto frame_transform's params directly. Both paths must land the same values
+    where frame_transform actually reads them. This proves analyse(mount_deg, h_matrix,
+    channel) is byte-for-byte identical to run_recipe over a hand-built recipe with those
+    same three params set on frame_transform -- the translation the direct-injection bake
+    path implicitly trusts.
+    """
+    import copy
+
+    from diag.recipe import DEFAULT_RECIPE
+    from diag.runner import run_recipe, seed_columns
+
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut()
+    cache = cache_of(t, fx, fy, fz, rpm, revs, fs)
+    swap = [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+
+    cols_a, metrics_a = analyse(
+        cache, x, y, channel="fc", mount_deg=37.0, h_matrix=np.array(swap), samples_per_rev=SPR
+    )
+
+    recipe = copy.deepcopy(DEFAULT_RECIPE)
+    ft = next(s for s in recipe["steps"] if s["op"] == "frame_transform")
+    ft["params"].update({"channel": "fc", "mount_deg": 37.0, "h_matrix": swap})
+    cols_r, metrics_r = run_recipe(recipe, seed_columns(cache, x, y))
+
+    for name in cols_a:
+        np.testing.assert_array_equal(cols_a[name], cols_r[name], err_msg=f"column {name}")
+    assert metrics_a["mount_deg"] == metrics_r["mount_deg"] == 37.0
+    assert metrics_a["h_matrix_applied"] is metrics_r["h_matrix_applied"] is True
+    assert metrics_a["channel"] == metrics_r["channel"] == "fc"
+
+
 def test_h_matrix_correction_moves_signal_between_channels():
     """A synthetic case where the ONLY way the anomaly-bearing signal ends up on Ff is
     through the H-matrix correction: fx carries the signature, fy is flat. An h_matrix that
