@@ -140,11 +140,15 @@ function onBake() {
 	emit('bake', baked);
 }
 
+const recipeHasBoundSeeds = computed(() => recipe.value.steps.some((s) =>
+	s.on && s.op === 'grow_segmentation'
+	&& (((s.inputs?.seeds as { layers?: string[] } | undefined)?.layers?.length ?? 0) > 0)));
+
 async function runPreview() {
 	previewAbort?.abort();
-	// Show the bake when the recipe is unedited AND no mask is applied — either is a
-	// non-baked state that needs a preview.
-	if (!bakeStale.value && !activeMask.value) {
+	// Show the bake only when nothing overrides it: recipe unedited, no mask applied, no
+	// seeds bound. Any of those is a non-baked state that needs a live preview.
+	if (!bakeStale.value && !activeMask.value && !recipeHasBoundSeeds.value) {
 		previewWS.value = null;
 		previewErr.value = null;
 		previewMs.value = null;
@@ -155,9 +159,12 @@ async function runPreview() {
 	previewing.value = true;
 	previewErr.value = null;
 	try {
+		// Send every painted layer's geometry; the service rasterises only the ones a
+		// binding names (radial_detrend's mask, grow_segmentation's seeds). The mask
+		// binding is injected here; seed bindings are already in the recipe from RecipePanel.
 		const r = await fetchDiagPreview(
 			props.analysisId, recipeWithMask(), null, ac.signal,
-			activeMask.value ? layersForRequest([activeMask.value]) : undefined,
+			layers.value.length ? layersForRequest(layers.value) : undefined,
 		);
 		if (ac.signal.aborted) return;
 		previewWS.value = workingSetFromD1an(r.attrs);
