@@ -222,10 +222,13 @@ function _upsert(saved: DiagLayer) {
 		: [...layers.value, saved];
 }
 async function onAddLayer(role: LayerRole): Promise<DiagLayer> {
-	const existing = layers.value.filter((l) => l.role === role).length;
+	// A time-based suffix, not `count + 1`: two fast clicks both read the same pre-save
+	// count and collide on the (analysis_id, name) unique constraint. The analyst renames
+	// from the LayerPanel anyway.
+	const name = `${role}-${Date.now().toString(36).slice(-4)}`;
 	const saved = await saveLayer({
 		analysis_id: props.analysisId,
-		name: `${role}-${existing + 1}`,
+		name,
 		role,
 		geometry: { polygons: [] },
 	});
