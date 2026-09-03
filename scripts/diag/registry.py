@@ -25,10 +25,13 @@ from .layers import rasterize_polygons
 Columns = dict[str, np.ndarray]
 StepFn = Callable[[Columns, dict[str, Any], dict[str, Any]], tuple[Columns, dict]]
 
-# The RESOLVED shape a step's fn receives as its third argument: each declared input name
-# mapped to a per-point boolean array (True = inside the painted region) or None when the
-# bound layer is absent and the binding is optional.
-Inputs = dict[str, "np.ndarray | None"]
+# The RESOLVED shape a step's fn receives as its third argument. Each declared input name maps
+# to one of:
+#   - a per-point boolean array  (a {"layer": name} binding, True = inside the painted region)
+#   - None                       (a {"layer": name} binding whose optional layer is absent)
+#   - an insertion-ordered dict {layer_name: bool_array}  (a {"layers": [names]} binding, e.g.
+#     grow_segmentation's seed classes -- order is the recipe's, and it is semantic)
+Inputs = dict[str, "np.ndarray | None | dict[str, np.ndarray]"]
 
 # Columns present before any step runs, seeded by the runner from the D1LC cache and the
 # D1OC spiral. x_raw/y_raw are MATLAB's own geometry, never recomputed here.
@@ -93,6 +96,28 @@ def resolve_inputs(step: dict, layers: dict | None, x, y) -> Inputs:
     xa = np.asarray(x)
     out: Inputs = {}
     for key, binding in bindings.items():
+        # List mode: {"layers": [names]} -> ordered {name: bool_array}, one per resolvable
+        # layer (missing layers skipped, not None-entried). Recipe order is preserved and
+        # semantic (e.g. grow_segmentation's seed layers ARE the class indices).
+        if "layers" in binding:
+            resolved: dict[str, np.ndarray] = {}
+            for lname in binding["layers"]:
+                layer = (layers or {}).get(lname)
+                if layer is None:
+                    continue
+                arr = rasterize_polygons(layer["geometry"], x, y)
+                if arr.shape != xa.shape:
+                    raise RecipeError(
+                        f"layer {lname!r} rasterised to {arr.shape}, "
+                        f"step {op!r} expects {xa.shape}"
+                    )
+                resolved[lname] = arr
+            if not resolved and binding.get("required"):
+                raise RecipeError(
+                    f"step {op!r} requires input {key!r} but no bound layer resolved"
+                )
+            out[key] = resolved
+            continue
         name = binding.get("layer")
         layer = (layers or {}).get(name)
         if layer is None:

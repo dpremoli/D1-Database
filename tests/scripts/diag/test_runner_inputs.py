@@ -6,6 +6,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "scripts"))
 
+from diag import ops as _ops  # noqa: F401 -- populates STEPS so the tier gate has data
 from diag.registry import RecipeError, resolve_inputs
 
 
@@ -69,3 +70,46 @@ def test_resolve_inputs_rejects_a_length_mismatch():
             resolve_inputs(step, bad, np.zeros(3), np.zeros(3))
     finally:
         reg.rasterize_polygons = orig
+
+
+def test_resolve_inputs_list_mode_returns_ordered_dict():
+    step = {"op": "grow_segmentation", "on": True,
+            "inputs": {"seeds": {"layers": ["defect", "clean"], "required": False}}}
+    layers = {
+        "clean": _layer([_sq(1.0)]),
+        "defect": _layer([[[5.0, 5.0], [7.0, 5.0], [7.0, 7.0], [5.0, 7.0]]]),
+    }
+    x = np.array([0.0, 6.0, 20.0])
+    y = np.array([0.0, 6.0, 20.0])
+    out = resolve_inputs(step, layers, x, y)
+    assert list(out["seeds"].keys()) == ["defect", "clean"]
+    assert out["seeds"]["defect"].tolist() == [False, True, False]
+    assert out["seeds"]["clean"].tolist() == [True, False, False]
+
+
+def test_resolve_inputs_list_mode_skips_missing_layers():
+    step = {"op": "grow_segmentation",
+            "inputs": {"seeds": {"layers": ["a", "gone"], "required": False}}}
+    out = resolve_inputs(step, {"a": _layer([_sq(1.0)])}, np.zeros(2), np.zeros(2))
+    assert list(out["seeds"].keys()) == ["a"]
+
+
+def test_resolve_inputs_list_mode_required_with_none_raises():
+    step = {"op": "grow_segmentation",
+            "inputs": {"seeds": {"layers": ["gone"], "required": True}}}
+    with pytest.raises(RecipeError, match="seeds"):
+        resolve_inputs(step, {}, np.zeros(2), np.zeros(2))
+
+
+def test_list_binding_hashes_stably_and_order_sensitively():
+    from diag.recipe import recipe_hash
+
+    def mk(layers):
+        return {"steps": [
+            {"id": "a", "op": "frame_transform", "on": True, "params": {}},
+            {"id": "s", "op": "grow_segmentation", "on": True, "params": {},
+             "inputs": {"seeds": {"layers": layers}}},
+        ]}
+
+    assert recipe_hash(mk(["x", "y"])) == recipe_hash(mk(["x", "y"]))
+    assert recipe_hash(mk(["x", "y"])) != recipe_hash(mk(["y", "x"]))
