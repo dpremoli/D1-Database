@@ -40,5 +40,8 @@ export type { Recipe, RecipeStep, ParamSpec, StepMeta, ChannelOption } from './r
 export { fetchDiagPreview } from './diagPreview';
 export type { DiagPreview } from './diagPreview';
 
+export { fetchLayers, saveLayer, deleteLayer, layersForRequest } from './diagLayers';
+export type { DiagLayer, LayerRole, LayerGeometry } from './diagLayers';
+
 export { alignAndDiff } from './compare';
 export type { AlignedDiff } from './compare';
