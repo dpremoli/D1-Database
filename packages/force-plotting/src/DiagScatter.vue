@@ -16,7 +16,7 @@
  * outside the active cross-panel selection -- computed in JS (cheap at <=1M) rather than in
  * the shader, since the selection can be any predicate.
  */
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { COLORMAPS } from './liveCloud';
@@ -46,6 +46,11 @@ const emit = defineEmits<{
 }>();
 
 const draft = ref<[number, number][]>([]);
+
+// Categorical colouring: cluster_id (via the clusterMode prop) OR segment_id (a categorical
+// channel). Both are 0-based class ids with -1 = "none", so the same 12-entry palette path
+// and the same "aValue < 0 -> grey" shader branch serve both.
+const categorical = computed(() => props.clusterMode || props.channel === 'segmentId');
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 const paintEl = ref<HTMLDivElement | null>(null);
@@ -83,7 +88,7 @@ function makeMaterial(): THREE.ShaderMaterial {
 			uGradient: { value: gradientTexture(props.colormap) },
 			uRange: { value: new THREE.Vector2(0, 1) },
 			uSize: { value: props.pointSize },
-			uCluster: { value: props.clusterMode ? 1 : 0 },
+			uCluster: { value: categorical.value ? 1 : 0 },
 			uPalette: { value: paletteFlat },
 			uSelActive: { value: 0 },
 		},
@@ -169,7 +174,7 @@ function packValue() {
 	const attr = geom.getAttribute('aValue') as THREE.BufferAttribute;
 	(attr.array as Float32Array).set(col.subarray(0, ws.n));
 	attr.needsUpdate = true;
-	if (!props.clusterMode) {
+	if (!categorical.value) {
 		const [lo, hi] = percentileRange(col.subarray(0, ws.n));
 		material.uniforms.uRange.value.set(lo, hi);
 		emit('climits', { cmin: lo, cmax: hi });
@@ -338,9 +343,8 @@ onBeforeUnmount(() => {
 });
 
 watch(() => props.workingSet, rebuildGeometry);
-watch(() => props.channel, packValue);
-watch(() => props.clusterMode, () => {
-	if (material) material.uniforms.uCluster.value = props.clusterMode ? 1 : 0;
+watch([() => props.channel, categorical], () => {
+	if (material) material.uniforms.uCluster.value = categorical.value ? 1 : 0;
 	packValue();
 });
 watch(() => props.colormap, () => {

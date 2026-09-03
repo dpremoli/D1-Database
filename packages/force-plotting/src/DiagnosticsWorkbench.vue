@@ -25,6 +25,8 @@ import { DEFAULT_RECIPE, recipeChannels, recipesEquivalent, type Recipe } from '
 import {
 	fetchLayers, saveLayer, deleteLayer, layersForRequest, type DiagLayer, type LayerRole,
 } from './diagLayers';
+import { fetchRecipeLibrary, type SavedRecipe } from './diagRecipes';
+import { clusterColorCss } from './clusterPalette';
 import { useForceHost } from './host';
 
 const props = withDefaults(defineProps<{
@@ -58,6 +60,24 @@ async function loadLayers() {
 }
 onMounted(loadLayers);
 watch(() => props.analysisId, () => { activeLayerName.value = null; drawing.value = false; loadLayers(); });
+
+const seedLayerNames = computed(() => layers.value.filter((l) => l.role === 'seed').map((l) => l.name));
+
+// --- recipe library --------------------------------------------------------------------------
+const library = ref<SavedRecipe[]>([]);
+async function loadLibrary() {
+	try { library.value = await fetchRecipeLibrary(); }
+	catch { library.value = []; }
+}
+onMounted(loadLibrary);
+function onApplyRecipe(r: Recipe) { recipe.value = r; }   // fires the debounced preview watch
+
+// segment_id class index -> the seed layer that defines it (for the Spatial legend)
+const segmentLegend = computed(() => {
+	const seg = recipe.value.steps.find((s) => s.op === 'grow_segmentation' && s.on);
+	const names = (seg?.inputs?.seeds as { layers?: string[] } | undefined)?.layers ?? [];
+	return names.map((name, id) => ({ id, name }));
+});
 
 // Only masks with real geometry can bind to compute; an empty just-created layer is inert.
 const boundMasks = computed(() =>
@@ -120,11 +140,15 @@ function onBake() {
 	emit('bake', baked);
 }
 
+const recipeHasBoundSeeds = computed(() => recipe.value.steps.some((s) =>
+	s.on && s.op === 'grow_segmentation'
+	&& (((s.inputs?.seeds as { layers?: string[] } | undefined)?.layers?.length ?? 0) > 0)));
+
 async function runPreview() {
 	previewAbort?.abort();
-	// Show the bake when the recipe is unedited AND no mask is applied — either is a
-	// non-baked state that needs a preview.
-	if (!bakeStale.value && !activeMask.value) {
+	// Show the bake only when nothing overrides it: recipe unedited, no mask applied, no
+	// seeds bound. Any of those is a non-baked state that needs a live preview.
+	if (!bakeStale.value && !activeMask.value && !recipeHasBoundSeeds.value) {
 		previewWS.value = null;
 		previewErr.value = null;
 		previewMs.value = null;
@@ -135,9 +159,12 @@ async function runPreview() {
 	previewing.value = true;
 	previewErr.value = null;
 	try {
+		// Send every painted layer's geometry; the service rasterises only the ones a
+		// binding names (radial_detrend's mask, grow_segmentation's seeds). The mask
+		// binding is injected here; seed bindings are already in the recipe from RecipePanel.
 		const r = await fetchDiagPreview(
 			props.analysisId, recipeWithMask(), null, ac.signal,
-			activeMask.value ? layersForRequest([activeMask.value]) : undefined,
+			layers.value.length ? layersForRequest(layers.value) : undefined,
 		);
 		if (ac.signal.aborted) return;
 		previewWS.value = workingSetFromD1an(r.attrs);
@@ -195,10 +222,13 @@ function _upsert(saved: DiagLayer) {
 		: [...layers.value, saved];
 }
 async function onAddLayer(role: LayerRole): Promise<DiagLayer> {
-	const existing = layers.value.filter((l) => l.role === role).length;
+	// A time-based suffix, not `count + 1`: two fast clicks both read the same pre-save
+	// count and collide on the (analysis_id, name) unique constraint. The analyst renames
+	// from the LayerPanel anyway.
+	const name = `${role}-${Date.now().toString(36).slice(-4)}`;
 	const saved = await saveLayer({
 		analysis_id: props.analysisId,
-		name: `${role}-${existing + 1}`,
+		name,
 		role,
 		geometry: { polygons: [] },
 	});
@@ -258,7 +288,11 @@ const stateLabel = computed(() => {
 						:previewing="previewing"
 						:preview-ms="previewMs"
 						:preview-error="previewErr"
+						:seed-layer-names="seedLayerNames"
+						:library="library"
 						@bake="onBake"
+						@apply="onApplyRecipe"
+						@library-changed="loadLibrary"
 					/>
 				</WorkbenchPanel>
 
@@ -295,6 +329,12 @@ const stateLabel = computed(() => {
 								:active-id="selection?.kind === 'cluster' ? selection.id : null"
 								@select="onClusterSelect"
 							/>
+							<div v-if="channel === 'segmentId' && segmentLegend.length" class="dw-seg-legend">
+								<span v-for="c in segmentLegend" :key="c.id" class="dw-seg-row">
+									<span class="dw-seg-swatch" :style="{ background: clusterColorCss(c.id) }" />
+									{{ c.id }} · {{ c.name }}
+								</span>
+							</div>
 						</div>
 					</template>
 				</WorkbenchPanel>
@@ -333,6 +373,9 @@ const stateLabel = computed(() => {
 .dw-error { padding: 8px 12px; color: var(--danger, #fca5a5); font-size: 12px; }
 .dw-loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-dim); font-size: 12px; }
 .dw-spatial-footer { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow: auto; }
+.dw-seg-legend { display: flex; flex-wrap: wrap; gap: 6px; font-size: 10px; color: var(--text-dim, #94a3b8); }
+.dw-seg-row { display: inline-flex; align-items: center; gap: 4px; }
+.dw-seg-swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 .dw-channel-select { width: 100%; font-size: 12px; padding: 4px 6px; background: var(--bg-2, #111a33); color: var(--text, #e5e7eb); border: 1px solid var(--border, rgba(255,255,255,0.14)); border-radius: 6px; }
 .dw-state { padding: 4px 12px; font-size: 11px; color: var(--text-dim, #94a3b8); border-top: 1px solid var(--border, rgba(255,255,255,0.1)); }
 .dw-state.preview { color: #fcd34d; background: color-mix(in srgb, #d97706 12%, transparent); }

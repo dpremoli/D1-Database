@@ -99,7 +99,7 @@ DIAG_CACHE_POINTS = 5_000_000
 # v5: the published artifact set gained base.d1an (t, rev, x, y, sig -- the pre-tsa state a
 # preview service resumes a recipe from). Version-4 rows have complete-looking DB rows but
 # no base.d1an on disk, so they must requeue to gain it.
-DIAG_VERSION = 5
+DIAG_VERSION = 6
 DIAG_SAMPLES_PER_REV = 256
 
 

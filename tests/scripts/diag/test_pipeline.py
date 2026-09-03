@@ -117,6 +117,7 @@ def test_pipeline_columns_include_spatial_coordinates():
         "cluster_id",
         "glosh",
         "env_band",
+        "segment_id",
     }
     # x/y must land on the same radius the spiral actually has at that revolution --
     # not just be finite/present. rho = 40.0 - 0.05*revs in synthetic_cut.

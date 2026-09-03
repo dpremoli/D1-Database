@@ -8,7 +8,7 @@ import type { DiagAttrs } from './diagAttrs';
 /** Every per-point channel the diag pipeline produces, camelCased. Defined once here and
  *  imported wherever a channel is named (the Spatial selector, DiagScatter, RecipePanel). */
 export type ChannelKey =
-	| 'tsaResid' | 'residZ' | 'giStar' | 'giSig' | 'clusterId' | 'glosh' | 'envBand';
+	| 'tsaResid' | 'residZ' | 'giStar' | 'giSig' | 'clusterId' | 'glosh' | 'envBand' | 'segmentId';
 
 export interface WorkingSet {
 	n: number;
@@ -23,6 +23,7 @@ export interface WorkingSet {
 	clusterId: Float32Array;
 	glosh: Float32Array;
 	envBand: Float32Array;
+	segmentId: Float32Array;
 }
 
 // snake_case D1AN column -> camelCase WorkingSet field. The full contract; a file missing any
@@ -30,7 +31,7 @@ export interface WorkingSet {
 const COLUMN_MAP: Record<string, keyof WorkingSet> = {
 	t: 't', rev: 'rev', x: 'x', y: 'y',
 	tsa_resid: 'tsaResid', resid_z: 'residZ', gi_star: 'giStar', gi_sig: 'giSig',
-	cluster_id: 'clusterId', glosh: 'glosh', env_band: 'envBand',
+	cluster_id: 'clusterId', glosh: 'glosh', env_band: 'envBand', segment_id: 'segmentId',
 };
 
 export function workingSetFromD1an(attrs: DiagAttrs): WorkingSet {
@@ -55,6 +56,7 @@ export const CHANNEL_ACCESSOR: Record<ChannelKey, (ws: WorkingSet, i: number) =>
 	clusterId: (ws, i) => ws.clusterId[i],
 	glosh: (ws, i) => ws.glosh[i],
 	envBand: (ws, i) => ws.envBand[i],
+	segmentId: (ws, i) => ws.segmentId[i],
 };
 
 export type Selection =

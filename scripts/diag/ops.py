@@ -206,3 +206,29 @@ def _op_envelope(cols: Columns, params: dict, inputs: dict):
             "amplitude": [float(v) for v in ea],
         },
     }
+
+
+@step("grow_segmentation", produces=["segment_id"],
+      requires=["x", "y", "resid_z"], tier="derived")
+def _op_grow_segmentation(cols: Columns, params: dict, inputs: dict):
+    """Seeded segmentation: each bound seed-role layer is one class; LabelSpreading fills
+    every other point. Degrades to all -1 below 2 seed classes. NOT in DEFAULT_RECIPE -- it
+    needs seed layers that do not exist by default; the runner's assembly fills segment_id
+    with -1 for every cut that never enables this step."""
+    from .segmentation import grow_segmentation
+
+    feature_names = params.get("features") or ["resid_z"]
+    feature_cols = [cols[f] for f in feature_names if f in cols]
+    seeds = inputs.get("seeds") or {}
+    seed_masks = list(seeds.values())  # order preserved from resolve_inputs list mode
+    seg, status = grow_segmentation(
+        cols["x"], cols["y"], feature_cols, seed_masks,
+        k=int(params.get("k", 15)),
+        alpha=float(params.get("alpha", 0.2)),
+        attr_weight=float(params.get("attr_weight", 1.0)),
+    )
+    n_classes = len({int(v) for v in seg[seg >= 0]})
+    return {"segment_id": seg}, {
+        "segmentation_status": status,
+        "segmentation_n_classes": int(n_classes),
+    }

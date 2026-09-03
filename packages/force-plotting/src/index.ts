@@ -44,5 +44,9 @@ export type { DiagPreview } from './diagPreview';
 export { fetchLayers, saveLayer, deleteLayer, layersForRequest } from './diagLayers';
 export type { DiagLayer, LayerRole, LayerGeometry } from './diagLayers';
 
+export { fetchRecipeLibrary, saveRecipe, deleteRecipe } from './diagRecipes';
+export type { SavedRecipe } from './diagRecipes';
+export { default as RecipeLibrary } from './RecipeLibrary.vue';
+
 export { alignAndDiff } from './compare';
 export type { AlignedDiff } from './compare';

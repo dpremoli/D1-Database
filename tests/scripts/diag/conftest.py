@@ -85,7 +85,15 @@ def assert_columns_match_golden(cols, metrics, golden_path, nondegenerate=()):
         assert np.count_nonzero(golden[name]) > 0, (
             f"golden {name!r} is degenerate -- fixture regenerated from a broken pipeline?"
         )
-    assert set(cols) == set(expected), "column set drifted from the frozen reference"
+    # The frozen fixture predates segment_id (D1AN's 12th column, Phase F). Every column the
+    # fixture DOES contain must still be present and byte-identical; a column the run adds
+    # beyond the fixture is allowed only if it is segment_id and entirely unsegmented (-1).
+    missing = set(expected) - set(cols)
+    assert not missing, f"columns dropped vs the frozen reference: {missing}"
+    extra = set(cols) - set(expected)
+    assert extra <= {"segment_id"}, f"unexpected columns beyond the reference: {extra}"
+    if "segment_id" in extra:
+        assert np.all(cols["segment_id"] == -1), "default-path segment_id must be all -1"
     for name, want in expected.items():
         got = cols[name]
         assert got.dtype == want.dtype, f"column {name!r} dtype drifted"

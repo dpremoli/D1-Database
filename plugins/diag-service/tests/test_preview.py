@@ -31,7 +31,7 @@ from diag.runner import run_recipe, seed_columns  # noqa: E402
 BASE_COLUMNS = ("t", "rev", "x", "y", "sig")
 PUBLIC = {
     "t", "rev", "x", "y", "tsa_resid", "resid_z",
-    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band",
+    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band", "segment_id",
 }
 
 
@@ -123,8 +123,8 @@ def test_preview_approximates_a_full_bake(client):
     want, _ = _full_bake()
     assert set(got) == PUBLIC == set(want)
 
-    # pass-through / structurally-exact columns
-    for name in ("t", "rev", "x", "y", "env_band"):
+    # pass-through / structurally-exact columns (segment_id is all -1 both sides: no seeds)
+    for name in ("t", "rev", "x", "y", "env_band", "segment_id"):
         np.testing.assert_array_equal(got[name], want[name], err_msg=f"{name} must be exact")
 
     # continuous statistics: close, not equal
@@ -267,3 +267,28 @@ def test_preview_rejects_malformed_layer_geometry(client):
     )
     assert r.status_code == 422
     assert "bad" in r.text
+
+
+def test_preview_returns_segment_id_from_seeds(client):
+    import copy
+
+    recipe = copy.deepcopy(DEFAULT_RECIPE)
+    recipe["steps"].append({
+        "id": "seg", "op": "grow_segmentation", "on": True,
+        "params": {"features": ["resid_z"], "k": 15},
+        "inputs": {"seeds": {"layers": ["a", "b"], "required": False}},
+    })
+    big_left = [[[-1e9, -1e9], [0, -1e9], [0, 1e9], [-1e9, 1e9]]]
+    big_right = [[[0, -1e9], [1e9, -1e9], [1e9, 1e9], [0, 1e9]]]
+    body = {
+        "analysis_id": "a1", "recipe": recipe,
+        "layers": {
+            "a": {"role": "seed", "geometry": {"polygons": big_left}, "value": None, "version": 1},
+            "b": {"role": "seed", "geometry": {"polygons": big_right}, "value": None, "version": 1},
+        },
+    }
+    r = client.post("/preview", json=body)
+    assert r.status_code == 200, r.text
+    got = _read_bytes(r.content)
+    assert "segment_id" in got
+    assert set(np.unique(got["segment_id"])) <= {0.0, 1.0}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DiagAttrs } from './diagAttrs';
-import { clusterStats, computeStats, matches, workingSetFromD1an } from './selection';
+import { CHANNEL_ACCESSOR, clusterStats, computeStats, matches, workingSetFromD1an } from './selection';
 import type { Selection } from './selection';
 
 function makeAttrs(): DiagAttrs {
@@ -19,6 +19,7 @@ function makeAttrs(): DiagAttrs {
 			cluster_id: new Float32Array([0, 0, -1, 1, 1]),
 			glosh: new Float32Array([0.9, 0.1, 0.5, 0.2, 0.8]),
 			env_band: new Float32Array([0, 0, 0, 0, 0]),
+			segment_id: new Float32Array([-1, 0, 0, 1, 1]),
 		},
 	};
 }
@@ -37,6 +38,12 @@ describe('workingSetFromD1an', () => {
 		const attrs = makeAttrs();
 		delete attrs.columns.gi_star;
 		expect(() => workingSetFromD1an(attrs)).toThrow(/gi_star/);
+	});
+
+	it('maps segment_id and reads it through the accessor', () => {
+		const ws = workingSetFromD1an(makeAttrs());
+		expect(Array.from(ws.segmentId)).toEqual([-1, 0, 0, 1, 1]);
+		expect(CHANNEL_ACCESSOR.segmentId(ws, 3)).toBe(1);
 	});
 });
 
