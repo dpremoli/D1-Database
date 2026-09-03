@@ -30,9 +30,9 @@
 - `tests/scripts/test_resid_broadcast.py` — `np.interp` broadcast fidelity (module-level helper extracted from `process_diag_row`).
 - `scripts/diag/broadcast.py` — `broadcast_to_spiral(rev_grid, value_grid, revs_full) -> np.ndarray`. One tiny pure function, unit-testable without MATLAB.
 - `plugins/diag-service/tests/test_viewport.py` — crop, stride, per-step, authz, LRU.
-- `packages/force-plotting/src/diagViewport.ts` — `fetchViewportCompute(analysisId, bbox, step, opts) -> {x, y, value, n}`.
+- `packages/force-plotting/src/diagViewport.ts` — `fetchViewportCompute(analysisId, bbox, step, opts) -> {x, y, value, n, ms}`.
 - `packages/force-plotting/src/diagViewport.test.ts`.
-- `packages/force-plotting/src/DiagAnalysisOverlay.vue` — flat `THREE.Points` overlay fed by a viewport result.
+- ~~`DiagAnalysisOverlay.vue`~~ — **dropped in Task 3 Step 1.** A second `<canvas>` would need its own WebGL context, camera sync, and z-fight management; the overlay instead renders as a second `THREE.Points` inside `DiagOctreeView`'s own scene (Task 4).
 
 **Modify:**
 - `scripts/force_orchestrator.py` — `process_diag_row`: `resid_z` broadcast + `full.d1an` + `full/` octree publish; `DIAG_VERSION = 7`.
@@ -41,7 +41,7 @@
 - `packages/force-plotting/src/DiagOctreeView.vue` — paint machinery port (draw `<div>`, `canvasToWorld`, layer `LineLoop` overlay, draft ring); new props `layers`, `activeLayerName`, `paintMode`; new emit `polygon`. `currentBounds()` is already exposed — add a `boundsChanged` emit, debounced.
 - `packages/force-plotting/src/DiagnosticsWorkbench.vue` — retire `DiagScatter`; `DiagOctreeView` + `DiagAnalysisOverlay` as the Spatial panel; viewport tracking; Gi\* auto / HDBSCAN+segmentation buttons; layout rework (Spatial hero, Recipe collapsible); state strip with viewport point count.
 - `packages/force-plotting/src/RecipePanel.vue` — per spatial step: "runs on the current view" note + trigger button for HDBSCAN / segmentation; `collapsed` prop.
-- `packages/force-plotting/src/index.ts` — export `DiagAnalysisOverlay`, `fetchViewportCompute`.
+- `packages/force-plotting/src/index.ts` — export `fetchViewportCompute`, `ViewportStep`, `ViewportResult`.
 - `apps/force-app/web/src/force/DiagnosticsPage.vue` — pass through any new props (likely none; the workbench owns viewport state).
 
 **Retire (keep exported, remove from the workbench):** `DiagScatter.vue` — still in `index.ts`, no longer imported by `DiagnosticsWorkbench.vue`.

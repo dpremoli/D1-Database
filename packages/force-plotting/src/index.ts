@@ -41,6 +41,9 @@ export type { Recipe, RecipeStep, ParamSpec, StepMeta, ChannelOption } from './r
 export { fetchDiagPreview } from './diagPreview';
 export type { DiagPreview } from './diagPreview';
 
+export { fetchViewportCompute } from './diagViewport';
+export type { ViewportStep, ViewportResult } from './diagViewport';
+
 export { fetchLayers, saveLayer, deleteLayer, layersForRequest } from './diagLayers';
 export type { DiagLayer, LayerRole, LayerGeometry } from './diagLayers';
 
