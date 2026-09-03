@@ -99,7 +99,11 @@ DIAG_CACHE_POINTS = 5_000_000
 # v5: the published artifact set gained base.d1an (t, rev, x, y, sig -- the pre-tsa state a
 # preview service resumes a recipe from). Version-4 rows have complete-looking DB rows but
 # no base.d1an on disk, so they must requeue to gain it.
-DIAG_VERSION = 6
+# v7 (Phase G): the published set gained full/ -- a full-resolution resid_z octree and
+# full.d1an (flat {x, y, resid_z} at raw spiral resolution) that /diag/viewport crops to run
+# a spatial step on a framed region. The 256/rev analysis output is unchanged; v6 rows just
+# lack full/ on disk and must requeue to gain it.
+DIAG_VERSION = 7
 DIAG_SAMPLES_PER_REV = 256
 
 
@@ -1135,6 +1139,70 @@ def process_diag_row(
         # base.d1an: pre-statistics state (t, rev, x, y, sig) for a future preview service
         # to resume a recipe from without MATLAB or the archive.
         shutil.copy2(base_path, dst / "base.d1an")
+
+        # --- Phase G: full-resolution resid_z octree + flat viewport source ----------------
+        # x / y here are the STRIDED spiral (cache_target points, index-aligned with the
+        # cache) -- the raw cloud, not the 256/rev angular grid. Broadcast the 256/rev
+        # resid_z onto every spiral point by revolution-phase so /diag/viewport can run a
+        # spatial step (Gi*, HDBSCAN, seeded segmentation) on a framed region at full res.
+        from diag.broadcast import broadcast_to_spiral
+
+        resid_full = broadcast_to_spiral(
+            columns["rev"].astype(np.float64),
+            columns["resid_z"].astype(np.float64),
+            np.asarray(cache["revs"], dtype=np.float64),
+        )
+        # write_d1an raises a generic ValueError on a length mismatch, which would land in
+        # the daemon's except and write a useless diag_error. Fail loudly with real numbers.
+        if resid_full.size != x.size:
+            raise RuntimeError(
+                f"resid_z broadcast length {resid_full.size} != strided spiral {x.size}"
+            )
+        full_dir = dst / "full"
+        full_dir.mkdir(parents=True, exist_ok=True)
+
+        # full.d1an: the flat {x, y, resid_z} the /diag/viewport endpoint crops. Keep NaN
+        # (a Phase-E mask leaves NaN in resid_z; masked points must be excluded from a
+        # viewport recompute, so the endpoint sees the NaN and drops them).
+        full_d1an = Path(outdir) / "full.d1an"
+        write_d1an(str(full_d1an), {
+            "x": x.astype(np.float32),
+            "y": y.astype(np.float32),
+            "resid_z": resid_full.astype(np.float32),
+        })
+        shutil.copy2(full_d1an, full_dir / "full.d1an")
+
+        # full/ octree: LAS with resid_z as the one extra dim; nan_to_num so PotreeConverter's
+        # per-attribute min/max stays finite (else DiagOctreeView's colour range goes NaN and
+        # the octree renders blank -- same rule as the 256/rev octree above).
+        fh = laspy.LasHeader(point_format=3)
+        fh.offsets = [float(x.min()), float(y.min()), 0.0]
+        fh.scales = [0.001, 0.001, 0.001]
+        fh.add_extra_dim(laspy.ExtraBytesParams(name="resid_z", type=np.float32))
+        fl = laspy.LasData(fh)
+        fl.x = x.astype(np.float64)
+        fl.y = y.astype(np.float64)
+        fl.z = np.zeros(x.size)
+        fl.resid_z = np.nan_to_num(resid_full, nan=0.0).astype(np.float32)
+        _rlo = float(np.nanmin(resid_full)) if np.any(np.isfinite(resid_full)) else 0.0
+        _rhi = float(np.nanmax(resid_full)) if np.any(np.isfinite(resid_full)) else 1.0
+        fl.intensity = np.clip(
+            (np.nan_to_num(resid_full, nan=_rlo) - _rlo) / ((_rhi - _rlo) or 1.0) * 65535,
+            0, 65535,
+        ).astype(np.uint16)
+        full_las = str(Path(outdir) / "full.las")
+        fl.write(full_las)
+
+        full_octmp = str(Path(outdir) / "full_octree")
+        fpc = subprocess.run(
+            [potree_exe, full_las, "-o", full_octmp],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if fpc.returncode != 0 or not (Path(full_octmp) / "metadata.json").exists():
+            tail = (fpc.stderr or fpc.stdout or "").strip().splitlines()[-5:]
+            raise RuntimeError("PotreeConverter (full) failed: " + " | ".join(tail))
+        for fn in ("metadata.json", "hierarchy.bin", "octree.bin"):
+            shutil.copy2(Path(full_octmp) / fn, full_dir / fn)
 
         # The stored identity of these artifacts: the effective recipe hash, plus a layer
         # fingerprint when the cut has painted layers. claim_diag's staleness clause requeues

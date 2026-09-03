@@ -17,16 +17,24 @@ const props = defineProps<{
 	previewError: string | null;
 	seedLayerNames: string[];
 	library: SavedRecipe[];
+	collapsed?: boolean;
 }>();
 const emit = defineEmits<{
 	(e: 'update:recipe', r: Recipe): void;
+	(e: 'update:collapsed', v: boolean): void;
 	(e: 'bake'): void;
 	(e: 'apply', r: Recipe): void;
 	(e: 'library-changed'): void;
+	(e: 'run-step', op: 'getis_ord' | 'hdbscan' | 'grow_segmentation'): void;
 }>();
 
 // s1..s7 are the built-in default steps — not removable. Anything added carries an x-prefixed id.
 const DEFAULT_IDS = new Set(['s1', 's2', 's3', 's4', 's5', 's6', 's7']);
+
+// Steps whose statistics run on the FRAMED viewport at full resolution (Phase G), not on the
+// 256/rev bake. Gi* auto-fires on pan/zoom settle; HDBSCAN / segmentation run on the button.
+const SPATIAL_OPS = new Set(['getis_ord', 'hdbscan', 'grow_segmentation']);
+const BUTTON_OPS = new Set(['hdbscan', 'grow_segmentation']);
 
 function edit(mut: (r: Recipe) => void) {
 	const next = JSON.parse(JSON.stringify(props.recipe)) as Recipe;
@@ -94,7 +102,11 @@ function toggleSeed(id: string, name: string) {
 
 <template>
 	<div class="recipe-panel">
-		<ol class="steps">
+		<button class="rp-collapse" @click="emit('update:collapsed', !collapsed)">
+			<span>{{ collapsed ? '▸' : '▾' }}</span>
+			<span>{{ collapsed ? 'Recipe (collapsed)' : 'Recipe steps' }}</span>
+		</button>
+		<ol v-show="!collapsed" class="steps">
 			<li v-for="s in recipe.steps" :key="s.id" :class="{ off: !s.on }">
 				<label class="step-head">
 					<input type="checkbox" :checked="s.on" @change="toggle(s.id)" />
@@ -116,6 +128,13 @@ function toggleSeed(id: string, name: string) {
 							@change="setParam(s.id, p.key, ($event.target as HTMLInputElement).value)" />
 					</label>
 				</div>
+				<div v-if="s.on && SPATIAL_OPS.has(s.op)" class="scope-note">
+					<span>runs on the current view · full resolution</span>
+					<button v-if="BUTTON_OPS.has(s.op)" class="run-step-btn"
+						@click.prevent="emit('run-step', s.op as 'hdbscan' | 'grow_segmentation')">
+						Run on this view
+					</button>
+				</div>
 				<div v-if="s.on && s.op === 'grow_segmentation'" class="seed-bind">
 					<span class="seed-title">Seed classes</span>
 					<p v-if="!seedLayerNames.length" class="seed-hint">paint a seed layer first</p>
@@ -128,7 +147,7 @@ function toggleSeed(id: string, name: string) {
 			</li>
 		</ol>
 
-		<div class="add-step" v-if="addableOps.length">
+		<div class="add-step" v-if="!collapsed && addableOps.length">
 			<select @change="addStep(($event.target as HTMLSelectElement).value); ($event.target as HTMLSelectElement).value = ''">
 				<option value="">+ add step…</option>
 				<option v-for="op in addableOps" :key="op" :value="op">{{ STEP_META[op].label }}</option>
@@ -179,6 +198,9 @@ function toggleSeed(id: string, name: string) {
 .seed-hint { margin: 0; font-size: 10px; font-style: italic; color: var(--text-dim, #94a3b8); }
 .seed-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
 .seed-idx { font-size: 9px; color: var(--text-dim, #94a3b8); }
+.rp-collapse { display: flex; align-items: center; gap: 6px; width: 100%; font: inherit; font-size: 11px; font-weight: 600; color: var(--text-dim, #94a3b8); background: none; border: none; border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); padding: 6px 10px; cursor: pointer; text-align: left; }
+.scope-note { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; padding-left: 22px; font-size: 10px; color: #86efac; }
+.run-step-btn { font: inherit; font-size: 10px; cursor: pointer; padding: 2px 7px; border-radius: 5px; color: var(--text, #e5e7eb); background: var(--bg-2, #111a33); border: 1px solid var(--border, rgba(255,255,255,0.18)); }
 .add-step { padding: 6px 10px; border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); }
 .add-step select { width: 100%; font-size: 11px; padding: 3px 5px; background: var(--bg-2, #111a33); color: var(--text, #e5e7eb); border: 1px solid var(--border, rgba(255,255,255,0.14)); border-radius: 5px; }
 .rp-footer { flex-shrink: 0; border-top: 1px solid var(--border, rgba(255,255,255,0.12)); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }

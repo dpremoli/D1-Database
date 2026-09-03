@@ -43,7 +43,7 @@ for _p in (
 from diag.d1an import read_d1an, write_d1an  # noqa: E402
 from diag.layers import validate_geometry  # noqa: E402
 from diag.recipe import recipe_hash  # noqa: E402
-from diag.registry import STEPS  # noqa: E402
+from diag.registry import STEPS, resolve_inputs  # noqa: E402
 from diag.runner import run_recipe  # noqa: E402
 
 DIRECTUS_URL = os.environ.get("DIRECTUS_URL", "http://directus:8055").rstrip("/")
@@ -127,6 +127,41 @@ def _load_base(diag_path: str) -> dict:
     _base_lru[diag_path] = cols
     while len(_base_lru) > BASE_LRU_CAP:
         _base_lru.popitem(last=False)
+    return cols
+
+
+# --- Phase G: full-resolution viewport recompute ---------------------------------------
+# full.d1an is the flat {x, y, resid_z} at raw spiral resolution (~7M rows x 3 float64 ~=
+# 168 MB parsed). The endpoint crops it to a framed bbox, strides down over max_points, and
+# runs exactly ONE spatial registry step on the crop. Never authoritative -- the 256/rev
+# attrs.d1an stays the baked truth; this is a preview at the resolution the analyst is
+# looking at.
+FULL_LRU_CAP = int(os.environ.get("FULL_LRU", "3"))
+_full_lru: OrderedDict[str, dict] = OrderedDict()
+_viewport_lru: OrderedDict[tuple, tuple[bytes, int]] = OrderedDict()  # key -> (d1an bytes, n)
+
+_VIEWPORT_STEPS = {"getis_ord", "hdbscan", "grow_segmentation"}
+_VIEWPORT_OUTPUT = {
+    "getis_ord": "gi_star",
+    "hdbscan": "cluster_id",
+    "grow_segmentation": "segment_id",
+}
+
+
+def _load_full(diag_path: str) -> dict:
+    if not _DIAG_PATH_RE.fullmatch(diag_path):
+        raise HTTPException(400, "invalid diag_path")
+    hit = _full_lru.get(diag_path)
+    if hit is not None:
+        _full_lru.move_to_end(diag_path)
+        return hit
+    path = os.path.join(_octree_root(), "diag", diag_path, "full", "full.d1an")
+    if not os.path.isfile(path):
+        raise HTTPException(409, "no full.d1an — a rebake at DIAG_VERSION 7 is needed")
+    cols = {k: np.asarray(v, dtype=np.float64) for k, v in read_d1an(path).items()}
+    _full_lru[diag_path] = cols
+    while len(_full_lru) > FULL_LRU_CAP:
+        _full_lru.popitem(last=False)
     return cols
 
 
@@ -219,4 +254,116 @@ async def preview(req: Request):
             "X-Diag-Preview": "approximate",
             "X-Diag-Ms": f"{(time.perf_counter() - t0) * 1000:.0f}",
         },
+    )
+
+
+@app.post("/viewport")
+async def viewport(req: Request):
+    """Run one spatial step (Gi*, HDBSCAN, seeded segmentation) on a framed region of the
+    full-resolution cloud. The client sends a bbox in x/y mm and the step config; we crop
+    full.d1an to it, stride down if over max_points, and return D1AN {x, y, value}."""
+    body = await req.json()
+    analysis_id = body.get("analysis_id")
+    bbox = body.get("bbox")
+    step = body.get("step") or {}
+    layers = body.get("layers") or None
+    max_points = int(body.get("max_points") or 1_000_000)
+    output = body.get("output") or "gi_star"
+    op = step.get("op")
+
+    if not analysis_id or not isinstance(bbox, list) or len(bbox) != 4:
+        raise HTTPException(422, "analysis_id and bbox [x0,y0,x1,y1] are required")
+    if op not in _VIEWPORT_STEPS:
+        raise HTTPException(422, f"step.op must be one of {sorted(_VIEWPORT_STEPS)}")
+    if layers is not None:
+        if not isinstance(layers, dict):
+            raise HTTPException(422, "layers must be an object keyed by layer name")
+        for lname, layer in layers.items():
+            try:
+                validate_geometry((layer or {}).get("geometry") or {})
+            except (ValueError, AttributeError, TypeError) as e:
+                raise HTTPException(422, f"layer '{lname}': {e}") from e
+
+    row = await _resolve_and_authorize(str(analysis_id), req)
+    if row.get("diag_status") != "done" or not row.get("diag_path"):
+        raise HTTPException(409, "analysis has no completed bake")
+    diag_path = str(row["diag_path"])
+
+    x0, y0, x1, y1 = (float(v) for v in bbox)
+    if x1 < x0:
+        x0, x1 = x1, x0
+    if y1 < y0:
+        y0, y1 = y1, y0
+
+    layers_key = repr(sorted((layers or {}).items())) if layers else ""
+    key = (
+        diag_path, op,
+        (round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3)),
+        recipe_hash({"steps": [step]}), layers_key, output, max_points,
+    )
+    cached = _viewport_lru.get(key)
+    if cached is not None:
+        _viewport_lru.move_to_end(key)
+        cbytes, cn = cached
+        return Response(
+            cbytes, media_type="application/octet-stream",
+            headers={"Cache-Control": "no-store", "X-Diag-Cache": "hit",
+                     "X-Diag-Viewport-N": str(cn)},
+        )
+
+    full = _load_full(diag_path)
+    fx, fy, frz = full["x"], full["y"], full["resid_z"]
+    m = (fx >= x0) & (fx <= x1) & (fy >= y0) & (fy <= y1)
+    idx = np.where(m)[0]
+    if idx.size == 0:
+        raise HTTPException(422, "empty viewport")
+    if idx.size > max_points:
+        idx = idx[:: int(np.ceil(idx.size / max_points))]
+    xc = fx[idx].copy()
+    yc = fy[idx].copy()
+    rc = frz[idx].copy()
+
+    resolved: dict = {}
+    if op == "grow_segmentation":
+        resolved = resolve_inputs(
+            {"op": op, "inputs": step.get("inputs")}, layers, xc, yc
+        )
+
+    t0 = time.perf_counter()
+    try:
+        produced, _metrics = STEPS[op].fn(
+            {"x": xc, "y": yc, "resid_z": rc}, step.get("params") or {}, resolved
+        )
+    except HTTPException:
+        raise
+    except (KeyError, ValueError) as e:
+        raise HTTPException(422, f"step failed: {e}") from e
+    ms = int((time.perf_counter() - t0) * 1000)
+
+    col = _VIEWPORT_OUTPUT[op]
+    if op == "getis_ord" and output in ("gi_star", "gi_sig"):
+        col = output
+    categorical = col in ("cluster_id", "segment_id")
+    value = np.nan_to_num(produced[col], nan=-1.0 if categorical else np.nan)
+
+    with tempfile.NamedTemporaryFile(suffix=".d1an", delete=False) as f:
+        tmp = f.name
+    try:
+        write_d1an(tmp, {
+            "x": xc.astype(np.float32),
+            "y": yc.astype(np.float32),
+            "value": value.astype(np.float32),
+        })
+        with open(tmp, "rb") as fh:
+            out = fh.read()
+    finally:
+        os.unlink(tmp)
+
+    _viewport_lru[key] = (out, int(xc.size))
+    while len(_viewport_lru) > RESULT_LRU_CAP:
+        _viewport_lru.popitem(last=False)
+    return Response(
+        out, media_type="application/octet-stream",
+        headers={"Cache-Control": "no-store", "X-Diag-Cache": "miss",
+                 "X-Diag-Ms": str(ms), "X-Diag-Viewport-N": str(xc.size)},
     )
