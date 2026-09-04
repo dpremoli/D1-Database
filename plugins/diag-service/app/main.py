@@ -238,6 +238,13 @@ async def preview(req: Request):
     if not analysis_id or not isinstance(recipe, dict):
         raise HTTPException(422, "analysis_id and recipe are required")
 
+    # "Click a step in the Pipeline panel to revert the view to it" (Phase H slice 3): the
+    # full step-list index (disabled steps included) to truncate execution after, in
+    # runner.run_recipe's own stop_after convention. None previews the whole recipe.
+    stop_after = body.get("stop_after")
+    if stop_after is not None and not isinstance(stop_after, int):
+        raise HTTPException(422, "stop_after must be an integer or null")
+
     # Inline layers are the authoritative mask/label/seed input for THIS request (spec
     # Component 4: "a mask is most useful while you are still drawing it"). Validate the
     # geometry shape here so a malformed polygon set is a clean 422, not a 500 from deep in
@@ -263,7 +270,7 @@ async def preview(req: Request):
     recipe, skipped = _disable_unpreviewable(recipe, from_step)
     skipped_hdr = ",".join(s for s in skipped if s)
 
-    key = (diag_path, recipe_hash(recipe), _layers_key(layers))
+    key = (diag_path, recipe_hash(recipe), _layers_key(layers), stop_after)
     cached = _result_lru.get(key)
     if cached is not None:
         _result_lru.move_to_end(key)
@@ -282,7 +289,7 @@ async def preview(req: Request):
     t0 = time.perf_counter()
     try:
         cols, _metrics = run_recipe(
-            recipe, dict(base), layers=layers, from_step=from_step
+            recipe, dict(base), layers=layers, from_step=from_step, stop_after=stop_after
         )
     except HTTPException:
         raise

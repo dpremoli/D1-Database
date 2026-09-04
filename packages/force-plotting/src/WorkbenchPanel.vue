@@ -12,6 +12,7 @@ defineEmits<{ close: [] }>();
 		<div class="wb-panel-handle">
 			<span v-if="icon" class="material-symbols-rounded">{{ icon }}</span>
 			<span class="wb-panel-title">{{ title }}</span>
+			<slot name="title-extra" />
 			<span class="wb-panel-grip material-symbols-rounded">drag_indicator</span>
 			<button v-if="closable" class="wb-panel-close" title="Close panel" @pointerdown.stop @click.stop="$emit('close')">
 				<span class="material-symbols-rounded">close</span>

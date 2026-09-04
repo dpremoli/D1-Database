@@ -17,7 +17,7 @@
 //      is a floor measured in grid cells, and now says so.
 import { computed, ref } from 'vue';
 import {
-	CATEGORY_LABELS, CATEGORY_ORDER, STEP_META,
+	CATEGORY_LABELS, CATEGORY_ORDER, STEP_META, recipeProblems, stepIsRevertable,
 	type Recipe, type RecipeProblem, type RecipeStep, type StepCategory,
 } from './recipeChannels';
 import type { ViewportOp } from './diagViewport';
@@ -44,6 +44,8 @@ const props = defineProps<{
 	baking?: boolean;
 	/** ops the preview silently skipped (base-tier steps), from X-Diag-Skipped. */
 	skippedOps?: string[];
+	/** id of the step the hero view currently shows "as of", or null for the full pipeline. */
+	revertStepId?: string | null;
 }>();
 const emit = defineEmits<{
 	(e: 'update:recipe', r: Recipe): void;
@@ -52,6 +54,11 @@ const emit = defineEmits<{
 	(e: 'apply', r: Recipe): void;
 	(e: 'library-changed'): void;
 	(e: 'run-step', op: ViewportOp): void;
+	/** Card clicked (or its clear button): the step id to revert the view to, or null to
+	 *  return to the full pipeline. Always the final desired state, never a toggle request --
+	 *  this panel already knows `revertStepId`, so it resolves "click the active card again"
+	 *  to null itself rather than asking the parent to guess. */
+	(e: 'revert-step', stepId: string | null): void;
 }>();
 
 // s1..s7 are the built-in default steps — not removable. Anything added carries an x-prefixed id.
@@ -129,6 +136,47 @@ function removeStep(id: string) {
 	edit((r) => { r.steps = r.steps.filter((s) => s.id !== id); });
 }
 
+// --- drag-reorder ---------------------------------------------------------------------------
+// Native HTML5 drag/drop, anchored on the grip icon only (not the whole card) so dragging
+// never fights the card's own click-to-revert or the param inputs' text selection.
+const dragFrom = ref<number | null>(null);
+const dragOverIdx = ref<number | null>(null);
+const dragRefused = ref<string | null>(null);
+let dragRefusedTimer: ReturnType<typeof setTimeout> | null = null;
+
+function onDragStart(e: DragEvent, i: number) {
+	dragFrom.value = i;
+	if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(i)); }
+}
+function onDragOverStep(i: number) { dragOverIdx.value = i; }
+function onDragEnd() { dragFrom.value = null; dragOverIdx.value = null; }
+
+function onDropStep(toIdx: number) {
+	const fromIdx = dragFrom.value;
+	dragOverIdx.value = null;
+	dragFrom.value = null;
+	if (fromIdx === null || fromIdx === toIdx) return;
+
+	const next = JSON.parse(JSON.stringify(props.recipe)) as Recipe;
+	const [moved] = next.steps.splice(fromIdx, 1);
+	next.steps.splice(toIdx, 0, moved);
+
+	// Revalidate before committing: refuse a drop that STRANDS a step (creates a problem it
+	// did not already have), rather than letting the panel show a broken pipeline the analyst
+	// has to notice and undo themselves. Computed fresh from props.recipe rather than read off
+	// the props.problems prop, so a stale/debounced problems prop can never let a genuinely
+	// stranding drop through.
+	const before = new Set(recipeProblems(props.recipe).map((p) => p.stepId));
+	const newlyBroken = recipeProblems(next).filter((p) => !before.has(p.stepId));
+	if (newlyBroken.length) {
+		if (dragRefusedTimer) clearTimeout(dragRefusedTimer);
+		dragRefused.value = newlyBroken[0].message;
+		dragRefusedTimer = setTimeout(() => { dragRefused.value = null; }, 4500);
+		return;
+	}
+	emit('update:recipe', next);
+}
+
 function seedBound(s: RecipeStep): string[] {
 	return ((s.inputs?.seeds as { layers?: string[] } | undefined)?.layers) ?? [];
 }
@@ -161,6 +209,19 @@ function toggleExpand(id: string) {
 function isExpanded(id: string): boolean {
 	return expanded.value.has(id) || problemFor.value.has(id);
 }
+
+// Clicking a card both expands it AND makes it the "view as of this step" target -- one
+// action, matching the sample/operation picker cards elsewhere (clicking a row selects it AND
+// shows its detail). Clicking the already-active card returns to the full pipeline. Expanding
+// always works (harmless even for a base-tier step); the revert half is gated by
+// stepIsRevertable -- a base-tier step (frame_transform, angular_resample) sits before where
+// /preview resumes, so reverting to it would show every derived column at its neutral fill.
+function onCardClick(s: RecipeStep, i: number) {
+	toggleExpand(s.id);
+	if (!stepIsRevertable(props.recipe, i)) return;
+	emit('revert-step', props.revertStepId === s.id ? null : s.id);
+}
+const isRevertable = (i: number) => stepIsRevertable(props.recipe, i);
 function paramSummary(s: RecipeStep): string {
 	const specs = STEP_META[s.op]?.params ?? [];
 	if (!specs.length) return '';
@@ -180,6 +241,11 @@ const bakeLabel = computed(() => {
 	if (!props.baked) return 'Bake recipe';
 	return props.bakeStale ? 'Bake recipe (edited)' : 'Re-bake recipe';
 });
+
+const revertStepLabel = computed(() => {
+	const s = props.recipe.steps.find((x) => x.id === props.revertStepId);
+	return s ? (STEP_META[s.op]?.label ?? s.op) : '';
+});
 </script>
 
 <template>
@@ -189,6 +255,10 @@ const bakeLabel = computed(() => {
 			<span class="rp-title">Pipeline</span>
 			<InfoTip :text="PANEL_HELP.recipe" wide placement="left" @click.stop />
 			<span class="rp-spacer" />
+			<span v-if="revertStepId" class="rp-badge revert">
+				viewing · {{ revertStepLabel }}
+				<button class="rp-badge-x" title="Return to the full pipeline" @click.stop="emit('revert-step', null)">✕</button>
+			</span>
 			<span v-if="problems?.length" class="rp-badge err">{{ problems.length }} issue{{ problems.length > 1 ? 's' : '' }}</span>
 			<span v-else-if="bakeStale && baked" class="rp-badge warn">edited</span>
 		</button>
@@ -196,13 +266,31 @@ const bakeLabel = computed(() => {
 		<div v-if="problems?.length && !collapsed" class="rp-problems">
 			<p v-for="p in problems" :key="p.stepId">{{ p.message }}</p>
 		</div>
+		<p v-if="dragRefused && !collapsed" class="rp-drag-refused">{{ dragRefused }}</p>
 
 		<ol v-show="!collapsed" class="steps">
 			<li
 				v-for="(s, i) in recipe.steps" :key="s.id"
-				:class="{ off: !s.on, broken: problemFor.has(s.id), open: isExpanded(s.id) }"
+				class="step-card"
+				:class="{
+					off: !s.on, broken: problemFor.has(s.id), open: isExpanded(s.id),
+					active: revertStepId === s.id, dragover: dragOverIdx === i,
+					'no-revert': !isRevertable(i),
+				}"
+				@dragover.prevent="onDragOverStep(i)"
+				@drop.prevent="onDropStep(i)"
 			>
-				<div class="step-head" @click="toggleExpand(s.id)">
+				<div
+					class="step-head" @click="onCardClick(s, i)"
+					:title="isRevertable(i) ? 'Click to view the pipeline as of this step' : 'This step runs during a Bake, before the live preview -- there is no preview state to view'"
+				>
+					<span
+						class="step-grip material-symbols-rounded" title="Drag to reorder"
+						draggable="true"
+						@click.stop
+						@dragstart="onDragStart($event, i)"
+						@dragend="onDragEnd"
+					>drag_indicator</span>
 					<span class="step-n">{{ i + 1 }}</span>
 					<input class="step-on" type="checkbox" :checked="s.on" :title="s.on ? 'Disable this step' : 'Enable this step'" @click.stop @change="toggle(s.id)" />
 					<span class="step-label">{{ STEP_META[s.op]?.label ?? s.op }}</span>
@@ -324,27 +412,44 @@ const bakeLabel = computed(() => {
 .rp-chev { width: 9px; }
 .rp-title { text-transform: uppercase; letter-spacing: 0.05em; }
 .rp-spacer { flex: 1; }
-.rp-badge { font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.03em; }
+.rp-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.03em; }
 .rp-badge.err { background: color-mix(in srgb, #dc2626 26%, transparent); color: #fca5a5; }
 .rp-badge.warn { background: color-mix(in srgb, #d97706 26%, transparent); color: #fcd34d; }
+.rp-badge.revert { background: color-mix(in srgb, #38bdf8 22%, transparent); color: #7dd3fc; }
+.rp-badge-x { border: none; background: none; color: inherit; cursor: pointer; font-size: 10px; padding: 0; line-height: 1; opacity: 0.8; }
+.rp-badge-x:hover { opacity: 1; }
 
 .rp-problems { padding: 7px 10px; background: color-mix(in srgb, #dc2626 12%, transparent); border-bottom: 1px solid color-mix(in srgb, #dc2626 30%, transparent); }
 .rp-problems p { margin: 0 0 3px; font-size: 11px; color: #fca5a5; line-height: 1.4; }
 .rp-problems p:last-child { margin-bottom: 0; }
+.rp-drag-refused { margin: 0; padding: 6px 10px; font-size: 11px; color: #fcd34d; background: color-mix(in srgb, #d97706 12%, transparent); border-bottom: 1px solid color-mix(in srgb, #d97706 30%, transparent); }
 
-.steps { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; counter-reset: step; }
-.steps li { border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); padding: 6px 10px; }
-.steps li.off { opacity: 0.45; }
-.steps li.broken { background: color-mix(in srgb, #dc2626 9%, transparent); opacity: 1; }
-.steps li.open { background: rgba(255,255,255,0.02); }
+/* Steps as cards -- matching the sample/operation picker's rowcard language (own rounded
+   surface, hover lift, distinct active/broken states) rather than a flat divided list. */
+.steps { list-style: none; margin: 0; padding: 7px 8px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.step-card {
+	border: 1px solid var(--border, rgba(255,255,255,0.1)); border-radius: 10px; padding: 6px 9px;
+	background: var(--bg-2, #111a33); transition: transform 0.1s ease, box-shadow 0.1s ease, border-color 0.1s ease, opacity 0.1s ease;
+}
+.step-card:hover { transform: translateY(-1px); box-shadow: 0 6px 16px -10px rgba(0,0,0,0.6); }
+.step-card.off { opacity: 0.45; }
+.step-card.broken { background: color-mix(in srgb, #dc2626 12%, transparent); border-color: color-mix(in srgb, #dc2626 40%, transparent); opacity: 1; }
+.step-card.open { background: color-mix(in srgb, var(--bg-2, #111a33) 70%, rgba(255,255,255,0.03)); }
+.step-card.active { border-color: var(--accent, #38bdf8); box-shadow: 0 0 0 1px var(--accent, #38bdf8) inset; }
+.step-card.dragover { border-color: var(--accent, #38bdf8); border-style: dashed; }
+.step-card.no-revert .step-head { cursor: default; }
 .step-head { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.step-grip { flex: none; font-size: 15px !important; color: var(--text-dim, #94a3b8); cursor: grab; opacity: 0.55; }
+.step-grip:hover { opacity: 1; }
+.step-grip:active { cursor: grabbing; }
 .step-chev { flex: none; width: 10px; font-size: 9px; color: var(--text-dim, #94a3b8); text-align: center; }
 .step-summary { margin: 3px 0 0 22px; font-size: 10px; color: var(--text-dim, #94a3b8); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .step-n {
 	flex: none; width: 16px; height: 16px; border-radius: 4px; font-size: 9.5px; font-weight: 700;
 	display: grid; place-items: center; color: var(--text-dim, #94a3b8);
-	background: var(--bg-2, #111a33); font-variant-numeric: tabular-nums;
+	background: var(--bg-1, #0b1020); font-variant-numeric: tabular-nums;
 }
+.step-card.active .step-n { color: var(--accent-ink, #0b1020); background: var(--accent, #38bdf8); }
 .step-on { cursor: pointer; margin: 0; }
 .step-label { font-weight: 600; }
 .scope { display: inline-flex; align-items: center; gap: 3px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; white-space: nowrap; }

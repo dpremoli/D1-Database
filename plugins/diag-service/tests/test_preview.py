@@ -143,6 +143,96 @@ def test_preview_approximates_a_full_bake(client):
     assert np.mean(got["cluster_id"] == want["cluster_id"]) >= 0.99
 
 
+def test_preview_stop_after_truncates_the_pipeline(client):
+    """Phase H slice 3: clicking a step in the Pipeline panel reverts the view to that step's
+    state -- the client sends stop_after (the full step-list index, disabled steps included,
+    matching runner.run_recipe's own convention) and the response reflects only steps up to
+    and including it."""
+    idx = next(i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "radial_detrend")
+    r = client.post(
+        "/preview",
+        json={
+            "analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None,
+            "stop_after": idx,
+        },
+    )
+    assert r.status_code == 200, r.text
+    got = _read_bytes(r.content)
+    assert set(got) == PUBLIC
+    # radial_detrend (stopped-after step) ran: resid_z is real.
+    assert np.count_nonzero(got["resid_z"]) > 0
+    # getis_ord and hdbscan sit AFTER the stop point: their columns stay at the same neutral
+    # fill a disabled step would produce, not real values.
+    assert np.all(got["gi_star"] == 0.0)
+    assert np.all(got["gi_sig"] == 0.0)
+    assert np.all(got["cluster_id"] == 0.0)
+
+
+def test_preview_stop_after_before_the_first_derived_step_is_a_clean_422(client):
+    """/preview always resumes from base.d1an at from_step (the first derived step) --
+    run_recipe's `lo` -- regardless of what stop_after asks for. A stop_after BEFORE that
+    point (e.g. clicking a base-tier step like frame_transform or angular_resample in the
+    Pipeline panel) makes stop_after < from_step, so the loop's very first candidate index
+    already exceeds it and the loop runs NOTHING -- not even tsa, whose output run_recipe
+    needs to know the angular column length before it can assemble PUBLIC_COLUMNS at all.
+    That surfaces as a clean ValueError, not a crash or a silently-empty 200.
+
+    Documented here as the actual, intentional behaviour -- the client (RecipePanel's
+    stepIsRevertable) is expected to never ask for this, but the endpoint itself must not
+    misbehave if something does; diagRequestError already turns a 422 into a readable
+    message on the client, so this degrades safely even if the client-side gate is bypassed.
+    """
+    idx = next(i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "angular_resample")
+    r = client.post(
+        "/preview",
+        json={
+            "analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None,
+            "stop_after": idx,
+        },
+    )
+    assert r.status_code == 422
+    assert "recipe failed" in r.json()["detail"]
+
+
+def test_preview_stop_after_differs_from_the_full_preview(client):
+    idx = next(i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "radial_detrend")
+    full = client.post(
+        "/preview",
+        json={"analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None},
+    )
+    truncated = client.post(
+        "/preview",
+        json={
+            "analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None,
+            "stop_after": idx,
+        },
+    )
+    assert full.status_code == truncated.status_code == 200
+    got_full, got_trunc = _read_bytes(full.content), _read_bytes(truncated.content)
+    assert not np.array_equal(got_full["gi_star"], got_trunc["gi_star"])
+    # Two different stop_after values must not collide in the LRU cache keyed only on recipe.
+    assert full.headers["x-diag-cache"] == "miss"
+    assert truncated.headers["x-diag-cache"] == "miss"
+
+
+def test_preview_stop_after_null_behaves_exactly_like_omitting_it(client):
+    a = client.post(
+        "/preview",
+        json={"analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None},
+    )
+    b = client.post(
+        "/preview",
+        json={
+            "analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None,
+            "stop_after": None,
+        },
+    )
+    assert a.status_code == b.status_code == 200
+    ga, gb = _read_bytes(a.content), _read_bytes(b.content)
+    for name in ga:
+        np.testing.assert_array_equal(ga[name], gb[name])
+
+
 def test_preview_reflects_a_param_change(client):
     hot = {
         "recipe_version": 1,

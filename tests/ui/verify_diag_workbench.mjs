@@ -119,6 +119,45 @@ function check(name, pass, detail = '') {
 		(await p.locator('canvas').count()) > 0,
 		`${await p.locator('canvas').count()} canvas element(s)`);
 
+	// --- 0. Phase H slice 3: categorized picker adds a step card, and click-to-revert works ---
+	const cardsBefore = await p.locator('.step-card').count();
+	const addSelect = p.locator('.add-step select');
+	let addedOp = null;
+	if (await addSelect.count()) {
+		// Pick the first real (non-empty) <option> out of an <optgroup> -- proves the picker
+		// is actually grouped by category, not a flat list, and gives us an op name to look for.
+		addedOp = await addSelect.evaluate((el) => {
+			const opt = el.querySelector('optgroup option');
+			return opt ? opt.value : null;
+		});
+		if (addedOp) {
+			await addSelect.selectOption(addedOp);
+			await p.waitForTimeout(300);
+		}
+	}
+	check('the categorized step picker adds a new step card',
+		addedOp !== null && (await p.locator('.step-card').count()) > cardsBefore,
+		addedOp ? `added '${addedOp}'` : 'no <optgroup> option found in .add-step select');
+
+	// A derived step (radial_detrend produces resid_z, always on in the default recipe) is a
+	// safe, always-revertable click target -- unlike the base-tier steps at the very top.
+	const revertCard = p.locator('.step-card:not(.no-revert)').first();
+	let revertClicked = false;
+	if (await revertCard.count()) {
+		await revertCard.locator('.step-head').click();
+		await p.waitForTimeout(1200);
+		revertClicked = true;
+	}
+	check('clicking a revertable step card shows the "viewing" badge',
+		revertClicked && (await p.locator('.rp-badge.revert').count()) > 0,
+		revertClicked ? '' : 'no revertable .step-card found');
+	if (revertClicked && (await p.locator('.rp-badge.revert').count())) {
+		await p.locator('.rp-badge-x').click();
+		await p.waitForTimeout(300);
+		check('the ✕ on the badge returns to the full pipeline',
+			(await p.locator('.rp-badge.revert').count()) === 0);
+	}
+
 	// --- 1. no 401 reached the client at all (the refresh-and-retry works) ---
 	// Count the two populations separately. The diag OCTREE is served under /octrees/diag/,
 	// so a bare "/diag/" match is dominated by static tile fetches and would make this look

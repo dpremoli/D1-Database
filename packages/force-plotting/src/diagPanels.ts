@@ -33,18 +33,22 @@ export interface DiagPanelInst {
 	channel?: string;
 }
 
-// Fits in ~16 rows so the responsive row-height stays generous. The Pipeline column runs the
-// full height (7 steps + parameters need the room); Signal and Clusters share a band under
-// the hero Spatial view; the Selection inspector is a thin strip along the bottom.
+// Phase H slice 3: pipeline LEFT, full height (an analyst reads it top to bottom while
+// setting up a recipe, the same way they read a card list) with the Spatial view as the HERO
+// -- top two thirds of the remaining width -- since it is what most eyes are on once the
+// recipe is dialled in. Signal and Clusters share a band under it; the Selection inspector is
+// a thin strip along the bottom. Fits in 16 rows so the responsive row-height stays generous.
 export const DIAG_DEFAULT_LAYOUT: DiagPanelInst[] = [
-	{ i: 'spatial', type: 'spatial', x: 0, y: 0, w: 9, h: 9, channel: 'residZ' },
-	{ i: 'recipe', type: 'recipe', x: 9, y: 0, w: 3, h: 13 },
-	{ i: 'signal', type: 'signal', x: 0, y: 9, w: 4, h: 4 },
-	{ i: 'clusters', type: 'clusters', x: 4, y: 9, w: 5, h: 4 },
-	{ i: 'inspector', type: 'inspector', x: 0, y: 13, w: 9, h: 3 },
+	{ i: 'recipe', type: 'recipe', x: 0, y: 0, w: 3, h: 16 },
+	{ i: 'spatial', type: 'spatial', x: 3, y: 0, w: 9, h: 11, channel: 'residZ' },
+	{ i: 'signal', type: 'signal', x: 3, y: 11, w: 4, h: 3 },
+	{ i: 'clusters', type: 'clusters', x: 7, y: 11, w: 5, h: 3 },
+	{ i: 'inspector', type: 'inspector', x: 3, y: 14, w: 9, h: 2 },
 ];
 
-export const DIAG_LAYOUT_LS_KEY = 'force-app.diag.layout.v2';
+// Bumped v2 -> v3 for the pipeline-left rework above: without this, every analyst with a
+// persisted layout keeps their old (spatial-left) arrangement and never sees the new default.
+export const DIAG_LAYOUT_LS_KEY = 'force-app.diag.layout.v3';
 
 export function loadDiagLayout(): DiagPanelInst[] {
 	try {

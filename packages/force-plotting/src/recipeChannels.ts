@@ -224,6 +224,38 @@ export interface ChannelOption {
 	produced: boolean;
 }
 
+/** The channel a "revert to this step" click should switch the hero Spatial view to -- the
+ *  first of the step's produced columns that has a selectable channel (a step like
+ *  frame_transform or angular_resample produces only intermediates with no channel of their
+ *  own, so this is null for those; the caller just leaves whatever channel was already
+ *  showing). */
+export function primaryChannelForOp(op: string): ChannelKey | null {
+	for (const c of STEP_META[op]?.produces ?? []) {
+		const ch = PRODUCED_TO_CHANNEL[c];
+		if (ch) return ch;
+	}
+	return null;
+}
+
+/** Mirror of plugins/diag-service/app/main.py::_first_derived_index -- the step /preview
+ *  resumes from (base.d1an already has everything before it baked in; a base-tier step
+ *  AFTER this point, e.g. envelope, gets switched off for the preview by
+ *  _disable_unpreviewable instead of running). -1 when the recipe has no derived step. */
+export function firstDerivedIndex(recipe: Recipe): number {
+	return recipe.steps.findIndex((s) => STEP_META[s.op]?.tier === 'derived');
+}
+
+/** Whether "revert to this step" (Phase H slice 3 -- click a step card to view the pipeline's
+ *  state as of it) can show a REAL answer for the step at `index`. A step before
+ *  firstDerivedIndex is base-tier and /preview never re-runs base-tier steps at all -- asking
+ *  for stop_after less than that resumes at from_step, sees stop_after already behind it, and
+ *  runs NOTHING: every derived column comes back at its neutral fill, which reads as "the
+ *  workbench broke," not "here is step 1's state." */
+export function stepIsRevertable(recipe: Recipe, index: number): boolean {
+	const first = firstDerivedIndex(recipe);
+	return first !== -1 && index >= first;
+}
+
 /** The Spatial selector's option list, each flagged whether the current recipe produces it. */
 export function recipeChannels(recipe: Recipe): ChannelOption[] {
 	const producedCols = new Set<string>();

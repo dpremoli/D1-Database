@@ -26,9 +26,10 @@ import { bucketEnvelope } from './liveCache';
 import { clusterStats, computeStats, workingSetFromD1an } from './selection';
 import type { ClusterRow, Selection, WorkingSet } from './selection';
 import {
-	DEFAULT_RECIPE, recipeChannels, recipeProblems, recipesEquivalent, type Recipe,
+	DEFAULT_RECIPE, firstDerivedIndex, primaryChannelForOp, recipeChannels, recipeProblems,
+	recipesEquivalent, type Recipe,
 } from './recipeChannels';
-import { PANEL_HELP } from './diagHelp';
+import { CHANNEL_HELP, PANEL_HELP } from './diagHelp';
 import {
 	DIAG_LAYOUT_LS_KEY, DIAG_PANEL_TYPES, loadDiagLayout, newPanelInst, saveDiagLayout,
 	type DiagPanelInst,
@@ -74,6 +75,46 @@ const previewErr = ref<string | null>(null);
 const selection = ref<Selection>(null);
 const skippedOps = ref<string[]>([]);
 const recipeCollapsed = ref(false);
+
+// --- click a step in the Pipeline panel to revert the hero view to its state --------------
+const revertStepId = ref<string | null>(null);
+// Index, not just id: recomputed from the CURRENT recipe every time, so a drag-reorder in the
+// Pipeline panel (which keeps the id but moves the position) never sends a stale stop_after.
+const revertIndex = computed(() => {
+	if (!revertStepId.value) return null;
+	const idx = recipe.value.steps.findIndex((s) => s.id === revertStepId.value);
+	if (idx === -1) return null;
+	// Defense in depth: RecipePanel already refuses to emit revert-step for a base-tier step
+	// (stepIsRevertable), but this is the value that actually reaches the network request, so
+	// it independently guards the same invariant rather than trusting the emitter.
+	if (idx < firstDerivedIndex(recipe.value)) return null;
+	return idx;
+});
+// The reverted step was removed from the recipe entirely (not just moved) -- fall back to the
+// full pipeline rather than silently pinning a stop_after that no longer names anything.
+watch(() => recipe.value.steps, (steps) => {
+	if (revertStepId.value && !steps.some((s) => s.id === revertStepId.value)) revertStepId.value = null;
+}, { deep: true });
+
+// SpatialPanel only has a rendering path for resid_z (the octree's baked base colour) and the
+// four spatial ops it can live-recompute on the framed view (its own OP_OF map). Every other
+// produced channel is selectable in its dropdown but has no visual effect yet -- the
+// multi-column /viewport response those channels would need (grid_fill + grid_support,
+// inverted, ...) has no consuming UI (deferred when /viewport was widened, Phase H slice 2.5).
+// Switching to one of those here would silently change nothing on screen, so only auto-switch
+// when the target channel is one the hero view can actually show; the truncated preview
+// itself still reaches the Signal chart and Selection Inspector regardless.
+const RENDERABLE_CHANNELS = new Set(['residZ', 'giStar', 'clusterId', 'segmentId', 'gmmId']);
+
+function onRevertStep(stepId: string | null) {
+	revertStepId.value = stepId;
+	if (!stepId) return;
+	const step = recipe.value.steps.find((s) => s.id === stepId);
+	const channel = step ? primaryChannelForOp(step.op) : null;
+	if (!channel || !RENDERABLE_CHANNELS.has(channel)) return;
+	const hero = layout.value.find((p) => p.type === 'spatial');
+	if (hero) setChannel(hero.i, channel);
+}
 
 // Steps whose inputs no earlier enabled step produces. The service refuses these with a 422
 // carrying a Python error string; catching it here marks the step and skips the doomed request.
@@ -132,9 +173,11 @@ onMounted(loadBaked);
 watch(() => props.diagPath, () => { previewWS.value = null; loadBaked(); });
 
 // Debounced preview: any recipe edit fires POST /diag/preview after 400 ms of quiet.
+// revertStepId is in the dependency list too -- clicking a step card to view its state (or
+// clicking it again to return to the full pipeline) needs the same request, just truncated.
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
 let previewAbort: AbortController | null = null;
-watch([recipe, () => layers.value, activeLayerName], () => {
+watch([recipe, () => layers.value, activeLayerName, revertStepId], () => {
 	if (previewTimer) clearTimeout(previewTimer);
 	previewTimer = setTimeout(runPreview, 400);
 }, { deep: true });
@@ -166,7 +209,7 @@ async function runPreview() {
 		previewing.value = false; previewErr.value = null; previewMs.value = null;
 		return;
 	}
-	if (!bakeStale.value && !activeMask.value && !recipeHasBoundSeeds.value) {
+	if (!bakeStale.value && !activeMask.value && !recipeHasBoundSeeds.value && revertIndex.value === null) {
 		previewWS.value = null; previewErr.value = null; previewMs.value = null;
 		return;
 	}
@@ -178,6 +221,7 @@ async function runPreview() {
 		const r = await fetchDiagPreview(
 			props.analysisId, recipeWithMask(), null, ac.signal,
 			layers.value.length ? layersForRequestSafe() : undefined,
+			revertIndex.value,
 		);
 		if (ac.signal.aborted) return;
 		previewWS.value = workingSetFromD1an(r.attrs);
@@ -331,7 +375,13 @@ function resetLayout() {
 function panelTitle(p: DiagPanelInst): string {
 	if (p.type === 'spatial') {
 		const opt = channelOptions.value.find((o) => o.key === p.channel);
-		return opt ? `Spatial · ${opt.label.split(' — ')[0]}` : 'Spatial view';
+		if (!opt) return 'Spatial view';
+		// ALL_CHANNELS' label is "col_name — meaning", deliberately technical for the channel
+		// SELECT dropdown; the compact panel title should lead with the MEANING instead --
+		// "Anomaly z-score (resid_z)", not the bare column name "resid_z" (Phase H slice 3).
+		const [col, meaning] = opt.label.split(' — ');
+		if (!meaning) return `Spatial · ${col}`;
+		return `Spatial · ${meaning.charAt(0).toUpperCase()}${meaning.slice(1)} (${col})`;
 	}
 	return DIAG_PANEL_TYPES[p.type].title;
 }
@@ -502,6 +552,10 @@ onBeforeUnmount(() => {
 						:closable="!(DIAG_PANEL_TYPES[item.type].single && ['recipe', 'signal'].includes(item.type))"
 						@close="closePanel(item.i)"
 					>
+						<template v-if="item.type === 'spatial' && item.channel && CHANNEL_HELP[item.channel]" #title-extra>
+							<InfoTip :text="CHANNEL_HELP[item.channel]" placement="left" />
+						</template>
+
 						<!-- Pipeline -->
 						<RecipePanel
 							v-if="item.type === 'recipe'"
@@ -512,8 +566,9 @@ onBeforeUnmount(() => {
 							:seed-layer-names="seedLayerNames" :library="library"
 							:problems="problems" :baking="baking" :skipped-ops="skippedOps"
 							:busy-op="anyViewportBusy ? 'any' : null"
+							:revert-step-id="revertStepId"
 							@bake="onBake" @apply="onApplyRecipe" @library-changed="loadLibrary"
-							@run-step="runStepOnView"
+							@run-step="runStepOnView" @revert-step="onRevertStep"
 						/>
 
 						<!-- Spatial view (multi) -->

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-	DEFAULT_RECIPE, STEP_META, recipeChannels, recipeProblems, recipesEquivalent, type Recipe,
+	DEFAULT_RECIPE, STEP_META, firstDerivedIndex, primaryChannelForOp, recipeChannels,
+	recipeProblems, recipesEquivalent, stepIsRevertable, type Recipe,
 } from './recipeChannels';
 
 const clone = (r: Recipe): Recipe => JSON.parse(JSON.stringify(r));
@@ -36,6 +37,59 @@ describe('recipeChannels', () => {
 		expect(chans.find((c) => c.key === 'clusterId')!.produced).toBe(false);
 		expect(chans.find((c) => c.key === 'glosh')!.produced).toBe(false);
 		expect(chans.find((c) => c.key === 'residZ')!.produced).toBe(true);
+	});
+});
+
+describe('primaryChannelForOp', () => {
+	it('maps a step to the channel its first produced column corresponds to', () => {
+		expect(primaryChannelForOp('radial_detrend')).toBe('residZ');
+		expect(primaryChannelForOp('getis_ord')).toBe('giStar');
+		expect(primaryChannelForOp('hdbscan')).toBe('clusterId');
+		expect(primaryChannelForOp('griddify')).toBe('gridFill');
+		expect(primaryChannelForOp('gmm_segmentation')).toBe('gmmId');
+	});
+
+	it('is null for a step whose products are intermediates with no channel', () => {
+		expect(primaryChannelForOp('frame_transform')).toBeNull();
+		expect(primaryChannelForOp('angular_resample')).toBeNull();
+	});
+
+	it('is null for an unknown op', () => {
+		expect(primaryChannelForOp('not_a_real_op')).toBeNull();
+	});
+});
+
+describe('firstDerivedIndex / stepIsRevertable', () => {
+	it('DEFAULT_RECIPE resumes at index 2 (tsa), after frame_transform + angular_resample', () => {
+		expect(firstDerivedIndex(DEFAULT_RECIPE)).toBe(2);
+	});
+
+	it('a base-tier step (frame_transform, angular_resample) is not revertable', () => {
+		expect(stepIsRevertable(DEFAULT_RECIPE, 0)).toBe(false);
+		expect(stepIsRevertable(DEFAULT_RECIPE, 1)).toBe(false);
+	});
+
+	it('a derived-tier step, and everything after the first derived step, is revertable', () => {
+		expect(stepIsRevertable(DEFAULT_RECIPE, 2)).toBe(true);   // tsa
+		expect(stepIsRevertable(DEFAULT_RECIPE, 4)).toBe(true);   // getis_ord
+		expect(stepIsRevertable(DEFAULT_RECIPE, 6)).toBe(true);   // envelope (base-tier, but AFTER from_step)
+	});
+
+	it('reordering the recipe moves the boundary, not just the position', () => {
+		// Drag radial_detrend (derived) to the very front: it is now index 0, and IS the
+		// first derived step, so it -- and everything after it -- becomes revertable.
+		const r = clone(DEFAULT_RECIPE);
+		const [moved] = r.steps.splice(3, 1);   // radial_detrend
+		r.steps.unshift(moved);
+		expect(r.steps[0].op).toBe('radial_detrend');
+		expect(firstDerivedIndex(r)).toBe(0);
+		expect(stepIsRevertable(r, 0)).toBe(true);
+	});
+
+	it('no derived step at all: nothing is revertable', () => {
+		const r: Recipe = { recipe_version: 1, name: 'bare', steps: [DEFAULT_RECIPE.steps[0]] };
+		expect(firstDerivedIndex(r)).toBe(-1);
+		expect(stepIsRevertable(r, 0)).toBe(false);
 	});
 });
 

@@ -24,6 +24,11 @@ export async function fetchDiagPreview(
 	fromStep: number | null,
 	signal?: AbortSignal,
 	layers?: Record<string, unknown>,
+	/** Truncate the recipe's execution at this step index (the full step list, disabled
+	 *  steps included -- same indexing as `recipe.steps`) and return the pipeline's state
+	 *  as of there. Used by "click a step to revert the view to it"; null previews the
+	 *  whole recipe as normal. */
+	stopAfter?: number | null,
 ): Promise<DiagPreview> {
 	const res = await authorizedFetch(`${useForceHost().diagUrl}/preview`, {
 		method: 'POST',
@@ -34,6 +39,7 @@ export async function fetchDiagPreview(
 			recipe,
 			from_step: fromStep,
 			layers: layers ?? null,
+			stop_after: stopAfter ?? null,
 		}),
 	});
 	if (!res.ok) {
