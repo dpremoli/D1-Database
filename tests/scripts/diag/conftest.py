@@ -107,15 +107,24 @@ def assert_columns_match_golden(cols, metrics, golden_path, nondegenerate=()):
         assert np.count_nonzero(golden[name]) > 0, (
             f"golden {name!r} is degenerate -- fixture regenerated from a broken pipeline?"
         )
-    # The frozen fixture predates segment_id (D1AN's 12th column, Phase F). Every column the
-    # fixture DOES contain must still be present and byte-identical; a column the run adds
-    # beyond the fixture is allowed only if it is segment_id and entirely unsegmented (-1).
+    # The frozen fixture predates every column a step OFF the default recipe still
+    # contributes at its neutral default (segment_id, Phase F; inverted/grid_fill/
+    # grid_support/gmm_id/gmm_prob, Phase H slice 2 -- see runner.py::PUBLIC_COLUMNS). Every
+    # column the fixture DOES contain must still be present and byte-identical; a column the
+    # run adds beyond the fixture is allowed only if it is one of these, at its documented
+    # neutral value.
     missing = set(expected) - set(cols)
     assert not missing, f"columns dropped vs the frozen reference: {missing}"
+    _NEUTRAL_EXTRA = {
+        "segment_id": -1.0, "gmm_id": -1.0,
+        "inverted": 0.0, "grid_fill": 0.0, "grid_support": 0.0, "gmm_prob": 0.0,
+    }
     extra = set(cols) - set(expected)
-    assert extra <= {"segment_id"}, f"unexpected columns beyond the reference: {extra}"
-    if "segment_id" in extra:
-        assert np.all(cols["segment_id"] == -1), "default-path segment_id must be all -1"
+    assert extra <= set(_NEUTRAL_EXTRA), f"unexpected columns beyond the reference: {extra}"
+    for name in extra:
+        assert np.all(cols[name] == _NEUTRAL_EXTRA[name]), (
+            f"default-path {name!r} must be all {_NEUTRAL_EXTRA[name]}"
+        )
     for name, want in expected.items():
         got = cols[name]
         assert got.dtype == want.dtype, f"column {name!r} dtype drifted"

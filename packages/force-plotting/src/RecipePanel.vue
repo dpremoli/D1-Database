@@ -20,6 +20,7 @@ import {
 	CATEGORY_LABELS, CATEGORY_ORDER, STEP_META,
 	type Recipe, type RecipeProblem, type RecipeStep, type StepCategory,
 } from './recipeChannels';
+import type { ViewportOp } from './diagViewport';
 import { ACTION_HELP, PANEL_HELP, SCOPE_META, STEP_HELP, scopeOf } from './diagHelp';
 import RecipeLibrary from './RecipeLibrary.vue';
 import InfoTip from './InfoTip.vue';
@@ -50,7 +51,7 @@ const emit = defineEmits<{
 	(e: 'bake'): void;
 	(e: 'apply', r: Recipe): void;
 	(e: 'library-changed'): void;
-	(e: 'run-step', op: 'getis_ord' | 'hdbscan' | 'grow_segmentation'): void;
+	(e: 'run-step', op: ViewportOp): void;
 }>();
 
 // s1..s7 are the built-in default steps — not removable. Anything added carries an x-prefixed id.
@@ -107,7 +108,12 @@ const addableByCategory = computed(() => {
 function defaultParams(op: string): Record<string, number | string | null> {
 	const out: Record<string, number | string | null> = {};
 	for (const p of STEP_META[op]?.params ?? []) {
-		out[p.key] = p.kind === 'number' ? (p.min ?? 0) : (p.options?.[0]?.value ?? '');
+		// p.default is the step's own intended starting value; falling straight to `min` (as
+		// this used to) is wrong for any param whose sensible default isn't its minimum --
+		// grow_segmentation.k defaults to 15, not its min of 3.
+		out[p.key] = p.default !== undefined
+			? p.default
+			: (p.kind === 'number' ? (p.min ?? 0) : (p.options?.[0]?.value ?? ''));
 	}
 	return out;
 }
@@ -260,7 +266,7 @@ const bakeLabel = computed(() => {
 					class="run-step-btn"
 					:disabled="!!busyOp"
 					:title="ACTION_HELP.runOnView"
-					@click.prevent="emit('run-step', s.op as 'hdbscan' | 'grow_segmentation')"
+					@click.prevent="emit('run-step', s.op as ViewportOp)"
 				>
 					{{ busyOp ? 'Running…' : '▸ Run on this view' }}
 				</button>

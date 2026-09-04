@@ -1,15 +1,21 @@
 // Client for diag-service's POST /diag/viewport. The workbench frames a region of the
-// full-resolution spiral (bbox in x/y mm) and asks for ONE spatial step -- Gi*, HDBSCAN, or
-// seeded segmentation -- recomputed on just those points. The service crops full.d1an,
-// strides down over max_points, runs the step, and returns D1AN {x, y, value}. Never
-// authoritative: the 256/rev bake stays the baked truth, this is a preview at the resolution
-// the analyst is looking at.
+// full-resolution spiral (bbox in x/y mm) and asks for ONE spatial step -- Gi*, HDBSCAN,
+// GMM, or seeded segmentation -- recomputed on just those points. The service crops
+// full.d1an, strides down over max_points, runs the step, and returns D1AN {x, y, value}.
+// Never authoritative: the 256/rev bake stays the baked truth, this is a preview at the
+// resolution the analyst is looking at.
 import { parseD1an } from './diagAttrs';
 import { authorizedFetch, useForceHost } from './host';
 import { diagRequestError } from './diagError';
 
+// The single source of truth for "which ops can run on a framed viewport" -- every other
+// file that needs this union (DiagnosticsWorkbench, RecipePanel, SpatialPanel) imports it
+// from here rather than repeating the literal, so a new spatial step is one edit instead of
+// several silently-drifting ones.
+export type ViewportOp = 'getis_ord' | 'hdbscan' | 'grow_segmentation' | 'gmm_segmentation';
+
 export interface ViewportStep {
-	op: 'getis_ord' | 'hdbscan' | 'grow_segmentation';
+	op: ViewportOp;
 	params: Record<string, unknown>;
 	inputs?: Record<string, unknown>;
 }

@@ -27,9 +27,17 @@ from .registry import STEPS, Columns, resolve_inputs, validate_recipe
 # The D1AN contract: exactly these columns, always, in this order. A disabled step still
 # contributes its column (zero-filled) because the browser's reader indexes by name and a
 # missing column is a parse error, not an absence.
+#
+# inverted/grid_fill/grid_support/gmm_id/gmm_prob (Phase H slice 2) follow the same
+# always-present, off-by-default precedent segment_id set: none of invert/griddify/
+# gmm_segmentation is in DEFAULT_RECIPE, so every cut that never enables them gets a
+# zero-filled (gmm_id: -1-filled, matching segment_id's "unsegmented") column, and the
+# analyst can still select the channel to see that it is empty rather than the request
+# failing outright.
 PUBLIC_COLUMNS: tuple[str, ...] = (
     "t", "rev", "x", "y", "tsa_resid", "resid_z",
     "gi_star", "gi_sig", "cluster_id", "glosh", "env_band", "segment_id",
+    "inverted", "grid_fill", "grid_support", "gmm_id", "gmm_prob",
 )
 
 # Angular-domain columns that shorten with the TSA truncation. Deliberately hardcoded and
@@ -51,6 +59,7 @@ PUBLIC_COLUMNS: tuple[str, ...] = (
 _TRUNCATABLE: tuple[str, ...] = (
     "t", "rev", "x", "y", "tsa_resid", "resid_z",
     "gi_star", "gi_sig", "cluster_id", "glosh", "env_band", "segment_id",
+    "inverted", "grid_fill", "grid_support", "gmm_id", "gmm_prob",
 )
 
 # Internal, non-array-contract key: the D1LC cache sample rate, stashed by seed_columns so
@@ -227,9 +236,9 @@ def run_recipe(
         col = work.get(name)
         # .astype(np.float32) always copies (matching analyse()); np.asarray would hand
         # back a VIEW into the caller's prefix-cache dict when col is already float32.
-        # segment_id defaults to -1 ("unsegmented" -- 0 is a valid class index); every other
-        # missing/disabled column zero-fills as before.
-        fill = -1.0 if name == "segment_id" else 0.0
+        # segment_id and gmm_id default to -1 ("unsegmented" -- 0 is a valid class index for
+        # both); every other missing/disabled column zero-fills as before.
+        fill = -1.0 if name in ("segment_id", "gmm_id") else 0.0
         out[name] = (
             col[:n].astype(np.float32) if col is not None
             else np.full(n, fill, dtype=np.float32)

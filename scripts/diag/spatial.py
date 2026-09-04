@@ -156,6 +156,49 @@ def cluster_hdbscan(
     return h.labels_.astype(np.float64), glosh.astype(np.float64)
 
 
+def cluster_gmm(
+    x: np.ndarray,
+    y: np.ndarray,
+    v: np.ndarray,
+    *,
+    n_components: int = 4,
+    covariance_type: str = "full",
+    attr_weight: float = 1.0,
+    random_state: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Unsupervised Gaussian-mixture segmentation over (x, y, v). Returns (labels, prob):
+    `labels` is the assigned component index for every point -- unlike HDBSCAN there is no
+    noise class, every point belongs to something; `prob` is that component's responsibility
+    (predict_proba's max per row), a genuine per-point confidence and the reason GMM is worth
+    having alongside HDBSCAN.
+
+    (x, y, v) are each z-scored before fitting -- otherwise millimetre-scale spatial
+    coordinates and a z-score-scale residual would not compare on the same footing, and
+    `attr_weight` (applied to v AFTER scaling, mirroring segmentation.py::grow_segmentation)
+    would not mean what it says. `n_components` is clipped to the point count: a mixture
+    cannot fit more components than it has points to place them at.
+    """
+    from sklearn.mixture import GaussianMixture
+    from sklearn.preprocessing import StandardScaler
+
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    v = np.asarray(v, dtype=np.float64)
+    n = x.size
+    k = int(max(1, min(n_components, n)))
+
+    features = np.column_stack([x, y, v])
+    scaled = StandardScaler().fit_transform(features)
+    scaled[:, 2] *= float(attr_weight)
+
+    gmm = GaussianMixture(
+        n_components=k, covariance_type=covariance_type, random_state=int(random_state),
+    ).fit(scaled)
+    labels = gmm.predict(scaled)
+    prob = gmm.predict_proba(scaled).max(axis=1)
+    return labels.astype(np.float64), prob.astype(np.float64)
+
+
 def assign_from_grid(
     cell_id: np.ndarray, labels_reduced: np.ndarray, glosh_reduced: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:

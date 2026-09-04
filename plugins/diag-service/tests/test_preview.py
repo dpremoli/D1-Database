@@ -32,6 +32,7 @@ BASE_COLUMNS = ("t", "rev", "x", "y", "sig")
 PUBLIC = {
     "t", "rev", "x", "y", "tsa_resid", "resid_z",
     "gi_star", "gi_sig", "cluster_id", "glosh", "env_band", "segment_id",
+    "inverted", "grid_fill", "grid_support", "gmm_id", "gmm_prob",
 }
 
 

@@ -21,7 +21,7 @@ import BandwidthStrip from './BandwidthStrip.vue';
 import InfoTip from './InfoTip.vue';
 import { fetchD1an } from './diagAttrs';
 import { fetchDiagPreview } from './diagPreview';
-import type { ViewportResult } from './diagViewport';
+import type { ViewportResult, ViewportOp } from './diagViewport';
 import { bucketEnvelope } from './liveCache';
 import { clusterStats, computeStats, workingSetFromD1an } from './selection';
 import type { ClusterRow, Selection, WorkingSet } from './selection';
@@ -197,9 +197,9 @@ function layersForRequestSafe() { return layersForRequest(layers.value); }
 // the state strip ("something is recomputing") and one result for the cluster table.
 const panelResults = reactive<Record<string, ViewportResult | null>>({});
 const panelBusy = reactive<Record<string, boolean>>({});
-const spatialRefs = new Map<string, { runViewport: (op: 'getis_ord' | 'hdbscan' | 'grow_segmentation', o?: { focus: boolean }) => void }>();
+const spatialRefs = new Map<string, { runViewport: (op: ViewportOp, o?: { focus: boolean }) => void }>();
 function bindSpatial(id: string, el: unknown) {
-	if (el) spatialRefs.set(id, el as { runViewport: (op: 'getis_ord' | 'hdbscan' | 'grow_segmentation', o?: { focus: boolean }) => void });
+	if (el) spatialRefs.set(id, el as { runViewport: (op: ViewportOp, o?: { focus: boolean }) => void });
 	else { spatialRefs.delete(id); delete panelResults[id]; delete panelBusy[id]; }
 }
 const anyViewportBusy = computed(() => Object.values(panelBusy).some(Boolean));
@@ -209,7 +209,7 @@ const hdbscanResult = computed<ViewportResult | null>(() =>
 	Object.values(panelResults).find((r) => r?.op === 'hdbscan') ?? null);
 
 // "Run <op> on this view" from the Pipeline panel routes to the first spatial view.
-function runStepOnView(op: 'getis_ord' | 'hdbscan' | 'grow_segmentation') {
+function runStepOnView(op: ViewportOp) {
 	const first = layout.value.find((p) => p.type === 'spatial');
 	if (first) spatialRefs.get(first.i)?.runViewport(op, { focus: true });
 }

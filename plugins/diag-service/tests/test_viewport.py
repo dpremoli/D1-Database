@@ -104,6 +104,25 @@ def test_viewport_hdbscan_returns_cluster_id(client):
     assert set(np.unique(v)) - {-1.0}  # at least one real cluster
 
 
+def test_viewport_gmm_segmentation_returns_gmm_id(client):
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1",
+            "bbox": [-40, -40, 40, 40],
+            "step": {
+                "op": "gmm_segmentation",
+                "params": {"n_components": 3, "random_state": 0, "grid_target": 500},
+            },
+        },
+    )
+    assert r.status_code == 200, r.text
+    v = _read(r.content)["value"]
+    # Unlike HDBSCAN, GMM assigns every point -- no -1 noise class.
+    assert set(np.unique(v)) <= {0.0, 1.0, 2.0}
+    assert -1.0 not in set(np.unique(v))
+
+
 def test_viewport_segmentation_two_seed_polys(client):
     left = [[[-1e6, -1e6], [-5, -1e6], [-5, 1e6], [-1e6, 1e6]]]
     right = [[[5, -1e6], [1e6, -1e6], [1e6, 1e6], [5, 1e6]]]

@@ -8,7 +8,8 @@ import type { DiagAttrs } from './diagAttrs';
 /** Every per-point channel the diag pipeline produces, camelCased. Defined once here and
  *  imported wherever a channel is named (the Spatial selector, DiagScatter, RecipePanel). */
 export type ChannelKey =
-	| 'tsaResid' | 'residZ' | 'giStar' | 'giSig' | 'clusterId' | 'glosh' | 'envBand' | 'segmentId';
+	| 'tsaResid' | 'residZ' | 'giStar' | 'giSig' | 'clusterId' | 'glosh' | 'envBand' | 'segmentId'
+	| 'inverted' | 'gridFill' | 'gridSupport' | 'gmmId' | 'gmmProb';
 
 export interface WorkingSet {
 	n: number;
@@ -24,14 +25,22 @@ export interface WorkingSet {
 	glosh: Float32Array;
 	envBand: Float32Array;
 	segmentId: Float32Array;
+	inverted: Float32Array;
+	gridFill: Float32Array;
+	gridSupport: Float32Array;
+	gmmId: Float32Array;
+	gmmProb: Float32Array;
 }
 
 // snake_case D1AN column -> camelCase WorkingSet field. The full contract; a file missing any
-// of these is not a usable diag artifact.
+// of these is not a usable diag artifact. Every column here must also be in
+// scripts/diag/runner.py::PUBLIC_COLUMNS, or every preview/bake response fails this check.
 const COLUMN_MAP: Record<string, keyof WorkingSet> = {
 	t: 't', rev: 'rev', x: 'x', y: 'y',
 	tsa_resid: 'tsaResid', resid_z: 'residZ', gi_star: 'giStar', gi_sig: 'giSig',
 	cluster_id: 'clusterId', glosh: 'glosh', env_band: 'envBand', segment_id: 'segmentId',
+	inverted: 'inverted', grid_fill: 'gridFill', grid_support: 'gridSupport',
+	gmm_id: 'gmmId', gmm_prob: 'gmmProb',
 };
 
 export function workingSetFromD1an(attrs: DiagAttrs): WorkingSet {
@@ -57,6 +66,11 @@ export const CHANNEL_ACCESSOR: Record<ChannelKey, (ws: WorkingSet, i: number) =>
 	glosh: (ws, i) => ws.glosh[i],
 	envBand: (ws, i) => ws.envBand[i],
 	segmentId: (ws, i) => ws.segmentId[i],
+	inverted: (ws, i) => ws.inverted[i],
+	gridFill: (ws, i) => ws.gridFill[i],
+	gridSupport: (ws, i) => ws.gridSupport[i],
+	gmmId: (ws, i) => ws.gmmId[i],
+	gmmProb: (ws, i) => ws.gmmProb[i],
 };
 
 export type Selection =

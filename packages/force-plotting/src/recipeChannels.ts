@@ -46,6 +46,11 @@ export interface ParamSpec {
 	max?: number;
 	step?: number;
 	options?: { value: string; label: string }[];
+	/** Value a newly-added step starts with. Falls back to `min` (number) or the first
+	 *  option (select) when absent -- which is wrong for any param whose sensible default
+	 *  isn't its minimum (e.g. grow_segmentation.k defaults to 15, not its min of 3), so
+	 *  every param below sets this explicitly. */
+	default?: number | string | null;
 }
 
 // Mirrors scripts/diag/registry.py::CATEGORIES. What kind of thing a step does, for the step
@@ -81,53 +86,108 @@ export const STEP_META: Record<string, StepMeta> = {
 	frame_transform: {
 		label: 'Frame transform', tier: 'base', category: 'transform', produces: ['fc', 'ff', 'fp'],
 		params: [{
-			key: 'channel', label: 'Channel', kind: 'select',
+			key: 'channel', label: 'Channel', kind: 'select', default: 'fp',
 			options: [
 				{ value: 'fp', label: 'Fp (dyno Z)' },
 				{ value: 'fc', label: 'Fc (cutting)' },
 				{ value: 'ff', label: 'Ff (feed)' },
 			],
-		}, { key: 'mount_deg', label: 'Mount °', kind: 'number', min: -180, max: 180, step: 1 }],
+		}, { key: 'mount_deg', label: 'Mount °', kind: 'number', min: -180, max: 180, step: 1, default: 0 }],
 	},
 	angular_resample: {
 		label: 'Angular resample', tier: 'base', category: 'transform', produces: ['t', 'rev', 'x', 'y', 'sig'],
-		params: [{ key: 'samples_per_rev', label: 'Samples / rev', kind: 'number', min: 64, max: 2048, step: 64 }],
+		params: [{ key: 'samples_per_rev', label: 'Samples / rev', kind: 'number', min: 64, max: 2048, step: 64, default: 256 }],
 	},
 	tsa: { label: 'TSA residual', tier: 'derived', category: 'residual', produces: ['tsa_resid'], params: [] },
 	radial_detrend: {
 		label: 'Radial detrend', tier: 'derived', category: 'residual', produces: ['resid_z'],
 		params: [
-			{ key: 'n_bins', label: 'Radial bins', kind: 'number', min: 20, max: 1000, step: 10 },
-			{ key: 'min_per_bin', label: 'Min / bin', kind: 'number', min: 2, max: 100, step: 1 },
+			{ key: 'n_bins', label: 'Radial bins', kind: 'number', min: 20, max: 1000, step: 10, default: 200 },
+			{ key: 'min_per_bin', label: 'Min / bin', kind: 'number', min: 2, max: 100, step: 1, default: 8 },
 		],
 	},
 	getis_ord: {
 		label: 'Getis-Ord Gi*', tier: 'derived', category: 'statistics', produces: ['gi_star', 'gi_sig'],
 		params: [
-			{ key: 'k', label: 'Neighbours k', kind: 'number', min: 5, max: 200, step: 1 },
-			{ key: 'alpha', label: 'FDR α', kind: 'number', min: 0.001, max: 0.2, step: 0.005 },
+			{ key: 'k', label: 'Neighbours k', kind: 'number', min: 5, max: 200, step: 1, default: 30 },
+			{ key: 'alpha', label: 'FDR α', kind: 'number', min: 0.001, max: 0.2, step: 0.005, default: 0.05 },
 		],
 	},
 	hdbscan: {
 		label: 'HDBSCAN clusters', tier: 'derived', category: 'segmentation', produces: ['cluster_id', 'glosh'],
 		params: [
-			{ key: 'grid_target', label: 'Grid target', kind: 'number', min: 2000, max: 60000, step: 1000 },
-			{ key: 'min_cluster_size', label: 'Min cluster', kind: 'number', min: 3, max: 200, step: 1 },
+			{ key: 'grid_target', label: 'Grid target', kind: 'number', min: 2000, max: 60000, step: 1000, default: 20000 },
+			{ key: 'min_cluster_size', label: 'Min cluster', kind: 'number', min: 3, max: 200, step: 1, default: 10 },
 		],
 	},
 	envelope: {
 		label: 'Envelope band', tier: 'base', category: 'residual', produces: ['env_band'],
 		params: [
-			{ key: 'fn_hz', label: 'Dyno fₙ (Hz)', kind: 'number', min: 0, max: 20000, step: 50 },
-			{ key: 'bandwidth_frac', label: 'Band width frac', kind: 'number', min: 0.05, max: 0.5, step: 0.05 },
+			{ key: 'fn_hz', label: 'Dyno fₙ (Hz)', kind: 'number', min: 0, max: 20000, step: 50, default: null },
+			{ key: 'bandwidth_frac', label: 'Band width frac', kind: 'number', min: 0.05, max: 0.5, step: 0.05, default: 0.2 },
 		],
 	},
 	grow_segmentation: {
 		label: 'Seeded segmentation', tier: 'derived', category: 'segmentation', produces: ['segment_id'],
 		params: [
-			{ key: 'k', label: 'Neighbours k', kind: 'number', min: 3, max: 100, step: 1 },
-			{ key: 'alpha', label: 'Clamping α', kind: 'number', min: 0.01, max: 0.9, step: 0.05 },
-			{ key: 'attr_weight', label: 'Attr weight', kind: 'number', min: 0.1, max: 10, step: 0.1 },
+			{ key: 'k', label: 'Neighbours k', kind: 'number', min: 3, max: 100, step: 1, default: 15 },
+			{ key: 'alpha', label: 'Clamping α', kind: 'number', min: 0.01, max: 0.9, step: 0.05, default: 0.2 },
+			{ key: 'attr_weight', label: 'Attr weight', kind: 'number', min: 0.1, max: 10, step: 0.1, default: 1 },
+		],
+	},
+	invert: {
+		label: 'Invert', tier: 'derived', category: 'transform', produces: ['inverted'],
+		params: [
+			{
+				key: 'source', label: 'Source channel', kind: 'select', default: 'resid_z',
+				options: [
+					{ value: 'resid_z', label: 'resid_z' },
+					{ value: 'gi_star', label: 'gi_star' },
+					{ value: 'glosh', label: 'glosh' },
+					{ value: 'tsa_resid', label: 'tsa_resid' },
+					{ value: 'env_band', label: 'env_band' },
+				],
+			},
+			{
+				key: 'mode', label: 'Mode', kind: 'select', default: 'complement',
+				options: [
+					{ value: 'complement', label: 'Complement (max − v)' },
+					{ value: 'reciprocal', label: 'Reciprocal (1 / |v|)' },
+				],
+			},
+			{ key: 'epsilon', label: 'Epsilon (reciprocal)', kind: 'number', min: 1e-9, max: 1, step: 1e-6, default: 1e-6 },
+		],
+	},
+	griddify: {
+		label: 'Griddify', tier: 'derived', category: 'interpolation', produces: ['grid_fill', 'grid_support'],
+		params: [
+			{ key: 'resolution_mm', label: 'Resolution (mm)', kind: 'number', min: 0.05, max: 5, step: 0.05, default: 0.25 },
+			{
+				key: 'method', label: 'Method', kind: 'select', default: 'linear',
+				options: [
+					{ value: 'linear', label: 'Linear' },
+					{ value: 'nearest', label: 'Nearest' },
+				],
+			},
+			{ key: 'max_fill_mm', label: 'Max fill distance (mm)', kind: 'number', min: 0.1, max: 20, step: 0.1, default: 1.0 },
+		],
+	},
+	gmm_segmentation: {
+		label: 'GMM segmentation', tier: 'derived', category: 'segmentation', produces: ['gmm_id', 'gmm_prob'],
+		params: [
+			{ key: 'n_components', label: 'Components', kind: 'number', min: 2, max: 20, step: 1, default: 4 },
+			{
+				key: 'covariance_type', label: 'Covariance', kind: 'select', default: 'full',
+				options: [
+					{ value: 'full', label: 'Full' },
+					{ value: 'tied', label: 'Tied' },
+					{ value: 'diag', label: 'Diagonal' },
+					{ value: 'spherical', label: 'Spherical' },
+				],
+			},
+			{ key: 'attr_weight', label: 'Attr weight', kind: 'number', min: 0.1, max: 10, step: 0.1, default: 1 },
+			{ key: 'random_state', label: 'Random seed', kind: 'number', min: 0, max: 9999, step: 1, default: 0 },
+			{ key: 'grid_target', label: 'Grid target', kind: 'number', min: 2000, max: 60000, step: 1000, default: 20000 },
 		],
 	},
 };
@@ -137,6 +197,8 @@ export const STEP_META: Record<string, StepMeta> = {
 const PRODUCED_TO_CHANNEL: Record<string, ChannelKey> = {
 	tsa_resid: 'tsaResid', resid_z: 'residZ', gi_star: 'giStar', gi_sig: 'giSig',
 	cluster_id: 'clusterId', glosh: 'glosh', env_band: 'envBand', segment_id: 'segmentId',
+	inverted: 'inverted', grid_fill: 'gridFill', grid_support: 'gridSupport',
+	gmm_id: 'gmmId', gmm_prob: 'gmmProb',
 };
 
 const ALL_CHANNELS: { key: ChannelKey; label: string }[] = [
@@ -147,6 +209,11 @@ const ALL_CHANNELS: { key: ChannelKey; label: string }[] = [
 	{ key: 'glosh', label: 'glosh — outlier score' },
 	{ key: 'tsaResid', label: 'tsa_resid — TSA residual' },
 	{ key: 'envBand', label: 'env_band — resonance envelope' },
+	{ key: 'inverted', label: 'inverted — value-inverted channel' },
+	{ key: 'gridFill', label: 'grid_fill — griddified value' },
+	{ key: 'gridSupport', label: 'grid_support — interpolation confidence' },
+	{ key: 'gmmId', label: 'gmm_id — GMM segment' },
+	{ key: 'gmmProb', label: 'gmm_prob — GMM confidence' },
 	{ key: 'segmentId', label: 'segment_id — seeded regions' },
 ];
 
@@ -219,6 +286,12 @@ const STEP_REQUIRES: Record<string, string[]> = {
 	hdbscan: ['x', 'y', 'resid_z'],
 	envelope: ['fc', 'ff', 'fp', 'revs', 't_raw', 'tsa_resid'],
 	grow_segmentation: ['x', 'y', 'resid_z'],
+	// Empty on purpose: invert's real dependency is params.source, chosen at recipe-edit
+	// time, which the static requires/produces graph cannot express. recipeProblems() below
+	// checks it directly instead.
+	invert: [],
+	griddify: ['x', 'y', 'resid_z'],
+	gmm_segmentation: ['x', 'y', 'resid_z'],
 };
 
 export interface RecipeProblem {
@@ -251,6 +324,25 @@ export function recipeProblems(recipe: Recipe): RecipeProblem[] {
 					: `${label} needs ${missing.join(', ')}, which nothing before it produces.`,
 			});
 			continue;   // do not pretend this step produced anything
+		}
+		// invert's dependency is params.source, a runtime choice STEP_REQUIRES cannot express
+		// (see the comment on STEP_REQUIRES.invert and scripts/diag/ops.py::_op_invert, which
+		// raises the same check server-side). Checked here so a stranded invert is caught
+		// before the request, exactly like every step above.
+		if (s.op === 'invert') {
+			const source = String(s.params.source ?? 'resid_z');
+			if (!have.has(source)) {
+				const fix = PRODUCER_OF[source];
+				const label = STEP_META[s.op]?.label ?? s.op;
+				problems.push({
+					stepId: s.id,
+					missing: [source],
+					message: fix
+						? `${label} needs ${fix} — re-enable that step, or choose a different source.`
+						: `${label} needs ${source}, which nothing before it produces.`,
+				});
+				continue;
+			}
 		}
 		for (const c of STEP_META[s.op]?.produces ?? []) have.add(c);
 	}

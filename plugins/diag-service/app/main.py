@@ -158,11 +158,12 @@ FULL_LRU_CAP = int(os.environ.get("FULL_LRU", "3"))
 _full_lru: OrderedDict[str, dict] = OrderedDict()
 _viewport_lru: OrderedDict[tuple, tuple[bytes, int]] = OrderedDict()  # key -> (d1an bytes, n)
 
-_VIEWPORT_STEPS = {"getis_ord", "hdbscan", "grow_segmentation"}
+_VIEWPORT_STEPS = {"getis_ord", "hdbscan", "grow_segmentation", "gmm_segmentation"}
 _VIEWPORT_OUTPUT = {
     "getis_ord": "gi_star",
     "hdbscan": "cluster_id",
     "grow_segmentation": "segment_id",
+    "gmm_segmentation": "gmm_id",
 }
 
 
@@ -420,7 +421,7 @@ async def viewport(req: Request):
     col = _VIEWPORT_OUTPUT[op]
     if op == "getis_ord" and output in ("gi_star", "gi_sig"):
         col = output
-    categorical = col in ("cluster_id", "segment_id")
+    categorical = col in ("cluster_id", "segment_id", "gmm_id")
     value = np.nan_to_num(produced[col], nan=-1.0 if categorical else np.nan)
 
     with tempfile.NamedTemporaryFile(suffix=".d1an", delete=False) as f:

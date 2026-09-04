@@ -25,10 +25,12 @@ from .angular import tsa as _tsa
 from .detrend import radial_detrend as _radial_detrend
 from .envelope import bandpass_envelope, envelope_spectrum
 from .frames import frame_transform as _frame_transform
+from .interpolate import grid_interpolate
 from .registry import Columns, step
 from .spatial import (
     assign_by_neighbours,
     benjamini_hochberg,
+    cluster_gmm,
     cluster_hdbscan,
     getis_ord_gi_star,
     grid_reduce,
@@ -243,3 +245,91 @@ def _op_grow_segmentation(cols: Columns, params: dict, inputs: dict):
         "segmentation_status": status,
         "segmentation_n_classes": int(n_classes),
     }
+
+
+@step("invert", produces=["inverted"], requires=[], tier="derived", category="transform")
+def _op_invert(cols: Columns, params: dict, inputs: dict):
+    """Value inversion -- NOT a sign flip, NOT deconvolution. Maps `source` through a
+    complement or reciprocal so a "low is bad" channel (e.g. glosh, where a poor fit reads
+    low) can be coloured the same way as a "high is bad" one (resid_z).
+
+    `requires=()` is deliberate: `source` names WHICH earlier column to invert, chosen at
+    recipe-edit time -- a genuinely runtime dependency the static requires/produces graph
+    cannot express (every other step's requires is fixed at registration). Raising here with
+    the missing name in the message is what lets recipeProblems() (recipeChannels.ts) mirror
+    the same check client-side and refuse the doomed request before it is sent, rather than
+    this step being the one whose failure the client can never predict.
+    """
+    source = str(params.get("source", "resid_z"))
+    if source not in cols:
+        raise ValueError(
+            f"invert: source column {source!r} is not available -- place invert after "
+            f"the step that produces it"
+        )
+    v = np.asarray(cols[source], dtype=np.float64)
+    mode = str(params.get("mode", "complement"))
+    if mode == "reciprocal":
+        epsilon = float(params.get("epsilon", 1e-6))
+        # Magnitude inverted (small |v| -> large output), sign kept: a positive and a
+        # negative anomaly of the same size stay distinguishable after inversion.
+        out = np.copysign(1.0 / (np.abs(v) + epsilon), v)
+    else:
+        finite = v[np.isfinite(v)]
+        top = float(np.nanmax(finite)) if finite.size else 0.0
+        out = top - v
+    return {"inverted": out}, {}
+
+
+@step("griddify", produces=["grid_fill", "grid_support"],
+      requires=["x", "y", "resid_z"], tier="derived", category="interpolation")
+def _op_griddify(cols: Columns, params: dict, inputs: dict):
+    """Regularise resid_z onto a resolution_mm grid and sample it back at every original
+    point (see interpolate.py for why -- the point count cannot change). grid_fill is the
+    result; grid_support is [0, 1], each point's own local density relative to max_fill_mm,
+    the honest "how much of this is invented" estimate."""
+    resolution_mm = float(params.get("resolution_mm", 0.25))
+    method = str(params.get("method", "linear"))
+    max_fill_mm = float(params.get("max_fill_mm", 1.0))
+    fill, support = grid_interpolate(
+        cols["x"], cols["y"], cols["resid_z"],
+        resolution_mm=resolution_mm, method=method, max_fill_mm=max_fill_mm,
+    )
+    finite_support = support[np.isfinite(support)]
+    return {"grid_fill": fill, "grid_support": support}, {
+        "grid_support_mean": float(finite_support.mean()) if finite_support.size else 0.0,
+    }
+
+
+@step("gmm_segmentation", produces=["gmm_id", "gmm_prob"],
+      requires=["x", "y", "resid_z"], tier="derived", category="segmentation")
+def _op_gmm_segmentation(cols: Columns, params: dict, inputs: dict):
+    """Unsupervised counterpart to grow_segmentation -- no seeds needed, every point gets a
+    class (no noise) and a genuine per-point confidence (gmm_prob). Runs on the same
+    grid-reduced set as hdbscan, carried back with assign_by_neighbours, so it does not
+    reintroduce the grid-quantized boundaries assign_from_grid produced (see the hdbscan op's
+    comment and spatial.assign_by_neighbours)."""
+    n_components = int(params.get("n_components", 4))
+    covariance_type = str(params.get("covariance_type", "full"))
+    attr_weight = float(params.get("attr_weight", 1.0))
+    random_state = int(params.get("random_state", 0))
+    target = int(params.get("grid_target", 20000))
+
+    z = cols["resid_z"]
+    n = z.size
+    fin = np.isfinite(z)
+    gmm_id = np.full(n, -1.0)
+    gmm_prob = np.zeros(n)
+    if int(fin.sum()) >= max(4, n_components):
+        xr, yr, vr, _cell_id = grid_reduce(
+            cols["x"][fin], cols["y"][fin], z[fin], target_n=target
+        )
+        labels, prob = cluster_gmm(
+            xr, yr, vr, n_components=n_components, covariance_type=covariance_type,
+            attr_weight=attr_weight, random_state=random_state,
+        )
+        id_fin, prob_fin = assign_by_neighbours(
+            cols["x"][fin], cols["y"][fin], xr, yr, labels, prob
+        )
+        gmm_id[fin] = id_fin
+        gmm_prob[fin] = prob_fin
+    return {"gmm_id": gmm_id, "gmm_prob": gmm_prob}, {}

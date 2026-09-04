@@ -99,4 +99,52 @@ describe('recipeProblems', () => {
 		};
 		expect(recipeProblems(r)).toEqual([]);
 	});
+
+	// invert's dependency is params.source, a runtime choice STEP_REQUIRES cannot express
+	// (scripts/diag/ops.py::_op_invert raises the matching check server-side) -- these pin
+	// the client-side mirror in recipeProblems() that catches it before the request is sent.
+	describe('invert (runtime source dependency)', () => {
+		function withInvert(source: string, extra: Partial<Recipe> = {}): Recipe {
+			return {
+				...DEFAULT_RECIPE,
+				...extra,
+				steps: [
+					...DEFAULT_RECIPE.steps,
+					{ id: 'x1', op: 'invert', on: true, params: { source, mode: 'complement' } },
+				],
+			};
+		}
+
+		it('accepts inverting a channel an earlier enabled step produces', () => {
+			expect(recipeProblems(withInvert('resid_z'))).toEqual([]);
+		});
+
+		it('flags inverting a channel nothing enabled has produced yet', () => {
+			const probs = recipeProblems(withInvert('env_band'));
+			expect(probs).toHaveLength(1);
+			expect(probs[0].stepId).toBe('x1');
+			expect(probs[0].missing).toEqual(['env_band']);
+			expect(probs[0].message).toContain('Envelope band');
+		});
+
+		it('defaults the source to resid_z when the param is absent', () => {
+			const r: Recipe = {
+				...DEFAULT_RECIPE,
+				steps: [...DEFAULT_RECIPE.steps, { id: 'x1', op: 'invert', on: true, params: {} }],
+			};
+			expect(recipeProblems(r)).toEqual([]);
+		});
+
+		it('does not flag a disabled invert step', () => {
+			const r = withInvert('env_band');
+			r.steps[r.steps.length - 1].on = false;
+			expect(recipeProblems(r)).toEqual([]);
+		});
+
+		it('unblocks once the producing step is re-enabled', () => {
+			const r = withInvert('env_band');
+			r.steps.find((s) => s.op === 'envelope')!.on = true;
+			expect(recipeProblems(r)).toEqual([]);
+		});
+	});
 });

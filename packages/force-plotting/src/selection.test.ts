@@ -20,6 +20,11 @@ function makeAttrs(): DiagAttrs {
 			glosh: new Float32Array([0.9, 0.1, 0.5, 0.2, 0.8]),
 			env_band: new Float32Array([0, 0, 0, 0, 0]),
 			segment_id: new Float32Array([-1, 0, 0, 1, 1]),
+			inverted: new Float32Array([5, 1, 0, -1, -5]),
+			grid_fill: new Float32Array([-5, -1, 0, 1, 5]),
+			grid_support: new Float32Array([1, 1, 1, 1, 1]),
+			gmm_id: new Float32Array([0, 0, 1, 1, 2]),
+			gmm_prob: new Float32Array([0.9, 0.8, 0.7, 0.9, 0.6]),
 		},
 	};
 }

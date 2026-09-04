@@ -9,7 +9,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import DiagOctreeView from './DiagOctreeView.vue';
 import InfoTip from './InfoTip.vue';
-import { fetchViewportCompute, type ViewportResult, type ViewportStep } from './diagViewport';
+import { fetchViewportCompute, type ViewportResult, type ViewportStep, type ViewportOp } from './diagViewport';
 import { layersForRequest, type DiagLayer } from './diagLayers';
 import { CHANNEL_HELP } from './diagHelp';
 import type { ChannelKey, Selection } from './selection';
@@ -55,12 +55,15 @@ watch(viewportBusy, (b) => emit('busy', b));
 
 const OUTPUT_OF: Record<string, ChannelKey> = {
 	getis_ord: 'giStar', hdbscan: 'clusterId', grow_segmentation: 'segmentId',
+	gmm_segmentation: 'gmmId',
 };
-const OP_OF: Partial<Record<ChannelKey, 'getis_ord' | 'hdbscan' | 'grow_segmentation'>> = {
+const OP_OF: Partial<Record<ChannelKey, ViewportOp>> = {
 	giStar: 'getis_ord', clusterId: 'hdbscan', segmentId: 'grow_segmentation',
+	gmmId: 'gmm_segmentation',
 };
 const analysisMode = computed<'continuous' | 'categorical'>(() =>
-	channel.value === 'clusterId' || channel.value === 'segmentId' ? 'categorical' : 'continuous');
+	channel.value === 'clusterId' || channel.value === 'segmentId' || channel.value === 'gmmId'
+		? 'categorical' : 'continuous');
 const isolateClass = computed(() =>
 	(props.selection?.kind === 'cluster' ? props.selection.id : null));
 
@@ -74,7 +77,7 @@ function stepInputs(op: string): Record<string, unknown> | undefined {
 }
 
 async function runViewport(
-	op: 'getis_ord' | 'hdbscan' | 'grow_segmentation',
+	op: ViewportOp,
 	{ focus }: { focus: boolean } = { focus: true },
 ) {
 	if (!viewportBounds.value || !props.recipeValid) return;

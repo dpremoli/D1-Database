@@ -38,7 +38,7 @@ export const SCOPE_META: Record<StepScope, { label: string; short: string; help:
 };
 
 /** Ops whose statistics can be recomputed on the framed viewport. */
-export const VIEW_SCOPED_OPS = new Set(['getis_ord', 'hdbscan', 'grow_segmentation']);
+export const VIEW_SCOPED_OPS = new Set(['getis_ord', 'hdbscan', 'grow_segmentation', 'gmm_segmentation']);
 
 export function scopeOf(op: string, tier: 'base' | 'derived'): StepScope {
 	if (tier === 'base') return 'bake';
@@ -180,6 +180,61 @@ export const STEP_HELP: Record<string, StepHelp> = {
 				+ 'on geometry alone; high values follow the residual across space.',
 		},
 	},
+	invert: {
+		summary: 'Flips a channel so a "low is bad" reading colours the same way as a "high is bad" one.',
+		detail:
+			'Not a sign flip and not a deconvolution — a value inversion. Complement (max minus '
+			+ 'the value) mirrors the channel around its own peak; reciprocal inverts magnitude '
+			+ 'while keeping the original sign, so a small value reads large and vice versa. Useful '
+			+ 'on glosh, where a POOR cluster fit reads low, to colour it consistently with resid_z.',
+		params: {
+			source: 'Which already-computed channel to invert. Must come from an earlier enabled step.',
+			mode: 'Complement mirrors around the channel’s own max; reciprocal inverts magnitude only.',
+			epsilon: 'Reciprocal mode only — added to the magnitude before dividing, so a value of '
+				+ 'exactly zero does not produce an infinite result.',
+		},
+	},
+	griddify: {
+		summary: 'Regularises resid_z onto a physical-resolution grid, with an honest confidence map.',
+		detail:
+			'The point count cannot change (every step after angular_resample must produce the '
+			+ 'same number of points), so this is not a denser cloud — it is resid_z resampled '
+			+ 'through a grid at Resolution mm, which behaves as a spatial smoothing filter: '
+			+ 'coarser than the real point spacing, it averages several real points together. '
+			+ 'grid_support is [0, 1] per point — how close it is to its nearest OTHER real '
+			+ 'sample relative to Max fill distance. High support means the value nearby is '
+			+ 'genuinely measured; low support means it is interpolated across a real gap '
+			+ '(the wide angular spacing at large radius is the usual cause).',
+		params: {
+			resolution_mm: 'Grid pitch in millimetres. Coarser smooths more but blurs finer '
+				+ 'features; the real point spacing on this cut is a useful floor.',
+			method: 'Linear blends between the nearest real samples; nearest just copies the '
+				+ 'closest one — no NaN even at the edge of the data.',
+			max_fill_mm: 'Distance in millimetres beyond which grid_support reaches 0 — the '
+				+ 'point is now further from any real data than this is willing to call confident.',
+		},
+	},
+	gmm_segmentation: {
+		summary: 'Unsupervised segmentation over position and resid_z — no seeds needed.',
+		detail:
+			'The unsupervised counterpart to Seeded segmentation: a Gaussian mixture over '
+			+ '(x, y, resid_z) partitions the whole cut into Components classes with no painted '
+			+ 'examples. Unlike HDBSCAN, every point gets a class — there is no noise — and '
+			+ 'gmm_prob is a genuine per-point confidence (how sure the model is of that '
+			+ 'point’s assignment), which is the reason to reach for this over HDBSCAN.',
+		params: {
+			n_components: 'How many classes to partition into. Fixed, unlike HDBSCAN which finds '
+				+ 'its own count — you are choosing the number of segments up front.',
+			covariance_type: 'How each class’s spread is shaped. Full fits an arbitrary ellipse '
+				+ 'per class; spherical is the simplest and most stable on noisy data.',
+			attr_weight: 'How much resid_z counts relative to physical position. Low partitions on '
+				+ 'geometry alone; high follows the residual across space.',
+			random_state: 'Seeds the fit so the same recipe gives the same classes every time. '
+				+ 'Changing it can relabel which class is which, or find a different local optimum.',
+			grid_target: 'The cloud is first reduced to about this many spatial cells before '
+				+ 'fitting, the same tractability step HDBSCAN uses. Higher = finer detail, slower.',
+		},
+	},
 };
 
 /** Channel selector help, keyed by ChannelKey. */
@@ -206,6 +261,21 @@ export const CHANNEL_HELP: Record<string, string> = {
 		+ 'the Envelope step ran with a real natural frequency.',
 	segmentId:
 		'Seeded segmentation class. Each colour is one of the classes you painted seeds for.',
+	inverted:
+		'The source channel, inverted (complement or reciprocal). What reads as "bad" is '
+		+ 'the same direction as resid_z, whatever the source channel was.',
+	gridFill:
+		'resid_z regularised onto a physical-resolution grid and read back at each point — a '
+		+ 'spatial smoothing of the anomaly map at a chosen millimetre scale.',
+	gridSupport:
+		'Interpolation confidence, 0–1. High near real, dense data; low where the grid had to '
+		+ 'reach further to fill a gap. Colour by this to see how much of grid_fill is invented.',
+	gmmId:
+		'Gaussian-mixture segment. Unlike HDBSCAN clusters, every point belongs to one — there '
+		+ 'is no noise class.',
+	gmmProb:
+		'Confidence the GMM had in assigning this point to its segment. Low values sit near a '
+		+ 'boundary between two segments.',
 };
 
 /** Panel-level help, keyed by panel id. */
