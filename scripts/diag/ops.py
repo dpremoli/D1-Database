@@ -27,7 +27,7 @@ from .envelope import bandpass_envelope, envelope_spectrum
 from .frames import frame_transform as _frame_transform
 from .registry import Columns, step
 from .spatial import (
-    assign_from_grid,
+    assign_by_neighbours,
     benjamini_hochberg,
     cluster_hdbscan,
     getis_ord_gi_star,
@@ -154,10 +154,18 @@ def _op_hdbscan(cols: Columns, params: dict, inputs: dict):
     cluster_id = np.full(n, -1.0)
     glosh = np.zeros(n)
     if int(fin.sum()) >= min_size:
-        xr, yr, vr, cell_id = grid_reduce(cols["x"][fin], cols["y"][fin], z[fin], target_n=target)
+        xr, yr, vr, _cell_id = grid_reduce(
+            cols["x"][fin], cols["y"][fin], z[fin], target_n=target
+        )
         if xr.size >= min_size:
             labels, gl = cluster_hdbscan(xr, yr, vr, min_cluster_size=min_size)
-            cid_fin, gl_fin = assign_from_grid(cell_id, labels, gl)
+            # Vote over neighbouring centroids rather than broadcasting each grid cell's
+            # label: grid_reduce targets a CELL COUNT, so the broadcast quantized every
+            # boundary to ~1/141 of the view at every zoom level -- visibly blocky segments
+            # that no parameter could fix. See spatial.assign_by_neighbours.
+            cid_fin, gl_fin = assign_by_neighbours(
+                cols["x"][fin], cols["y"][fin], xr, yr, labels, gl
+            )
             cluster_id[fin] = cid_fin
             glosh[fin] = gl_fin
     return {"cluster_id": cluster_id, "glosh": glosh}, {}

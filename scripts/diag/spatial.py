@@ -160,6 +160,84 @@ def assign_from_grid(
     cell_id: np.ndarray, labels_reduced: np.ndarray, glosh_reduced: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
     """Broadcast the reduced set's cluster labels/glosh to every full-resolution point via
-    its grid cell (exact -- see grid_reduce's docstring)."""
+    its grid cell (exact -- see grid_reduce's docstring).
+
+    Kept, and still the right tool when you want the reduction itself to be visible (the
+    equivalence tests use it), but NOT what the ops call any more: because every boundary
+    lands on a cell edge, the result reads as blocky. See assign_by_neighbours.
+    """
     cell_id = np.asarray(cell_id, dtype=np.int64)
     return labels_reduced[cell_id], glosh_reduced[cell_id]
+
+
+def assign_by_neighbours(
+    x: np.ndarray,
+    y: np.ndarray,
+    xr: np.ndarray,
+    yr: np.ndarray,
+    labels_reduced: np.ndarray,
+    glosh_reduced: np.ndarray,
+    k: int = 4,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Carry a clustering computed on the reduced set back to full resolution by an
+    inverse-distance-weighted vote over the `k` nearest reduced centroids.
+
+    Why this exists. `grid_reduce` sizes its grid for a target CELL COUNT, so at the default
+    grid_target=20000 it is about 141x141 cells across whatever extent it is handed. Pairing
+    it with `assign_from_grid`, which gives every point its own cell's label, quantized each
+    cluster boundary to one cell -- roughly 1/141 of the view, at EVERY zoom level, since
+    zooming shrinks the cells but never adds any. No parameter could remove that, so the fix
+    had to be in the assignment rather than in the reduction.
+
+    Voting over neighbouring centroids lets a boundary fall anywhere between them, so it
+    follows the data. `-1` (noise) votes like any other label rather than abstaining: were it
+    ignored, every noise point beside a cluster would be absorbed into it and noise regions
+    would disappear. glosh gets the same weighted mean, which also stops it reading as
+    piecewise-constant.
+
+    `k` is deliberately not a recipe parameter -- it controls the smoothness of the hand-off,
+    not the clustering, and exposing it would invite tuning the wrong knob.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    xr = np.asarray(xr, dtype=np.float64)
+    yr = np.asarray(yr, dtype=np.float64)
+    labels_reduced = np.asarray(labels_reduced, dtype=np.float64)
+    glosh_reduced = np.asarray(glosh_reduced, dtype=np.float64)
+
+    if xr.size == 0:
+        return np.full(x.size, -1.0), np.zeros(x.size)
+    kq = int(max(1, min(k, xr.size)))
+
+    tree = cKDTree(np.column_stack([xr, yr]))
+    dist, idx = tree.query(np.column_stack([x, y]), k=kq)
+    # cKDTree drops the trailing axis when k == 1; restore it so one code path handles both.
+    if kq == 1:
+        dist = dist[:, None]
+        idx = idx[:, None]
+
+    # Inverse-distance weights. A point coincident with a centroid is at distance 0, which
+    # must hand that centroid ALL the weight rather than yielding inf/nan: those rows collapse
+    # to a one-hot weight on the zero-distance neighbour(s).
+    with np.errstate(divide="ignore"):
+        w = 1.0 / dist
+    exact = ~np.isfinite(w)
+    rows_exact = exact.any(axis=1)
+    if rows_exact.any():
+        w[rows_exact] = exact[rows_exact].astype(np.float64)
+
+    neighbour_labels = labels_reduced[idx]
+
+    # Majority vote by summed weight. The label set is small (cluster ids plus -1), so
+    # accumulating a column per distinct label is both cheaper and clearer than a general
+    # argmax over (point, neighbour) pairs.
+    uniq = np.unique(labels_reduced)
+    scores = np.empty((x.size, uniq.size), dtype=np.float64)
+    for j, lab in enumerate(uniq):
+        scores[:, j] = np.where(neighbour_labels == lab, w, 0.0).sum(axis=1)
+    out_labels = uniq[np.argmax(scores, axis=1)]
+
+    wsum = w.sum(axis=1)
+    out_glosh = (glosh_reduced[idx] * w).sum(axis=1) / np.where(wsum > 0, wsum, 1.0)
+
+    return out_labels.astype(np.float64), out_glosh.astype(np.float64)

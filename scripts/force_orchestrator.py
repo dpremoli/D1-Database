@@ -106,7 +106,12 @@ DIAG_CACHE_POINTS = 5_000_000
 # v8: the resid_z broadcast now marks the trailing partial revolution TSA drops as NaN
 # (fill_edges="nan") instead of clamping it to resid_z[-1] -- a v7 full.d1an carries a false
 # uniform-value arc at the octree edge that a viewport recompute would include.
-DIAG_VERSION = 8
+# v9: hdbscan carries its labels back to full resolution with spatial.assign_by_neighbours
+# (an inverse-distance vote over the nearest reduced centroids) instead of assign_from_grid's
+# per-cell broadcast. grid_reduce targets a cell COUNT, so that broadcast quantized every
+# cluster boundary to ~1/141 of the extent at every zoom level -- the visibly blocky segments,
+# unfixable by any parameter. cluster_id and glosh both change, so v8 rows must requeue.
+DIAG_VERSION = 9
 DIAG_SAMPLES_PER_REV = 256
 
 

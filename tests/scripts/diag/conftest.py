@@ -64,6 +64,28 @@ def standard_cut():
 # conftest.synthetic_cut is a co-dependency of BOTH fixtures: it defines the exact input
 # they were captured from, so editing it breaks all four equivalence gates at once in a way
 # that reads as a pipeline regression rather than a fixture-input change.
+#
+# PROVENANCE
+#   original  captured from analyse() before the registry existed (plan Task 1)
+#   v9        RECAPTURED, 2026-09-04. _op_hdbscan switched from spatial.assign_from_grid to
+#             spatial.assign_by_neighbours to stop cluster boundaries being quantized to the
+#             reduction grid. Exactly two columns moved -- cluster_id (107/9984, 1.07%, same
+#             label set {-1,0,1,2}) and glosh (8245/9984, now an interpolated weighted mean
+#             rather than piecewise-constant per cell). Every other column and the
+#             __metrics__ blob were byte-identical across the recapture, which is the
+#             evidence that the change is confined to the op that was edited.
+#
+# Recapture is only ever legitimate alongside a deliberate algorithm change and its
+# DIAG_VERSION bump, and it goes through the committed, reviewable script rather than an
+# ad-hoc session:
+#     py -3 tests/scripts/diag/regenerate_goldens.py --diff     # what would move, and why
+#     py -3 tests/scripts/diag/regenerate_goldens.py --write    # only once --diff is explained
+# Record the moved-column list here and in the commit message. A column that moves which the
+# change does not explain is a regression, not a recapture.
+#
+# A recaptured fixture can only prove the pipeline reproduces ITSELF, so the properties the
+# v9 change actually claims are pinned independently, in test_assign_by_neighbours.py's
+# pipeline-level cases -- those survive any future recapture.
 
 _FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 GOLDEN_DEFAULT = os.path.join(_FIXTURES, "golden_default_recipe.npz")
