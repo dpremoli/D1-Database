@@ -101,6 +101,12 @@ def test_ts_step_tiers_match_the_python_registry():
     assert ts == {name: spec.tier for name, spec in STEPS.items()}
 
 
+def test_ts_step_categories_match_the_python_registry():
+    blocks = _op_blocks(_ts_source(), "STEP_META", set(STEPS))
+    ts = {op: re.search(r"category:\s*'(\w+)'", b).group(1) for op, b in blocks.items()}
+    assert ts == {name: spec.category for name, spec in STEPS.items()}
+
+
 @pytest.mark.parametrize("op", sorted(STEPS))
 def test_every_registered_step_has_client_help(op):
     """A step with no help text renders a bare op name in the panel -- the exact opacity the

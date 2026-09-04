@@ -16,7 +16,10 @@
 //      'Min cluster' read as "number of clusters" and cost an analyst a debugging session; it
 //      is a floor measured in grid cells, and now says so.
 import { computed, ref } from 'vue';
-import { STEP_META, type Recipe, type RecipeProblem, type RecipeStep } from './recipeChannels';
+import {
+	CATEGORY_LABELS, CATEGORY_ORDER, STEP_META,
+	type Recipe, type RecipeProblem, type RecipeStep, type StepCategory,
+} from './recipeChannels';
 import { ACTION_HELP, PANEL_HELP, SCOPE_META, STEP_HELP, scopeOf } from './diagHelp';
 import RecipeLibrary from './RecipeLibrary.vue';
 import InfoTip from './InfoTip.vue';
@@ -85,6 +88,20 @@ function setParam(id: string, key: string, raw: string) {
 const addableOps = computed(() => {
 	const present = new Set(props.recipe.steps.map((s) => s.op));
 	return Object.keys(STEP_META).filter((op) => !present.has(op));
+});
+
+// Grouped by category so the picker reads as "what kind of thing do I want to add" rather
+// than a flat alphabetical dump. CATEGORY_ORDER, not object insertion order, so the groups
+// appear in a stable, roughly-pipeline sequence regardless of STEP_META's own key order.
+const addableByCategory = computed(() => {
+	const byCat = new Map<StepCategory, string[]>();
+	for (const op of addableOps.value) {
+		const cat = STEP_META[op].category;
+		(byCat.get(cat) ?? byCat.set(cat, []).get(cat)!).push(op);
+	}
+	return CATEGORY_ORDER
+		.map((cat) => ({ cat, label: CATEGORY_LABELS[cat], ops: byCat.get(cat) ?? [] }))
+		.filter((g) => g.ops.length > 0);
 });
 
 function defaultParams(op: string): Record<string, number | string | null> {
@@ -257,7 +274,9 @@ const bakeLabel = computed(() => {
 		<div class="add-step" v-if="!collapsed && addableOps.length">
 			<select @change="addStep(($event.target as HTMLSelectElement).value); ($event.target as HTMLSelectElement).value = ''">
 				<option value="">+ add step…</option>
-				<option v-for="op in addableOps" :key="op" :value="op">{{ STEP_META[op].label }}</option>
+				<optgroup v-for="g in addableByCategory" :key="g.cat" :label="g.label">
+					<option v-for="op in g.ops" :key="op" :value="op">{{ STEP_META[op].label }}</option>
+				</optgroup>
 			</select>
 		</div>
 

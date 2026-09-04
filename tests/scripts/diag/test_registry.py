@@ -37,13 +37,14 @@ def dummy_steps():
     snapshot = dict(STEPS)
     try:
 
-        @step("_dummy_source", produces=["_dummy_col"], requires=[], tier="derived")
+        @step("_dummy_source", produces=["_dummy_col"], requires=[], tier="derived",
+              category="transform")
         def _dummy_source(cols, params, inputs):
             n = len(next(iter(cols.values()))) if cols else 4
             return {"_dummy_col": np.zeros(n)}, {"_dummy_metric": 1}
 
         @step("_dummy_consumer", produces=["_dummy_out"], requires=["_dummy_col"],
-              tier="derived")
+              tier="derived", category="transform")
         def _dummy_consumer(cols, params, inputs):
             return {"_dummy_out": cols["_dummy_col"] + 1}, {}
 
@@ -111,13 +112,22 @@ def test_disabled_step_does_not_satisfy_a_requirement(dummy_steps):
 
 def test_decorator_rejects_an_invalid_tier():
     with pytest.raises(ValueError, match="tier must be one of"):
-        step("_dummy_bad_tier", produces=[], requires=[], tier="nonsense")(lambda *a: None)
+        step("_dummy_bad_tier", produces=[], requires=[], tier="nonsense",
+             category="transform")(lambda *a: None)
     assert "_dummy_bad_tier" not in STEPS
+
+
+def test_decorator_rejects_an_invalid_category():
+    with pytest.raises(ValueError, match="category must be one of"):
+        step("_dummy_bad_category", produces=[], requires=[], tier="derived",
+             category="nonsense")(lambda *a: None)
+    assert "_dummy_bad_category" not in STEPS
 
 
 def test_decorator_rejects_a_duplicate_registration(dummy_steps):
     with pytest.raises(ValueError, match="duplicate step registration"):
-        step("_dummy_source", produces=[], requires=[], tier="derived")(lambda *a: None)
+        step("_dummy_source", produces=[], requires=[], tier="derived",
+             category="transform")(lambda *a: None)
 
 
 def test_step_spec_is_frozen(dummy_steps):
@@ -132,6 +142,9 @@ def test_seed_columns_and_tiers_are_exported():
         "t_raw", "fx", "fy", "fz", "rpm", "revs", "x_raw", "y_raw",
     )
     assert registry.TIERS == ("base", "derived")
+    assert registry.CATEGORIES == (
+        "transform", "residual", "interpolation", "statistics", "segmentation",
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -152,6 +165,13 @@ def test_default_recipe_validates():
 def test_every_step_declares_a_valid_tier():
     for name, spec in STEPS.items():
         assert spec.tier in TIERS, f"{name} has bad tier {spec.tier!r}"
+
+
+def test_every_step_declares_a_valid_category():
+    for name, spec in STEPS.items():
+        assert spec.category in registry.CATEGORIES, (
+            f"{name} has bad category {spec.category!r}"
+        )
 
 
 def test_envelope_is_base_tier():

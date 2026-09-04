@@ -41,6 +41,14 @@ SEED_COLUMNS: tuple[str, ...] = (
 
 TIERS = ("base", "derived")
 
+# What kind of thing a step does, for the step PICKER only -- the pipeline itself stays a flat
+# ordered list, because step order is semantic (radial_detrend must run before getis_ord) and
+# grouping the list itself would hide that. 'transform' reshapes the raw signal into the
+# working frame; 'residual' extracts what departs from the expected signal; 'interpolation'
+# fills gaps; 'statistics' scores points against their neighbourhood; 'segmentation' assigns
+# points to discrete groups.
+CATEGORIES = ("transform", "residual", "interpolation", "statistics", "segmentation")
+
 
 @dataclass(frozen=True)
 class StepSpec:
@@ -49,6 +57,7 @@ class StepSpec:
     produces: tuple[str, ...]
     requires: tuple[str, ...]
     tier: str
+    category: str
 
 
 STEPS: dict[str, StepSpec] = {}
@@ -58,7 +67,7 @@ class RecipeError(ValueError):
     """A recipe that cannot be executed as written."""
 
 
-def step(name: str, *, produces: list[str], requires: list[str], tier: str):
+def step(name: str, *, produces: list[str], requires: list[str], tier: str, category: str):
     """Register a step function. Import-time side effect, so diag.ops must be imported
     before a recipe referencing its ops can be validated or run."""
 
@@ -67,7 +76,9 @@ def step(name: str, *, produces: list[str], requires: list[str], tier: str):
             raise ValueError(f"duplicate step registration: {name!r}")
         if tier not in TIERS:
             raise ValueError(f"tier must be one of {TIERS}, got {tier!r}")
-        STEPS[name] = StepSpec(name, fn, tuple(produces), tuple(requires), tier)
+        if category not in CATEGORIES:
+            raise ValueError(f"category must be one of {CATEGORIES}, got {category!r}")
+        STEPS[name] = StepSpec(name, fn, tuple(produces), tuple(requires), tier, category)
         return fn
 
     return deco

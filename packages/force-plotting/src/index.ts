@@ -37,10 +37,12 @@ export { workingSetFromD1an, matches, computeStats, clusterStats, CHANNEL_ACCESS
 export type { WorkingSet, Selection, SelectionStats, ChannelKey, ClusterRow } from './selection';
 
 export {
-	DEFAULT_RECIPE, STEP_META, recipeChannels, recipesEquivalent,
+	DEFAULT_RECIPE, STEP_META, recipeChannels, recipesEquivalent, CATEGORY_LABELS, CATEGORY_ORDER,
 } from './recipeChannels';
 export { recipeProblems } from './recipeChannels';
-export type { Recipe, RecipeStep, ParamSpec, StepMeta, ChannelOption, RecipeProblem } from './recipeChannels';
+export type {
+	Recipe, RecipeStep, ParamSpec, StepMeta, ChannelOption, RecipeProblem, StepCategory,
+} from './recipeChannels';
 
 export { fetchDiagPreview } from './diagPreview';
 export type { DiagPreview } from './diagPreview';

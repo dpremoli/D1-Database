@@ -38,7 +38,7 @@ _CHANNELS = ("fc", "ff", "fp")
 
 
 @step("frame_transform", produces=["fc", "ff", "fp"],
-      requires=["fx", "fy", "fz"], tier="base")
+      requires=["fx", "fy", "fz"], tier="base", category="transform")
 def _op_frame_transform(cols: Columns, params: dict, inputs: dict):
     h = params.get("h_matrix")
     fx, fy, fz = cols["fx"], cols["fy"], cols["fz"]
@@ -58,7 +58,8 @@ def _op_frame_transform(cols: Columns, params: dict, inputs: dict):
 
 
 @step("angular_resample", produces=["t", "rev", "x", "y", "sig"],
-      requires=["revs", "t_raw", "x_raw", "y_raw", "fc", "ff", "fp"], tier="base")
+      requires=["revs", "t_raw", "x_raw", "y_raw", "fc", "ff", "fp"], tier="base",
+      category="transform")
 def _op_angular_resample(cols: Columns, params: dict, inputs: dict):
     spr = int(params.get("samples_per_rev", 256))
     channel = str(params.get("channel", "fp"))
@@ -74,7 +75,8 @@ def _op_angular_resample(cols: Columns, params: dict, inputs: dict):
     }
 
 
-@step("tsa", produces=["tsa_resid"], requires=["sig", "rev"], tier="derived")
+@step("tsa", produces=["tsa_resid"], requires=["sig", "rev"], tier="derived",
+      category="residual")
 def _op_tsa(cols: Columns, params: dict, inputs: dict):
     spr = int(params.get("samples_per_rev") or 0)
     if not spr:
@@ -97,7 +99,7 @@ def _op_tsa(cols: Columns, params: dict, inputs: dict):
 
 
 @step("radial_detrend", produces=["resid_z"],
-      requires=["tsa_resid", "x", "y"], tier="derived")
+      requires=["tsa_resid", "x", "y"], tier="derived", category="residual")
 def _op_radial_detrend(cols: Columns, params: dict, inputs: dict):
     r = np.hypot(cols["x"], cols["y"])
     tsa = cols["tsa_resid"]
@@ -120,7 +122,7 @@ def _op_radial_detrend(cols: Columns, params: dict, inputs: dict):
 
 
 @step("getis_ord", produces=["gi_star", "gi_sig"],
-      requires=["x", "y", "resid_z"], tier="derived")
+      requires=["x", "y", "resid_z"], tier="derived", category="statistics")
 def _op_getis_ord(cols: Columns, params: dict, inputs: dict):
     k = int(params.get("k", 30))
     alpha = float(params.get("alpha", 0.05))
@@ -142,7 +144,7 @@ def _op_getis_ord(cols: Columns, params: dict, inputs: dict):
 
 
 @step("hdbscan", produces=["cluster_id", "glosh"],
-      requires=["x", "y", "resid_z"], tier="derived")
+      requires=["x", "y", "resid_z"], tier="derived", category="segmentation")
 def _op_hdbscan(cols: Columns, params: dict, inputs: dict):
     target = int(params.get("grid_target", 20000))
     min_size = int(params.get("min_cluster_size", 10))
@@ -172,7 +174,8 @@ def _op_hdbscan(cols: Columns, params: dict, inputs: dict):
 
 
 @step("envelope", produces=["env_band"],
-      requires=["fc", "ff", "fp", "revs", "t_raw", "tsa_resid"], tier="base")
+      requires=["fc", "ff", "fp", "revs", "t_raw", "tsa_resid"], tier="base",
+      category="residual")
 def _op_envelope(cols: Columns, params: dict, inputs: dict):
     """Full-rate, time-domain. This is why the step is 'base' tier despite running last:
     the modulation rate it recovers lives in Hz, which the angular domain discards."""
@@ -217,7 +220,7 @@ def _op_envelope(cols: Columns, params: dict, inputs: dict):
 
 
 @step("grow_segmentation", produces=["segment_id"],
-      requires=["x", "y", "resid_z"], tier="derived")
+      requires=["x", "y", "resid_z"], tier="derived", category="segmentation")
 def _op_grow_segmentation(cols: Columns, params: dict, inputs: dict):
     """Seeded segmentation: each bound seed-role layer is one class; LabelSpreading fills
     every other point. Degrades to all -1 below 2 seed classes. NOT in DEFAULT_RECIPE -- it

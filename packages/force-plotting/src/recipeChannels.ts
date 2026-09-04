@@ -48,9 +48,29 @@ export interface ParamSpec {
 	options?: { value: string; label: string }[];
 }
 
+// Mirrors scripts/diag/registry.py::CATEGORIES. What kind of thing a step does, for the step
+// PICKER only -- the pipeline itself stays a flat ordered list, because step order is
+// semantic (radial_detrend must run before getis_ord) and grouping the list would hide that.
+export type StepCategory = 'transform' | 'residual' | 'interpolation' | 'statistics' | 'segmentation';
+
+export const CATEGORY_LABELS: Record<StepCategory, string> = {
+	transform: 'Transform',
+	residual: 'Residual',
+	interpolation: 'Interpolation',
+	statistics: 'Statistics',
+	segmentation: 'Segmentation',
+};
+
+// Picker display order -- roughly pipeline order, so a step's own category is never far from
+// where it would sit in a freshly-built recipe.
+export const CATEGORY_ORDER: StepCategory[] = [
+	'transform', 'residual', 'interpolation', 'statistics', 'segmentation',
+];
+
 export interface StepMeta {
 	label: string;
 	tier: 'base' | 'derived';
+	category: StepCategory;
 	/** snake_case columns this step produces (registry `produces`). */
 	produces: string[];
 	params: ParamSpec[];
@@ -59,7 +79,7 @@ export interface StepMeta {
 // Mirrors scripts/diag/ops.py's @step registrations. Only the tunable params are surfaced.
 export const STEP_META: Record<string, StepMeta> = {
 	frame_transform: {
-		label: 'Frame transform', tier: 'base', produces: ['fc', 'ff', 'fp'],
+		label: 'Frame transform', tier: 'base', category: 'transform', produces: ['fc', 'ff', 'fp'],
 		params: [{
 			key: 'channel', label: 'Channel', kind: 'select',
 			options: [
@@ -70,40 +90,40 @@ export const STEP_META: Record<string, StepMeta> = {
 		}, { key: 'mount_deg', label: 'Mount °', kind: 'number', min: -180, max: 180, step: 1 }],
 	},
 	angular_resample: {
-		label: 'Angular resample', tier: 'base', produces: ['t', 'rev', 'x', 'y', 'sig'],
+		label: 'Angular resample', tier: 'base', category: 'transform', produces: ['t', 'rev', 'x', 'y', 'sig'],
 		params: [{ key: 'samples_per_rev', label: 'Samples / rev', kind: 'number', min: 64, max: 2048, step: 64 }],
 	},
-	tsa: { label: 'TSA residual', tier: 'derived', produces: ['tsa_resid'], params: [] },
+	tsa: { label: 'TSA residual', tier: 'derived', category: 'residual', produces: ['tsa_resid'], params: [] },
 	radial_detrend: {
-		label: 'Radial detrend', tier: 'derived', produces: ['resid_z'],
+		label: 'Radial detrend', tier: 'derived', category: 'residual', produces: ['resid_z'],
 		params: [
 			{ key: 'n_bins', label: 'Radial bins', kind: 'number', min: 20, max: 1000, step: 10 },
 			{ key: 'min_per_bin', label: 'Min / bin', kind: 'number', min: 2, max: 100, step: 1 },
 		],
 	},
 	getis_ord: {
-		label: 'Getis-Ord Gi*', tier: 'derived', produces: ['gi_star', 'gi_sig'],
+		label: 'Getis-Ord Gi*', tier: 'derived', category: 'statistics', produces: ['gi_star', 'gi_sig'],
 		params: [
 			{ key: 'k', label: 'Neighbours k', kind: 'number', min: 5, max: 200, step: 1 },
 			{ key: 'alpha', label: 'FDR α', kind: 'number', min: 0.001, max: 0.2, step: 0.005 },
 		],
 	},
 	hdbscan: {
-		label: 'HDBSCAN clusters', tier: 'derived', produces: ['cluster_id', 'glosh'],
+		label: 'HDBSCAN clusters', tier: 'derived', category: 'segmentation', produces: ['cluster_id', 'glosh'],
 		params: [
 			{ key: 'grid_target', label: 'Grid target', kind: 'number', min: 2000, max: 60000, step: 1000 },
 			{ key: 'min_cluster_size', label: 'Min cluster', kind: 'number', min: 3, max: 200, step: 1 },
 		],
 	},
 	envelope: {
-		label: 'Envelope band', tier: 'base', produces: ['env_band'],
+		label: 'Envelope band', tier: 'base', category: 'residual', produces: ['env_band'],
 		params: [
 			{ key: 'fn_hz', label: 'Dyno fₙ (Hz)', kind: 'number', min: 0, max: 20000, step: 50 },
 			{ key: 'bandwidth_frac', label: 'Band width frac', kind: 'number', min: 0.05, max: 0.5, step: 0.05 },
 		],
 	},
 	grow_segmentation: {
-		label: 'Seeded segmentation', tier: 'derived', produces: ['segment_id'],
+		label: 'Seeded segmentation', tier: 'derived', category: 'segmentation', produces: ['segment_id'],
 		params: [
 			{ key: 'k', label: 'Neighbours k', kind: 'number', min: 3, max: 100, step: 1 },
 			{ key: 'alpha', label: 'Clamping α', kind: 'number', min: 0.01, max: 0.9, step: 0.05 },
