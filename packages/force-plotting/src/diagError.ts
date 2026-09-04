@@ -69,3 +69,23 @@ export function diagRequestError(what: string, status: number, body: string): Di
 	}
 	return new DiagRequestError(message, status, body.slice(0, 500));
 }
+
+/**
+ * The same mapping for an error thrown by the axios client rather than by a raw fetch.
+ *
+ * Directus reads go through axios, whose rejection message is "Request failed with status
+ * code 403" -- as opaque to an analyst as the raw sidecar body was, and it reached the
+ * detached panel's error line verbatim. Anything that is not a recognisable HTTP failure
+ * (a network drop, a bug) keeps its own message, since inventing an HTTP story for it would
+ * be worse than saying nothing.
+ */
+export function describeRequestFailure(err: unknown, what: string): string {
+	const e = err as { response?: { status?: number; data?: unknown }; status?: number; message?: string };
+	const status = e?.response?.status ?? e?.status;
+	if (typeof status === 'number') {
+		const data = e?.response?.data;
+		const body = typeof data === 'string' ? data : JSON.stringify(data ?? {});
+		return diagRequestError(what, status, body).message;
+	}
+	return e?.message || `Could not load the ${what}.`;
+}

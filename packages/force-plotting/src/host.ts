@@ -129,7 +129,12 @@ export async function authorizedFetch(url: string, init: RequestInit = {}): Prom
 	});
 
 	const res = await send();
-	if (res.status !== 401 || !host.refreshAuth || init.signal?.aborted) return res;
+	// 403 as well as 401: Directus answers a MISSING or unusable token with 403 on item
+	// reads, and diag-service forwards whichever status Directus gave it. Retrying only on
+	// 401 therefore left exactly the expired-token case unhandled -- the one this exists for.
+	// A genuine permissions 403 costs one wasted refresh and then fails identically.
+	const retryable = res.status === 401 || res.status === 403;
+	if (!retryable || !host.refreshAuth || init.signal?.aborted) return res;
 
 	// The 401 body is left unread on purpose. When the refresh fails this response is handed
 	// back to the caller, which reads it to build its error message — draining it here would

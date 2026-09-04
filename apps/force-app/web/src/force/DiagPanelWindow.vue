@@ -16,7 +16,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import {
-	SpatialPanel, DEFAULT_RECIPE, recipeChannels, setForceHost, openDiagSync,
+	SpatialPanel, DEFAULT_RECIPE, recipeChannels, setForceHost, openDiagSync, describeRequestFailure,
 	fetchLayers, type DiagSyncChannel, type DiagLayer, type Recipe,
 } from '@d1/force-plotting';
 import { api, authHeaders } from '../directusClient';
@@ -67,7 +67,7 @@ onMounted(async () => {
 		if (row.diag_recipe) recipe.value = row.diag_recipe as Recipe;
 		document.title = `Spatial · ${row.pass_code || analysisId.value.slice(0, 8)}`;
 	} catch (e: any) {
-		err.value = e?.message || 'failed to load the cut';
+		err.value = describeRequestFailure(e, 'cut');
 		return;
 	}
 	try { layers.value = await fetchLayers(analysisId.value); } catch { layers.value = []; }

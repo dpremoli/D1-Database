@@ -31,7 +31,13 @@ api.interceptors.response.use(
 	async (error: AxiosError) => {
 		const cfg = error.config as (InternalAxiosRequestConfig & { _retried?: boolean }) | undefined;
 		const status = error.response?.status;
-		if (status === 401 && cfg && !cfg._retried && authStore.state.refreshToken) {
+		// 403 as well as 401: Directus answers a request carrying NO usable token with 403 on
+		// item reads, so an expired access token surfaced as a 403 that this interceptor
+		// ignored -- the detached diagnostics panel showed "Request failed with status code
+		// 403" and never recovered. Retrying a genuine permissions 403 costs one refresh and
+		// then fails the same way, so the retry is safe to widen.
+		const recoverable = status === 401 || status === 403;
+		if (recoverable && cfg && !cfg._retried && authStore.state.refreshToken) {
 			cfg._retried = true;
 			const ok = await authStore.refresh();
 			if (ok) {
@@ -39,6 +45,8 @@ api.interceptors.response.use(
 				return api.request(cfg);
 			}
 		}
+		// Only a 401 means "this session is over". A 403 that survived the retry above is a
+		// permissions answer about one resource, and must not sign the analyst out.
 		if (status === 401) {
 			authStore.clear();
 			onUnauthorized?.();

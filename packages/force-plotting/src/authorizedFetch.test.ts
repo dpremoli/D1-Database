@@ -140,3 +140,31 @@ describe('authorizedFetch', () => {
 		expect(refreshAuth).not.toHaveBeenCalled();
 	});
 });
+
+describe('authorizedFetch on 403', () => {
+	// Directus answers an item read carrying no usable token with 403, not 401, and
+	// diag-service forwards whatever Directus gave it. Retrying only on 401 left exactly the
+	// expired-token case unhandled -- the case this function exists for.
+	const forbidden = () => new Response(JSON.stringify({ detail: 'not permitted' }), { status: 403 });
+
+	it('refreshes and retries a 403 caused by an expired token', async () => {
+		let token = 'stale';
+		const refreshAuth = vi.fn(async () => { token = 'fresh'; return true; });
+		vi.stubGlobal('fetch', vi.fn(async () => (token === 'fresh' ? ok() : forbidden())));
+		setForceHost(hostWith({ refreshAuth }));
+
+		expect((await authorizedFetch('/diag/preview')).status).toBe(200);
+		expect(refreshAuth).toHaveBeenCalledTimes(1);
+	});
+
+	it('gives up after one retry on a genuine permissions 403', async () => {
+		const refreshAuth = vi.fn(async () => true);
+		const fetchMock = vi.fn(async () => forbidden());
+		vi.stubGlobal('fetch', fetchMock);
+		setForceHost(hostWith({ refreshAuth }));
+
+		expect((await authorizedFetch('/diag/preview')).status).toBe(403);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(refreshAuth).toHaveBeenCalledTimes(1);
+	});
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diagRequestError, DiagRequestError } from './diagError';
+import { describeRequestFailure, diagRequestError, DiagRequestError } from './diagError';
 
 const NOT_PERMITTED = JSON.stringify({ detail: 'not permitted' });
 
@@ -60,5 +60,31 @@ describe('diagRequestError', () => {
 
 	it('truncates a large body rather than carrying it whole', () => {
 		expect(diagRequestError('preview', 500, 'x'.repeat(5000)).detail).toHaveLength(500);
+	});
+});
+
+describe('describeRequestFailure', () => {
+	it('maps an axios rejection instead of leaking "Request failed with status code 403"', () => {
+		// This exact string reached the detached panel's error line.
+		const axiosish = {
+			message: 'Request failed with status code 403',
+			response: { status: 403, data: { errors: [{ message: 'Forbidden' }] } },
+		};
+		const msg = describeRequestFailure(axiosish, 'cut');
+		expect(msg).not.toMatch(/status code|403/);
+		expect(msg).toBe('Your session expired. Reload the page to sign in again.');
+	});
+
+	it('reads a bare status when there is no response envelope', () => {
+		expect(describeRequestFailure({ status: 404 }, 'cut'))
+			.toBe('This cut has no diagnostics row.');
+	});
+
+	it('keeps a non-HTTP failure message rather than inventing an HTTP story', () => {
+		expect(describeRequestFailure(new Error('Network Error'), 'cut')).toBe('Network Error');
+	});
+
+	it('falls back to a sentence naming what failed when there is nothing to go on', () => {
+		expect(describeRequestFailure({}, 'cut')).toBe('Could not load the cut.');
 	});
 });
