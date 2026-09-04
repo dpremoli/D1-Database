@@ -292,3 +292,39 @@ def test_preview_returns_segment_id_from_seeds(client):
     got = _read_bytes(r.content)
     assert "segment_id" in got
     assert set(np.unique(got["segment_id"])) <= {0.0, 1.0}
+
+
+def _envelope_on_recipe():
+    """The recipe shape that broke every preview in the field: the analyst enabled the
+    envelope step from the workbench. envelope is base-tier -- it reads full-rate fc/ff/fp,
+    revs and t_raw, none of which base.d1an carries -- so the resume path raised a bare
+    KeyError('t_raw') and the UI showed `recipe failed: 't_raw'` on every keystroke."""
+    import copy
+
+    r = copy.deepcopy(DEFAULT_RECIPE)
+    for s in r["steps"]:
+        if s["op"] == "envelope":
+            s["on"] = True
+            s["params"] = {"bandwidth_frac": 0.2, "fn_hz": 1000.0}
+    return r
+
+
+def test_preview_skips_a_base_tier_step_instead_of_failing(client):
+    r = client.post(
+        "/preview", json={"analysis_id": "a1", "recipe": _envelope_on_recipe(), "layers": None}
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers.get("x-diag-skipped") == "envelope"
+    # Everything else still previews; env_band is present but zero-filled (the step was off).
+    got = _read_bytes(r.content)
+    assert "env_band" in got
+    assert np.all(got["env_band"] == 0.0)
+    assert np.any(got["resid_z"] != 0.0)
+
+
+def test_preview_without_a_base_step_reports_nothing_skipped(client):
+    r = client.post(
+        "/preview", json={"analysis_id": "a1", "recipe": DEFAULT_RECIPE, "layers": None}
+    )
+    assert r.status_code == 200
+    assert r.headers.get("x-diag-skipped") == ""

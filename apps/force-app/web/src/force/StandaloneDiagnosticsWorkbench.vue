@@ -5,16 +5,30 @@ import { DiagnosticsWorkbench, setForceHost, type Recipe } from '@d1/force-plott
 import { api, authHeaders } from '../directusClient';
 import { authStore } from '../authStore';
 import { getConfig } from '../config';
+import { appUrl } from '../appUrl';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
 	diagPath: string;
 	analysisId: string;
 	diagMetrics: Record<string, unknown> | null;
 	totalPoints: number;
 	initialRecipe: Recipe | null;
 	bakedRecipe: Recipe | null;
-}>();
+	baking?: boolean;
+	bakeMessage?: string | null;
+}>(), { baking: false, bakeMessage: null });
 const emit = defineEmits<{ (e: 'bake', recipe: Recipe): void }>();
+
+// Pop a Spatial view out to its own window (second monitor), like the Record tab's live panels.
+function onPopout(p: { type: string; channel?: string }) {
+	const q = new URLSearchParams();
+	if (p.channel) q.set('channel', p.channel);
+	window.open(
+		appUrl(`/diag-panel/${props.analysisId}?${q}`),
+		`diag-${p.type}-${props.analysisId}`,
+		'noopener,width=1300,height=950',
+	);
+}
 
 setForceHost({
 	api,
@@ -50,6 +64,9 @@ setForceHost({
 		:total-points="props.totalPoints"
 		:initial-recipe="props.initialRecipe"
 		:baked-recipe="props.bakedRecipe"
+		:baking="props.baking"
+		:bake-message="props.bakeMessage"
 		@bake="(r: Recipe) => emit('bake', r)"
+		@popout="onPopout"
 	/>
 </template>

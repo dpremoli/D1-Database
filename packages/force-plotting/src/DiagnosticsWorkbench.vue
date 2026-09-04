@@ -1,28 +1,38 @@
 <script setup lang="ts">
-// The Diagnostics Workbench: tune-and-see. Three columns — the editable recipe, the spatial
-// analysis cloud (channel-selectable, cluster overlay), and the signal brush — plus the
-// selection inspector and a state strip that is honest about preview vs bake.
+// The Diagnostics Workbench: an editable processing pipeline, one or more full-resolution
+// spatial views, the signal brush, the cluster table and the selection inspector — each a
+// panel you can add, close, resize, rearrange or pop out to its own window, exactly like the
+// Record tab (apps/force-app/web/src/record/RecordPage.vue).
 //
-// The recipe is a client-side object. Editing a parameter debounce-fires POST /diag/preview,
-// whose D1AN bytes replace the WorkingSet everything downstream reads. The bake stays the
-// existing diag_status='pending' PATCH flow, emitted upward.
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+// The recipe is a client-side object. Editing it debounce-fires POST /diag/preview, whose
+// D1AN bytes feed the Signal chart and the Inspector. Each spatial view additionally recomputes
+// its spatial step on the framed region at full resolution (see SpatialPanel.vue). The bake is
+// the existing diag_status='pending' PATCH flow, emitted upward.
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import ForceChart from './ForceChart.vue';
-import DiagOctreeView from './DiagOctreeView.vue';
+import SpatialPanel from './SpatialPanel.vue';
 import ClusterTable from './ClusterTable.vue';
 import RecipePanel from './RecipePanel.vue';
 import LayerPanel from './LayerPanel.vue';
 import WorkbenchPanel from './WorkbenchPanel.vue';
 import SelectionInspector from './SelectionInspector.vue';
 import BandwidthStrip from './BandwidthStrip.vue';
+import InfoTip from './InfoTip.vue';
 import { fetchD1an } from './diagAttrs';
 import { fetchDiagPreview } from './diagPreview';
-import { fetchViewportCompute, type ViewportResult, type ViewportStep } from './diagViewport';
+import type { ViewportResult } from './diagViewport';
 import { bucketEnvelope } from './liveCache';
 import { clusterStats, computeStats, workingSetFromD1an } from './selection';
-import type { ChannelKey, Selection, WorkingSet } from './selection';
-import { DEFAULT_RECIPE, recipeChannels, recipesEquivalent, type Recipe } from './recipeChannels';
+import type { ClusterRow, Selection, WorkingSet } from './selection';
+import {
+	DEFAULT_RECIPE, recipeChannels, recipeProblems, recipesEquivalent, type Recipe,
+} from './recipeChannels';
+import { PANEL_HELP } from './diagHelp';
+import {
+	DIAG_LAYOUT_LS_KEY, DIAG_PANEL_TYPES, loadDiagLayout, newPanelInst, saveDiagLayout,
+	type DiagPanelInst,
+} from './diagPanels';
 import {
 	fetchLayers, saveLayer, deleteLayer, layersForRequest, type DiagLayer, type LayerRole,
 } from './diagLayers';
@@ -37,11 +47,21 @@ const props = withDefaults(defineProps<{
 	totalPoints: number;
 	initialRecipe?: Recipe | null;
 	bakedRecipe?: Recipe | null;
-}>(), { initialRecipe: null, bakedRecipe: null });
+	/** true while the host is running a bake for this cut (owned by the page). */
+	baking?: boolean;
+	/** progress/failure text for the running bake, shown in the state strip. */
+	bakeMessage?: string | null;
+}>(), { initialRecipe: null, bakedRecipe: null, baking: false, bakeMessage: null });
 
-const emit = defineEmits<{ (e: 'bake', recipe: Recipe): void }>();
+const emit = defineEmits<{
+	(e: 'bake', recipe: Recipe): void;
+	(e: 'popout', payload: { type: string; channel?: string }): void;
+}>();
 
-const recipe = ref<Recipe>(structuredClone(props.initialRecipe ?? DEFAULT_RECIPE));
+// JSON clone, NOT structuredClone: `initialRecipe` arrives from the page's reactive row list,
+// so it is a Vue Proxy, and structuredClone throws DataCloneError on a Proxy. That killed
+// setup() outright — every cut with a saved diag_recipe rendered an empty workbench.
+const recipe = ref<Recipe>(JSON.parse(JSON.stringify(props.initialRecipe ?? DEFAULT_RECIPE)));
 const bakedWS = ref<WorkingSet | null>(null);
 const previewWS = ref<WorkingSet | null>(null);
 const loadError = ref<string | null>(null);
@@ -49,7 +69,13 @@ const previewing = ref(false);
 const previewMs = ref<number | null>(null);
 const previewErr = ref<string | null>(null);
 const selection = ref<Selection>(null);
-const channel = ref<ChannelKey>('residZ');
+const skippedOps = ref<string[]>([]);
+const recipeCollapsed = ref(false);
+
+// Steps whose inputs no earlier enabled step produces. The service refuses these with a 422
+// carrying a Python error string; catching it here marks the step and skips the doomed request.
+const problems = computed(() => recipeProblems(recipe.value));
+const recipeValid = computed(() => problems.value.length === 0);
 
 // --- paint layers ---------------------------------------------------------------------------
 const layers = ref<DiagLayer[]>([]);
@@ -64,23 +90,21 @@ watch(() => props.analysisId, () => { activeLayerName.value = null; drawing.valu
 
 const seedLayerNames = computed(() => layers.value.filter((l) => l.role === 'seed').map((l) => l.name));
 
-// --- recipe library --------------------------------------------------------------------------
+// --- recipe library ------------------------------------------------------------------------
 const library = ref<SavedRecipe[]>([]);
 async function loadLibrary() {
 	try { library.value = await fetchRecipeLibrary(); }
 	catch { library.value = []; }
 }
 onMounted(loadLibrary);
-function onApplyRecipe(r: Recipe) { recipe.value = r; }   // fires the debounced preview watch
+function onApplyRecipe(r: Recipe) { recipe.value = r; }
 
-// segment_id class index -> the seed layer that defines it (for the Spatial legend)
 const segmentLegend = computed(() => {
 	const seg = recipe.value.steps.find((s) => s.op === 'grow_segmentation' && s.on);
 	const names = (seg?.inputs?.seeds as { layers?: string[] } | undefined)?.layers ?? [];
 	return names.map((name, id) => ({ id, name }));
 });
 
-// Only masks with real geometry can bind to compute; an empty just-created layer is inert.
 const boundMasks = computed(() =>
 	layers.value.filter((l) => l.role === 'mask' && (l.geometry?.polygons?.length ?? 0) > 0));
 const activeMask = computed(() =>
@@ -90,14 +114,11 @@ const activeWS = computed(() => previewWS.value ?? bakedWS.value);
 const bakeStale = computed(() =>
 	!recipesEquivalent(recipe.value, props.bakedRecipe ?? DEFAULT_RECIPE));
 const channelOptions = computed(() => recipeChannels(recipe.value));
-const clusterMode = computed(() => channel.value === 'clusterId');
 
 async function loadBaked() {
 	loadError.value = null;
 	bakedWS.value = null;
 	try {
-		// diag_path is the bare operation id; the "diag/" segment is this component's to add —
-		// /octrees/<id>/ is the raw spiral octree, a different artifact (200, not 404).
 		const base = `${useForceHost().octreeUrl}/diag/${props.diagPath}/`;
 		bakedWS.value = workingSetFromD1an(await fetchD1an(`${base}attrs.d1an`));
 	} catch (e: any) {
@@ -107,8 +128,7 @@ async function loadBaked() {
 onMounted(loadBaked);
 watch(() => props.diagPath, () => { previewWS.value = null; loadBaked(); });
 
-// Debounced preview: any recipe edit fires POST /diag/preview after 400 ms of quiet, with the
-// previous request aborted. The pattern filterChain.ts uses.
+// Debounced preview: any recipe edit fires POST /diag/preview after 400 ms of quiet.
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
 let previewAbort: AbortController | null = null;
 watch([recipe, () => layers.value, activeLayerName], () => {
@@ -116,25 +136,17 @@ watch([recipe, () => layers.value, activeLayerName], () => {
 	previewTimer = setTimeout(runPreview, 400);
 }, { deep: true });
 
-// The recipe as sent to the preview service: a plain-JSON clone (never the reactive proxy —
-// structuredClone throws on it) with the active mask bound onto radial_detrend. recipe.value
-// itself is never mutated, so the bake payload and its hash are unaffected.
 function recipeWithMask(): Recipe {
 	if (!activeMask.value) return recipe.value;
 	const r = JSON.parse(JSON.stringify(recipe.value)) as Recipe;
 	for (const s of r.steps) {
 		if (s.op === 'radial_detrend') {
-			(s as { inputs?: unknown }).inputs = {
-				mask: { layer: activeMask.value.name, required: false },
-			};
+			(s as { inputs?: unknown }).inputs = { mask: { layer: activeMask.value.name, required: false } };
 		}
 	}
 	return r;
 }
 
-// Bake persists the recipe INCLUDING the mask binding (the geometry lives in diag_layer,
-// which process_diag_row reads separately). Adopt that recipe as the local current one so
-// the bake-stale comparator settles instead of reading "stale" forever.
 function onBake() {
 	const baked = recipeWithMask();
 	recipe.value = JSON.parse(JSON.stringify(baked));
@@ -147,12 +159,12 @@ const recipeHasBoundSeeds = computed(() => recipe.value.steps.some((s) =>
 
 async function runPreview() {
 	previewAbort?.abort();
-	// Show the bake only when nothing overrides it: recipe unedited, no mask applied, no
-	// seeds bound. Any of those is a non-baked state that needs a live preview.
+	if (!recipeValid.value) {
+		previewing.value = false; previewErr.value = null; previewMs.value = null;
+		return;
+	}
 	if (!bakeStale.value && !activeMask.value && !recipeHasBoundSeeds.value) {
-		previewWS.value = null;
-		previewErr.value = null;
-		previewMs.value = null;
+		previewWS.value = null; previewErr.value = null; previewMs.value = null;
 		return;
 	}
 	const ac = new AbortController();
@@ -160,16 +172,14 @@ async function runPreview() {
 	previewing.value = true;
 	previewErr.value = null;
 	try {
-		// Send every painted layer's geometry; the service rasterises only the ones a
-		// binding names (radial_detrend's mask, grow_segmentation's seeds). The mask
-		// binding is injected here; seed bindings are already in the recipe from RecipePanel.
 		const r = await fetchDiagPreview(
 			props.analysisId, recipeWithMask(), null, ac.signal,
-			layers.value.length ? layersForRequest(layers.value) : undefined,
+			layers.value.length ? layersForRequestSafe() : undefined,
 		);
 		if (ac.signal.aborted) return;
 		previewWS.value = workingSetFromD1an(r.attrs);
 		previewMs.value = r.ms;
+		skippedOps.value = r.skipped;
 	} catch (e: any) {
 		if (ac.signal.aborted || e?.name === 'AbortError') return;
 		previewErr.value = e?.message || 'preview failed';
@@ -177,152 +187,39 @@ async function runPreview() {
 		if (previewAbort === ac) previewing.value = false;
 	}
 }
+function layersForRequestSafe() { return layersForRequest(layers.value); }
 
-// --- Phase G: full-resolution viewport recompute -------------------------------------------
-// The Spatial panel is the full-res octree (resid_z). Framing a region and settling fires a
-// Gi* recompute on just those points; HDBSCAN / segmentation run on a button. The 256/rev
-// bake stays authoritative -- this overlay is a preview at the resolution being looked at.
-const analysisResult = ref<ViewportResult | null>(null);
-const viewportBounds = ref<[number, number, number, number] | null>(null);
-const viewportBusy = ref(false);
-let viewportAbort: AbortController | null = null;
-const recipeCollapsed = ref(false);
-
-const OUTPUT_OF: Record<string, ChannelKey> = {
-	getis_ord: 'giStar', hdbscan: 'clusterId', grow_segmentation: 'segmentId',
-};
-const OP_OF: Partial<Record<ChannelKey, 'getis_ord' | 'hdbscan' | 'grow_segmentation'>> = {
-	giStar: 'getis_ord', clusterId: 'hdbscan', segmentId: 'grow_segmentation',
-};
-const analysisMode = computed<'continuous' | 'categorical'>(() =>
-	channel.value === 'clusterId' || channel.value === 'segmentId' ? 'categorical' : 'continuous');
-
-function stepParams(op: string): Record<string, unknown> {
-	const s = recipe.value.steps.find((x) => x.op === op && x.on);
-	return s ? { ...s.params } : {};
+// --- spatial panels: aggregate their independent viewport state ---------------------------
+// Each SpatialPanel owns its own channel + recompute; the workbench only needs the union for
+// the state strip ("something is recomputing") and one result for the cluster table.
+const panelResults = reactive<Record<string, ViewportResult | null>>({});
+const panelBusy = reactive<Record<string, boolean>>({});
+const spatialRefs = new Map<string, { runViewport: (op: 'getis_ord' | 'hdbscan' | 'grow_segmentation', o?: { focus: boolean }) => void }>();
+function bindSpatial(id: string, el: unknown) {
+	if (el) spatialRefs.set(id, el as { runViewport: (op: 'getis_ord' | 'hdbscan' | 'grow_segmentation', o?: { focus: boolean }) => void });
+	else { spatialRefs.delete(id); delete panelResults[id]; delete panelBusy[id]; }
 }
-function stepInputs(op: string): Record<string, unknown> | undefined {
-	const s = recipe.value.steps.find((x) => x.op === op && x.on);
-	return s?.inputs as Record<string, unknown> | undefined;
+const anyViewportBusy = computed(() => Object.values(panelBusy).some(Boolean));
+// The cluster table describes whichever spatial view is currently showing an HDBSCAN result,
+// so the table and that map cannot disagree. Falls back to the bake when none is.
+const hdbscanResult = computed<ViewportResult | null>(() =>
+	Object.values(panelResults).find((r) => r?.op === 'hdbscan') ?? null);
+
+// "Run <op> on this view" from the Pipeline panel routes to the first spatial view.
+function runStepOnView(op: 'getis_ord' | 'hdbscan' | 'grow_segmentation') {
+	const first = layout.value.find((p) => p.type === 'spatial');
+	if (first) spatialRefs.get(first.i)?.runViewport(op, { focus: true });
 }
-
-async function runViewport(
-	op: 'getis_ord' | 'hdbscan' | 'grow_segmentation',
-	{ focus }: { focus: boolean } = { focus: true },
-) {
-	if (!viewportBounds.value) return;
-	viewportAbort?.abort();
-	const ac = new AbortController();
-	viewportAbort = ac;
-	viewportBusy.value = true;
-	previewErr.value = null;
-	try {
-		const step: ViewportStep = { op, params: stepParams(op), inputs: stepInputs(op) };
-		const r = await fetchViewportCompute(props.analysisId, viewportBounds.value, step, {
-			layers: layers.value.length ? layersForRequest(layers.value) : undefined,
-			signal: ac.signal,
-			output: op === 'getis_ord' ? 'gi_star' : undefined,
-		});
-		if (ac.signal.aborted) return;
-		analysisResult.value = r;
-		if (focus) channel.value = OUTPUT_OF[op];
-	} catch (e: any) {
-		if (!ac.signal.aborted && e?.name !== 'AbortError') {
-			previewErr.value = e?.message || 'viewport compute failed';
-		}
-	} finally {
-		if (viewportAbort === ac) viewportBusy.value = false;
-	}
-}
-
-function onBounds(b: [number, number, number, number]) {
-	viewportBounds.value = b;
-}
-
-// The viewport overlay is per-cut: its x/y are the previous cut's spiral coords and its bbox
-// is the previous cut's framing. Clear both on a cut switch so DiagOctreeView's load() ->
-// rebuildAnalysis() does not draw the old Gi* points over the new octree.
-watch(() => props.analysisId, () => {
-	viewportAbort?.abort();
-	analysisResult.value = null;
-	viewportBounds.value = null;
-});
-
-// Manual run buttons for the enabled spatial steps (Gi* also auto-fires on settle).
-const runButtons = computed(() => {
-	const labels: Record<string, string> = {
-		getis_ord: 'Run Gi*', hdbscan: 'Run HDBSCAN', grow_segmentation: 'Run segmentation',
-	};
-	return recipe.value.steps
-		.filter((s) => s.on && s.op in labels)
-		.map((s) => ({ op: s.op as 'getis_ord' | 'hdbscan' | 'grow_segmentation', label: labels[s.op] }));
-});
-
-// Auto Gi* on settle -- only while the analyst is actually viewing Gi*. Panning while
-// studying a HDBSCAN result must not silently recompute or yank the channel back.
-let giTimer: ReturnType<typeof setTimeout> | null = null;
-function maybeAutoGi() {
-	const gi = recipe.value.steps.find((s) => s.op === 'getis_ord' && s.on);
-	if (!gi || channel.value !== 'giStar' || !viewportBounds.value) return;
-	if (giTimer) clearTimeout(giTimer);
-	giTimer = setTimeout(() => runViewport('getis_ord', { focus: false }), 600);
-}
-watch(viewportBounds, maybeAutoGi);
-// Switching the channel to a spatial output recomputes when the shown overlay was NOT
-// produced by that op -- otherwise switching giStar -> clusterId would render the stale Gi*
-// z-scores through the categorical palette (int(mod(v,12))), which reads as fake clusters.
-// The stale result is dropped immediately so nothing wrong is shown during the recompute.
-watch(channel, (c) => {
-	const op = OP_OF[c];
-	if (!op || analysisResult.value?.op === op) return;
-	if (!viewportBounds.value) return;   // nothing framed yet -- keep what's shown
-	analysisResult.value = null;
-	runViewport(op, { focus: false });
-});
-// The identity of just the step whose output is currently shown. A recipe edit re-runs the
-// viewport ONLY when this changes -- editing radial_detrend / tsa / mount_deg while viewing a
-// cluster_id overlay must not fire a full-resolution HDBSCAN that reflects nothing (the
-// viewport reads pre-baked resid_z). Seed geometry lives in `layers`, not the recipe, so the
-// segmentId case also watches the bound seed layers.
-const activeSpatialStepKey = computed(() => {
-	const op = OP_OF[channel.value];
-	if (!op) return null;
-	const s = recipe.value.steps.find((x) => x.op === op && x.on);
-	if (!s) return null;
-	const seedGeoms = op === 'grow_segmentation'
-		? layers.value.filter((l) => l.role === 'seed').map((l) => [l.name, l.version, l.geometry])
-		: null;
-	return JSON.stringify({ params: s.params, inputs: s.inputs ?? null, seedGeoms });
-});
-let vpRecipeTimer: ReturnType<typeof setTimeout> | null = null;
-watch(activeSpatialStepKey, () => {
-	const op = OP_OF[channel.value];
-	if (!op || analysisResult.value?.op !== op) return;
-	if (vpRecipeTimer) clearTimeout(vpRecipeTimer);
-	vpRecipeTimer = setTimeout(() => runViewport(op, { focus: false }), 500);
-});
-
-// If a produced-channel is deselected out from under the current view, fall back to resid_z.
-watch(channelOptions, (opts) => {
-	const cur = opts.find((o) => o.key === channel.value);
-	if (cur && !cur.produced) channel.value = 'residZ';
-});
 
 const chartData = computed(() => {
 	const ws = activeWS.value;
 	if (!ws) return null;
-	// A paint mask leaves NaN in residZ for the excluded region; drop those points so the
-	// envelope buckets (and the SVG path they feed) stay finite.
 	let t = ws.t;
 	let z = ws.residZ;
 	if (!z.every((v) => Number.isFinite(v))) {
-		const ti: number[] = [];
-		const zi: number[] = [];
-		for (let i = 0; i < ws.n; i++) {
-			if (Number.isFinite(z[i])) { ti.push(t[i]); zi.push(z[i]); }
-		}
-		t = Float32Array.from(ti);
-		z = Float32Array.from(zi);
+		const ti: number[] = []; const zi: number[] = [];
+		for (let i = 0; i < ws.n; i++) if (Number.isFinite(z[i])) { ti.push(t[i]); zi.push(z[i]); }
+		t = Float32Array.from(ti); z = Float32Array.from(zi);
 	}
 	return bucketEnvelope(t, z);
 });
@@ -347,16 +244,8 @@ function _upsert(saved: DiagLayer) {
 		: [...layers.value, saved];
 }
 async function onAddLayer(role: LayerRole): Promise<DiagLayer> {
-	// A time-based suffix, not `count + 1`: two fast clicks both read the same pre-save
-	// count and collide on the (analysis_id, name) unique constraint. The analyst renames
-	// from the LayerPanel anyway.
 	const name = `${role}-${Date.now().toString(36).slice(-4)}`;
-	const saved = await saveLayer({
-		analysis_id: props.analysisId,
-		name,
-		role,
-		geometry: { polygons: [] },
-	});
+	const saved = await saveLayer({ analysis_id: props.analysisId, name, role, geometry: { polygons: [] } });
 	_upsert(saved);
 	activeLayerName.value = saved.name;
 	drawing.value = true;
@@ -381,159 +270,319 @@ async function onDeleteLayer(layer: DiagLayer) {
 }
 
 const stats = computed(() => (activeWS.value ? computeStats(activeWS.value, selection.value) : null));
-const clusters = computed(() => (activeWS.value ? clusterStats(activeWS.value) : []));
 
-// Spatial is the hero: the full-res octree carries the interaction now. Recipe collapses to
-// a rail; Signal sits under it.
-const layout = ref([
-	{ x: 0, y: 0, w: 9, h: 12, i: 'spatial' },
-	{ x: 9, y: 0, w: 3, h: 7, i: 'recipe' },
-	{ x: 9, y: 7, w: 3, h: 5, i: 'signal' },
-]);
+function clustersFromViewport(r: ViewportResult): ClusterRow[] {
+	const acc = new Map<number, { n: number; rMin: number; rMax: number }>();
+	for (let i = 0; i < r.n; i++) {
+		const id = r.value[i];
+		if (!Number.isFinite(id)) continue;
+		const key = id < 0 ? -1 : id;
+		const rad = Math.hypot(r.x[i], r.y[i]);
+		const a = acc.get(key);
+		if (a) { a.n++; if (rad < a.rMin) a.rMin = rad; if (rad > a.rMax) a.rMax = rad; }
+		else acc.set(key, { n: 1, rMin: rad, rMax: rad });
+	}
+	const total = r.n || 1;
+	return [...acc.entries()]
+		.map(([id, a]) => ({ id, n: a.n, fraction: a.n / total, meanAbsResidZ: null, maxGiStar: null, rMin: a.rMin, rMax: a.rMax }))
+		.sort((a, b) => (a.id < 0 ? 1 : b.id < 0 ? -1 : b.n - a.n));
+}
+const clusters = computed<ClusterRow[]>(() => {
+	const r = hdbscanResult.value;
+	if (r) return clustersFromViewport(r);
+	return activeWS.value ? clusterStats(activeWS.value) : [];
+});
+const clusterCaption = computed(() => {
+	const r = hdbscanResult.value;
+	if (r) return `${r.n.toLocaleString()} points in the framed view · full resolution`;
+	const n = activeWS.value?.n ?? 0;
+	return `${n.toLocaleString()} points · whole cut at analysis resolution`;
+});
+const clustersLive = computed(() => !!hdbscanResult.value
+	|| layout.value.some((p) => p.type === 'spatial' && p.channel === 'clusterId')
+	|| (activeWS.value ? clusterStats(activeWS.value).length > 0 : false));
+
+// --- panel layout: add / close / reset / persist (RecordPage's model) ---------------------
+const layout = ref<DiagPanelInst[]>(loadDiagLayout());
+watch(layout, (l) => saveDiagLayout(l), { deep: true });
+const addOpen = ref(false);
+const addable = computed(() => Object.entries(DIAG_PANEL_TYPES).map(([type, m]) => ({
+	type, ...m, disabled: !!m.single && layout.value.some((p) => p.type === type),
+})));
+function addPanel(type: string) {
+	addOpen.value = false;
+	const inst = newPanelInst(type, layout.value);
+	if (inst) layout.value = [...layout.value, inst];
+}
+function closePanel(id: string) {
+	layout.value = layout.value.filter((p) => p.i !== id);
+}
+function resetLayout() {
+	try { localStorage.removeItem(DIAG_LAYOUT_LS_KEY); } catch { /* private mode */ }
+	layout.value = loadDiagLayout();   // now returns the built-in default
+}
+function panelTitle(p: DiagPanelInst): string {
+	if (p.type === 'spatial') {
+		const opt = channelOptions.value.find((o) => o.key === p.channel);
+		return opt ? `Spatial · ${opt.label.split(' — ')[0]}` : 'Spatial view';
+	}
+	return DIAG_PANEL_TYPES[p.type].title;
+}
+function setChannel(id: string, c: string) {
+	const p = layout.value.find((x) => x.i === id);
+	if (p) p.channel = c;
+}
+function onPopout(channel: string) {
+	emit('popout', { type: 'spatial', channel });
+}
+
+// ---- Responsive grid height (ported from RecordPage) -------------------------------------
+const GRID_MARGIN = 12;
+const MIN_ROW_H = 18;
+const BOTTOM_PAD = 2;
+const gridEl = ref<HTMLElement | null>(null);
+const availableHeight = ref(700);
+function measureGrid() {
+	if (!gridEl.value) return;
+	const top = gridEl.value.getBoundingClientRect().top + window.scrollY;
+	availableHeight.value = Math.max(320, Math.floor(window.innerHeight - top - BOTTOM_PAD));
+}
+const bottomRow = computed(() => layout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0) || 1);
+const rowHeight = computed(() =>
+	Math.max(MIN_ROW_H, Math.floor((availableHeight.value - GRID_MARGIN) / bottomRow.value) - GRID_MARGIN));
+
+const NARROW_BREAKPOINT = 640;
+const narrow = ref(false);
+function checkNarrow() { narrow.value = window.innerWidth < NARROW_BREAKPOINT; }
+const stackedLayout = computed(() => {
+	let y = 0;
+	return layout.value.map((p) => { const out = { ...p, x: 0, w: 1, y }; y += p.h; return out; });
+});
+const displayLayout = computed({
+	get: () => (narrow.value ? stackedLayout.value : layout.value),
+	set: (v: DiagPanelInst[]) => {
+		if (narrow.value) return;
+		// grid-layout-plus rewrites x/y/w/h; keep our own `channel` field, which it drops.
+		layout.value = v.map((p) => {
+			const prev = layout.value.find((q) => q.i === p.i);
+			return prev ? { ...p, channel: prev.channel } : p;
+		});
+	},
+});
+
+let gridRO: ResizeObserver | undefined;
+onMounted(() => {
+	gridRO = new ResizeObserver(measureGrid);
+	if (gridEl.value) gridRO.observe(gridEl.value);
+	measureGrid();
+	checkNarrow();
+	window.addEventListener('resize', measureGrid);
+	window.addEventListener('resize', checkNarrow);
+	document.addEventListener('click', () => { addOpen.value = false; });
+});
 
 const multiMaskNote = computed(() =>
 	boundMasks.value.length > 1 ? ' · only the selected mask is applied' : '');
-const stateLabel = computed(() => {
-	if (previewing.value) return `previewing recipe · approximate — Bake for exact numbers${multiMaskNote.value}`;
-	if (previewWS.value) return `previewing recipe · ${previewMs.value ?? '?'} ms · approximate${multiMaskNote.value}`;
-	if (bakeStale.value) return 'showing last bake · recipe edited since — Bake to apply';
-	if (activeMask.value) return `mask applied in preview · Bake to persist${multiMaskNote.value}`;
-	return 'baked';
+
+type StateKind = 'error' | 'busy' | 'preview' | 'stale' | 'baked';
+const state = computed<{ kind: StateKind; text: string }>(() => {
+	if (problems.value.length) {
+		return { kind: 'error', text: `${problems.value.length} step${problems.value.length > 1 ? 's' : ''} cannot run — see the Pipeline panel` };
+	}
+	if (props.baking) {
+		return { kind: 'busy', text: props.bakeMessage || 'Baking on the host — this rewrites the authoritative result…' };
+	}
+	if (props.bakeMessage) return { kind: 'error', text: props.bakeMessage };
+	if (anyViewportBusy.value) return { kind: 'busy', text: 'Recomputing on the framed view at full resolution…' };
+	if (previewing.value) return { kind: 'preview', text: `Updating the live preview — approximate; Bake for exact numbers${multiMaskNote.value}` };
+	if (previewWS.value) return { kind: 'preview', text: `Live preview · ${previewMs.value ?? '?'} ms · approximate — Bake to make it authoritative${multiMaskNote.value}` };
+	if (bakeStale.value) return { kind: 'stale', text: 'Showing the last bake — the recipe has been edited since. Bake to apply it.' };
+	if (activeMask.value) return { kind: 'preview', text: `Mask applied in preview only — Bake to persist it${multiMaskNote.value}` };
+	return { kind: 'baked', text: 'Showing the baked result for this cut — authoritative.' };
 });
 
 onBeforeUnmount(() => {
-	viewportAbort?.abort();
 	previewAbort?.abort();
-	if (giTimer) clearTimeout(giTimer);
-	if (vpRecipeTimer) clearTimeout(vpRecipeTimer);
 	if (previewTimer) clearTimeout(previewTimer);
+	gridRO?.disconnect();
+	window.removeEventListener('resize', measureGrid);
+	window.removeEventListener('resize', checkNarrow);
 });
 </script>
 
 <template>
 	<div class="diag-workbench">
 		<div v-if="loadError" class="dw-error">{{ loadError }}</div>
-		<GridLayout v-model:layout="layout" :col-num="12" :row-height="40" :margin="[10, 10]" :is-resizable="true" :is-draggable="true">
-			<GridItem v-for="item in layout" :key="item.i" :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i" drag-allow-from=".wb-panel-handle">
-				<WorkbenchPanel v-if="item.i === 'recipe'" title="Recipe" icon="tune">
-					<RecipePanel
-						v-model:recipe="recipe"
-						v-model:collapsed="recipeCollapsed"
-						:baked="!!bakedWS"
-						:bake-stale="bakeStale"
-						:previewing="previewing"
-						:preview-ms="previewMs"
-						:preview-error="previewErr"
-						:seed-layer-names="seedLayerNames"
-						:library="library"
-						@bake="onBake"
-						@apply="onApplyRecipe"
-						@library-changed="loadLibrary"
-						@run-step="(op) => runViewport(op, { focus: true })"
-					/>
-				</WorkbenchPanel>
+		<div ref="gridEl" class="dw-gridwrap">
+			<div class="dw-panel-controls">
+				<div class="dw-addwrap">
+					<button class="dw-ctl" title="Add a panel" @click.stop="addOpen = !addOpen">
+						<span class="material-symbols-rounded">add</span>
+					</button>
+					<div v-if="addOpen" class="dw-addmenu" @click.stop>
+						<button v-for="a in addable" :key="a.type" :disabled="a.disabled" @click="addPanel(a.type)">
+							<span class="material-symbols-rounded">{{ a.icon }}</span>{{ a.title }}
+							<span v-if="a.disabled" class="dw-added">added</span>
+						</button>
+					</div>
+				</div>
+				<button class="dw-ctl" title="Reset panel layout" @click="resetLayout">
+					<span class="material-symbols-rounded">grid_view</span>
+				</button>
+			</div>
 
-				<WorkbenchPanel v-else-if="item.i === 'spatial'" title="Spatial" icon="scatter_plot">
-					<DiagOctreeView
-						:octree-path="`${diagPath}/full`"
-						:channel="'residZ'"
-						:colormap="'viridis'"
-						:point-size="1.5"
-						:selection="selection"
-						:analysis-result="analysisResult"
-						:analysis-mode="analysisMode"
-						:layers="layers"
-						:active-layer-name="activeLayerName"
-						:paint-mode="drawing ? 'draw' : 'off'"
-						@polygon="onPolygon"
-						@bounds="onBounds"
-					/>
-					<template #footer>
-						<div class="dw-spatial-footer">
-							<LayerPanel
-								:layers="layers"
-								v-model:active-name="activeLayerName"
-								v-model:drawing="drawing"
-								@add="onAddLayer"
-								@rename="onRenameLayer"
-								@delete="onDeleteLayer"
-							/>
-							<select v-model="channel" class="dw-channel-select">
-								<option v-for="o in channelOptions" :key="o.key" :value="o.key" :disabled="!o.produced">
-									{{ o.label }}{{ o.produced ? '' : ' — step off' }}
-								</option>
-							</select>
-							<div class="dw-vp-row">
-								<button
-									v-for="rb in runButtons" :key="rb.op"
-									class="dw-vp-btn" :disabled="viewportBusy || !viewportBounds"
-									@click="runViewport(rb.op, { focus: true })"
-								>{{ rb.label }}</button>
-								<span v-if="viewportBusy" class="dw-vp-busy">computing…</span>
-								<span v-else-if="analysisResult" class="dw-vp-n">
-									{{ analysisResult.n.toLocaleString() }} pts{{ analysisResult.ms != null ? ` · ${analysisResult.ms} ms` : '' }}
-								</span>
+			<GridLayout
+				v-model:layout="displayLayout" :col-num="narrow ? 1 : 12" :row-height="rowHeight"
+				:margin="[12, 12]" :is-draggable="!narrow" :is-resizable="!narrow"
+				:use-css-transforms="true" :vertical-compact="true"
+			>
+				<GridItem
+					v-for="item in displayLayout" :key="item.i"
+					:x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i"
+					drag-allow-from=".wb-panel-handle" :min-w="narrow ? 1 : 2" :min-h="3"
+				>
+					<WorkbenchPanel
+						:title="panelTitle(item)" :icon="DIAG_PANEL_TYPES[item.type].icon"
+						:closable="!(DIAG_PANEL_TYPES[item.type].single && ['recipe', 'signal'].includes(item.type))"
+						@close="closePanel(item.i)"
+					>
+						<!-- Pipeline -->
+						<RecipePanel
+							v-if="item.type === 'recipe'"
+							v-model:recipe="recipe"
+							v-model:collapsed="recipeCollapsed"
+							:baked="!!bakedWS" :bake-stale="bakeStale"
+							:previewing="previewing" :preview-ms="previewMs" :preview-error="previewErr"
+							:seed-layer-names="seedLayerNames" :library="library"
+							:problems="problems" :baking="baking" :skipped-ops="skippedOps"
+							:busy-op="anyViewportBusy ? 'any' : null"
+							@bake="onBake" @apply="onApplyRecipe" @library-changed="loadLibrary"
+							@run-step="runStepOnView"
+						/>
+
+						<!-- Spatial view (multi) -->
+						<SpatialPanel
+							v-else-if="item.type === 'spatial'"
+							:ref="(el) => bindSpatial(item.i, el)"
+							:analysis-id="analysisId"
+							:octree-path="`${diagPath}/full`"
+							:recipe="recipe" :recipe-valid="recipeValid"
+							:channel-options="channelOptions"
+							:layers="layers" :active-layer-name="activeLayerName"
+							:selection="selection" :drawing="drawing"
+							:initial-channel="item.channel"
+							@polygon="onPolygon"
+							@update:channel="(c) => setChannel(item.i, c)"
+							@cluster-select="onClusterSelect"
+							@result="(r) => panelResults[item.i] = r"
+							@busy="(b) => panelBusy[item.i] = b"
+							@popout="onPopout"
+						/>
+
+						<!-- Signal -->
+						<template v-else-if="item.type === 'signal'">
+							<div class="dw-signal-head">
+								<span class="dw-signal-title">Anomaly z-score along the cut</span>
+								<InfoTip :text="PANEL_HELP.signal" wide placement="left" />
 							</div>
+							<ForceChart
+								v-if="chartData"
+								title="resid_z (σ from normal for that radius) vs time"
+								kind="env" :data="chartData" color="#f59e0b" x-unit="s" y-unit="σ"
+								:crop-start="selection?.kind === 'time' ? selection.t0 : null"
+								:crop-end="selection?.kind === 'time' ? selection.t1 : null"
+								:crop-editable="true"
+								@update:crop-start="onCropStart" @update:crop-end="onCropEnd"
+							/>
+							<div v-else class="dw-loading">loading…</div>
+						</template>
+
+						<!-- Clusters -->
+						<template v-else-if="item.type === 'clusters'">
 							<ClusterTable
-								v-if="clusterMode"
-								:rows="clusters"
+								v-if="clustersLive"
+								:rows="clusters" :caption="clusterCaption"
 								:active-id="selection?.kind === 'cluster' ? selection.id : null"
 								@select="onClusterSelect"
 							/>
-							<div v-if="channel === 'segmentId' && segmentLegend.length" class="dw-seg-legend">
+							<div v-else class="dw-loading">
+								Colour a Spatial view by <code>cluster_id</code> to populate this.
+							</div>
+							<div v-if="segmentLegend.length" class="dw-seg-legend">
 								<span v-for="c in segmentLegend" :key="c.id" class="dw-seg-row">
 									<span class="dw-seg-swatch" :style="{ background: clusterColorCss(c.id) }" />
 									{{ c.id }} · {{ c.name }}
 								</span>
 							</div>
-						</div>
-					</template>
-				</WorkbenchPanel>
+						</template>
 
-				<WorkbenchPanel v-else-if="item.i === 'signal'" title="Signal" icon="show_chart">
-					<ForceChart
-						v-if="chartData"
-						title="resid_z vs time"
-						kind="env"
-						:data="chartData"
-						color="#f59e0b"
-						x-unit="s"
-						y-unit="σ"
-						:crop-start="selection?.kind === 'time' ? selection.t0 : null"
-						:crop-end="selection?.kind === 'time' ? selection.t1 : null"
-						:crop-editable="true"
-						@update:crop-start="onCropStart"
-						@update:crop-end="onCropEnd"
-					/>
-					<div v-else class="dw-loading">loading…</div>
-				</WorkbenchPanel>
-			</GridItem>
-		</GridLayout>
+						<!-- Selection inspector -->
+						<template v-else-if="item.type === 'inspector'">
+							<SelectionInspector v-if="stats" :stats="stats" />
+							<div v-else class="dw-loading">brush the Signal chart or pick a cluster</div>
+						</template>
 
-		<SelectionInspector v-if="stats" :stats="stats" />
-		<div class="dw-state" :class="{ preview: previewing || previewWS, stale: bakeStale && !previewWS && !previewing }">
-			{{ stateLabel }}
+						<!-- Painted layers live in the Pipeline panel's footer -->
+						<template v-if="item.type === 'recipe'" #footer>
+							<div class="dw-layers-row">
+								<LayerPanel
+									:layers="layers"
+									v-model:active-name="activeLayerName"
+									v-model:drawing="drawing"
+									@add="onAddLayer" @rename="onRenameLayer" @delete="onDeleteLayer"
+								/>
+								<InfoTip :text="PANEL_HELP.layers" placement="left" />
+							</div>
+						</template>
+					</WorkbenchPanel>
+				</GridItem>
+			</GridLayout>
+		</div>
+
+		<div class="dw-state" :class="state.kind">
+			<span class="dw-state-dot" />
+			{{ state.text }}
 		</div>
 		<BandwidthStrip :metrics="props.diagMetrics as any" />
 	</div>
 </template>
 
 <style scoped>
-.diag-workbench { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.diag-workbench :deep(.vgl-layout) { flex: 1; min-height: 0; }
+.diag-workbench { display: flex; flex-direction: column; min-height: 0; }
+.dw-gridwrap { position: relative; margin: 8px 10px 0; }
+.dw-gridwrap :deep(.vgl-layout) { margin: 0; }
+.dw-gridwrap :deep(.vgl-item--placeholder) { background: rgba(56, 189, 248, 0.18); border-radius: 12px; }
+.dw-gridwrap :deep(.vgl-item__resizer) { z-index: 5; }
 .dw-error { padding: 8px 12px; color: var(--danger, #fca5a5); font-size: 12px; }
-.dw-loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-dim); font-size: 12px; }
-.dw-spatial-footer { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow: auto; }
-.dw-seg-legend { display: flex; flex-wrap: wrap; gap: 6px; font-size: 10px; color: var(--text-dim, #94a3b8); }
+.dw-loading { display: flex; align-items: center; justify-content: center; height: 100%; padding: 12px; text-align: center; color: var(--text-dim); font-size: 12px; }
+.dw-loading code { font-size: 11px; background: var(--bg-2, #111a33); padding: 1px 4px; border-radius: 4px; }
+
+.dw-panel-controls { position: fixed; right: 20px; bottom: 56px; z-index: 25; display: flex; align-items: center; gap: 8px; }
+.dw-addwrap { position: relative; }
+.dw-ctl { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; background: var(--bg-1, #0f172a); border: 1px solid var(--border, rgba(255,255,255,0.16)); color: var(--text-dim, #94a3b8); cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.4); }
+.dw-ctl:hover { color: var(--accent, #38bdf8); }
+.dw-ctl .material-symbols-rounded { font-size: 19px; }
+.dw-addmenu { position: absolute; right: 0; bottom: calc(100% + 8px); min-width: 210px; background: var(--bg-1, #0f172a); border: 1px solid var(--border, rgba(255,255,255,0.16)); border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,0.5); overflow: hidden; }
+.dw-addmenu button { display: flex; align-items: center; gap: 8px; width: 100%; font: inherit; font-size: 12px; padding: 8px 11px; background: none; border: none; color: var(--text, #e5e7eb); cursor: pointer; text-align: left; }
+.dw-addmenu button:hover:not(:disabled) { background: rgba(255,255,255,0.05); }
+.dw-addmenu button:disabled { color: var(--text-dim, #94a3b8); cursor: default; }
+.dw-addmenu .material-symbols-rounded { font-size: 16px; color: var(--text-dim, #94a3b8); }
+.dw-added { margin-left: auto; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-dim, #94a3b8); }
+
+.dw-seg-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; padding: 0 8px 6px; font-size: 10px; color: var(--text-dim, #94a3b8); }
 .dw-seg-row { display: inline-flex; align-items: center; gap: 4px; }
 .dw-seg-swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
-.dw-channel-select { width: 100%; font-size: 12px; padding: 4px 6px; background: var(--bg-2, #111a33); color: var(--text, #e5e7eb); border: 1px solid var(--border, rgba(255,255,255,0.14)); border-radius: 6px; }
-.dw-vp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.dw-vp-btn { font: inherit; font-size: 11px; cursor: pointer; padding: 3px 8px; border-radius: 6px; color: var(--text, #e5e7eb); background: var(--bg-2, #111a33); border: 1px solid var(--border, rgba(255,255,255,0.18)); }
-.dw-vp-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.dw-vp-busy { font-size: 10px; color: #fcd34d; }
-.dw-vp-n { font-size: 10px; color: var(--text-dim, #94a3b8); font-variant-numeric: tabular-nums; }
-.dw-state { padding: 4px 12px; font-size: 11px; color: var(--text-dim, #94a3b8); border-top: 1px solid var(--border, rgba(255,255,255,0.1)); }
+.dw-layers-row { display: flex; align-items: flex-start; gap: 6px; }
+.dw-layers-row > :first-child { flex: 1; min-width: 0; }
+
+.dw-signal-head { display: flex; align-items: center; gap: 5px; padding: 2px 2px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim, #94a3b8); }
+.dw-signal-title { font-weight: 650; }
+
+.dw-state { display: flex; align-items: center; gap: 7px; padding: 5px 12px; font-size: 11px; color: var(--text-dim, #94a3b8); border-top: 1px solid var(--border, rgba(255,255,255,0.1)); }
+.dw-state-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .dw-state.preview { color: #fcd34d; background: color-mix(in srgb, #d97706 12%, transparent); }
+.dw-state.busy { color: #7dd3fc; background: color-mix(in srgb, #38bdf8 12%, transparent); }
 .dw-state.stale { color: #fca5a5; }
+.dw-state.error { color: #fca5a5; background: color-mix(in srgb, #dc2626 14%, transparent); }
+.dw-state.baked { color: #86efac; }
 </style>

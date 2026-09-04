@@ -12,6 +12,9 @@ export interface DiagPreview {
 	ms: number | null;
 	/** X-Diag-Cache: 'hit' | 'miss'. */
 	cache: string;
+	/** Ops the service switched off for this preview because they cannot run from base.d1an
+	 *  (base-tier steps need the full-rate signal). Empty when the whole recipe previewed. */
+	skipped: string[];
 }
 
 export async function fetchDiagPreview(
@@ -38,9 +41,11 @@ export async function fetchDiagPreview(
 		throw new Error(`diag preview: ${res.status} ${(await res.text()).slice(0, 200)}`);
 	}
 	const msHeader = res.headers.get('X-Diag-Ms');
+	const skipped = res.headers.get('X-Diag-Skipped') || '';
 	return {
 		attrs: parseD1an(await res.arrayBuffer()),
 		ms: msHeader ? Number(msHeader) : null,
 		cache: res.headers.get('X-Diag-Cache') || 'miss',
+		skipped: skipped ? skipped.split(',').filter(Boolean) : [],
 	};
 }

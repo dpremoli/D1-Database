@@ -138,8 +138,11 @@ export interface ClusterRow {
 	n: number;
 	/** n / ws.n, so the rows sum to 1. */
 	fraction: number;
-	meanAbsResidZ: number;
-	maxGiStar: number;
+	/** null when the row came from a viewport recompute, whose response carries only
+	 *  {x, y, cluster_id} -- there is no resid_z/gi_star for those points to average. The
+	 *  table renders null as "—" rather than borrowing the bake's numbers for other points. */
+	meanAbsResidZ: number | null;
+	maxGiStar: number | null;
 	rMin: number;
 	rMax: number;
 }

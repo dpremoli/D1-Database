@@ -17,6 +17,7 @@ routes are /health and /preview.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -70,7 +71,10 @@ if _cors:
         allow_origins=_cors,
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
-        expose_headers=["X-Diag-Cache", "X-Diag-Ms", "X-Diag-Preview"],
+        expose_headers=[
+            "X-Diag-Cache", "X-Diag-Ms", "X-Diag-Preview", "X-Diag-Skipped",
+            "X-Diag-Viewport-N",
+        ],
     )
 
 # base.d1an parsed columns, keyed by diag_path (~18k rows x 5 float64 ~= 730 KB each).
@@ -189,6 +193,36 @@ def _first_derived_index(recipe: dict) -> int:
     raise HTTPException(422, "recipe has no derived step to preview")
 
 
+def _disable_unpreviewable(recipe: dict, from_step: int) -> tuple[dict, list[str]]:
+    """Return (recipe with un-previewable steps switched off, their op names).
+
+    base.d1an holds only the angular state (t, rev, x, y, sig). A `base`-tier step sitting
+    AFTER the resume point -- `envelope` is the one that exists -- consumes full-rate columns
+    (fc/ff/fp, revs, t_raw) that base.d1an does not carry, so running it here raises a bare
+    KeyError('t_raw'). That surfaced to the analyst as `recipe failed: 't_raw'` on EVERY
+    preview once they enabled the envelope step, with nothing saying why.
+
+    Switching those steps off for the preview only (never for the bake) makes the rest of the
+    recipe previewable and lets the response name what was skipped, so the UI can say
+    "envelope needs a bake" instead of showing a column name as an error.
+    """
+    skipped = [
+        s.get("op")
+        for i, s in enumerate(recipe.get("steps", []))
+        if i >= from_step
+        and s.get("on", True)
+        and (spec := STEPS.get(s.get("op"))) is not None
+        and spec.tier == "base"
+    ]
+    if not skipped:
+        return recipe, []
+    out = copy.deepcopy(recipe)
+    for i, s in enumerate(out.get("steps", [])):
+        if i >= from_step and s.get("op") in skipped:
+            s["on"] = False
+    return out, skipped
+
+
 @app.get("/health")
 async def health():
     return {"ok": True, "base_lru": len(_base_lru), "result_lru": len(_result_lru)}
@@ -221,6 +255,13 @@ async def preview(req: Request):
         raise HTTPException(409, "analysis has no completed bake to preview from")
     diag_path = str(row["diag_path"])
 
+    # Steps that cannot run from base.d1an are switched off for the preview and named back to
+    # the client, rather than raising a bare column-name KeyError. Done before the cache key so
+    # a recipe that differs only in an un-previewable step still shares one cache entry.
+    from_step = _first_derived_index(recipe)
+    recipe, skipped = _disable_unpreviewable(recipe, from_step)
+    skipped_hdr = ",".join(s for s in skipped if s)
+
     key = (diag_path, recipe_hash(recipe), _layers_key(layers))
     cached = _result_lru.get(key)
     if cached is not None:
@@ -232,6 +273,7 @@ async def preview(req: Request):
                 "Cache-Control": "no-store",
                 "X-Diag-Cache": "hit",
                 "X-Diag-Preview": "approximate",
+                "X-Diag-Skipped": skipped_hdr,
             },
         )
 
@@ -239,7 +281,7 @@ async def preview(req: Request):
     t0 = time.perf_counter()
     try:
         cols, _metrics = run_recipe(
-            recipe, dict(base), layers=layers, from_step=_first_derived_index(recipe)
+            recipe, dict(base), layers=layers, from_step=from_step
         )
     except HTTPException:
         raise
@@ -265,6 +307,7 @@ async def preview(req: Request):
             "Cache-Control": "no-store",
             "X-Diag-Cache": "miss",
             "X-Diag-Preview": "approximate",
+            "X-Diag-Skipped": skipped_hdr,
             "X-Diag-Ms": f"{(time.perf_counter() - t0) * 1000:.0f}",
         },
     )

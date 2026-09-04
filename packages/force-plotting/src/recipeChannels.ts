@@ -166,3 +166,73 @@ export function recipesEquivalent(a: Recipe, b: Recipe): boolean {
 	const eb = b.steps.filter((s) => s.on).map(canonicalStep);
 	return ea.length === eb.length && ea.every((s, i) => s === eb[i]);
 }
+
+// --- recipe validation (mirror of scripts/diag/registry.py::validate_recipe) ----------------
+//
+// The service refuses an unsatisfiable recipe with a 422 whose body is a Python error string.
+// Before this existed, toggling `radial_detrend` off left the workbench firing a doomed
+// preview on every subsequent keystroke and showing `step 's5' (getis_ord) requires
+// ['resid_z'], which no earlier enabled step produces` as though the analyst had broken
+// something unrecoverable. Checking client-side lets the panel mark the offending step, say
+// which earlier step to re-enable, and not send the request at all.
+
+/** Verbatim from scripts/diag/registry.py::SEED_COLUMNS. */
+const SEED_COLUMNS = ['t_raw', 'fx', 'fy', 'fz', 'rpm', 'revs', 'x_raw', 'y_raw'];
+
+/** snake_case column -> the label of the step that produces it, for a human-readable fix. */
+const PRODUCER_OF: Record<string, string> = (() => {
+	const out: Record<string, string> = {};
+	for (const [op, meta] of Object.entries(STEP_META)) {
+		for (const c of meta.produces) out[c] = meta.label;
+	}
+	return out;
+})();
+
+// Mirrors each op's registry `requires`. Kept beside STEP_META's `produces` so the two halves
+// of a step's contract live together; a test pins them against the Python registry.
+const STEP_REQUIRES: Record<string, string[]> = {
+	frame_transform: ['fx', 'fy', 'fz'],
+	angular_resample: ['revs', 't_raw', 'x_raw', 'y_raw', 'fc', 'ff', 'fp'],
+	tsa: ['sig', 'rev'],
+	radial_detrend: ['tsa_resid', 'x', 'y'],
+	getis_ord: ['x', 'y', 'resid_z'],
+	hdbscan: ['x', 'y', 'resid_z'],
+	envelope: ['fc', 'ff', 'fp', 'revs', 't_raw', 'tsa_resid'],
+	grow_segmentation: ['x', 'y', 'resid_z'],
+};
+
+export interface RecipeProblem {
+	/** id of the step that cannot run. */
+	stepId: string;
+	/** columns it needs that nothing enabled before it produces. */
+	missing: string[];
+	/** One sentence naming the fix, in step labels rather than column names. */
+	message: string;
+}
+
+/**
+ * Every enabled step whose inputs are not satisfied by an earlier enabled step, in order.
+ * An empty array means the recipe will run.
+ */
+export function recipeProblems(recipe: Recipe): RecipeProblem[] {
+	const have = new Set<string>(SEED_COLUMNS);
+	const problems: RecipeProblem[] = [];
+	for (const s of recipe.steps) {
+		if (!s.on) continue;
+		const missing = (STEP_REQUIRES[s.op] ?? []).filter((c) => !have.has(c));
+		if (missing.length) {
+			const fixes = [...new Set(missing.map((c) => PRODUCER_OF[c]).filter(Boolean))];
+			const label = STEP_META[s.op]?.label ?? s.op;
+			problems.push({
+				stepId: s.id,
+				missing,
+				message: fixes.length
+					? `${label} needs ${fixes.join(' and ')} — re-enable ${fixes.length > 1 ? 'those steps' : 'that step'}, or switch ${label} off.`
+					: `${label} needs ${missing.join(', ')}, which nothing before it produces.`,
+			});
+			continue;   // do not pretend this step produced anything
+		}
+		for (const c of STEP_META[s.op]?.produces ?? []) have.add(c);
+	}
+	return problems;
+}

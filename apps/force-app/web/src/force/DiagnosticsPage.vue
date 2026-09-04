@@ -147,20 +147,29 @@ async function build(recipe?: Recipe) {
 			<span v-if="selected?.diag_status === 'done'" class="diag-meta">
 				{{ Number(selected.diag_points || 0).toLocaleString() }} pts
 			</span>
+			<!-- Only shown when there is nothing to work with yet. Once a cut is baked, the
+			     Pipeline panel's "Bake recipe" is the single bake action -- two buttons calling
+			     the same build() under different names ("Rebuild" here, "Re-bake" there) was
+			     the top confusion in the field report. -->
 			<button
-				v-if="selected"
+				v-if="selected && !ready"
 				class="diag-btn"
 				:disabled="building"
-				:title="ready ? 'Rebuild the diagnostics analysis on the host' : 'Build the diagnostics analysis on the host'"
+				:title="selected.diag_status === 'error'
+					? 'The last host run failed. Fix the cause, then run it again.'
+					: 'No analysis exists for this cut yet — run the pipeline on the host to create one.'"
 				@click="build()"
 			>
-				{{ building ? 'Requesting…' : (selected.diag_status === 'error' ? 'Retry' : ready ? 'Rebuild' : 'Build') }}
+				{{ building ? 'Requesting…' : (selected.diag_status === 'error' ? 'Retry' : 'Build') }}
 			</button>
-			<button class="diag-btn ghost" :disabled="loading || building" title="Reload the operation list" @click="loadRows">Refresh</button>
+			<button class="diag-btn ghost" :disabled="loading || building" title="Reload the operation list from the database" @click="loadRows">Refresh</button>
 		</header>
 
 		<p v-if="err" class="diag-note error">{{ err }}</p>
-		<p v-else-if="buildMsg" class="diag-note">{{ buildMsg }}</p>
+		<!-- While a workbench is open the bake state belongs in its own state strip, next to
+		     "what am I looking at" -- a note up here was easy to miss and left the strip
+		     claiming "baked" during a bake. -->
+		<p v-else-if="buildMsg && !ready" class="diag-note">{{ buildMsg }}</p>
 
 		<div class="diag-body">
 			<StandaloneDiagnosticsWorkbench
@@ -172,6 +181,8 @@ async function build(recipe?: Recipe) {
 				:total-points="Number(selected.diag_points) || 0"
 				:initial-recipe="selected.diag_recipe"
 				:baked-recipe="selected.diag_recipe"
+				:baking="building"
+				:bake-message="buildMsg"
 				@bake="build"
 			/>
 			<div v-else class="diag-empty">

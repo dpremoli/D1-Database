@@ -24,6 +24,8 @@ const routes: RouteRecordRaw[] = [
 	},
 	// Detached single-panel live view for a second monitor (no shell). Same recorder stream.
 	{ path: '/live/:panel', name: 'live', component: () => import('./record/LivePanelWindow.vue') },
+	// Detached Diagnostics panel (no shell). A viewer of the last bake — see DiagPanelWindow.
+	{ path: '/diag-panel/:analysisId', name: 'diag-panel', component: () => import('./force/DiagPanelWindow.vue') },
 	{ path: '/:pathMatch(.*)*', redirect: '/record' },
 ];
 
