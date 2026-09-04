@@ -15,7 +15,7 @@
 //   3. WHAT each knob does. Every step and every parameter carries prose from diagHelp.ts.
 //      'Min cluster' read as "number of clusters" and cost an analyst a debugging session; it
 //      is a floor measured in grid cells, and now says so.
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { STEP_META, type Recipe, type RecipeProblem, type RecipeStep } from './recipeChannels';
 import { ACTION_HELP, PANEL_HELP, SCOPE_META, STEP_HELP, scopeOf } from './diagHelp';
 import RecipeLibrary from './RecipeLibrary.vue';
@@ -127,6 +127,31 @@ const scope = (op: string) => scopeOf(op, STEP_META[op]?.tier ?? 'derived');
 const isRunnable = (op: string) =>
 	scope(op) === 'view' && op !== 'getis_ord';   // Gi* runs automatically on view settle
 
+// Steps collapse to a one-line parameter summary so all 7 fit without scrolling; click the
+// row to expand the editable controls. A step with a problem always stays expanded.
+const expanded = ref<Set<string>>(new Set());
+function toggleExpand(id: string) {
+	const s = new Set(expanded.value);
+	s.has(id) ? s.delete(id) : s.add(id);
+	expanded.value = s;
+}
+function isExpanded(id: string): boolean {
+	return expanded.value.has(id) || problemFor.value.has(id);
+}
+function paramSummary(s: RecipeStep): string {
+	const specs = STEP_META[s.op]?.params ?? [];
+	if (!specs.length) return '';
+	return specs
+		.map((p) => {
+			const v = s.params[p.key];
+			if (p.kind === 'select') {
+				return p.options?.find((o) => o.value === String(v))?.label ?? String(v ?? '');
+			}
+			return `${p.label.toLowerCase()} ${v ?? '—'}`;
+		})
+		.join(' · ');
+}
+
 const bakeLabel = computed(() => {
 	if (props.baking) return 'Baking on the host…';
 	if (!props.baked) return 'Bake recipe';
@@ -152,26 +177,31 @@ const bakeLabel = computed(() => {
 		<ol v-show="!collapsed" class="steps">
 			<li
 				v-for="(s, i) in recipe.steps" :key="s.id"
-				:class="{ off: !s.on, broken: problemFor.has(s.id) }"
+				:class="{ off: !s.on, broken: problemFor.has(s.id), open: isExpanded(s.id) }"
 			>
-				<div class="step-head">
+				<div class="step-head" @click="toggleExpand(s.id)">
 					<span class="step-n">{{ i + 1 }}</span>
-					<input class="step-on" type="checkbox" :checked="s.on" :title="s.on ? 'Disable this step' : 'Enable this step'" @change="toggle(s.id)" />
+					<input class="step-on" type="checkbox" :checked="s.on" :title="s.on ? 'Disable this step' : 'Enable this step'" @click.stop @change="toggle(s.id)" />
 					<span class="step-label">{{ STEP_META[s.op]?.label ?? s.op }}</span>
 					<InfoTip
 						v-if="STEP_HELP[s.op]"
 						:title="STEP_HELP[s.op].summary"
 						:text="STEP_HELP[s.op].detail"
 						wide
+						@click.stop
 					/>
 					<span class="rp-spacer" />
 					<span class="scope" :class="scope(s.op)">
 						{{ SCOPE_META[scope(s.op)].short }}
-						<InfoTip :text="SCOPE_META[scope(s.op)].help" placement="left" />
+						<InfoTip :text="SCOPE_META[scope(s.op)].help" placement="left" @click.stop />
 					</span>
-					<button v-if="!DEFAULT_IDS.has(s.id)" class="rm" title="Remove this step" @click.prevent="removeStep(s.id)">✕</button>
+					<button v-if="!DEFAULT_IDS.has(s.id)" class="rm" title="Remove this step" @click.stop.prevent="removeStep(s.id)">✕</button>
+					<span class="step-chev">{{ isExpanded(s.id) ? '▾' : '▸' }}</span>
 				</div>
 
+				<p v-if="!isExpanded(s.id) && s.on && paramSummary(s)" class="step-summary">{{ paramSummary(s) }}</p>
+
+				<template v-if="isExpanded(s.id)">
 				<p v-if="problemFor.has(s.id)" class="step-err">{{ problemFor.get(s.id)!.message }}</p>
 				<p v-else-if="s.on && skipped.has(s.op)" class="step-skip">
 					Not shown in the live preview — Bake to compute it.
@@ -215,11 +245,12 @@ const bakeLabel = computed(() => {
 					:title="ACTION_HELP.runOnView"
 					@click.prevent="emit('run-step', s.op as 'hdbscan' | 'grow_segmentation')"
 				>
-					{{ busyOp === s.op ? 'Running…' : '▸ Run on this view' }}
+					{{ busyOp ? 'Running…' : '▸ Run on this view' }}
 				</button>
 				<p v-else-if="s.on && scope(s.op) === 'view' && !problemFor.has(s.id)" class="auto-note">
 					recomputes automatically when you pan or zoom
 				</p>
+				</template>
 			</li>
 		</ol>
 
@@ -277,10 +308,13 @@ const bakeLabel = computed(() => {
 .rp-problems p:last-child { margin-bottom: 0; }
 
 .steps { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; counter-reset: step; }
-.steps li { border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); padding: 7px 10px; }
+.steps li { border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); padding: 6px 10px; }
 .steps li.off { opacity: 0.45; }
 .steps li.broken { background: color-mix(in srgb, #dc2626 9%, transparent); opacity: 1; }
-.step-head { display: flex; align-items: center; gap: 6px; }
+.steps li.open { background: rgba(255,255,255,0.02); }
+.step-head { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.step-chev { flex: none; width: 10px; font-size: 9px; color: var(--text-dim, #94a3b8); text-align: center; }
+.step-summary { margin: 3px 0 0 22px; font-size: 10px; color: var(--text-dim, #94a3b8); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .step-n {
 	flex: none; width: 16px; height: 16px; border-radius: 4px; font-size: 9.5px; font-weight: 700;
 	display: grid; place-items: center; color: var(--text-dim, #94a3b8);

@@ -46,6 +46,12 @@ export { fetchViewportCompute } from './diagViewport';
 export type { ViewportStep, ViewportResult } from './diagViewport';
 
 export { default as InfoTip } from './InfoTip.vue';
+export { default as SpatialPanel } from './SpatialPanel.vue';
+export {
+	DIAG_PANEL_TYPES, DIAG_DEFAULT_LAYOUT, DIAG_LAYOUT_LS_KEY, loadDiagLayout, saveDiagLayout,
+	newPanelInst,
+} from './diagPanels';
+export type { DiagPanelType, DiagPanelInst } from './diagPanels';
 export {
 	STEP_HELP, CHANNEL_HELP, PANEL_HELP, SCOPE_META, ACTION_HELP, scopeOf,
 } from './diagHelp';
