@@ -123,6 +123,89 @@ def test_viewport_gmm_segmentation_returns_gmm_id(client):
     assert -1.0 not in set(np.unique(v))
 
 
+def test_viewport_outputs_returns_one_named_column_per_request(client):
+    # gmm_id + gmm_prob together in one response, the case griddify-style value+confidence
+    # steps need: the client wants to colour by one and modulate opacity by the other.
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1",
+            "bbox": [-40, -40, 40, 40],
+            "step": {
+                "op": "gmm_segmentation",
+                "params": {"n_components": 3, "random_state": 0, "grid_target": 500},
+            },
+            "outputs": ["gmm_id", "gmm_prob"],
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers["x-diag-viewport-cols"] == "gmm_id,gmm_prob"
+    cols = _read(r.content)
+    assert set(cols) == {"x", "y", "gmm_id", "gmm_prob"}
+    assert set(np.unique(cols["gmm_id"])) <= {0.0, 1.0, 2.0}
+    assert np.all(cols["gmm_prob"] >= 0.0) and np.all(cols["gmm_prob"] <= 1.0 + 1e-6)
+
+
+def test_viewport_outputs_rejects_a_column_the_op_does_not_produce(client):
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1",
+            "bbox": [-40, -40, 40, 40],
+            "step": {"op": "hdbscan", "params": {"min_cluster_size": 20}},
+            "outputs": ["cluster_id", "gmm_prob"],
+        },
+    )
+    assert r.status_code == 422
+    assert "gmm_prob" in r.text
+
+
+def test_viewport_outputs_rejects_an_empty_list(client):
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1",
+            "bbox": [-40, -40, 40, 40],
+            "step": {"op": "hdbscan", "params": {}},
+            "outputs": [],
+        },
+    )
+    assert r.status_code == 422
+
+
+def test_viewport_without_outputs_still_returns_the_legacy_single_value_column(client):
+    # Byte-for-byte the pre-widening contract: 'value', not the op's real column name.
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1",
+            "bbox": [-40, -40, 40, 40],
+            "step": {"op": "hdbscan", "params": {"min_cluster_size": 20}},
+        },
+    )
+    assert r.status_code == 200
+    assert r.headers["x-diag-viewport-cols"] == "value"
+    assert set(_read(r.content)) == {"x", "y", "value"}
+
+
+def test_viewport_outputs_cache_hit_reproduces_the_cols_header(client):
+    body = {
+        "analysis_id": "a1",
+        "bbox": [-40, -40, 40, 40],
+        "step": {
+            "op": "gmm_segmentation",
+            "params": {"n_components": 3, "random_state": 0, "grid_target": 500},
+        },
+        "outputs": ["gmm_id", "gmm_prob"],
+    }
+    first = client.post("/viewport", json=body)
+    assert first.headers["x-diag-cache"] == "miss"
+    second = client.post("/viewport", json=body)
+    assert second.headers["x-diag-cache"] == "hit"
+    assert second.headers["x-diag-viewport-cols"] == "gmm_id,gmm_prob"
+    assert second.content == first.content
+
+
 def test_viewport_segmentation_two_seed_polys(client):
     left = [[[-1e6, -1e6], [-5, -1e6], [-5, 1e6], [-1e6, 1e6]]]
     right = [[[5, -1e6], [1e6, -1e6], [1e6, 1e6], [5, 1e6]]]

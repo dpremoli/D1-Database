@@ -275,9 +275,13 @@ async function onDeleteLayer(layer: DiagLayer) {
 const stats = computed(() => (activeWS.value ? computeStats(activeWS.value, selection.value) : null));
 
 function clustersFromViewport(r: ViewportResult): ClusterRow[] {
+	// r.value is absent for a multi-`outputs` result (see diagViewport.ts); this table only
+	// reads the legacy single column, which is all any current caller ever requests here.
+	if (!r.value) return [];
+	const value = r.value;
 	const acc = new Map<number, { n: number; rMin: number; rMax: number }>();
 	for (let i = 0; i < r.n; i++) {
-		const id = r.value[i];
+		const id = value[i];
 		if (!Number.isFinite(id)) continue;
 		const key = id < 0 ? -1 : id;
 		const rad = Math.hypot(r.x[i], r.y[i]);

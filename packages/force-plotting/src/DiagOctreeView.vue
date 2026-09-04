@@ -297,15 +297,19 @@ function disposeAnalysis() {
 function rebuildAnalysis() {
 	disposeAnalysis();
 	const r = props.analysisResult;
-	if (!r || r.n === 0 || !scene) { invalidate(); return; }
+	// r.value is absent when the caller requested `outputs` instead of the legacy single
+	// column (see diagViewport.ts) -- this view only ever renders one column, so it has
+	// nothing to draw in that case rather than something to guess at.
+	if (!r || r.n === 0 || !scene || !r.value) { invalidate(); return; }
+	const value = r.value;
 	const g = new THREE.BufferGeometry();
 	const pos = new Float32Array(r.n * 3);
 	for (let i = 0; i < r.n; i++) { pos[i * 3] = r.x[i]; pos[i * 3 + 1] = r.y[i]; pos[i * 3 + 2] = 1; }
 	g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-	g.setAttribute('aValue', new THREE.BufferAttribute(Float32Array.from(r.value), 1));
+	g.setAttribute('aValue', new THREE.BufferAttribute(Float32Array.from(value), 1));
 	const mat = makeAnalysisMaterial();
 	if (props.analysisMode !== 'categorical') {
-		const [lo, hi] = percentileRange(r.value);
+		const [lo, hi] = percentileRange(value);
 		mat.uniforms.uRange.value.set(lo, hi);
 	}
 	analysisPoints = new THREE.Points(g, mat);

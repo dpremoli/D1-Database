@@ -60,7 +60,7 @@ describe('fetchViewportCompute', () => {
 		expect(res.n).toBe(2);
 		expect(res.op).toBe('getis_ord');
 		expect(Array.from(res.x)).toEqual([0, 1]);
-		expect(Array.from(res.value)).toEqual([20, 21]);
+		expect(Array.from(res.value ?? [])).toEqual([20, 21]);
 		expect(res.ms).toBe(42);
 		const call = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0];
 		expect(call[0]).toBe('/diag/viewport');
@@ -81,6 +81,42 @@ describe('fetchViewportCompute', () => {
 		const body = JSON.parse(opt.body);
 		expect(body.layers).toEqual({ L: { role: 'seed' } });
 		expect(body.max_points).toBe(5000);
+	});
+
+	it('sends outputs and parses each named column into .columns, leaving .value unset', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				arrayBuffer: async () =>
+					buildD1an({
+						x: new Float32Array([0, 1]),
+						y: new Float32Array([10, 11]),
+						gmm_id: new Float32Array([0, 1]),
+						gmm_prob: new Float32Array([0.9, 0.7]),
+					}),
+				headers: new Headers({ 'X-Diag-Viewport-Cols': 'gmm_id,gmm_prob' }),
+			}),
+		);
+
+		const res = await fetchViewportCompute(
+			'a1', [0, 0, 10, 10], { op: 'gmm_segmentation', params: {} },
+			{ outputs: ['gmm_id', 'gmm_prob'] },
+		);
+
+		expect(res.value).toBeUndefined();
+		expect(Array.from(res.columns?.gmm_id ?? [])).toEqual([0, 1]);
+		const prob = Array.from(res.columns?.gmm_prob ?? []);
+		expect(prob[0]).toBeCloseTo(0.9);
+		expect(prob[1]).toBeCloseTo(0.7);
+		const opt = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][1] as { body: string };
+		expect(JSON.parse(opt.body).outputs).toEqual(['gmm_id', 'gmm_prob']);
+	});
+
+	it('omits outputs from the request body when not given, matching the pre-widening contract', async () => {
+		await fetchViewportCompute('a1', [0, 0, 1, 1], { op: 'getis_ord', params: {} });
+		const opt = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][1] as { body: string };
+		expect(JSON.parse(opt.body)).not.toHaveProperty('outputs');
 	});
 
 	it('throws a message an analyst can act on, keeping the raw body off the panel', async () => {

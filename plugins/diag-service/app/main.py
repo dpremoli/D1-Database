@@ -73,7 +73,7 @@ if _cors:
         allow_headers=["Authorization", "Content-Type"],
         expose_headers=[
             "X-Diag-Cache", "X-Diag-Ms", "X-Diag-Preview", "X-Diag-Skipped",
-            "X-Diag-Viewport-N",
+            "X-Diag-Viewport-N", "X-Diag-Viewport-Cols",
         ],
     )
 
@@ -156,7 +156,7 @@ def _load_base(diag_path: str) -> dict:
 # looking at.
 FULL_LRU_CAP = int(os.environ.get("FULL_LRU", "3"))
 _full_lru: OrderedDict[str, dict] = OrderedDict()
-_viewport_lru: OrderedDict[tuple, tuple[bytes, int]] = OrderedDict()  # key -> (d1an bytes, n)
+_viewport_lru: OrderedDict[tuple, tuple[bytes, int, str]] = OrderedDict()  # key -> (d1an bytes, n, cols header)
 
 _VIEWPORT_STEPS = {"getis_ord", "hdbscan", "grow_segmentation", "gmm_segmentation"}
 _VIEWPORT_OUTPUT = {
@@ -316,15 +316,27 @@ async def preview(req: Request):
 
 @app.post("/viewport")
 async def viewport(req: Request):
-    """Run one spatial step (Gi*, HDBSCAN, seeded segmentation) on a framed region of the
-    full-resolution cloud. The client sends a bbox in x/y mm and the step config; we crop
-    full.d1an to it, stride down if over max_points, and return D1AN {x, y, value}."""
+    """Run one spatial step (Gi*, HDBSCAN, GMM, seeded segmentation) on a framed region of
+    the full-resolution cloud. The client sends a bbox in x/y mm and the step config; we crop
+    full.d1an to it, stride down if over max_points, and return D1AN {x, y, <output columns>}.
+
+    `outputs` (a list) requests several of the step's produced columns at once, each under
+    its own name -- e.g. gmm_segmentation's gmm_id (colour) and gmm_prob (confidence)
+    together in one response, which griddify-style value+confidence steps need to be shown
+    together. `output` (singular) is the older, single-column form: kept exactly as it
+    behaved before -- respected only for getis_ord's gi_star/gi_sig choice, silently ignored
+    for every other op (existing callers send a stale 'gi_star' default on every request
+    regardless of op, so widening what `output` validates against would break them). A
+    request naming neither gets the op's own default column. Exactly one of `output`/absent
+    and `outputs` present decides whether the response is the legacy single `value` column or
+    one column per requested name (X-Diag-Viewport-Cols names them, in order)."""
     body = await req.json()
     analysis_id = body.get("analysis_id")
     bbox = body.get("bbox")
     step = body.get("step") or {}
     layers = body.get("layers") or None
     output = body.get("output") or "gi_star"
+    outputs_raw = body.get("outputs")
     op = step.get("op")
 
     if not analysis_id or not isinstance(bbox, list) or len(bbox) != 4:
@@ -333,6 +345,18 @@ async def viewport(req: Request):
         raise HTTPException(422, "bbox elements must be numbers")
     if op not in _VIEWPORT_STEPS:
         raise HTTPException(422, f"step.op must be one of {sorted(_VIEWPORT_STEPS)}")
+    if outputs_raw is not None:
+        if (
+            not isinstance(outputs_raw, list) or not outputs_raw
+            or not all(isinstance(o, str) for o in outputs_raw)
+        ):
+            raise HTTPException(422, "outputs must be a non-empty array of strings")
+        produces = set(STEPS[op].produces)
+        bad = [o for o in outputs_raw if o not in produces]
+        if bad:
+            raise HTTPException(
+                422, f"outputs {bad} not produced by {op!r} (produces {sorted(produces)})"
+            )
     mp_raw = body.get("max_points")
     if mp_raw is None:
         max_points = 1_000_000
@@ -364,19 +388,20 @@ async def viewport(req: Request):
     if y1 < y0:
         y0, y1 = y1, y0
 
+    outputs_key = tuple(outputs_raw) if outputs_raw is not None else (output,)
     key = (
         diag_path, op,
         (round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3)),
-        recipe_hash({"steps": [step]}), _layers_key(layers), output, max_points,
+        recipe_hash({"steps": [step]}), _layers_key(layers), outputs_key, max_points,
     )
     cached = _viewport_lru.get(key)
     if cached is not None:
         _viewport_lru.move_to_end(key)
-        cbytes, cn = cached
+        cbytes, cn, ccols = cached
         return Response(
             cbytes, media_type="application/octet-stream",
             headers={"Cache-Control": "no-store", "X-Diag-Cache": "hit",
-                     "X-Diag-Viewport-N": str(cn)},
+                     "X-Diag-Viewport-N": str(cn), "X-Diag-Viewport-Cols": ccols},
         )
 
     full = _load_full(diag_path)
@@ -418,11 +443,25 @@ async def viewport(req: Request):
         raise HTTPException(422, f"step failed: {e}") from e
     ms = int((time.perf_counter() - t0) * 1000)
 
-    col = _VIEWPORT_OUTPUT[op]
-    if op == "getis_ord" and output in ("gi_star", "gi_sig"):
-        col = output
-    categorical = col in ("cluster_id", "segment_id", "gmm_id")
-    value = np.nan_to_num(produced[col], nan=-1.0 if categorical else np.nan)
+    def _column(name: str) -> np.ndarray:
+        categorical = name in ("cluster_id", "segment_id", "gmm_id")
+        return np.nan_to_num(produced[name], nan=-1.0 if categorical else np.nan).astype(np.float32)
+
+    if outputs_raw is not None:
+        # Multi-output: each requested column keeps its own real name, so a new client can
+        # tell grid_fill from grid_support (or gmm_id from gmm_prob) apart in one response.
+        cols_out = list(outputs_raw)
+        d1an_cols = {name: _column(name) for name in cols_out}
+    else:
+        # Legacy single-column path, byte-for-byte what this returned before `outputs`
+        # existed: always named 'value', 'output' respected only for getis_ord.
+        col = _VIEWPORT_OUTPUT[op]
+        if op == "getis_ord" and output in ("gi_star", "gi_sig"):
+            col = output
+        cols_out = ["value"]
+        d1an_cols = {"value": _column(col)}
+
+    cols_header = ",".join(cols_out)
 
     with tempfile.NamedTemporaryFile(suffix=".d1an", delete=False) as f:
         tmp = f.name
@@ -430,18 +469,19 @@ async def viewport(req: Request):
         write_d1an(tmp, {
             "x": xc.astype(np.float32),
             "y": yc.astype(np.float32),
-            "value": value.astype(np.float32),
+            **d1an_cols,
         })
         with open(tmp, "rb") as fh:
             out = fh.read()
     finally:
         os.unlink(tmp)
 
-    _viewport_lru[key] = (out, int(xc.size))
+    _viewport_lru[key] = (out, int(xc.size), cols_header)
     while len(_viewport_lru) > VIEWPORT_LRU_CAP:
         _viewport_lru.popitem(last=False)
     return Response(
         out, media_type="application/octet-stream",
         headers={"Cache-Control": "no-store", "X-Diag-Cache": "miss",
-                 "X-Diag-Ms": str(ms), "X-Diag-Viewport-N": str(xc.size)},
+                 "X-Diag-Ms": str(ms), "X-Diag-Viewport-N": str(xc.size),
+                 "X-Diag-Viewport-Cols": cols_header},
     )

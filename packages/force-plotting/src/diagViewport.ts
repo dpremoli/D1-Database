@@ -26,7 +26,13 @@ export interface ViewportResult {
 	op: ViewportStep['op'];
 	x: Float32Array;
 	y: Float32Array;
-	value: Float32Array;
+	/** Present unless `opts.outputs` was requested -- the single legacy column. */
+	value?: Float32Array;
+	/** Present when `opts.outputs` was requested: one entry per requested column, keyed by
+	 *  its real name (e.g. 'gmm_id', 'gmm_prob') rather than the generic 'value'. Lets a
+	 *  caller colour by one and modulate opacity by another in a single round trip -- the
+	 *  case a value+confidence step (gmm_segmentation, and any future one) needs. */
+	columns?: Record<string, Float32Array>;
 	n: number;
 	/** server compute time in ms, from X-Diag-Ms; null if the header was absent. */
 	ms: number | null;
@@ -40,6 +46,11 @@ export async function fetchViewportCompute(
 		layers?: Record<string, unknown>;
 		maxPoints?: number;
 		output?: string;
+		/** Request several of the step's produced columns at once instead of the single
+		 *  legacy 'value' column. Each must be a column the op actually produces -- the
+		 *  service 422s otherwise. Mutually exclusive with `output` in effect: passing this
+		 *  ignores `output` server-side. */
+		outputs?: string[];
 		signal?: AbortSignal;
 	} = {},
 ): Promise<ViewportResult> {
@@ -54,6 +65,7 @@ export async function fetchViewportCompute(
 			layers: opts.layers ?? null,
 			max_points: opts.maxPoints ?? 1_000_000,
 			output: opts.output ?? 'gi_star',
+			...(opts.outputs ? { outputs: opts.outputs } : {}),
 		}),
 	});
 	if (!res.ok) {
@@ -61,12 +73,12 @@ export async function fetchViewportCompute(
 	}
 	const attrs = parseD1an(await res.arrayBuffer());
 	const ms = res.headers.get('X-Diag-Ms');
-	return {
-		op: step.op,
-		x: attrs.columns.x,
-		y: attrs.columns.y,
-		value: attrs.columns.value,
-		n: attrs.n,
-		ms: ms ? Number(ms) : null,
-	};
+	const base = { op: step.op, x: attrs.columns.x, y: attrs.columns.y, n: attrs.n,
+		ms: ms ? Number(ms) : null };
+	if (opts.outputs) {
+		const columns: Record<string, Float32Array> = {};
+		for (const name of opts.outputs) columns[name] = attrs.columns[name];
+		return { ...base, columns };
+	}
+	return { ...base, value: attrs.columns.value };
 }
