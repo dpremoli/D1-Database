@@ -50,6 +50,21 @@ describe('workingSetFromD1an', () => {
 		expect(Array.from(ws.segmentId)).toEqual([-1, 0, 0, 1, 1]);
 		expect(CHANNEL_ACCESSOR.segmentId(ws, 3)).toBe(1);
 	});
+
+	it('backfills a slice-2 column absent from a pre-slice-2 bake at its neutral value, rather than throwing', () => {
+		const attrs = makeAttrs();
+		delete attrs.columns.inverted;
+		delete attrs.columns.grid_fill;
+		delete attrs.columns.grid_support;
+		delete attrs.columns.gmm_id;
+		delete attrs.columns.gmm_prob;
+		const ws = workingSetFromD1an(attrs);
+		expect(Array.from(ws.inverted)).toEqual([0, 0, 0, 0, 0]);
+		expect(Array.from(ws.gridFill)).toEqual([0, 0, 0, 0, 0]);
+		expect(Array.from(ws.gridSupport)).toEqual([0, 0, 0, 0, 0]);
+		expect(Array.from(ws.gmmId)).toEqual([-1, -1, -1, -1, -1]);
+		expect(Array.from(ws.gmmProb)).toEqual([0, 0, 0, 0, 0]);
+	});
 });
 
 describe('matches', () => {

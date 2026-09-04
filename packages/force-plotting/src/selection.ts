@@ -32,8 +32,7 @@ export interface WorkingSet {
 	gmmProb: Float32Array;
 }
 
-// snake_case D1AN column -> camelCase WorkingSet field. The full contract; a file missing any
-// of these is not a usable diag artifact. Every column here must also be in
+// snake_case D1AN column -> camelCase WorkingSet field. Every column here must also be in
 // scripts/diag/runner.py::PUBLIC_COLUMNS, or every preview/bake response fails this check.
 const COLUMN_MAP: Record<string, keyof WorkingSet> = {
 	t: 't', rev: 'rev', x: 'x', y: 'y',
@@ -43,15 +42,33 @@ const COLUMN_MAP: Record<string, keyof WorkingSet> = {
 	gmm_id: 'gmmId', gmm_prob: 'gmmProb',
 };
 
+// A file missing one of these is not a usable diag artifact -- every bake and preview has
+// always produced them, so absence means real corruption, not staleness.
+const REQUIRED_COLUMNS = new Set([
+	't', 'rev', 'x', 'y', 'tsa_resid', 'resid_z', 'gi_star', 'gi_sig',
+	'cluster_id', 'glosh', 'env_band', 'segment_id',
+]);
+
+// Phase H slice 2 added these columns to PUBLIC_COLUMNS without bumping DIAG_VERSION -- a row
+// baked before that ships an attrs.d1an with only the 12 REQUIRED_COLUMNS. That is not
+// corruption, it is "these steps were never run on this bake", which is exactly what each
+// value here already means when a fresh bake has them at their documented neutral fill
+// (runner.py::PUBLIC_COLUMNS's fill-default logic). Missing is backfilled the same way,
+// rather than thrown on, so an old bake keeps loading until it is naturally re-baked.
+const NEUTRAL_FILL: Record<string, number> = {
+	inverted: 0, grid_fill: 0, grid_support: 0, gmm_id: -1, gmm_prob: 0,
+};
+
 export function workingSetFromD1an(attrs: DiagAttrs): WorkingSet {
-	for (const col of Object.keys(COLUMN_MAP)) {
+	for (const col of REQUIRED_COLUMNS) {
 		if (!(col in attrs.columns)) {
 			throw new Error(`D1AN file is missing required column '${col}'`);
 		}
 	}
 	const ws = { n: attrs.n } as WorkingSet;
 	for (const [snake, camel] of Object.entries(COLUMN_MAP)) {
-		(ws as unknown as Record<string, Float32Array>)[camel] = attrs.columns[snake];
+		const col = attrs.columns[snake] ?? new Float32Array(attrs.n).fill(NEUTRAL_FILL[snake] ?? 0);
+		(ws as unknown as Record<string, Float32Array>)[camel] = col;
 	}
 	return ws;
 }
