@@ -58,6 +58,7 @@ describe('fetchViewportCompute', () => {
 			params: { k: 30 },
 		});
 		expect(res.n).toBe(2);
+		expect(res.op).toBe('getis_ord');
 		expect(Array.from(res.x)).toEqual([0, 1]);
 		expect(Array.from(res.value)).toEqual([20, 21]);
 		expect(res.ms).toBe(42);

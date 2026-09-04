@@ -463,6 +463,8 @@ async function load() {
 }
 
 let baseSpan = 100;
+// Fit-view: recenter on the octree bounding box and reset zoom. Load / cut-switch only --
+// NOT the resize path (which must keep the analyst's framing; see adjustAspect).
 function frameCamera() {
 	if (!pco || !camera || !controls) return;
 	const box = pco.boundingBox.clone().applyMatrix4(pco.matrixWorld);
@@ -470,9 +472,23 @@ function frameCamera() {
 	baseSpan = Math.max(sz.x, sz.y) || 100;
 	const span = baseSpan * 1.08, aspect = cssW / cssH;
 	camera.left = -span / 2 * aspect; camera.right = span / 2 * aspect; camera.top = span / 2; camera.bottom = -span / 2;
+	camera.zoom = 1;   // OrbitControls dolly leaves zoom > 1 on the ortho camera; a fit-view must clear it
 	camera.position.set(c.x, c.y, c.z + 1e5); camera.up.set(0, 1, 0); camera.lookAt(c.x, c.y, c.z);
 	camera.updateProjectionMatrix();
 	controls.target.set(c.x, c.y, c.z); controls.update();
+	invalidate();
+	emitBounds();
+}
+
+// Resize keeps the analyst's framing: only the horizontal frustum extent tracks the new
+// aspect ratio; the vertical world-span, pan target and zoom are all preserved.
+function adjustAspect() {
+	if (!camera) return;
+	const halfV = (camera.top - camera.bottom) / 2;
+	const aspect = cssW / cssH;
+	camera.left = -halfV * aspect;
+	camera.right = halfV * aspect;
+	camera.updateProjectionMatrix();
 	invalidate();
 	emitBounds();
 }
@@ -518,7 +534,7 @@ function sizeCanvas() {
 
 let ro: ResizeObserver | undefined;
 onMounted(() => {
-	ro = new ResizeObserver(() => { sizeCanvas(); frameCamera(); });
+	ro = new ResizeObserver(() => { sizeCanvas(); adjustAspect(); });
 	nextTick(() => { setupGL(); if (canvasEl.value) ro!.observe(canvasEl.value); load(); });
 });
 onBeforeUnmount(() => {
@@ -530,8 +546,10 @@ onBeforeUnmount(() => {
 });
 
 watch(() => props.octreePath, () => { disposePco(); disposeMaterial(); load(); });
-watch(() => props.analysisResult, rebuildAnalysis);
-watch(() => props.analysisMode, rebuildAnalysis);
+// One watcher, not two: a focus=true run sets analysisResult and (via the workbench) the
+// channel/analysisMode in the same tick -- separate watchers would build the up-to-1M-point
+// geometry twice for one result. A multi-source watch coalesces to one callback per flush.
+watch([() => props.analysisResult, () => props.analysisMode], rebuildAnalysis);
 watch(() => [props.layers, props.activeLayerName], rebuildOverlay, { deep: true });
 watch(() => props.paintMode, () => {
 	if (controls) controls.enabled = (props.paintMode ?? 'off') !== 'draw';

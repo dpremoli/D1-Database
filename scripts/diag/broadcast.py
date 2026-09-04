@@ -11,13 +11,23 @@ import numpy as np
 
 
 def broadcast_to_spiral(
-    rev_grid: np.ndarray, value_grid: np.ndarray, revs_full: np.ndarray
+    rev_grid: np.ndarray,
+    value_grid: np.ndarray,
+    revs_full: np.ndarray,
+    *,
+    fill_edges: str = "clamp",
 ) -> np.ndarray:
     """np.interp(revs_full, rev_grid, value_grid).
 
-    rev_grid must be strictly ascending (the angular grid is). Points of revs_full outside
-    rev_grid clamp to the endpoints. A NaN in value_grid propagates to every revs_full point
-    whose interval touches it.
+    rev_grid must be strictly ascending (the angular grid is). A NaN in value_grid propagates
+    to every revs_full point whose interval touches it.
+
+    `fill_edges` controls revs_full points outside rev_grid's span:
+      "clamp" (default) -- hold the nearest endpoint value (np.interp's own behaviour).
+      "nan"             -- NaN. Use this for resid_z: TSA drops the partial last revolution,
+                           so the trailing raw spiral points have no residual, and a fabricated
+                           resid_z[-1] there would render as a false uniform arc at the octree
+                           edge (and be included in a viewport recompute).
     """
     rev_grid = np.asarray(rev_grid, dtype=np.float64)
     value_grid = np.asarray(value_grid, dtype=np.float64)
@@ -26,4 +36,8 @@ def broadcast_to_spiral(
     # so guard rather than trust the comment (cf. the samples_per_rev bug in the recipe engine).
     if rev_grid.size > 1 and not np.all(np.diff(rev_grid) > 0):
         raise ValueError("rev_grid must be strictly ascending")
+    if fill_edges == "nan":
+        return np.interp(revs_full, rev_grid, value_grid, left=np.nan, right=np.nan)
+    if fill_edges != "clamp":
+        raise ValueError(f"fill_edges must be 'clamp' or 'nan', got {fill_edges!r}")
     return np.interp(revs_full, rev_grid, value_grid)
