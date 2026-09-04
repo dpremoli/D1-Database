@@ -3,7 +3,8 @@
 // column bytes, which parse straight into a WorkingSet. Preview is a float32 approximation —
 // the response carries X-Diag-Preview: approximate, and the bake stays authoritative.
 import { parseD1an, type DiagAttrs } from './diagAttrs';
-import { useForceHost } from './host';
+import { authorizedFetch, useForceHost } from './host';
+import { diagRequestError } from './diagError';
 import type { Recipe } from './recipeChannels';
 
 export interface DiagPreview {
@@ -24,12 +25,10 @@ export async function fetchDiagPreview(
 	signal?: AbortSignal,
 	layers?: Record<string, unknown>,
 ): Promise<DiagPreview> {
-	const host = useForceHost();
-	const res = await fetch(`${host.diagUrl}/preview`, {
+	const res = await authorizedFetch(`${useForceHost().diagUrl}/preview`, {
 		method: 'POST',
 		signal,
-		credentials: host.fetchCredentials,
-		headers: { 'Content-Type': 'application/json', ...host.authHeaders() },
+		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			analysis_id: analysisId,
 			recipe,
@@ -38,7 +37,7 @@ export async function fetchDiagPreview(
 		}),
 	});
 	if (!res.ok) {
-		throw new Error(`diag preview: ${res.status} ${(await res.text()).slice(0, 200)}`);
+		throw diagRequestError('preview', res.status, await res.text());
 	}
 	const msHeader = res.headers.get('X-Diag-Ms');
 	const skipped = res.headers.get('X-Diag-Skipped') || '';

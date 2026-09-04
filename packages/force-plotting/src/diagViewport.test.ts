@@ -83,13 +83,23 @@ describe('fetchViewportCompute', () => {
 		expect(body.max_points).toBe(5000);
 	});
 
-	it('throws on a non-ok response', async () => {
+	it('throws a message an analyst can act on, keeping the raw body off the panel', async () => {
 		vi.stubGlobal(
 			'fetch',
-			vi.fn().mockResolvedValue({ ok: false, status: 422, text: async () => 'empty viewport' }),
+			vi.fn().mockResolvedValue({
+				ok: false,
+				status: 422,
+				text: async () => JSON.stringify({ detail: 'empty viewport' }),
+			}),
 		);
 		await expect(
 			fetchViewportCompute('a1', [0, 0, 1, 1], { op: 'getis_ord', params: {} }),
-		).rejects.toThrow(/422/);
+		).rejects.toMatchObject({
+			// Neither the status code nor JSON braces may reach the message — that shape was
+			// the reported `diag preview: 401 {"detail":"not permitted"}` defect.
+			message: "This recipe can't run: empty viewport",
+			status: 422,
+			detail: expect.stringContaining('empty viewport'),
+		});
 	});
 });

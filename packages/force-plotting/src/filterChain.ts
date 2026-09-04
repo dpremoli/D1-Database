@@ -2,7 +2,8 @@
 // (docs/superpowers/specs/2026-07-21-frm-filtering-suite-design.md). The chain JSON shape
 // is shared verbatim with the filter-service (scipy) and MATLAB frm_filters (bake).
 import { type Cache, parseCache } from './liveCache';
-import { useForceHost } from './host';
+import { authorizedFetch, useForceHost } from './host';
+import { diagRequestError } from './diagError';
 
 export interface FilterChain {
 	despike: { on: boolean; window: number; sigma: number };
@@ -54,15 +55,13 @@ export function chainSummary(c: FilterChain | null | undefined): string {
 // service forwards to Directus when fetching the cache. The host supplies both. ----
 export async function fetchFiltered(cacheFileId: string, chain: FilterChain, targetPoints = 1_500_000, signal?: AbortSignal):
 	Promise<{ cache: Cache; skipped: string[]; stride: number }> {
-	const host = useForceHost();
-	const res = await fetch(`${host.filterUrl}/run`, {
+	const res = await authorizedFetch(`${useForceHost().filterUrl}/run`, {
 		method: 'POST',
 		signal,
-		credentials: host.fetchCredentials,
-		headers: { 'Content-Type': 'application/json', ...host.authHeaders() },
+		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ cache_file_id: cacheFileId, chain, target_points: targetPoints }),
 	});
-	if (!res.ok) throw new Error(`filter service: ${res.status} ${(await res.text()).slice(0, 200)}`);
+	if (!res.ok) throw diagRequestError('filter', res.status, await res.text());
 	const skipped = (res.headers.get('X-Filter-Skipped') || '').split(';').map((s) => s.trim()).filter(Boolean);
 	const stride = Math.max(1, parseInt(res.headers.get('X-Filter-Stride') || '1', 10) || 1);
 	return { cache: parseCache(await res.arrayBuffer()), skipped, stride };
@@ -70,27 +69,23 @@ export async function fetchFiltered(cacheFileId: string, chain: FilterChain, tar
 
 export async function fetchFilteredFft(cacheFileId: string, chain: FilterChain, axis: string):
 	Promise<{ f: number[]; amp: number[] }> {
-	const host = useForceHost();
-	const res = await fetch(`${host.filterUrl}/fft`, {
+	const res = await authorizedFetch(`${useForceHost().filterUrl}/fft`, {
 		method: 'POST',
-		credentials: host.fetchCredentials,
-		headers: { 'Content-Type': 'application/json', ...host.authHeaders() },
+		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ cache_file_id: cacheFileId, chain, axis }),
 	});
-	if (!res.ok) throw new Error(`filter service: ${res.status}`);
+	if (!res.ok) throw diagRequestError('FFT', res.status, await res.text());
 	return res.json();
 }
 
 // STFT of one axis for the spectrogram / waterfall / power-spectrum views. S is [freq][time] in dB.
 export async function fetchSpectrogram(cacheFileId: string, chain: FilterChain, axis: string):
 	Promise<{ f: number[]; t: number[]; S: number[][]; fmax: number }> {
-	const host = useForceHost();
-	const res = await fetch(`${host.filterUrl}/spectrogram`, {
+	const res = await authorizedFetch(`${useForceHost().filterUrl}/spectrogram`, {
 		method: 'POST',
-		credentials: host.fetchCredentials,
-		headers: { 'Content-Type': 'application/json', ...host.authHeaders() },
+		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ cache_file_id: cacheFileId, chain, axis }),
 	});
-	if (!res.ok) throw new Error(`filter service: ${res.status}`);
+	if (!res.ok) throw diagRequestError('spectrogram', res.status, await res.text());
 	return res.json();
 }

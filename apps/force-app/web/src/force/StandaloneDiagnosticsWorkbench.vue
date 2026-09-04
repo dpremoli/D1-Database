@@ -38,6 +38,7 @@ setForceHost({
 	get diagUrl() { return getConfig().diagUrl; },
 	get octreeUrl() { return getConfig().octreeUrl; },
 	authHeaders,
+	refreshAuth: () => authStore.refresh(),
 	fetchCredentials: 'omit',
 	openRecord: (collection, id) => {
 		window.open(`${getConfig().directusUrl}/admin/content/${collection}/${id}`, '_blank', 'noopener');

@@ -5,7 +5,8 @@
 // authoritative: the 256/rev bake stays the baked truth, this is a preview at the resolution
 // the analyst is looking at.
 import { parseD1an } from './diagAttrs';
-import { useForceHost } from './host';
+import { authorizedFetch, useForceHost } from './host';
+import { diagRequestError } from './diagError';
 
 export interface ViewportStep {
 	op: 'getis_ord' | 'hdbscan' | 'grow_segmentation';
@@ -36,12 +37,10 @@ export async function fetchViewportCompute(
 		signal?: AbortSignal;
 	} = {},
 ): Promise<ViewportResult> {
-	const host = useForceHost();
-	const res = await fetch(`${host.diagUrl}/viewport`, {
+	const res = await authorizedFetch(`${useForceHost().diagUrl}/viewport`, {
 		method: 'POST',
 		signal: opts.signal,
-		credentials: host.fetchCredentials,
-		headers: { 'Content-Type': 'application/json', ...host.authHeaders() },
+		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			analysis_id: analysisId,
 			bbox,
@@ -52,7 +51,7 @@ export async function fetchViewportCompute(
 		}),
 	});
 	if (!res.ok) {
-		throw new Error(`diag viewport: ${res.status} ${(await res.text()).slice(0, 200)}`);
+		throw diagRequestError('viewport recompute', res.status, await res.text());
 	}
 	const attrs = parseD1an(await res.arrayBuffer());
 	const ms = res.headers.get('X-Diag-Ms');

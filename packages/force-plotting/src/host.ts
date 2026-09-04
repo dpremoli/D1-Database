@@ -42,6 +42,19 @@ export interface ForceHost {
 	readonly octreeUrl: string;
 	/** Extra headers for raw `fetch` calls. Bearer token standalone; empty in Directus (cookie). */
 	authHeaders(): Record<string, string>;
+	/**
+	 * Exchange the refresh token for a new access token, resolving false when it cannot.
+	 *
+	 * `authHeaders()` reads whatever access token the store holds at that moment, so raw
+	 * `fetch` calls had no equivalent of directusClient's axios 401-refresh interceptor:
+	 * once the short-lived access token expired every sidecar request 401'd forever, while
+	 * the rest of the app carried on refreshing transparently. `authorizedFetch` uses this
+	 * hook to close that gap.
+	 *
+	 * Optional: the Directus module authenticates by session cookie and has nothing to
+	 * refresh, so it omits this and `authorizedFetch` degrades to a single attempt.
+	 */
+	refreshAuth?(): Promise<boolean>;
 	/** Credentials mode for raw `fetch` calls. 'include' in Directus (session cookie); 'omit' standalone. */
 	fetchCredentials: RequestCredentials;
 	/** Open a Directus record editor for the given collection and primary key. */
@@ -73,4 +86,55 @@ export function useForceHost(): ForceHost {
 /** Test-only: clear the installed host so cases start from a known state. */
 export function resetForceHost(): void {
 	current = null;
+}
+
+// One in-flight refresh shared by every concurrent 401. The workbench fires several sidecar
+// requests per interaction (a preview plus one viewport recompute per spatial panel); without
+// this they would each trigger their own refresh, and every refresh after the first would
+// present an already-rotated refresh token and fail.
+let refreshing: Promise<boolean> | null = null;
+
+function refreshOnce(host: ForceHost): Promise<boolean> {
+	if (!host.refreshAuth) return Promise.resolve(false);
+	if (!refreshing) {
+		refreshing = Promise.resolve(host.refreshAuth())
+			.catch(() => false)
+			.finally(() => { refreshing = null; });
+	}
+	return refreshing;
+}
+
+/** Test-only: drop any in-flight refresh so cases do not leak into one another. */
+export function resetAuthRefresh(): void {
+	refreshing = null;
+}
+
+/**
+ * `fetch` with the host's auth headers, retried once through `refreshAuth` on a 401.
+ *
+ * This is the raw-fetch counterpart of directusClient's axios response interceptor. Sidecar
+ * clients (diag preview, diag viewport, filter chain) must go through it rather than calling
+ * `fetch` with `host.authHeaders()` directly, or they resume 401ing the moment the access
+ * token expires.
+ *
+ * The retry is deliberately not attempted when the caller's signal has already aborted: a
+ * debounced keystroke that superseded this request should not spend a refresh on it.
+ */
+export async function authorizedFetch(url: string, init: RequestInit = {}): Promise<Response> {
+	const host = useForceHost();
+	const send = () => fetch(url, {
+		...init,
+		credentials: host.fetchCredentials,
+		headers: { ...(init.headers as Record<string, string> | undefined), ...host.authHeaders() },
+	});
+
+	const res = await send();
+	if (res.status !== 401 || !host.refreshAuth || init.signal?.aborted) return res;
+
+	// The 401 body is left unread on purpose. When the refresh fails this response is handed
+	// back to the caller, which reads it to build its error message — draining it here would
+	// make that read throw on an already-consumed body.
+	if (!(await refreshOnce(host))) return res;
+	if (init.signal?.aborted) return res;
+	return send();
 }

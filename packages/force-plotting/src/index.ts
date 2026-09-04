@@ -1,5 +1,6 @@
-export { setForceHost, useForceHost, resetForceHost } from './host';
+export { setForceHost, useForceHost, resetForceHost, authorizedFetch, resetAuthRefresh } from './host';
 export type { ForceHost, ForceHostUser } from './host';
+export { diagRequestError, DiagRequestError } from './diagError';
 
 export { default as ForceChart } from './ForceChart.vue';
 export { default as SpectrumView } from './SpectrumView.vue';

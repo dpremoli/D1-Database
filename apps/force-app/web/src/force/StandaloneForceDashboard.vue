@@ -16,6 +16,7 @@ setForceHost({
 	get diagUrl() { return getConfig().diagUrl; },
 	get octreeUrl() { return getConfig().octreeUrl; },
 	authHeaders,
+	refreshAuth: () => authStore.refresh(),
 	fetchCredentials: 'omit',
 	// The record editors live in the Directus admin UI, which is a different origin here.
 	openRecord: (collection, id) => {
