@@ -226,3 +226,39 @@ def test_default_recipe_emits_segment_id_all_minus_one():
     assert "segment_id" in cols
     assert np.all(cols["segment_id"] == -1)
     assert cols["segment_id"].dtype == np.float32
+
+
+# --- Phase H slice 2: invert / griddify / gmm_segmentation, run through run_recipe ---------
+# The op-level tests (test_invert_op.py, test_griddify_op.py, test_gmm_segmentation_op.py)
+# call STEPS[op].fn(...) directly with hand-built column dicts -- they never put these three
+# steps in an actual recipe and drive them through run_recipe, so the truncation path, the
+# PUBLIC_COLUMNS assembly, and step-ordering interaction with the rest of DEFAULT_RECIPE were
+# untested. This closes that gap.
+
+
+def _default_recipe_plus_slice2_steps():
+    recipe = copy.deepcopy(DEFAULT_RECIPE)
+    recipe["steps"] += [
+        {"id": "s8", "op": "invert", "on": True, "params": {"source": "resid_z"}},
+        {"id": "s9", "op": "griddify", "on": True,
+         "params": {"resolution_mm": 0.25, "method": "linear", "max_fill_mm": 1.0}},
+        {"id": "s10", "op": "gmm_segmentation", "on": True,
+         "params": {"n_components": 3, "grid_target": 20000}},
+    ]
+    return recipe
+
+
+def test_invert_griddify_gmm_segmentation_run_together_through_run_recipe():
+    recipe = _default_recipe_plus_slice2_steps()
+    cols, _ = run_recipe(recipe, _seed())
+
+    assert set(cols) == PUBLIC_COLUMNS
+    assert len({c.size for c in cols.values()}) == 1
+
+    # Non-degenerate: proves these three steps actually ran, rather than the recipe
+    # silently keeping their PUBLIC_COLUMNS entries at the disabled-step neutral fill
+    # (runner.py: -1.0 for gmm_id, 0.0 for inverted/grid_fill/grid_support/gmm_prob).
+    assert np.count_nonzero(cols["inverted"]) > 0
+    assert not np.all(cols["grid_support"] == 0.0)
+    assert not np.all(cols["gmm_id"] == -1.0)
+    assert np.unique(cols["gmm_id"][cols["gmm_id"] >= 0]).size > 1
