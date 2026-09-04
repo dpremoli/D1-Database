@@ -39,6 +39,9 @@ import {
 import { fetchRecipeLibrary, type SavedRecipe } from './diagRecipes';
 import { clusterColorCss } from './clusterPalette';
 import { useForceHost } from './host';
+import {
+	debouncePublish, openDiagSync, type DiagSyncChannel, type DiagSyncMsg,
+} from './diagSync';
 
 const props = withDefaults(defineProps<{
 	diagPath: string;
@@ -401,12 +404,61 @@ const state = computed<{ kind: StateKind; text: string }>(() => {
 	return { kind: 'baked', text: 'Showing the baked result for this cut — authoritative.' };
 });
 
+// --- pop-out synchronisation ------------------------------------------------------------
+//
+// This window is the sole WRITER: detached Spatial views (DiagPanelWindow) apply what they
+// receive and never publish back, so there is no edit loop and no "who wins" question. A
+// pop-out opened after the last edit would otherwise show pre-edit state, so it announces
+// itself with `hello` and we answer with everything it needs.
+let sync: DiagSyncChannel | null = null;
+
+function syncState(): DiagSyncMsg[] {
+	return [
+		{ t: 'recipe', recipe: JSON.parse(JSON.stringify(recipe.value)) },
+		{ t: 'layers', layers: JSON.parse(JSON.stringify(layers.value)) },
+		{
+			t: 'isolate',
+			clusterId: selection.value?.kind === 'cluster' ? selection.value.id : null,
+		},
+	];
+}
+
+// The recipe publishes on every keystroke; coalesce so a pop-out re-renders at a rate it can
+// actually draw. `hello` bypasses this via flush().
+const publishState = debouncePublish<DiagSyncMsg[]>((msgs) => {
+	for (const m of msgs) sync?.post(m);
+}, 150);
+
+onMounted(() => {
+	sync = openDiagSync(props.analysisId, (msg) => {
+		if (msg.t === 'hello') { publishState.push(syncState()); publishState.flush(); }
+	});
+});
+
+watch(
+	[recipe, layers, selection],
+	() => publishState.push(syncState()),
+	{ deep: true },
+);
+
+// A different cut means a different channel; re-open before announcing anything on it.
+watch(() => props.analysisId, (id) => {
+	publishState.cancel();
+	sync?.close();
+	sync = openDiagSync(id, (msg) => {
+		if (msg.t === 'hello') { publishState.push(syncState()); publishState.flush(); }
+	});
+});
+
 onBeforeUnmount(() => {
 	previewAbort?.abort();
 	if (previewTimer) clearTimeout(previewTimer);
 	gridRO?.disconnect();
 	window.removeEventListener('resize', measureGrid);
 	window.removeEventListener('resize', checkNarrow);
+	publishState.cancel();
+	sync?.close();
+	sync = null;
 });
 </script>
 

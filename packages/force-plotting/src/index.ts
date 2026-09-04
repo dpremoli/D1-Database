@@ -1,6 +1,8 @@
 export { setForceHost, useForceHost, resetForceHost, authorizedFetch, resetAuthRefresh } from './host';
 export type { ForceHost, ForceHostUser } from './host';
 export { diagRequestError, DiagRequestError } from './diagError';
+export { openDiagSync, diagSyncName, debouncePublish } from './diagSync';
+export type { DiagSyncMsg, DiagSyncChannel } from './diagSync';
 
 export { default as ForceChart } from './ForceChart.vue';
 export { default as SpectrumView } from './SpectrumView.vue';

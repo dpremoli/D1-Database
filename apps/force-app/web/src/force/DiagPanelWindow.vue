@@ -3,14 +3,21 @@
 // the Record tab's /live/:panel pop-outs (LivePanelWindow.vue): install the app's ForceHost,
 // read the target from the route, render one panel full-window.
 //
-// This is a VIEWER, not the editor: it colours by the LAST BAKED recipe's parameters. Editing
-// the recipe stays in the main workbench window. A framed region still recomputes its spatial
-// step at full resolution here, because that only needs the analysis id and the step params.
-import { computed, onMounted, ref } from 'vue';
+// This is a VIEWER, not the editor: editing the recipe stays in the main workbench window.
+// A framed region still recomputes its spatial step at full resolution here, because that
+// only needs the analysis id and the step params.
+//
+// It is no longer a STALE viewer, though. It used to read the row once on mount and never
+// hear anything again, so a recipe edit, a cluster isolation or a new painted layer in the
+// main window left this one silently showing something else. It now subscribes to the
+// workbench's BroadcastChannel (diagSync.ts) and mirrors it, announcing itself with `hello`
+// on mount so a window opened after the last edit is never stale. It never publishes back —
+// one writer keeps the model trivial.
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import {
-	SpatialPanel, DEFAULT_RECIPE, recipeChannels, setForceHost,
-	fetchLayers, type DiagLayer, type Recipe,
+	SpatialPanel, DEFAULT_RECIPE, recipeChannels, setForceHost, openDiagSync,
+	fetchLayers, type DiagSyncChannel, type DiagLayer, type Recipe,
 } from '@d1/force-plotting';
 import { api, authHeaders } from '../directusClient';
 import { authStore } from '../authStore';
@@ -39,7 +46,9 @@ const channel = ref(String(route.query.channel || 'residZ'));
 const diagPath = ref<string | null>(null);
 const recipe = ref<Recipe>(DEFAULT_RECIPE);
 const layers = ref<DiagLayer[]>([]);
+const selection = ref<{ kind: 'cluster'; id: number } | null>(null);
 const err = ref<string | null>(null);
+let sync: DiagSyncChannel | null = null;
 const ready = computed(() => !!diagPath.value);
 
 const channelOptions = computed(() => recipeChannels(recipe.value));
@@ -62,14 +71,29 @@ onMounted(async () => {
 		return;
 	}
 	try { layers.value = await fetchLayers(analysisId.value); } catch { layers.value = []; }
+
+	// Mirror the main window from here on. `hello` asks it to send current state, so opening
+	// this window after an edit shows the edit rather than the baked recipe.
+	sync = openDiagSync(analysisId.value, (msg) => {
+		if (msg.t === 'recipe') recipe.value = msg.recipe as Recipe;
+		else if (msg.t === 'layers') layers.value = msg.layers as DiagLayer[];
+		else if (msg.t === 'isolate') {
+			selection.value = msg.clusterId == null
+				? null
+				: { kind: 'cluster', id: msg.clusterId };
+		}
+	});
+	sync.post({ t: 'hello' });
 });
+
+onBeforeUnmount(() => { sync?.close(); sync = null; });
 </script>
 
 <template>
 	<div class="dpw">
 		<header class="dpw-bar">
 			<span class="dpw-kicker">Diagnostics · detached view</span>
-			<span class="dpw-note">colours by the last baked recipe — edit in the main window</span>
+			<span class="dpw-note">mirrors the main window — edit the recipe there</span>
 		</header>
 		<div class="dpw-body">
 			<p v-if="err" class="dpw-err">{{ err }}</p>
@@ -82,7 +106,7 @@ onMounted(async () => {
 				:channel-options="channelOptions"
 				:layers="layers"
 				:active-layer-name="null"
-				:selection="null"
+				:selection="selection"
 				:drawing="false"
 				:initial-channel="channel"
 				no-popout
