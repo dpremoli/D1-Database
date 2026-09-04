@@ -103,3 +103,4 @@ logs/
 /node_modules/
 # Vite dev cache
 apps/force-app/web/.vite/
+_shots*.mjs

@@ -14,6 +14,9 @@ export interface ViewportStep {
 }
 
 export interface ViewportResult {
+	/** which spatial op produced this result -- the workbench keys its recompute guards on
+	 * this (a bare result cannot tell a Gi* layer from a cluster_id layer). */
+	op: ViewportStep['op'];
 	x: Float32Array;
 	y: Float32Array;
 	value: Float32Array;
@@ -54,6 +57,7 @@ export async function fetchViewportCompute(
 	const attrs = parseD1an(await res.arrayBuffer());
 	const ms = res.headers.get('X-Diag-Ms');
 	return {
+		op: step.op,
 		x: attrs.columns.x,
 		y: attrs.columns.y,
 		value: attrs.columns.value,

@@ -127,6 +127,52 @@ def test_viewport_segmentation_two_seed_polys(client):
     assert set(np.unique(_read(r.content)["value"])) <= {0.0, 1.0}
 
 
+def test_viewport_applies_a_mask_layer_to_gi_star(client):
+    """A mask painted after the last bake is not in full.d1an's NaN pattern; the endpoint
+    must rasterise mask-role layers onto the crop so Gi* skips the excluded region."""
+    box = [[[-5.0, -5.0], [5.0, -5.0], [5.0, 5.0], [-5.0, 5.0]]]
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1",
+            "bbox": [-40, -40, 40, 40],
+            "step": {"op": "getis_ord", "params": {"k": 20}},
+            "layers": {
+                "chuck": {"role": "mask", "geometry": {"polygons": box}, "value": None, "version": 1},
+            },
+        },
+    )
+    assert r.status_code == 200, r.text
+    got = _read(r.content)
+    inside = (np.abs(got["x"]) <= 5) & (np.abs(got["y"]) <= 5)
+    assert inside.any()
+    assert np.all(np.isnan(got["value"][inside]))          # masked -> excluded from Gi*
+    assert np.isfinite(got["value"][~inside]).any()        # the rest still computed
+
+
+def test_viewport_rejects_a_bad_max_points(client):
+    for mp in (-5, 0):
+        r = client.post(
+            "/viewport",
+            json={
+                "analysis_id": "a1", "bbox": [-40, -40, 40, 40],
+                "step": {"op": "getis_ord", "params": {}}, "max_points": mp,
+            },
+        )
+        assert r.status_code == 422, (mp, r.text)
+
+
+def test_viewport_rejects_a_non_numeric_bbox(client):
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1", "bbox": [None, 0, 1, 1],
+            "step": {"op": "getis_ord", "params": {}},
+        },
+    )
+    assert r.status_code == 422
+
+
 def test_viewport_rejects_a_non_spatial_step(client):
     r = client.post(
         "/viewport",

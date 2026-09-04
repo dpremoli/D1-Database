@@ -6,7 +6,7 @@
 // The recipe is a client-side object. Editing a parameter debounce-fires POST /diag/preview,
 // whose D1AN bytes replace the WorkingSet everything downstream reads. The bake stays the
 // existing diag_status='pending' PATCH flow, emitted upward.
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import ForceChart from './ForceChart.vue';
 import DiagOctreeView from './DiagOctreeView.vue';
@@ -239,6 +239,15 @@ function onBounds(b: [number, number, number, number]) {
 	viewportBounds.value = b;
 }
 
+// The viewport overlay is per-cut: its x/y are the previous cut's spiral coords and its bbox
+// is the previous cut's framing. Clear both on a cut switch so DiagOctreeView's load() ->
+// rebuildAnalysis() does not draw the old Gi* points over the new octree.
+watch(() => props.analysisId, () => {
+	viewportAbort?.abort();
+	analysisResult.value = null;
+	viewportBounds.value = null;
+});
+
 // Manual run buttons for the enabled spatial steps (Gi* also auto-fires on settle).
 const runButtons = computed(() => {
 	const labels: Record<string, string> = {
@@ -259,23 +268,39 @@ function maybeAutoGi() {
 	giTimer = setTimeout(() => runViewport('getis_ord', { focus: false }), 600);
 }
 watch(viewportBounds, maybeAutoGi);
-// Switching the channel to a spatial output with no current result kicks a compute for it.
+// Switching the channel to a spatial output recomputes when the shown overlay was NOT
+// produced by that op -- otherwise switching giStar -> clusterId would render the stale Gi*
+// z-scores through the categorical palette (int(mod(v,12))), which reads as fake clusters.
+// The stale result is dropped immediately so nothing wrong is shown during the recompute.
 watch(channel, (c) => {
 	const op = OP_OF[c];
-	if (op && !analysisResult.value && viewportBounds.value) {
-		runViewport(op, { focus: false });
-	}
+	if (!op || analysisResult.value?.op === op) return;
+	if (!viewportBounds.value) return;   // nothing framed yet -- keep what's shown
+	analysisResult.value = null;
+	runViewport(op, { focus: false });
 });
-// A recipe param edit to the shown spatial step re-runs it on the current view. Debounced:
-// toggleSeed / addStep mutate the recipe deeply too, and three quick seed toggles must not
-// fire three full-resolution segmentation computes.
-let vpRecipeTimer: ReturnType<typeof setTimeout> | null = null;
-watch(recipe, () => {
+// The identity of just the step whose output is currently shown. A recipe edit re-runs the
+// viewport ONLY when this changes -- editing radial_detrend / tsa / mount_deg while viewing a
+// cluster_id overlay must not fire a full-resolution HDBSCAN that reflects nothing (the
+// viewport reads pre-baked resid_z). Seed geometry lives in `layers`, not the recipe, so the
+// segmentId case also watches the bound seed layers.
+const activeSpatialStepKey = computed(() => {
 	const op = OP_OF[channel.value];
-	if (!op || !analysisResult.value) return;
+	if (!op) return null;
+	const s = recipe.value.steps.find((x) => x.op === op && x.on);
+	if (!s) return null;
+	const seedGeoms = op === 'grow_segmentation'
+		? layers.value.filter((l) => l.role === 'seed').map((l) => [l.name, l.version, l.geometry])
+		: null;
+	return JSON.stringify({ params: s.params, inputs: s.inputs ?? null, seedGeoms });
+});
+let vpRecipeTimer: ReturnType<typeof setTimeout> | null = null;
+watch(activeSpatialStepKey, () => {
+	const op = OP_OF[channel.value];
+	if (!op || analysisResult.value?.op !== op) return;
 	if (vpRecipeTimer) clearTimeout(vpRecipeTimer);
 	vpRecipeTimer = setTimeout(() => runViewport(op, { focus: false }), 500);
-}, { deep: true });
+});
 
 // If a produced-channel is deselected out from under the current view, fall back to resid_z.
 watch(channelOptions, (opts) => {
@@ -375,6 +400,14 @@ const stateLabel = computed(() => {
 	if (activeMask.value) return `mask applied in preview · Bake to persist${multiMaskNote.value}`;
 	return 'baked';
 });
+
+onBeforeUnmount(() => {
+	viewportAbort?.abort();
+	previewAbort?.abort();
+	if (giTimer) clearTimeout(giTimer);
+	if (vpRecipeTimer) clearTimeout(vpRecipeTimer);
+	if (previewTimer) clearTimeout(previewTimer);
+});
 </script>
 
 <template>
@@ -406,6 +439,7 @@ const stateLabel = computed(() => {
 						:channel="'residZ'"
 						:colormap="'viridis'"
 						:point-size="1.5"
+						:selection="selection"
 						:analysis-result="analysisResult"
 						:analysis-mode="analysisMode"
 						:layers="layers"

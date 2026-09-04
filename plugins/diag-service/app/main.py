@@ -17,6 +17,7 @@ routes are /health and /preview.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -41,7 +42,7 @@ for _p in (
         sys.path.insert(0, _abs)
 
 from diag.d1an import read_d1an, write_d1an  # noqa: E402
-from diag.layers import validate_geometry  # noqa: E402
+from diag.layers import rasterize_polygons, validate_geometry  # noqa: E402
 from diag.recipe import recipe_hash  # noqa: E402
 from diag.registry import STEPS, resolve_inputs  # noqa: E402
 from diag.runner import run_recipe  # noqa: E402
@@ -49,6 +50,10 @@ from diag.runner import run_recipe  # noqa: E402
 DIRECTUS_URL = os.environ.get("DIRECTUS_URL", "http://directus:8055").rstrip("/")
 BASE_LRU_CAP = int(os.environ.get("BASE_LRU", "6"))
 RESULT_LRU_CAP = int(os.environ.get("RESULT_LRU", "24"))
+# Viewport results are far larger than /preview results (up to max_points x 3 float32 ~=
+# 12 MB at 1M points, vs sub-MB base.d1an columns), so they get their own, smaller cap.
+VIEWPORT_LRU_CAP = int(os.environ.get("VIEWPORT_LRU", "6"))
+VIEWPORT_MAX_POINTS_CEIL = 5_000_000
 
 
 def _octree_root() -> str:
@@ -70,6 +75,15 @@ if _cors:
 
 # base.d1an parsed columns, keyed by diag_path (~18k rows x 5 float64 ~= 730 KB each).
 _base_lru: OrderedDict[str, dict] = OrderedDict()
+def _layers_key(layers: dict | None) -> str:
+    """A stable cache-key fragment for a layers dict. json.dumps(sort_keys=True), not repr(),
+    so two clients that serialise the same layer with differently-ordered inner keys still
+    hit the same cache entry."""
+    if not layers:
+        return ""
+    return json.dumps(layers, sort_keys=True, separators=(",", ":"), default=str)
+
+
 # Computed D1AN bytes, keyed by (diag_path, recipe_hash, layers_key). The common interaction —
 # viewing several steps of one unchanged recipe — is then served from a single compute.
 _result_lru: OrderedDict[tuple, bytes] = OrderedDict()
@@ -207,8 +221,7 @@ async def preview(req: Request):
         raise HTTPException(409, "analysis has no completed bake to preview from")
     diag_path = str(row["diag_path"])
 
-    layers_key = repr(sorted((layers or {}).items())) if layers else ""
-    key = (diag_path, recipe_hash(recipe), layers_key)
+    key = (diag_path, recipe_hash(recipe), _layers_key(layers))
     cached = _result_lru.get(key)
     if cached is not None:
         _result_lru.move_to_end(key)
@@ -267,14 +280,26 @@ async def viewport(req: Request):
     bbox = body.get("bbox")
     step = body.get("step") or {}
     layers = body.get("layers") or None
-    max_points = int(body.get("max_points") or 1_000_000)
     output = body.get("output") or "gi_star"
     op = step.get("op")
 
     if not analysis_id or not isinstance(bbox, list) or len(bbox) != 4:
         raise HTTPException(422, "analysis_id and bbox [x0,y0,x1,y1] are required")
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in bbox):
+        raise HTTPException(422, "bbox elements must be numbers")
     if op not in _VIEWPORT_STEPS:
         raise HTTPException(422, f"step.op must be one of {sorted(_VIEWPORT_STEPS)}")
+    mp_raw = body.get("max_points")
+    if mp_raw is None:
+        max_points = 1_000_000
+    else:
+        try:
+            max_points = int(mp_raw)
+        except (TypeError, ValueError):
+            raise HTTPException(422, "max_points must be an integer") from None
+    if max_points < 1:
+        raise HTTPException(422, "max_points must be a positive integer")
+    max_points = min(max_points, VIEWPORT_MAX_POINTS_CEIL)
     if layers is not None:
         if not isinstance(layers, dict):
             raise HTTPException(422, "layers must be an object keyed by layer name")
@@ -295,11 +320,10 @@ async def viewport(req: Request):
     if y1 < y0:
         y0, y1 = y1, y0
 
-    layers_key = repr(sorted((layers or {}).items())) if layers else ""
     key = (
         diag_path, op,
         (round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3)),
-        recipe_hash({"steps": [step]}), layers_key, output, max_points,
+        recipe_hash({"steps": [step]}), _layers_key(layers), output, max_points,
     )
     cached = _viewport_lru.get(key)
     if cached is not None:
@@ -322,6 +346,16 @@ async def viewport(req: Request):
     xc = fx[idx].copy()
     yc = fy[idx].copy()
     rc = frz[idx].copy()
+
+    # A mask painted since the last bake is not reflected in full.d1an's NaN pattern (that
+    # only carries masks present at bake time). Apply every mask-role layer to the crop here
+    # so a viewport recompute excludes the same region the 256/rev preview does -- the ops
+    # already skip non-finite resid_z.
+    if layers:
+        for layer in layers.values():
+            lyr = layer or {}
+            if lyr.get("role") == "mask" and lyr.get("geometry"):
+                rc[rasterize_polygons(lyr["geometry"], xc, yc)] = np.nan
 
     resolved: dict = {}
     if op == "grow_segmentation":
@@ -360,7 +394,7 @@ async def viewport(req: Request):
         os.unlink(tmp)
 
     _viewport_lru[key] = (out, int(xc.size))
-    while len(_viewport_lru) > RESULT_LRU_CAP:
+    while len(_viewport_lru) > VIEWPORT_LRU_CAP:
         _viewport_lru.popitem(last=False)
     return Response(
         out, media_type="application/octet-stream",

@@ -103,7 +103,10 @@ DIAG_CACHE_POINTS = 5_000_000
 # full.d1an (flat {x, y, resid_z} at raw spiral resolution) that /diag/viewport crops to run
 # a spatial step on a framed region. The 256/rev analysis output is unchanged; v6 rows just
 # lack full/ on disk and must requeue to gain it.
-DIAG_VERSION = 7
+# v8: the resid_z broadcast now marks the trailing partial revolution TSA drops as NaN
+# (fill_edges="nan") instead of clamping it to resid_z[-1] -- a v7 full.d1an carries a false
+# uniform-value arc at the octree edge that a viewport recompute would include.
+DIAG_VERSION = 8
 DIAG_SAMPLES_PER_REV = 256
 
 
@@ -1151,6 +1154,7 @@ def process_diag_row(
             columns["rev"].astype(np.float64),
             columns["resid_z"].astype(np.float64),
             np.asarray(cache["revs"], dtype=np.float64),
+            fill_edges="nan",
         )
         # write_d1an raises a generic ValueError on a length mismatch, which would land in
         # the daemon's except and write a useless diag_error. Fail loudly with real numbers.
@@ -1158,6 +1162,15 @@ def process_diag_row(
             raise RuntimeError(
                 f"resid_z broadcast length {resid_full.size} != strided spiral {x.size}"
             )
+        # A recipe with radial_detrend disabled zero-fills resid_z (runner.py); the full/
+        # octree and every viewport recompute off it are then a flat, useless layer. Still
+        # publish it (so the Spatial panel does not 404) but record why it is empty.
+        _finite_nonzero = resid_full[np.isfinite(resid_full)]
+        metrics["full_resolution_status"] = (
+            "resid_z is degenerate (radial_detrend disabled?) — full/ layer is flat"
+            if _finite_nonzero.size == 0 or not np.any(_finite_nonzero != 0.0)
+            else "published"
+        )
         full_dir = dst / "full"
         full_dir.mkdir(parents=True, exist_ok=True)
 
