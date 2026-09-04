@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	DEFAULT_RECIPE, STEP_META, recipeChannels, recipesEquivalent, type Recipe,
+	DEFAULT_RECIPE, STEP_META, recipeChannels, recipeProblems, recipesEquivalent, type Recipe,
 } from './recipeChannels';
 
 const clone = (r: Recipe): Recipe => JSON.parse(JSON.stringify(r));
@@ -60,5 +60,43 @@ describe('recipesEquivalent', () => {
 		const r = clone(DEFAULT_RECIPE);
 		r.steps.find((s) => s.op === 'envelope')!.on = true;
 		expect(recipesEquivalent(DEFAULT_RECIPE, r)).toBe(false);
+	});
+});
+
+describe('recipeProblems', () => {
+	const off = (op: string): Recipe => ({
+		...DEFAULT_RECIPE,
+		steps: DEFAULT_RECIPE.steps.map((s) => (s.op === op ? { ...s, on: false } : s)),
+	});
+
+	it('accepts the default recipe', () => {
+		expect(recipeProblems(DEFAULT_RECIPE)).toEqual([]);
+	});
+
+	it('flags the step the service would 422 on, naming the fix in step labels', () => {
+		// The exact field failure: radial_detrend off -> getis_ord (s5) has no resid_z.
+		const probs = recipeProblems(off('radial_detrend'));
+		expect(probs.length).toBeGreaterThan(0);
+		expect(probs[0].stepId).toBe('s5');
+		expect(probs[0].missing).toContain('resid_z');
+		expect(probs[0].message).toContain('Radial detrend');
+	});
+
+	it('does not cascade a broken step into a false second failure', () => {
+		// tsa off breaks radial_detrend; getis_ord then also lacks resid_z, so both are
+		// genuinely broken -- but each must be reported against its own missing column.
+		const probs = recipeProblems(off('tsa'));
+		expect(probs.map((p) => p.stepId)).toEqual(['s4', 's5', 's6']);
+		expect(probs[0].missing).toContain('tsa_resid');
+		expect(probs[1].missing).toContain('resid_z');
+	});
+
+	it('accepts a recipe whose broken consumer is also switched off', () => {
+		const r: Recipe = {
+			...DEFAULT_RECIPE,
+			steps: DEFAULT_RECIPE.steps.map((s) =>
+				['radial_detrend', 'getis_ord', 'hdbscan'].includes(s.op) ? { ...s, on: false } : s),
+		};
+		expect(recipeProblems(r)).toEqual([]);
 	});
 });

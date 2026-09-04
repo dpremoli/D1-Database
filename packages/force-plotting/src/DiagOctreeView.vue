@@ -42,6 +42,10 @@ const props = defineProps<{
 	// a second canvas would need its own WebGL context and camera sync.
 	analysisResult?: ViewportResult | null;
 	analysisMode?: 'continuous' | 'categorical';
+	/** Isolate one categorical class in the overlay (a cluster/segment id); null shows all.
+	 *  Only the overlay honours this -- the base octree's shader has no per-class attribute,
+	 *  so the underlying resid_z map stays fully visible as context. */
+	isolateClass?: number | null;
 	// Phase G: paint layers, ported verbatim from DiagScatter (same top-down ortho unproject).
 	layers?: DiagLayer[];
 	activeLayerName?: string | null;
@@ -234,6 +238,9 @@ function makeAnalysisMaterial(): THREE.ShaderMaterial {
 			uSize: { value: (props.pointSize || 1.5) + 1.5 },   // read on top of the octree
 			uCluster: { value: categorical ? 1 : 0 },
 			uPalette: { value: paletteFlat },
+			// -9999 = "no isolation". A sentinel rather than a second bool uniform because a
+			// valid class id is any integer >= -1 (noise), so 0 cannot mean "off".
+			uIsolate: { value: props.isolateClass ?? -9999 },
 		},
 		vertexShader: `
 			attribute float aValue;
@@ -242,6 +249,7 @@ function makeAnalysisMaterial(): THREE.ShaderMaterial {
 			uniform float uSize;
 			uniform float uCluster;
 			uniform float uPalette[36];
+			uniform float uIsolate;
 			varying vec3 vColor;
 			varying float vDim;
 			void main() {
@@ -254,7 +262,9 @@ function makeAnalysisMaterial(): THREE.ShaderMaterial {
 						int idx = int(mod(aValue, 12.0));
 						vColor = vec3(uPalette[idx*3], uPalette[idx*3+1], uPalette[idx*3+2]);
 					}
-					vDim = 1.0;
+					// Isolating a cluster fades the others right down rather than hiding them,
+					// so the isolated region is still read in the context of the whole map.
+					vDim = (uIsolate < -9000.0 || abs(aValue - uIsolate) < 0.5) ? 1.0 : 0.08;
 				} else {
 					float u = clamp((aValue - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
 					vColor = texture2D(uGradient, vec2(u, 0.5)).rgb;
@@ -550,6 +560,13 @@ watch(() => props.octreePath, () => { disposePco(); disposeMaterial(); load(); }
 // channel/analysisMode in the same tick -- separate watchers would build the up-to-1M-point
 // geometry twice for one result. A multi-source watch coalesces to one callback per flush.
 watch([() => props.analysisResult, () => props.analysisMode], rebuildAnalysis);
+// Isolation is a uniform swap, not a geometry rebuild -- clicking through cluster rows must
+// not reallocate an up-to-1M-point buffer per click.
+watch(() => props.isolateClass, (v) => {
+	if (!analysisPoints) return;
+	(analysisPoints.material as THREE.ShaderMaterial).uniforms.uIsolate.value = v ?? -9999;
+	invalidate();
+});
 watch(() => [props.layers, props.activeLayerName], rebuildOverlay, { deep: true });
 watch(() => props.paintMode, () => {
 	if (controls) controls.enabled = (props.paintMode ?? 'off') !== 'draw';

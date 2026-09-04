@@ -6,14 +6,16 @@ import { api, authHeaders } from '../directusClient';
 import { authStore } from '../authStore';
 import { getConfig } from '../config';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
 	diagPath: string;
 	analysisId: string;
 	diagMetrics: Record<string, unknown> | null;
 	totalPoints: number;
 	initialRecipe: Recipe | null;
 	bakedRecipe: Recipe | null;
-}>();
+	baking?: boolean;
+	bakeMessage?: string | null;
+}>(), { baking: false, bakeMessage: null });
 const emit = defineEmits<{ (e: 'bake', recipe: Recipe): void }>();
 
 setForceHost({
@@ -50,6 +52,8 @@ setForceHost({
 		:total-points="props.totalPoints"
 		:initial-recipe="props.initialRecipe"
 		:baked-recipe="props.bakedRecipe"
+		:baking="props.baking"
+		:bake-message="props.bakeMessage"
 		@bake="(r: Recipe) => emit('bake', r)"
 	/>
 </template>

@@ -1,11 +1,25 @@
 <script setup lang="ts">
-// The recipe column of the Diagnostics Workbench: an editable step list. The panel never calls
-// diag-service — it edits the recipe object (v-model) and shows preview/bake status the
-// workbench passes down. Phase D-1 was on/off + param tuning; Phase F adds add/remove step,
-// the seed-layer binding for grow_segmentation, and the recipe library.
+// The recipe column of the Diagnostics Workbench: the processing pipeline as an editable
+// program, in the shape a recipe-driven analysis tool (MIPAR and friends) uses — numbered
+// steps, each owning its own parameters, scope and run control, with one commit action at
+// the bottom.
+//
+// Three things this panel exists to make legible, all of which were previously invisible:
+//   1. WHERE a step's result comes from. A recipe mixes steps that only run during a host
+//      Bake (base tier, full-rate input), steps that re-run live over the whole cut, and
+//      spatial steps that ALSO re-run on the framed viewport at full resolution. Same list,
+//      three different costs and three different answers — so every step wears its scope.
+//   2. WHETHER the recipe can run at all. Toggling a step off can strand a later one; the
+//      service answers that with a 422 and a Python error string. recipeProblems() catches it
+//      here, marks the step, and names the fix in step labels.
+//   3. WHAT each knob does. Every step and every parameter carries prose from diagHelp.ts.
+//      'Min cluster' read as "number of clusters" and cost an analyst a debugging session; it
+//      is a floor measured in grid cells, and now says so.
 import { computed } from 'vue';
-import { STEP_META, type Recipe, type RecipeStep } from './recipeChannels';
+import { STEP_META, type Recipe, type RecipeProblem, type RecipeStep } from './recipeChannels';
+import { ACTION_HELP, PANEL_HELP, SCOPE_META, STEP_HELP, scopeOf } from './diagHelp';
 import RecipeLibrary from './RecipeLibrary.vue';
+import InfoTip from './InfoTip.vue';
 import type { SavedRecipe } from './diagRecipes';
 
 const props = defineProps<{
@@ -18,6 +32,14 @@ const props = defineProps<{
 	seedLayerNames: string[];
 	library: SavedRecipe[];
 	collapsed?: boolean;
+	/** Steps that cannot run as configured — from recipeProblems(). */
+	problems?: RecipeProblem[];
+	/** op currently running on the viewport, so its button can show progress. */
+	busyOp?: string | null;
+	/** true while a host bake is queued or running. */
+	baking?: boolean;
+	/** ops the preview silently skipped (base-tier steps), from X-Diag-Skipped. */
+	skippedOps?: string[];
 }>();
 const emit = defineEmits<{
 	(e: 'update:recipe', r: Recipe): void;
@@ -31,10 +53,12 @@ const emit = defineEmits<{
 // s1..s7 are the built-in default steps — not removable. Anything added carries an x-prefixed id.
 const DEFAULT_IDS = new Set(['s1', 's2', 's3', 's4', 's5', 's6', 's7']);
 
-// Steps whose statistics run on the FRAMED viewport at full resolution (Phase G), not on the
-// 256/rev bake. Gi* auto-fires on pan/zoom settle; HDBSCAN / segmentation run on the button.
-const SPATIAL_OPS = new Set(['getis_ord', 'hdbscan', 'grow_segmentation']);
-const BUTTON_OPS = new Set(['hdbscan', 'grow_segmentation']);
+const problemFor = computed(() => {
+	const m = new Map<string, RecipeProblem>();
+	for (const p of props.problems ?? []) m.set(p.stepId, p);
+	return m;
+});
+const skipped = computed(() => new Set(props.skippedOps ?? []));
 
 function edit(mut: (r: Recipe) => void) {
 	const next = JSON.parse(JSON.stringify(props.recipe)) as Recipe;
@@ -98,25 +122,67 @@ function toggleSeed(id: string, name: string) {
 		s.inputs.seeds = seeds;
 	});
 }
+
+const scope = (op: string) => scopeOf(op, STEP_META[op]?.tier ?? 'derived');
+const isRunnable = (op: string) =>
+	scope(op) === 'view' && op !== 'getis_ord';   // Gi* runs automatically on view settle
+
+const bakeLabel = computed(() => {
+	if (props.baking) return 'Baking on the host…';
+	if (!props.baked) return 'Bake recipe';
+	return props.bakeStale ? 'Bake recipe (edited)' : 'Re-bake recipe';
+});
 </script>
 
 <template>
 	<div class="recipe-panel">
 		<button class="rp-collapse" @click="emit('update:collapsed', !collapsed)">
-			<span>{{ collapsed ? '▸' : '▾' }}</span>
-			<span>{{ collapsed ? 'Recipe (collapsed)' : 'Recipe steps' }}</span>
+			<span class="rp-chev">{{ collapsed ? '▸' : '▾' }}</span>
+			<span class="rp-title">Pipeline</span>
+			<InfoTip :text="PANEL_HELP.recipe" wide placement="left" @click.stop />
+			<span class="rp-spacer" />
+			<span v-if="problems?.length" class="rp-badge err">{{ problems.length }} issue{{ problems.length > 1 ? 's' : '' }}</span>
+			<span v-else-if="bakeStale && baked" class="rp-badge warn">edited</span>
 		</button>
+
+		<div v-if="problems?.length && !collapsed" class="rp-problems">
+			<p v-for="p in problems" :key="p.stepId">{{ p.message }}</p>
+		</div>
+
 		<ol v-show="!collapsed" class="steps">
-			<li v-for="s in recipe.steps" :key="s.id" :class="{ off: !s.on }">
-				<label class="step-head">
-					<input type="checkbox" :checked="s.on" @change="toggle(s.id)" />
+			<li
+				v-for="(s, i) in recipe.steps" :key="s.id"
+				:class="{ off: !s.on, broken: problemFor.has(s.id) }"
+			>
+				<div class="step-head">
+					<span class="step-n">{{ i + 1 }}</span>
+					<input class="step-on" type="checkbox" :checked="s.on" :title="s.on ? 'Disable this step' : 'Enable this step'" @change="toggle(s.id)" />
 					<span class="step-label">{{ STEP_META[s.op]?.label ?? s.op }}</span>
-					<span class="tier" :class="STEP_META[s.op]?.tier">{{ STEP_META[s.op]?.tier }}</span>
-					<button v-if="!DEFAULT_IDS.has(s.id)" class="rm" title="remove step" @click.prevent="removeStep(s.id)">✕</button>
-				</label>
+					<InfoTip
+						v-if="STEP_HELP[s.op]"
+						:title="STEP_HELP[s.op].summary"
+						:text="STEP_HELP[s.op].detail"
+						wide
+					/>
+					<span class="rp-spacer" />
+					<span class="scope" :class="scope(s.op)">
+						{{ SCOPE_META[scope(s.op)].short }}
+						<InfoTip :text="SCOPE_META[scope(s.op)].help" placement="left" />
+					</span>
+					<button v-if="!DEFAULT_IDS.has(s.id)" class="rm" title="Remove this step" @click.prevent="removeStep(s.id)">✕</button>
+				</div>
+
+				<p v-if="problemFor.has(s.id)" class="step-err">{{ problemFor.get(s.id)!.message }}</p>
+				<p v-else-if="s.on && skipped.has(s.op)" class="step-skip">
+					Not shown in the live preview — Bake to compute it.
+				</p>
+
 				<div v-if="s.on && STEP_META[s.op]?.params.length" class="params">
 					<label v-for="p in STEP_META[s.op].params" :key="p.key" class="param">
-						<span>{{ p.label }}</span>
+						<span class="param-label">
+							{{ p.label }}
+							<InfoTip v-if="STEP_HELP[s.op]?.params[p.key]" :text="STEP_HELP[s.op].params[p.key]" placement="left" />
+						</span>
 						<select v-if="p.kind === 'select'"
 							:value="String(s.params[p.key] ?? '')"
 							@change="setParam(s.id, p.key, ($event.target as HTMLSelectElement).value)">
@@ -128,22 +194,32 @@ function toggleSeed(id: string, name: string) {
 							@change="setParam(s.id, p.key, ($event.target as HTMLInputElement).value)" />
 					</label>
 				</div>
-				<div v-if="s.on && SPATIAL_OPS.has(s.op)" class="scope-note">
-					<span>runs on the current view · full resolution</span>
-					<button v-if="BUTTON_OPS.has(s.op)" class="run-step-btn"
-						@click.prevent="emit('run-step', s.op as 'hdbscan' | 'grow_segmentation')">
-						Run on this view
-					</button>
-				</div>
+
 				<div v-if="s.on && s.op === 'grow_segmentation'" class="seed-bind">
-					<span class="seed-title">Seed classes</span>
-					<p v-if="!seedLayerNames.length" class="seed-hint">paint a seed layer first</p>
+					<span class="seed-title">
+						Seed classes
+						<InfoTip text="Each bound seed layer becomes one class, in this order. Paint at least two." placement="left" />
+					</span>
+					<p v-if="!seedLayerNames.length" class="seed-hint">paint a seed layer first (+ seed, under the Spatial view)</p>
 					<label v-for="name in seedLayerNames" :key="name" class="seed-row">
 						<input type="checkbox" :checked="seedBound(s).includes(name)" @change="toggleSeed(s.id, name)" />
 						<span>{{ name }}</span>
 						<span v-if="seedBound(s).includes(name)" class="seed-idx">class {{ seedBound(s).indexOf(name) }}</span>
 					</label>
 				</div>
+
+				<button
+					v-if="s.on && isRunnable(s.op) && !problemFor.has(s.id)"
+					class="run-step-btn"
+					:disabled="!!busyOp"
+					:title="ACTION_HELP.runOnView"
+					@click.prevent="emit('run-step', s.op as 'hdbscan' | 'grow_segmentation')"
+				>
+					{{ busyOp === s.op ? 'Running…' : '▸ Run on this view' }}
+				</button>
+				<p v-else-if="s.on && scope(s.op) === 'view' && !problemFor.has(s.id)" class="auto-note">
+					recomputes automatically when you pan or zoom
+				</p>
 			</li>
 		</ol>
 
@@ -163,13 +239,19 @@ function toggleSeed(id: string, name: string) {
 				@deleted="emit('library-changed')"
 			/>
 			<div class="preview-line">
-				<span v-if="previewing">previewing…</span>
+				<span v-if="previewing">updating live preview…</span>
 				<span v-else-if="previewError" class="err">{{ previewError }}</span>
-				<span v-else-if="previewMs != null">previewed in {{ previewMs }} ms · approximate</span>
-				<span v-else-if="baked">showing last bake</span>
+				<span v-else-if="previewMs != null">live preview · {{ previewMs }} ms · approximate</span>
+				<span v-else-if="baked">showing the last bake</span>
 			</div>
-			<button class="bake-btn" :disabled="previewing" @click="emit('bake')">
-				{{ bakeStale ? 'Bake (recipe changed)' : 'Re-bake' }}
+			<button
+				class="bake-btn"
+				:class="{ stale: bakeStale && baked }"
+				:disabled="previewing || baking || !!problems?.length"
+				:title="problems?.length ? 'Fix the issues above first' : ACTION_HELP.bake"
+				@click="emit('bake')"
+			>
+				{{ bakeLabel }}
 			</button>
 		</div>
 	</div>
@@ -177,38 +259,74 @@ function toggleSeed(id: string, name: string) {
 
 <style scoped>
 .recipe-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; font-size: 12px; }
-.steps { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
-.steps li { border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); padding: 6px 10px; }
-.steps li.off { opacity: 0.5; }
-.step-head { display: flex; align-items: center; gap: 7px; cursor: pointer; }
-.step-label { font-weight: 600; flex: 1; }
-.tier { font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; }
-.tier.base { background: color-mix(in srgb, #d97706 22%, transparent); color: #fcd34d; }
-.tier.derived { background: color-mix(in srgb, #16a34a 22%, transparent); color: #86efac; }
-.rm { border: none; background: none; color: var(--text-dim, #94a3b8); cursor: pointer; font-size: 11px; }
+.rp-collapse {
+	display: flex; align-items: center; gap: 6px; width: 100%; font: inherit; font-size: 11px;
+	font-weight: 650; color: var(--text-dim, #94a3b8); background: none; border: none;
+	border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); padding: 7px 10px;
+	cursor: pointer; text-align: left;
+}
+.rp-chev { width: 9px; }
+.rp-title { text-transform: uppercase; letter-spacing: 0.05em; }
+.rp-spacer { flex: 1; }
+.rp-badge { font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.03em; }
+.rp-badge.err { background: color-mix(in srgb, #dc2626 26%, transparent); color: #fca5a5; }
+.rp-badge.warn { background: color-mix(in srgb, #d97706 26%, transparent); color: #fcd34d; }
+
+.rp-problems { padding: 7px 10px; background: color-mix(in srgb, #dc2626 12%, transparent); border-bottom: 1px solid color-mix(in srgb, #dc2626 30%, transparent); }
+.rp-problems p { margin: 0 0 3px; font-size: 11px; color: #fca5a5; line-height: 1.4; }
+.rp-problems p:last-child { margin-bottom: 0; }
+
+.steps { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; counter-reset: step; }
+.steps li { border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); padding: 7px 10px; }
+.steps li.off { opacity: 0.45; }
+.steps li.broken { background: color-mix(in srgb, #dc2626 9%, transparent); opacity: 1; }
+.step-head { display: flex; align-items: center; gap: 6px; }
+.step-n {
+	flex: none; width: 16px; height: 16px; border-radius: 4px; font-size: 9.5px; font-weight: 700;
+	display: grid; place-items: center; color: var(--text-dim, #94a3b8);
+	background: var(--bg-2, #111a33); font-variant-numeric: tabular-nums;
+}
+.step-on { cursor: pointer; margin: 0; }
+.step-label { font-weight: 600; }
+.scope { display: inline-flex; align-items: center; gap: 3px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
+.scope.bake { background: color-mix(in srgb, #d97706 22%, transparent); color: #fcd34d; }
+.scope.preview { background: color-mix(in srgb, #16a34a 22%, transparent); color: #86efac; }
+.scope.view { background: color-mix(in srgb, #38bdf8 22%, transparent); color: #7dd3fc; }
+.rm { border: none; background: none; color: var(--text-dim, #94a3b8); cursor: pointer; font-size: 11px; padding: 0 2px; }
+
+.step-err { margin: 5px 0 0 22px; font-size: 10.5px; color: #fca5a5; line-height: 1.4; }
+.step-skip { margin: 5px 0 0 22px; font-size: 10.5px; color: #fcd34d; font-style: italic; }
+.auto-note { margin: 5px 0 0 22px; font-size: 10px; color: var(--text-dim, #94a3b8); font-style: italic; }
+
 .params { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 8px; margin-top: 6px; padding-left: 22px; }
 .param { display: flex; flex-direction: column; gap: 2px; }
-.param span { font-size: 10px; color: var(--text-dim, #94a3b8); }
+.param-label { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--text-dim, #94a3b8); }
 .param input, .param select {
 	font: inherit; font-size: 11px; padding: 3px 5px; background: var(--bg-2, #111a33);
 	color: var(--text, #e5e7eb); border: 1px solid var(--border, rgba(255,255,255,0.14)); border-radius: 5px;
 }
 .seed-bind { margin-top: 6px; padding-left: 22px; display: flex; flex-direction: column; gap: 3px; }
-.seed-title { font-size: 10px; color: var(--text-dim, #94a3b8); }
+.seed-title { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-dim, #94a3b8); }
 .seed-hint { margin: 0; font-size: 10px; font-style: italic; color: var(--text-dim, #94a3b8); }
 .seed-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
 .seed-idx { font-size: 9px; color: var(--text-dim, #94a3b8); }
-.rp-collapse { display: flex; align-items: center; gap: 6px; width: 100%; font: inherit; font-size: 11px; font-weight: 600; color: var(--text-dim, #94a3b8); background: none; border: none; border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); padding: 6px 10px; cursor: pointer; text-align: left; }
-.scope-note { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; padding-left: 22px; font-size: 10px; color: #86efac; }
-.run-step-btn { font: inherit; font-size: 10px; cursor: pointer; padding: 2px 7px; border-radius: 5px; color: var(--text, #e5e7eb); background: var(--bg-2, #111a33); border: 1px solid var(--border, rgba(255,255,255,0.18)); }
+
+.run-step-btn {
+	margin: 7px 0 0 22px; font: inherit; font-size: 10.5px; cursor: pointer; padding: 3px 9px;
+	border-radius: 6px; color: #7dd3fc; background: color-mix(in srgb, #38bdf8 12%, transparent);
+	border: 1px solid color-mix(in srgb, #38bdf8 40%, transparent);
+}
+.run-step-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
 .add-step { padding: 6px 10px; border-bottom: 1px solid var(--border, rgba(255,255,255,0.08)); }
 .add-step select { width: 100%; font-size: 11px; padding: 3px 5px; background: var(--bg-2, #111a33); color: var(--text, #e5e7eb); border: 1px solid var(--border, rgba(255,255,255,0.14)); border-radius: 5px; }
 .rp-footer { flex-shrink: 0; border-top: 1px solid var(--border, rgba(255,255,255,0.12)); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
 .preview-line { font-size: 11px; color: var(--text-dim, #94a3b8); font-style: italic; min-height: 14px; }
 .preview-line .err { color: var(--danger, #fca5a5); font-style: normal; }
 .bake-btn {
-	font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; padding: 6px 12px; border-radius: 7px;
+	font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; padding: 7px 12px; border-radius: 7px;
 	color: var(--accent-ink, #0b1020); background: var(--accent, #38bdf8); border: 1px solid var(--accent, #38bdf8);
 }
+.bake-btn.stale { background: #fbbf24; border-color: #fbbf24; }
 .bake-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

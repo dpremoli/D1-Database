@@ -36,13 +36,20 @@ export type { WorkingSet, Selection, SelectionStats, ChannelKey, ClusterRow } fr
 export {
 	DEFAULT_RECIPE, STEP_META, recipeChannels, recipesEquivalent,
 } from './recipeChannels';
-export type { Recipe, RecipeStep, ParamSpec, StepMeta, ChannelOption } from './recipeChannels';
+export { recipeProblems } from './recipeChannels';
+export type { Recipe, RecipeStep, ParamSpec, StepMeta, ChannelOption, RecipeProblem } from './recipeChannels';
 
 export { fetchDiagPreview } from './diagPreview';
 export type { DiagPreview } from './diagPreview';
 
 export { fetchViewportCompute } from './diagViewport';
 export type { ViewportStep, ViewportResult } from './diagViewport';
+
+export { default as InfoTip } from './InfoTip.vue';
+export {
+	STEP_HELP, CHANNEL_HELP, PANEL_HELP, SCOPE_META, ACTION_HELP, scopeOf,
+} from './diagHelp';
+export type { StepScope, StepHelp } from './diagHelp';
 
 export { fetchLayers, saveLayer, deleteLayer, layersForRequest } from './diagLayers';
 export type { DiagLayer, LayerRole, LayerGeometry } from './diagLayers';
