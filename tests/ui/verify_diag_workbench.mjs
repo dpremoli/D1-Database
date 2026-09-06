@@ -158,6 +158,39 @@ function check(name, pass, detail = '') {
 			(await p.locator('.rp-badge.revert').count()) === 0);
 	}
 
+	// --- 0b. Phase H slice 4: Signal panel channel picker ---
+	// Rebake-independent on purpose: a freshly-widened base.d1an (DIAG_VERSION 10) only exists
+	// on cuts that have actually re-baked since the deploy, so a chip click can legitimately
+	// still be serving the pre-v10 single-channel fallback here. Assert the picker itself works
+	// (chips render, clicking one moves the highlight, "All channels" toggles and never surfaces
+	// a raw error), not that the drawn data differs -- that needs a manual check against a
+	// confirmed-rebaked cut instead.
+	const sigChips = p.locator('.sig-chip');
+	const chipCount = await sigChips.count();
+	check('the Signal panel renders a channel chip row', chipCount >= 2, `${chipCount} chip(s)`);
+	if (chipCount >= 2) {
+		const before = await sigChips.nth(1).getAttribute('class');
+		await sigChips.nth(1).click();
+		await p.waitForTimeout(500);
+		const after = await sigChips.nth(1).getAttribute('class');
+		check('clicking a channel chip moves the "on" highlight to it',
+			!/\bon\b/.test(before || '') && /\bon\b/.test(after || ''), `${before} -> ${after}`);
+	}
+	const allModeBtn = p.locator('.sig-allmode');
+	if (await allModeBtn.count()) {
+		await allModeBtn.click();
+		await p.waitForTimeout(3000);
+		check('"All channels" mode toggles on', /\bon\b/.test((await allModeBtn.getAttribute('class')) || ''));
+		const sigText = await p.locator('.signal-panel').innerText();
+		const sigErrVisible = await p.locator('.sig-err').first().isVisible().catch(() => false);
+		check('no raw error text in the Signal panel after enabling "All channels"',
+			!RAW_ERROR_RE.test(sigText) && !sigErrVisible);
+		await allModeBtn.click();
+		await p.waitForTimeout(300);
+	} else {
+		check('found an "All channels" toggle', false, 'no .sig-allmode button');
+	}
+
 	// --- 1. no 401 reached the client at all (the refresh-and-retry works) ---
 	// Count the two populations separately. The diag OCTREE is served under /octrees/diag/,
 	// so a bare "/diag/" match is dominated by static tile fetches and would make this look

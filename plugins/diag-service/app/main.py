@@ -131,6 +131,37 @@ async def _resolve_and_authorize(analysis_id: str, req: Request) -> dict:
 _DIAG_PATH_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
+_FRAME_CHANNELS = ("fp", "fc", "ff")
+
+
+def _channel_of(recipe: dict) -> str:
+    """The frame_transform.channel a recipe has selected, defaulting exactly like the step's
+    own registry function does."""
+    for s in recipe.get("steps", []):
+        if s.get("op") == "frame_transform":
+            return str((s.get("params") or {}).get("channel", "fp"))
+    return "fp"
+
+
+def _select_base_signal(base: dict, channel: str) -> dict:
+    """base.d1an's `sig` seed column for a preview run, picking out the requested channel from
+    a DIAG_VERSION 10+ base.d1an (base_columns_all_channels: sig_fp/sig_fc/sig_ff) -- or,
+    against an older base.d1an that predates per-channel signals (still just `sig`), falling
+    back to whatever single channel it was baked with. That fallback is not a new failure
+    mode: it reproduces exactly what preview already did before Phase H slice 4, for a row
+    that has not yet been rebaked at v10, rather than a hard 409 mid-transition."""
+    if channel not in _FRAME_CHANNELS:
+        raise HTTPException(422, f"channel must be one of {_FRAME_CHANNELS}, got {channel!r}")
+    sig_key = f"sig_{channel}"
+    if sig_key in base:
+        sig = base[sig_key]
+    elif "sig" in base:
+        sig = base["sig"]
+    else:
+        raise HTTPException(409, "base.d1an for this analysis has no recognised signal column")
+    return {"t": base["t"], "rev": base["rev"], "x": base["x"], "y": base["y"], "sig": sig}
+
+
 def _load_base(diag_path: str) -> dict:
     if not _DIAG_PATH_RE.fullmatch(diag_path):
         raise HTTPException(400, "invalid diag_path")
@@ -286,10 +317,11 @@ async def preview(req: Request):
         )
 
     base = _load_base(diag_path)
+    seed = _select_base_signal(base, _channel_of(recipe))
     t0 = time.perf_counter()
     try:
         cols, _metrics = run_recipe(
-            recipe, dict(base), layers=layers, from_step=from_step, stop_after=stop_after
+            recipe, seed, layers=layers, from_step=from_step, stop_after=stop_after
         )
     except HTTPException:
         raise

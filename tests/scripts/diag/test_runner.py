@@ -13,7 +13,7 @@ from conftest import (
 
 from diag.recipe import DEFAULT_RECIPE
 from diag.registry import STEPS, RecipeError
-from diag.runner import _TRUNCATABLE, run_recipe, seed_columns
+from diag.runner import _TRUNCATABLE, base_columns_all_channels, run_recipe, seed_columns
 
 PUBLIC_COLUMNS = {
     "t", "rev", "x", "y", "tsa_resid", "resid_z",
@@ -262,3 +262,52 @@ def test_invert_griddify_gmm_segmentation_run_together_through_run_recipe():
     assert not np.all(cols["grid_support"] == 0.0)
     assert not np.all(cols["gmm_id"] == -1.0)
     assert np.unique(cols["gmm_id"][cols["gmm_id"] >= 0]).size > 1
+
+
+# --- Phase H slice 4: base_columns_all_channels ---------------------------------------------
+# frames.py::frame_transform: fp = fz unrotated, fc/ff = a rotation of fx/fy. synthetic_cut()
+# sets fx = fy = 0, so fc and ff are identically zero here and fp alone carries the implanted
+# anomaly -- a good test of "these really are three DIFFERENT signals", not just "three arrays
+# came back".
+
+
+def test_base_columns_all_channels_shape_and_dtype():
+    out = base_columns_all_channels(DEFAULT_RECIPE, _seed())
+    assert set(out) == {"t", "rev", "x", "y", "sig_fp", "sig_fc", "sig_ff"}
+    assert len({v.size for v in out.values()}) == 1
+    assert all(v.dtype == np.float32 for v in out.values())
+
+
+def test_base_columns_all_channels_fp_carries_the_signal_fc_ff_are_zero():
+    out = base_columns_all_channels(DEFAULT_RECIPE, _seed())
+    assert np.count_nonzero(out["sig_fp"]) > 0
+    assert np.all(out["sig_fc"] == 0.0)
+    assert np.all(out["sig_ff"] == 0.0)
+
+
+def test_base_columns_all_channels_sig_fp_matches_the_single_channel_base_path():
+    """Regression pin: the widened base.d1an's sig_fp must equal exactly what the ORIGINAL
+    single-channel base.d1an emission (force_orchestrator.py's own run_recipe(...,
+    stop_after=angular_resample_index, emit=(...,"sig"))) already produced for channel='fp' --
+    DEFAULT_RECIPE's frame_transform.channel. Byte-identical, not just close: both paths go
+    through the exact same angular_resample() call on the exact same inputs."""
+    stop = next(i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "angular_resample")
+    single, _ = run_recipe(
+        DEFAULT_RECIPE, _seed(), stop_after=stop, emit=("t", "rev", "x", "y", "sig"),
+    )
+    multi = base_columns_all_channels(DEFAULT_RECIPE, _seed())
+    for name in ("t", "rev", "x", "y"):
+        np.testing.assert_array_equal(multi[name], single[name])
+    np.testing.assert_array_equal(multi["sig_fp"], single["sig"])
+
+
+def test_base_columns_all_channels_is_channel_agnostic():
+    """It must compute all three regardless of whatever frame_transform.channel the recipe
+    currently has selected -- that selection is what /preview reads to pick ONE of the three
+    back out, not something base_columns_all_channels should key off."""
+    hot = copy.deepcopy(DEFAULT_RECIPE)
+    next(s for s in hot["steps"] if s["op"] == "frame_transform")["params"]["channel"] = "fc"
+    a = base_columns_all_channels(DEFAULT_RECIPE, _seed())
+    b = base_columns_all_channels(hot, _seed())
+    for name in a:
+        np.testing.assert_array_equal(a[name], b[name])

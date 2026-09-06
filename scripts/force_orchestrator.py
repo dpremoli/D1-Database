@@ -111,7 +111,14 @@ DIAG_CACHE_POINTS = 5_000_000
 # per-cell broadcast. grid_reduce targets a cell COUNT, so that broadcast quantized every
 # cluster boundary to ~1/141 of the extent at every zoom level -- the visibly blocky segments,
 # unfixable by any parameter. cluster_id and glosh both change, so v8 rows must requeue.
-DIAG_VERSION = 9
+# v10 (Phase H slice 4): base.d1an's FORMAT changes -- it now carries sig_fp/sig_fc/sig_ff
+# (base_columns_all_channels) instead of one sig column for whichever channel the recipe
+# happened to have selected at bake time. This is what lets the preview service switch which
+# frame_transform channel a recipe shows without a rebake. A v9 base.d1an still has only
+# `sig`; the preview service falls back to treating it as the SELECTED channel's, matching
+# pre-v10 behaviour exactly (no crash), but a v9 row must requeue to gain real channel
+# switching. The 256/rev analysis output (attrs.d1an) is otherwise unchanged.
+DIAG_VERSION = 10
 DIAG_SAMPLES_PER_REV = 256
 
 
@@ -924,7 +931,7 @@ def process_diag_row(
     from diag.d1an import write_d1an
     from diag.pipeline import read_d1lc
     from diag.recipe import DEFAULT_RECIPE, recipe_hash
-    from diag.runner import run_recipe, seed_columns
+    from diag.runner import base_columns_all_channels, run_recipe, seed_columns
 
     outdir = tempfile.mkdtemp(prefix="diag_", dir=os.environ.get("FORCE_WORKDIR"))
     # NULL diag_recipe means "the built-in default", so every row baked before the recipe
@@ -1058,19 +1065,15 @@ def process_diag_row(
         # neither MATLAB (~20 s) nor the archive. Published rather than reconstructed on the
         # fly: deriving x/y from the cache instead would re-implement cut geometry outside
         # process_force.m, the divergence risk this codebase guards against throughout.
-        # `sig` (the resampled channel) is internal, not a PUBLIC_COLUMN, so it is emitted
-        # via run_recipe's `emit` seam rather than the default assembly -- which also
-        # deliberately refuses a stop before `tsa`.
-        base_stop = next(
-            i for i, s in enumerate(recipe["steps"]) if s["op"] == "angular_resample"
-        )
-        base_cols, _ = run_recipe(
-            recipe,
-            seed_columns(cache, x, y),
-            layers=diag_layers,
-            stop_after=base_stop,
-            emit=("t", "rev", "x", "y", "sig"),
-        )
+        #
+        # Phase H slice 4: carries all THREE frame_transform channels (sig_fp/sig_fc/sig_ff),
+        # not just the one this recipe happens to have selected -- frame_transform already
+        # computes fc/ff/fp together, so this costs two extra angular resamples, not a second
+        # bake, and lets the preview service switch which channel it shows without a rebake.
+        # No `layers` argument here (unlike the attrs.d1an run above): base.d1an stops at
+        # angular_resample, before radial_detrend or any later step that reads layers, so
+        # they're inert this early and deliberately not threaded through.
+        base_cols = base_columns_all_channels(recipe, seed_columns(cache, x, y))
         base_path = Path(outdir) / "base.d1an"
         write_d1an(str(base_path), base_cols)
 

@@ -10,8 +10,8 @@
 // the existing diag_status='pending' PATCH flow, emitted upward.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
-import ForceChart from './ForceChart.vue';
 import SpatialPanel from './SpatialPanel.vue';
+import SignalPanel from './SignalPanel.vue';
 import ClusterTable from './ClusterTable.vue';
 import RecipePanel from './RecipePanel.vue';
 import LayerPanel from './LayerPanel.vue';
@@ -22,7 +22,6 @@ import InfoTip from './InfoTip.vue';
 import { fetchD1an } from './diagAttrs';
 import { fetchDiagPreview } from './diagPreview';
 import type { ViewportResult, ViewportOp } from './diagViewport';
-import { bucketEnvelope } from './liveCache';
 import { clusterStats, computeStats, workingSetFromD1an } from './selection';
 import type { ClusterRow, Selection, WorkingSet } from './selection';
 import {
@@ -258,28 +257,6 @@ function runStepOnView(op: ViewportOp) {
 	if (first) spatialRefs.get(first.i)?.runViewport(op, { focus: true });
 }
 
-const chartData = computed(() => {
-	const ws = activeWS.value;
-	if (!ws) return null;
-	let t = ws.t;
-	let z = ws.residZ;
-	if (!z.every((v) => Number.isFinite(v))) {
-		const ti: number[] = []; const zi: number[] = [];
-		for (let i = 0; i < ws.n; i++) if (Number.isFinite(z[i])) { ti.push(t[i]); zi.push(z[i]); }
-		t = Float32Array.from(ti); z = Float32Array.from(zi);
-	}
-	return bucketEnvelope(t, z);
-});
-function onCropStart(v: number) {
-	const cur = selection.value;
-	const t1 = cur && cur.kind === 'time' ? cur.t1 : (activeWS.value?.t.at(-1) ?? v);
-	selection.value = { kind: 'time', t0: v, t1 };
-}
-function onCropEnd(v: number) {
-	const cur = selection.value;
-	const t0 = cur && cur.kind === 'time' ? cur.t0 : (activeWS.value?.t[0] ?? v);
-	selection.value = { kind: 'time', t0, t1: v };
-}
 function onClusterSelect(id: number | null) {
 	selection.value = id == null ? null : { kind: 'cluster', id };
 }
@@ -591,22 +568,13 @@ onBeforeUnmount(() => {
 						/>
 
 						<!-- Signal -->
-						<template v-else-if="item.type === 'signal'">
-							<div class="dw-signal-head">
-								<span class="dw-signal-title">Anomaly z-score along the cut</span>
-								<InfoTip :text="PANEL_HELP.signal" wide placement="left" />
-							</div>
-							<ForceChart
-								v-if="chartData"
-								title="resid_z (σ from normal for that radius) vs time"
-								kind="env" :data="chartData" color="#f59e0b" x-unit="s" y-unit="σ"
-								:crop-start="selection?.kind === 'time' ? selection.t0 : null"
-								:crop-end="selection?.kind === 'time' ? selection.t1 : null"
-								:crop-editable="true"
-								@update:crop-start="onCropStart" @update:crop-end="onCropEnd"
-							/>
-							<div v-else class="dw-loading">loading…</div>
-						</template>
+						<SignalPanel
+							v-else-if="item.type === 'signal'"
+							v-model:recipe="recipe"
+							:analysis-id="analysisId" :layers="layers" :recipe-valid="recipeValid"
+							:active-working-set="activeWS" :selection="selection"
+							@update:selection="(s) => (selection = s)"
+						/>
 
 						<!-- Clusters -->
 						<template v-else-if="item.type === 'clusters'">
@@ -685,9 +653,6 @@ onBeforeUnmount(() => {
 .dw-seg-swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 .dw-layers-row { display: flex; align-items: flex-start; gap: 6px; }
 .dw-layers-row > :first-child { flex: 1; min-width: 0; }
-
-.dw-signal-head { display: flex; align-items: center; gap: 5px; padding: 2px 2px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim, #94a3b8); }
-.dw-signal-title { font-weight: 650; }
 
 .dw-state { display: flex; align-items: center; gap: 7px; padding: 5px 12px; font-size: 11px; color: var(--text-dim, #94a3b8); border-top: 1px solid var(--border, rgba(255,255,255,0.1)); }
 .dw-state-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }

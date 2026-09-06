@@ -22,7 +22,14 @@ from typing import Any
 import numpy as np
 
 from . import ops  # noqa: F401  -- import for its registration side effects
+from .angular import angular_resample
 from .registry import STEPS, Columns, resolve_inputs, validate_recipe
+
+# Mirrors ops.py::_CHANNELS. Duplicated rather than imported: ops.py is the step-registration
+# module, and STEP_META.frame_transform's options in recipeChannels.ts already mirror this
+# same list a third time -- one more import wouldn't remove the real risk (three places
+# agreeing on "fp, fc, ff"), and this way each file states its own copy where it's used.
+_FRAME_CHANNELS: tuple[str, ...] = ("fp", "fc", "ff")
 
 # The D1AN contract: exactly these columns, always, in this order. A disabled step still
 # contributes its column (zero-filled) because the browser's reader indexes by name and a
@@ -244,3 +251,40 @@ def run_recipe(
             else np.full(n, fill, dtype=np.float32)
         )
     return out, metrics
+
+
+def base_columns_all_channels(recipe: dict, cols: Columns) -> Columns:
+    """The pre-tsa state for EVERY frame_transform channel at once: t/rev/x/y (identical
+    regardless of channel, since only the FORCE projection differs) plus one sig_<channel>
+    column per entry in _FRAME_CHANNELS.
+
+    Published as base.d1an (Phase H slice 4) so a preview can switch which channel a recipe
+    shows without a rebake. frame_transform already computes fc/ff/fp together in one call
+    (ops.py::_op_frame_transform) -- the only extra work over the original single-channel
+    base is angular_resample-ing the other two signals onto the SAME grid, using the SAME
+    revs it already needed for the one it used to keep.
+
+    Precision note: run_recipe's `emit` seam always casts to float32 (matching the original
+    single-channel base.d1an path, and base.d1an has been float32 since it was introduced --
+    "preview is an approximation" already tolerates far more than one extra truncation of the
+    full-rate signal buys here).
+    """
+    frame_idx = next(i for i, s in enumerate(recipe["steps"]) if s["op"] == "frame_transform")
+    spr = int(_resample_params(recipe["steps"]).get("samples_per_rev", 256))
+
+    pre, _ = run_recipe(
+        recipe, cols, stop_after=frame_idx,
+        emit=("revs", "t_raw", "x_raw", "y_raw", "fc", "ff", "fp"),
+    )
+    revs = pre["revs"]
+    rev_grid, t = angular_resample(revs, pre["t_raw"], spr)
+    _, x = angular_resample(revs, pre["x_raw"], spr)
+    _, y = angular_resample(revs, pre["y_raw"], spr)
+    out: Columns = {
+        "t": t.astype(np.float32), "rev": rev_grid.astype(np.float32),
+        "x": x.astype(np.float32), "y": y.astype(np.float32),
+    }
+    for ch in _FRAME_CHANNELS:
+        _, sig = angular_resample(revs, pre[ch], spr)
+        out[f"sig_{ch}"] = sig.astype(np.float32)
+    return out

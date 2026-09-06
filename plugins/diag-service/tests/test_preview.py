@@ -26,7 +26,7 @@ for _p in (
 from conftest import cache_of, synthetic_cut  # noqa: E402
 from diag.d1an import read_d1an, write_d1an  # noqa: E402
 from diag.recipe import DEFAULT_RECIPE  # noqa: E402
-from diag.runner import run_recipe, seed_columns  # noqa: E402
+from diag.runner import base_columns_all_channels, run_recipe, seed_columns  # noqa: E402
 
 BASE_COLUMNS = ("t", "rev", "x", "y", "sig")
 PUBLIC = {
@@ -37,8 +37,18 @@ PUBLIC = {
 
 
 def _write_base_d1an(dst: str) -> None:
-    """Exactly what process_diag_row publishes: the default recipe stopped after
-    angular_resample, emitting the base column set."""
+    """Exactly what process_diag_row publishes (Phase H slice 4): all three
+    frame_transform channels, not just the one DEFAULT_RECIPE happens to have selected."""
+    t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut()
+    cols = base_columns_all_channels(
+        DEFAULT_RECIPE, seed_columns(cache_of(t, fx, fy, fz, rpm, revs, fs), x, y),
+    )
+    write_d1an(dst, cols)
+
+
+def _write_old_format_base_d1an(dst: str) -> None:
+    """What process_diag_row published before Phase H slice 4 -- a single `sig` column for
+    whichever channel the recipe was baked with. Used to pin the pre-v10 fallback path."""
     t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut()
     stop = next(
         i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "angular_resample"
@@ -79,6 +89,30 @@ def client(tmp_path, monkeypatch):
     import app.main as m
 
     # fresh LRUs per test
+    m._base_lru.clear()
+    m._result_lru.clear()
+
+    async def _allow(analysis_id, req):
+        return {"diag_path": "op-under-test", "diag_status": "done"}
+
+    monkeypatch.setattr(m, "_resolve_and_authorize", _allow)
+
+    from fastapi.testclient import TestClient
+
+    return TestClient(m.app)
+
+
+@pytest.fixture
+def old_format_client(tmp_path, monkeypatch):
+    """Same as `client`, but base.d1an is written in the pre-v10 single-`sig` format -- a row
+    that has not been rebaked since Phase H slice 4 shipped."""
+    root = tmp_path / "octrees" / "diag" / "op-under-test"
+    root.mkdir(parents=True)
+    _write_old_format_base_d1an(str(root / "base.d1an"))
+    monkeypatch.setenv("OCTREE_ROOT", str(tmp_path / "octrees"))
+
+    import app.main as m
+
     m._base_lru.clear()
     m._result_lru.clear()
 
@@ -141,6 +175,70 @@ def test_preview_approximates_a_full_bake(client):
     # the decision outputs the UI renders must stay put
     assert np.mean(got["gi_sig"] == want["gi_sig"]) >= 0.99
     assert np.mean(got["cluster_id"] == want["cluster_id"]) >= 0.99
+
+
+def _with_channel(channel):
+    r = {
+        "recipe_version": 1, "name": channel,
+        "steps": [
+            {**s, "params": {**s["params"], "channel": channel}} if s["op"] == "frame_transform" else dict(s)
+            for s in DEFAULT_RECIPE["steps"]
+        ],
+    }
+    return r
+
+
+def test_preview_switches_frame_transform_channel_without_a_rebake(client):
+    """Phase H slice 4: base.d1an carries all three channels (base_columns_all_channels), so
+    switching frame_transform.channel in the recipe changes what /preview shows without a
+    rebake. synthetic_cut() sets fx = fy = 0, so fc is degenerate (frames.py: fc/ff come from
+    fx/fy, fp = fz unrotated) -- a real, verifiable difference from fp's real signal."""
+    fp = client.post(
+        "/preview",
+        json={"analysis_id": "a1", "recipe": _with_channel("fp"), "from_step": None, "layers": None},
+    )
+    fc = client.post(
+        "/preview",
+        json={"analysis_id": "a1", "recipe": _with_channel("fc"), "from_step": None, "layers": None},
+    )
+    assert fp.status_code == fc.status_code == 200
+    got_fp, got_fc = _read_bytes(fp.content), _read_bytes(fc.content)
+    assert np.std(got_fp["resid_z"]) > 0.1
+    assert np.std(got_fc["resid_z"]) < np.std(got_fp["resid_z"]) / 2
+    # Two different channels must not collide in the cache -- recipe_hash already includes
+    # frame_transform.channel, so both requests are genuine misses.
+    assert fp.headers["x-diag-cache"] == fc.headers["x-diag-cache"] == "miss"
+
+
+def test_preview_rejects_an_unknown_channel(client):
+    r = client.post(
+        "/preview",
+        json={"analysis_id": "a1", "recipe": _with_channel("not_a_channel"), "from_step": None, "layers": None},
+    )
+    assert r.status_code == 422
+    assert "channel" in r.json()["detail"]
+
+
+def test_preview_falls_back_to_one_signal_on_a_pre_v10_base_d1an(old_format_client):
+    """A row baked before Phase H slice 4 has only ONE `sig` column in base.d1an -- whatever
+    channel it was baked with (DEFAULT_RECIPE's default, fp). Requesting a DIFFERENT channel
+    against it must not error or silently show wrong data: it falls back to the one signal
+    the file actually has, exactly reproducing pre-slice-4 behaviour until the row rebakes."""
+    as_fp = old_format_client.post(
+        "/preview",
+        json={"analysis_id": "a1", "recipe": _with_channel("fp"), "from_step": None, "layers": None},
+    )
+    as_fc = old_format_client.post(
+        "/preview",
+        json={"analysis_id": "a1", "recipe": _with_channel("fc"), "from_step": None, "layers": None},
+    )
+    assert as_fp.status_code == as_fc.status_code == 200
+    got_fp, got_fc = _read_bytes(as_fp.content), _read_bytes(as_fc.content)
+    # Different recipe_hash (different channel param) means these are two separate cache
+    # entries, but the OLD base.d1an has no sig_fc to serve, so both fall back to its one
+    # signal and the results are the fp bake's, not a degenerate fc-shaped one.
+    np.testing.assert_array_equal(got_fp["resid_z"], got_fc["resid_z"])
+    assert np.std(got_fp["resid_z"]) > 0.1
 
 
 def test_preview_stop_after_truncates_the_pipeline(client):
