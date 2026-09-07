@@ -178,3 +178,82 @@ describe('bucketEnvelope', () => {
 		expect(env.t.length).toBeLessThanOrEqual(2000);
 	});
 });
+
+// D1LC v2: an additive trailer of named float32[N] extras (Mz, X, Y, Z), gated on the header's
+// version field. See docs/superpowers/specs/2026-09-07-milling-path-models-and-polar-design.md #4.
+describe('D1LC v2 trailer', () => {
+	function v1Buffer(N = 5): ArrayBuffer {
+		const buf = new ArrayBuffer(32 + N * 6 * 4);
+		const dv = new DataView(buf);
+		dv.setUint32(0, MAGIC, true); dv.setUint32(4, 1, true); dv.setUint32(8, N, true);
+		dv.setFloat32(12, 1000, true); dv.setFloat32(16, 0.05, true); dv.setFloat32(20, 80, true);
+		dv.setFloat32(24, 0, true); dv.setFloat32(28, (N - 1) * 0.01, true);
+		let off = 32;
+		for (let arr = 0; arr < 6; arr++) for (let i = 0; i < N; i++) { dv.setFloat32(off, arr * 10 + i, true); off += 4; }
+		return buf;
+	}
+	function v2Buffer(N: number, extras: Record<string, number[]>): ArrayBuffer {
+		const names = Object.keys(extras);
+		const trailerBytes = 4 + names.reduce((s) => s + 8 + N * 4, 0);
+		const buf = new ArrayBuffer(32 + N * 6 * 4 + trailerBytes);
+		const dv = new DataView(buf);
+		dv.setUint32(0, MAGIC, true); dv.setUint32(4, 2, true); dv.setUint32(8, N, true);
+		dv.setFloat32(12, 1000, true); dv.setFloat32(16, 0.05, true); dv.setFloat32(20, 80, true);
+		dv.setFloat32(24, 0, true); dv.setFloat32(28, (N - 1) * 0.01, true);
+		let off = 32;
+		for (let arr = 0; arr < 6; arr++) for (let i = 0; i < N; i++) { dv.setFloat32(off, arr * 10 + i, true); off += 4; }
+		dv.setUint32(off, names.length, true); off += 4;
+		for (const name of names) {
+			const bytes = new Uint8Array(8);
+			for (let i = 0; i < Math.min(8, name.length); i++) bytes[i] = name.charCodeAt(i);
+			new Uint8Array(buf, off, 8).set(bytes); off += 8;
+			for (const v of extras[name]) { dv.setFloat32(off, v, true); off += 4; }
+		}
+		return buf;
+	}
+
+	it("parses a v1 buffer to exactly today's Cache shape, optional fields undefined", () => {
+		const c = parseCache(v1Buffer(5));
+		expect(c.version).toBe(1);
+		expect(c.N).toBe(5);
+		expect(Array.from(c.t)).toEqual([0, 1, 2, 3, 4]);
+		expect(Array.from(c.Fx)).toEqual([10, 11, 12, 13, 14]);
+		expect(Array.from(c.Fy)).toEqual([20, 21, 22, 23, 24]);
+		expect(Array.from(c.Fz)).toEqual([30, 31, 32, 33, 34]);
+		expect(Array.from(c.rpm)).toEqual([40, 41, 42, 43, 44]);
+		expect(Array.from(c.revs)).toEqual([50, 51, 52, 53, 54]);
+		expect(c.Mz).toBeUndefined();
+		expect(c.X).toBeUndefined();
+		expect(c.Y).toBeUndefined();
+		expect(c.Z).toBeUndefined();
+	});
+
+	it('parses a v2 buffer with Mz + X/Y/Z into the optional fields', () => {
+		const N = 4;
+		const buf = v2Buffer(N, {
+			Mz: [1, 2, 3, 4], X: [10, 11, 12, 13], Y: [20, 21, 22, 23], Z: [30, 31, 32, 33],
+		});
+		const c = parseCache(buf);
+		expect(c.version).toBe(2);
+		expect(Array.from(c.Mz!)).toEqual([1, 2, 3, 4]);
+		expect(Array.from(c.X!)).toEqual([10, 11, 12, 13]);
+		expect(Array.from(c.Y!)).toEqual([20, 21, 22, 23]);
+		expect(Array.from(c.Z!)).toEqual([30, 31, 32, 33]);
+	});
+
+	it('ignores an unknown trailer name without throwing', () => {
+		const buf = v2Buffer(3, { Zz: [1, 2, 3] });
+		expect(() => parseCache(buf)).not.toThrow();
+		const c = parseCache(buf);
+		expect(c.Mz).toBeUndefined();
+	});
+
+	it('decimateCache decimates the optional arrays to the same length as the mandatory ones', () => {
+		const N = 9;
+		const buf = v2Buffer(N, { Mz: Array.from({ length: N }, (_, i) => i) });
+		const c = parseCache(buf);
+		const d = decimateCache(c, 3);
+		expect(d.Mz!.length).toBe(d.t.length);
+		expect(Array.from(d.Mz!)).toEqual([0, 3, 6]);
+	});
+});

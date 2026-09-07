@@ -8,15 +8,26 @@ export interface Cache {
 	N: number; Fs: number; feed: number; diam: number; csSec: number; ceSec: number;
 	t: Float32Array; Fx: Float32Array; Fy: Float32Array; Fz: Float32Array;
 	rpm: Float32Array; revs: Float32Array;
+	// D1LC v2 trailer fields (see write_d1lc's `extras` parameter). Absent on a v1 file, or on
+	// a v2 file that simply doesn't carry that channel.
+	Mz?: Float32Array; X?: Float32Array; Y?: Float32Array; Z?: Float32Array;
+	// Optional so hand-built test fixtures (and any other in-memory Cache construction) don't
+	// need to set it; parseCache always populates it from the real file's header.
+	version?: number;
 }
 
 const MAGIC = 0x44314c43; // 'D1LC'
+const KNOWN_TRAILER_NAMES = ['Mz', 'X', 'Y', 'Z'] as const;
 
-// Parse live_cache.bin (little-endian): 32-byte header then six float32[N] arrays.
-// Layout MUST match scripts/matlab/process_force.m's write_live_cache.
+// Parse live_cache.bin (little-endian): 32-byte header then six float32[N] arrays, then
+// (version >= 2 only) a trailer of named float32[N] extras. Layout MUST match
+// scripts/matlab/process_force.m's write_live_cache and apps/force-app/backend/app/d1lc.py.
+// A v1 file (or a header with no version byte set, as in legacy fixtures) parses to exactly
+// the six mandatory arrays; the optional trailer fields stay undefined.
 export function parseCache(ab: ArrayBuffer): Cache {
 	const dv = new DataView(ab);
 	if (dv.getUint32(0, true) !== MAGIC) throw new Error('bad live-cache magic');
+	const version = dv.getUint32(4, true);
 	const N = dv.getUint32(8, true);
 	const Fs = dv.getFloat32(12, true);
 	const feed = dv.getFloat32(16, true);
@@ -26,7 +37,22 @@ export function parseCache(ab: ArrayBuffer): Cache {
 	let off = 32;
 	const take = () => { const a = new Float32Array(ab, off, N); off += N * 4; return a; };
 	const t = take(), Fx = take(), Fy = take(), Fz = take(), rpm = take(), revs = take();
-	return { N, Fs, feed, diam, csSec, ceSec, t, Fx, Fy, Fz, rpm, revs };
+	const cache: Cache = { N, Fs, feed, diam, csSec, ceSec, t, Fx, Fy, Fz, rpm, revs, version };
+
+	if (version >= 2 && off + 4 <= ab.byteLength) {
+		const extraCount = dv.getUint32(off, true); off += 4;
+		for (let e = 0; e < extraCount; e++) {
+			if (off + 8 > ab.byteLength) break;
+			const nameBytes = new Uint8Array(ab, off, 8); off += 8;
+			let name = '';
+			for (let i = 0; i < 8 && nameBytes[i] !== 0; i++) name += String.fromCharCode(nameBytes[i]);
+			if (off + N * 4 > ab.byteLength) break;
+			const arr = new Float32Array(ab, off, N); off += N * 4;
+			if ((KNOWN_TRAILER_NAMES as readonly string[]).includes(name)) (cache as any)[name] = arr;
+			// unknown names are read past (to keep `off` correct for subsequent entries) and dropped
+		}
+	}
+	return cache;
 }
 
 // Decimate a cache by keeping every `stride`-th sample (indices 0, stride, 2·stride…),
@@ -41,7 +67,15 @@ export function decimateCache(c: Cache, stride: number): Cache {
 		for (let i = 0, k = 0; i < a.length; i += stride, k++) o[k] = a[i];
 		return o;
 	};
-	return { ...c, N: Math.ceil(c.N / stride), t: pick(c.t), Fx: pick(c.Fx), Fy: pick(c.Fy), Fz: pick(c.Fz), rpm: pick(c.rpm), revs: pick(c.revs) };
+	const out: Cache = {
+		...c, N: Math.ceil(c.N / stride), t: pick(c.t), Fx: pick(c.Fx), Fy: pick(c.Fy), Fz: pick(c.Fz),
+		rpm: pick(c.rpm), revs: pick(c.revs),
+	};
+	if (c.Mz) out.Mz = pick(c.Mz);
+	if (c.X) out.X = pick(c.X);
+	if (c.Y) out.Y = pick(c.Y);
+	if (c.Z) out.Z = pick(c.Z);
+	return out;
 }
 
 export interface EnvSeries { t: number[]; min: number[]; max: number[] }

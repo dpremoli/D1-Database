@@ -156,9 +156,7 @@ function buildLinearFeed(
 function buildMachineXyz(
 	c: Cache, p: MachineXyzParams, w: PathWindow, cs: number, stride: number,
 ): PathResult | null {
-	const src: Record<'X' | 'Y' | 'Z', Float32Array | undefined> = {
-		X: (c as any).X, Y: (c as any).Y, Z: (c as any).Z,
-	};
+	const src: Record<'X' | 'Y' | 'Z', Float32Array | undefined> = { X: c.X, Y: c.Y, Z: c.Z };
 	const xs = src[p.xKey], ys = src[p.yKey], zs = src[p.zKey];
 	if (!xs || !ys || !zs) return null;
 	if (xs.length !== c.N || ys.length !== c.N || zs.length !== c.N) return null;
