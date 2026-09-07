@@ -24,28 +24,41 @@ function makeCache(): Cache {
 	};
 }
 
+// Base path/window match the pre-refactor defaults exactly (turning_spiral, feed=0.05,
+// diam=80, innerDiam=0, measured, cropStart=0, cropEnd=1e9, stride=1).
+function basePath(overrides: Partial<CloudParams['path']> = {}): CloudParams['path'] {
+	return {
+		kind: 'turning_spiral', feed: 0.05, diam: 80, innerDiam: 0,
+		speedMode: 'measured', rpm: 1200, vc: 0, timeScale: 1, ppr: 1,
+		...overrides,
+	} as CloudParams['path'];
+}
+function baseWindow(overrides: Partial<CloudParams['window']> = {}): CloudParams['window'] {
+	return { cropStartSec: 0, cropEndSec: 1e9, stride: 1, ...overrides };
+}
 function baseParams(overrides: Partial<CloudParams> = {}): CloudParams {
 	return {
-		axis: 'Fz', feed: 0.05, diam: 80, innerDiam: 0, speedMode: 'measured',
-		rpm: 1200, vc: 0, timeScale: 1, ppr: 1,
-		cropStartSec: 0, cropEndSec: 1e9,
-		stride: 1, gridding: false, gridN: 20,
+		channel: 'Fz',
+		path: basePath(),
+		window: baseWindow(),
+		gridding: false, gridN: 20,
 		colormap: COLORMAPS.viridis,
 		cmin: null, cmax: null, zSeries: 'none',
 		...overrides,
-	} as CloudParams;
+	};
 }
 
-// Each case name documents which axis of the matrix it exercises.
+// Each case name documents which axis of the matrix it exercises. Same 9 cases as the
+// pre-refactor version of this file, translated to the new nested CloudParams shape.
 const CASES: [string, Partial<CloudParams>][] = [
 	['measured-raw', {}],
-	['rpm-model', { speedMode: 'rpm', rpm: 900 } as Partial<CloudParams>],
-	['vc-model', { speedMode: 'vc', vc: 120 } as Partial<CloudParams>],
+	['rpm-model', { path: basePath({ speedMode: 'rpm', rpm: 900 }) }],
+	['vc-model', { path: basePath({ speedMode: 'vc', vc: 120 }) }],
 	['gridded', { gridding: true, gridN: 12 }],
-	['stride-5', { stride: 5 }],
-	['inner-diam-20', { innerDiam: 20 } as Partial<CloudParams>],
+	['stride-5', { window: baseWindow({ stride: 5 }) }],
+	['inner-diam-20', { path: basePath({ innerDiam: 20 }) }],
 	['z-series-fx', { zSeries: 'Fx' }],
-	['truncating-crop', { cropStartSec: 0.1, cropEndSec: 0.3 }],
+	['truncating-crop', { window: baseWindow({ cropStartSec: 0.1, cropEndSec: 0.3 }) }],
 	['manual-climits', { cmin: -10, cmax: 10 }],
 ];
 
@@ -55,11 +68,20 @@ describe('buildCloud golden values (pre-refactor characterisation)', () => {
 		it(`matches the frozen snapshot: ${name}`, () => {
 			const cloud = buildCloud(cache, baseParams(overrides));
 			expect(cloud).not.toBeNull();
+			const n = cloud!.count;
+			// pos is now stride-3 (z=0 for every point on this flat turning-spiral path); drop z
+			// and compare the x/y pairs against the frozen stride-2 snapshot, so a genuine geometry
+			// regression still fails this test instead of being masked by the format change.
+			const pos2 = new Array<number>(n * 2);
+			for (let k = 0; k < n; k++) {
+				expect(cloud!.pos[k * 3 + 2]).toBe(0);
+				pos2[k * 2] = cloud!.pos[k * 3]; pos2[k * 2 + 1] = cloud!.pos[k * 3 + 1];
+			}
 			expect({
 				count: cloud!.count,
-				pos: Array.from(cloud!.pos),
+				pos: pos2,
 				col: Array.from(cloud!.col),
-				bounds: [cloud!.minX, cloud!.maxX, cloud!.minY, cloud!.maxY],
+				bounds: [cloud!.bounds.minX, cloud!.bounds.maxX, cloud!.bounds.minY, cloud!.bounds.maxY],
 				climits: [cloud!.cmin, cloud!.cmax],
 				zv: cloud!.zv ? Array.from(cloud!.zv) : null,
 			}).toMatchSnapshot();

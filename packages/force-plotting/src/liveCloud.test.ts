@@ -30,10 +30,13 @@ function makeCache(overrides: Partial<Cache> = {}): Cache {
 
 function baseParams(overrides: Partial<CloudParams> = {}): CloudParams {
 	return {
-		axis: 'Fz', feed: 0.05, diam: 80, innerDiam: 0, speedMode: 'measured',
-		rpm: 1200, vc: 0, timeScale: 1, ppr: 1,
-		cropStartSec: 0, cropEndSec: 1e9,
-		stride: 1, gridding: false, gridN: 400,
+		channel: 'Fz',
+		path: {
+			kind: 'turning_spiral', feed: 0.05, diam: 80, innerDiam: 0,
+			speedMode: 'measured', rpm: 1200, vc: 0, timeScale: 1, ppr: 1,
+		},
+		window: { cropStartSec: 0, cropEndSec: 1e9, stride: 1 },
+		gridding: false, gridN: 400,
 		colormap: COLORMAPS.viridis,
 		cmin: null, cmax: null, zSeries: 'none',
 		...overrides,
@@ -60,7 +63,7 @@ describe('buildCloud - degenerate input safety (the white-screen bug)', () => {
 
 	it('never returns NaN in pos/col for a degenerate crop window (cropStart at/after cropEnd)', () => {
 		const c = makeCache();
-		const cloud = buildCloud(c, baseParams({ cropStartSec: 0.5, cropEndSec: 0.5 }));
+		const cloud = buildCloud(c, baseParams({ window: { cropStartSec: 0.5, cropEndSec: 0.5, stride: 1 } }));
 		// Either null (no points in window) or, if a single boundary point sneaks in, must be finite.
 		if (cloud) {
 			assertNoNaN(cloud.pos, 'pos');
@@ -70,7 +73,7 @@ describe('buildCloud - degenerate input safety (the white-screen bug)', () => {
 
 	it('never returns NaN for a single-sample cache', () => {
 		const c = makeCache({ N: 1, t: Float32Array.of(0), revs: Float32Array.of(0), Fz: Float32Array.of(10), Fx: Float32Array.of(1), Fy: Float32Array.of(1), rpm: Float32Array.of(1200) });
-		const cloud = buildCloud(c, baseParams({ cropStartSec: 0, cropEndSec: 1 }));
+		const cloud = buildCloud(c, baseParams({ window: { cropStartSec: 0, cropEndSec: 1, stride: 1 } }));
 		if (cloud) {
 			assertNoNaN(cloud.pos, 'pos');
 			assertNoNaN(cloud.col, 'col');
@@ -91,8 +94,8 @@ describe('buildCloud - normal operation', () => {
 
 	it('stride thins the point count roughly by the stride factor', () => {
 		const c = makeCache({ N: 200 });
-		const full = buildCloud(c, baseParams({ stride: 1 }))!;
-		const thinned = buildCloud(c, baseParams({ stride: 4 }))!;
+		const full = buildCloud(c, baseParams({ window: { cropStartSec: 0, cropEndSec: 1e9, stride: 1 } }))!;
+		const thinned = buildCloud(c, baseParams({ window: { cropStartSec: 0, cropEndSec: 1e9, stride: 4 } }))!;
 		expect(thinned.count).toBeLessThan(full.count);
 		// ceil(200/4) = 50
 		expect(thinned.count).toBe(50);
@@ -100,7 +103,7 @@ describe('buildCloud - normal operation', () => {
 
 	it('respects the crop window (points outside cropStart/cropEnd are excluded)', () => {
 		const c = makeCache({ N: 1000 }); // t goes 0..9.99 at dt=0.01
-		const cloud = buildCloud(c, baseParams({ cropStartSec: 2, cropEndSec: 4 }))!;
+		const cloud = buildCloud(c, baseParams({ window: { cropStartSec: 2, cropEndSec: 4, stride: 1 } }))!;
 		expect(cloud).not.toBeNull();
 		// ~200 samples in a 2s window at dt=0.01
 		expect(cloud.count).toBeGreaterThan(150);

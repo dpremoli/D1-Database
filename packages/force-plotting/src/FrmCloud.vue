@@ -13,12 +13,17 @@ import { useForceHost } from './host';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { type Cache, cacheGet, cachePut, parseCache } from './liveCache';
-import { type Axis, type Cloud, type SpeedMode, axisAutoLimits, buildCloud, COLORMAPS } from './liveCloud';
+import { type Axis, type Cloud, type CloudChannel, type SpeedMode, axisAutoLimits, buildCloud, COLORMAPS } from './liveCloud';
+import type { PathParams } from './path';
 import { exportFrmFigure } from './frmExport';
 
 const props = defineProps<{
 	cacheFileId: string;
-	axis: Axis;
+	/** New: an explicit path config overrides the flat turning-spiral props below when supplied. */
+	path?: PathParams;
+	channel?: CloudChannel;
+	/** @deprecated use `channel` — kept so existing Fx/Fy/Fz toggles keep compiling untouched. */
+	axis?: Axis;
 	feed: number;
 	diam: number;
 	innerDiam: number;
@@ -51,6 +56,15 @@ const emit = defineEmits<{
 	(e: 'points', n: number): void;   // rendered point count (for the resolution readout)
 	(e: 'zscale', v: number): void;   // 3-finger vertical swipe adjusts the Z exaggeration
 }>();
+
+// `channel` wins when supplied; `axis` is the deprecated alias every existing caller still uses.
+const effChannel = computed<CloudChannel>(() => props.channel ?? props.axis ?? 'Fz');
+// `path` wins when supplied; otherwise assemble a turning_spiral from the flat props, exactly
+// reproducing what this component computed inline before the path-model refactor.
+const effPath = computed<PathParams>(() => props.path ?? {
+	kind: 'turning_spiral', feed: props.feed, diam: props.diam, innerDiam: props.innerDiam,
+	speedMode: props.speedMode, rpm: props.rpm, vc: props.vc, timeScale: props.timeScale, ppr: props.ppr,
+});
 
 const api = useForceHost().api;
 const loading = ref(true);
@@ -275,8 +289,8 @@ let cloud: Cloud | null = null;
 const autoLimitsByAxis = new Map<string, [number, number]>();
 watch(cache, () => autoLimitsByAxis.clear());
 function effClimits(): { cmin: number; cmax: number } {
-	let auto = autoLimitsByAxis.get(props.axis);
-	if (!auto && cache.value) { auto = axisAutoLimits(cache.value, props.axis); autoLimitsByAxis.set(props.axis, auto); }
+	let auto = autoLimitsByAxis.get(effChannel.value);
+	if (!auto && cache.value) { auto = axisAutoLimits(cache.value, effChannel.value); autoLimitsByAxis.set(effChannel.value, auto); }
 	auto = auto || [0, 1];
 	return {
 		cmin: Number.isFinite(props.cmin as number) ? (props.cmin as number) : auto[0],
@@ -287,10 +301,10 @@ function rebuild() {
 	if (!ready || !pointsGeom || !canvasEl.value || !cache.value) return;
 	const eff = effClimits();
 	cloud = buildCloud(cache.value, {
-		axis: props.axis, feed: props.feed, diam: props.diam, innerDiam: props.innerDiam,
-		speedMode: props.speedMode, rpm: props.rpm, vc: props.vc, timeScale: props.timeScale, ppr: props.ppr,
-		cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec,
-		stride: props.stride, gridding: props.gridding, gridN: props.gridN,
+		channel: effChannel.value,
+		path: effPath.value,
+		window: { cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec, stride: props.stride },
+		gridding: props.gridding, gridN: props.gridN,
 		colormap: COLORMAPS[props.colormap] || COLORMAPS.viridis,
 		cmin: eff.cmin, cmax: eff.cmax,
 		zSeries: props.zSeries || 'none',
@@ -300,18 +314,14 @@ function rebuild() {
 	if (!cloud) { climits.value = null; scaleBar.value = null; return; }
 
 	// data-fit params (used when the view is in auto-fit mode + as reset target)
-	fitCx = (cloud.minX + cloud.maxX) / 2; fitCy = (cloud.minY + cloud.maxY) / 2;
-	fitSpan = Math.max(cloud.maxX - cloud.minX, cloud.maxY - cloud.minY) || 1;
+	fitCx = (cloud.bounds.minX + cloud.bounds.maxX) / 2; fitCy = (cloud.bounds.minY + cloud.bounds.maxY) / 2;
+	fitSpan = Math.max(cloud.bounds.maxX - cloud.bounds.minX, cloud.bounds.maxY - cloud.bounds.minY) || 1;
 
-	// upload ONCE per rebuild. three needs 3-component positions; expand the 2D cloud
-	// (z=0). Colours are already 3-component (0..1) → vertex colours.
+	// upload ONCE per rebuild. cloud.pos is already stride-3 (buildPath emits x,y,z directly —
+	// this used to expand a stride-2 cloud.pos into a stride-3 GPU buffer by hand). Colours are
+	// already 3-component (0..1) → vertex colours.
 	const n = cloud.count;
-	const pos3 = new Float32Array(n * 3);
-	for (let k = 0; k < n; k++) { pos3[k * 3] = cloud.pos[k * 2]; pos3[k * 3 + 1] = cloud.pos[k * 2 + 1]; }
-	// Z displacement: stored centred (-0.5..0.5); the Points object's scale.z turns it into
-	// world units, so exaggeration changes (slider / 3-finger swipe) cost no rebuild.
-	if (cloud.zv) for (let k = 0; k < n; k++) pos3[k * 3 + 2] = cloud.zv[k];
-	pointsGeom.setAttribute('position', new THREE.BufferAttribute(pos3, 3));
+	pointsGeom.setAttribute('position', new THREE.BufferAttribute(cloud.pos, 3));
 	pointsGeom.setAttribute('color', new THREE.BufferAttribute(cloud.col, 3));
 	pointsGeom.setDrawRange(0, n);
 	applyZScale();
@@ -433,7 +443,7 @@ function exportViewport(filename: string, subtitle?: string) {
 	return exportFrmFigure({
 		canvas: c, bounds: currentBounds(),
 		cmin: cl?.cmin ?? 0, cmax: cl?.cmax ?? 1,
-		colormap: props.colormap, axis: props.axis, subtitle, filename,
+		colormap: props.colormap, axis: effChannel.value, subtitle, filename,
 	});
 }
 defineExpose({ currentBounds, exportViewport });
@@ -462,8 +472,8 @@ onBeforeUnmount(() => {
 });
 
 // Geometry/colour props → rebuild immediately. pointSize is view-only (a uniform).
-watch(() => [props.axis, props.feed, props.diam, props.innerDiam, props.speedMode, props.rpm, props.vc, props.timeScale, props.ppr,
-	props.stride, props.gridding, props.gridN, props.colormap, props.cmin, props.cmax, props.zSeries], scheduleRebuild);
+watch(() => [effChannel.value, effPath.value, props.stride, props.cropStartSec, props.cropEndSec,
+	props.gridding, props.gridN, props.colormap, props.cmin, props.cmax, props.zSeries], scheduleRebuild, { deep: true });
 watch(() => props.pointSize, scheduleDraw);
 
 // Crop is DRAGGED, and its rebuild is the full O(N) recompute + percentile sort + GPU

@@ -1,59 +1,38 @@
-// Pure FRM point-cloud recompute for Live mode. Rebuilds the spiral fingerprint
-// (positions + per-point colour) from a parsed live cache for any crop / Feed /
-// Diameter / speed model — an O(N) pass, kept out of the component so it stays
-// testable and reusable by both the FRM cloud renderer and any future consumer.
-//
-// Geometry (mirrors scripts/matlab/process_force.m): with r = revolutions elapsed
-// since the crop-start,  theta = 2*PI*r,  rho = Diam/2 - Feed*r,  x/y = pol2cart.
-// Three speed models drive r:
-//   measured — cached revs_cum (integrated from the real tacho at full res)
-//   rpm      — constant spindle speed:      r = (RPM/60)*(t - t_cs)
-//   vc       — constant surface speed Vc:   rho(t) = sqrt(rho0^2 - 2K*(t-t_cs)),
-//              K = Feed*Vc*1000/(pi*120) [mm^2/s]; r = (rho0 - rho)/Feed
+// Colourises a tool path built by path.ts into a renderable point cloud. Positions used
+// to be computed here directly (a hardcoded turning spiral); that geometry now lives in
+// path.ts (buildPath) so it can be swapped for a straight pass or real machine XYZ. This
+// file's only job is: pick points along the path, look up their channel value, map to a
+// colour. See docs/superpowers/specs/2026-09-07-milling-path-models-and-polar-design.md §3.
 import type { Cache } from './liveCache';
+import { buildPath, type PathBounds, type PathParams, type PathWindow } from './path';
 
 export type SpeedMode = 'measured' | 'rpm' | 'vc';
 export type Axis = 'Fx' | 'Fy' | 'Fz';
+export type CloudChannel = 'Fx' | 'Fy' | 'Fz' | 'Mz';
 
 export interface CloudParams {
-	axis: Axis;
-	feed: number;          // mm/rev
-	diam: number;          // mm
-	innerDiam: number;     // mm — donut/diaphragm inner diameter; spiral stops here (0 = solid disc)
-	speedMode: SpeedMode;
-	rpm: number;           // constant-RPM value
-	vc: number;            // constant-Vc value (m/min)
-	timeScale: number;     // Rate override: elapsed-time scale for rpm/vc models (1 = cache Fs)
-	ppr: number;           // pulses per rev — divides the cached (raw, PPR=1) revs_cum in 'measured' mode
-	cropStartSec: number;
-	cropEndSec: number;
-	stride: number;        // client-side thinning (render every Nth point)
+	channel: CloudChannel;
+	path: PathParams;
+	window: PathWindow;
 	gridding: boolean;     // bin into a grid (mean colour per cell) vs raw scatter
 	gridN: number;         // grid resolution per axis when gridding
 	colormap: (x: number) => [number, number, number];
-	// Manual colour-scale limits (N). When either is null/undefined the limit is
-	// auto-computed from the data (prctile 1 / 99, mirroring the app's
-	// prctile(DATA,1) / prctile(DATA,99) — the same limits process_force.m uses
-	// for the canonical FRM PNGs).
+	// Manual colour-scale limits (N). When either is null/undefined the limit is auto-computed
+	// from the data (prctile 1 / 99, mirroring process_force.m's canonical FRM colour scale).
 	cmin?: number | null;
 	cmax?: number | null;
-	zSeries?: 'none' | Axis;   // when set, also emit a centred (-0.5..0.5) Z array of that axis
+	// Optional force-as-height overlay for a flat path (turning spiral / linear feed); ignored
+	// for a machine_xyz path, which already carries real Z.
+	zSeries?: 'none' | CloudChannel;
 }
 
 export interface Cloud {
-	pos: Float32Array; col: Float32Array; count: number;
-	minX: number; maxX: number; minY: number; maxY: number;
+	pos: Float32Array;   // stride 3
+	col: Float32Array;   // stride 3, rgb 0..1
+	count: number;
+	bounds: PathBounds;
 	cmin: number; cmax: number;   // colour-scale limits actually applied (for the colorbar)
-	zv?: Float32Array;            // centred (-0.5..0.5) Z displacement per point (3D Lite)
-}
-
-// first index with t[i] >= sec (binary search). Returns -1 for an empty array — callers must
-// check for that (an empty t means there's nothing to search, not "index 0").
-function idxOfTime(t: Float32Array, sec: number): number {
-	if (t.length === 0) return -1;
-	let lo = 0, hi = t.length - 1, ans = t.length - 1;
-	while (lo <= hi) { const m = (lo + hi) >> 1; if (t[m] >= sec) { ans = m; hi = m - 1; } else lo = m + 1; }
-	return ans;
+	zv?: Float32Array;   // centred -0.5..0.5 force-as-height, only set for flat (z-constant) paths
 }
 
 function percentile(sorted: Float32Array, p: number): number {
@@ -61,12 +40,11 @@ function percentile(sorted: Float32Array, p: number): number {
 	return sorted[i];
 }
 
-// Auto colour limits (prctile 1/99) over the WHOLE cached cut window for one axis — NOT the
-// current crop and NOT decimation-dependent. This is the same window + statistic the host
-// bakes into the octree metadata and the FRM PNGs, so Live and Full now share a colour scale
-// per axis, and it no longer shifts while the user drags the crop. Sampled to ~400k for speed.
-export function axisAutoLimits(c: Cache, axis: Axis): [number, number] {
-	const a = c[axis];
+// Auto colour limits (prctile 1/99) over the WHOLE cached channel array — NOT the current crop
+// and NOT decimation-dependent. Sampled to ~400k for speed. Returns [0, 1] for a missing/empty
+// channel array (e.g. axisAutoLimits(c, 'Mz') on a cache with no torque channel).
+export function axisAutoLimits(c: Cache, channel: CloudChannel): [number, number] {
+	const a = (c as any)[channel] as Float32Array | undefined;
 	if (!a || a.length === 0) return [0, 1];
 	const stride = Math.max(1, Math.floor(a.length / 400_000));
 	const s = new Float32Array(Math.ceil(a.length / stride));
@@ -79,124 +57,84 @@ export function axisAutoLimits(c: Cache, axis: Axis): [number, number] {
 }
 
 export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
-	const t = c.t, revs = c.revs;
-	// An empty/degenerate cache (e.g. the finished trace arriving before it's fully loaded, or a
-	// zero-sample capture) must bail out cleanly here — without this guard, idxOfTime returned -1,
-	// which fed straight into `revs[-1]`/`t[-1]` (undefined) below and propagated NaN through the
-	// whole position/colour computation. WebGL rendering NaN vertex colours is undefined behaviour
-	// that commonly paints the canvas solid white, which is the actual bug this was causing: the
-	// FRM map flashing white right when a finished cache first arrives, before real data replaces it.
-	if (!t || t.length === 0 || c.N === 0) return null;
-	const cs = idxOfTime(t, p.cropStartSec);
-	if (cs < 0) return null;
-	const ceTime = p.cropEndSec;
-	const F = p.feed, D = p.diam, rho0 = D / 2;
-	const innerR = Math.max(0, (p.innerDiam || 0) / 2);   // donut discs stop here, not at 0
-	const revsCs = revs[cs], tCs = t[cs];
-	const revPerSec = p.rpm / 60;
-	const ts = p.timeScale > 0 ? p.timeScale : 1;  // Rate override time scaling (rpm/vc only)
-	const ppr = p.ppr > 0 ? p.ppr : 1;             // pulses-per-rev divisor (measured mode)
-	const K = F * p.vc * 1000 / (Math.PI * 120);   // constant-Vc coefficient
-	const stride = Math.max(1, Math.round(p.stride) || 1);
-	const Faxis = c[p.axis];
+	const path = buildPath(c, p.path, p.window);
+	if (!path) return null;
 
-	// Preallocate to the worst-case window size (every strided sample kept) and fill
-	// by index — avoids per-point boxed-array push()/GC, which dominates at millions
-	// of points. `m` is the real count (the loop can break early on rho<0 / t>end).
-	const cap = Math.max(1, Math.ceil((c.N - cs) / stride) + 1);
-	const xs = new Float32Array(cap), ys = new Float32Array(cap), fv = new Float32Array(cap);
-	const Zaxis = p.zSeries && p.zSeries !== 'none' ? c[p.zSeries] : null;
-	const zr = Zaxis ? new Float32Array(cap) : null;
-	let m = 0;
-	let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-	for (let i = cs; i < c.N; i += stride) {
-		if (t[i] > ceTime) break;
-		let r: number, rho: number;
-		if (p.speedMode === 'vc') {
-			const under = rho0 * rho0 - 2 * K * (t[i] - tCs) * ts;
-			if (under < innerR * innerR) break;
-			rho = Math.sqrt(under);
-			r = (rho0 - rho) / F;
-		} else {
-			r = p.speedMode === 'rpm' ? revPerSec * (t[i] - tCs) * ts : (revs[i] - revsCs) / ppr;
-			rho = rho0 - F * r;
-			if (rho < innerR) break;
-		}
-		const theta = 2 * Math.PI * r;
-		const x = rho * Math.cos(theta), y = rho * Math.sin(theta);
-		xs[m] = x; ys[m] = y; fv[m] = Faxis[i];
-		if (zr) zr[m] = Zaxis![i];
-		m++;
-		if (x < minX) minX = x; if (x > maxX) maxX = x;
-		if (y < minY) minY = y; if (y > maxY) maxY = y;
-	}
-	if (!m) return null;
+	const channelArr = (c as any)[p.channel] as Float32Array;
+	const m = path.count;
+	const fv = new Float32Array(m);
+	for (let k = 0; k < m; k++) fv[k] = channelArr[path.idx[k]];
 
-	// colour scale: manual limits when supplied, else percentile-clamped like the
-	// app — prctile(DATA,1) / prctile(DATA,99), matching process_force.m's
-	// prctile(cc,[1 99]) so a couple of outlier spikes don't wash out the colormap.
-	// (TypedArray.sort is numeric by default, so this sorts by value.)
-	const sorted = fv.slice(0, m).sort();
+	// colour scale: manual limits when supplied, else percentile-clamped like the app —
+	// prctile(DATA,1) / prctile(DATA,99), matching process_force.m's prctile(cc,[1 99]).
+	const sorted = fv.slice().sort();
 	let lo = Number.isFinite(p.cmin as number) ? (p.cmin as number) : percentile(sorted, 1);
 	let hi = Number.isFinite(p.cmax as number) ? (p.cmax as number) : percentile(sorted, 99);
 	if (!(hi > lo)) { lo = sorted[0]; hi = sorted[sorted.length - 1]; if (!(hi > lo)) hi = lo + 1; }
 	const span = hi - lo || 1;
 
-	if (p.gridding) return gridCloud(xs, ys, fv, m, minX, maxX, minY, maxY, lo, span, p);
+	// Optional force-as-height overlay: only meaningful for a flat (z-constant) path (the
+	// turning spiral and a single linear pass both have z=0/const per point). A machine_xyz
+	// path already carries real Z, so the overlay is ignored there.
+	const isFlatZ = path.bounds.minZ === path.bounds.maxZ;
+	let zSrc: Float32Array | null = null;
+	if (isFlatZ && p.zSeries && p.zSeries !== 'none') zSrc = (c as any)[p.zSeries] as Float32Array;
 
-	const pos = new Float32Array(m * 2), col = new Float32Array(m * 3);
+	if (p.gridding) return gridCloud(path, fv, lo, span, p, zSrc);
+
+	const pos = new Float32Array(m * 3), col = new Float32Array(m * 3);
+	let zlo = Infinity, zhi = -Infinity;
+	if (zSrc) for (let k = 0; k < m; k++) { const v = zSrc[path.idx[k]]; if (v < zlo) zlo = v; if (v > zhi) zhi = v; }
+	const zspan = (zhi - zlo) || 1;
+	let zv: Float32Array | undefined;
+	if (zSrc) zv = new Float32Array(m);
 	for (let k = 0; k < m; k++) {
-		pos[k * 2] = xs[k]; pos[k * 2 + 1] = ys[k];
+		pos[k * 3] = path.pos[k * 3]; pos[k * 3 + 1] = path.pos[k * 3 + 1];
+		pos[k * 3 + 2] = zSrc ? 0 : path.pos[k * 3 + 2];   // machine_xyz's real Z passes through when there's no overlay
 		const [rr, gg, bb] = p.colormap((fv[k] - lo) / span);
 		col[k * 3] = rr; col[k * 3 + 1] = gg; col[k * 3 + 2] = bb;
+		if (zv && zSrc) zv[k] = (zSrc[path.idx[k]] - zlo) / zspan - 0.5;
 	}
-	// Optional Z series: normalise the chosen axis over the window to a centred -0.5..0.5
-	// displacement. The renderer scales it to world units via the Points object's scale.z,
-	// so changing the exaggeration costs nothing (no rebuild).
-	let zv: Float32Array | undefined;
-	if (zr) {
-		let zlo = Infinity, zhi = -Infinity;
-		for (let k = 0; k < m; k++) { const v = zr[k]; if (v < zlo) zlo = v; if (v > zhi) zhi = v; }
-		const zspan = (zhi - zlo) || 1;
-		zv = new Float32Array(m);
-		for (let k = 0; k < m; k++) zv[k] = (zr[k] - zlo) / zspan - 0.5;
-	}
-	return { pos, col, count: m, minX, maxX, minY, maxY, cmin: lo, cmax: hi, zv };
+	return { pos, col, count: m, bounds: path.bounds, cmin: lo, cmax: hi, zv };
 }
 
-// Bin the scatter into a gridN×gridN grid; emit one point per non-empty cell at its
-// centre, coloured by the mean force there. Tames overplotting into a clean map.
+// Bin the scatter into a gridN x gridN grid on X/Y; emit one point per non-empty cell at its
+// centre, coloured by the mean channel value there, at the MEAN Z of the points in that cell.
+// This is a 2.5-D reduction: two points at the same (x,y) but different z (e.g. a repeated axial
+// pass) collapse into one cell. For a flat path every z is identical so this changes nothing.
 function gridCloud(
-	xs: Float32Array, ys: Float32Array, fv: Float32Array, m: number,
-	minX: number, maxX: number, minY: number, maxY: number,
-	lo: number, span: number, p: CloudParams,
+	path: { pos: Float32Array; idx: Int32Array; count: number; bounds: PathBounds },
+	fv: Float32Array, lo: number, span: number, p: CloudParams, zSrc: Float32Array | null,
 ): Cloud {
+	const { minX, maxX, minY, maxY } = path.bounds;
 	const G = Math.max(8, Math.round(p.gridN) || 400);
 	const wx = (maxX - minX) || 1, wy = (maxY - minY) || 1;
-	const sum = new Float64Array(G * G), cnt = new Uint32Array(G * G);
+	const m = path.count;
+	const sum = new Float64Array(G * G), sumZ = new Float64Array(G * G), cnt = new Uint32Array(G * G);
 	for (let k = 0; k < m; k++) {
-		let gx = Math.floor(((xs[k] - minX) / wx) * (G - 1e-9));
-		let gy = Math.floor(((ys[k] - minY) / wy) * (G - 1e-9));
+		const x = path.pos[k * 3], y = path.pos[k * 3 + 1], z = path.pos[k * 3 + 2];
+		let gx = Math.floor(((x - minX) / wx) * (G - 1e-9));
+		let gy = Math.floor(((y - minY) / wy) * (G - 1e-9));
 		if (gx < 0) gx = 0; else if (gx >= G) gx = G - 1;
 		if (gy < 0) gy = 0; else if (gy >= G) gy = G - 1;
-		const idx = gy * G + gx;
-		sum[idx] += fv[k]; cnt[idx]++;
+		const idx2 = gy * G + gx;
+		sum[idx2] += fv[k]; sumZ[idx2] += z; cnt[idx2]++;
 	}
 	const cx = wx / G, cy = wy / G;
-	const xsg: number[] = [], ysg: number[] = [], cg: number[] = [];
+	const xsg: number[] = [], ysg: number[] = [], zsg: number[] = [], cg: number[] = [];
 	for (let gy = 0; gy < G; gy++) for (let gx = 0; gx < G; gx++) {
-		const idx = gy * G + gx; const n = cnt[idx]; if (!n) continue;
+		const idx2 = gy * G + gx; const n = cnt[idx2]; if (!n) continue;
 		xsg.push(minX + (gx + 0.5) * cx); ysg.push(minY + (gy + 0.5) * cy);
-		cg.push(sum[idx] / n);
+		zsg.push(sumZ[idx2] / n); cg.push(sum[idx2] / n);
 	}
 	const n = cg.length;
-	const pos = new Float32Array(n * 2), col = new Float32Array(n * 3);
+	const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
 	for (let k = 0; k < n; k++) {
-		pos[k * 2] = xsg[k]; pos[k * 2 + 1] = ysg[k];
+		pos[k * 3] = xsg[k]; pos[k * 3 + 1] = ysg[k]; pos[k * 3 + 2] = zSrc ? 0 : zsg[k];
 		const [rr, gg, bb] = p.colormap((cg[k] - lo) / span);
 		col[k * 3] = rr; col[k * 3 + 1] = gg; col[k * 3 + 2] = bb;
 	}
-	return { pos, col, count: n, minX, maxX, minY, maxY, cmin: lo, cmax: lo + span };
+	return { pos, col, count: n, bounds: path.bounds, cmin: lo, cmax: lo + span };
 }
 
 // ---- colormaps (0..1 -> rgb 0..1) ----

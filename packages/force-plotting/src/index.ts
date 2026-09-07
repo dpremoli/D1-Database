@@ -16,8 +16,17 @@ export { default as FrmOctree } from './FrmOctree.vue';
 export { bucketEnvelope, buildSeriesEnvelope, cacheGet, cachePut, decimateCache, parseCache } from './liveCache';
 export type { Cache, EnvSeries } from './liveCache';
 export { COLORMAPS, axisAutoLimits } from './liveCloud';
-export type { Axis } from './liveCloud';
+export type { Axis, CloudChannel } from './liveCloud';
 export type { SpeedMode } from './liveCloud';
+export { buildPath } from './path';
+export type {
+	PathKind, PathParams, PathWindow, PathBounds, PathResult,
+	TurningSpiralParams, LinearFeedParams, MachineXyzParams,
+} from './path';
+export { spindleAngle, toFixedFrame, AngleSourceUnavailableError } from './angle';
+export type { AngleSource, AngleParams, FixedFrame } from './angle';
+export { buildPolar } from './polar';
+export type { PolarRadius, PolarParams, PolarResult } from './polar';
 
 export { chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 export type { FilterChain } from './filterChain';
