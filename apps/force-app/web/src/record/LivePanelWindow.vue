@@ -15,6 +15,7 @@ import LiveFrm from './LiveFrm.vue';
 const route = useRoute();
 const panel = computed(() => String(route.params.panel || 'force'));
 const isFrm = computed(() => panel.value === 'frm');
+const isPolar = computed(() => panel.value === 'polar');
 
 const q = new URLSearchParams(window.location.search);
 const mode = ref<string>(q.get('mode') || 'time');
@@ -26,6 +27,10 @@ const initColormap = ref<string>(q.get('colormap') || 'viridis');
 const initPointSize = ref(Number(q.get('pointSize')) || 2.2);
 const frmAxis = ref<'Fx' | 'Fy' | 'Fz'>((q.get('frmAxis') as 'Fx' | 'Fy' | 'Fz') || 'Fz');
 const initStride = ref(Number(q.get('stride')) || 1);
+// Polar pop-out: mirrors PolarPanel.vue's radius/angle-source selection so the two surfaces stay
+// in sync when opened from the panel (query params carry the panel's current selection).
+const polarRadius = ref<'Fz' | 'Fxy' | 'Mz'>((q.get('radius') as 'Fz' | 'Fxy' | 'Mz') || 'Fz');
+const polarAngleSource = ref<'tacho' | 'force_vector'>((q.get('angle') as 'tacho' | 'force_vector') || 'tacho');
 
 const MODES: { key: string; label: string }[] = [
 	{ key: 'time', label: 'Force' }, { key: 'fft', label: 'FFT' }, { key: 'psd', label: 'Power' },
@@ -34,6 +39,7 @@ const MODES: { key: string; label: string }[] = [
 const MODE_LABEL: Record<string, string> = { time: 'Force Plot', fft: 'FFT', psd: 'Power', spectrogram: 'Spectrogram', waterfall: 'Waterfall' };
 const title = computed(() => {
 	if (isFrm.value) return 'Live FRM Fingerprint';
+	if (isPolar.value) return 'Live Polar Plot';
 	return 'Live ' + (MODE_LABEL[mode.value] || 'Force');
 });
 
@@ -80,6 +86,15 @@ onBeforeUnmount(() => client.disconnect());
 				</div>
 				<select v-model="colormap" class="cm"><option v-for="m in maps" :key="m">{{ m }}</option></select>
 			</template>
+			<template v-else-if="isPolar">
+				<div class="segmode">
+					<button v-for="r in (['Fz', 'Fxy', 'Mz'] as const)" :key="r" class="segbtn" :class="{ on: polarRadius === r }" @click="polarRadius = r">{{ r }}</button>
+				</div>
+				<select v-model="polarAngleSource" class="cm">
+					<option value="tacho">Tacho</option>
+					<option value="force_vector">atan2(Fy,Fx)</option>
+				</select>
+			</template>
 			<template v-else>
 				<div class="segmode">
 					<button v-for="m in MODES" :key="m.key" class="segbtn" :class="{ on: mode === m.key }" @click="mode = m.key">{{ m.label }}</button>
@@ -122,6 +137,7 @@ onBeforeUnmount(() => client.disconnect());
 			</div>
 			<template v-else>
 				<LiveFrm v-if="isFrm" :client="client" :diam="80" :colormap="colormap" :point-size="pointSize" :point-stride="initStride" :axis="frmAxis" />
+				<div v-else-if="isPolar" class="syncing">Polar pop-out shows a finished/replayed cut — open it from the embedded panel once a cut is done.</div>
 				<LiveForcePlot v-else-if="mode === 'time'" :client="client" :channels="channels" />
 				<LiveFft v-else-if="mode === 'fft' || mode === 'psd'" :client="client" :channels="channels" :scale="mode === 'psd' ? 'psd' : 'amp'" />
 				<LiveSpectrogram v-else-if="mode === 'spectrogram'" :client="client" :channels="channels" :window-sec="windowSec" />

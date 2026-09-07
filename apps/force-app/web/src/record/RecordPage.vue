@@ -12,6 +12,7 @@ import RecordingOptions from './panels/RecordingOptions.vue';
 import RecordingActions from './panels/RecordingActions.vue';
 import ForcePanel from './panels/ForcePanel.vue';
 import FrmPanel from './panels/FrmPanel.vue';
+import PolarPanel from './panels/PolarPanel.vue';
 import RpmPanel from './panels/RpmPanel.vue';
 import OverviewPanel from './panels/OverviewPanel.vue';
 import SaveCutDialog from './panels/SaveCutDialog.vue';
@@ -30,7 +31,7 @@ const PANEL_TYPES: Record<string, { title: string; icon: string; single?: boolea
 	force: { title: 'Force Plot', icon: 'show_chart', w: 6, h: 11 },
 	rpm: { title: 'RPM', icon: 'speed', w: 6, h: 7 },
 	frm: { title: 'FRM Map', icon: 'fingerprint', w: 4, h: 19 },
-
+	polar: { title: 'Polar Plot', icon: 'radar', w: 4, h: 16 },
 };
 type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: 'time' | 'fft' | 'psd' | 'spectrogram' | 'waterfall'; channels?: string[] };
 const DEFAULT_LAYOUT: Inst[] = [
@@ -446,6 +447,7 @@ onBeforeUnmount(() => {
 					<ForcePanel v-else-if="item.type === 'force'" :inst="item" />
 					<RpmPanel v-else-if="item.type === 'rpm'" />
 					<FrmPanel v-else-if="item.type === 'frm'" />
+					<PolarPanel v-else-if="item.type === 'polar'" />
 					<template v-if="item.type === 'options'" #footer>
 						<RecordingActions />
 					</template>
