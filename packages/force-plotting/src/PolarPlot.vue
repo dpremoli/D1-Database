@@ -83,12 +83,36 @@ function draw() {
 	if (r && r.count > 0) {
 		const cm = COLORMAPS[props.colormap] || COLORMAPS.viridis;
 		const span = (r.rMax - r.rMin) || 1;
-		for (let k = 0; k < r.count; k++) {
-			const rr = Math.min(radiusPx, (r.r[k] / rMax) * radiusPx);
-			const x = cx + rr * Math.cos(r.phi[k]), y = cy + rr * Math.sin(r.phi[k]);
-			const [cr, cg, cb] = cm((r.r[k] - r.rMin) / span);
-			g.fillStyle = `rgb(${Math.round(cr * 255)},${Math.round(cg * 255)},${Math.round(cb * 255)})`;
-			g.beginPath(); g.arc(x, y, props.pointSize, 0, Math.PI * 2); g.fill();
+		const bins = Math.round(props.params.bins);
+		if (bins > 0) {
+			// Angular binning: mean radius per sector, drawn as one point per bin. buildPolar
+			// always returns the raw per-point series (see polar.ts) — binning for display is
+			// this renderer's job, which is what makes params.bins do something rather than
+			// travel through three layers inert.
+			const sums = new Float64Array(bins), counts = new Uint32Array(bins);
+			for (let k = 0; k < r.count; k++) {
+				let b = Math.floor((r.phi[k] / (2 * Math.PI)) * bins);
+				if (b < 0) b = 0; else if (b >= bins) b = bins - 1;
+				sums[b] += r.r[k]; counts[b]++;
+			}
+			for (let b = 0; b < bins; b++) {
+				if (!counts[b]) continue;
+				const mean = sums[b] / counts[b];
+				const phi = ((b + 0.5) / bins) * 2 * Math.PI;
+				const rr = Math.min(radiusPx, (mean / rMax) * radiusPx);
+				const x = cx + rr * Math.cos(phi), y = cy + rr * Math.sin(phi);
+				const [cr, cg, cb] = cm((mean - r.rMin) / span);
+				g.fillStyle = `rgb(${Math.round(cr * 255)},${Math.round(cg * 255)},${Math.round(cb * 255)})`;
+				g.beginPath(); g.arc(x, y, Math.max(props.pointSize, 3), 0, Math.PI * 2); g.fill();
+			}
+		} else {
+			for (let k = 0; k < r.count; k++) {
+				const rr = Math.min(radiusPx, (r.r[k] / rMax) * radiusPx);
+				const x = cx + rr * Math.cos(r.phi[k]), y = cy + rr * Math.sin(r.phi[k]);
+				const [cr, cg, cb] = cm((r.r[k] - r.rMin) / span);
+				g.fillStyle = `rgb(${Math.round(cr * 255)},${Math.round(cg * 255)},${Math.round(cb * 255)})`;
+				g.beginPath(); g.arc(x, y, props.pointSize, 0, Math.PI * 2); g.fill();
+			}
 		}
 	}
 

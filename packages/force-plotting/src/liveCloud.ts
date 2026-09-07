@@ -73,9 +73,13 @@ export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 	if (!(hi > lo)) { lo = sorted[0]; hi = sorted[sorted.length - 1]; if (!(hi > lo)) hi = lo + 1; }
 	const span = hi - lo || 1;
 
-	// Optional force-as-height overlay: only meaningful for a flat (z-constant) path (the
-	// turning spiral and a single linear pass both have z=0/const per point). A machine_xyz
-	// path already carries real Z, so the overlay is ignored there.
+	// Optional force-as-height overlay. Gated on the PATH'S OWN Z actually being flat
+	// (bounds.minZ === maxZ), not on path.kind — a turning_spiral/linear_feed path is always
+	// flat, but so is a machine_xyz path over a single constant-depth pass (today's real milling
+	// captures, once that path model has a data source). In that case there is no genuine 3D
+	// shape to lose, so the overlay is exactly as valid as for the other two path kinds. A
+	// machine_xyz path with real depth variation has minZ !== maxZ and correctly keeps its own
+	// Z untouched below.
 	const isFlatZ = path.bounds.minZ === path.bounds.maxZ;
 	let zSrc: Float32Array | null = null;
 	if (isFlatZ && p.zSeries && p.zSeries !== 'none') zSrc = (c as any)[p.zSeries] as Float32Array;

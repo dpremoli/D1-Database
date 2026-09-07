@@ -385,8 +385,8 @@ a later question.
 | `FrmCloud.vue:310` | Deletes the stride-2 → stride-3 repack loop; hands `cloud.pos` straight to a `BufferAttribute(pos, 3)`. This is a **simplification**, not extra work. |
 | `FrmCloud.vue` view/fit maths | Reads `cloud.bounds` instead of `minX/maxX/minY/maxY`. Camera fit stays 2-D (X/Y) — orbiting in true 3-D is a follow-up, not this pass. |
 | `FrmCloud.vue` `zScale` handling | Applies only when `cloud.zv` is present; a `machine_xyz` cloud has real Z and the exaggeration control hides. |
-| `frmExport.ts` | Reads `bounds`; unchanged otherwise (it composites the canvas, not the buffer). |
-| `record/playback/engine.ts` | Passes `channel`/`path` instead of `axis`; the playback path stays on `turning_spiral`. |
+| `frmExport.ts` | **Implemented as: no change.** It builds its own `{xmin,xmax,ymin,ymax}` from `fitCx`/`fitSpan`, never touching `Cloud.bounds` directly — confirmed during implementation. |
+| `record/playback/engine.ts` | **Implemented as: no change.** It only calls `axisAutoLimits(cache, axis)` with an `Axis`-typed value; `Axis ⊂ CloudChannel`, so it type-checks unchanged — confirmed via `npm run typecheck -w force-app-web`. |
 | `FrmOctree.vue` | **No change** — it renders host-baked octrees, not `Cloud`. |
 
 **`FrmCloud.vue` keeps its flat prop surface.** It currently takes `feed`, `diam`, `innerDiam`,

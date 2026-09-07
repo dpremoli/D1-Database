@@ -52,7 +52,7 @@ additive v2 trailer (Mz/X/Y/Z), the backend channel model gains a rotating-dyno 
 | `packages/force-plotting/src/liveCloud.ts` (modify) | `buildCloud` refactored to positions×colours; `CloudChannel`; `gridCloud` keeps Z. |
 | `packages/force-plotting/src/liveCloud.test.ts` (modify, additive) | Helpers adapted to new `CloudParams`; existing expectations preserved; new stride-3/grid-Z cases added. |
 | `packages/force-plotting/src/FrmCloud.vue` (modify) | Consumes stride-3 `pos`/`bounds`; new optional `path`/`channel` props; `axis` alias kept. |
-| `packages/force-plotting/src/frmExport.ts` (modify) | Reads `bounds` object instead of four min/max fields. |
+| `packages/force-plotting/src/frmExport.ts` | **No change** — confirmed during implementation (Task 4 Step 6): it builds its own `{xmin,xmax,ymin,ymax}` object from `fitCx`/`fitSpan` in `FrmCloud.vue`, never touches `Cloud.bounds` directly. |
 | `packages/force-plotting/src/liveCache.ts` (modify) | D1LC v2 trailer parsing; `version` field; `decimateCache` extended. |
 | `packages/force-plotting/src/liveCache.test.ts` (modify, additive) | v1 exactness test kept; v2 trailer tests added. |
 | `packages/force-plotting/src/PolarPlot.vue` (new) | Canvas-2D polar renderer. |
