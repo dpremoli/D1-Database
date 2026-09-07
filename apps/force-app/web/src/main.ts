@@ -1,7 +1,9 @@
 import { createApp } from 'vue';
-import { loadRuntimeConfig } from './config';
+import { setForceHost } from '@d1/force-plotting';
+import { loadRuntimeConfig, getConfig } from './config';
 import { router } from './router';
-import { setUnauthorizedHandler } from './directusClient';
+import { api, authHeaders, setUnauthorizedHandler } from './directusClient';
+import { authStore } from './authStore';
 import { installGlobalErrorReporting, reportClientError } from './clientLog';
 import App from './App.vue';
 import VIcon from './shims/VIcon.vue';
@@ -12,6 +14,44 @@ import './styles.css';
 async function bootstrap() {
 	// Honour an optional runtime /config.json before anything reads the service URLs.
 	await loadRuntimeConfig();
+
+	// Install the shared plotting package's host ONCE, here, at app start -- not only from
+	// StandaloneForceDashboard.vue/StandaloneDiagnosticsWorkbench.vue/DiagPanelWindow.vue (the
+	// three places that used to be the only callers). Every FrmCloud consumer (FrmPanel.vue on
+	// /record, LocalCaptureView.vue on /plot/local/:id) calls useForceHost() unconditionally in
+	// its own setup() -- with no host installed yet, that threw "no host installed" the instant a
+	// recording finished and FrmPanel swapped its v-if from LiveFrm to FrmCloud, UNLESS the user
+	// had already visited /plot earlier in the session (whichever page mounted first happened to
+	// install the module-singleton host for the rest of the session). Pre-existing bug, found
+	// while visually verifying the buildCloud/path-model refactor
+	// (docs/superpowers/specs/2026-09-07-milling-path-models-and-polar-design.md) -- fixed here
+	// rather than left as a note, since it sat directly in the rendering path that work touches.
+	// Same shape as StandaloneForceDashboard.vue's call; installing it twice (there too) is
+	// harmless -- setForceHost just overwrites with equivalent values.
+	setForceHost({
+		api,
+		currentUser: () => authStore.currentUser.value,
+		get filterUrl() { return getConfig().filterUrl; },
+		get diagUrl() { return getConfig().diagUrl; },
+		get octreeUrl() { return getConfig().octreeUrl; },
+		authHeaders,
+		refreshAuth: () => authStore.refresh(),
+		fetchCredentials: 'omit',
+		openRecord: (collection, id) => {
+			window.open(`${getConfig().directusUrl}/admin/content/${collection}/${id}`, '_blank', 'noopener');
+		},
+		downloadAsset: async (fileId) => {
+			try {
+				const res = await api.get(`/assets/${fileId}`, { params: { download: '' }, responseType: 'blob' });
+				const url = URL.createObjectURL(res.data as Blob);
+				const a = document.createElement('a');
+				a.href = url; a.download = String(fileId);
+				document.body.appendChild(a); a.click(); a.remove();
+				setTimeout(() => URL.revokeObjectURL(url), 10_000);
+			} catch { /* best-effort */ }
+		},
+		dense: true,
+	});
 
 	const app = createApp(App);
 
