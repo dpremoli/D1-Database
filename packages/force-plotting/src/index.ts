@@ -27,6 +27,7 @@ export { spindleAngle, toFixedFrame, AngleSourceUnavailableError } from './angle
 export type { AngleSource, AngleParams, FixedFrame } from './angle';
 export { buildPolar } from './polar';
 export type { PolarRadius, PolarParams, PolarResult } from './polar';
+export { default as PolarPlot } from './PolarPlot.vue';
 
 export { chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 export type { FilterChain } from './filterChain';
