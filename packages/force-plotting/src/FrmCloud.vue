@@ -471,8 +471,12 @@ onBeforeUnmount(() => {
 	renderer?.dispose();
 });
 
-// Geometry/colour props → rebuild immediately. pointSize is view-only (a uniform).
-watch(() => [effChannel.value, effPath.value, props.stride, props.cropStartSec, props.cropEndSec,
+// Geometry/colour props → rebuild immediately. pointSize is view-only (a uniform). Crop
+// (cropStartSec/cropEndSec) is DELIBERATELY excluded here — it has its own throttled watcher
+// below (onCropChange), since it's dragged continuously and an unthrottled rebuild on every
+// drag frame is the O(N) recompute + percentile sort + GPU re-upload lag this file's other
+// comments describe. Including it in this list too would silently bypass that throttle.
+watch(() => [effChannel.value, effPath.value, props.stride,
 	props.gridding, props.gridN, props.colormap, props.cmin, props.cmax, props.zSeries], scheduleRebuild, { deep: true });
 watch(() => props.pointSize, scheduleDraw);
 

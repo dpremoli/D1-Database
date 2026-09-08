@@ -60,7 +60,11 @@ export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 	const path = buildPath(c, p.path, p.window);
 	if (!path) return null;
 
-	const channelArr = (c as any)[p.channel] as Float32Array;
+	// Guard the channel lookup the same way axisAutoLimits above does: a CloudChannel value
+	// (e.g. 'Mz') that the cache simply doesn't carry (a v1/no-trailer file) must produce "no
+	// data", never an index-into-undefined crash.
+	const channelArr = (c as any)[p.channel] as Float32Array | undefined;
+	if (!channelArr || channelArr.length === 0) return null;
 	const m = path.count;
 	const fv = new Float32Array(m);
 	for (let k = 0; k < m; k++) fv[k] = channelArr[path.idx[k]];
@@ -82,14 +86,18 @@ export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 	// Z untouched below.
 	const isFlatZ = path.bounds.minZ === path.bounds.maxZ;
 	let zSrc: Float32Array | null = null;
-	if (isFlatZ && p.zSeries && p.zSeries !== 'none') zSrc = (c as any)[p.zSeries] as Float32Array;
+	if (isFlatZ && p.zSeries && p.zSeries !== 'none') zSrc = ((c as any)[p.zSeries] as Float32Array | undefined) ?? null;
 
-	if (p.gridding) return gridCloud(path, fv, lo, span, p, zSrc);
-
-	const pos = new Float32Array(m * 3), col = new Float32Array(m * 3);
+	// zlo/zhi computed ONCE, over the whole (ungridded) window, so the gridded and raw-scatter
+	// renders of the same window normalise `zv` identically — computed here, before the gridding
+	// branch, specifically so gridCloud can share it rather than losing the overlay entirely.
 	let zlo = Infinity, zhi = -Infinity;
 	if (zSrc) for (let k = 0; k < m; k++) { const v = zSrc[path.idx[k]]; if (v < zlo) zlo = v; if (v > zhi) zhi = v; }
 	const zspan = (zhi - zlo) || 1;
+
+	if (p.gridding) return gridCloud(path, fv, lo, span, p, zSrc, zlo, zspan);
+
+	const pos = new Float32Array(m * 3), col = new Float32Array(m * 3);
 	let zv: Float32Array | undefined;
 	if (zSrc) zv = new Float32Array(m);
 	for (let k = 0; k < m; k++) {
@@ -106,9 +114,13 @@ export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 // centre, coloured by the mean channel value there, at the MEAN Z of the points in that cell.
 // This is a 2.5-D reduction: two points at the same (x,y) but different z (e.g. a repeated axial
 // pass) collapse into one cell. For a flat path every z is identical so this changes nothing.
+// Also emits `zv` (mean force-as-height per cell, normalised against the SAME zlo/zspan the
+// ungridded path uses) whenever an overlay is requested — gridding must not silently drop the
+// 3D overlay the way it used to before this seam existed.
 function gridCloud(
 	path: { pos: Float32Array; idx: Int32Array; count: number; bounds: PathBounds },
 	fv: Float32Array, lo: number, span: number, p: CloudParams, zSrc: Float32Array | null,
+	zlo: number, zspan: number,
 ): Cloud {
 	const { minX, maxX, minY, maxY } = path.bounds;
 	const G = Math.max(8, Math.round(p.gridN) || 400);
@@ -116,7 +128,11 @@ function gridCloud(
 	const m = path.count;
 	const sum = new Float64Array(G * G), sumZ = new Float64Array(G * G), cnt = new Uint32Array(G * G);
 	for (let k = 0; k < m; k++) {
-		const x = path.pos[k * 3], y = path.pos[k * 3 + 1], z = path.pos[k * 3 + 2];
+		const x = path.pos[k * 3], y = path.pos[k * 3 + 1];
+		// Bin the OVERLAY series (zSrc) when one is requested, else the path's own Z — matching
+		// the ungridded path's convention that zSrc, not real Z, drives height once an overlay
+		// is active.
+		const z = zSrc ? zSrc[path.idx[k]] : path.pos[k * 3 + 2];
 		let gx = Math.floor(((x - minX) / wx) * (G - 1e-9));
 		let gy = Math.floor(((y - minY) / wy) * (G - 1e-9));
 		if (gx < 0) gx = 0; else if (gx >= G) gx = G - 1;
@@ -133,12 +149,16 @@ function gridCloud(
 	}
 	const n = cg.length;
 	const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+	let zv: Float32Array | undefined;
+	if (zSrc) zv = new Float32Array(n);
 	for (let k = 0; k < n; k++) {
-		pos[k * 3] = xsg[k]; pos[k * 3 + 1] = ysg[k]; pos[k * 3 + 2] = zSrc ? 0 : zsg[k];
+		pos[k * 3] = xsg[k]; pos[k * 3 + 1] = ysg[k];
+		pos[k * 3 + 2] = zSrc ? 0 : zsg[k];   // real (unbinned-overlay) Z; zero when the overlay drives height instead
 		const [rr, gg, bb] = p.colormap((cg[k] - lo) / span);
 		col[k * 3] = rr; col[k * 3 + 1] = gg; col[k * 3 + 2] = bb;
+		if (zv) zv[k] = (zsg[k] - zlo) / zspan - 0.5;
 	}
-	return { pos, col, count: n, bounds: path.bounds, cmin: lo, cmax: lo + span };
+	return { pos, col, count: n, bounds: path.bounds, cmin: lo, cmax: lo + span, zv };
 }
 
 // ---- colormaps (0..1 -> rgb 0..1) ----
