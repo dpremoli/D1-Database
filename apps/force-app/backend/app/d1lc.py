@@ -50,7 +50,10 @@ def write_d1lc(
         if extras:
             f.write(struct.pack("<I", len(extras)))
             for name, arr in extras.items():
-                name_bytes = name.encode("ascii")[:8].ljust(8, b"\x00")
+                # The trailer's name field is a fixed 8-byte ASCII slot. errors="replace" keeps a
+                # stray non-ASCII key from crashing the whole writer; the reader ignores any name
+                # it doesn't recognise anyway (KNOWN_TRAILER_NAMES).
+                name_bytes = name.encode("ascii", errors="replace")[:8].ljust(8, b"\x00")
                 f.write(name_bytes)
                 f.write(np.ascontiguousarray(arr, dtype="<f4").tobytes())
 
