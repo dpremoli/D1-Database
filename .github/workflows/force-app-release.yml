@@ -126,13 +126,11 @@ jobs:
           path: apps/force-app/desktop/test-results
           retention-days: 7
 
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: force-app-installer
-          path: |
-            apps/force-app/desktop/release/*.exe
-            apps/force-app/desktop/release/latest.yml
+      # No workflow-run artifact for the installer: the "Create GitHub Release" step below
+      # already attaches the identical *.exe + latest.yml as Release assets (which don't count
+      # against the Actions storage quota), and that is what scripts/publish-release.ps1 and
+      # electron-updater both read. A second copy as a 90-day workflow artifact only burned
+      # ~150 MB of quota per release — it filled the account's Actions storage in ~15 builds.
 
       # scripts/publish-release.ps1 pulls with `gh release download <tag>`, which reads Release
       # assets — a workflow-run artifact is not the same thing and is invisible to it. Creating a
