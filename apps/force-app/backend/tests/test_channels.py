@@ -7,9 +7,11 @@ import pytest
 
 from app.channels import (
     DYNO_ROTATING,
+    DYNO_STATIONARY,
     ROTATING_ORDER,
     autoassign,
     dyno_gains,
+    infer_dyno_kind,
     to_record_channels,
 )
 
@@ -68,3 +70,20 @@ def test_dyno_gains_rotating_uses_nm_per_v_for_mz():
 
 def test_rotating_order_is_fx_fy_fz_mz():
     assert ROTATING_ORDER == ["Fx", "Fy", "Fz", "Mz"]
+
+
+def test_infer_dyno_kind_detects_rotating_from_mz_channel():
+    stationary = autoassign(_devices_with_n_ai(10))
+    rotating = autoassign(_devices_with_n_ai(10), kind=DYNO_ROTATING)
+    assert infer_dyno_kind(stationary) == DYNO_STATIONARY
+    assert infer_dyno_kind(rotating) == DYNO_ROTATING
+
+
+def test_infer_dyno_kind_defaults_to_stationary_for_empty_or_malformed():
+    assert infer_dyno_kind([]) == DYNO_STATIONARY
+    assert infer_dyno_kind([{"name": "Fx1"}, {"physical": "Dev1/ai0"}]) == DYNO_STATIONARY
+
+
+def test_infer_dyno_kind_detects_rotating_from_role_even_if_name_differs():
+    # A hand-edited config could name the torque channel anything but still role it "Mz".
+    assert infer_dyno_kind([{"name": "Torque", "role": "Mz"}]) == DYNO_ROTATING

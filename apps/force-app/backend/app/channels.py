@@ -114,6 +114,21 @@ def autoassign(devices: dict, kind: str = DYNO_STATIONARY) -> list[dict]:
     return channels
 
 
+def infer_dyno_kind(channels: list[dict]) -> str:
+    """Detect which preset a saved channel list belongs to. The persisted config
+    (NIDAQ_CHANNELS_PATH) has no separate `kind` field -- PUT /nidaq/channels accepts a bare
+    channel list -- so `record_start` has to recover it from the channels themselves before it
+    can pass the right `kind` to `to_record_channels`/`dyno_gains`. A rotating-dyno config is the
+    only one with an "Mz" channel (role or name), so that alone is decisive; everything else
+    (including an empty or malformed list) is treated as the stationary default, matching every
+    function in this module's own default.
+    """
+    for c in channels:
+        if c.get("name") == "Mz" or c.get("role") == "Mz":
+            return DYNO_ROTATING
+    return DYNO_STATIONARY
+
+
 def to_record_channels(channels: list[dict], kind: str = DYNO_STATIONARY) -> list[str]:
     """Ordered physical list for the recorder's fixed [Fx1..Fz4, Tacho] layout. Unbound slots keep
     the placeholder default so a partial config still starts.

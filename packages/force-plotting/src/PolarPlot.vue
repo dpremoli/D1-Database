@@ -3,7 +3,7 @@
 // striding, a polar view is thousands of points, not millions, and canvas makes the axis
 // furniture (radial grid, spoke labels, colorbar) trivial. See
 // docs/superpowers/specs/2026-09-07-milling-path-models-and-polar-design.md #6.
-import { nextTick, onMounted, ref, watch } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Cache } from './liveCache';
 import { buildPolar, type PolarParams, type PolarResult } from './polar';
 import { COLORMAPS } from './liveCloud';
@@ -126,7 +126,12 @@ function draw() {
 }
 
 watch(() => [props.cache, props.params, props.rMax, props.colormap, props.flutes], rebuild, { deep: true });
-onMounted(() => { nextTick(rebuild); window.addEventListener('resize', draw); });
+// PolarPanel.vue mounts/unmounts this behind v-if="cache" on every recording-finish / replay
+// cycle, so the resize listener MUST be torn down with the component or it accumulates one dead
+// handler (holding a detached canvas) per cycle.
+const onResize = () => draw();
+onMounted(() => { nextTick(rebuild); window.addEventListener('resize', onResize); });
+onBeforeUnmount(() => { window.removeEventListener('resize', onResize); });
 </script>
 
 <template>

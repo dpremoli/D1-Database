@@ -1328,10 +1328,21 @@ async def record_start(cfg: RecordConfig) -> dict:
         # The NI-DAQ page's channel model is the source of truth for physical channels + per-channel
         # gains. A request may still override with an explicit non-default channel list.
         cc = _channel_config()
+        # The persisted config has no separate "kind" field (PUT /nidaq/channels saves a bare
+        # channel list), so the rotating-vs-stationary preset has to be recovered from the
+        # channels themselves. Without this, a saved rotating-dyno config (Fx/Fy/Fz/Mz, no
+        # numbered corners) silently matched nothing in to_record_channels'/dyno_gains' stationary
+        # FORCE_ORDER lookup and fell through to DEFAULT_NIDAQ_CHANNELS placeholders with no gains
+        # and no error -- exactly the silent-garbage-capture failure mode the DYNO_ROTATING
+        # refusal in to_record_channels was built to prevent, just never reached.
+        dyno_kind = chan.infer_dyno_kind(cc)
         if not cfg.nidaq_channels or cfg.nidaq_channels == list(DEFAULT_NIDAQ_CHANNELS):
-            cfg.nidaq_channels = chan.to_record_channels(cc)
+            try:
+                cfg.nidaq_channels = chan.to_record_channels(cc, kind=dyno_kind)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
         if not cfg.dyno_gains:
-            g = chan.dyno_gains(cc)
+            g = chan.dyno_gains(cc, kind=dyno_kind)
             if g:
                 cfg.dyno_gains = g
         try:
