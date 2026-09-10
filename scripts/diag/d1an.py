@@ -28,8 +28,12 @@ _HEADER = "<IIII"
 HEADER_SIZE = struct.calcsize(_HEADER)
 
 
-def write_d1an(path: str, columns: dict[str, np.ndarray]) -> None:
-    """Write named float32 columns. All columns must share one length."""
+def d1an_bytes(columns: dict[str, np.ndarray]) -> bytes:
+    """Serialise named float32 columns (all sharing one length) to a D1AN byte string.
+
+    The in-memory form: /viewport builds a small result on every pan/zoom settle and needs
+    bytes for the HTTP body, not a file. write_d1an is this plus one open().write().
+    """
     if not columns:
         raise ValueError("no columns to write")
     lengths = {int(np.asarray(v).size) for v in columns.values()}
@@ -41,12 +45,16 @@ def write_d1an(path: str, columns: dict[str, np.ndarray]) -> None:
     for name in columns:
         if len(name.encode("ascii")) > NAME_BYTES:
             raise ValueError(f"column name {name!r} exceeds {NAME_BYTES} bytes")
+    parts = [struct.pack(_HEADER, MAGIC, VERSION, n, len(columns))]
+    parts += [name.encode("ascii").ljust(NAME_BYTES, b"\x00") for name in columns]
+    parts += [np.ascontiguousarray(arr, dtype="<f4").tobytes() for arr in columns.values()]
+    return b"".join(parts)
+
+
+def write_d1an(path: str, columns: dict[str, np.ndarray]) -> None:
+    """Write named float32 columns. All columns must share one length."""
     with open(path, "wb") as f:
-        f.write(struct.pack(_HEADER, MAGIC, VERSION, n, len(columns)))
-        for name in columns:
-            f.write(name.encode("ascii").ljust(NAME_BYTES, b"\x00"))
-        for arr in columns.values():
-            f.write(np.ascontiguousarray(arr, dtype="<f4").tobytes())
+        f.write(d1an_bytes(columns))
 
 
 def read_d1an(path: str) -> dict[str, np.ndarray]:

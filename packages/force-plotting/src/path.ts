@@ -2,7 +2,7 @@
 // Extracted so the geometry that used to be hardwired into buildCloud() (a turning
 // spiral) is one of three interchangeable models. See
 // docs/superpowers/specs/2026-09-07-milling-path-models-and-polar-design.md §1.
-import type { Cache } from './liveCache';
+import { type Cache, idxOfTime } from './liveCache';
 
 export type PathKind = 'turning_spiral' | 'linear_feed' | 'machine_xyz';
 export type SpeedMode = 'measured' | 'rpm' | 'vc';
@@ -55,14 +55,6 @@ export interface PathResult {
 	idx: Int32Array;     // cache index of each emitted point
 	count: number;
 	bounds: PathBounds;
-}
-
-// Same binary search as liveCloud.ts's idxOfTime: first index with t[i] >= sec.
-function idxOfTime(t: Float32Array, sec: number): number {
-	if (t.length === 0) return -1;
-	let lo = 0, hi = t.length - 1, ans = t.length - 1;
-	while (lo <= hi) { const m = (lo + hi) >> 1; if (t[m] >= sec) { ans = m; hi = m - 1; } else lo = m + 1; }
-	return ans;
 }
 
 /**

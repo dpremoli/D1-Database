@@ -292,15 +292,24 @@ def base_columns_all_channels(recipe: dict, cols: Columns) -> Columns:
         recipe, cols, stop_after=frame_idx,
         emit=("revs", "t_raw", "x_raw", "y_raw", "fc", "ff", "fp"),
     )
-    revs = pre["revs"]
+    # The first angular_resample validates `revs` (monotonicity, span) and builds the grid.
+    # The other five signals resample onto that SAME grid against the SAME revs, so re-running
+    # angular_resample would redo the O(N) monotonic check and rebuild the identical grid five
+    # more times -- on a multi-million-sample cut that is real wasted CPU on every bake. Do
+    # them as a direct np.interp with a cheap shape guard instead.
+    revs = np.asarray(pre["revs"], dtype=np.float64)
     rev_grid, t = angular_resample(revs, pre["t_raw"], spr)
-    _, x = angular_resample(revs, pre["x_raw"], spr)
-    _, y = angular_resample(revs, pre["y_raw"], spr)
+
+    def _resample(name: str) -> np.ndarray:
+        sig = np.asarray(pre[name], dtype=np.float64)
+        if sig.shape != revs.shape:
+            raise ValueError(f"base column {name!r} shape {sig.shape} != revs {revs.shape}")
+        return np.interp(rev_grid, revs, sig)
+
     out: Columns = {
         "t": t.astype(np.float32), "rev": rev_grid.astype(np.float32),
-        "x": x.astype(np.float32), "y": y.astype(np.float32),
+        "x": _resample("x_raw").astype(np.float32), "y": _resample("y_raw").astype(np.float32),
     }
     for ch in _FRAME_CHANNELS:
-        _, sig = angular_resample(revs, pre[ch], spr)
-        out[f"sig_{ch}"] = sig.astype(np.float32)
+        out[f"sig_{ch}"] = _resample(ch).astype(np.float32)
     return out

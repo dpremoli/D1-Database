@@ -22,7 +22,6 @@ import json
 import os
 import re
 import sys
-import tempfile
 import time
 from collections import OrderedDict
 
@@ -42,7 +41,7 @@ for _p in (
     if os.path.isdir(_abs) and _abs not in sys.path:
         sys.path.insert(0, _abs)
 
-from diag.d1an import read_d1an, write_d1an  # noqa: E402
+from diag.d1an import d1an_bytes, read_d1an  # noqa: E402
 from diag.layers import rasterize_polygons, validate_geometry  # noqa: E402
 from diag.recipe import recipe_hash  # noqa: E402
 from diag.registry import STEPS, resolve_inputs  # noqa: E402
@@ -328,14 +327,7 @@ async def preview(req: Request):
     except (KeyError, ValueError) as e:
         raise HTTPException(422, f"recipe failed: {e}") from e
 
-    with tempfile.NamedTemporaryFile(suffix=".d1an", delete=False) as f:
-        tmp = f.name
-    try:
-        write_d1an(tmp, cols)
-        with open(tmp, "rb") as fh:
-            out = fh.read()
-    finally:
-        os.unlink(tmp)
+    out = d1an_bytes(cols)
 
     _result_lru[key] = out
     while len(_result_lru) > RESULT_LRU_CAP:
@@ -513,18 +505,11 @@ async def viewport(req: Request):
 
     cols_header = ",".join(cols_out)
 
-    with tempfile.NamedTemporaryFile(suffix=".d1an", delete=False) as f:
-        tmp = f.name
-    try:
-        write_d1an(tmp, {
-            "x": xc.astype(np.float32),
-            "y": yc.astype(np.float32),
-            **d1an_cols,
-        })
-        with open(tmp, "rb") as fh:
-            out = fh.read()
-    finally:
-        os.unlink(tmp)
+    out = d1an_bytes({
+        "x": xc.astype(np.float32),
+        "y": yc.astype(np.float32),
+        **d1an_cols,
+    })
 
     _viewport_lru[key] = (out, int(xc.size), cols_header)
     while len(_viewport_lru) > VIEWPORT_LRU_CAP:

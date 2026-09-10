@@ -6,7 +6,7 @@
 //             extremes (sustained rail contact = likely over-range / clipping).
 // The dyno chain is 12-bit at source, so effective bits ≈ 12 means the full ADC range
 // was used; much lower means under-ranged (poor resolution utilisation).
-import type { Cache } from './liveCache';
+import { type Cache, idxOfTime } from './liveCache';
 
 export interface AxisStats {
 	n: number;                       // samples in the crop window
@@ -22,13 +22,6 @@ export interface SignalStats {
 	windowSec: [number, number];     // the crop window analysed
 	axes: Record<'Fx' | 'Fy' | 'Fz', AxisStats>;
 	rpm: { mean: number; std: number; min: number; max: number };
-}
-
-// first index with t[i] >= sec (binary search)
-function idxOfTime(t: Float32Array, sec: number): number {
-	let lo = 0, hi = t.length - 1, ans = t.length - 1;
-	while (lo <= hi) { const m = (lo + hi) >> 1; if (t[m] >= sec) { ans = m; hi = m - 1; } else lo = m + 1; }
-	return ans;
 }
 
 // Noise-floor estimate via robust first differences: sigma ≈ 1.4826·median(|x[i+1]−x[i]|)/√2

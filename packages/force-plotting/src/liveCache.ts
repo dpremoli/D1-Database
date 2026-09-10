@@ -16,6 +16,17 @@ export interface Cache {
 	version?: number;
 }
 
+// First index with t[i] >= sec (binary search over a sorted time axis). Returns t.length-1
+// for a `sec` past the end (callers that need a distinct "nothing here" break on t[i] > end),
+// and -1 for an empty array. The single copy: path.ts, polar.ts and signalStats.ts all used
+// to carry their own byte-identical version.
+export function idxOfTime(t: Float32Array, sec: number): number {
+	if (t.length === 0) return -1;
+	let lo = 0, hi = t.length - 1, ans = t.length - 1;
+	while (lo <= hi) { const m = (lo + hi) >> 1; if (t[m] >= sec) { ans = m; hi = m - 1; } else lo = m + 1; }
+	return ans;
+}
+
 const MAGIC = 0x44314c43; // 'D1LC'
 const KNOWN_TRAILER_NAMES = ['Mz', 'X', 'Y', 'Z'] as const;
 

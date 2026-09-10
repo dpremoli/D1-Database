@@ -464,20 +464,22 @@ function syncState(): DiagSyncMsg[] {
 }
 
 // The recipe publishes on every keystroke; coalesce so a pop-out re-renders at a rate it can
-// actually draw. `hello` bypasses this via flush().
-const publishState = debouncePublish<DiagSyncMsg[]>((msgs) => {
-	for (const m of msgs) sync?.post(m);
+// actually draw. `hello` bypasses this via flush(). syncState() (two full deep clones of the
+// recipe + layers) runs INSIDE the debounced callback, not at every push -- a 20-vertex
+// polygon drag fired 20 clones a second, all but the last discarded, before this.
+const publishState = debouncePublish<void>(() => {
+	for (const m of syncState()) sync?.post(m);
 }, 150);
 
 onMounted(() => {
 	sync = openDiagSync(props.analysisId, (msg) => {
-		if (msg.t === 'hello') { publishState.push(syncState()); publishState.flush(); }
+		if (msg.t === 'hello') { publishState.push(); publishState.flush(); }
 	});
 });
 
 watch(
 	[recipe, layers, selection],
-	() => publishState.push(syncState()),
+	() => publishState.push(),
 	{ deep: true },
 );
 
@@ -486,7 +488,7 @@ watch(() => props.analysisId, (id) => {
 	publishState.cancel();
 	sync?.close();
 	sync = openDiagSync(id, (msg) => {
-		if (msg.t === 'hello') { publishState.push(syncState()); publishState.flush(); }
+		if (msg.t === 'hello') { publishState.push(); publishState.flush(); }
 	});
 });
 
