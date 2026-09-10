@@ -71,6 +71,44 @@ def test_a_point_coincident_with_a_centroid_takes_that_centroid_label_exactly():
     assert np.isfinite(gl).all()
 
 
+def test_a_point_coincident_with_two_differently_labelled_centroids_takes_the_nearest_returned():
+    # grid_reduce can round two nearby clusters' centroids to the same coords with different
+    # labels. Splitting the vote evenly between them would let argmax break the tie on label
+    # id (array order), not the data. The point must take ONE definite label (the first the
+    # kNN query returns), and its glosh comes from that same centroid, not a blend.
+    xr = np.array([0.0, 0.0, 5.0])
+    yr = np.array([0.0, 0.0, 0.0])
+    labels = np.array([3.0, 8.0, 1.0])
+    glosh = np.array([0.1, 0.9, 0.0])
+
+    out, gl = assign_by_neighbours(
+        np.array([0.0]), np.array([0.0]), xr, yr, labels, glosh, k=3
+    )
+    assert out[0] in (3.0, 8.0)          # a real coincident label, not label 1
+    assert gl[0] in (pytest.approx(0.1), pytest.approx(0.9))  # that centroid's glosh, not ~0.5
+    assert np.isfinite(gl).all()
+
+
+def test_many_labels_do_not_allocate_a_full_scores_matrix():
+    # Regression for the /viewport MemoryError: the assignment used to build an
+    # (n_points, n_labels) float64 matrix. With many labels and many points that is gigabytes.
+    # This exercises a wide label set over a non-trivial point count and just checks it
+    # completes with a sane result -- the streaming argmax keeps peak memory O(n_points).
+    rng = np.random.default_rng(3)
+    n_labels = 300
+    xr = rng.uniform(-10, 10, n_labels)
+    yr = rng.uniform(-10, 10, n_labels)
+    labels = np.arange(n_labels, dtype=np.float64)
+    glosh = rng.uniform(0, 1, n_labels)
+
+    x = rng.uniform(-10, 10, 50_000)
+    y = rng.uniform(-10, 10, 50_000)
+    out, gl = assign_by_neighbours(x, y, xr, yr, labels, glosh, k=4)
+    assert out.shape == x.shape
+    assert set(np.unique(out)).issubset(set(labels))
+    assert np.isfinite(gl).all()
+
+
 def test_k_larger_than_the_centroid_count_degrades_instead_of_raising():
     xr = np.array([0.0, 1.0])
     yr = np.array([0.0, 0.0])

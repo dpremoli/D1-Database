@@ -72,6 +72,14 @@ def grid_interpolate(
     resolution_mm = max(float(resolution_mm), 1e-6)
     xlo, xhi = float(xf.min()), float(xf.max())
     ylo, yhi = float(yf.min()), float(yf.max())
+    # A degenerate axis (every finite sample shares one x -- or one y -- e.g. a straight-line
+    # cut or a razor-thin radial mask) makes np.linspace(lo, lo, n) a duplicate-valued axis,
+    # which RegularGridInterpolator rejects ("must be strictly ascending"). Give it one grid
+    # pitch of extent: still a valid ascending axis, and every real sample bins to column 0.
+    if xhi <= xlo:
+        xhi = xlo + resolution_mm
+    if yhi <= ylo:
+        yhi = ylo + resolution_mm
     nx = max(2, int(np.ceil((xhi - xlo) / resolution_mm)) + 1)
     ny = max(2, int(np.ceil((yhi - ylo) / resolution_mm)) + 1)
     gx = np.linspace(xlo, xhi, nx)

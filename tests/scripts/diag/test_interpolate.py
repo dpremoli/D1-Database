@@ -128,3 +128,21 @@ def test_resolution_mm_coarsening_averages_out_noise_on_a_smooth_field():
     err_fine = np.nanmean(np.abs(fine[fin_f] - true[fin_f]))
     err_coarse = np.nanmean(np.abs(coarse[fin_c] - true[fin_c]))
     assert err_coarse < err_fine
+
+
+def test_a_degenerate_axis_does_not_crash_the_interpolator():
+    """Every finite sample shares one x (a straight-line cut, or a razor-thin radial mask):
+    np.linspace(xlo, xlo, n) would be a duplicate-valued axis and RegularGridInterpolator
+    rejects it. Must degrade gracefully, not raise."""
+    x = np.full(8, 5.0)
+    y = np.linspace(0.0, 4.0, 8)
+    v = np.linspace(10.0, 24.0, 8)
+    for method in ("linear", "nearest"):
+        fill, support = grid_interpolate(x, y, v, resolution_mm=0.5, method=method, max_fill_mm=2.0)
+        assert fill.shape == v.shape
+        assert np.all(np.isfinite(fill))
+        assert np.all((support >= 0.0) & (support <= 1.0))
+
+    # And the transposed case (degenerate y).
+    fill2, _ = grid_interpolate(y, x, v, resolution_mm=0.5, method="linear", max_fill_mm=2.0)
+    assert np.all(np.isfinite(fill2))

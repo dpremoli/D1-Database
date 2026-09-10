@@ -57,3 +57,33 @@ def test_fill_edges_nan_marks_points_outside_the_grid():
 def test_fill_edges_rejects_an_unknown_mode():
     with pytest.raises(ValueError):
         broadcast_to_spiral(np.arange(3.0), np.arange(3.0), np.arange(3.0), fill_edges="hold")
+
+
+def test_float32_angular_grid_at_high_rev_collapses_but_float64_reconstruction_does_not():
+    """Regression for force_orchestrator's Phase G call: a long/fast cut's angular grid
+    (r0 + arange(n)/spr), once run_recipe has cast it to float32, has consecutive values that
+    collapse to equal float32 numbers at high rev magnitude -- the float32 ULP there reaches
+    the 1/spr grid spacing. Re-widening that with .astype(float64) does NOT recover the bits,
+    so broadcast_to_spiral's strict-ascending guard raises and the whole bake fails.
+    Reconstructing the grid in float64 from (r0, n, spr) -- what force_orchestrator now does --
+    keeps it strictly ascending.
+    """
+    spr = 256
+    r0 = 3.5
+    # Past rev ~65536 the float32 spacing exceeds 1/spr (2^-8), so grid points must collapse;
+    # 100k revs (~28 min at 3500 rpm, or ~10 min at 10000 rpm) is a realistic long cut.
+    n = 100_000 * spr
+    grid_f64 = r0 + np.arange(n, dtype=np.float64) / spr
+    grid_f32_rewidened = grid_f64.astype(np.float32).astype(np.float64)
+
+    # The float32 round-trip really does collapse consecutive values here.
+    assert np.any(np.diff(grid_f32_rewidened) <= 0)
+
+    vals = np.zeros(n)
+    revs_full = np.linspace(r0, grid_f64[-1], n // 4)
+    with pytest.raises(ValueError, match="strictly ascending"):
+        broadcast_to_spiral(grid_f32_rewidened, vals, revs_full)
+
+    # The float64 reconstruction is fine.
+    out = broadcast_to_spiral(grid_f64, vals, revs_full)
+    assert out.shape == revs_full.shape

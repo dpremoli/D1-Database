@@ -43,6 +43,13 @@ const emit = defineEmits<{
 
 const channel = ref<ChannelKey>((props.initialChannel as ChannelKey) || 'residZ');
 watch(channel, (c) => emit('update:channel', c));
+// `initialChannel` is not just a seed: DiagnosticsWorkbench changes it to redirect an
+// already-mounted panel (e.g. "click a step card to revert the hero view to its channel").
+// Without this watch that only updated the persisted layout, never the live view.
+// The `c !== channel.value` guard stops the parent's own persist-of-our-emit from looping.
+watch(() => props.initialChannel, (c) => {
+	if (c && c !== channel.value) channel.value = c as ChannelKey;
+});
 
 const analysisResult = ref<ViewportResult | null>(null);
 const viewportBounds = ref<[number, number, number, number] | null>(null);
@@ -129,9 +136,13 @@ watch(viewportBounds, () => {
 // Switching to a spatial channel recomputes when the shown overlay is not that op's output.
 watch(channel, (c) => {
 	const op = OP_OF[c];
-	if (!op || analysisResult.value?.op === op) return;
-	if (!viewportBounds.value) return;
+	if (op && analysisResult.value?.op === op) return;   // already showing this op's result
+	// Switched to a non-spatial channel (residZ etc.), or to a spatial channel whose result we
+	// don't hold: drop any stale spatial overlay so DiagOctreeView doesn't keep rendering it
+	// -- categorical cluster ids re-interpreted as a continuous gradient under residZ, or the
+	// wrong op's categorical layer.
 	analysisResult.value = null;
+	if (!op || !viewportBounds.value) return;
 	runViewport(op, { focus: false });
 });
 // Re-run only when the shown step's own params change (not an unrelated recipe edit).

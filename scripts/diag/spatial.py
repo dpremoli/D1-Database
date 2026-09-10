@@ -260,25 +260,36 @@ def assign_by_neighbours(
         idx = idx[:, None]
 
     # Inverse-distance weights. A point coincident with a centroid is at distance 0, which
-    # must hand that centroid ALL the weight rather than yielding inf/nan: those rows collapse
-    # to a one-hot weight on the zero-distance neighbour(s).
+    # must hand a coincident centroid ALL the weight rather than yielding inf/nan.
     with np.errstate(divide="ignore"):
         w = 1.0 / dist
     exact = ~np.isfinite(w)
     rows_exact = exact.any(axis=1)
     if rows_exact.any():
-        w[rows_exact] = exact[rows_exact].astype(np.float64)
+        # When a point is coincident with MORE THAN ONE centroid (grid_reduce can round two
+        # nearby clusters' centroids to the same coordinates while keeping their distinct
+        # labels), splitting the weight evenly across them makes argmax break the tie on label
+        # id / array order rather than on the data. Give the full weight to just the first
+        # (nearest-returned) exact neighbour so a coincident point takes one definite label.
+        first_exact = np.argmax(exact, axis=1)
+        w[rows_exact] = 0.0
+        w[rows_exact, first_exact[rows_exact]] = 1.0
 
     neighbour_labels = labels_reduced[idx]
 
-    # Majority vote by summed weight. The label set is small (cluster ids plus -1), so
-    # accumulating a column per distinct label is both cheaper and clearer than a general
-    # argmax over (point, neighbour) pairs.
+    # Majority vote by summed weight, argmax'd label per point. Accumulated as a running best
+    # rather than a full (n_points, n_labels) matrix: that matrix is unbounded in n_labels and
+    # a large viewport crop that clusters into many labels could allocate gigabytes (the
+    # /viewport endpoint hands this up to VIEWPORT_MAX_POINTS_CEIL points). The streaming form
+    # keeps the exact same first-max-wins tie-break (uniq is sorted, `>` is strict).
     uniq = np.unique(labels_reduced)
-    scores = np.empty((x.size, uniq.size), dtype=np.float64)
-    for j, lab in enumerate(uniq):
-        scores[:, j] = np.where(neighbour_labels == lab, w, 0.0).sum(axis=1)
-    out_labels = uniq[np.argmax(scores, axis=1)]
+    best_score = np.full(x.size, -np.inf, dtype=np.float64)
+    out_labels = np.empty(x.size, dtype=np.float64)
+    for lab in uniq:
+        s = np.where(neighbour_labels == lab, w, 0.0).sum(axis=1)
+        take = s > best_score
+        out_labels[take] = lab
+        best_score[take] = s[take]
 
     wsum = w.sum(axis=1)
     out_glosh = (glosh_reduced[idx] * w).sum(axis=1) / np.where(wsum > 0, wsum, 1.0)

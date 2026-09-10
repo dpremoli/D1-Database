@@ -465,14 +465,16 @@ async def viewport(req: Request):
             if lyr.get("role") == "mask" and lyr.get("geometry"):
                 rc[rasterize_polygons(lyr["geometry"], xc, yc)] = np.nan
 
-    resolved: dict = {}
-    if op == "grow_segmentation":
-        resolved = resolve_inputs(
-            {"op": op, "inputs": step.get("inputs")}, layers, xc, yc
-        )
-
     t0 = time.perf_counter()
     try:
+        # resolve_inputs is inside the try: it raises RecipeError (a ValueError subclass) for a
+        # missing/mismatched layer binding, which must surface as the endpoint's 422 contract,
+        # not an unhandled 500.
+        resolved: dict = {}
+        if op == "grow_segmentation":
+            resolved = resolve_inputs(
+                {"op": op, "inputs": step.get("inputs")}, layers, xc, yc
+            )
         produced, _metrics = STEPS[op].fn(
             {"x": xc, "y": yc, "resid_z": rc}, step.get("params") or {}, resolved
         )
@@ -480,6 +482,15 @@ async def viewport(req: Request):
         raise
     except (KeyError, ValueError) as e:
         raise HTTPException(422, f"step failed: {e}") from e
+    except MemoryError as e:
+        # assign_by_neighbours (hdbscan / gmm_segmentation broadcast-back) allocates an
+        # (n_points, n_labels) float64 matrix with no bound tied to VIEWPORT_MAX_POINTS_CEIL,
+        # so a large crop that clusters into many labels can exhaust host memory. Return a
+        # clean, actionable error rather than a bare 500 or taking the process down for every
+        # concurrent analyst.
+        raise HTTPException(
+            507, "viewport crop is too large for this step — zoom in or lower max_points"
+        ) from e
     ms = int((time.perf_counter() - t0) * 1000)
 
     def _column(name: str) -> np.ndarray:

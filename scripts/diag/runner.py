@@ -23,7 +23,7 @@ import numpy as np
 
 from . import ops  # noqa: F401  -- import for its registration side effects
 from .angular import angular_resample
-from .registry import STEPS, Columns, resolve_inputs, validate_recipe
+from .registry import STEPS, Columns, RecipeError, resolve_inputs, validate_recipe
 
 # Mirrors ops.py::_CHANNELS. Duplicated rather than imported: ops.py is the step-registration
 # module, and STEP_META.frame_transform's options in recipeChannels.ts already mirror this
@@ -269,7 +269,23 @@ def base_columns_all_channels(recipe: dict, cols: Columns) -> Columns:
     "preview is an approximation" already tolerates far more than one extra truncation of the
     full-rate signal buys here).
     """
-    frame_idx = next(i for i, s in enumerate(recipe["steps"]) if s["op"] == "frame_transform")
+    # base.d1an is fundamentally the sig_fc/sig_ff/sig_fp signals resampled onto the angular
+    # grid, and frame_transform is what produces fc/ff/fp. A recipe with it disabled (or
+    # absent) passes validate_recipe as long as no ENABLED step needs those columns, but there
+    # is then no force projection to publish. Catch that here with a clear RecipeError rather
+    # than letting `next()` raise a message-less StopIteration, or run_recipe's emit path raise
+    # a confusing "requested column 'fc' is not present" -- both land in the daemon's generic
+    # except and write a useless per-row diag_error.
+    frame_idx = next(
+        (i for i, s in enumerate(recipe["steps"])
+         if s["op"] == "frame_transform" and s.get("on", True)),
+        None,
+    )
+    if frame_idx is None:
+        raise RecipeError(
+            "base.d1an needs an enabled frame_transform step (it publishes the sig_fc/"
+            "sig_ff/sig_fp force projections); this recipe has none"
+        )
     spr = int(_resample_params(recipe["steps"]).get("samples_per_rev", 256))
 
     pre, _ = run_recipe(

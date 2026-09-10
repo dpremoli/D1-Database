@@ -1158,8 +1158,18 @@ def process_diag_row(
         # spatial step (Gi*, HDBSCAN, seeded segmentation) on a framed region at full res.
         from diag.broadcast import broadcast_to_spiral
 
+        # Reconstruct the angular grid in float64 rather than re-widening columns["rev"]. That
+        # column was cast to float32 by run_recipe's PUBLIC_COLUMNS assembly; .astype(float64)
+        # does not restore the lost bits, and on a long/fast cut (tens of thousands of revs)
+        # the float32 ULP at that magnitude reaches the grid spacing (1/spr), collapsing
+        # consecutive rev values to equal float32 numbers. broadcast_to_spiral's strict-
+        # ascending guard then raises and the whole per-row bake fails. The grid is fully
+        # determined by (r0, n, spr) -- r0 is small (cut start) so its float32 value is exact
+        # enough; the arange is what must stay float64.
+        n_rev_grid = int(columns["rev"].size)
+        rev_grid_f64 = float(columns["rev"][0]) + np.arange(n_rev_grid, dtype=np.float64) / spr
         resid_full = broadcast_to_spiral(
-            columns["rev"].astype(np.float64),
+            rev_grid_f64,
             columns["resid_z"].astype(np.float64),
             np.asarray(cache["revs"], dtype=np.float64),
             fill_edges="nan",

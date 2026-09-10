@@ -229,6 +229,27 @@ def test_viewport_segmentation_two_seed_polys(client):
     assert set(np.unique(_read(r.content)["value"])) <= {0.0, 1.0}
 
 
+def test_viewport_segmentation_required_seed_missing_is_422_not_500(client):
+    """grow_segmentation's inputs binding requires a seed layer that isn't in the request's
+    `layers` dict. resolve_inputs raises RecipeError (a ValueError subclass) -- and it runs
+    OUTSIDE the endpoint's step-call try/except unless moved in, so it used to surface as an
+    unhandled 500 instead of the 422 contract every other failure path here follows."""
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1",
+            "bbox": [-40, -40, 40, 40],
+            "step": {
+                "op": "grow_segmentation",
+                "params": {"features": ["resid_z"]},
+                "inputs": {"seeds": {"layers": ["does-not-exist"], "required": True}},
+            },
+            "layers": {},
+        },
+    )
+    assert r.status_code == 422, r.text
+
+
 def test_viewport_applies_a_mask_layer_to_gi_star(client):
     """A mask painted after the last bake is not in full.d1an's NaN pattern; the endpoint
     must rasterise mask-role layers onto the crop so Gi* skips the excluded region."""

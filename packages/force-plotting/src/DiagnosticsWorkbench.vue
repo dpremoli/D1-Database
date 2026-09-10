@@ -105,14 +105,22 @@ watch(() => recipe.value.steps, (steps) => {
 // itself still reaches the Signal chart and Selection Inspector regardless.
 const RENDERABLE_CHANNELS = new Set(['residZ', 'giStar', 'clusterId', 'segmentId', 'gmmId']);
 
+// "The hero view": the spatial panel visually on top (smallest y, then x) rather than the one
+// that happens to be first in the layout ARRAY -- a drag-reorder changes the former, not the
+// latter, and "run/revert on this view" should follow what the analyst sees on top.
+const heroSpatial = computed(() =>
+	layout.value
+		.filter((p) => p.type === 'spatial')
+		.slice()
+		.sort((a, b) => a.y - b.y || a.x - b.x)[0] ?? null);
+
 function onRevertStep(stepId: string | null) {
 	revertStepId.value = stepId;
 	if (!stepId) return;
 	const step = recipe.value.steps.find((s) => s.id === stepId);
 	const channel = step ? primaryChannelForOp(step.op) : null;
 	if (!channel || !RENDERABLE_CHANNELS.has(channel)) return;
-	const hero = layout.value.find((p) => p.type === 'spatial');
-	if (hero) setChannel(hero.i, channel);
+	if (heroSpatial.value) setChannel(heroSpatial.value.i, channel);
 }
 
 // Steps whose inputs no earlier enabled step produces. The service refuses these with a 422
@@ -251,10 +259,11 @@ const anyViewportBusy = computed(() => Object.values(panelBusy).some(Boolean));
 const hdbscanResult = computed<ViewportResult | null>(() =>
 	Object.values(panelResults).find((r) => r?.op === 'hdbscan') ?? null);
 
-// "Run <op> on this view" from the Pipeline panel routes to the first spatial view.
+// "Run <op> on this view" from the Pipeline panel routes to the hero spatial view (the one
+// visually on top -- see heroSpatial), not whichever is first in the layout array.
 function runStepOnView(op: ViewportOp) {
-	const first = layout.value.find((p) => p.type === 'spatial');
-	if (first) spatialRefs.get(first.i)?.runViewport(op, { focus: true });
+	const hero = heroSpatial.value;
+	if (hero) spatialRefs.get(hero.i)?.runViewport(op, { focus: true });
 }
 
 function onClusterSelect(id: number | null) {

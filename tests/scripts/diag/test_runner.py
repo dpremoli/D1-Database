@@ -311,3 +311,20 @@ def test_base_columns_all_channels_is_channel_agnostic():
     b = base_columns_all_channels(hot, _seed())
     for name in a:
         np.testing.assert_array_equal(a[name], b[name])
+
+
+def test_base_columns_all_channels_refuses_a_disabled_frame_transform():
+    """A recipe with frame_transform off passes validate_recipe (no enabled step needs
+    fc/ff/fp), but base.d1an has no force projection to publish -- must be a clear RecipeError,
+    not a message-less StopIteration or a confusing 'column fc not present'."""
+    off = copy.deepcopy(DEFAULT_RECIPE)
+    next(s for s in off["steps"] if s["op"] == "frame_transform")["on"] = False
+    with pytest.raises(RecipeError, match="frame_transform"):
+        base_columns_all_channels(off, _seed())
+
+
+def test_base_columns_all_channels_refuses_an_absent_frame_transform():
+    gone = copy.deepcopy(DEFAULT_RECIPE)
+    gone["steps"] = [s for s in gone["steps"] if s["op"] != "frame_transform"]
+    with pytest.raises(RecipeError, match="frame_transform"):
+        base_columns_all_channels(gone, _seed())
