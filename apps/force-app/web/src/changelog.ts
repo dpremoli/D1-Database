@@ -9,6 +9,17 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.19',
+		date: '2026-09-11',
+		notes: [
+			'New Polar Plot panel (Record page → Add panel, with its own pop-out window): plots torque or force against spindle angle for a finished or replayed cut — the milling counterpart to the FRM map.',
+			'Fixed: the FRM map could come up blank, or show a "no host installed" error, immediately after a recording finished — unless you had opened the Plot page earlier in the same session.',
+			'Diagnostics Workbench: a very long or high-speed cut, a straight-line cut, or a recipe with the frame-transform step switched off no longer crashes the analysis bake — each now fails with a clear reason.',
+			'Diagnostics Workbench: the framed-view recompute now returns a readable error (not a bare server error) when a crop is too large or a seed layer is missing; clicking a pipeline step to revert the view now redirects the view you are actually looking at and clears its stale colouring.',
+			'Force capture files can now carry torque (Mz) and machine tool-position (X/Y/Z) channels alongside force, as groundwork for milling support. Older capture files load unchanged.',
+		],
+	},
+	{
 		version: '0.1.18',
 		date: '2026-08-29',
 		notes: [
