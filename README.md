@@ -51,6 +51,8 @@ See [`docs/adr/`](./docs/adr/) for the decisions behind this and
 | [`db/`](./db/) | SQL migrations, seeds — the schema (the contract) |
 | [`core/`](./core/) | Directus configuration-as-code |
 | [`plugins/`](./plugins/) | Project-specific compute, one container per folder |
+| [`apps/`](./apps/) | Operator-facing applications — currently [`force-app/`](./apps/force-app/), the machining force-capture desktop app |
+| [`packages/`](./packages/) | Shared front-end libraries (e.g. `force-plotting` — the force cloud, polar plot, diagnostics workbench) |
 | [`infra/`](./infra/) | Compose stack, env templates, backup/restore |
 | [`docs/`](./docs/) | ADRs, runbooks, data dictionary, legacy-data analysis |
 | [`tests/`](./tests/) | Integration & end-to-end tests |
@@ -80,6 +82,7 @@ Python workers · Ollama (local LLM) · Docker Compose.
 - [`system_requirements_specification.md`](./system_requirements_specification.md) — requirements
 - [`docs/legacy-data-analysis.md`](./docs/legacy-data-analysis.md) — analysis of the legacy AppSheet/Sheets data
 - [`docs/experiment-sheets-and-naming.md`](./docs/experiment-sheets-and-naming.md) — experiment sheets & deterministic naming
+- [`apps/force-app/README.md`](./apps/force-app/README.md) — the machining force-capture desktop app (Record / Plot / Diagnostics Workbench), with screenshots
 - [`docs/force-app-operations.md`](./docs/force-app-operations.md) — running, deploying & troubleshooting the force-capture app
 - [`docs/force-file-standards.md`](./docs/force-file-standards.md) — the four force-capture `.mat` layouts
 - [`docs/FAST25_OVERVIEW.md`](./docs/FAST25_OVERVIEW.md) — FAST 25 / FAST 250 sintering data architecture
