@@ -136,16 +136,21 @@ def test_session_writes_manifest_on_start_and_done(tmp_path, monkeypatch):
             m = json.load(f)
         assert m["state"] in ("recording", "finalizing", "done")
 
-        # Wait for completion
-        for _ in range(100):
+        # Wait for completion. Poll the MANIFEST FILE, not just /record/status: the status
+        # endpoint flips to "done" a beat before _finalize_async's last manifest rewrite lands,
+        # and a contended CI runner widens that gap enough to fail an assertion that reads the
+        # file immediately after the status loop. Generous budget (60 s) — a 0.3 s capture
+        # finalises in ~1 s locally and the loop breaks the instant it is done, so a healthy
+        # machine still finishes in about a second; the ceiling only matters on a hammered runner.
+        m = {}
+        for _ in range(600):
             st = client.get("/record/status").json()
-            if st["state"] in ("done", "error"):
+            with open(manifest_path) as f:
+                m = json.load(f)
+            if m.get("state") in ("done", "error") and st["state"] in ("done", "error"):
                 break
             time.sleep(0.1)
 
-        # Manifest updated to final state
-        with open(manifest_path) as f:
-            m = json.load(f)
         assert m["state"] == "done"
 
 
