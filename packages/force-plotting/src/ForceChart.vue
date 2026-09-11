@@ -248,14 +248,25 @@ const hoverPt = computed(() => {
 		label: `${d.amp[i].toPrecision(3)}`, sub: `${niceNum(g.xs[i])} ${props.xUnit || 'Hz'}`.trim() };
 });
 
-function onMove(ev: MouseEvent) {
-	const g = geom.value;
-	if (!g) return;
-	const r = (ev.currentTarget as SVGElement).getBoundingClientRect();
+// Raw mousemove can fire far faster than the screen repaints, and hoverIndex is a single ref
+// shared across every open chart (so they scrub together) — each emit re-renders every sibling
+// chart's crosshair, so emitting on every raw event redoes that fan-out several times per visible
+// frame. Coalesce to one emit per animation frame, same rationale/pattern as onCropMove below.
+let hoverRafId = 0;
+let pendingHoverEv: MouseEvent | null = null;
+function emitHover(ev: MouseEvent) {
+	const g = geom.value, svg = svgEl.value;
+	if (!g || !svg) return;
+	const r = svg.getBoundingClientRect();
 	const px = (ev.clientX - r.left) * (g.W / r.width);
 	const frac = (px - ML) / (g.W - ML - MR);
 	const i = Math.round(Math.min(1, Math.max(0, frac)) * (g.xs.length - 1));
 	emit('hover', i);
+}
+function onMove(ev: MouseEvent) {
+	if (!geom.value) return;
+	pendingHoverEv = ev;
+	if (!hoverRafId) hoverRafId = requestAnimationFrame(() => { hoverRafId = 0; if (pendingHoverEv) emitHover(pendingHoverEv); });
 }
 function onLeave() { emit('hover', null); }
 
@@ -372,9 +383,9 @@ function onWheel(ev: WheelEvent) {
 			preserveAspectRatio="none" @mousemove="onMove" @mouseleave="onLeave" @wheel="onWheel"
 			@pointerdown="onZoomDown" @pointermove="onZoomMove" @pointerup="onZoomUp" @pointercancel="onZoomUp"
 		>
-			<line v-for="(t, i) in geom.yticks" :key="'gy' + i" :x1="ML" :x2="geom.W - MR" :y1="t.y" :y2="t.y" stroke="#e2e8f0" stroke-width="0.5" />
-			<line v-for="(t, i) in geom.xticks" :key="'gx' + i" :x1="t.x" :x2="t.x" :y1="MT" :y2="geom.Hh - MB" stroke="#eef1f5" stroke-width="0.5" />
-			<line v-if="geom.zeroY != null" :x1="ML" :x2="geom.W - MR" :y1="geom.zeroY" :y2="geom.zeroY" stroke="#cbd5e1" stroke-width="0.9" />
+			<line v-for="(t, i) in geom.yticks" :key="'gy' + i" :x1="ML" :x2="geom.W - MR" :y1="t.y" :y2="t.y" class="fc-grid" stroke-width="0.5" />
+			<line v-for="(t, i) in geom.xticks" :key="'gx' + i" :x1="t.x" :x2="t.x" :y1="MT" :y2="geom.Hh - MB" class="fc-grid" stroke-width="0.5" />
+			<line v-if="geom.zeroY != null" :x1="ML" :x2="geom.W - MR" :y1="geom.zeroY" :y2="geom.zeroY" class="fc-zero" stroke-width="0.9" />
 			<!-- full-range area at low saturation; the analysed [cropStart,cropEnd] window overpaints at full saturation -->
 			<path v-if="kind === 'env'" :d="geom.area" :fill="stroke" :fill-opacity="geom.cropArea ? 0.09 : 0.2" :stroke="stroke" stroke-opacity="0.35" stroke-width="0.6" />
 			<path v-if="kind === 'env' && geom.cropArea" :d="geom.cropArea" :fill="stroke" fill-opacity="0.28" :stroke="stroke" stroke-width="0.8" />
@@ -384,14 +395,14 @@ function onWheel(ev: WheelEvent) {
 				 visual subject and the others read as reference traces. -->
 			<path v-for="c in geom.compareLines" :key="c.id" :d="c.d" fill="none"
 				:stroke="c.color" stroke-width="1.2" stroke-dasharray="4 2" opacity="0.85" />
-			<line :x1="ML" :x2="ML" :y1="MT" :y2="geom.Hh - MB" stroke="#94a3b8" stroke-width="0.8" />
-			<line :x1="ML" :x2="geom.W - MR" :y1="geom.Hh - MB" :y2="geom.Hh - MB" stroke="#94a3b8" stroke-width="0.8" />
+			<line :x1="ML" :x2="ML" :y1="MT" :y2="geom.Hh - MB" class="fc-axis" stroke-width="0.8" />
+			<line :x1="ML" :x2="geom.W - MR" :y1="geom.Hh - MB" :y2="geom.Hh - MB" class="fc-axis" stroke-width="0.8" />
 			<g v-for="(t, i) in geom.yticks" :key="'y' + i">
-				<line :x1="ML - 3" :x2="ML" :y1="t.y" :y2="t.y" stroke="#94a3b8" stroke-width="0.8" />
+				<line :x1="ML - 3" :x2="ML" :y1="t.y" :y2="t.y" class="fc-axis" stroke-width="0.8" />
 				<text :x="ML - 5" :y="t.y + 2.5" text-anchor="end" class="tick">{{ t.label }}</text>
 			</g>
 			<g v-for="(t, i) in geom.xticks" :key="'x' + i">
-				<line :x1="t.x" :x2="t.x" :y1="geom.Hh - MB" :y2="geom.Hh - MB + 3" stroke="#94a3b8" stroke-width="0.8" />
+				<line :x1="t.x" :x2="t.x" :y1="geom.Hh - MB" :y2="geom.Hh - MB + 3" class="fc-axis" stroke-width="0.8" />
 				<text :x="t.x" :y="geom.Hh - MB + 12" text-anchor="middle" class="tick">{{ t.label }}</text>
 			</g>
 			<text :x="(ML + geom.W - MR) / 2" :y="geom.Hh - 3" text-anchor="middle" class="axis-label">{{ xUnit }}</text>
@@ -437,9 +448,14 @@ function onWheel(ev: WheelEvent) {
 .chart-peak { font-size: 10.5px; color: var(--theme--foreground, #1e293b); font-weight: 700; font-variant-numeric: tabular-nums; }
 .chart-svg { display: block; width: 100%; flex: 1 1 auto; min-height: 0; cursor: crosshair; touch-action: none; }
 .chart-svg.zoomtool { cursor: crosshair; }
-.chart-svg .tick { fill: var(--theme--foreground-subdued, #94a3b8); font-size: 8px; font-variant-numeric: tabular-nums; }
-.chart-svg .axis-label { fill: var(--theme--foreground-subdued, #94a3b8); font-size: 8px; }
+.chart-svg .tick { fill: var(--theme--foreground-subdued, #94a3b8); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart-svg .axis-label { fill: var(--theme--foreground-subdued, #94a3b8); font-size: 11px; }
 .chart-svg .crop-hit { cursor: ew-resize; }
+/* dimmer than the near-white light-mode defaults so gridlines don't outshine the crop handles
+   against a dark background; --border/--border-2 are theme-scoped in apps/force-app's styles.css */
+.chart-svg .fc-grid { stroke: var(--border, #e2e8f0); }
+.chart-svg .fc-axis { stroke: var(--border-2, #94a3b8); }
+.chart-svg .fc-zero { stroke: var(--border-2, #cbd5e1); }
 .chart-empty { flex: 1; display: grid; place-items: center; color: var(--theme--foreground-subdued, #98a2b3); font-size: 12px; }
 .chart-tip {
 	/* below the header row so it never covers the "peak … N" readout in the top-right */

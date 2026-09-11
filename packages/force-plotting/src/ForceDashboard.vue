@@ -692,7 +692,12 @@ const availableHeight = ref(700);
 function updateAvailableHeight() {
 	if (!layoutEl.value) return;
 	const top = layoutEl.value.getBoundingClientRect().top;
-	availableHeight.value = Math.max(420, Math.floor(window.innerHeight - top - 20));
+	// Read .fd's real bottom padding instead of hardcoding it a second time here — a stale
+	// hardcoded value (this used to say 20 while .fd's CSS padding-bottom is 40) silently leaves
+	// that much extra page-level scroll on any viewport, not just small screens.
+	const fd = layoutEl.value.closest('.fd') as HTMLElement | null;
+	const bottomPad = fd ? parseFloat(getComputedStyle(fd).paddingBottom) || 0 : 40;
+	availableHeight.value = Math.max(420, Math.floor(window.innerHeight - top - bottomPad));
 }
 function measureLayout() {
 	if (!layoutEl.value) return;
@@ -1172,9 +1177,13 @@ async function saveCropAsOfficial() {
 // editable crop, while the signal graphs can still be flipped to FFT. The crop
 // range the force plots shade/drag is the live editable one when Live is on.
 const effectiveMode = computed(() => chartMode.value);
+// Outside Live, prefer a human-saved crop override over the derived auto-crop window — mirrors
+// the priority already used by the detail.value?.id watch and onCloudLoaded() below. Without
+// this, reopening a cut in Figure/Full silently showed the auto window even when a crop had
+// been saved, because only the Live branch ever consulted savedCropSec.
 const activeCrop = computed(() => (liveOn.value
 	? { start: cropStartSec.value, end: cropEndSec.value }
-	: cropWindow.value));
+	: (savedCropSec.value || cropWindow.value)));
 // When live, drop the date/coolant-ish rows to free space (keep the essentials).
 const HIDE_WHEN_LIVE = new Set(['Date', 'Recorded', 'Coolant', 'New edge', 'Sequence']);
 const compactMeta = computed(() => (liveOn.value ? opMeta.value.filter((m) => !HIDE_WHEN_LIVE.has(m[0] as string)) : opMeta.value));
@@ -1258,25 +1267,15 @@ function axesFor(item: RPanel): Axis[] {
 // Chain the spectral views reflect: the live-tuned/applied filter when present, else raw.
 const specChain = computed<FilterChain>(() => previewChain() ?? savedChain.value ?? defaultChain());
 function toggleItemAxis(item: RPanel, a: Axis) {
-	// A spectrogram is a heatmap — there is no readable way to overlay two of them, unlike a
-	// waterfall (stacked line traces) or the force/FFT charts, which draw multiple axes as
-	// distinct colored lines just fine. So spectrogram stays single-axis: clicking a chip
-	// replaces the selection instead of toggling it.
-	if (chartMode.value === 'spectrogram') { item.channels = [a]; return; }
+	// Every mode (Force/FFT/Power/Spectrogram/Waterfall) draws one chart per selected axis,
+	// stacked in the panel — SpectrumView labels each with its axis name (e.g. "Fx spectrogram"),
+	// same as ForceChart's title, so stacked heatmaps are just as distinguishable as stacked
+	// line charts. Toggling works the same in every mode.
 	const cur = (item.channels && item.channels.length ? [...item.channels] : [...AXES]);
 	const i = cur.indexOf(a);
 	if (i >= 0) { if (cur.length > 1) cur.splice(i, 1); } else cur.push(a);
 	item.channels = AXES.filter((x) => cur.includes(x));
 }
-// Entering spectrogram with several axes already picked (e.g. coming from waterfall) would
-// otherwise render several heatmaps stacked on top of each other with no way to tell them apart
-// until a chip is clicked — clamp down to one right away instead.
-watch(chartMode, (m) => {
-	if (m !== 'spectrogram') return;
-	for (const item of rightLayout.value) {
-		if (item.channels && item.channels.length > 1) item.channels = [item.channels[0]];
-	}
-});
 
 // Seed the editable controls from the loaded cache (FrmCloud emits this once the
 // binary is parsed). User edits thereafter drive the cloud; Reset restores these.
