@@ -33,7 +33,6 @@ from conftest import (  # noqa: E402
     cache_of,
     synthetic_cut,
 )
-
 from diag.pipeline import analyse  # noqa: E402
 
 # The exact call each golden was captured from. Keep in step with the tests that consume
@@ -64,7 +63,9 @@ def diff() -> int:
                 continue
             moved = moved_any = True
             n = int(np.count_nonzero(got != want))
-            print(f"  {name:12s} {n:6d}/{want.size} differ ({100 * n / want.size:.2f}%)")
+            print(
+                f"  {name:12s} {n:6d}/{want.size} differ ({100 * n / want.size:.2f}%)"
+            )
             if name == "cluster_id":
                 print(f"      labels before={sorted(set(want.tolist()))}")
                 print(f"      labels after ={sorted(set(got.tolist()))}")

@@ -58,4 +58,7 @@ def test_validate_geometry_rejects_malformed_shapes():
 
 
 def test_rasterize_empty_geometry_selects_nothing():
-    assert rasterize_polygons({"polygons": []}, np.zeros(5), np.zeros(5)).tolist() == [False] * 5
+    assert (
+        rasterize_polygons({"polygons": []}, np.zeros(5), np.zeros(5)).tolist()
+        == [False] * 5
+    )

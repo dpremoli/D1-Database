@@ -7,6 +7,7 @@ sparse labels"; it is deterministic, multi-class, and needs no dependency the pi
 not already carry. Provisional defaults, like the rest of scripts/diag/spatial.py -- treat
 them as starting points to tune against real cuts, not calibrated constants.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -53,14 +54,16 @@ def grow_segmentation(
             cols.append(f)
         else:
             dropped += 1
-    F = np.column_stack(cols)
+    feat = np.column_stack(cols)
 
-    finite = np.all(np.isfinite(F), axis=1)
+    finite = np.all(np.isfinite(feat), axis=1)
     if int(finite.sum()) < max(4, k + 1):
         return seg, "too few finite points to propagate"
 
-    scaled = np.zeros_like(F, dtype=np.float64)  # ~finite rows stay 0 and are never fit/used
-    scaled[finite] = StandardScaler().fit_transform(F[finite])
+    scaled = np.zeros_like(
+        feat, dtype=np.float64
+    )  # ~finite rows stay 0 and are never fit/used
+    scaled[finite] = StandardScaler().fit_transform(feat[finite])
     if scaled.shape[1] > 2:
         scaled[:, 2:] *= float(attr_weight)
 

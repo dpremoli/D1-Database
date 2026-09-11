@@ -36,7 +36,14 @@ Inputs = dict[str, "np.ndarray | None | dict[str, np.ndarray]"]
 # Columns present before any step runs, seeded by the runner from the D1LC cache and the
 # D1OC spiral. x_raw/y_raw are MATLAB's own geometry, never recomputed here.
 SEED_COLUMNS: tuple[str, ...] = (
-    "t_raw", "fx", "fy", "fz", "rpm", "revs", "x_raw", "y_raw",
+    "t_raw",
+    "fx",
+    "fy",
+    "fz",
+    "rpm",
+    "revs",
+    "x_raw",
+    "y_raw",
 )
 
 TIERS = ("base", "derived")
@@ -67,7 +74,9 @@ class RecipeError(ValueError):
     """A recipe that cannot be executed as written."""
 
 
-def step(name: str, *, produces: list[str], requires: list[str], tier: str, category: str):
+def step(
+    name: str, *, produces: list[str], requires: list[str], tier: str, category: str
+):
     """Register a step function. Import-time side effect, so diag.ops must be imported
     before a recipe referencing its ops can be validated or run."""
 
@@ -78,7 +87,9 @@ def step(name: str, *, produces: list[str], requires: list[str], tier: str, cate
             raise ValueError(f"tier must be one of {TIERS}, got {tier!r}")
         if category not in CATEGORIES:
             raise ValueError(f"category must be one of {CATEGORIES}, got {category!r}")
-        STEPS[name] = StepSpec(name, fn, tuple(produces), tuple(requires), tier, category)
+        STEPS[name] = StepSpec(
+            name, fn, tuple(produces), tuple(requires), tier, category
+        )
         return fn
 
     return deco

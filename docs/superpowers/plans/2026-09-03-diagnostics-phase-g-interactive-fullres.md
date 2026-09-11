@@ -93,14 +93,14 @@ def test_clamps_outside_the_grid():
     grid = np.array([1.0, 2.0, 3.0])
     vals = np.array([10.0, 20.0, 30.0])
     out = broadcast_to_spiral(grid, vals, np.array([0.0, 5.0]))
-    np.testing.assert_array_equal(out, [10.0, 30.0])   # np.interp clamps to endpoints
+    np.testing.assert_array_equal(out, [10.0, 30.0])  # np.interp clamps to endpoints
 
 
 def test_nan_in_the_grid_propagates_locally():
     grid = np.array([0.0, 1.0, 2.0])
     vals = np.array([0.0, np.nan, 4.0])
     out = broadcast_to_spiral(grid, vals, np.array([0.5, 1.5]))
-    assert np.all(np.isnan(out))            # both interpolate across the NaN bin
+    assert np.all(np.isnan(out))  # both interpolate across the NaN bin
 ```
 
 - [ ] **Step 2: Run, verify fail** — `py -3 -m pytest tests/scripts/test_resid_broadcast.py -q` → `ModuleNotFoundError: diag.broadcast`.
@@ -116,6 +116,7 @@ octree and the viewport-recompute source need it per raw spiral point. Linear in
 in revolution-phase is the honest broadcast for a continuous residual -- nearest-neighbour
 would band at the phase-bin boundaries.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -150,61 +151,66 @@ In `scripts/force_orchestrator.py`, add the import near the other diag imports:
 After the existing `las.write(las_path)` + PotreeConverter + `dst` copy block for the 256/rev octree (right before or after the `attrs.d1an` / `base.d1an` copies), add:
 
 ```python
-        # --- Phase G: full-resolution resid_z octree + flat viewport source -----------------
-        # x / y / revs here are the STRIDED spiral (cache_target points, index-aligned with
-        # the cache) -- the same arrays the 256/rev octree's fza resample used. Broadcast the
-        # 256/rev resid_z onto every spiral point by revolution-phase.
-        resid_full = broadcast_to_spiral(
-            columns["rev"].astype(np.float64),
-            columns["resid_z"].astype(np.float64),
-            np.asarray(cache["revs"], dtype=np.float64),
-        )
-        # write_d1an raises a generic ValueError on a length mismatch, which would land in the
-        # daemon's except and write a useless diag_error. Fail loudly with the real numbers.
-        if resid_full.size != x.size:
-            raise RuntimeError(
-                f"resid_z broadcast length {resid_full.size} != strided spiral {x.size}"
-            )
-        full_dir = dst / "full"
-        full_dir.mkdir(parents=True, exist_ok=True)
+# --- Phase G: full-resolution resid_z octree + flat viewport source -----------------
+# x / y / revs here are the STRIDED spiral (cache_target points, index-aligned with
+# the cache) -- the same arrays the 256/rev octree's fza resample used. Broadcast the
+# 256/rev resid_z onto every spiral point by revolution-phase.
+resid_full = broadcast_to_spiral(
+    columns["rev"].astype(np.float64),
+    columns["resid_z"].astype(np.float64),
+    np.asarray(cache["revs"], dtype=np.float64),
+)
+# write_d1an raises a generic ValueError on a length mismatch, which would land in the
+# daemon's except and write a useless diag_error. Fail loudly with the real numbers.
+if resid_full.size != x.size:
+    raise RuntimeError(
+        f"resid_z broadcast length {resid_full.size} != strided spiral {x.size}"
+    )
+full_dir = dst / "full"
+full_dir.mkdir(parents=True, exist_ok=True)
 
-        # full.d1an: the flat {x, y, resid_z} the /diag/viewport endpoint crops. Keep NaN
-        # (masked points must be excluded from a viewport recompute).
-        write_d1an(str(Path(outdir) / "full.d1an"), {
-            "x": x.astype(np.float32),
-            "y": y.astype(np.float32),
-            "resid_z": resid_full.astype(np.float32),
-        })
-        shutil.copy2(Path(outdir) / "full.d1an", full_dir / "full.d1an")
+# full.d1an: the flat {x, y, resid_z} the /diag/viewport endpoint crops. Keep NaN
+# (masked points must be excluded from a viewport recompute).
+write_d1an(
+    str(Path(outdir) / "full.d1an"),
+    {
+        "x": x.astype(np.float32),
+        "y": y.astype(np.float32),
+        "resid_z": resid_full.astype(np.float32),
+    },
+)
+shutil.copy2(Path(outdir) / "full.d1an", full_dir / "full.d1an")
 
-        # full/ octree: LAS with resid_z as the one extra dim; nan_to_num so PotreeConverter's
-        # per-attribute min/max stays finite (else DiagOctreeView's colour range goes NaN).
-        fh = laspy.LasHeader(point_format=3)
-        fh.offsets = [float(x.min()), float(y.min()), 0.0]
-        fh.scales = [0.001, 0.001, 0.001]
-        fh.add_extra_dim(laspy.ExtraBytesParams(name="resid_z", type=np.float32))
-        fl = laspy.LasData(fh)
-        fl.x = x.astype(np.float64)
-        fl.y = y.astype(np.float64)
-        fl.z = np.zeros(x.size)
-        fl.resid_z = np.nan_to_num(resid_full, nan=0.0).astype(np.float32)
-        rlo, rhi = float(np.nanmin(resid_full)), float(np.nanmax(resid_full))
-        fl.intensity = np.clip(
-            (np.nan_to_num(resid_full, nan=rlo) - rlo) / ((rhi - rlo) or 1.0) * 65535, 0, 65535
-        ).astype(np.uint16)
-        full_las = str(Path(outdir) / "full.las")
-        fl.write(full_las)
+# full/ octree: LAS with resid_z as the one extra dim; nan_to_num so PotreeConverter's
+# per-attribute min/max stays finite (else DiagOctreeView's colour range goes NaN).
+fh = laspy.LasHeader(point_format=3)
+fh.offsets = [float(x.min()), float(y.min()), 0.0]
+fh.scales = [0.001, 0.001, 0.001]
+fh.add_extra_dim(laspy.ExtraBytesParams(name="resid_z", type=np.float32))
+fl = laspy.LasData(fh)
+fl.x = x.astype(np.float64)
+fl.y = y.astype(np.float64)
+fl.z = np.zeros(x.size)
+fl.resid_z = np.nan_to_num(resid_full, nan=0.0).astype(np.float32)
+rlo, rhi = float(np.nanmin(resid_full)), float(np.nanmax(resid_full))
+fl.intensity = np.clip(
+    (np.nan_to_num(resid_full, nan=rlo) - rlo) / ((rhi - rlo) or 1.0) * 65535, 0, 65535
+).astype(np.uint16)
+full_las = str(Path(outdir) / "full.las")
+fl.write(full_las)
 
-        full_octmp = str(Path(outdir) / "full_octree")
-        fpc = subprocess.run(
-            [potree_exe, full_las, "-o", full_octmp],
-            capture_output=True, text=True, timeout=timeout,
-        )
-        if fpc.returncode != 0 or not (Path(full_octmp) / "metadata.json").exists():
-            tail = (fpc.stderr or fpc.stdout or "").strip().splitlines()[-5:]
-            raise RuntimeError("PotreeConverter (full) failed: " + " | ".join(tail))
-        for fn in ("metadata.json", "hierarchy.bin", "octree.bin"):
-            shutil.copy2(Path(full_octmp) / fn, full_dir / fn)
+full_octmp = str(Path(outdir) / "full_octree")
+fpc = subprocess.run(
+    [potree_exe, full_las, "-o", full_octmp],
+    capture_output=True,
+    text=True,
+    timeout=timeout,
+)
+if fpc.returncode != 0 or not (Path(full_octmp) / "metadata.json").exists():
+    tail = (fpc.stderr or fpc.stdout or "").strip().splitlines()[-5:]
+    raise RuntimeError("PotreeConverter (full) failed: " + " | ".join(tail))
+for fn in ("metadata.json", "hierarchy.bin", "octree.bin"):
+    shutil.copy2(Path(full_octmp) / fn, full_dir / fn)
 ```
 
 (Place it inside the `try`, after `dst` exists and `x`/`y`/`cache`/`columns`/`potree_exe` are in scope — i.e. after the 256/rev octree `dst` copy block, before the `UPDATE ... SET diag_status='done'`.)
@@ -271,8 +277,11 @@ import numpy as np
 import pytest
 
 _REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-for _p in (os.path.join(_REPO, "scripts"), os.path.join(_REPO, "plugins", "diag-service"),
-           os.path.join(_REPO, "tests", "scripts", "diag")):
+for _p in (
+    os.path.join(_REPO, "scripts"),
+    os.path.join(_REPO, "plugins", "diag-service"),
+    os.path.join(_REPO, "tests", "scripts", "diag"),
+):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -281,7 +290,8 @@ from diag.d1an import read_d1an, write_d1an  # noqa: E402
 
 def _read(buf: bytes) -> dict:
     with tempfile.NamedTemporaryFile(suffix=".d1an", delete=False) as f:
-        f.write(buf); path = f.name
+        f.write(buf)
+        path = f.name
     try:
         return read_d1an(path)
     finally:
@@ -302,23 +312,31 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("OCTREE_ROOT", str(tmp_path / "octrees"))
 
     import app.main as m
-    m._base_lru.clear(); m._result_lru.clear()
+
+    m._base_lru.clear()
+    m._result_lru.clear()
     if hasattr(m, "_full_lru"):
         m._full_lru.clear()
 
     async def _allow(analysis_id, req):
         return {"diag_path": "op-under-test", "diag_status": "done"}
+
     monkeypatch.setattr(m, "_resolve_and_authorize", _allow)
 
     from fastapi.testclient import TestClient
+
     return TestClient(m.app)
 
 
 def test_viewport_crops_to_the_bbox(client):
-    r = client.post("/viewport", json={
-        "analysis_id": "a1", "bbox": [0, -40, 40, 40],
-        "step": {"op": "getis_ord", "params": {"k": 20}},
-    })
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1",
+            "bbox": [0, -40, 40, 40],
+            "step": {"op": "getis_ord", "params": {"k": 20}},
+        },
+    )
     assert r.status_code == 200, r.text
     got = _read(r.content)
     assert np.all(got["x"] >= 0) and np.all(got["x"] <= 40)
@@ -327,66 +345,106 @@ def test_viewport_crops_to_the_bbox(client):
 
 
 def test_viewport_strides_over_max_points(client):
-    r = client.post("/viewport", json={
-        "analysis_id": "a1", "bbox": [-40, -40, 40, 40],
-        "step": {"op": "getis_ord", "params": {"k": 10}}, "max_points": 5000,
-    })
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1",
+            "bbox": [-40, -40, 40, 40],
+            "step": {"op": "getis_ord", "params": {"k": 10}},
+            "max_points": 5000,
+        },
+    )
     assert r.status_code == 200
     assert _read(r.content)["x"].size <= 5000
 
 
 def test_viewport_hdbscan_returns_cluster_id(client):
-    r = client.post("/viewport", json={
-        "analysis_id": "a1", "bbox": [-40, -40, 40, 40],
-        "step": {"op": "hdbscan", "params": {"min_cluster_size": 20}},
-    })
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1",
+            "bbox": [-40, -40, 40, 40],
+            "step": {"op": "hdbscan", "params": {"min_cluster_size": 20}},
+        },
+    )
     assert r.status_code == 200
     v = _read(r.content)["value"]
-    assert set(np.unique(v)) - {-1.0}          # at least one real cluster
+    assert set(np.unique(v)) - {-1.0}  # at least one real cluster
 
 
 def test_viewport_segmentation_two_seed_polys(client):
     left = [[[-1e6, -1e6], [-5, -1e6], [-5, 1e6], [-1e6, 1e6]]]
     right = [[[5, -1e6], [1e6, -1e6], [1e6, 1e6], [5, 1e6]]]
-    r = client.post("/viewport", json={
-        "analysis_id": "a1", "bbox": [-40, -40, 40, 40],
-        "step": {"op": "grow_segmentation", "params": {"features": ["resid_z"]},
-                 "inputs": {"seeds": {"layers": ["L", "R"]}}},
-        "layers": {
-            "L": {"role": "seed", "geometry": {"polygons": left}, "value": None, "version": 1},
-            "R": {"role": "seed", "geometry": {"polygons": right}, "value": None, "version": 1},
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1",
+            "bbox": [-40, -40, 40, 40],
+            "step": {
+                "op": "grow_segmentation",
+                "params": {"features": ["resid_z"]},
+                "inputs": {"seeds": {"layers": ["L", "R"]}},
+            },
+            "layers": {
+                "L": {
+                    "role": "seed",
+                    "geometry": {"polygons": left},
+                    "value": None,
+                    "version": 1,
+                },
+                "R": {
+                    "role": "seed",
+                    "geometry": {"polygons": right},
+                    "value": None,
+                    "version": 1,
+                },
+            },
         },
-    })
+    )
     assert r.status_code == 200, r.text
     assert set(np.unique(_read(r.content)["value"])) <= {0.0, 1.0}
 
 
 def test_viewport_rejects_a_non_spatial_step(client):
-    r = client.post("/viewport", json={
-        "analysis_id": "a1", "bbox": [-40, -40, 40, 40], "step": {"op": "tsa", "params": {}},
-    })
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1",
+            "bbox": [-40, -40, 40, 40],
+            "step": {"op": "tsa", "params": {}},
+        },
+    )
     assert r.status_code == 422
 
 
 def test_viewport_empty_bbox_is_422(client):
-    r = client.post("/viewport", json={
-        "analysis_id": "a1", "bbox": [1000, 1000, 1001, 1001],
-        "step": {"op": "getis_ord", "params": {}},
-    })
+    r = client.post(
+        "/viewport",
+        json={
+            "analysis_id": "a1",
+            "bbox": [1000, 1000, 1001, 1001],
+            "step": {"op": "getis_ord", "params": {}},
+        },
+    )
     assert r.status_code == 422
 
 
 def test_viewport_authorizes_on_lru_hit(client, monkeypatch):
-    body = {"analysis_id": "a1", "bbox": [-40, -40, 40, 40],
-            "step": {"op": "getis_ord", "params": {"k": 10}}}
-    assert client.post("/viewport", json=body).status_code == 200   # populates LRU
+    body = {
+        "analysis_id": "a1",
+        "bbox": [-40, -40, 40, 40],
+        "step": {"op": "getis_ord", "params": {"k": 10}},
+    }
+    assert client.post("/viewport", json=body).status_code == 200  # populates LRU
     import app.main as m
 
     async def _deny(analysis_id, req):
         from fastapi import HTTPException
+
         raise HTTPException(403, "nope")
+
     monkeypatch.setattr(m, "_resolve_and_authorize", _deny)
-    assert client.post("/viewport", json=body).status_code == 403   # hit still re-checks
+    assert client.post("/viewport", json=body).status_code == 403  # hit still re-checks
 ```
 
 - [ ] **Step 2: Run, verify fail** — `py -3 -m pytest plugins/diag-service/tests/test_viewport.py -q` → 404 on `/viewport`.
@@ -398,7 +456,9 @@ Add to `main.py` after the `_load_base` block:
 ```python
 FULL_LRU_CAP = int(os.environ.get("FULL_LRU", "3"))
 _full_lru: OrderedDict[str, dict] = OrderedDict()
-_viewport_lru: OrderedDict[tuple, tuple[bytes, int]] = OrderedDict()   # key -> (d1an bytes, n)
+_viewport_lru: OrderedDict[tuple, tuple[bytes, int]] = (
+    OrderedDict()
+)  # key -> (d1an bytes, n)
 
 _VIEWPORT_STEPS = {"getis_ord", "hdbscan", "grow_segmentation"}
 
@@ -458,15 +518,28 @@ async def viewport(req: Request):
     if y1 < y0:
         y0, y1 = y1, y0
     layers_key = repr(sorted((layers or {}).items())) if layers else ""
-    key = (diag_path, op, (round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3)),
-           recipe_hash({"steps": [step]}), layers_key, output, max_points)
+    key = (
+        diag_path,
+        op,
+        (round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3)),
+        recipe_hash({"steps": [step]}),
+        layers_key,
+        output,
+        max_points,
+    )
     cached = _viewport_lru.get(key)
     if cached is not None:
         _viewport_lru.move_to_end(key)
         cbytes, cn = cached
-        return Response(cbytes, media_type="application/octet-stream",
-                        headers={"Cache-Control": "no-store", "X-Diag-Cache": "hit",
-                                 "X-Diag-Viewport-N": str(cn)})
+        return Response(
+            cbytes,
+            media_type="application/octet-stream",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Diag-Cache": "hit",
+                "X-Diag-Viewport-N": str(cn),
+            },
+        )
 
     full = _load_full(diag_path)
     fx, fy, frz = full["x"], full["y"], full["resid_z"]
@@ -481,7 +554,10 @@ async def viewport(req: Request):
     resolved: dict = {}
     if op == "grow_segmentation":
         from diag.registry import resolve_inputs
-        resolved = resolve_inputs({"op": op, "inputs": step.get("inputs")}, layers, xc, yc)
+
+        resolved = resolve_inputs(
+            {"op": op, "inputs": step.get("inputs")}, layers, xc, yc
+        )
 
     t0 = time.perf_counter()
     try:
@@ -492,15 +568,26 @@ async def viewport(req: Request):
         raise HTTPException(422, f"step failed: {e}") from e
     ms = int((time.perf_counter() - t0) * 1000)
 
-    col = {"getis_ord": output if output in ("gi_star", "gi_sig") else "gi_star",
-           "hdbscan": "cluster_id", "grow_segmentation": "segment_id"}[op]
-    value = np.nan_to_num(produced[col], nan=-1.0 if col in ("cluster_id", "segment_id") else np.nan)
+    col = {
+        "getis_ord": output if output in ("gi_star", "gi_sig") else "gi_star",
+        "hdbscan": "cluster_id",
+        "grow_segmentation": "segment_id",
+    }[op]
+    value = np.nan_to_num(
+        produced[col], nan=-1.0 if col in ("cluster_id", "segment_id") else np.nan
+    )
 
     with tempfile.NamedTemporaryFile(suffix=".d1an", delete=False) as f:
         tmp = f.name
     try:
-        write_d1an(tmp, {"x": xc.astype(np.float32), "y": yc.astype(np.float32),
-                         "value": value.astype(np.float32)})
+        write_d1an(
+            tmp,
+            {
+                "x": xc.astype(np.float32),
+                "y": yc.astype(np.float32),
+                "value": value.astype(np.float32),
+            },
+        )
         out = open(tmp, "rb").read()
     finally:
         os.unlink(tmp)
@@ -508,9 +595,16 @@ async def viewport(req: Request):
     _viewport_lru[key] = (out, int(xc.size))
     while len(_viewport_lru) > RESULT_LRU_CAP:
         _viewport_lru.popitem(last=False)
-    return Response(out, media_type="application/octet-stream",
-                    headers={"Cache-Control": "no-store", "X-Diag-Cache": "miss",
-                             "X-Diag-Ms": str(ms), "X-Diag-Viewport-N": str(xc.size)})
+    return Response(
+        out,
+        media_type="application/octet-stream",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Diag-Cache": "miss",
+            "X-Diag-Ms": str(ms),
+            "X-Diag-Viewport-N": str(xc.size),
+        },
+    )
 ```
 
 The LRU stores `(bytes, n)` so the hit path reports `X-Diag-Viewport-N` without re-parsing the D1AN header.

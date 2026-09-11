@@ -6,7 +6,6 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "scripts"))
 
 from conftest import cache_of, synthetic_cut
-
 from diag.layers import rasterize_polygons
 from diag.recipe import DEFAULT_RECIPE
 from diag.runner import run_recipe, seed_columns

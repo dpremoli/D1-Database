@@ -104,8 +104,14 @@ def _base_d1an(tmp_path) -> str:
     after angular_resample with emit=BASE_COLUMNS."""
     t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut()
     cache = cache_of(t, fx, fy, fz, rpm, revs, fs)
-    stop = next(i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "angular_resample")
-    cols, _ = run_recipe(DEFAULT_RECIPE, seed_columns(cache, x, y), stop_after=stop, emit=BASE_COLUMNS)
+    stop = next(
+        i
+        for i, s in enumerate(DEFAULT_RECIPE["steps"])
+        if s["op"] == "angular_resample"
+    )
+    cols, _ = run_recipe(
+        DEFAULT_RECIPE, seed_columns(cache, x, y), stop_after=stop, emit=BASE_COLUMNS
+    )
     p = str(tmp_path / "base.d1an")
     write_d1an(p, cols)
     return p
@@ -114,7 +120,9 @@ def _base_d1an(tmp_path) -> str:
 def _expected_full(tmp_path):
     """What a full bake produces for the same cut — the ground truth preview must match."""
     t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut()
-    cols, metrics = run_recipe(DEFAULT_RECIPE, seed_columns(cache_of(t, fx, fy, fz, rpm, revs, fs), x, y))
+    cols, metrics = run_recipe(
+        DEFAULT_RECIPE, seed_columns(cache_of(t, fx, fy, fz, rpm, revs, fs), x, y)
+    )
     return cols, metrics
 
 
@@ -144,9 +152,15 @@ def test_health(client):
 
 
 def test_preview_matches_a_full_bake(client, tmp_path):
-    r = client.post("/diag/preview", json={
-        "analysis_id": "analysis-1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None,
-    })
+    r = client.post(
+        "/diag/preview",
+        json={
+            "analysis_id": "analysis-1",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
+        },
+    )
     assert r.status_code == 200, r.text
     assert r.headers["content-type"] == "application/octet-stream"
 
@@ -158,15 +172,37 @@ def test_preview_matches_a_full_bake(client, tmp_path):
 
 
 def test_preview_reflects_a_param_change(client):
-    hot = {"recipe_version": 1, "name": "x", "steps": [dict(s) for s in DEFAULT_RECIPE["steps"]]}
+    hot = {
+        "recipe_version": 1,
+        "name": "x",
+        "steps": [dict(s) for s in DEFAULT_RECIPE["steps"]],
+    }
     for s in hot["steps"]:
         if s["op"] == "getis_ord":
             s["params"] = {**s["params"], "k": 50}
-    a = client.post("/diag/preview", json={"analysis_id": "analysis-1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None})
-    b = client.post("/diag/preview", json={"analysis_id": "analysis-1", "recipe": hot, "from_step": None, "layers": None})
+    a = client.post(
+        "/diag/preview",
+        json={
+            "analysis_id": "analysis-1",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
+        },
+    )
+    b = client.post(
+        "/diag/preview",
+        json={
+            "analysis_id": "analysis-1",
+            "recipe": hot,
+            "from_step": None,
+            "layers": None,
+        },
+    )
     assert a.status_code == b.status_code == 200
     ga, gb = read_d1an_bytes(a.content), read_d1an_bytes(b.content)
-    assert not np.array_equal(ga["gi_star"], gb["gi_star"]), "k=30 vs k=50 must change gi_star"
+    assert not np.array_equal(ga["gi_star"], gb["gi_star"]), (
+        "k=30 vs k=50 must change gi_star"
+    )
 
 
 def test_missing_analysis_is_409(client, monkeypatch):
@@ -177,13 +213,23 @@ def test_missing_analysis_is_409(client, monkeypatch):
 
     monkeypatch.setattr(m, "_resolve_and_authorize", _not_done)
     from fastapi.testclient import TestClient
+
     c = TestClient(m.app)
-    r = c.post("/diag/preview", json={"analysis_id": "x", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None})
+    r = c.post(
+        "/diag/preview",
+        json={
+            "analysis_id": "x",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
+        },
+    )
     assert r.status_code == 409
 
 
 def read_d1an_bytes(buf: bytes) -> dict[str, np.ndarray]:
     import tempfile
+
     with tempfile.NamedTemporaryFile(suffix=".d1an", delete=False) as f:
         f.write(buf)
         path = f.name
@@ -247,7 +293,9 @@ RESULT_LRU_CAP = int(os.environ.get("RESULT_LRU", "24"))
 
 app = FastAPI(title="d1-diag-service")
 
-_cors = [o.strip() for o in os.environ.get("DIAG_CORS_ORIGINS", "").split(",") if o.strip()]
+_cors = [
+    o.strip() for o in os.environ.get("DIAG_CORS_ORIGINS", "").split(",") if o.strip()
+]
 if _cors:
     app.add_middleware(
         CORSMiddleware,
@@ -343,8 +391,11 @@ async def preview(req: Request):
     cached = _result_lru.get(key)
     if cached is not None:
         _result_lru.move_to_end(key)
-        return Response(cached, media_type="application/octet-stream",
-                        headers={"Cache-Control": "no-store", "X-Diag-Cache": "hit"})
+        return Response(
+            cached,
+            media_type="application/octet-stream",
+            headers={"Cache-Control": "no-store", "X-Diag-Cache": "hit"},
+        )
 
     base = _load_base(diag_path)
     t0 = time.perf_counter()
@@ -366,11 +417,15 @@ async def preview(req: Request):
     _result_lru[key] = out
     while len(_result_lru) > RESULT_LRU_CAP:
         _result_lru.popitem(last=False)
-    return Response(out, media_type="application/octet-stream", headers={
-        "Cache-Control": "no-store",
-        "X-Diag-Cache": "miss",
-        "X-Diag-Ms": f"{(time.perf_counter() - t0) * 1000:.0f}",
-    })
+    return Response(
+        out,
+        media_type="application/octet-stream",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Diag-Cache": "miss",
+            "X-Diag-Ms": f"{(time.perf_counter() - t0) * 1000:.0f}",
+        },
+    )
 ```
 
 - [ ] **Step 5: Run the tests**

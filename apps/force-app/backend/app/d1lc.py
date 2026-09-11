@@ -41,7 +41,15 @@ def write_d1lc(
     n = int(t.size)
     version = 2 if extras else 1
     head = struct.pack(
-        "<IIIfffff", MAGIC, version, n, float(fs), float(feed), float(diam), float(cs_sec), float(ce_sec)
+        "<IIIfffff",
+        MAGIC,
+        version,
+        n,
+        float(fs),
+        float(feed),
+        float(diam),
+        float(cs_sec),
+        float(ce_sec),
     )
     with open(path, "wb") as f:
         f.write(head)
@@ -98,7 +106,7 @@ def parse_d1lc(buf: bytes) -> dict:
         for _ in range(extra_count):
             if off + 8 > len(buf):
                 break
-            name = buf[off:off + 8].rstrip(b"\x00").decode("ascii", errors="replace")
+            name = buf[off : off + 8].rstrip(b"\x00").decode("ascii", errors="replace")
             off += 8
             if off + n * 4 > len(buf):
                 break

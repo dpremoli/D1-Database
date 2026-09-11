@@ -37,14 +37,24 @@ def dummy_steps():
     snapshot = dict(STEPS)
     try:
 
-        @step("_dummy_source", produces=["_dummy_col"], requires=[], tier="derived",
-              category="transform")
+        @step(
+            "_dummy_source",
+            produces=["_dummy_col"],
+            requires=[],
+            tier="derived",
+            category="transform",
+        )
         def _dummy_source(cols, params, inputs):
             n = len(next(iter(cols.values()))) if cols else 4
             return {"_dummy_col": np.zeros(n)}, {"_dummy_metric": 1}
 
-        @step("_dummy_consumer", produces=["_dummy_out"], requires=["_dummy_col"],
-              tier="derived", category="transform")
+        @step(
+            "_dummy_consumer",
+            produces=["_dummy_out"],
+            requires=["_dummy_col"],
+            tier="derived",
+            category="transform",
+        )
         def _dummy_consumer(cols, params, inputs):
             return {"_dummy_out": cols["_dummy_col"] + 1}, {}
 
@@ -66,68 +76,102 @@ def test_registry_is_clean_after_the_fixture():
 
 
 def test_unknown_op_is_rejected():
-    bad = {"recipe_version": 1, "name": "x",
-           "steps": [{"id": "a", "op": "does_not_exist", "on": True, "params": {}}]}
+    bad = {
+        "recipe_version": 1,
+        "name": "x",
+        "steps": [{"id": "a", "op": "does_not_exist", "on": True, "params": {}}],
+    }
     with pytest.raises(RecipeError, match="unknown op"):
         validate_recipe(bad)
 
 
 def test_duplicate_step_id_is_rejected(dummy_steps):
-    bad = {"recipe_version": 1, "name": "x", "steps": [
-        {"id": "a", "op": "_dummy_source", "on": True, "params": {}},
-        {"id": "a", "op": "_dummy_source", "on": True, "params": {}},
-    ]}
+    bad = {
+        "recipe_version": 1,
+        "name": "x",
+        "steps": [
+            {"id": "a", "op": "_dummy_source", "on": True, "params": {}},
+            {"id": "a", "op": "_dummy_source", "on": True, "params": {}},
+        ],
+    }
     with pytest.raises(RecipeError, match="duplicate step id"):
         validate_recipe(bad)
 
 
 def test_valid_ordering_passes(dummy_steps):
-    ok = {"recipe_version": 1, "name": "x", "steps": [
-        {"id": "a", "op": "_dummy_source", "on": True, "params": {}},
-        {"id": "b", "op": "_dummy_consumer", "on": True, "params": {}},
-    ]}
+    ok = {
+        "recipe_version": 1,
+        "name": "x",
+        "steps": [
+            {"id": "a", "op": "_dummy_source", "on": True, "params": {}},
+            {"id": "b", "op": "_dummy_consumer", "on": True, "params": {}},
+        ],
+    }
     validate_recipe(ok)  # must not raise
 
 
 def test_out_of_order_step_is_rejected(dummy_steps):
     """A step whose `requires` is not produced by an EARLIER enabled step is refused,
     so the editor can reject an illegal insertion before anything runs."""
-    bad = {"recipe_version": 1, "name": "x", "steps": [
-        {"id": "b", "op": "_dummy_consumer", "on": True, "params": {}},
-        {"id": "a", "op": "_dummy_source", "on": True, "params": {}},
-    ]}
+    bad = {
+        "recipe_version": 1,
+        "name": "x",
+        "steps": [
+            {"id": "b", "op": "_dummy_consumer", "on": True, "params": {}},
+            {"id": "a", "op": "_dummy_source", "on": True, "params": {}},
+        ],
+    }
     with pytest.raises(RecipeError, match="requires"):
         validate_recipe(bad)
 
 
 def test_disabled_step_does_not_satisfy_a_requirement(dummy_steps):
     """A switched-off step produces nothing, so a later step depending on it is invalid."""
-    bad = {"recipe_version": 1, "name": "x", "steps": [
-        {"id": "a", "op": "_dummy_source", "on": False, "params": {}},
-        {"id": "b", "op": "_dummy_consumer", "on": True, "params": {}},
-    ]}
+    bad = {
+        "recipe_version": 1,
+        "name": "x",
+        "steps": [
+            {"id": "a", "op": "_dummy_source", "on": False, "params": {}},
+            {"id": "b", "op": "_dummy_consumer", "on": True, "params": {}},
+        ],
+    }
     with pytest.raises(RecipeError, match="requires"):
         validate_recipe(bad)
 
 
 def test_decorator_rejects_an_invalid_tier():
     with pytest.raises(ValueError, match="tier must be one of"):
-        step("_dummy_bad_tier", produces=[], requires=[], tier="nonsense",
-             category="transform")(lambda *a: None)
+        step(
+            "_dummy_bad_tier",
+            produces=[],
+            requires=[],
+            tier="nonsense",
+            category="transform",
+        )(lambda *a: None)
     assert "_dummy_bad_tier" not in STEPS
 
 
 def test_decorator_rejects_an_invalid_category():
     with pytest.raises(ValueError, match="category must be one of"):
-        step("_dummy_bad_category", produces=[], requires=[], tier="derived",
-             category="nonsense")(lambda *a: None)
+        step(
+            "_dummy_bad_category",
+            produces=[],
+            requires=[],
+            tier="derived",
+            category="nonsense",
+        )(lambda *a: None)
     assert "_dummy_bad_category" not in STEPS
 
 
 def test_decorator_rejects_a_duplicate_registration(dummy_steps):
     with pytest.raises(ValueError, match="duplicate step registration"):
-        step("_dummy_source", produces=[], requires=[], tier="derived",
-             category="transform")(lambda *a: None)
+        step(
+            "_dummy_source",
+            produces=[],
+            requires=[],
+            tier="derived",
+            category="transform",
+        )(lambda *a: None)
 
 
 def test_step_spec_is_frozen(dummy_steps):
@@ -139,11 +183,22 @@ def test_step_spec_is_frozen(dummy_steps):
 
 def test_seed_columns_and_tiers_are_exported():
     assert registry.SEED_COLUMNS == (
-        "t_raw", "fx", "fy", "fz", "rpm", "revs", "x_raw", "y_raw",
+        "t_raw",
+        "fx",
+        "fy",
+        "fz",
+        "rpm",
+        "revs",
+        "x_raw",
+        "y_raw",
     )
     assert registry.TIERS == ("base", "derived")
     assert registry.CATEGORIES == (
-        "transform", "residual", "interpolation", "statistics", "segmentation",
+        "transform",
+        "residual",
+        "interpolation",
+        "statistics",
+        "segmentation",
     )
 
 
@@ -169,9 +224,9 @@ def test_every_step_declares_a_valid_tier():
 
 def test_every_step_declares_a_valid_category():
     for name, spec in STEPS.items():
-        assert spec.category in registry.CATEGORIES, (
-            f"{name} has bad category {spec.category!r}"
-        )
+        assert (
+            spec.category in registry.CATEGORIES
+        ), f"{name} has bad category {spec.category!r}"
 
 
 def test_envelope_is_base_tier():
@@ -185,10 +240,18 @@ def test_seed_column_requirement_is_satisfied_by_seeding():
     Pins that validate_recipe actually seeds `have` from SEED_COLUMNS (frame_transform
     requires fx/fy/fz, which exist only because of the seed)."""
     assert {"fx", "fy", "fz"}.issubset(set(SEED_COLUMNS))
-    r = {"recipe_version": 1, "name": "x", "steps": [
-        {"id": "a", "op": "frame_transform", "on": True,
-         "params": {"channel": "fp", "mount_deg": 0.0}},
-    ]}
+    r = {
+        "recipe_version": 1,
+        "name": "x",
+        "steps": [
+            {
+                "id": "a",
+                "op": "frame_transform",
+                "on": True,
+                "params": {"channel": "fp", "mount_deg": 0.0},
+            },
+        ],
+    }
     validate_recipe(r)  # must not raise
 
 

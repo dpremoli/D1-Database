@@ -98,6 +98,7 @@ DROP TABLE IF EXISTS tool_setup;
 ```python
 # tests/scripts/diag/test_pipeline.py -- append
 
+
 def test_h_matrix_correction_moves_signal_between_channels():
     """A synthetic case where the ONLY way the anomaly-bearing signal ends up on Ff is
     through the H-matrix correction: fx carries the signature, fy is flat. An h_matrix that
@@ -120,8 +121,20 @@ def test_h_matrix_correction_moves_signal_between_channels():
     x = rho * np.cos(theta)
     y = rho * np.sin(theta)
 
-    cache = dict(n=n, fs=fs, feed=0.05, diam=80.0, cs_sec=0.0, ce_sec=float(t[-1]),
-                 t=t, fx=fx, fy=fy, fz=fz, rpm=rpm, revs=revs)
+    cache = dict(
+        n=n,
+        fs=fs,
+        feed=0.05,
+        diam=80.0,
+        cs_sec=0.0,
+        ce_sec=float(t[-1]),
+        t=t,
+        fx=fx,
+        fy=fy,
+        fz=fz,
+        rpm=rpm,
+        revs=revs,
+    )
 
     # No correction: ff = fy = 0 throughout -- no signature to find.
     _, metrics_plain = analyse(cache, x, y, channel="ff", samples_per_rev=spr)
@@ -131,9 +144,13 @@ def test_h_matrix_correction_moves_signal_between_channels():
     # h_matrix swaps x and y: corrected fx' = fy = 0, fy' = fx = signature.
     # With mount_deg=0 (identity rotation), ff = fy' = signature.
     swap = np.array([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
-    columns, metrics = analyse(cache, x, y, channel="ff", h_matrix=swap, samples_per_rev=spr)
+    columns, metrics = analyse(
+        cache, x, y, channel="ff", h_matrix=swap, samples_per_rev=spr
+    )
     assert metrics["h_matrix_applied"] is True
-    assert max(abs(v) for v in metrics["tsa_signature"]) > 3.0  # the signature is now on ff
+    assert (
+        max(abs(v) for v in metrics["tsa_signature"]) > 3.0
+    )  # the signature is now on ff
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -211,13 +228,22 @@ In `claim_diag`'s `RETURNING` clause, add two subselects alongside the existing 
 In `process_diag_row`, immediately before the `columns, metrics = analyse(...)` line, resolve the two optional fields and pass them through:
 
 ```python
-        mount_deg = float(row["setup_mount_deg"]) if row.get("setup_mount_deg") is not None else 0.0
-        h_matrix_raw = row.get("setup_h_matrix")
-        h_matrix = np.array(h_matrix_raw, dtype=np.float64) if h_matrix_raw is not None else None
+mount_deg = (
+    float(row["setup_mount_deg"]) if row.get("setup_mount_deg") is not None else 0.0
+)
+h_matrix_raw = row.get("setup_h_matrix")
+h_matrix = (
+    np.array(h_matrix_raw, dtype=np.float64) if h_matrix_raw is not None else None
+)
 
-        columns, metrics = analyse(
-            cache, x, y, mount_deg=mount_deg, h_matrix=h_matrix, samples_per_rev=DIAG_SAMPLES_PER_REV
-        )
+columns, metrics = analyse(
+    cache,
+    x,
+    y,
+    mount_deg=mount_deg,
+    h_matrix=h_matrix,
+    samples_per_rev=DIAG_SAMPLES_PER_REV,
+)
 ```
 
 (Replaces the existing `columns, metrics = analyse(cache, x, y, samples_per_rev=DIAG_SAMPLES_PER_REV)` line.)
@@ -262,7 +288,8 @@ def test_drift_check_flags_a_strong_linear_trend():
     axes = {
         "Fx": np.full(n, 40.0),
         "Fy": np.full(n, 60.0),
-        "Fz": 5.0 + 40.0 * t,  # same strong drift as test_drift_comp_removes_linear_trend
+        "Fz": 5.0
+        + 40.0 * t,  # same strong drift as test_drift_comp_removes_linear_trend
     }
     result = drift_check(t, axes)
     assert result["Fz"]["detected"] is True
@@ -309,7 +336,10 @@ Append to `apps/force-app/backend/app/dsp.py`:
 
 ```python
 def order_spectrum_quick(
-    revs: np.ndarray, sig: np.ndarray, samples_per_rev: int = 64, max_order: float = 16.0
+    revs: np.ndarray,
+    sig: np.ndarray,
+    samples_per_rev: int = 64,
+    max_order: float = 16.0,
 ) -> tuple[list[float], list[float]]:
     """A deliberately cheap order spectrum for the local tier (Component 8): resample onto a
     uniform revolution grid at a coarse `samples_per_rev`, then rfft. Independent of (and much
@@ -339,7 +369,9 @@ def order_spectrum_quick(
     return orders[keep].tolist(), amp[keep].tolist()
 
 
-def drift_check(t: np.ndarray, axes: dict[str, np.ndarray], thresh_frac: float = 0.1) -> dict:
+def drift_check(
+    t: np.ndarray, axes: dict[str, np.ndarray], thresh_frac: float = 0.1
+) -> dict:
     """Flag whether each summed axis shows a linear baseline drift large enough to matter,
     independent of whether drift_comp correction is enabled -- this is a diagnostic check, not
     the correction itself (see finalize.py's drift_comp, which unconditionally detrends when the
@@ -355,7 +387,11 @@ def drift_check(t: np.ndarray, axes: dict[str, np.ndarray], thresh_frac: float =
     for name, sig in axes.items():
         sig = np.asarray(sig, dtype=np.float64)
         if sig.size < 2 or duration <= 0:
-            out[name] = {"slope_n_per_sec": 0.0, "excursion_frac": 0.0, "detected": False}
+            out[name] = {
+                "slope_n_per_sec": 0.0,
+                "excursion_frac": 0.0,
+                "detected": False,
+            }
             continue
         slope = float(np.polyfit(t, sig, 1)[0])
         ptp = float(np.ptp(sig))
@@ -381,7 +417,13 @@ Expected: PASS (all 3 new tests), and re-run the full file to confirm no regress
 In `apps/force-app/backend/app/finalize.py`, add the import:
 
 ```python
-from .dsp import drift_check, order_spectrum_quick, rpm_from_tacho, sum_axes, tacho_column
+from .dsp import (
+    drift_check,
+    order_spectrum_quick,
+    rpm_from_tacho,
+    sum_axes,
+    tacho_column,
+)
 ```
 
 (replaces the existing `from .dsp import rpm_from_tacho, sum_axes, tacho_column` line)
@@ -389,25 +431,27 @@ from .dsp import drift_check, order_spectrum_quick, rpm_from_tacho, sum_axes, ta
 After the existing `rpm, tacho_measured = rpm_from_tacho(tacho, fs, cfg.ppr)` / `revs_cum = ...` lines and before the `.mat` write, add the local-tier computation:
 
 ```python
-    # Local tier (Component 8, deliberately thin): a quick order spectrum + a drift-detection
-    # flag, computed here because finalize() only ever runs after the acquisition loop has
-    # stopped (see session.py's _run -> self.raw.close() -> _finalize_async) -- this is what
-    # makes "never runs during recording" structural rather than a rule this function has to
-    # separately enforce. The order spectrum needs a real revs_cum to resample against; without
-    # a measured tacho there is no revolution axis to resample onto, so it refuses rather than
-    # guessing one (same refusal-over-aliasing pattern as scripts/diag/pipeline.py's envelope
-    # analysis).
-    if tacho_measured:
-        os_orders, os_amp = order_spectrum_quick(revs_cum, axes["Fz"])
-        os_status = "computed" if os_orders else "refused: cut too short for a revolution grid"
-    else:
-        os_orders, os_amp = [], []
-        os_status = "refused: tacho not measured"
-    local_diag = {
-        "order_spectrum_status": os_status,
-        "order_spectrum": {"orders": os_orders, "amplitude": os_amp} if os_orders else None,
-        "drift": drift_check(t, axes),
-    }
+# Local tier (Component 8, deliberately thin): a quick order spectrum + a drift-detection
+# flag, computed here because finalize() only ever runs after the acquisition loop has
+# stopped (see session.py's _run -> self.raw.close() -> _finalize_async) -- this is what
+# makes "never runs during recording" structural rather than a rule this function has to
+# separately enforce. The order spectrum needs a real revs_cum to resample against; without
+# a measured tacho there is no revolution axis to resample onto, so it refuses rather than
+# guessing one (same refusal-over-aliasing pattern as scripts/diag/pipeline.py's envelope
+# analysis).
+if tacho_measured:
+    os_orders, os_amp = order_spectrum_quick(revs_cum, axes["Fz"])
+    os_status = (
+        "computed" if os_orders else "refused: cut too short for a revolution grid"
+    )
+else:
+    os_orders, os_amp = [], []
+    os_status = "refused: tacho not measured"
+local_diag = {
+    "order_spectrum_status": os_status,
+    "order_spectrum": {"orders": os_orders, "amplitude": os_amp} if os_orders else None,
+    "drift": drift_check(t, axes),
+}
 ```
 
 Add `"local_diag": local_diag,` to the `summary` dict (near the existing `"drift_comp": bool(cfg.drift_comp),` line).

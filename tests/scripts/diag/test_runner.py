@@ -2,7 +2,6 @@ import copy
 
 import numpy as np
 import pytest
-
 from conftest import (
     GOLDEN_DEFAULT,
     GOLDEN_ENVELOPE,
@@ -10,15 +9,33 @@ from conftest import (
     cache_of,
     synthetic_cut,
 )
-
 from diag.recipe import DEFAULT_RECIPE
 from diag.registry import STEPS, RecipeError
-from diag.runner import _TRUNCATABLE, base_columns_all_channels, run_recipe, seed_columns
+from diag.runner import (
+    _TRUNCATABLE,
+    base_columns_all_channels,
+    run_recipe,
+    seed_columns,
+)
 
 PUBLIC_COLUMNS = {
-    "t", "rev", "x", "y", "tsa_resid", "resid_z",
-    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band", "segment_id",
-    "inverted", "grid_fill", "grid_support", "gmm_id", "gmm_prob",
+    "t",
+    "rev",
+    "x",
+    "y",
+    "tsa_resid",
+    "resid_z",
+    "gi_star",
+    "gi_sig",
+    "cluster_id",
+    "glosh",
+    "env_band",
+    "segment_id",
+    "inverted",
+    "grid_fill",
+    "grid_support",
+    "gmm_id",
+    "gmm_prob",
 }
 
 
@@ -75,7 +92,9 @@ def test_stop_after_before_tsa_raises_not_returns_empties():
     """stop_after cutting before tsa leaves no angular length defined. The runner must fail
     loudly rather than hand back eleven zero-length columns that a caller would persist."""
     idx = next(
-        i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "angular_resample"
+        i
+        for i, s in enumerate(DEFAULT_RECIPE["steps"])
+        if s["op"] == "angular_resample"
     )
     with pytest.raises(ValueError, match="before the 'tsa' step"):
         run_recipe(DEFAULT_RECIPE, _seed(), stop_after=idx)
@@ -100,7 +119,9 @@ def test_resume_path_omits_metrics_it_cannot_truthfully_compute():
     """cached_fs_hz / effective_fs_hz / effective_nyquist_hz derive from seed columns that
     a from_step resume does not carry. Absent keys, not zeros -- a zero Nyquist is a lie a
     consumer would plot."""
-    idx = next(i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "getis_ord")
+    idx = next(
+        i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "getis_ord"
+    )
     prefix, _ = run_recipe(DEFAULT_RECIPE, _seed(), stop_after=idx - 1)
     _, metrics = run_recipe(DEFAULT_RECIPE, prefix, from_step=idx)
     assert "cached_fs_hz" not in metrics
@@ -131,7 +152,9 @@ def test_from_step_reuses_supplied_columns():
     diverge slightly on the resumed path. Assert structural agreement, not identity.
     """
     full, _ = run_recipe(DEFAULT_RECIPE, _seed())
-    idx = next(i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "getis_ord")
+    idx = next(
+        i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "getis_ord"
+    )
     prefix, _ = run_recipe(DEFAULT_RECIPE, _seed(), from_step=None, stop_after=idx - 1)
     resumed, _ = run_recipe(DEFAULT_RECIPE, prefix, from_step=idx)
     # The overwhelming majority of gi_star values are unchanged; the rest are neighbour-swap
@@ -144,7 +167,8 @@ def test_from_step_reuses_supplied_columns():
 
 def _angular_resample_idx():
     return next(
-        i for i, s in enumerate(DEFAULT_RECIPE["steps"])
+        i
+        for i, s in enumerate(DEFAULT_RECIPE["steps"])
         if s["op"] == "angular_resample"
     )
 
@@ -216,9 +240,7 @@ def test_default_recipe_with_envelope_on_reproduces_analyse_exactly():
     s7 = next(s for s in recipe["steps"] if s["id"] == "s7")
     s7["on"] = True
     s7["params"]["fn_hz"] = 1000.0
-    _assert_equivalent_to_golden(
-        recipe, GOLDEN_ENVELOPE, nondegenerate=("env_band",)
-    )
+    _assert_equivalent_to_golden(recipe, GOLDEN_ENVELOPE, nondegenerate=("env_band",))
 
 
 def test_default_recipe_emits_segment_id_all_minus_one():
@@ -240,10 +262,18 @@ def _default_recipe_plus_slice2_steps():
     recipe = copy.deepcopy(DEFAULT_RECIPE)
     recipe["steps"] += [
         {"id": "s8", "op": "invert", "on": True, "params": {"source": "resid_z"}},
-        {"id": "s9", "op": "griddify", "on": True,
-         "params": {"resolution_mm": 0.25, "method": "linear", "max_fill_mm": 1.0}},
-        {"id": "s10", "op": "gmm_segmentation", "on": True,
-         "params": {"n_components": 3, "grid_target": 20000}},
+        {
+            "id": "s9",
+            "op": "griddify",
+            "on": True,
+            "params": {"resolution_mm": 0.25, "method": "linear", "max_fill_mm": 1.0},
+        },
+        {
+            "id": "s10",
+            "op": "gmm_segmentation",
+            "on": True,
+            "params": {"n_components": 3, "grid_target": 20000},
+        },
     ]
     return recipe
 
@@ -291,9 +321,16 @@ def test_base_columns_all_channels_sig_fp_matches_the_single_channel_base_path()
     stop_after=angular_resample_index, emit=(...,"sig"))) already produced for channel='fp' --
     DEFAULT_RECIPE's frame_transform.channel. Byte-identical, not just close: both paths go
     through the exact same angular_resample() call on the exact same inputs."""
-    stop = next(i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "angular_resample")
+    stop = next(
+        i
+        for i, s in enumerate(DEFAULT_RECIPE["steps"])
+        if s["op"] == "angular_resample"
+    )
     single, _ = run_recipe(
-        DEFAULT_RECIPE, _seed(), stop_after=stop, emit=("t", "rev", "x", "y", "sig"),
+        DEFAULT_RECIPE,
+        _seed(),
+        stop_after=stop,
+        emit=("t", "rev", "x", "y", "sig"),
     )
     multi = base_columns_all_channels(DEFAULT_RECIPE, _seed())
     for name in ("t", "rev", "x", "y"):
@@ -306,7 +343,9 @@ def test_base_columns_all_channels_is_channel_agnostic():
     currently has selected -- that selection is what /preview reads to pick ONE of the three
     back out, not something base_columns_all_channels should key off."""
     hot = copy.deepcopy(DEFAULT_RECIPE)
-    next(s for s in hot["steps"] if s["op"] == "frame_transform")["params"]["channel"] = "fc"
+    next(s for s in hot["steps"] if s["op"] == "frame_transform")["params"][
+        "channel"
+    ] = "fc"
     a = base_columns_all_channels(DEFAULT_RECIPE, _seed())
     b = base_columns_all_channels(hot, _seed())
     for name in a:

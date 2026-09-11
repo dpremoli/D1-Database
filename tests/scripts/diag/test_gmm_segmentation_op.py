@@ -28,7 +28,9 @@ def test_registered_with_the_right_contract():
 
 def test_op_assigns_every_finite_point_no_masking():
     c = _cols()
-    out, _ = STEPS["gmm_segmentation"].fn(c, {"n_components": 3, "grid_target": 200}, {})
+    out, _ = STEPS["gmm_segmentation"].fn(
+        c, {"n_components": 3, "grid_target": 200}, {}
+    )
     assert out["gmm_id"].shape == (600,)
     assert np.all(out["gmm_id"] >= 0)
     assert np.all(out["gmm_prob"] >= 0.0) and np.all(out["gmm_prob"] <= 1.0 + 1e-9)
@@ -37,7 +39,9 @@ def test_op_assigns_every_finite_point_no_masking():
 def test_op_passes_masked_nan_through_as_minus_one():
     c = _cols()
     c["resid_z"][:80] = np.nan
-    out, _ = STEPS["gmm_segmentation"].fn(c, {"n_components": 3, "grid_target": 200}, {})
+    out, _ = STEPS["gmm_segmentation"].fn(
+        c, {"n_components": 3, "grid_target": 200}, {}
+    )
     assert np.all(out["gmm_id"][:80] == -1)
     assert np.all(out["gmm_prob"][:80] == 0.0)
 

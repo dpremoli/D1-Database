@@ -49,14 +49,16 @@ def test_fill_edges_nan_marks_points_outside_the_grid():
     grid = np.array([1.0, 2.0, 3.0])
     vals = np.array([10.0, 20.0, 30.0])
     out = broadcast_to_spiral(grid, vals, np.array([0.0, 2.0, 5.0]), fill_edges="nan")
-    assert np.isnan(out[0])            # before the grid
-    assert out[1] == 20.0              # inside
-    assert np.isnan(out[2])            # after the grid (the TSA-dropped partial revolution)
+    assert np.isnan(out[0])  # before the grid
+    assert out[1] == 20.0  # inside
+    assert np.isnan(out[2])  # after the grid (the TSA-dropped partial revolution)
 
 
 def test_fill_edges_rejects_an_unknown_mode():
     with pytest.raises(ValueError):
-        broadcast_to_spiral(np.arange(3.0), np.arange(3.0), np.arange(3.0), fill_edges="hold")
+        broadcast_to_spiral(
+            np.arange(3.0), np.arange(3.0), np.arange(3.0), fill_edges="hold"
+        )
 
 
 def test_float32_angular_grid_at_high_rev_collapses_but_float64_reconstruction_does_not():

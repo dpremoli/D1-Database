@@ -26,13 +26,31 @@ for _p in (
 from conftest import cache_of, synthetic_cut  # noqa: E402
 from diag.d1an import read_d1an, write_d1an  # noqa: E402
 from diag.recipe import DEFAULT_RECIPE  # noqa: E402
-from diag.runner import base_columns_all_channels, run_recipe, seed_columns  # noqa: E402
+from diag.runner import (  # noqa: E402
+    base_columns_all_channels,
+    run_recipe,
+    seed_columns,
+)
 
 BASE_COLUMNS = ("t", "rev", "x", "y", "sig")
 PUBLIC = {
-    "t", "rev", "x", "y", "tsa_resid", "resid_z",
-    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band", "segment_id",
-    "inverted", "grid_fill", "grid_support", "gmm_id", "gmm_prob",
+    "t",
+    "rev",
+    "x",
+    "y",
+    "tsa_resid",
+    "resid_z",
+    "gi_star",
+    "gi_sig",
+    "cluster_id",
+    "glosh",
+    "env_band",
+    "segment_id",
+    "inverted",
+    "grid_fill",
+    "grid_support",
+    "gmm_id",
+    "gmm_prob",
 }
 
 
@@ -41,7 +59,8 @@ def _write_base_d1an(dst: str) -> None:
     frame_transform channels, not just the one DEFAULT_RECIPE happens to have selected."""
     t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut()
     cols = base_columns_all_channels(
-        DEFAULT_RECIPE, seed_columns(cache_of(t, fx, fy, fz, rpm, revs, fs), x, y),
+        DEFAULT_RECIPE,
+        seed_columns(cache_of(t, fx, fy, fz, rpm, revs, fs), x, y),
     )
     write_d1an(dst, cols)
 
@@ -51,7 +70,9 @@ def _write_old_format_base_d1an(dst: str) -> None:
     whichever channel the recipe was baked with. Used to pin the pre-v10 fallback path."""
     t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut()
     stop = next(
-        i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "angular_resample"
+        i
+        for i, s in enumerate(DEFAULT_RECIPE["steps"])
+        if s["op"] == "angular_resample"
     )
     cols, _ = run_recipe(
         DEFAULT_RECIPE,
@@ -148,7 +169,12 @@ def test_preview_approximates_a_full_bake(client):
     """
     r = client.post(
         "/preview",
-        json={"analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None},
+        json={
+            "analysis_id": "a1",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
+        },
     )
     assert r.status_code == 200, r.text
     assert r.headers["content-type"] == "application/octet-stream"
@@ -160,12 +186,18 @@ def test_preview_approximates_a_full_bake(client):
 
     # pass-through / structurally-exact columns (segment_id is all -1 both sides: no seeds)
     for name in ("t", "rev", "x", "y", "env_band", "segment_id"):
-        np.testing.assert_array_equal(got[name], want[name], err_msg=f"{name} must be exact")
+        np.testing.assert_array_equal(
+            got[name], want[name], err_msg=f"{name} must be exact"
+        )
 
     # continuous statistics: close, not equal
     for name in ("tsa_resid", "resid_z", "glosh"):
         np.testing.assert_allclose(
-            got[name], want[name], rtol=0.05, atol=0.05, err_msg=f"{name} out of float32 band"
+            got[name],
+            want[name],
+            rtol=0.05,
+            atol=0.05,
+            err_msg=f"{name} out of float32 band",
         )
 
     # gi_star swings hardest on the synthetic's tie degeneracy — assert shape, not values
@@ -179,9 +211,12 @@ def test_preview_approximates_a_full_bake(client):
 
 def _with_channel(channel):
     r = {
-        "recipe_version": 1, "name": channel,
+        "recipe_version": 1,
+        "name": channel,
         "steps": [
-            {**s, "params": {**s["params"], "channel": channel}} if s["op"] == "frame_transform" else dict(s)
+            {**s, "params": {**s["params"], "channel": channel}}
+            if s["op"] == "frame_transform"
+            else dict(s)
             for s in DEFAULT_RECIPE["steps"]
         ],
     }
@@ -195,11 +230,21 @@ def test_preview_switches_frame_transform_channel_without_a_rebake(client):
     fx/fy, fp = fz unrotated) -- a real, verifiable difference from fp's real signal."""
     fp = client.post(
         "/preview",
-        json={"analysis_id": "a1", "recipe": _with_channel("fp"), "from_step": None, "layers": None},
+        json={
+            "analysis_id": "a1",
+            "recipe": _with_channel("fp"),
+            "from_step": None,
+            "layers": None,
+        },
     )
     fc = client.post(
         "/preview",
-        json={"analysis_id": "a1", "recipe": _with_channel("fc"), "from_step": None, "layers": None},
+        json={
+            "analysis_id": "a1",
+            "recipe": _with_channel("fc"),
+            "from_step": None,
+            "layers": None,
+        },
     )
     assert fp.status_code == fc.status_code == 200
     got_fp, got_fc = _read_bytes(fp.content), _read_bytes(fc.content)
@@ -213,7 +258,12 @@ def test_preview_switches_frame_transform_channel_without_a_rebake(client):
 def test_preview_rejects_an_unknown_channel(client):
     r = client.post(
         "/preview",
-        json={"analysis_id": "a1", "recipe": _with_channel("not_a_channel"), "from_step": None, "layers": None},
+        json={
+            "analysis_id": "a1",
+            "recipe": _with_channel("not_a_channel"),
+            "from_step": None,
+            "layers": None,
+        },
     )
     assert r.status_code == 422
     assert "channel" in r.json()["detail"]
@@ -226,11 +276,21 @@ def test_preview_falls_back_to_one_signal_on_a_pre_v10_base_d1an(old_format_clie
     the file actually has, exactly reproducing pre-slice-4 behaviour until the row rebakes."""
     as_fp = old_format_client.post(
         "/preview",
-        json={"analysis_id": "a1", "recipe": _with_channel("fp"), "from_step": None, "layers": None},
+        json={
+            "analysis_id": "a1",
+            "recipe": _with_channel("fp"),
+            "from_step": None,
+            "layers": None,
+        },
     )
     as_fc = old_format_client.post(
         "/preview",
-        json={"analysis_id": "a1", "recipe": _with_channel("fc"), "from_step": None, "layers": None},
+        json={
+            "analysis_id": "a1",
+            "recipe": _with_channel("fc"),
+            "from_step": None,
+            "layers": None,
+        },
     )
     assert as_fp.status_code == as_fc.status_code == 200
     got_fp, got_fc = _read_bytes(as_fp.content), _read_bytes(as_fc.content)
@@ -246,11 +306,16 @@ def test_preview_stop_after_truncates_the_pipeline(client):
     state -- the client sends stop_after (the full step-list index, disabled steps included,
     matching runner.run_recipe's own convention) and the response reflects only steps up to
     and including it."""
-    idx = next(i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "radial_detrend")
+    idx = next(
+        i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "radial_detrend"
+    )
     r = client.post(
         "/preview",
         json={
-            "analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None,
+            "analysis_id": "a1",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
             "stop_after": idx,
         },
     )
@@ -280,11 +345,18 @@ def test_preview_stop_after_before_the_first_derived_step_is_a_clean_422(client)
     misbehave if something does; diagRequestError already turns a 422 into a readable
     message on the client, so this degrades safely even if the client-side gate is bypassed.
     """
-    idx = next(i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "angular_resample")
+    idx = next(
+        i
+        for i, s in enumerate(DEFAULT_RECIPE["steps"])
+        if s["op"] == "angular_resample"
+    )
     r = client.post(
         "/preview",
         json={
-            "analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None,
+            "analysis_id": "a1",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
             "stop_after": idx,
         },
     )
@@ -293,15 +365,25 @@ def test_preview_stop_after_before_the_first_derived_step_is_a_clean_422(client)
 
 
 def test_preview_stop_after_differs_from_the_full_preview(client):
-    idx = next(i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "radial_detrend")
+    idx = next(
+        i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "radial_detrend"
+    )
     full = client.post(
         "/preview",
-        json={"analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None},
+        json={
+            "analysis_id": "a1",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
+        },
     )
     truncated = client.post(
         "/preview",
         json={
-            "analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None,
+            "analysis_id": "a1",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
             "stop_after": idx,
         },
     )
@@ -316,12 +398,20 @@ def test_preview_stop_after_differs_from_the_full_preview(client):
 def test_preview_stop_after_null_behaves_exactly_like_omitting_it(client):
     a = client.post(
         "/preview",
-        json={"analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None},
+        json={
+            "analysis_id": "a1",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
+        },
     )
     b = client.post(
         "/preview",
         json={
-            "analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None,
+            "analysis_id": "a1",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
             "stop_after": None,
         },
     )
@@ -336,13 +426,20 @@ def test_preview_reflects_a_param_change(client):
         "recipe_version": 1,
         "name": "hot",
         "steps": [
-            {**s, "params": {**s["params"], "k": 50}} if s["op"] == "getis_ord" else dict(s)
+            {**s, "params": {**s["params"], "k": 50}}
+            if s["op"] == "getis_ord"
+            else dict(s)
             for s in DEFAULT_RECIPE["steps"]
         ],
     }
     a = client.post(
         "/preview",
-        json={"analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None},
+        json={
+            "analysis_id": "a1",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
+        },
     )
     b = client.post(
         "/preview",
@@ -350,12 +447,19 @@ def test_preview_reflects_a_param_change(client):
     )
     assert a.status_code == b.status_code == 200
     ga, gb = _read_bytes(a.content), _read_bytes(b.content)
-    assert not np.array_equal(ga["gi_star"], gb["gi_star"]), "k=30 vs k=50 must move gi_star"
+    assert not np.array_equal(
+        ga["gi_star"], gb["gi_star"]
+    ), "k=30 vs k=50 must move gi_star"
     assert a.headers["x-diag-cache"] == "miss"
 
 
 def test_repeated_identical_request_is_cache_hit(client):
-    body = {"analysis_id": "a1", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None}
+    body = {
+        "analysis_id": "a1",
+        "recipe": DEFAULT_RECIPE,
+        "from_step": None,
+        "layers": None,
+    }
     first = client.post("/preview", json=body)
     second = client.post("/preview", json=body)
     assert first.headers["x-diag-cache"] == "miss"
@@ -372,7 +476,12 @@ def test_analysis_not_done_is_409(client, monkeypatch):
     monkeypatch.setattr(m, "_resolve_and_authorize", _pending)
     r = client.post(
         "/preview",
-        json={"analysis_id": "x", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None},
+        json={
+            "analysis_id": "x",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
+        },
     )
     assert r.status_code == 409
 
@@ -386,12 +495,19 @@ def test_missing_base_d1an_is_409(client, monkeypatch):
     monkeypatch.setattr(m, "_resolve_and_authorize", _other)
     r = client.post(
         "/preview",
-        json={"analysis_id": "x", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None},
+        json={
+            "analysis_id": "x",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
+        },
     )
     assert r.status_code == 409
 
 
-@pytest.mark.parametrize("evil", ["../secret", "a/b", "..", "op\\win", "/abs", "with.dot"])
+@pytest.mark.parametrize(
+    "evil", ["../secret", "a/b", "..", "op\\win", "/abs", "with.dot"]
+)
 def test_path_traversal_in_diag_path_is_400(client, monkeypatch, evil):
     import app.main as m
 
@@ -401,7 +517,12 @@ def test_path_traversal_in_diag_path_is_400(client, monkeypatch, evil):
     monkeypatch.setattr(m, "_resolve_and_authorize", _crafted)
     r = client.post(
         "/preview",
-        json={"analysis_id": "x", "recipe": DEFAULT_RECIPE, "from_step": None, "layers": None},
+        json={
+            "analysis_id": "x",
+            "recipe": DEFAULT_RECIPE,
+            "from_step": None,
+            "layers": None,
+        },
     )
     assert r.status_code == 400
 
@@ -462,18 +583,33 @@ def test_preview_returns_segment_id_from_seeds(client):
     import copy
 
     recipe = copy.deepcopy(DEFAULT_RECIPE)
-    recipe["steps"].append({
-        "id": "seg", "op": "grow_segmentation", "on": True,
-        "params": {"features": ["resid_z"], "k": 15},
-        "inputs": {"seeds": {"layers": ["a", "b"], "required": False}},
-    })
+    recipe["steps"].append(
+        {
+            "id": "seg",
+            "op": "grow_segmentation",
+            "on": True,
+            "params": {"features": ["resid_z"], "k": 15},
+            "inputs": {"seeds": {"layers": ["a", "b"], "required": False}},
+        }
+    )
     big_left = [[[-1e9, -1e9], [0, -1e9], [0, 1e9], [-1e9, 1e9]]]
     big_right = [[[0, -1e9], [1e9, -1e9], [1e9, 1e9], [0, 1e9]]]
     body = {
-        "analysis_id": "a1", "recipe": recipe,
+        "analysis_id": "a1",
+        "recipe": recipe,
         "layers": {
-            "a": {"role": "seed", "geometry": {"polygons": big_left}, "value": None, "version": 1},
-            "b": {"role": "seed", "geometry": {"polygons": big_right}, "value": None, "version": 1},
+            "a": {
+                "role": "seed",
+                "geometry": {"polygons": big_left},
+                "value": None,
+                "version": 1,
+            },
+            "b": {
+                "role": "seed",
+                "geometry": {"polygons": big_right},
+                "value": None,
+                "version": 1,
+            },
         },
     }
     r = client.post("/preview", json=body)
@@ -500,7 +636,8 @@ def _envelope_on_recipe():
 
 def test_preview_skips_a_base_tier_step_instead_of_failing(client):
     r = client.post(
-        "/preview", json={"analysis_id": "a1", "recipe": _envelope_on_recipe(), "layers": None}
+        "/preview",
+        json={"analysis_id": "a1", "recipe": _envelope_on_recipe(), "layers": None},
     )
     assert r.status_code == 200, r.text
     assert r.headers.get("x-diag-skipped") == "envelope"

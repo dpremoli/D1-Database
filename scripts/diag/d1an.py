@@ -47,7 +47,9 @@ def d1an_bytes(columns: dict[str, np.ndarray]) -> bytes:
             raise ValueError(f"column name {name!r} exceeds {NAME_BYTES} bytes")
     parts = [struct.pack(_HEADER, MAGIC, VERSION, n, len(columns))]
     parts += [name.encode("ascii").ljust(NAME_BYTES, b"\x00") for name in columns]
-    parts += [np.ascontiguousarray(arr, dtype="<f4").tobytes() for arr in columns.values()]
+    parts += [
+        np.ascontiguousarray(arr, dtype="<f4").tobytes() for arr in columns.values()
+    ]
     return b"".join(parts)
 
 

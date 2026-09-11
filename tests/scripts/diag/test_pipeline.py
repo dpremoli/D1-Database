@@ -1,7 +1,6 @@
 import struct
 
 import numpy as np
-
 from conftest import (
     GOLDEN_DEFAULT,
     GOLDEN_ENVELOPE,
@@ -9,7 +8,6 @@ from conftest import (
     cache_of,
     synthetic_cut,
 )
-
 from diag.pipeline import analyse, read_d1lc
 
 SPR = 256
@@ -290,16 +288,28 @@ def test_mount_deg_rotates_the_signature_between_fc_and_ff():
     theta = 2 * np.pi * revs
     x = rho * np.cos(theta)
     y = rho * np.sin(theta)
-    cache = dict(n=n, fs=fs, feed=0.05, diam=80.0, cs_sec=0.0, ce_sec=float(t[-1]),
-                 t=t, fx=fx, fy=fy, fz=fz, rpm=rpm, revs=revs)
+    cache = dict(
+        n=n,
+        fs=fs,
+        feed=0.05,
+        diam=80.0,
+        cs_sec=0.0,
+        ce_sec=float(t[-1]),
+        t=t,
+        fx=fx,
+        fy=fy,
+        fz=fz,
+        rpm=rpm,
+        revs=revs,
+    )
 
     _, m0 = analyse(cache, x, y, channel="ff", mount_deg=0.0, samples_per_rev=spr)
     assert m0["mount_deg"] == 0.0
-    assert max(abs(v) for v in m0["tsa_signature"]) < 1e-6      # Ff = Fy = 0
+    assert max(abs(v) for v in m0["tsa_signature"]) < 1e-6  # Ff = Fy = 0
 
     _, m90 = analyse(cache, x, y, channel="ff", mount_deg=90.0, samples_per_rev=spr)
     assert m90["mount_deg"] == 90.0
-    assert max(abs(v) for v in m90["tsa_signature"]) > 3.0      # Ff = -Fx = the signature
+    assert max(abs(v) for v in m90["tsa_signature"]) > 3.0  # Ff = -Fx = the signature
 
 
 def test_analyse_kwargs_translate_to_the_recipe_frame_transform_reads():
@@ -320,7 +330,13 @@ def test_analyse_kwargs_translate_to_the_recipe_frame_transform_reads():
     swap = [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
 
     cols_a, metrics_a = analyse(
-        cache, x, y, channel="fc", mount_deg=37.0, h_matrix=np.array(swap), samples_per_rev=SPR
+        cache,
+        x,
+        y,
+        channel="fc",
+        mount_deg=37.0,
+        h_matrix=np.array(swap),
+        samples_per_rev=SPR,
     )
 
     recipe = copy.deepcopy(DEFAULT_RECIPE)
@@ -329,7 +345,9 @@ def test_analyse_kwargs_translate_to_the_recipe_frame_transform_reads():
     cols_r, metrics_r = run_recipe(recipe, seed_columns(cache, x, y))
 
     for name in cols_a:
-        np.testing.assert_array_equal(cols_a[name], cols_r[name], err_msg=f"column {name}")
+        np.testing.assert_array_equal(
+            cols_a[name], cols_r[name], err_msg=f"column {name}"
+        )
     assert metrics_a["mount_deg"] == metrics_r["mount_deg"] == 37.0
     assert metrics_a["h_matrix_applied"] is metrics_r["h_matrix_applied"] is True
     assert metrics_a["channel"] == metrics_r["channel"] == "fc"

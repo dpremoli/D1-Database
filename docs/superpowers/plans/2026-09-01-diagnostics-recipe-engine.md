@@ -95,9 +95,18 @@ def synthetic_cut(n_rev=40, spr=SPR, anomaly_rev=25.0, anomaly_span=0.05):
 
 def cache_of(t, fx, fy, fz, rpm, revs, fs):
     return {
-        "n": t.size, "fs": fs, "feed": 0.05, "diam": 80.0,
-        "cs_sec": 0.0, "ce_sec": float(t[-1]),
-        "t": t, "fx": fx, "fy": fy, "fz": fz, "rpm": rpm, "revs": revs,
+        "n": t.size,
+        "fs": fs,
+        "feed": 0.05,
+        "diam": 80.0,
+        "cs_sec": 0.0,
+        "ce_sec": float(t[-1]),
+        "t": t,
+        "fx": fx,
+        "fy": fy,
+        "fz": fz,
+        "rpm": rpm,
+        "revs": revs,
     }
 
 
@@ -134,16 +143,26 @@ from tests.scripts.diag.conftest import cache_of, synthetic_cut  # noqa: E402
 from diag.pipeline import analyse  # noqa: E402
 
 OUT = os.path.join(
-    os.path.dirname(__file__), "..", "..",
-    "tests", "scripts", "diag", "fixtures", "golden_default_recipe.npz",
+    os.path.dirname(__file__),
+    "..",
+    "..",
+    "tests",
+    "scripts",
+    "diag",
+    "fixtures",
+    "golden_default_recipe.npz",
 )
 
 
 def main() -> None:
     t, fx, fy, fz, rpm, revs, x, y, fs, _ = synthetic_cut()
-    cols, metrics = analyse(cache_of(t, fx, fy, fz, rpm, revs, fs), x, y, samples_per_rev=256)
+    cols, metrics = analyse(
+        cache_of(t, fx, fy, fz, rpm, revs, fs), x, y, samples_per_rev=256
+    )
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    np.savez_compressed(OUT, **cols, __metrics__=np.array(repr(sorted(metrics.items()))))
+    np.savez_compressed(
+        OUT, **cols, __metrics__=np.array(repr(sorted(metrics.items())))
+    )
     print(f"wrote {OUT}: {len(cols)} columns, n={cols['t'].size}")
 
 
@@ -206,7 +225,9 @@ def test_default_recipe_is_well_formed():
     ids = [s["id"] for s in DEFAULT_RECIPE["steps"]]
     assert len(ids) == len(set(ids)), "step ids must be unique"
     assert [s["op"] for s in DEFAULT_RECIPE["steps"]][:3] == [
-        "frame_transform", "angular_resample", "tsa",
+        "frame_transform",
+        "angular_resample",
+        "tsa",
     ]
 
 
@@ -249,7 +270,9 @@ def test_prefix_hash_is_stable_for_later_edits():
     computed prefix through step 5."""
     a = copy.deepcopy(DEFAULT_RECIPE)
     b = copy.deepcopy(DEFAULT_RECIPE)
-    next(s for s in b["steps"] if s["op"] == "hdbscan")["params"]["min_cluster_size"] = 99
+    next(s for s in b["steps"] if s["op"] == "hdbscan")["params"][
+        "min_cluster_size"
+    ] = 99
     idx = next(i for i, s in enumerate(a["steps"]) if s["op"] == "getis_ord")
     assert prefix_hash(a, idx) == prefix_hash(b, idx)
     assert recipe_hash(a) != recipe_hash(b)
@@ -295,22 +318,41 @@ DEFAULT_RECIPE: dict[str, Any] = {
     "recipe_version": RECIPE_VERSION,
     "name": "Default",
     "steps": [
-        {"id": "s1", "op": "frame_transform", "on": True,
-         "params": {"channel": "fp", "mount_deg": 0.0}},
-        {"id": "s2", "op": "angular_resample", "on": True,
-         "params": {"samples_per_rev": 256}},
+        {
+            "id": "s1",
+            "op": "frame_transform",
+            "on": True,
+            "params": {"channel": "fp", "mount_deg": 0.0},
+        },
+        {
+            "id": "s2",
+            "op": "angular_resample",
+            "on": True,
+            "params": {"samples_per_rev": 256},
+        },
         {"id": "s3", "op": "tsa", "on": True, "params": {}},
-        {"id": "s4", "op": "radial_detrend", "on": True,
-         "params": {"n_bins": 200, "min_per_bin": 8}},
-        {"id": "s5", "op": "getis_ord", "on": True,
-         "params": {"k": 30, "alpha": 0.05}},
-        {"id": "s6", "op": "hdbscan", "on": True,
-         "params": {"grid_target": 20000, "min_cluster_size": 10}},
+        {
+            "id": "s4",
+            "op": "radial_detrend",
+            "on": True,
+            "params": {"n_bins": 200, "min_per_bin": 8},
+        },
+        {"id": "s5", "op": "getis_ord", "on": True, "params": {"k": 30, "alpha": 0.05}},
+        {
+            "id": "s6",
+            "op": "hdbscan",
+            "on": True,
+            "params": {"grid_target": 20000, "min_cluster_size": 10},
+        },
         # Off by default: envelope analysis needs a real dyno_fn_hz, which no tool_setup
         # record supplies yet, so analyse() has always refused it. See the design's
         # open questions.
-        {"id": "s7", "op": "envelope", "on": False,
-         "params": {"bandwidth_frac": 0.2, "fn_hz": None}},
+        {
+            "id": "s7",
+            "op": "envelope",
+            "on": False,
+            "params": {"bandwidth_frac": 0.2, "fn_hz": None},
+        },
     ],
 }
 
@@ -397,17 +439,34 @@ def test_default_recipe_validates():
 
 
 def test_unknown_op_is_rejected():
-    bad = {"recipe_version": 1, "name": "x",
-           "steps": [{"id": "a", "op": "does_not_exist", "on": True, "params": {}}]}
+    bad = {
+        "recipe_version": 1,
+        "name": "x",
+        "steps": [{"id": "a", "op": "does_not_exist", "on": True, "params": {}}],
+    }
     with pytest.raises(RecipeError, match="unknown op"):
         validate_recipe(bad)
 
 
 def test_duplicate_step_id_is_rejected():
-    bad = {"recipe_version": 1, "name": "x", "steps": [
-        {"id": "a", "op": "frame_transform", "on": True, "params": {"channel": "fp", "mount_deg": 0.0}},
-        {"id": "a", "op": "frame_transform", "on": True, "params": {"channel": "fp", "mount_deg": 0.0}},
-    ]}
+    bad = {
+        "recipe_version": 1,
+        "name": "x",
+        "steps": [
+            {
+                "id": "a",
+                "op": "frame_transform",
+                "on": True,
+                "params": {"channel": "fp", "mount_deg": 0.0},
+            },
+            {
+                "id": "a",
+                "op": "frame_transform",
+                "on": True,
+                "params": {"channel": "fp", "mount_deg": 0.0},
+            },
+        ],
+    }
     with pytest.raises(RecipeError, match="duplicate step id"):
         validate_recipe(bad)
 
@@ -415,23 +474,61 @@ def test_duplicate_step_id_is_rejected():
 def test_out_of_order_step_is_rejected():
     """radial_detrend consumes tsa_resid, so it cannot precede tsa. The editor relies on
     this to refuse an illegal insertion before anything runs."""
-    bad = {"recipe_version": 1, "name": "x", "steps": [
-        {"id": "a", "op": "frame_transform", "on": True, "params": {"channel": "fp", "mount_deg": 0.0}},
-        {"id": "b", "op": "angular_resample", "on": True, "params": {"samples_per_rev": 256}},
-        {"id": "c", "op": "radial_detrend", "on": True, "params": {"n_bins": 200, "min_per_bin": 8}},
-    ]}
+    bad = {
+        "recipe_version": 1,
+        "name": "x",
+        "steps": [
+            {
+                "id": "a",
+                "op": "frame_transform",
+                "on": True,
+                "params": {"channel": "fp", "mount_deg": 0.0},
+            },
+            {
+                "id": "b",
+                "op": "angular_resample",
+                "on": True,
+                "params": {"samples_per_rev": 256},
+            },
+            {
+                "id": "c",
+                "op": "radial_detrend",
+                "on": True,
+                "params": {"n_bins": 200, "min_per_bin": 8},
+            },
+        ],
+    }
     with pytest.raises(RecipeError, match="requires"):
         validate_recipe(bad)
 
 
 def test_disabled_step_does_not_satisfy_a_requirement():
     """A switched-off step produces nothing, so a later step depending on it is invalid."""
-    bad = {"recipe_version": 1, "name": "x", "steps": [
-        {"id": "a", "op": "frame_transform", "on": True, "params": {"channel": "fp", "mount_deg": 0.0}},
-        {"id": "b", "op": "angular_resample", "on": True, "params": {"samples_per_rev": 256}},
-        {"id": "c", "op": "tsa", "on": False, "params": {}},
-        {"id": "d", "op": "radial_detrend", "on": True, "params": {"n_bins": 200, "min_per_bin": 8}},
-    ]}
+    bad = {
+        "recipe_version": 1,
+        "name": "x",
+        "steps": [
+            {
+                "id": "a",
+                "op": "frame_transform",
+                "on": True,
+                "params": {"channel": "fp", "mount_deg": 0.0},
+            },
+            {
+                "id": "b",
+                "op": "angular_resample",
+                "on": True,
+                "params": {"samples_per_rev": 256},
+            },
+            {"id": "c", "op": "tsa", "on": False, "params": {}},
+            {
+                "id": "d",
+                "op": "radial_detrend",
+                "on": True,
+                "params": {"n_bins": 200, "min_per_bin": 8},
+            },
+        ],
+    }
     with pytest.raises(RecipeError, match="requires"):
         validate_recipe(bad)
 
@@ -493,7 +590,14 @@ StepFn = Callable[[Columns, dict[str, Any], dict[str, Any]], tuple[Columns, dict
 # Columns present before any step runs, seeded by the runner from the D1LC cache and the
 # D1OC spiral. x_raw/y_raw are MATLAB's own geometry, never recomputed here.
 SEED_COLUMNS: tuple[str, ...] = (
-    "t_raw", "fx", "fy", "fz", "rpm", "revs", "x_raw", "y_raw",
+    "t_raw",
+    "fx",
+    "fy",
+    "fz",
+    "rpm",
+    "revs",
+    "x_raw",
+    "y_raw",
 )
 
 TIERS = ("base", "derived")
@@ -623,8 +727,12 @@ from .spatial import (
 _CHANNELS = ("fc", "ff", "fp")
 
 
-@step("frame_transform", produces=["fc", "ff", "fp"],
-      requires=["fx", "fy", "fz"], tier="base")
+@step(
+    "frame_transform",
+    produces=["fc", "ff", "fp"],
+    requires=["fx", "fy", "fz"],
+    tier="base",
+)
 def _op_frame_transform(cols: Columns, params: dict, inputs: dict):
     h = params.get("h_matrix")
     fx, fy, fz = cols["fx"], cols["fy"], cols["fz"]
@@ -643,8 +751,12 @@ def _op_frame_transform(cols: Columns, params: dict, inputs: dict):
     }
 
 
-@step("angular_resample", produces=["t", "rev", "x", "y", "sig"],
-      requires=["revs", "t_raw", "x_raw", "y_raw", "fc", "ff", "fp"], tier="base")
+@step(
+    "angular_resample",
+    produces=["t", "rev", "x", "y", "sig"],
+    requires=["revs", "t_raw", "x_raw", "y_raw", "fc", "ff", "fp"],
+    tier="base",
+)
 def _op_angular_resample(cols: Columns, params: dict, inputs: dict):
     spr = int(params.get("samples_per_rev", 256))
     channel = str(params.get("channel", "fp"))
@@ -682,12 +794,17 @@ def _op_tsa(cols: Columns, params: dict, inputs: dict):
     }
 
 
-@step("radial_detrend", produces=["resid_z"],
-      requires=["tsa_resid", "x", "y"], tier="derived")
+@step(
+    "radial_detrend",
+    produces=["resid_z"],
+    requires=["tsa_resid", "x", "y"],
+    tier="derived",
+)
 def _op_radial_detrend(cols: Columns, params: dict, inputs: dict):
     r = np.hypot(cols["x"], cols["y"])
     z = _radial_detrend(
-        r, cols["tsa_resid"],
+        r,
+        cols["tsa_resid"],
         n_bins=int(params.get("n_bins", 200)),
         min_per_bin=int(params.get("min_per_bin", 8)),
     )
@@ -696,8 +813,12 @@ def _op_radial_detrend(cols: Columns, params: dict, inputs: dict):
     }
 
 
-@step("getis_ord", produces=["gi_star", "gi_sig"],
-      requires=["x", "y", "resid_z"], tier="derived")
+@step(
+    "getis_ord",
+    produces=["gi_star", "gi_sig"],
+    requires=["x", "y", "resid_z"],
+    tier="derived",
+)
 def _op_getis_ord(cols: Columns, params: dict, inputs: dict):
     k = int(params.get("k", 30))
     alpha = float(params.get("alpha", 0.05))
@@ -712,13 +833,19 @@ def _op_getis_ord(cols: Columns, params: dict, inputs: dict):
     return {"gi_star": gi, "gi_sig": sig}, {}
 
 
-@step("hdbscan", produces=["cluster_id", "glosh"],
-      requires=["x", "y", "resid_z"], tier="derived")
+@step(
+    "hdbscan",
+    produces=["cluster_id", "glosh"],
+    requires=["x", "y", "resid_z"],
+    tier="derived",
+)
 def _op_hdbscan(cols: Columns, params: dict, inputs: dict):
     target = int(params.get("grid_target", 20000))
     min_size = int(params.get("min_cluster_size", 10))
     n = cols["resid_z"].size
-    xr, yr, vr, cell_id = grid_reduce(cols["x"], cols["y"], cols["resid_z"], target_n=target)
+    xr, yr, vr, cell_id = grid_reduce(
+        cols["x"], cols["y"], cols["resid_z"], target_n=target
+    )
     if xr.size >= min_size:
         labels, glosh = cluster_hdbscan(xr, yr, vr, min_cluster_size=min_size)
         cluster_id, glosh = assign_from_grid(cell_id, labels, glosh)
@@ -727,8 +854,12 @@ def _op_hdbscan(cols: Columns, params: dict, inputs: dict):
     return {"cluster_id": cluster_id, "glosh": glosh}, {}
 
 
-@step("envelope", produces=["env_band"],
-      requires=["fc", "ff", "fp", "revs", "t_raw"], tier="base")
+@step(
+    "envelope",
+    produces=["env_band"],
+    requires=["fc", "ff", "fp", "revs", "t_raw"],
+    tier="base",
+)
 def _op_envelope(cols: Columns, params: dict, inputs: dict):
     """Full-rate, time-domain. This is why the step is 'base' tier despite running last:
     the modulation rate it recovers lives in Hz, which the angular domain discards."""
@@ -810,8 +941,17 @@ from diag.registry import RecipeError
 from diag.runner import run_recipe, seed_columns
 
 PUBLIC_COLUMNS = {
-    "t", "rev", "x", "y", "tsa_resid", "resid_z",
-    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band",
+    "t",
+    "rev",
+    "x",
+    "y",
+    "tsa_resid",
+    "resid_z",
+    "gi_star",
+    "gi_sig",
+    "cluster_id",
+    "glosh",
+    "env_band",
 }
 
 
@@ -857,7 +997,9 @@ def test_from_step_reuses_supplied_columns():
     """Preview's core optimisation: given the columns as of step 4, running from step 5
     must reproduce the same final result as a full run."""
     full, _ = run_recipe(DEFAULT_RECIPE, _seed())
-    idx = next(i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "getis_ord")
+    idx = next(
+        i for i, s in enumerate(DEFAULT_RECIPE["steps"]) if s["op"] == "getis_ord"
+    )
     prefix, _ = run_recipe(DEFAULT_RECIPE, _seed(), from_step=None, stop_after=idx - 1)
     resumed, _ = run_recipe(DEFAULT_RECIPE, prefix, from_step=idx)
     np.testing.assert_array_equal(resumed["gi_star"], full["gi_star"])
@@ -894,8 +1036,17 @@ from .registry import SEED_COLUMNS, STEPS, Columns, validate_recipe
 # contributes its column (zero-filled) because the browser's reader indexes by name and a
 # missing column is a parse error, not an absence.
 PUBLIC_COLUMNS: tuple[str, ...] = (
-    "t", "rev", "x", "y", "tsa_resid", "resid_z",
-    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band",
+    "t",
+    "rev",
+    "x",
+    "y",
+    "tsa_resid",
+    "resid_z",
+    "gi_star",
+    "gi_sig",
+    "cluster_id",
+    "glosh",
+    "env_band",
 )
 
 
@@ -985,7 +1136,8 @@ def run_recipe(
     for name in PUBLIC_COLUMNS:
         col = work.get(name)
         out[name] = (
-            np.asarray(col[:n], dtype=np.float32) if col is not None
+            np.asarray(col[:n], dtype=np.float32)
+            if col is not None
             else np.zeros(n, dtype=np.float32)
         )
     return out, metrics
@@ -1024,7 +1176,9 @@ Append to `tests/scripts/diag/test_runner.py`:
 ```python
 import os
 
-GOLDEN = os.path.join(os.path.dirname(__file__), "fixtures", "golden_default_recipe.npz")
+GOLDEN = os.path.join(
+    os.path.dirname(__file__), "fixtures", "golden_default_recipe.npz"
+)
 
 
 def test_default_recipe_reproduces_the_frozen_analyse_output_exactly():
@@ -1038,7 +1192,9 @@ def test_default_recipe_reproduces_the_frozen_analyse_output_exactly():
     assert set(cols) == set(expected), "column set drifted from the frozen reference"
     for name, want in expected.items():
         np.testing.assert_array_equal(
-            cols[name], want, err_msg=f"column {name!r} differs from the golden reference"
+            cols[name],
+            want,
+            err_msg=f"column {name!r} differs from the golden reference",
         )
 ```
 
@@ -1071,9 +1227,21 @@ git commit -m "test(diag): assert the default recipe reproduces analyse() byte-f
 In `scripts/diag/pipeline.py`, keep the module docstring and the `analyse` signature exactly as they are, and replace the body with a translation from keyword arguments to a recipe:
 
 ```python
-def analyse(cache, x, y, *, mount_deg=0.0, h_matrix=None, samples_per_rev=DEFAULT_SAMPLES_PER_REV,
-            fn_hz=None, channel="fp", gi_k=30, hdbscan_grid_target=20_000,
-            hdbscan_min_cluster_size=10, envelope_bandwidth_frac=0.2):
+def analyse(
+    cache,
+    x,
+    y,
+    *,
+    mount_deg=0.0,
+    h_matrix=None,
+    samples_per_rev=DEFAULT_SAMPLES_PER_REV,
+    fn_hz=None,
+    channel="fp",
+    gi_k=30,
+    hdbscan_grid_target=20_000,
+    hdbscan_min_cluster_size=10,
+    envelope_bandwidth_frac=0.2,
+):
     """Run the default recipe. Retained as the stable entry point for callers that want the
     pipeline's default behaviour with a few knobs, rather than a recipe document: the
     orchestrator's own bake now passes a recipe directly (see process_diag_row)."""
@@ -1090,7 +1258,10 @@ def analyse(cache, x, y, *, mount_deg=0.0, h_matrix=None, samples_per_rev=DEFAUL
     by_op["angular_resample"]["params"]["samples_per_rev"] = samples_per_rev
     by_op["getis_ord"]["params"]["k"] = gi_k
     by_op["hdbscan"]["params"].update(
-        {"grid_target": hdbscan_grid_target, "min_cluster_size": hdbscan_min_cluster_size}
+        {
+            "grid_target": hdbscan_grid_target,
+            "min_cluster_size": hdbscan_min_cluster_size,
+        }
     )
     by_op["envelope"]["params"].update(
         {"bandwidth_frac": envelope_bandwidth_frac, "fn_hz": fn_hz}
@@ -1228,22 +1399,20 @@ git commit -m "feat(diag): add diag_recipe, diag_recipe_hash and the recipe libr
 In `process_diag_row`, after the `analyse()` call and alongside the existing `write_d1an(str(d1an_path), columns)`, add a second artifact. Insert immediately before the `las_path` assignment:
 
 ```python
-        # base.d1an: the state after angular resampling and before any statistics. It is
-        # what the preview service re-runs a recipe from, so tuning a derived step needs
-        # neither MATLAB nor the archive. Published rather than reconstructed on the fly:
-        # deriving x/y from the cache instead would re-implement cut geometry outside
-        # process_force.m, the divergence risk this codebase guards against throughout.
-        from diag.registry import STEPS  # noqa: F401  (ensures ops are registered)
-        from diag.runner import run_recipe, seed_columns
+# base.d1an: the state after angular resampling and before any statistics. It is
+# what the preview service re-runs a recipe from, so tuning a derived step needs
+# neither MATLAB nor the archive. Published rather than reconstructed on the fly:
+# deriving x/y from the cache instead would re-implement cut geometry outside
+# process_force.m, the divergence risk this codebase guards against throughout.
+from diag.registry import STEPS  # noqa: F401  (ensures ops are registered)
+from diag.runner import run_recipe, seed_columns
 
-        base_stop = next(
-            i for i, s in enumerate(recipe["steps"]) if s["op"] == "angular_resample"
-        )
-        base_cols, _ = run_recipe(
-            recipe, seed_columns(cache, x, y), stop_after=base_stop
-        )
-        base_path = Path(outdir) / "base.d1an"
-        write_d1an(str(base_path), base_cols)
+base_stop = next(
+    i for i, s in enumerate(recipe["steps"]) if s["op"] == "angular_resample"
+)
+base_cols, _ = run_recipe(recipe, seed_columns(cache, x, y), stop_after=base_stop)
+base_path = Path(outdir) / "base.d1an"
+write_d1an(str(base_path), base_cols)
 ```
 
 - [ ] **Step 2: Copy it to the published directory**
@@ -1316,10 +1485,11 @@ Then replace the `analyse(...)` call with a recipe run:
 In the success `UPDATE`, add the column. Replace the statement with:
 
 ```python
-                "UPDATE machining_force_analysis SET diag_status='done', diag_path=%s, "
-                "diag_points=%s, diag_version=%s, diag_metrics=%s, diag_recipe_hash=%s, "
-                "diag_error=NULL, updated_at=now() WHERE id=%s",
-                [op, int(n), DIAG_VERSION, json.dumps(metrics), recipe_hash(recipe), row["id"]],
+"UPDATE machining_force_analysis SET diag_status='done', diag_path=%s,"
+
+"diag_points=%s, diag_version=%s, diag_metrics=%s, diag_recipe_hash=%s, "
+("diag_error=NULL, updated_at=now() WHERE id=%s",)
+([op, int(n), DIAG_VERSION, json.dumps(metrics), recipe_hash(recipe), row["id"]],)
 ```
 
 - [ ] **Step 4: Extend `claim_diag`'s staleness clause to both axes**

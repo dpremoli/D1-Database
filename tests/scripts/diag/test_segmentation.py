@@ -28,7 +28,9 @@ def test_recovers_a_planted_high_residual_region():
     )
     assert status == ""
     assert (seg[planted] == 0).mean() > 0.9, (seg[planted] == 0).mean()
-    assert (seg[np.abs(resid) < 1.0] == 1).mean() > 0.8, (seg[np.abs(resid) < 1.0] == 1).mean()
+    assert (seg[np.abs(resid) < 1.0] == 1).mean() > 0.8, (
+        seg[np.abs(resid) < 1.0] == 1
+    ).mean()
 
 
 def test_multi_class_preserves_seed_order():

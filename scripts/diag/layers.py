@@ -6,6 +6,7 @@ testing each analysis-grid point against those polygons to get a boolean array t
 steps consume. The browser draws the polygons; this module is the only place they become
 per-point booleans (Recipe Workbench spec, Component 3: "the browser computes nothing").
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -27,9 +28,11 @@ def validate_geometry(geometry: dict) -> None:
             raise ValueError("each polygon ring needs >= 3 vertices")
         for v in ring:
             if (
-                not isinstance(v, (list, tuple))
+                not isinstance(v, list | tuple)
                 or len(v) != 2
-                or not all(isinstance(c, (int, float)) and not isinstance(c, bool) for c in v)
+                or not all(
+                    isinstance(c, int | float) and not isinstance(c, bool) for c in v
+                )
             ):
                 raise ValueError("each vertex must be [x, y] numbers")
 

@@ -220,8 +220,18 @@ def test_viewport_segmentation_two_seed_polys(client):
                 "inputs": {"seeds": {"layers": ["L", "R"]}},
             },
             "layers": {
-                "L": {"role": "seed", "geometry": {"polygons": left}, "value": None, "version": 1},
-                "R": {"role": "seed", "geometry": {"polygons": right}, "value": None, "version": 1},
+                "L": {
+                    "role": "seed",
+                    "geometry": {"polygons": left},
+                    "value": None,
+                    "version": 1,
+                },
+                "R": {
+                    "role": "seed",
+                    "geometry": {"polygons": right},
+                    "value": None,
+                    "version": 1,
+                },
             },
         },
     )
@@ -261,7 +271,12 @@ def test_viewport_applies_a_mask_layer_to_gi_star(client):
             "bbox": [-40, -40, 40, 40],
             "step": {"op": "getis_ord", "params": {"k": 20}},
             "layers": {
-                "chuck": {"role": "mask", "geometry": {"polygons": box}, "value": None, "version": 1},
+                "chuck": {
+                    "role": "mask",
+                    "geometry": {"polygons": box},
+                    "value": None,
+                    "version": 1,
+                },
             },
         },
     )
@@ -269,8 +284,8 @@ def test_viewport_applies_a_mask_layer_to_gi_star(client):
     got = _read(r.content)
     inside = (np.abs(got["x"]) <= 5) & (np.abs(got["y"]) <= 5)
     assert inside.any()
-    assert np.all(np.isnan(got["value"][inside]))          # masked -> excluded from Gi*
-    assert np.isfinite(got["value"][~inside]).any()        # the rest still computed
+    assert np.all(np.isnan(got["value"][inside]))  # masked -> excluded from Gi*
+    assert np.isfinite(got["value"][~inside]).any()  # the rest still computed
 
 
 def test_viewport_rejects_a_bad_max_points(client):
@@ -278,8 +293,10 @@ def test_viewport_rejects_a_bad_max_points(client):
         r = client.post(
             "/viewport",
             json={
-                "analysis_id": "a1", "bbox": [-40, -40, 40, 40],
-                "step": {"op": "getis_ord", "params": {}}, "max_points": mp,
+                "analysis_id": "a1",
+                "bbox": [-40, -40, 40, 40],
+                "step": {"op": "getis_ord", "params": {}},
+                "max_points": mp,
             },
         )
         assert r.status_code == 422, (mp, r.text)
@@ -289,7 +306,8 @@ def test_viewport_rejects_a_non_numeric_bbox(client):
     r = client.post(
         "/viewport",
         json={
-            "analysis_id": "a1", "bbox": [None, 0, 1, 1],
+            "analysis_id": "a1",
+            "bbox": [None, 0, 1, 1],
             "step": {"op": "getis_ord", "params": {}},
         },
     )

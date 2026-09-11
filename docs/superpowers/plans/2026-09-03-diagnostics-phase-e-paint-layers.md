@@ -173,8 +173,12 @@ from diag.layers import rasterize_polygons, validate_geometry
 
 
 def _square(cx, cy, half):
-    return [[cx - half, cy - half], [cx + half, cy - half],
-            [cx + half, cy + half], [cx - half, cy + half]]
+    return [
+        [cx - half, cy - half],
+        [cx + half, cy - half],
+        [cx + half, cy + half],
+        [cx - half, cy + half],
+    ]
 
 
 def test_rasterize_marks_points_inside_a_single_polygon():
@@ -209,8 +213,12 @@ def test_rasterize_is_resolution_independent():
 
 
 def test_validate_geometry_rejects_malformed_shapes():
-    for bad in [{}, {"polygons": "x"}, {"polygons": [[[0.0]]]},
-                {"polygons": [[[0.0, 0.0], [1.0, 0.0]]]}]:  # <3 vertices
+    for bad in [
+        {},
+        {"polygons": "x"},
+        {"polygons": [[[0.0]]]},
+        {"polygons": [[[0.0, 0.0], [1.0, 0.0]]]},
+    ]:  # <3 vertices
         with pytest.raises(ValueError):
             validate_geometry(bad)
 
@@ -237,6 +245,7 @@ testing each analysis-grid point against those polygons to get a boolean array t
 steps consume. The browser draws the polygons; this module is the only place they become
 per-point booleans.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -255,8 +264,11 @@ def validate_geometry(geometry: dict) -> None:
         if not isinstance(ring, list) or len(ring) < 3:
             raise ValueError("each polygon ring needs >= 3 vertices")
         for v in ring:
-            if (not isinstance(v, (list, tuple)) or len(v) != 2
-                    or not all(isinstance(c, (int, float)) for c in v)):
+            if (
+                not isinstance(v, (list, tuple))
+                or len(v) != 2
+                or not all(isinstance(c, (int, float)) for c in v)
+            ):
                 raise ValueError("each vertex must be [x, y] numbers")
 
 
@@ -331,10 +343,19 @@ def _sq(h):
 
 
 def test_resolve_inputs_rasterizes_a_bound_layer():
-    step = {"op": "radial_detrend", "on": True,
-            "inputs": {"mask": {"layer": "chuck", "required": False}}}
-    layers = {"chuck": {"role": "mask", "geometry": {"polygons": [_sq(1.0)]},
-                        "value": {"mode": "exclude"}, "version": 1}}
+    step = {
+        "op": "radial_detrend",
+        "on": True,
+        "inputs": {"mask": {"layer": "chuck", "required": False}},
+    }
+    layers = {
+        "chuck": {
+            "role": "mask",
+            "geometry": {"polygons": [_sq(1.0)]},
+            "value": {"mode": "exclude"},
+            "version": 1,
+        }
+    }
     x = np.array([0.0, 5.0])
     y = np.array([0.0, 5.0])
     out = resolve_inputs(step, layers, x, y)
@@ -342,7 +363,9 @@ def test_resolve_inputs_rasterizes_a_bound_layer():
 
 
 def test_resolve_inputs_no_binding_returns_empty():
-    assert resolve_inputs({"op": "tsa", "on": True}, None, np.zeros(3), np.zeros(3)) == {}
+    assert (
+        resolve_inputs({"op": "tsa", "on": True}, None, np.zeros(3), np.zeros(3)) == {}
+    )
 
 
 def test_resolve_inputs_missing_optional_layer_is_none():
@@ -352,7 +375,10 @@ def test_resolve_inputs_missing_optional_layer_is_none():
 
 
 def test_resolve_inputs_missing_required_layer_raises():
-    step = {"op": "radial_detrend", "inputs": {"mask": {"layer": "absent", "required": True}}}
+    step = {
+        "op": "radial_detrend",
+        "inputs": {"mask": {"layer": "absent", "required": True}},
+    }
     with pytest.raises(ValueError, match="absent"):
         resolve_inputs(step, {}, np.zeros(3), np.zeros(3))
 ```
@@ -464,8 +490,14 @@ def _bind_mask(recipe, polygons):
     for s in r["steps"]:
         if s["op"] == "radial_detrend":
             s["inputs"] = {"mask": {"layer": "art", "required": False}}
-    layers = {"art": {"role": "mask", "geometry": {"polygons": polygons},
-                      "value": {"mode": "exclude"}, "version": 1}}
+    layers = {
+        "art": {
+            "role": "mask",
+            "geometry": {"polygons": polygons},
+            "value": {"mode": "exclude"},
+            "version": 1,
+        }
+    }
     return r, layers
 
 
@@ -476,13 +508,15 @@ def test_mask_nans_covered_points_and_leaves_the_rest_identical():
     # a polygon covering roughly the outer third of the disc
     poly = [[-100.0, -100.0], [100.0, -100.0], [100.0, 100.0], [-100.0, 100.0]]
     # shrink to a band that only covers SOME points: use a small square near one edge
-    x = base["x"]; y = base["y"]
+    x = base["x"]
+    y = base["y"]
     cx, cy = float(x.max()) - 1.0, float(y[np.argmax(x)])
     sq = [[cx - 2, cy - 2], [cx + 2, cy - 2], [cx + 2, cy + 2], [cx - 2, cy + 2]]
     recipe, layers = _bind_mask(DEFAULT_RECIPE, [sq])
     masked, _ = run_recipe(recipe, dict(cols), layers=layers)
 
     from diag.layers import rasterize_polygons
+
     covered = rasterize_polygons({"polygons": [sq]}, base["x"], base["y"])
     assert covered.any() and not covered.all()
 
@@ -502,6 +536,7 @@ def test_downstream_channels_are_finite_safe_under_a_mask():
     recipe, layers = _bind_mask(DEFAULT_RECIPE, [sq])
     masked, _ = run_recipe(recipe, dict(cols), layers=layers)
     from diag.layers import rasterize_polygons
+
     covered = rasterize_polygons({"polygons": [sq]}, base["x"], base["y"])
     assert np.all(np.isnan(masked["gi_star"][covered]))
     assert np.all(masked["gi_sig"][covered] == 0)
@@ -520,8 +555,12 @@ Expected: FAIL — masked points are not `NaN` (mask ignored).
 - [ ] **Step 3: Implement the mask in `_op_radial_detrend`**
 
 ```python
-@step("radial_detrend", produces=["resid_z"],
-      requires=["tsa_resid", "x", "y"], tier="derived")
+@step(
+    "radial_detrend",
+    produces=["resid_z"],
+    requires=["tsa_resid", "x", "y"],
+    tier="derived",
+)
 def _op_radial_detrend(cols: Columns, params: dict, inputs: dict):
     r = np.hypot(cols["x"], cols["y"])
     tsa = cols["tsa_resid"]
@@ -530,13 +569,15 @@ def _op_radial_detrend(cols: Columns, params: dict, inputs: dict):
         keep = ~np.asarray(mask, dtype=bool)
         z = np.full(r.shape, np.nan)
         z[keep] = _radial_detrend(
-            r[keep], tsa[keep],
+            r[keep],
+            tsa[keep],
             n_bins=int(params.get("n_bins", 200)),
             min_per_bin=int(params.get("min_per_bin", 8)),
         )
     else:
         z = _radial_detrend(
-            r, tsa,
+            r,
+            tsa,
             n_bins=int(params.get("n_bins", 200)),
             min_per_bin=int(params.get("min_per_bin", 8)),
         )
@@ -549,8 +590,12 @@ def _op_radial_detrend(cols: Columns, params: dict, inputs: dict):
 - [ ] **Step 4: Make `_op_getis_ord` finite-safe**
 
 ```python
-@step("getis_ord", produces=["gi_star", "gi_sig"],
-      requires=["x", "y", "resid_z"], tier="derived")
+@step(
+    "getis_ord",
+    produces=["gi_star", "gi_sig"],
+    requires=["x", "y", "resid_z"],
+    tier="derived",
+)
 def _op_getis_ord(cols: Columns, params: dict, inputs: dict):
     k = int(params.get("k", 30))
     alpha = float(params.get("alpha", 0.05))
@@ -569,8 +614,12 @@ def _op_getis_ord(cols: Columns, params: dict, inputs: dict):
 - [ ] **Step 5: Make `_op_hdbscan` finite-safe**
 
 ```python
-@step("hdbscan", produces=["cluster_id", "glosh"],
-      requires=["x", "y", "resid_z"], tier="derived")
+@step(
+    "hdbscan",
+    produces=["cluster_id", "glosh"],
+    requires=["x", "y", "resid_z"],
+    tier="derived",
+)
 def _op_hdbscan(cols: Columns, params: dict, inputs: dict):
     target = int(params.get("grid_target", 20000))
     min_size = int(params.get("min_cluster_size", 10))
@@ -580,7 +629,9 @@ def _op_hdbscan(cols: Columns, params: dict, inputs: dict):
     cluster_id = np.full(n, -1.0)
     glosh = np.zeros(n)
     if int(fin.sum()) >= min_size:
-        xr, yr, vr, cell_id = grid_reduce(cols["x"][fin], cols["y"][fin], z[fin], target_n=target)
+        xr, yr, vr, cell_id = grid_reduce(
+            cols["x"][fin], cols["y"][fin], z[fin], target_n=target
+        )
         if xr.size >= min_size:
             labels, gl = cluster_hdbscan(xr, yr, vr, min_cluster_size=min_size)
             cid_fin, gl_fin = assign_from_grid(cell_id, labels, gl)
@@ -623,9 +674,13 @@ Run: `sed -n '1,60p' plugins/diag-service/tests/conftest.py` and skim `test_prev
 ```python
 # plugins/diag-service/tests/test_preview.py -- add (fixture names per Step 0)
 
+
 def test_preview_applies_an_inline_mask(client, seeded_analysis):
     # seeded_analysis: the fixture that already backs test_preview_approximates_a_full_bake
-    body_unmasked = {"analysis_id": seeded_analysis.id, "recipe": seeded_analysis.recipe}
+    body_unmasked = {
+        "analysis_id": seeded_analysis.id,
+        "recipe": seeded_analysis.recipe,
+    }
     r0 = client.post("/preview", json=body_unmasked, headers=seeded_analysis.auth)
     assert r0.status_code == 200
 
@@ -636,10 +691,16 @@ def test_preview_applies_an_inline_mask(client, seeded_analysis):
     body_masked = {
         "analysis_id": seeded_analysis.id,
         "recipe": recipe,
-        "layers": {"art": {"role": "mask",
-                           "geometry": {"polygons": [[[-1e9, -1e9], [1e9, -1e9],
-                                                      [1e9, 1e9], [-1e9, 1e9]]]},
-                           "value": {"mode": "exclude"}, "version": 1}},
+        "layers": {
+            "art": {
+                "role": "mask",
+                "geometry": {
+                    "polygons": [[[-1e9, -1e9], [1e9, -1e9], [1e9, 1e9], [-1e9, 1e9]]]
+                },
+                "value": {"mode": "exclude"},
+                "version": 1,
+            }
+        },
     }
     r1 = client.post("/preview", json=body_masked, headers=seeded_analysis.auth)
     assert r1.status_code == 200
@@ -669,15 +730,16 @@ Expected: FAIL — malformed geometry returns 500 (unhandled `ValueError`) or 20
 In `main.py`, right after `layers = body.get("layers") or None`:
 
 ```python
-    if layers:
-        from diag.layers import validate_geometry
-        if not isinstance(layers, dict):
-            raise HTTPException(422, "layers must be an object keyed by layer name")
-        for lname, layer in layers.items():
-            try:
-                validate_geometry((layer or {}).get("geometry") or {})
-            except (ValueError, AttributeError) as e:
-                raise HTTPException(422, f"layer '{lname}': {e}") from e
+if layers:
+    from diag.layers import validate_geometry
+
+    if not isinstance(layers, dict):
+        raise HTTPException(422, "layers must be an object keyed by layer name")
+    for lname, layer in layers.items():
+        try:
+            validate_geometry((layer or {}).get("geometry") or {})
+        except (ValueError, AttributeError) as e:
+            raise HTTPException(422, f"layer '{lname}': {e}") from e
 ```
 
 Leave the `run_recipe(recipe, dict(base), layers=layers, from_step=...)` call as-is — Task 3 made the runner resolve bindings.
@@ -1247,7 +1309,10 @@ from force_orchestrator import _layer_fingerprint
 
 
 def test_fingerprint_is_stable_and_order_independent():
-    a = [{"name": "chuck", "role": "mask", "version": 2}, {"name": "edge", "role": "label", "version": 1}]
+    a = [
+        {"name": "chuck", "role": "mask", "version": 2},
+        {"name": "edge", "role": "label", "version": 1},
+    ]
     b = list(reversed(a))
     assert _layer_fingerprint(a) == _layer_fingerprint(b)
 
@@ -1275,6 +1340,7 @@ def _layer_fingerprint(rows: list[dict]) -> str:
     if not rows:
         return ""
     import hashlib
+
     key = json.dumps(sorted((r["name"], r["role"], int(r["version"])) for r in rows))
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 ```
@@ -1282,17 +1348,21 @@ def _layer_fingerprint(rows: list[dict]) -> str:
 In `process_diag_row`, after the row is claimed and before the first `run_recipe`:
 
 ```python
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                "SELECT name, role, geometry, value, version FROM diag_layer WHERE analysis_id = %s",
-                [row["id"]],
-            )
-            layer_rows = cur.fetchall()
-        diag_layers = {
-            r["name"]: {"role": r["role"], "geometry": r["geometry"],
-                        "value": r["value"], "version": r["version"]}
-            for r in layer_rows
-        } or None
+with conn.cursor(cursor_factory=RealDictCursor) as cur:
+    cur.execute(
+        "SELECT name, role, geometry, value, version FROM diag_layer WHERE analysis_id = %s",
+        [row["id"]],
+    )
+    layer_rows = cur.fetchall()
+diag_layers = {
+    r["name"]: {
+        "role": r["role"],
+        "geometry": r["geometry"],
+        "value": r["value"],
+        "version": r["version"],
+    }
+    for r in layer_rows
+} or None
 ```
 
 Pass `layers=diag_layers` to each `run_recipe(...)` call. Change the hash write:

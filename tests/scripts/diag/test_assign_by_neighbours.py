@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from diag.spatial import assign_by_neighbours, assign_from_grid, grid_reduce
 
 
@@ -84,8 +83,11 @@ def test_a_point_coincident_with_two_differently_labelled_centroids_takes_the_ne
     out, gl = assign_by_neighbours(
         np.array([0.0]), np.array([0.0]), xr, yr, labels, glosh, k=3
     )
-    assert out[0] in (3.0, 8.0)          # a real coincident label, not label 1
-    assert gl[0] in (pytest.approx(0.1), pytest.approx(0.9))  # that centroid's glosh, not ~0.5
+    assert out[0] in (3.0, 8.0)  # a real coincident label, not label 1
+    assert gl[0] in (
+        pytest.approx(0.1),
+        pytest.approx(0.9),
+    )  # that centroid's glosh, not ~0.5
     assert np.isfinite(gl).all()
 
 
@@ -124,8 +126,13 @@ def test_k_larger_than_the_centroid_count_degrades_instead_of_raising():
 
 def test_a_single_centroid_labels_everything_as_itself():
     out, gl = assign_by_neighbours(
-        np.array([0.0, 9.0]), np.array([0.0, 9.0]),
-        np.array([1.0]), np.array([1.0]), np.array([4.0]), np.array([0.5]), k=4,
+        np.array([0.0, 9.0]),
+        np.array([0.0, 9.0]),
+        np.array([1.0]),
+        np.array([1.0]),
+        np.array([4.0]),
+        np.array([0.5]),
+        k=4,
     )
     assert out.tolist() == [4.0, 4.0]
     assert gl.tolist() == pytest.approx([0.5, 0.5])
@@ -178,7 +185,6 @@ def test_it_disagrees_with_the_grid_broadcast_only_near_boundaries():
 # synthetic cut, and survive any later recapture.
 
 from conftest import cache_of, synthetic_cut  # noqa: E402
-
 from diag.pipeline import analyse  # noqa: E402
 from diag.spatial import assign_from_grid as _assign_from_grid  # noqa: E402
 
@@ -197,7 +203,9 @@ def test_the_pipeline_still_finds_the_implanted_anomaly_as_its_own_class():
 
     bulk = np.bincount((cluster_id[cluster_id >= 0]).astype(int)).argmax()
     # Points at the anomaly are not simply the bulk class.
-    anomaly_labels = cluster_id[: hit.size][hit[: cluster_id.size]] if hit.size else np.array([])
+    anomaly_labels = (
+        cluster_id[: hit.size][hit[: cluster_id.size]] if hit.size else np.array([])
+    )
     assert anomaly_labels.size > 0
     assert not np.all(anomaly_labels == bulk)
 

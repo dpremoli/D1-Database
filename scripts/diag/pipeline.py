@@ -69,7 +69,10 @@ def analyse(
     by_op["angular_resample"]["params"]["samples_per_rev"] = samples_per_rev
     by_op["getis_ord"]["params"]["k"] = gi_k
     by_op["hdbscan"]["params"].update(
-        {"grid_target": hdbscan_grid_target, "min_cluster_size": hdbscan_min_cluster_size}
+        {
+            "grid_target": hdbscan_grid_target,
+            "min_cluster_size": hdbscan_min_cluster_size,
+        }
     )
     by_op["envelope"]["params"].update(
         {"bandwidth_frac": envelope_bandwidth_frac, "fn_hz": fn_hz}

@@ -29,7 +29,9 @@ def test_op_segments_with_two_seed_masks():
     c = _cols()
     n = c["x"].size
     seeds = {"a": c["x"] < -15, "b": c["x"] > 15}
-    out, metrics = STEPS["grow_segmentation"].fn(c, {"features": ["resid_z"]}, {"seeds": seeds})
+    out, metrics = STEPS["grow_segmentation"].fn(
+        c, {"features": ["resid_z"]}, {"seeds": seeds}
+    )
     assert out["segment_id"].shape == (n,)
     assert set(np.unique(out["segment_id"])) <= {0.0, 1.0}
     assert metrics["segmentation_status"] == ""

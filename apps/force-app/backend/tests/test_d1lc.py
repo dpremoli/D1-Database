@@ -2,6 +2,7 @@
 
 See docs/superpowers/specs/2026-09-07-milling-path-models-and-polar-design.md #4.
 """
+
 from __future__ import annotations
 
 import os
@@ -26,7 +27,20 @@ def _arrs(n: int = 6):
 def test_write_d1lc_without_extras_is_byte_identical_to_today(tmp_path):
     path = tmp_path / "live_cache.bin"
     t, fx, fy, fz, rpm, revs = _arrs()
-    write_d1lc(str(path), t, fx, fy, fz, rpm, revs, fs=1000.0, feed=0.05, diam=80.0, cs_sec=0.0, ce_sec=0.05)
+    write_d1lc(
+        str(path),
+        t,
+        fx,
+        fy,
+        fz,
+        rpm,
+        revs,
+        fs=1000.0,
+        feed=0.05,
+        diam=80.0,
+        cs_sec=0.0,
+        ce_sec=0.05,
+    )
     buf = path.read_bytes()
     magic, version, n = struct.unpack_from("<III", buf, 0)
     assert magic == 0x44314C43
@@ -42,7 +56,18 @@ def test_write_d1lc_with_extras_writes_v2_trailer_that_round_trips():
     os.close(fd)
     try:
         write_d1lc(
-            path, t, fx, fy, fz, rpm, revs, fs=1000.0, feed=0.05, diam=80.0, cs_sec=0.0, ce_sec=0.04,
+            path,
+            t,
+            fx,
+            fy,
+            fz,
+            rpm,
+            revs,
+            fs=1000.0,
+            feed=0.05,
+            diam=80.0,
+            cs_sec=0.0,
+            ce_sec=0.04,
             extras={"Mz": mz},
         )
         buf = open(path, "rb").read()
@@ -58,7 +83,21 @@ def test_write_d1lc_with_extras_writes_v2_trailer_that_round_trips():
 def test_write_d1lc_with_empty_extras_dict_stays_v1(tmp_path):
     path = tmp_path / "live_cache.bin"
     t, fx, fy, fz, rpm, revs = _arrs(3)
-    write_d1lc(str(path), t, fx, fy, fz, rpm, revs, fs=1000.0, feed=0.05, diam=80.0, cs_sec=0.0, ce_sec=0.02, extras={})
+    write_d1lc(
+        str(path),
+        t,
+        fx,
+        fy,
+        fz,
+        rpm,
+        revs,
+        fs=1000.0,
+        feed=0.05,
+        diam=80.0,
+        cs_sec=0.0,
+        ce_sec=0.02,
+        extras={},
+    )
     buf = path.read_bytes()
     _, version, _ = struct.unpack_from("<III", buf, 0)
     assert version == 1
@@ -69,7 +108,9 @@ def test_parse_d1lc_v1_has_empty_extras_dict():
     fd, path = tempfile.mkstemp(suffix=".bin")
     os.close(fd)
     try:
-        write_d1lc(path, t, fx, fy, fz, rpm, revs, fs=1000.0, feed=0.05, diam=80.0, cs_sec=0.0, ce_sec=0.03)
+        write_d1lc(
+            path, t, fx, fy, fz, rpm, revs, fs=1000.0, feed=0.05, diam=80.0, cs_sec=0.0, ce_sec=0.03
+        )
         buf = open(path, "rb").read()
         parsed = parse_d1lc(buf)
         assert parsed["extras"] == {}
@@ -83,7 +124,18 @@ def test_parse_d1lc_ignores_unknown_trailer_names():
     os.close(fd)
     try:
         write_d1lc(
-            path, t, fx, fy, fz, rpm, revs, fs=1000.0, feed=0.05, diam=80.0, cs_sec=0.0, ce_sec=0.02,
+            path,
+            t,
+            fx,
+            fy,
+            fz,
+            rpm,
+            revs,
+            fs=1000.0,
+            feed=0.05,
+            diam=80.0,
+            cs_sec=0.0,
+            ce_sec=0.02,
             extras={"Bogus": np.array([1.0, 2.0, 3.0])},
         )
         buf = open(path, "rb").read()

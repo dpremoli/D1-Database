@@ -44,7 +44,10 @@ def test_resolve_inputs_missing_optional_layer_is_none():
 
 
 def test_resolve_inputs_missing_required_layer_raises():
-    step = {"op": "radial_detrend", "inputs": {"mask": {"layer": "absent", "required": True}}}
+    step = {
+        "op": "radial_detrend",
+        "inputs": {"mask": {"layer": "absent", "required": True}},
+    }
     with pytest.raises(RecipeError, match="absent"):
         resolve_inputs(step, {}, np.zeros(3), np.zeros(3))
 
@@ -59,7 +62,14 @@ def test_resolve_inputs_rejects_a_length_mismatch():
     # a degenerate geometry can't mismatch, but a hand-mangled layers dict could; the guard
     # exists so a coordinate-space slip surfaces loudly rather than as silent misalignment.
     step = {"op": "getis_ord", "inputs": {"mask": {"layer": "m"}}}
-    bad = {"m": {"geometry": {"polygons": [_sq(1.0)]}, "role": "mask", "value": None, "version": 1}}
+    bad = {
+        "m": {
+            "geometry": {"polygons": [_sq(1.0)]},
+            "role": "mask",
+            "value": None,
+            "version": 1,
+        }
+    }
     # monkeypatch rasterize to return the wrong length
     import diag.registry as reg
 
@@ -73,8 +83,11 @@ def test_resolve_inputs_rejects_a_length_mismatch():
 
 
 def test_resolve_inputs_list_mode_returns_ordered_dict():
-    step = {"op": "grow_segmentation", "on": True,
-            "inputs": {"seeds": {"layers": ["defect", "clean"], "required": False}}}
+    step = {
+        "op": "grow_segmentation",
+        "on": True,
+        "inputs": {"seeds": {"layers": ["defect", "clean"], "required": False}},
+    }
     layers = {
         "clean": _layer([_sq(1.0)]),
         "defect": _layer([[[5.0, 5.0], [7.0, 5.0], [7.0, 7.0], [5.0, 7.0]]]),
@@ -88,15 +101,19 @@ def test_resolve_inputs_list_mode_returns_ordered_dict():
 
 
 def test_resolve_inputs_list_mode_skips_missing_layers():
-    step = {"op": "grow_segmentation",
-            "inputs": {"seeds": {"layers": ["a", "gone"], "required": False}}}
+    step = {
+        "op": "grow_segmentation",
+        "inputs": {"seeds": {"layers": ["a", "gone"], "required": False}},
+    }
     out = resolve_inputs(step, {"a": _layer([_sq(1.0)])}, np.zeros(2), np.zeros(2))
     assert list(out["seeds"].keys()) == ["a"]
 
 
 def test_resolve_inputs_list_mode_required_with_none_raises():
-    step = {"op": "grow_segmentation",
-            "inputs": {"seeds": {"layers": ["gone"], "required": True}}}
+    step = {
+        "op": "grow_segmentation",
+        "inputs": {"seeds": {"layers": ["gone"], "required": True}},
+    }
     with pytest.raises(RecipeError, match="seeds"):
         resolve_inputs(step, {}, np.zeros(2), np.zeros(2))
 
@@ -105,11 +122,18 @@ def test_list_binding_hashes_stably_and_order_sensitively():
     from diag.recipe import recipe_hash
 
     def mk(layers):
-        return {"steps": [
-            {"id": "a", "op": "frame_transform", "on": True, "params": {}},
-            {"id": "s", "op": "grow_segmentation", "on": True, "params": {},
-             "inputs": {"seeds": {"layers": layers}}},
-        ]}
+        return {
+            "steps": [
+                {"id": "a", "op": "frame_transform", "on": True, "params": {}},
+                {
+                    "id": "s",
+                    "op": "grow_segmentation",
+                    "on": True,
+                    "params": {},
+                    "inputs": {"seeds": {"layers": layers}},
+                },
+            ]
+        }
 
     assert recipe_hash(mk(["x", "y"])) == recipe_hash(mk(["x", "y"]))
     assert recipe_hash(mk(["x", "y"])) != recipe_hash(mk(["y", "x"]))

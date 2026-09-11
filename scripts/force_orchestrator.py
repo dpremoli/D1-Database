@@ -911,9 +911,7 @@ def _layer_fingerprint(rows) -> str:
 
     if not rows:
         return ""
-    key = json.dumps(
-        sorted((r["name"], r["role"], int(r["version"])) for r in rows)
-    )
+    key = json.dumps(sorted((r["name"], r["role"], int(r["version"])) for r in rows))
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
@@ -1167,7 +1165,9 @@ def process_diag_row(
         # determined by (r0, n, spr) -- r0 is small (cut start) so its float32 value is exact
         # enough; the arange is what must stay float64.
         n_rev_grid = int(columns["rev"].size)
-        rev_grid_f64 = float(columns["rev"][0]) + np.arange(n_rev_grid, dtype=np.float64) / spr
+        rev_grid_f64 = (
+            float(columns["rev"][0]) + np.arange(n_rev_grid, dtype=np.float64) / spr
+        )
         resid_full = broadcast_to_spiral(
             rev_grid_f64,
             columns["resid_z"].astype(np.float64),
@@ -1196,11 +1196,14 @@ def process_diag_row(
         # (a Phase-E mask leaves NaN in resid_z; masked points must be excluded from a
         # viewport recompute, so the endpoint sees the NaN and drops them).
         full_d1an = Path(outdir) / "full.d1an"
-        write_d1an(str(full_d1an), {
-            "x": x.astype(np.float32),
-            "y": y.astype(np.float32),
-            "resid_z": resid_full.astype(np.float32),
-        })
+        write_d1an(
+            str(full_d1an),
+            {
+                "x": x.astype(np.float32),
+                "y": y.astype(np.float32),
+                "resid_z": resid_full.astype(np.float32),
+            },
+        )
         shutil.copy2(full_d1an, full_dir / "full.d1an")
 
         # full/ octree: LAS with resid_z as the one extra dim; nan_to_num so PotreeConverter's
@@ -1218,8 +1221,11 @@ def process_diag_row(
         _rlo = float(np.nanmin(resid_full)) if np.any(np.isfinite(resid_full)) else 0.0
         _rhi = float(np.nanmax(resid_full)) if np.any(np.isfinite(resid_full)) else 1.0
         fl.intensity = np.clip(
-            (np.nan_to_num(resid_full, nan=_rlo) - _rlo) / ((_rhi - _rlo) or 1.0) * 65535,
-            0, 65535,
+            (np.nan_to_num(resid_full, nan=_rlo) - _rlo)
+            / ((_rhi - _rlo) or 1.0)
+            * 65535,
+            0,
+            65535,
         ).astype(np.uint16)
         full_las = str(Path(outdir) / "full.las")
         fl.write(full_las)
@@ -1227,7 +1233,9 @@ def process_diag_row(
         full_octmp = str(Path(outdir) / "full_octree")
         fpc = subprocess.run(
             [potree_exe, full_las, "-o", full_octmp],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         if fpc.returncode != 0 or not (Path(full_octmp) / "metadata.json").exists():
             tail = (fpc.stderr or fpc.stdout or "").strip().splitlines()[-5:]

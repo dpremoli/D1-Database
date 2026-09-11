@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "scripts"
 pytest.importorskip("psycopg2")
 pytest.importorskip("requests")
 
-from force_orchestrator import _layer_fingerprint
+from force_orchestrator import _layer_fingerprint  # noqa: E402
 
 
 def test_fingerprint_is_stable_and_order_independent():

@@ -72,9 +72,13 @@
 ```python
 # append to tests/scripts/diag/test_runner_inputs.py
 
+
 def test_resolve_inputs_list_mode_returns_ordered_dict():
-    step = {"op": "grow_segmentation", "on": True,
-            "inputs": {"seeds": {"layers": ["defect", "clean"], "required": False}}}
+    step = {
+        "op": "grow_segmentation",
+        "on": True,
+        "inputs": {"seeds": {"layers": ["defect", "clean"], "required": False}},
+    }
     layers = {
         "clean": _layer([_sq(1.0)]),
         "defect": _layer([[[5.0, 5.0], [7.0, 5.0], [7.0, 7.0], [5.0, 7.0]]]),
@@ -82,34 +86,51 @@ def test_resolve_inputs_list_mode_returns_ordered_dict():
     x = np.array([0.0, 6.0, 20.0])
     y = np.array([0.0, 6.0, 20.0])
     out = resolve_inputs(step, layers, x, y)
-    assert list(out["seeds"].keys()) == ["defect", "clean"]          # recipe order, not dict order
+    assert list(out["seeds"].keys()) == [
+        "defect",
+        "clean",
+    ]  # recipe order, not dict order
     assert out["seeds"]["defect"].tolist() == [False, True, False]
     assert out["seeds"]["clean"].tolist() == [True, False, False]
 
 
 def test_resolve_inputs_list_mode_skips_missing_layers():
-    step = {"op": "grow_segmentation",
-            "inputs": {"seeds": {"layers": ["a", "gone"], "required": False}}}
+    step = {
+        "op": "grow_segmentation",
+        "inputs": {"seeds": {"layers": ["a", "gone"], "required": False}},
+    }
     out = resolve_inputs(step, {"a": _layer([_sq(1.0)])}, np.zeros(2), np.zeros(2))
     assert list(out["seeds"].keys()) == ["a"]
 
 
 def test_resolve_inputs_list_mode_required_with_none_raises():
-    step = {"op": "grow_segmentation",
-            "inputs": {"seeds": {"layers": ["gone"], "required": True}}}
+    step = {
+        "op": "grow_segmentation",
+        "inputs": {"seeds": {"layers": ["gone"], "required": True}},
+    }
     with pytest.raises(RecipeError, match="seeds"):
         resolve_inputs(step, {}, np.zeros(2), np.zeros(2))
 
 
 def test_list_binding_hashes_stably_and_order_sensitively():
     from diag.recipe import recipe_hash
-    mk = lambda layers: {"steps": [
-        {"id": "a", "op": "frame_transform", "on": True, "params": {}},
-        {"id": "s", "op": "grow_segmentation", "on": True, "params": {},
-         "inputs": {"seeds": {"layers": layers}}},
-    ]}
+
+    mk = lambda layers: {
+        "steps": [
+            {"id": "a", "op": "frame_transform", "on": True, "params": {}},
+            {
+                "id": "s",
+                "op": "grow_segmentation",
+                "on": True,
+                "params": {},
+                "inputs": {"seeds": {"layers": layers}},
+            },
+        ]
+    }
     assert recipe_hash(mk(["x", "y"])) == recipe_hash(mk(["x", "y"]))
-    assert recipe_hash(mk(["x", "y"])) != recipe_hash(mk(["y", "x"]))   # class order is semantic
+    assert recipe_hash(mk(["x", "y"])) != recipe_hash(
+        mk(["y", "x"])
+    )  # class order is semantic
 ```
 
 (This exercises `_canonical` in `recipe.py`: `dict(sorted(inputs.items()))` sorts only the top-level `inputs` keys, and the JSON encoding of the value preserves nested list order — so the swapped-list hash differs. If the test shows otherwise, that is a `_canonical` bug to fix here.)
@@ -121,26 +142,26 @@ def test_list_binding_hashes_stably_and_order_sensitively():
 In `resolve_inputs`, inside the `for key, binding in bindings.items():` loop, before the existing `name = binding.get("layer")` line:
 
 ```python
-        if "layers" in binding:
-            names = binding["layers"]
-            resolved: dict[str, np.ndarray] = {}
-            for lname in names:                       # recipe order is semantic — do not sort
-                layer = (layers or {}).get(lname)
-                if layer is None:
-                    continue
-                arr = rasterize_polygons(layer["geometry"], x, y)
-                if arr.shape != xa.shape:
-                    raise RecipeError(
-                        f"layer {lname!r} rasterised to {arr.shape}, "
-                        f"step {op!r} expects {xa.shape}"
-                    )
-                resolved[lname] = arr
-            if not resolved and binding.get("required"):
-                raise RecipeError(
-                    f"step {op!r} requires input {key!r} but no bound layer resolved"
-                )
-            out[key] = resolved
+if "layers" in binding:
+    names = binding["layers"]
+    resolved: dict[str, np.ndarray] = {}
+    for lname in names:  # recipe order is semantic — do not sort
+        layer = (layers or {}).get(lname)
+        if layer is None:
             continue
+        arr = rasterize_polygons(layer["geometry"], x, y)
+        if arr.shape != xa.shape:
+            raise RecipeError(
+                f"layer {lname!r} rasterised to {arr.shape}, "
+                f"step {op!r} expects {xa.shape}"
+            )
+        resolved[lname] = arr
+    if not resolved and binding.get("required"):
+        raise RecipeError(
+            f"step {op!r} requires input {key!r} but no bound layer resolved"
+        )
+    out[key] = resolved
+    continue
 ```
 
 (The `xa = np.asarray(x)` and the base-tier gate above already run for any step with bindings.)
@@ -172,10 +193,16 @@ git commit -m "feat(diag): resolve_inputs list-binding mode for multi-layer step
 - Produces:
   ```python
   def grow_segmentation(
-      x: np.ndarray, y: np.ndarray,
-      features: list[np.ndarray],          # e.g. [resid_z] — non-spatial columns, each len n
-      seed_masks: list[np.ndarray],        # ordered; seed_masks[c] True where point is a class-c example
-      *, k: int = 15, alpha: float = 0.2, attr_weight: float = 1.0,
+      x: np.ndarray,
+      y: np.ndarray,
+      features: list[np.ndarray],  # e.g. [resid_z] — non-spatial columns, each len n
+      seed_masks: list[
+          np.ndarray
+      ],  # ordered; seed_masks[c] True where point is a class-c example
+      *,
+      k: int = 15,
+      alpha: float = 0.2,
+      attr_weight: float = 1.0,
   ) -> tuple[np.ndarray, str]:
       """Returns (segment_id, status). segment_id is float64 length n: the class index
       (0-based, matching seed_masks order) for every point, or -1 where unsegmentable.
@@ -221,22 +248,26 @@ def test_recovers_a_planted_high_residual_region():
     x = rng.uniform(-40, 40, n)
     y = rng.uniform(-40, 40, n)
     resid = rng.normal(0, 1, n)
-    planted = (x > 10) & (x < 25) & (y > -8) & (y < 8)      # a rectangular macrozone
+    planted = (x > 10) & (x < 25) & (y > -8) & (y < 8)  # a rectangular macrozone
     resid[planted] += 6.0
 
     seed_defect = (x > 15) & (x < 20) & (y > -3) & (y < 3)  # small patch inside
     seed_clean = (np.abs(resid) < 0.5) & ~planted & (rng.uniform(size=n) < 0.15)
-    seg, status = grow_segmentation(x, y, [resid], [seed_defect, seed_clean],
-                                    k=15, attr_weight=3.0)
+    seg, status = grow_segmentation(
+        x, y, [resid], [seed_defect, seed_clean], k=15, attr_weight=3.0
+    )
     assert status == ""
     assert (seg[planted] == 0).mean() > 0.9, (seg[planted] == 0).mean()
-    assert (seg[np.abs(resid) < 1.0] == 1).mean() > 0.8, (seg[np.abs(resid) < 1.0] == 1).mean()
+    assert (seg[np.abs(resid) < 1.0] == 1).mean() > 0.8, (
+        seg[np.abs(resid) < 1.0] == 1
+    ).mean()
 
 
 def test_multi_class_preserves_seed_order():
     rng = np.random.default_rng(4)
     n = 3000
-    x = rng.uniform(-40, 40, n); y = rng.uniform(-40, 40, n)
+    x = rng.uniform(-40, 40, n)
+    y = rng.uniform(-40, 40, n)
     resid = rng.normal(0, 1, n)
     a = x < -15
     b = (x > -5) & (x < 5)
@@ -244,11 +275,16 @@ def test_multi_class_preserves_seed_order():
     seg, status = grow_segmentation(x, y, [resid], [a, b, c])
     assert status == ""
     assert set(np.unique(seg)) <= {0.0, 1.0, 2.0}
-    assert seg[a].mean() < 0.5 and abs(seg[b].mean() - 1) < 0.5 and abs(seg[c].mean() - 2) < 0.5
+    assert (
+        seg[a].mean() < 0.5
+        and abs(seg[b].mean() - 1) < 0.5
+        and abs(seg[c].mean() - 2) < 0.5
+    )
 
 
 def test_degrades_below_two_seed_classes():
-    x = np.arange(50.0); y = np.zeros(50)
+    x = np.arange(50.0)
+    y = np.zeros(50)
     seg, status = grow_segmentation(x, y, [np.zeros(50)], [x > 40])
     assert status == "needs >= 2 seed classes"
     assert np.all(seg == -1)
@@ -257,9 +293,10 @@ def test_degrades_below_two_seed_classes():
 def test_nan_feature_points_are_minus_one_and_excluded():
     rng = np.random.default_rng(5)
     n = 800
-    x = rng.uniform(-10, 10, n); y = rng.uniform(-10, 10, n)
+    x = rng.uniform(-10, 10, n)
+    y = rng.uniform(-10, 10, n)
     resid = rng.normal(0, 1, n)
-    resid[:100] = np.nan                       # a Phase-E mask
+    resid[:100] = np.nan  # a Phase-E mask
     seg, status = grow_segmentation(x, y, [resid], [x < -5, x > 5])
     assert np.all(seg[:100] == -1)
     assert status == ""
@@ -279,6 +316,7 @@ U-Net. LabelSpreading over [x, y, scaled attributes] is exactly "classify every 
 sparse labels"; it is deterministic, multi-class, and needs no dependency the pipeline does
 not already carry. Provisional defaults, like the rest of scripts/diag/spatial.py.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -321,7 +359,9 @@ def grow_segmentation(
     if int(finite.sum()) < max(4, k + 1):
         return seg, "too few finite points to propagate"
 
-    scaled = np.zeros_like(F, dtype=np.float64)   # ~finite rows stay 0 and are never fit/used
+    scaled = np.zeros_like(
+        F, dtype=np.float64
+    )  # ~finite rows stay 0 and are never fit/used
     scaled[finite] = StandardScaler().fit_transform(F[finite])
     if scaled.shape[1] > 2:
         scaled[:, 2:] *= float(attr_weight)
@@ -334,7 +374,9 @@ def grow_segmentation(
 
     fit_idx = np.where(finite)[0]
     kk = int(min(k, fit_idx.size - 1))
-    model = LabelSpreading(kernel="knn", n_neighbors=max(1, kk), alpha=float(alpha), max_iter=60)
+    model = LabelSpreading(
+        kernel="knn", n_neighbors=max(1, kk), alpha=float(alpha), max_iter=60
+    )
     model.fit(scaled[fit_idx], y_labels[fit_idx])
     seg[fit_idx] = model.transduction_.astype(np.float64)
 
@@ -363,8 +405,12 @@ git commit -m "feat(diag): seeded segmentation via k-NN label propagation"
 - Consumes: `grow_segmentation` (Task 2), `resolve_inputs` list mode (Task 1).
 - Produces:
   ```python
-  @step("grow_segmentation", produces=["segment_id"],
-        requires=["x", "y", "resid_z"], tier="derived")
+  @step(
+      "grow_segmentation",
+      produces=["segment_id"],
+      requires=["x", "y", "resid_z"],
+      tier="derived",
+  )
   def _op_grow_segmentation(cols, params, inputs): ...
   ```
   - `params`: `k` (default 15), `alpha` (0.2), `attr_weight` (1.0), `features` (list[str], default `["resid_z"]`).
@@ -407,7 +453,9 @@ def test_op_segments_with_two_seed_masks():
     c = _cols()
     n = c["x"].size
     seeds = {"a": c["x"] < -15, "b": c["x"] > 15}
-    out, metrics = STEPS["grow_segmentation"].fn(c, {"features": ["resid_z"]}, {"seeds": seeds})
+    out, metrics = STEPS["grow_segmentation"].fn(
+        c, {"features": ["resid_z"]}, {"seeds": seeds}
+    )
     assert out["segment_id"].shape == (n,)
     assert set(np.unique(out["segment_id"])) <= {0.0, 1.0}
     assert metrics["segmentation_status"] == ""
@@ -433,8 +481,12 @@ def test_op_passes_masked_nan_through_as_minus_one():
 - [ ] **Step 3: Implement** (append to `scripts/diag/ops.py`, after `_op_hdbscan`)
 
 ```python
-@step("grow_segmentation", produces=["segment_id"],
-      requires=["x", "y", "resid_z"], tier="derived")
+@step(
+    "grow_segmentation",
+    produces=["segment_id"],
+    requires=["x", "y", "resid_z"],
+    tier="derived",
+)
 def _op_grow_segmentation(cols: Columns, params: dict, inputs: dict):
     """Seeded segmentation: each bound seed-role layer is one class; LabelSpreading fills
     every other point. Degrades to all -1 below 2 seed classes. Not in DEFAULT_RECIPE --
@@ -446,7 +498,10 @@ def _op_grow_segmentation(cols: Columns, params: dict, inputs: dict):
     seeds = inputs.get("seeds") or {}
     seed_masks = list(seeds.values())
     seg, status = grow_segmentation(
-        cols["x"], cols["y"], feature_cols, seed_masks,
+        cols["x"],
+        cols["y"],
+        feature_cols,
+        seed_masks,
         k=int(params.get("k", 15)),
         alpha=float(params.get("alpha", 0.2)),
         attr_weight=float(params.get("attr_weight", 1.0)),
@@ -488,6 +543,7 @@ git commit -m "feat(diag): register grow_segmentation step"
 ```python
 # tests/scripts/diag/test_runner.py -- add near the other run_recipe tests
 
+
 def test_default_recipe_emits_segment_id_all_minus_one():
     cols, _ = run_recipe(DEFAULT_RECIPE, _seed())
     assert "segment_id" in cols
@@ -503,8 +559,18 @@ And in `conftest.py`, a test-support change (not a test) — update `assert_colu
 
 ```python
 PUBLIC_COLUMNS: tuple[str, ...] = (
-    "t", "rev", "x", "y", "tsa_resid", "resid_z",
-    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band", "segment_id",
+    "t",
+    "rev",
+    "x",
+    "y",
+    "tsa_resid",
+    "resid_z",
+    "gi_star",
+    "gi_sig",
+    "cluster_id",
+    "glosh",
+    "env_band",
+    "segment_id",
 )
 ```
 
@@ -513,15 +579,16 @@ PUBLIC_COLUMNS: tuple[str, ...] = (
 In the `for name in PUBLIC_COLUMNS:` loop:
 
 ```python
-    for name in PUBLIC_COLUMNS:
-        col = work.get(name)
-        # segment_id defaults to -1 ("unsegmented"); 0 is a valid class index. Every other
-        # missing/disabled column zero-fills as before.
-        fill = -1.0 if name == "segment_id" else 0.0
-        out[name] = (
-            col[:n].astype(np.float32) if col is not None
-            else np.full(n, fill, dtype=np.float32)
-        )
+for name in PUBLIC_COLUMNS:
+    col = work.get(name)
+    # segment_id defaults to -1 ("unsegmented"); 0 is a valid class index. Every other
+    # missing/disabled column zero-fills as before.
+    fill = -1.0 if name == "segment_id" else 0.0
+    out[name] = (
+        col[:n].astype(np.float32)
+        if col is not None
+        else np.full(n, fill, dtype=np.float32)
+    )
 ```
 
 - [ ] **Step 5: Relax `assert_columns_match_golden`**
@@ -581,25 +648,43 @@ def test_preview_returns_segment_id_from_seeds(client):
     import copy
 
     recipe = copy.deepcopy(DEFAULT_RECIPE)
-    recipe["steps"].append({
-        "id": "seg", "op": "grow_segmentation", "on": True,
-        "params": {"features": ["resid_z"], "k": 15},
-        "inputs": {"seeds": {"layers": ["a", "b"], "required": False}},
-    })
+    recipe["steps"].append(
+        {
+            "id": "seg",
+            "op": "grow_segmentation",
+            "on": True,
+            "params": {"features": ["resid_z"], "k": 15},
+            "inputs": {"seeds": {"layers": ["a", "b"], "required": False}},
+        }
+    )
     big_left = [[[-1e9, -1e9], [0, -1e9], [0, 1e9], [-1e9, 1e9]]]
     big_right = [[[0, -1e9], [1e9, -1e9], [1e9, 1e9], [0, 1e9]]]
     body = {
-        "analysis_id": "a1", "recipe": recipe,
+        "analysis_id": "a1",
+        "recipe": recipe,
         "layers": {
-            "a": {"role": "seed", "geometry": {"polygons": big_left}, "value": None, "version": 1},
-            "b": {"role": "seed", "geometry": {"polygons": big_right}, "value": None, "version": 1},
+            "a": {
+                "role": "seed",
+                "geometry": {"polygons": big_left},
+                "value": None,
+                "version": 1,
+            },
+            "b": {
+                "role": "seed",
+                "geometry": {"polygons": big_right},
+                "value": None,
+                "version": 1,
+            },
         },
     }
     r = client.post("/preview", json=body)
     assert r.status_code == 200, r.text
     got = _read_bytes(r.content)
     assert "segment_id" in got
-    assert set(np.unique(got["segment_id"])) <= {0.0, 1.0}   # two classes, everything assigned
+    assert set(np.unique(got["segment_id"])) <= {
+        0.0,
+        1.0,
+    }  # two classes, everything assigned
 ```
 
 - [ ] **Step 2: Run** — `py -3 -m pytest plugins/diag-service/tests/ -q` → all green.
@@ -1060,7 +1145,9 @@ import pytest
 
 psycopg2 = pytest.importorskip("psycopg2")
 
-DSN = os.environ.get("DATABASE_URL", "postgres://d1:change_me@localhost:5432/d1_database")
+DSN = os.environ.get(
+    "DATABASE_URL", "postgres://d1:change_me@localhost:5432/d1_database"
+)
 
 
 @pytest.fixture
@@ -1073,8 +1160,10 @@ def conn():
 
 def _smallest_done_row(cur):
     # smallest cut (ffe1286d, ~17.9k pts) -> least likely to be mid-bake and holding a row lock
-    cur.execute("SELECT id FROM machining_force_analysis WHERE diag_status='done' "
-                "ORDER BY diag_points ASC LIMIT 1")
+    cur.execute(
+        "SELECT id FROM machining_force_analysis WHERE diag_status='done' "
+        "ORDER BY diag_points ASC LIMIT 1"
+    )
     row = cur.fetchone()
     if not row:
         pytest.skip("no baked diag row to test against")
@@ -1083,10 +1172,15 @@ def _smallest_done_row(cur):
 
 def test_editing_diag_recipe_requeues(conn):
     with conn.cursor() as cur:
-        cur.execute("SET lock_timeout = '3s'")   # fail loud on a daemon collision, don't hang
+        cur.execute(
+            "SET lock_timeout = '3s'"
+        )  # fail loud on a daemon collision, don't hang
         rid = _smallest_done_row(cur)
-        cur.execute("UPDATE machining_force_analysis SET diag_recipe = '{\"steps\":[]}'::jsonb "
-                    "WHERE id = %s RETURNING diag_status", [rid])
+        cur.execute(
+            "UPDATE machining_force_analysis SET diag_recipe = '{\"steps\":[]}'::jsonb "
+            "WHERE id = %s RETURNING diag_status",
+            [rid],
+        )
         assert cur.fetchone()[0] == "pending"
     conn.rollback()
 
@@ -1095,8 +1189,11 @@ def test_touching_unrelated_columns_does_not_requeue(conn):
     with conn.cursor() as cur:
         cur.execute("SET lock_timeout = '3s'")
         rid = _smallest_done_row(cur)
-        cur.execute("UPDATE machining_force_analysis SET diag_points = diag_points "
-                    "WHERE id = %s RETURNING diag_status", [rid])
+        cur.execute(
+            "UPDATE machining_force_analysis SET diag_points = diag_points "
+            "WHERE id = %s RETURNING diag_status",
+            [rid],
+        )
         assert cur.fetchone()[0] == "done"
     conn.rollback()
 ```
@@ -1137,8 +1234,9 @@ Verify one file:
 ```python
 # via C:\Program Files\Python313\python.exe
 from diag.d1an import read_d1an
-d = read_d1an('infra/octrees/diag/<op>/attrs.d1an')
-assert 'segment_id' in d and (d['segment_id'] == -1).all()   # no seeds bound -> all -1
+
+d = read_d1an("infra/octrees/diag/<op>/attrs.d1an")
+assert "segment_id" in d and (d["segment_id"] == -1).all()  # no seeds bound -> all -1
 ```
 
 - [ ] **Step 3: Headless workbench (playwright-core)**
@@ -1177,19 +1275,45 @@ Drive `/diagnostics` in the force app (login via `/auth/login`, seed `localStora
 ```python
 def test_list_binding_hashes_stably_and_order_sensitively():
     from diag.recipe import recipe_hash
-    base = {"steps": [
-        {"id": "a", "op": "frame_transform", "on": True, "params": {}},
-        {"id": "s", "op": "grow_segmentation", "on": True, "params": {},
-         "inputs": {"seeds": {"layers": ["x", "y"]}}},
-    ]}
-    same = {"steps": [dict(base["steps"][0]),
-        {"id": "s", "op": "grow_segmentation", "on": True, "params": {},
-         "inputs": {"seeds": {"layers": ["x", "y"]}}}]}
-    swapped = {"steps": [dict(base["steps"][0]),
-        {"id": "s", "op": "grow_segmentation", "on": True, "params": {},
-         "inputs": {"seeds": {"layers": ["y", "x"]}}}]}
+
+    base = {
+        "steps": [
+            {"id": "a", "op": "frame_transform", "on": True, "params": {}},
+            {
+                "id": "s",
+                "op": "grow_segmentation",
+                "on": True,
+                "params": {},
+                "inputs": {"seeds": {"layers": ["x", "y"]}},
+            },
+        ]
+    }
+    same = {
+        "steps": [
+            dict(base["steps"][0]),
+            {
+                "id": "s",
+                "op": "grow_segmentation",
+                "on": True,
+                "params": {},
+                "inputs": {"seeds": {"layers": ["x", "y"]}},
+            },
+        ]
+    }
+    swapped = {
+        "steps": [
+            dict(base["steps"][0]),
+            {
+                "id": "s",
+                "op": "grow_segmentation",
+                "on": True,
+                "params": {},
+                "inputs": {"seeds": {"layers": ["y", "x"]}},
+            },
+        ]
+    }
     assert recipe_hash(base) == recipe_hash(same)
-    assert recipe_hash(base) != recipe_hash(swapped)     # class order is semantic
+    assert recipe_hash(base) != recipe_hash(swapped)  # class order is semantic
 ```
 
 (This exercises `_canonical` in `recipe.py` — confirm it JSON-encodes the `inputs` value without sorting nested lists; `dict(sorted(inputs.items()))` only sorts the top-level keys, so a nested list order is preserved. If a test shows otherwise, that is a `_canonical` bug to fix in Task 1.)

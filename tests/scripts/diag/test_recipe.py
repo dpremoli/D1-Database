@@ -9,8 +9,13 @@ def test_default_recipe_is_well_formed():
     assert len(ids) == len(set(ids)), "step ids must be unique"
     # Assert complete op sequence
     assert [s["op"] for s in DEFAULT_RECIPE["steps"]] == [
-        "frame_transform", "angular_resample", "tsa",
-        "radial_detrend", "getis_ord", "hdbscan", "envelope",
+        "frame_transform",
+        "angular_resample",
+        "tsa",
+        "radial_detrend",
+        "getis_ord",
+        "hdbscan",
+        "envelope",
     ]
     # Assert step ids are exactly s1..s7
     assert ids == ["s1", "s2", "s3", "s4", "s5", "s6", "s7"]
@@ -58,7 +63,9 @@ def test_prefix_hash_is_stable_for_later_edits():
     computed prefix through step 5."""
     a = copy.deepcopy(DEFAULT_RECIPE)
     b = copy.deepcopy(DEFAULT_RECIPE)
-    next(s for s in b["steps"] if s["op"] == "hdbscan")["params"]["min_cluster_size"] = 99
+    next(s for s in b["steps"] if s["op"] == "hdbscan")["params"][
+        "min_cluster_size"
+    ] = 99
     idx = next(i for i, s in enumerate(a["steps"]) if s["op"] == "getis_ord")
     assert prefix_hash(a, idx) == prefix_hash(b, idx)
     assert recipe_hash(a) != recipe_hash(b)

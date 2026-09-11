@@ -63,7 +63,9 @@ def _octree_root() -> str:
 
 app = FastAPI(title="d1-diag-service")
 
-_cors = [o.strip() for o in os.environ.get("DIAG_CORS_ORIGINS", "").split(",") if o.strip()]
+_cors = [
+    o.strip() for o in os.environ.get("DIAG_CORS_ORIGINS", "").split(",") if o.strip()
+]
 if _cors:
     app.add_middleware(
         CORSMiddleware,
@@ -71,13 +73,19 @@ if _cors:
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
         expose_headers=[
-            "X-Diag-Cache", "X-Diag-Ms", "X-Diag-Preview", "X-Diag-Skipped",
-            "X-Diag-Viewport-N", "X-Diag-Viewport-Cols",
+            "X-Diag-Cache",
+            "X-Diag-Ms",
+            "X-Diag-Preview",
+            "X-Diag-Skipped",
+            "X-Diag-Viewport-N",
+            "X-Diag-Viewport-Cols",
         ],
     )
 
 # base.d1an parsed columns, keyed by diag_path (~18k rows x 5 float64 ~= 730 KB each).
 _base_lru: OrderedDict[str, dict] = OrderedDict()
+
+
 def _layers_key(layers: dict | None) -> str:
     """A stable cache-key fragment for a layers dict. json.dumps(sort_keys=True), not repr(),
     so two clients that serialise the same layer with differently-ordered inner keys still
@@ -150,15 +158,25 @@ def _select_base_signal(base: dict, channel: str) -> dict:
     mode: it reproduces exactly what preview already did before Phase H slice 4, for a row
     that has not yet been rebaked at v10, rather than a hard 409 mid-transition."""
     if channel not in _FRAME_CHANNELS:
-        raise HTTPException(422, f"channel must be one of {_FRAME_CHANNELS}, got {channel!r}")
+        raise HTTPException(
+            422, f"channel must be one of {_FRAME_CHANNELS}, got {channel!r}"
+        )
     sig_key = f"sig_{channel}"
     if sig_key in base:
         sig = base[sig_key]
     elif "sig" in base:
         sig = base["sig"]
     else:
-        raise HTTPException(409, "base.d1an for this analysis has no recognised signal column")
-    return {"t": base["t"], "rev": base["rev"], "x": base["x"], "y": base["y"], "sig": sig}
+        raise HTTPException(
+            409, "base.d1an for this analysis has no recognised signal column"
+        )
+    return {
+        "t": base["t"],
+        "rev": base["rev"],
+        "x": base["x"],
+        "y": base["y"],
+        "sig": sig,
+    }
 
 
 def _load_base(diag_path: str) -> dict:
@@ -186,7 +204,9 @@ def _load_base(diag_path: str) -> dict:
 # looking at.
 FULL_LRU_CAP = int(os.environ.get("FULL_LRU", "3"))
 _full_lru: OrderedDict[str, dict] = OrderedDict()
-_viewport_lru: OrderedDict[tuple, tuple[bytes, int, str]] = OrderedDict()  # key -> (d1an bytes, n, cols header)
+_viewport_lru: OrderedDict[tuple, tuple[bytes, int, str]] = (
+    OrderedDict()
+)  # key -> (d1an bytes, n, cols header)
 
 _VIEWPORT_STEPS = {"getis_ord", "hdbscan", "grow_segmentation", "gmm_segmentation"}
 _VIEWPORT_OUTPUT = {
@@ -372,13 +392,14 @@ async def viewport(req: Request):
 
     if not analysis_id or not isinstance(bbox, list) or len(bbox) != 4:
         raise HTTPException(422, "analysis_id and bbox [x0,y0,x1,y1] are required")
-    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in bbox):
+    if not all(isinstance(v, int | float) and not isinstance(v, bool) for v in bbox):
         raise HTTPException(422, "bbox elements must be numbers")
     if op not in _VIEWPORT_STEPS:
         raise HTTPException(422, f"step.op must be one of {sorted(_VIEWPORT_STEPS)}")
     if outputs_raw is not None:
         if (
-            not isinstance(outputs_raw, list) or not outputs_raw
+            not isinstance(outputs_raw, list)
+            or not outputs_raw
             or not all(isinstance(o, str) for o in outputs_raw)
         ):
             raise HTTPException(422, "outputs must be a non-empty array of strings")
@@ -386,7 +407,8 @@ async def viewport(req: Request):
         bad = [o for o in outputs_raw if o not in produces]
         if bad:
             raise HTTPException(
-                422, f"outputs {bad} not produced by {op!r} (produces {sorted(produces)})"
+                422,
+                f"outputs {bad} not produced by {op!r} (produces {sorted(produces)})",
             )
     mp_raw = body.get("max_points")
     if mp_raw is None:
@@ -421,18 +443,27 @@ async def viewport(req: Request):
 
     outputs_key = tuple(outputs_raw) if outputs_raw is not None else (output,)
     key = (
-        diag_path, op,
+        diag_path,
+        op,
         (round(x0, 3), round(y0, 3), round(x1, 3), round(y1, 3)),
-        recipe_hash({"steps": [step]}), _layers_key(layers), outputs_key, max_points,
+        recipe_hash({"steps": [step]}),
+        _layers_key(layers),
+        outputs_key,
+        max_points,
     )
     cached = _viewport_lru.get(key)
     if cached is not None:
         _viewport_lru.move_to_end(key)
         cbytes, cn, ccols = cached
         return Response(
-            cbytes, media_type="application/octet-stream",
-            headers={"Cache-Control": "no-store", "X-Diag-Cache": "hit",
-                     "X-Diag-Viewport-N": str(cn), "X-Diag-Viewport-Cols": ccols},
+            cbytes,
+            media_type="application/octet-stream",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Diag-Cache": "hit",
+                "X-Diag-Viewport-N": str(cn),
+                "X-Diag-Viewport-Cols": ccols,
+            },
         )
 
     full = _load_full(diag_path)
@@ -481,13 +512,16 @@ async def viewport(req: Request):
         # clean, actionable error rather than a bare 500 or taking the process down for every
         # concurrent analyst.
         raise HTTPException(
-            507, "viewport crop is too large for this step — zoom in or lower max_points"
+            507,
+            "viewport crop is too large for this step — zoom in or lower max_points",
         ) from e
     ms = int((time.perf_counter() - t0) * 1000)
 
     def _column(name: str) -> np.ndarray:
         categorical = name in ("cluster_id", "segment_id", "gmm_id")
-        return np.nan_to_num(produced[name], nan=-1.0 if categorical else np.nan).astype(np.float32)
+        return np.nan_to_num(
+            produced[name], nan=-1.0 if categorical else np.nan
+        ).astype(np.float32)
 
     if outputs_raw is not None:
         # Multi-output: each requested column keeps its own real name, so a new client can
@@ -505,18 +539,25 @@ async def viewport(req: Request):
 
     cols_header = ",".join(cols_out)
 
-    out = d1an_bytes({
-        "x": xc.astype(np.float32),
-        "y": yc.astype(np.float32),
-        **d1an_cols,
-    })
+    out = d1an_bytes(
+        {
+            "x": xc.astype(np.float32),
+            "y": yc.astype(np.float32),
+            **d1an_cols,
+        }
+    )
 
     _viewport_lru[key] = (out, int(xc.size), cols_header)
     while len(_viewport_lru) > VIEWPORT_LRU_CAP:
         _viewport_lru.popitem(last=False)
     return Response(
-        out, media_type="application/octet-stream",
-        headers={"Cache-Control": "no-store", "X-Diag-Cache": "miss",
-                 "X-Diag-Ms": str(ms), "X-Diag-Viewport-N": str(xc.size),
-                 "X-Diag-Viewport-Cols": cols_header},
+        out,
+        media_type="application/octet-stream",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Diag-Cache": "miss",
+            "X-Diag-Ms": str(ms),
+            "X-Diag-Viewport-N": str(xc.size),
+            "X-Diag-Viewport-Cols": cols_header,
+        },
     )

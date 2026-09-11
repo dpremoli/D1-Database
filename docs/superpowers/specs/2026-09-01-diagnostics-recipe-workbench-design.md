@@ -124,10 +124,12 @@ The principal server-side change. `analyse()` stops being a hardcoded sequence a
 registry-driven. Each op is a pure function over a column dict with a declared contract:
 
 ```python
-@step("radial_detrend",
-      produces=["resid_z"],
-      requires=["tsa_resid", "x", "y"],
-      tier="derived")
+@step(
+    "radial_detrend",
+    produces=["resid_z"],
+    requires=["tsa_resid", "x", "y"],
+    tier="derived",
+)
 def _radial_detrend(cols: Columns, params: dict, inputs: Inputs) -> Columns: ...
 ```
 

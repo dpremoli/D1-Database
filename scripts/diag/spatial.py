@@ -192,7 +192,9 @@ def cluster_gmm(
     scaled[:, 2] *= float(attr_weight)
 
     gmm = GaussianMixture(
-        n_components=k, covariance_type=covariance_type, random_state=int(random_state),
+        n_components=k,
+        covariance_type=covariance_type,
+        random_state=int(random_state),
     ).fit(scaled)
     labels = gmm.predict(scaled)
     prob = gmm.predict_proba(scaled).max(axis=1)

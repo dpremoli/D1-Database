@@ -59,8 +59,13 @@ def test_replay_live_rpm_survives_decimation(tmp_path):
 
     # Exactly what main.py:record_start_replay builds — cfg.sample_rate is the ORIGINAL fs.
     cfg = RecordConfig(
-        sample_name="REPLAY-DECIMATED", axis="Fz",
-        feed=src.feed, diam=src.diam, sample_rate=fs, duration_sec=n / fs, ppr=1,
+        sample_name="REPLAY-DECIMATED",
+        axis="Fz",
+        feed=src.feed,
+        diam=src.diam,
+        sample_rate=fs,
+        duration_sec=n / fs,
+        ppr=1,
     )
     sess = RecordingSession(cfg, str(tmp_path), src, broadcaster=None)
     sess.start()
@@ -84,14 +89,16 @@ Expected: FAIL — `live RPM 3000 != 1500 (stride 2x error)`.
 In `consumers.py`, change the constructor signature and the `self.fs` line only:
 
 ```python
-    def __init__(self, cfg: RecordConfig, fs: float | None = None, max_points_per_frame: int = 300):
-        self.cfg = cfg
-        self.max_pts = max_points_per_frame
-        # The rate data ACTUALLY arrives at, which is not always cfg.sample_rate: a ReplaySource
-        # decimates a long cut and streams at fs/stride, so reading cfg.sample_rate here reported
-        # RPM high by exactly that stride. Callers that genuinely acquire at cfg.sample_rate can
-        # omit it. CutDetector and session._update_fft already take source.rate for this reason.
-        self.fs = float(cfg.sample_rate if fs is None else fs)
+def __init__(
+    self, cfg: RecordConfig, fs: float | None = None, max_points_per_frame: int = 300
+):
+    self.cfg = cfg
+    self.max_pts = max_points_per_frame
+    # The rate data ACTUALLY arrives at, which is not always cfg.sample_rate: a ReplaySource
+    # decimates a long cut and streams at fs/stride, so reading cfg.sample_rate here reported
+    # RPM high by exactly that stride. Callers that genuinely acquire at cfg.sample_rate can
+    # omit it. CutDetector and session._update_fft already take source.rate for this reason.
+    self.fs = float(cfg.sample_rate if fs is None else fs)
 ```
 
 In `session.py:72`:
@@ -144,7 +151,10 @@ def test_replay_honours_speed_on_long_chunks(tmp_path):
     """
     import time
 
-    n, fs = 200_000, 2_000.0  # 100 s of cut; chunk lands well above 0.1 s of wall time at 1x
+    n, fs = (
+        200_000,
+        2_000.0,
+    )  # 100 s of cut; chunk lands well above 0.1 s of wall time at 1x
     cache, _ = _make_cache(tmp_path, n=n, fs=fs, rpm=1500.0)
     src = ReplaySource(cache, ppr=1, realtime=True, speed=1.0)
     chunk_sec = src.chunk / src.rate
@@ -158,7 +168,9 @@ def test_replay_honours_speed_on_long_chunks(tmp_path):
     wall = time.perf_counter() - t0
     played = reads * chunk_sec
     # Allow generous slack for scheduler jitter; the bug was a 3x+ overspeed, not a few percent.
-    assert wall > played * 0.7, f"played {played:.2f}s of cut in {wall:.2f}s wall — too fast"
+    assert wall > played * 0.7, (
+        f"played {played:.2f}s of cut in {wall:.2f}s wall — too fast"
+    )
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -471,7 +483,9 @@ from .dsp import welch_spectra
 
 ```python
 @app.post("/dsp/spectrum")
-async def dsp_spectrum(request: Request, fs: float, names: str, nperseg: int = 4096) -> dict:
+async def dsp_spectrum(
+    request: Request, fs: float, names: str, nperseg: int = 4096
+) -> dict:
     """Welch amplitude spectra for one window of samples. Stateless — no session, no playhead.
 
     Playback (an archived cut scrubbed in the browser) calls this a few times a second so its
@@ -486,7 +500,8 @@ async def dsp_spectrum(request: Request, fs: float, names: str, nperseg: int = 4
     flat = np.frombuffer(raw, dtype="<f4")
     if flat.size % len(chan_names):
         raise HTTPException(
-            422, f"body has {flat.size} samples, not a multiple of {len(chan_names)} channels"
+            422,
+            f"body has {flat.size} samples, not a multiple of {len(chan_names)} channels",
         )
     n = flat.size // len(chan_names)
     bufs = {

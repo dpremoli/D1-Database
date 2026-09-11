@@ -42,9 +42,23 @@ _FRAME_CHANNELS: tuple[str, ...] = ("fp", "fc", "ff")
 # analyst can still select the channel to see that it is empty rather than the request
 # failing outright.
 PUBLIC_COLUMNS: tuple[str, ...] = (
-    "t", "rev", "x", "y", "tsa_resid", "resid_z",
-    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band", "segment_id",
-    "inverted", "grid_fill", "grid_support", "gmm_id", "gmm_prob",
+    "t",
+    "rev",
+    "x",
+    "y",
+    "tsa_resid",
+    "resid_z",
+    "gi_star",
+    "gi_sig",
+    "cluster_id",
+    "glosh",
+    "env_band",
+    "segment_id",
+    "inverted",
+    "grid_fill",
+    "grid_support",
+    "gmm_id",
+    "gmm_prob",
 )
 
 # Angular-domain columns that shorten with the TSA truncation. Deliberately hardcoded and
@@ -64,9 +78,23 @@ PUBLIC_COLUMNS: tuple[str, ...] = (
 # step's angular output appears -- though like every column produced AFTER `tsa` it is
 # created at the already-truncated length, so its presence has no runtime effect today.
 _TRUNCATABLE: tuple[str, ...] = (
-    "t", "rev", "x", "y", "tsa_resid", "resid_z",
-    "gi_star", "gi_sig", "cluster_id", "glosh", "env_band", "segment_id",
-    "inverted", "grid_fill", "grid_support", "gmm_id", "gmm_prob",
+    "t",
+    "rev",
+    "x",
+    "y",
+    "tsa_resid",
+    "resid_z",
+    "gi_star",
+    "gi_sig",
+    "cluster_id",
+    "glosh",
+    "env_band",
+    "segment_id",
+    "inverted",
+    "grid_fill",
+    "grid_support",
+    "gmm_id",
+    "gmm_prob",
 )
 
 # Internal, non-array-contract key: the D1LC cache sample rate, stashed by seed_columns so
@@ -247,7 +275,8 @@ def run_recipe(
         # both); every other missing/disabled column zero-fills as before.
         fill = -1.0 if name in ("segment_id", "gmm_id") else 0.0
         out[name] = (
-            col[:n].astype(np.float32) if col is not None
+            col[:n].astype(np.float32)
+            if col is not None
             else np.full(n, fill, dtype=np.float32)
         )
     return out, metrics
@@ -277,8 +306,11 @@ def base_columns_all_channels(recipe: dict, cols: Columns) -> Columns:
     # a confusing "requested column 'fc' is not present" -- both land in the daemon's generic
     # except and write a useless per-row diag_error.
     frame_idx = next(
-        (i for i, s in enumerate(recipe["steps"])
-         if s["op"] == "frame_transform" and s.get("on", True)),
+        (
+            i
+            for i, s in enumerate(recipe["steps"])
+            if s["op"] == "frame_transform" and s.get("on", True)
+        ),
         None,
     )
     if frame_idx is None:
@@ -289,7 +321,9 @@ def base_columns_all_channels(recipe: dict, cols: Columns) -> Columns:
     spr = int(_resample_params(recipe["steps"]).get("samples_per_rev", 256))
 
     pre, _ = run_recipe(
-        recipe, cols, stop_after=frame_idx,
+        recipe,
+        cols,
+        stop_after=frame_idx,
         emit=("revs", "t_raw", "x_raw", "y_raw", "fc", "ff", "fp"),
     )
     # The first angular_resample validates `revs` (monotonicity, span) and builds the grid.
@@ -303,12 +337,16 @@ def base_columns_all_channels(recipe: dict, cols: Columns) -> Columns:
     def _resample(name: str) -> np.ndarray:
         sig = np.asarray(pre[name], dtype=np.float64)
         if sig.shape != revs.shape:
-            raise ValueError(f"base column {name!r} shape {sig.shape} != revs {revs.shape}")
+            raise ValueError(
+                f"base column {name!r} shape {sig.shape} != revs {revs.shape}"
+            )
         return np.interp(rev_grid, revs, sig)
 
     out: Columns = {
-        "t": t.astype(np.float32), "rev": rev_grid.astype(np.float32),
-        "x": _resample("x_raw").astype(np.float32), "y": _resample("y_raw").astype(np.float32),
+        "t": t.astype(np.float32),
+        "rev": rev_grid.astype(np.float32),
+        "x": _resample("x_raw").astype(np.float32),
+        "y": _resample("y_raw").astype(np.float32),
     }
     for ch in _FRAME_CHANNELS:
         out[f"sig_{ch}"] = _resample(ch).astype(np.float32)

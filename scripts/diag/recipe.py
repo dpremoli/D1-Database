@@ -24,22 +24,41 @@ DEFAULT_RECIPE: dict[str, Any] = {
     "recipe_version": RECIPE_VERSION,
     "name": "Default",
     "steps": [
-        {"id": "s1", "op": "frame_transform", "on": True,
-         "params": {"channel": "fp", "mount_deg": 0.0}},
-        {"id": "s2", "op": "angular_resample", "on": True,
-         "params": {"samples_per_rev": 256}},
+        {
+            "id": "s1",
+            "op": "frame_transform",
+            "on": True,
+            "params": {"channel": "fp", "mount_deg": 0.0},
+        },
+        {
+            "id": "s2",
+            "op": "angular_resample",
+            "on": True,
+            "params": {"samples_per_rev": 256},
+        },
         {"id": "s3", "op": "tsa", "on": True, "params": {}},
-        {"id": "s4", "op": "radial_detrend", "on": True,
-         "params": {"n_bins": 200, "min_per_bin": 8}},
-        {"id": "s5", "op": "getis_ord", "on": True,
-         "params": {"k": 30, "alpha": 0.05}},
-        {"id": "s6", "op": "hdbscan", "on": True,
-         "params": {"grid_target": 20000, "min_cluster_size": 10}},
+        {
+            "id": "s4",
+            "op": "radial_detrend",
+            "on": True,
+            "params": {"n_bins": 200, "min_per_bin": 8},
+        },
+        {"id": "s5", "op": "getis_ord", "on": True, "params": {"k": 30, "alpha": 0.05}},
+        {
+            "id": "s6",
+            "op": "hdbscan",
+            "on": True,
+            "params": {"grid_target": 20000, "min_cluster_size": 10},
+        },
         # Off by default: envelope analysis needs a real dyno_fn_hz, which no tool_setup
         # record supplies yet, so analyse() has always refused it. See the design's
         # open questions.
-        {"id": "s7", "op": "envelope", "on": False,
-         "params": {"bandwidth_frac": 0.2, "fn_hz": None}},
+        {
+            "id": "s7",
+            "op": "envelope",
+            "on": False,
+            "params": {"bandwidth_frac": 0.2, "fn_hz": None},
+        },
     ],
 }
 

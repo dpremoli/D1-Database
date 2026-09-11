@@ -22,10 +22,12 @@ It also closes the reuse loop. A recipe tuned on one cut of a campaign should ap
 ### Contract
 
 ```python
-@step("grow_segmentation",
-      produces=["segment_id"],
-      requires=["x", "y", "resid_z"],
-      tier="derived")
+@step(
+    "grow_segmentation",
+    produces=["segment_id"],
+    requires=["x", "y", "resid_z"],
+    tier="derived",
+)
 def _op_grow_segmentation(cols, params, inputs): ...
 ```
 

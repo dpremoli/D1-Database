@@ -4,7 +4,9 @@ import pytest
 
 psycopg2 = pytest.importorskip("psycopg2")
 
-DSN = os.environ.get("DATABASE_URL", "postgres://d1:change_me@localhost:5432/d1_database")
+DSN = os.environ.get(
+    "DATABASE_URL", "postgres://d1:change_me@localhost:5432/d1_database"
+)
 
 
 @pytest.fixture

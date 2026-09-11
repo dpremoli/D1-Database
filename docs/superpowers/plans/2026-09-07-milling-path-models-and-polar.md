@@ -1665,6 +1665,7 @@ because `CloudChannel` is validated to be one of `Fx|Fy|Fz|Mz`, all real `Cache`
 
 See docs/superpowers/specs/2026-09-07-milling-path-models-and-polar-design.md #4.
 """
+
 from __future__ import annotations
 
 import struct
@@ -1687,7 +1688,20 @@ def _arrs(n: int = 6):
 def test_write_d1lc_without_extras_is_byte_identical_to_today(tmp_path):
     path = tmp_path / "live_cache.bin"
     t, fx, fy, fz, rpm, revs = _arrs()
-    write_d1lc(str(path), t, fx, fy, fz, rpm, revs, fs=1000.0, feed=0.05, diam=80.0, cs_sec=0.0, ce_sec=0.05)
+    write_d1lc(
+        str(path),
+        t,
+        fx,
+        fy,
+        fz,
+        rpm,
+        revs,
+        fs=1000.0,
+        feed=0.05,
+        diam=80.0,
+        cs_sec=0.0,
+        ce_sec=0.05,
+    )
     buf = path.read_bytes()
     magic, version, n = struct.unpack_from("<III", buf, 0)
     assert magic == 0x44314C43
@@ -1699,13 +1713,25 @@ def test_write_d1lc_without_extras_is_byte_identical_to_today(tmp_path):
 def test_write_d1lc_with_extras_writes_v2_trailer_that_round_trips():
     import tempfile
     import os
+
     t, fx, fy, fz, rpm, revs = _arrs(5)
     mz = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
     fd, path = tempfile.mkstemp(suffix=".bin")
     os.close(fd)
     try:
         write_d1lc(
-            path, t, fx, fy, fz, rpm, revs, fs=1000.0, feed=0.05, diam=80.0, cs_sec=0.0, ce_sec=0.04,
+            path,
+            t,
+            fx,
+            fy,
+            fz,
+            rpm,
+            revs,
+            fs=1000.0,
+            feed=0.05,
+            diam=80.0,
+            cs_sec=0.0,
+            ce_sec=0.04,
             extras={"Mz": mz},
         )
         buf = open(path, "rb").read()
@@ -1721,7 +1747,21 @@ def test_write_d1lc_with_extras_writes_v2_trailer_that_round_trips():
 def test_write_d1lc_with_empty_extras_dict_stays_v1(tmp_path):
     path = tmp_path / "live_cache.bin"
     t, fx, fy, fz, rpm, revs = _arrs(3)
-    write_d1lc(str(path), t, fx, fy, fz, rpm, revs, fs=1000.0, feed=0.05, diam=80.0, cs_sec=0.0, ce_sec=0.02, extras={})
+    write_d1lc(
+        str(path),
+        t,
+        fx,
+        fy,
+        fz,
+        rpm,
+        revs,
+        fs=1000.0,
+        feed=0.05,
+        diam=80.0,
+        cs_sec=0.0,
+        ce_sec=0.02,
+        extras={},
+    )
     buf = path.read_bytes()
     _, version, _ = struct.unpack_from("<III", buf, 0)
     assert version == 1
@@ -1775,7 +1815,15 @@ def write_d1lc(
     n = int(t.size)
     version = 2 if extras else 1
     head = struct.pack(
-        "<IIIfffff", MAGIC, version, n, float(fs), float(feed), float(diam), float(cs_sec), float(ce_sec)
+        "<IIIfffff",
+        MAGIC,
+        version,
+        n,
+        float(fs),
+        float(feed),
+        float(diam),
+        float(cs_sec),
+        float(ce_sec),
     )
     with open(path, "wb") as f:
         f.write(head)
@@ -1824,7 +1872,7 @@ def parse_d1lc(buf: bytes) -> dict:
         for _ in range(extra_count):
             if off + 8 > len(buf):
                 break
-            name = buf[off:off + 8].rstrip(b"\x00").decode("ascii", errors="replace")
+            name = buf[off : off + 8].rstrip(b"\x00").decode("ascii", errors="replace")
             off += 8
             arr = np.frombuffer(buf, dtype="<f4", count=n, offset=off).copy()
             off += n * 4
@@ -1880,6 +1928,7 @@ behaviour change. MATLAB stays on v1 until it has extras to write (§4 of the sp
 """Channel-model tests: the rotating-dyno preset and its interaction with the fixed
 9-column recorder layout. See
 docs/superpowers/specs/2026-09-07-milling-path-models-and-polar-design.md #5."""
+
 from __future__ import annotations
 
 import pytest
@@ -2114,7 +2163,9 @@ def dyno_gains(channels: list[dict], kind: str = DYNO_STATIONARY) -> list[float]
         gains: list[float | None] = []
         for name in ROTATING_ORDER:
             c = by_name.get(name, {})
-            gains.append(c.get("gain_nm_per_v") if name == "Mz" else c.get("gain_n_per_v"))
+            gains.append(
+                c.get("gain_nm_per_v") if name == "Mz" else c.get("gain_n_per_v")
+            )
         return [float(g) for g in gains] if all(g is not None for g in gains) else []
 
     gains = [by_name.get(n, {}).get("gain_n_per_v") for n in FORCE_ORDER]

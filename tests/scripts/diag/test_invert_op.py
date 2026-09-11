@@ -7,6 +7,7 @@ raises a clear error itself when the chosen source is not present, and the clien
 that in recipeProblems() (see recipeChannels.test.ts) so the doomed request is still caught
 before it is sent.
 """
+
 import os
 import sys
 
@@ -21,8 +22,11 @@ from diag.registry import STEPS
 
 def _cols(n=200, rng=None):
     rng = rng or np.random.default_rng(3)
-    return {"x": rng.uniform(-30, 30, n), "y": rng.uniform(-30, 30, n),
-            "resid_z": rng.normal(0, 2, n)}
+    return {
+        "x": rng.uniform(-30, 30, n),
+        "y": rng.uniform(-30, 30, n),
+        "resid_z": rng.normal(0, 2, n),
+    }
 
 
 def test_registered_with_the_right_contract():

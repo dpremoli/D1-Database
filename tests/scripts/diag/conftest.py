@@ -35,9 +35,18 @@ def synthetic_cut(n_rev=40, spr=SPR, anomaly_rev=25.0, anomaly_span=0.05):
 
 def cache_of(t, fx, fy, fz, rpm, revs, fs):
     return {
-        "n": t.size, "fs": fs, "feed": 0.05, "diam": 80.0,
-        "cs_sec": 0.0, "ce_sec": float(t[-1]),
-        "t": t, "fx": fx, "fy": fy, "fz": fz, "rpm": rpm, "revs": revs,
+        "n": t.size,
+        "fs": fs,
+        "feed": 0.05,
+        "diam": 80.0,
+        "cs_sec": 0.0,
+        "ce_sec": float(t[-1]),
+        "t": t,
+        "fx": fx,
+        "fy": fy,
+        "fz": fz,
+        "rpm": rpm,
+        "revs": revs,
     }
 
 
@@ -104,9 +113,9 @@ def assert_columns_match_golden(cols, metrics, golden_path, nondegenerate=()):
     golden = np.load(golden_path, allow_pickle=False)
     expected = {k: golden[k] for k in golden.files if not k.startswith("__")}
     for name in nondegenerate:
-        assert np.count_nonzero(golden[name]) > 0, (
-            f"golden {name!r} is degenerate -- fixture regenerated from a broken pipeline?"
-        )
+        assert (
+            np.count_nonzero(golden[name]) > 0
+        ), f"golden {name!r} is degenerate -- fixture regenerated from a broken pipeline?"
     # The frozen fixture predates every column a step OFF the default recipe still
     # contributes at its neutral default (segment_id, Phase F; inverted/grid_fill/
     # grid_support/gmm_id/gmm_prob, Phase H slice 2 -- see runner.py::PUBLIC_COLUMNS). Every
@@ -115,16 +124,22 @@ def assert_columns_match_golden(cols, metrics, golden_path, nondegenerate=()):
     # neutral value.
     missing = set(expected) - set(cols)
     assert not missing, f"columns dropped vs the frozen reference: {missing}"
-    _NEUTRAL_EXTRA = {
-        "segment_id": -1.0, "gmm_id": -1.0,
-        "inverted": 0.0, "grid_fill": 0.0, "grid_support": 0.0, "gmm_prob": 0.0,
+    neutral_extra = {
+        "segment_id": -1.0,
+        "gmm_id": -1.0,
+        "inverted": 0.0,
+        "grid_fill": 0.0,
+        "grid_support": 0.0,
+        "gmm_prob": 0.0,
     }
     extra = set(cols) - set(expected)
-    assert extra <= set(_NEUTRAL_EXTRA), f"unexpected columns beyond the reference: {extra}"
+    assert extra <= set(
+        neutral_extra
+    ), f"unexpected columns beyond the reference: {extra}"
     for name in extra:
-        assert np.all(cols[name] == _NEUTRAL_EXTRA[name]), (
-            f"default-path {name!r} must be all {_NEUTRAL_EXTRA[name]}"
-        )
+        assert np.all(
+            cols[name] == neutral_extra[name]
+        ), f"default-path {name!r} must be all {neutral_extra[name]}"
     for name, want in expected.items():
         got = cols[name]
         assert got.dtype == want.dtype, f"column {name!r} dtype drifted"
@@ -133,6 +148,6 @@ def assert_columns_match_golden(cols, metrics, golden_path, nondegenerate=()):
         )
     # The metrics blob is frozen too: analyse() emits columns AND a JSON-serialisable
     # metrics dict, and the runner must reproduce both. Stored as repr(sorted(items())).
-    assert repr(sorted(metrics.items())) == str(golden["__metrics__"]), (
-        "metrics payload differs from the golden reference"
-    )
+    assert repr(sorted(metrics.items())) == str(
+        golden["__metrics__"]
+    ), "metrics payload differs from the golden reference"

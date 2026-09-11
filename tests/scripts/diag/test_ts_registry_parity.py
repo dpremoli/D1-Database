@@ -8,18 +8,22 @@ reason `recipeChannels.ts` is allowed to hold a hand-written copy of `requires`/
 
 from __future__ import annotations
 
-
 import os
 import re
 
 import pytest
-
 from diag import ops as _ops  # noqa: F401  -- registration side effects
 from diag.registry import SEED_COLUMNS, STEPS
 
 _TS = os.path.join(
-    os.path.dirname(__file__), "..", "..", "..",
-    "packages", "force-plotting", "src", "recipeChannels.ts",
+    os.path.dirname(__file__),
+    "..",
+    "..",
+    "..",
+    "packages",
+    "force-plotting",
+    "src",
+    "recipeChannels.ts",
 )
 
 
@@ -84,7 +88,9 @@ def test_ts_step_meta_produces_matches_the_python_registry():
     py = {name: list(spec.produces) for name, spec in STEPS.items()}
     assert set(blocks) == set(py)
     for op in sorted(py):
-        got = re.findall(r"'([^']*)'", re.search(r"produces:\s*\[([^\]]*)\]", blocks[op]).group(1))
+        got = re.findall(
+            r"'([^']*)'", re.search(r"produces:\s*\[([^\]]*)\]", blocks[op]).group(1)
+        )
         assert got == py[op], f"{op}.produces: TS {got} != Python {py[op]}"
 
 
@@ -111,8 +117,9 @@ def test_ts_step_categories_match_the_python_registry():
 def test_every_registered_step_has_client_help(op):
     """A step with no help text renders a bare op name in the panel -- the exact opacity the
     workbench is meant to remove. Fail loudly when a new step skips its description."""
-    assert op in _op_blocks(_help_source(), "STEP_HELP", set(STEPS)), \
-        f"no STEP_HELP entry for {op!r}"
+    assert op in _op_blocks(
+        _help_source(), "STEP_HELP", set(STEPS)
+    ), f"no STEP_HELP entry for {op!r}"
 
 
 def test_every_tunable_param_has_help():

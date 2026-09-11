@@ -75,7 +75,9 @@ def _am_signal(fs, duration, carrier, mod_rate, mod_depth=0.8, noise=0.05, seed=
     resonance being excited at some repetition rate the dynamometer can't directly resolve."""
     t = np.arange(0, duration, 1.0 / fs)
     rng = np.random.default_rng(seed)
-    sig = (1.0 + mod_depth * np.sin(2 * np.pi * mod_rate * t)) * np.sin(2 * np.pi * carrier * t)
+    sig = (1.0 + mod_depth * np.sin(2 * np.pi * mod_rate * t)) * np.sin(
+        2 * np.pi * carrier * t
+    )
     sig = sig + noise * rng.normal(size=t.size)
     return sig
 
@@ -303,7 +305,9 @@ def test_env_band_computed_when_fn_hz_fits_within_nyquist():
     assert metrics["env_band_status"] == "computed"
     assert "envelope_spectrum" in metrics
     assert len(metrics["envelope_spectrum"]["freqs"]) > 0
-    assert len(metrics["envelope_spectrum"]["freqs"]) == len(metrics["envelope_spectrum"]["amplitude"])
+    assert len(metrics["envelope_spectrum"]["freqs"]) == len(
+        metrics["envelope_spectrum"]["amplitude"]
+    )
     assert cols["env_band"].shape == cols["resid_z"].shape
     assert np.all(np.isfinite(cols["env_band"]))
     assert np.all(cols["env_band"] >= 0.0)

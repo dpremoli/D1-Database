@@ -108,11 +108,15 @@ def grid_interpolate(
         # Cells with no sample in them (gaps wider than one grid pitch) take their nearest
         # OCCUPIED cell's value -- a KDTree over the occupied cells only (at most n_cells,
         # never the full point cloud), so this stays cheap regardless of point count.
-        Gx, Gy = np.meshgrid(gx, gy)
+        grid_x, grid_y = np.meshgrid(gx, gy)
         occ_idx = np.flatnonzero(occupied)
         empty_idx = np.flatnonzero(~occupied)
-        cell_tree = cKDTree(np.column_stack([Gx.ravel()[occ_idx], Gy.ravel()[occ_idx]]))
-        _, nn = cell_tree.query(np.column_stack([Gx.ravel()[empty_idx], Gy.ravel()[empty_idx]]), k=1)
+        cell_tree = cKDTree(
+            np.column_stack([grid_x.ravel()[occ_idx], grid_y.ravel()[occ_idx]])
+        )
+        _, nn = cell_tree.query(
+            np.column_stack([grid_x.ravel()[empty_idx], grid_y.ravel()[empty_idx]]), k=1
+        )
         grid_vals[empty_idx] = grid_vals[occ_idx[nn]]
 
     grid_2d = grid_vals.reshape(ny, nx)
@@ -125,7 +129,9 @@ def grid_interpolate(
         # only touching the small grid, not the point cloud.
         from scipy.interpolate import RegularGridInterpolator
 
-        interp = RegularGridInterpolator((gy, gx), grid_2d, method="linear", bounds_error=False)
+        interp = RegularGridInterpolator(
+            (gy, gx), grid_2d, method="linear", bounds_error=False
+        )
         fill[fin] = interp(np.column_stack([yf, xf]))
 
     return fill, support

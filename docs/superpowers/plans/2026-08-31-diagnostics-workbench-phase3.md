@@ -180,7 +180,9 @@ def getis_ord_gi_star(
     v = np.asarray(v, dtype=np.float64)
     n = x.size
     if n < k + 1:
-        raise ValueError(f"need at least k+1={k + 1} points for k={k} neighbours, got {n}")
+        raise ValueError(
+            f"need at least k+1={k + 1} points for k={k} neighbours, got {n}"
+        )
 
     tree = cKDTree(np.column_stack([x, y]))
     _, idx = tree.query(np.column_stack([x, y]), k=k)  # idx includes the point itself
@@ -193,8 +195,8 @@ def getis_ord_gi_star(
         return np.zeros(n), np.ones(n)
 
     neighbor_sum = v[idx].sum(axis=1)
-    w_sum = float(k)       # binary weights, all 1, k of them (including self)
-    w_sq_sum = float(k)    # squared weights are also 1 each
+    w_sum = float(k)  # binary weights, all 1, k of them (including self)
+    w_sq_sum = float(k)  # squared weights are also 1 each
     numerator = neighbor_sum - vbar * w_sum
     denom = s * np.sqrt((n * w_sq_sum - w_sum**2) / (n - 1))
     gi_star = numerator / denom
@@ -482,8 +484,16 @@ def test_pipeline_columns_include_spatial_coordinates():
     }
     cols, _ = analyse(cache, x, y, samples_per_rev=SPR)
     assert set(cols) == {
-        "t", "rev", "x", "y", "tsa_resid", "resid_z",
-        "gi_star", "gi_sig", "cluster_id", "glosh",
+        "t",
+        "rev",
+        "x",
+        "y",
+        "tsa_resid",
+        "resid_z",
+        "gi_star",
+        "gi_sig",
+        "cluster_id",
+        "glosh",
     }
     r = np.hypot(cols["x"], cols["y"])
     expected_r = 40.0 - 0.05 * cols["rev"]
@@ -502,7 +512,13 @@ Expected: FAIL — `KeyError: 'gi_sig'` (or the column-set assertion mismatch)
 In `scripts/diag/pipeline.py`, add the import:
 
 ```python
-from .spatial import assign_from_grid, benjamini_hochberg, cluster_hdbscan, getis_ord_gi_star, grid_reduce
+from .spatial import (
+    assign_from_grid,
+    benjamini_hochberg,
+    cluster_hdbscan,
+    getis_ord_gi_star,
+    grid_reduce,
+)
 ```
 
 Update the signature:
@@ -526,24 +542,26 @@ def analyse(
 After the existing `resid_z = radial_detrend(r, residual)` line and before the `orders, amp = order_spectrum(...)` line, insert:
 
 ```python
-    # Spatial statistics run on the same (x_ang, y_ang, resid_z) the detrend already used.
-    # Gi* needs at least gi_k+1 points; short test cuts can fall under that, so degrade to
-    # "nothing significant" rather than raising -- a two-revolution synthetic cut should not
-    # crash the whole pipeline over a statistic it has too few points to compute.
-    if n > gi_k:
-        gi_star, gi_p = getis_ord_gi_star(x_ang, y_ang, resid_z, k=gi_k)
-        gi_sig = benjamini_hochberg(gi_p, alpha=0.05).astype(np.float64)
-    else:
-        gi_star = np.zeros(n)
-        gi_sig = np.zeros(n)
+# Spatial statistics run on the same (x_ang, y_ang, resid_z) the detrend already used.
+# Gi* needs at least gi_k+1 points; short test cuts can fall under that, so degrade to
+# "nothing significant" rather than raising -- a two-revolution synthetic cut should not
+# crash the whole pipeline over a statistic it has too few points to compute.
+if n > gi_k:
+    gi_star, gi_p = getis_ord_gi_star(x_ang, y_ang, resid_z, k=gi_k)
+    gi_sig = benjamini_hochberg(gi_p, alpha=0.05).astype(np.float64)
+else:
+    gi_star = np.zeros(n)
+    gi_sig = np.zeros(n)
 
-    xr, yr, vr, cell_id = grid_reduce(x_ang, y_ang, resid_z, target_n=hdbscan_grid_target)
-    if xr.size >= hdbscan_min_cluster_size:
-        labels_r, glosh_r = cluster_hdbscan(xr, yr, vr, min_cluster_size=hdbscan_min_cluster_size)
-        cluster_id, glosh = assign_from_grid(cell_id, labels_r, glosh_r)
-    else:
-        cluster_id = np.full(n, -1.0)
-        glosh = np.zeros(n)
+xr, yr, vr, cell_id = grid_reduce(x_ang, y_ang, resid_z, target_n=hdbscan_grid_target)
+if xr.size >= hdbscan_min_cluster_size:
+    labels_r, glosh_r = cluster_hdbscan(
+        xr, yr, vr, min_cluster_size=hdbscan_min_cluster_size
+    )
+    cluster_id, glosh = assign_from_grid(cell_id, labels_r, glosh_r)
+else:
+    cluster_id = np.full(n, -1.0)
+    glosh = np.zeros(n)
 ```
 
 Update the `columns` dict:

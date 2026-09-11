@@ -5,6 +5,7 @@ octree and the viewport-recompute source need it per raw spiral point. Linear in
 in revolution-phase is the honest broadcast for a continuous residual -- nearest-neighbour
 would band at the phase-bin boundaries.
 """
+
 from __future__ import annotations
 
 import numpy as np

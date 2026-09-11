@@ -39,8 +39,13 @@ from .spatial import (
 _CHANNELS = ("fc", "ff", "fp")
 
 
-@step("frame_transform", produces=["fc", "ff", "fp"],
-      requires=["fx", "fy", "fz"], tier="base", category="transform")
+@step(
+    "frame_transform",
+    produces=["fc", "ff", "fp"],
+    requires=["fx", "fy", "fz"],
+    tier="base",
+    category="transform",
+)
 def _op_frame_transform(cols: Columns, params: dict, inputs: dict):
     h = params.get("h_matrix")
     fx, fy, fz = cols["fx"], cols["fy"], cols["fz"]
@@ -59,9 +64,13 @@ def _op_frame_transform(cols: Columns, params: dict, inputs: dict):
     }
 
 
-@step("angular_resample", produces=["t", "rev", "x", "y", "sig"],
-      requires=["revs", "t_raw", "x_raw", "y_raw", "fc", "ff", "fp"], tier="base",
-      category="transform")
+@step(
+    "angular_resample",
+    produces=["t", "rev", "x", "y", "sig"],
+    requires=["revs", "t_raw", "x_raw", "y_raw", "fc", "ff", "fp"],
+    tier="base",
+    category="transform",
+)
 def _op_angular_resample(cols: Columns, params: dict, inputs: dict):
     spr = int(params.get("samples_per_rev", 256))
     channel = str(params.get("channel", "fp"))
@@ -77,8 +86,13 @@ def _op_angular_resample(cols: Columns, params: dict, inputs: dict):
     }
 
 
-@step("tsa", produces=["tsa_resid"], requires=["sig", "rev"], tier="derived",
-      category="residual")
+@step(
+    "tsa",
+    produces=["tsa_resid"],
+    requires=["sig", "rev"],
+    tier="derived",
+    category="residual",
+)
 def _op_tsa(cols: Columns, params: dict, inputs: dict):
     spr = int(params.get("samples_per_rev") or 0)
     if not spr:
@@ -100,21 +114,30 @@ def _op_tsa(cols: Columns, params: dict, inputs: dict):
     }
 
 
-@step("radial_detrend", produces=["resid_z"],
-      requires=["tsa_resid", "x", "y"], tier="derived", category="residual")
+@step(
+    "radial_detrend",
+    produces=["resid_z"],
+    requires=["tsa_resid", "x", "y"],
+    tier="derived",
+    category="residual",
+)
 def _op_radial_detrend(cols: Columns, params: dict, inputs: dict):
     r = np.hypot(cols["x"], cols["y"])
     tsa = cols["tsa_resid"]
     n_bins = int(params.get("n_bins", 200))
     min_per_bin = int(params.get("min_per_bin", 8))
-    mask = inputs.get("mask")  # True = an excluded region (chuck mark / fixture artefact)
+    mask = inputs.get(
+        "mask"
+    )  # True = an excluded region (chuck mark / fixture artefact)
     if mask is not None and np.any(mask):
         # Hold masked points out of the radial-bin fit entirely and give them NaN: the
         # detrend, Gi* and clustering downstream must never see a fixture artefact. NaN is
         # the D1AN value; the orchestrator sanitises it before the LAS/octree write.
         keep = ~np.asarray(mask, dtype=bool)
         z = np.full(r.shape, np.nan)
-        z[keep] = _radial_detrend(r[keep], tsa[keep], n_bins=n_bins, min_per_bin=min_per_bin)
+        z[keep] = _radial_detrend(
+            r[keep], tsa[keep], n_bins=n_bins, min_per_bin=min_per_bin
+        )
     else:
         z = _radial_detrend(r, tsa, n_bins=n_bins, min_per_bin=min_per_bin)
     finite = z[np.isfinite(z)]
@@ -123,8 +146,13 @@ def _op_radial_detrend(cols: Columns, params: dict, inputs: dict):
     }
 
 
-@step("getis_ord", produces=["gi_star", "gi_sig"],
-      requires=["x", "y", "resid_z"], tier="derived", category="statistics")
+@step(
+    "getis_ord",
+    produces=["gi_star", "gi_sig"],
+    requires=["x", "y", "resid_z"],
+    tier="derived",
+    category="statistics",
+)
 def _op_getis_ord(cols: Columns, params: dict, inputs: dict):
     k = int(params.get("k", 30))
     alpha = float(params.get("alpha", 0.05))
@@ -145,8 +173,13 @@ def _op_getis_ord(cols: Columns, params: dict, inputs: dict):
     return {"gi_star": gi, "gi_sig": sig}, {}
 
 
-@step("hdbscan", produces=["cluster_id", "glosh"],
-      requires=["x", "y", "resid_z"], tier="derived", category="segmentation")
+@step(
+    "hdbscan",
+    produces=["cluster_id", "glosh"],
+    requires=["x", "y", "resid_z"],
+    tier="derived",
+    category="segmentation",
+)
 def _op_hdbscan(cols: Columns, params: dict, inputs: dict):
     target = int(params.get("grid_target", 20000))
     min_size = int(params.get("min_cluster_size", 10))
@@ -175,9 +208,13 @@ def _op_hdbscan(cols: Columns, params: dict, inputs: dict):
     return {"cluster_id": cluster_id, "glosh": glosh}, {}
 
 
-@step("envelope", produces=["env_band"],
-      requires=["fc", "ff", "fp", "revs", "t_raw", "tsa_resid"], tier="base",
-      category="residual")
+@step(
+    "envelope",
+    produces=["env_band"],
+    requires=["fc", "ff", "fp", "revs", "t_raw", "tsa_resid"],
+    tier="base",
+    category="residual",
+)
 def _op_envelope(cols: Columns, params: dict, inputs: dict):
     """Full-rate, time-domain. This is why the step is 'base' tier despite running last:
     the modulation rate it recovers lives in Hz, which the angular domain discards."""
@@ -221,8 +258,13 @@ def _op_envelope(cols: Columns, params: dict, inputs: dict):
     }
 
 
-@step("grow_segmentation", produces=["segment_id"],
-      requires=["x", "y", "resid_z"], tier="derived", category="segmentation")
+@step(
+    "grow_segmentation",
+    produces=["segment_id"],
+    requires=["x", "y", "resid_z"],
+    tier="derived",
+    category="segmentation",
+)
 def _op_grow_segmentation(cols: Columns, params: dict, inputs: dict):
     """Seeded segmentation: each bound seed-role layer is one class; LabelSpreading fills
     every other point. Degrades to all -1 below 2 seed classes. NOT in DEFAULT_RECIPE -- it
@@ -235,7 +277,10 @@ def _op_grow_segmentation(cols: Columns, params: dict, inputs: dict):
     seeds = inputs.get("seeds") or {}
     seed_masks = list(seeds.values())  # order preserved from resolve_inputs list mode
     seg, status = grow_segmentation(
-        cols["x"], cols["y"], feature_cols, seed_masks,
+        cols["x"],
+        cols["y"],
+        feature_cols,
+        seed_masks,
         k=int(params.get("k", 15)),
         alpha=float(params.get("alpha", 0.2)),
         attr_weight=float(params.get("attr_weight", 1.0)),
@@ -247,7 +292,9 @@ def _op_grow_segmentation(cols: Columns, params: dict, inputs: dict):
     }
 
 
-@step("invert", produces=["inverted"], requires=[], tier="derived", category="transform")
+@step(
+    "invert", produces=["inverted"], requires=[], tier="derived", category="transform"
+)
 def _op_invert(cols: Columns, params: dict, inputs: dict):
     """Value inversion -- NOT a sign flip, NOT deconvolution. Maps `source` through a
     complement or reciprocal so a "low is bad" channel (e.g. glosh, where a poor fit reads
@@ -280,8 +327,13 @@ def _op_invert(cols: Columns, params: dict, inputs: dict):
     return {"inverted": out}, {}
 
 
-@step("griddify", produces=["grid_fill", "grid_support"],
-      requires=["x", "y", "resid_z"], tier="derived", category="interpolation")
+@step(
+    "griddify",
+    produces=["grid_fill", "grid_support"],
+    requires=["x", "y", "resid_z"],
+    tier="derived",
+    category="interpolation",
+)
 def _op_griddify(cols: Columns, params: dict, inputs: dict):
     """Regularise resid_z onto a resolution_mm grid and sample it back at every original
     point (see interpolate.py for why -- the point count cannot change). grid_fill is the
@@ -291,17 +343,28 @@ def _op_griddify(cols: Columns, params: dict, inputs: dict):
     method = str(params.get("method", "linear"))
     max_fill_mm = float(params.get("max_fill_mm", 1.0))
     fill, support = grid_interpolate(
-        cols["x"], cols["y"], cols["resid_z"],
-        resolution_mm=resolution_mm, method=method, max_fill_mm=max_fill_mm,
+        cols["x"],
+        cols["y"],
+        cols["resid_z"],
+        resolution_mm=resolution_mm,
+        method=method,
+        max_fill_mm=max_fill_mm,
     )
     finite_support = support[np.isfinite(support)]
     return {"grid_fill": fill, "grid_support": support}, {
-        "grid_support_mean": float(finite_support.mean()) if finite_support.size else 0.0,
+        "grid_support_mean": float(finite_support.mean())
+        if finite_support.size
+        else 0.0,
     }
 
 
-@step("gmm_segmentation", produces=["gmm_id", "gmm_prob"],
-      requires=["x", "y", "resid_z"], tier="derived", category="segmentation")
+@step(
+    "gmm_segmentation",
+    produces=["gmm_id", "gmm_prob"],
+    requires=["x", "y", "resid_z"],
+    tier="derived",
+    category="segmentation",
+)
 def _op_gmm_segmentation(cols: Columns, params: dict, inputs: dict):
     """Unsupervised counterpart to grow_segmentation -- no seeds needed, every point gets a
     class (no noise) and a genuine per-point confidence (gmm_prob). Runs on the same
@@ -324,8 +387,13 @@ def _op_gmm_segmentation(cols: Columns, params: dict, inputs: dict):
             cols["x"][fin], cols["y"][fin], z[fin], target_n=target
         )
         labels, prob = cluster_gmm(
-            xr, yr, vr, n_components=n_components, covariance_type=covariance_type,
-            attr_weight=attr_weight, random_state=random_state,
+            xr,
+            yr,
+            vr,
+            n_components=n_components,
+            covariance_type=covariance_type,
+            attr_weight=attr_weight,
+            random_state=random_state,
         )
         id_fin, prob_fin = assign_by_neighbours(
             cols["x"][fin], cols["y"][fin], xr, yr, labels, prob

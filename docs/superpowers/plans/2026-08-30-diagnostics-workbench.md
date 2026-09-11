@@ -179,7 +179,9 @@ def write_d1an(path: str, columns: dict[str, np.ndarray]) -> None:
         raise ValueError("no columns to write")
     lengths = {int(np.asarray(v).size) for v in columns.values()}
     if len(lengths) != 1:
-        raise ValueError(f"all columns must have the same length, got {sorted(lengths)}")
+        raise ValueError(
+            f"all columns must have the same length, got {sorted(lengths)}"
+        )
     n = lengths.pop()
     for name in columns:
         if len(name.encode("ascii")) > NAME_BYTES:
@@ -516,9 +518,7 @@ def angular_resample(
     return grid, np.interp(grid, revs_cum, sig)
 
 
-def tsa(
-    resampled: np.ndarray, samples_per_rev: int
-) -> tuple[np.ndarray, np.ndarray]:
+def tsa(resampled: np.ndarray, samples_per_rev: int) -> tuple[np.ndarray, np.ndarray]:
     """Time-synchronous average over whole revolutions.
 
     Returns (signature, residual). `signature` is the per-revolution mean of length
@@ -666,11 +666,17 @@ import numpy as np
 _MAD_TO_SIGMA = 1.4826
 _REFINE_Z = 3.5
 _MAX_PASSES = 2
-_WINDOW_HALF_SPAN = 2  # aggregate +/-2 neighbouring bins per output centre (5 bins total)
+_WINDOW_HALF_SPAN = (
+    2  # aggregate +/-2 neighbouring bins per output centre (5 bins total)
+)
 
 
 def _bin_trend(
-    r: np.ndarray, v: np.ndarray, edges: np.ndarray, min_per_bin: int, weight: np.ndarray
+    r: np.ndarray,
+    v: np.ndarray,
+    edges: np.ndarray,
+    min_per_bin: int,
+    weight: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """One pass of moving-window median/MAD, using only points where `weight` is True.
 
@@ -847,9 +853,18 @@ def test_pipeline_recovers_implanted_anomaly_location():
     must come back as the strongest residual at that same revolution."""
     t, fx, fy, fz, rpm, revs, x, y, fs, hit = _synthetic_cut()
     cache = {
-        "n": t.size, "fs": fs, "feed": 0.05, "diam": 80.0,
-        "cs_sec": 0.0, "ce_sec": float(t[-1]),
-        "t": t, "fx": fx, "fy": fy, "fz": fz, "rpm": rpm, "revs": revs,
+        "n": t.size,
+        "fs": fs,
+        "feed": 0.05,
+        "diam": 80.0,
+        "cs_sec": 0.0,
+        "ce_sec": float(t[-1]),
+        "t": t,
+        "fx": fx,
+        "fy": fy,
+        "fz": fz,
+        "rpm": rpm,
+        "revs": revs,
     }
     cols, metrics = analyse(cache, x, y, samples_per_rev=SPR)
     peak_rev = cols["rev"][int(np.argmax(np.abs(cols["resid_z"])))]
@@ -860,9 +875,18 @@ def test_pipeline_recovers_implanted_anomaly_location():
 def test_pipeline_columns_are_aligned_and_finite():
     t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
     cache = {
-        "n": t.size, "fs": fs, "feed": 0.05, "diam": 80.0,
-        "cs_sec": 0.0, "ce_sec": float(t[-1]),
-        "t": t, "fx": fx, "fy": fy, "fz": fz, "rpm": rpm, "revs": revs,
+        "n": t.size,
+        "fs": fs,
+        "feed": 0.05,
+        "diam": 80.0,
+        "cs_sec": 0.0,
+        "ce_sec": float(t[-1]),
+        "t": t,
+        "fx": fx,
+        "fy": fy,
+        "fz": fz,
+        "rpm": rpm,
+        "revs": revs,
     }
     cols, _ = analyse(cache, x, y, samples_per_rev=SPR)
     sizes = {k: v.size for k, v in cols.items()}
@@ -875,9 +899,18 @@ def test_pipeline_columns_are_aligned_and_finite():
 def test_metrics_record_effective_nyquist_and_validity():
     t, fx, fy, fz, rpm, revs, x, y, fs, _ = _synthetic_cut(n_rev=8)
     cache = {
-        "n": t.size, "fs": fs, "feed": 0.05, "diam": 80.0,
-        "cs_sec": 0.0, "ce_sec": float(t[-1]),
-        "t": t, "fx": fx, "fy": fy, "fz": fz, "rpm": rpm, "revs": revs,
+        "n": t.size,
+        "fs": fs,
+        "feed": 0.05,
+        "diam": 80.0,
+        "cs_sec": 0.0,
+        "ce_sec": float(t[-1]),
+        "t": t,
+        "fx": fx,
+        "fy": fy,
+        "fz": fz,
+        "rpm": rpm,
+        "revs": revs,
     }
     _, metrics = analyse(cache, x, y, samples_per_rev=SPR, fn_hz=2300.0)
     assert metrics["effective_fs_hz"] > 0
@@ -1004,7 +1037,11 @@ def analyse(
         raise ValueError(f"channel must be one of {_CHANNELS}, got {channel!r}")
     revs = np.asarray(cache["revs"], dtype=np.float64)
     t_in = np.asarray(cache["t"], dtype=np.float64)
-    frame = dict(zip(_CHANNELS, frame_transform(cache["fx"], cache["fy"], cache["fz"], mount_deg)))
+    frame = dict(
+        zip(
+            _CHANNELS, frame_transform(cache["fx"], cache["fy"], cache["fz"], mount_deg)
+        )
+    )
     sig = frame[channel]
 
     rev_grid, sig_ang = angular_resample(revs, sig, samples_per_rev)
@@ -1217,16 +1254,16 @@ def process_diag_row(
                 "the octree cloud must come from the same decimation to be index-aligned"
             )
 
-        columns, metrics = analyse(
-            cache, x, y, samples_per_rev=DIAG_SAMPLES_PER_REV
-        )
+        columns, metrics = analyse(cache, x, y, samples_per_rev=DIAG_SAMPLES_PER_REV)
         n = columns["t"].size
         write_d1an(str(Path(outdir) / "attrs.d1an"), columns)
 
         revs = np.asarray(cache["revs"], dtype=np.float64)
         _, xa = angular_resample(revs, np.asarray(x, np.float64), DIAG_SAMPLES_PER_REV)
         _, ya = angular_resample(revs, np.asarray(y, np.float64), DIAG_SAMPLES_PER_REV)
-        _, fza = angular_resample(revs, np.asarray(fz, np.float64), DIAG_SAMPLES_PER_REV)
+        _, fza = angular_resample(
+            revs, np.asarray(fz, np.float64), DIAG_SAMPLES_PER_REV
+        )
         xa, ya, fza = xa[:n], ya[:n], fza[:n]
 
         las_path = str(Path(outdir) / "diag.las")
@@ -1303,12 +1340,17 @@ def handle_diags(conn, exe: str) -> int:
     try:
         import laspy  # noqa: F401
     except ImportError:
-        log.warning("laspy not installed (pip install laspy) — diag requests left pending")
+        log.warning(
+            "laspy not installed (pip install laspy) — diag requests left pending"
+        )
         return 0
     rows = claim_diag(conn, limit=1)
     done = 0
     for row in rows:
-        if process_diag_row(conn, row, exe, 3600, load_sampling_opts(conn), potree_exe) == "done":
+        if (
+            process_diag_row(conn, row, exe, 3600, load_sampling_opts(conn), potree_exe)
+            == "done"
+        ):
             done += 1
     return done
 ```

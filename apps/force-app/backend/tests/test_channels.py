@@ -1,6 +1,7 @@
 """Channel-model tests: the rotating-dyno preset and its interaction with the fixed
 9-column recorder layout. See
 docs/superpowers/specs/2026-09-07-milling-path-models-and-polar-design.md #5."""
+
 from __future__ import annotations
 
 import pytest
@@ -19,9 +20,7 @@ from app.channels import (
 def _devices_with_n_ai(n: int) -> dict:
     return {
         "chassis": [],
-        "standalone": [
-            {"ports": [{"kind": "ai", "physical": f"Dev1/ai{i}"} for i in range(n)]}
-        ],
+        "standalone": [{"ports": [{"kind": "ai", "physical": f"Dev1/ai{i}"} for i in range(n)]}],
     }
 
 

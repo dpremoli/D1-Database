@@ -5,11 +5,11 @@ Unlike cluster_hdbscan, GMM assigns every point to a component -- there is no no
 -- and it hands back a genuine per-point confidence (the responsibility of the assigned
 component), which is exactly what makes it worth having alongside HDBSCAN.
 """
+
 import os
 import sys
 
 import numpy as np
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "scripts"))
 
@@ -65,14 +65,19 @@ def test_attr_weight_changes_which_axis_dominates_the_partition():
     # With attr_weight large, a strong v-based split should override weak spatial structure.
     rng = np.random.default_rng(4)
     n = 400
-    x = rng.uniform(-1, 1, n)   # narrow spatial spread: little spatial structure to find
+    x = rng.uniform(-1, 1, n)  # narrow spatial spread: little spatial structure to find
     y = rng.uniform(-1, 1, n)
     v = np.where(x + y > 0, 10.0, -10.0) + rng.normal(0, 0.1, n)  # strong v-based split
 
-    labels_lo, _ = cluster_gmm(x, y, v, n_components=2, attr_weight=1e-6, random_state=0)
-    labels_hi, _ = cluster_gmm(x, y, v, n_components=2, attr_weight=50.0, random_state=0)
+    labels_lo, _ = cluster_gmm(
+        x, y, v, n_components=2, attr_weight=1e-6, random_state=0
+    )
+    labels_hi, _ = cluster_gmm(
+        x, y, v, n_components=2, attr_weight=50.0, random_state=0
+    )
 
     true_split = v > 0
+
     # Rebuild a boolean partition from each labelling and compare agreement with the true
     # v-based split (label identity is arbitrary, so check both orientations).
     def agreement(labels):
@@ -87,7 +92,9 @@ def test_covariance_type_is_accepted():
     n = 100
     x, y, v = rng.normal(size=n), rng.normal(size=n), rng.normal(size=n)
     for cov in ("full", "tied", "diag", "spherical"):
-        labels, prob = cluster_gmm(x, y, v, n_components=2, covariance_type=cov, random_state=0)
+        labels, prob = cluster_gmm(
+            x, y, v, n_components=2, covariance_type=cov, random_state=0
+        )
         assert labels.shape == (n,)
         assert np.isfinite(prob).all()
 
