@@ -101,6 +101,36 @@ Two host quirks on the current `d1-server`, neither a repo problem:
 - From **Git Bash on Windows**, prefix that `docker run` with `MSYS_NO_PATHCONV=1` or the
   `-v $PWD/...:/etc/caddy/...` mount path gets mangled. WSL, PowerShell and Linux are unaffected.
 
+## Deploying the auto-publish task
+
+Every `force-app-v*` tag builds an installer and attaches it to a GitHub Release (CI), but
+`electron-updater` only sees it once that Release's `*.exe` + `latest.yml` land in the
+Caddy-served feed at `/force-app-updates/`. That publish step is automated: a Windows Scheduled
+Task on d1-server polls GitHub every few minutes and republishes the moment a new release
+appears — no one needs to run a script by hand after a release ships.
+
+One-time setup, on d1-server, in the repo root:
+
+```powershell
+gh auth login   # once per machine, if not already done — see publish-release.ps1's header
+cd apps\force-app\desktop\scripts
+.\install-auto-publish-task.ps1
+```
+
+This registers the `force-app-auto-publish-release` Scheduled Task (polls every 5 minutes by
+default; pass `-IntervalMinutes N` to change it) and runs it once immediately. It keeps the same
+pull-based trust model `publish-release.ps1` already used — d1-server has outbound internet and
+its own `gh` login; no tailnet-reaching credential is added to GitHub Actions.
+
+Troubleshooting:
+
+- Log: `infra\force-app-updates\auto-publish.log` (only writes an entry when it actually
+  publishes something, or hits an error — steady-state polls are silent).
+- Last published tag: `infra\force-app-updates\.published-tag`.
+- Force an immediate check: `Start-ScheduledTask -TaskName force-app-auto-publish-release`.
+- Re-running `install-auto-publish-task.ps1` replaces the task definition; safe after moving the
+  repo or changing the interval.
+
 ### Security posture — read before exposing anything
 
 The backup server has **no authentication at all**: anyone who can reach it can list, download or
@@ -156,8 +186,10 @@ these need the rig and a human:
 - **Four backend tests fail on the acquisition PC** (`test_autorange.py` ×2, `test_labamp.py`,
   `test_nidaq_config.py`). They expect the simulated NI-DAQ/LabAmp fallback, and this machine has
   the real hardware. Pre-existing and unrelated to any change.
-- **`electron-updater` finds nothing on launch** until a `force-app-v*` tag produces a Release and
-  `publish-release.ps1` runs against the Caddy feed. Auto-update is dormant, not broken.
+- **`electron-updater` finds nothing on launch** until the auto-publish task's next poll picks up
+  the release (up to `IntervalMinutes`, 5 by default — see "Deploying the auto-publish task"). If
+  it has been well over that and still nothing, check `infra\force-app-updates\auto-publish.log`
+  on d1-server before assuming the app is broken.
 - **The installer is unsigned** by design for v1 (ADR-0010's open decisions), so SmartScreen warns.
 - **`Cannot read properties of undefined (reading 'whenReady')`** on launch means something set
   `ELECTRON_RUN_AS_NODE=1` in the shell. Check `$env:ELECTRON_RUN_AS_NODE`.
