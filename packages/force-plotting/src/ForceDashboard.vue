@@ -10,6 +10,7 @@ import WearTrend from './WearTrend.vue';
 import type { SpeedMode } from './liveCloud';
 import { cacheGet, cachePut, decimateCache, parseCache, type Cache } from './liveCache';
 import { buildPath, alignRhoToBuckets, type TurningSpiralParams } from './path';
+import { computeAutoCode } from './operationCode';
 import { computeSignalStats, type SignalStats } from './signalStats';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
@@ -103,6 +104,15 @@ const cropEndSec = ref(0);
 const cropSavePrompt = ref(false);
 const cropSaving = ref(false);
 const cropSavedMsg = ref('');
+// Set only by an actual user drag (onCropEdit below), reset on op change / successful save.
+// cropDirty (below) compares two independently-stored values — the cache header's csSec vs
+// cut_start_idx/sample_rate — with only a 1-sample tolerance, so it can read true from float
+// noise alone with no drag ever happening. The combined "Save changes" dialog gates on this
+// instead, so editing Notes alone never silently pins a crop override that was previously NULL
+// (= "follow the derived crop, survive reprocessing" per the crop_start_idx_override migration).
+// The standalone "Save crop" button/flow (liveOn && cropDirty, ~line 2010) is untouched — it
+// already required a deliberate click before this fix and still does.
+const cropTouched = ref(false);
 const editFeed = ref(0.1);
 const editDiam = ref(80);
 const editInnerDiam = ref(0);   // donut/diaphragm inner Ø (mm); 0 = solid disc
@@ -128,7 +138,7 @@ const editRateKHz = computed({
 	get: () => Math.round((editRate.value / 1000) * 100) / 100,
 	set: (v: number) => { editRate.value = Math.max(1, Math.round(Number(v) * 1000)); },
 });
-watch(() => detail.value?.id, () => nextTick(seedCutFromDetail));
+watch(() => detail.value?.id, () => { cropTouched.value = false; nextTick(() => { seedCutFromDetail(); seedMetaFromDetail(); }); });
 const speedMode = ref<SpeedMode>('measured');
 const editRpm = ref(1000);
 const editVc = ref(100);
@@ -366,6 +376,7 @@ watch(() => detail.value?.id, () => { sigStats.value = null; statsErr.value = nu
 // a handle, jump to Lite so they see the effect — provided this op has a live cache.
 function onCropEdit(which: 'start' | 'end', v: number) {
 	if (which === 'start') cropStartSec.value = v; else cropEndSec.value = v;
+	cropTouched.value = true;
 	if (frmMode.value !== 'lite' && liveAvailable.value) frmMode.value = 'lite';
 }
 watch(statsOpen, (open) => {
@@ -999,6 +1010,10 @@ async function selectOp(row: any) {
 					// machining_force_analysis's own columns, not the related operation's, so without
 					// this the edge grouping silently finds nothing and falls back to sample.
 					'operation_id.insert_edge_id', 'operation_id.machining_cutting_length_mm',
+					// Needed by computeAutoCode() (operationCode.ts) to regenerate the operation's name —
+					// without these the regenerated pass_code silently drops its parameter suffix.
+					'operation_id.machining_cutting_speed_m_per_min', 'operation_id.machining_feed_mm_per_rev',
+					'operation_id.machining_axial_depth_of_cut_mm',
 					'operation_id.equipment_id.equipment_name', 'operation_id.method_id.method_name',
 					'operation_id.sample_id.sample_id', 'operation_id.sample_id.sample_code', 'operation_id.sample_id.nickname',
 					'operation_id.sample_id.form', 'operation_id.sample_id.manufactured_date',
@@ -1038,6 +1053,96 @@ const op = computed(() => detail.value?.operation_id ?? null);
 const opSample = computed(() => op.value?.sample_id ?? null);
 const opLabel = computed(() => op.value?.pass_code || opSample.value?.sample_code || '—');
 
+// ---- Editable operation metadata (Subtype/Sequence/New edge/Coolant/Operator/cutting params/
+// notes/name) — the plotting view previously showed these read-only. Combined with the crop
+// save into one dialog (see saveChanges() below). Machine/Method (equipment_id/method_id
+// relations) stay read-only: editing them needs option-list fetches from collections not
+// otherwise touched in this package, and they don't feed name regeneration.
+// NOTE: this block must stay textually after `op`/`opSample` above — watch(regeneratedPassCode,
+// ...) below evaluates its source once, synchronously, at setup (even without immediate:true),
+// and regeneratedPassCode reads op.value; declaring it before op's own `const` throws a TDZ
+// ReferenceError the moment this component mounts (a plain function declaration like
+// seedMetaFromDetail would be hoisted and fine either way — it's specifically the eager
+// watch-of-a-computed pattern that requires this ordering).
+const srcMeta = reactive({
+	subtype: '', sequence: null as number | null, newEdge: null as boolean | null, coolant: null as boolean | null,
+	operator: '', cuttingSpeed: null as number | null, feedMmPerRev: null as number | null, axialDoc: null as number | null,
+	outcomeNotes: '', passCode: '',
+});
+const editOpSubtype = ref('');
+const editOpSequence = ref<number | null>(null);
+const editOpNewEdge = ref<boolean | null>(null);
+const editOpCoolant = ref<boolean | null>(null);
+const editOperatorName = ref('');
+// Named editOp* (not editFeed/editDiam) to avoid colliding with the point-cloud geometry
+// overrides above, which are a different table and a different meaning despite similar names.
+const editOpCuttingSpeed = ref<number | null>(null);   // machining_cutting_speed_m_per_min (Vc)
+const editOpFeedMmPerRev = ref<number | null>(null);   // machining_feed_mm_per_rev
+const editOpAxialDoc = ref<number | null>(null);       // machining_axial_depth_of_cut_mm
+const editOutcomeNotes = ref('');
+const editPassCode = ref('');
+// Mirrors OperationCode.vue's manual-vs-auto toggle: typing into the name field flips to manual
+// (stops auto-tracking the regenerated value); the regenerate button flips back. Starts true —
+// never auto-clobber a saved name on open, same rule OperationCode.vue applies for an existing
+// record (isExistingItem()).
+const passCodeManual = ref(true);
+function seedMetaFromDetail() {
+	const o = op.value; if (!o) return;
+	srcMeta.subtype = o.machining_operation_subtype || '';
+	srcMeta.sequence = o.operation_sequence ?? null;
+	srcMeta.newEdge = o.machining_new_edge ?? null;
+	srcMeta.coolant = o.machining_coolant_used ?? null;
+	srcMeta.operator = o.operator_name || '';
+	srcMeta.cuttingSpeed = o.machining_cutting_speed_m_per_min ?? null;
+	srcMeta.feedMmPerRev = o.machining_feed_mm_per_rev ?? null;
+	srcMeta.axialDoc = o.machining_axial_depth_of_cut_mm ?? null;
+	srcMeta.outcomeNotes = o.outcome_notes || '';
+	srcMeta.passCode = o.pass_code || '';
+	editOpSubtype.value = srcMeta.subtype;
+	editOpSequence.value = srcMeta.sequence;
+	editOpNewEdge.value = srcMeta.newEdge;
+	editOpCoolant.value = srcMeta.coolant;
+	editOperatorName.value = srcMeta.operator;
+	editOpCuttingSpeed.value = srcMeta.cuttingSpeed;
+	editOpFeedMmPerRev.value = srcMeta.feedMmPerRev;
+	editOpAxialDoc.value = srcMeta.axialDoc;
+	editOutcomeNotes.value = srcMeta.outcomeNotes;
+	editPassCode.value = srcMeta.passCode;
+	passCodeManual.value = true;
+}
+// The name computeAutoCode() would produce from the currently-edited fields — recomputed live
+// so the combined-save dialog can show "old -> new" before the user confirms.
+const regeneratedPassCode = computed(() => {
+	const o = op.value; if (!o) return '';
+	return computeAutoCode({
+		processCategory: o.process_category,
+		sampleCode: opSample.value?.sample_code ?? null,
+		operationSequence: editOpSequence.value,
+		machiningOperationSubtype: editOpSubtype.value,
+		machiningCuttingSpeedMPerMin: editOpCuttingSpeed.value,
+		machiningFeedMmPerRev: editOpFeedMmPerRev.value,
+		machiningAxialDepthOfCutMm: editOpAxialDoc.value,
+	});
+});
+// While in auto mode, keep the field in sync with the composed code — same "auto-track until
+// the user types" behavior as OperationCode.vue's own watch(autoCode, ...).
+watch(regeneratedPassCode, (code) => { if (!passCodeManual.value && code) editPassCode.value = code; });
+function onPassCodeInput() { passCodeManual.value = editPassCode.value !== regeneratedPassCode.value; }
+function regeneratePassCode() { passCodeManual.value = false; if (regeneratedPassCode.value) editPassCode.value = regeneratedPassCode.value; }
+const metaDirty = computed(() => {
+	if (!op.value) return false;
+	return editOpSubtype.value !== srcMeta.subtype
+		|| editOpSequence.value !== srcMeta.sequence
+		|| editOpNewEdge.value !== srcMeta.newEdge
+		|| editOpCoolant.value !== srcMeta.coolant
+		|| editOperatorName.value !== srcMeta.operator
+		|| !near(editOpCuttingSpeed.value || 0, srcMeta.cuttingSpeed || 0)
+		|| !near(editOpFeedMmPerRev.value || 0, srcMeta.feedMmPerRev || 0)
+		|| !near(editOpAxialDoc.value || 0, srcMeta.axialDoc || 0)
+		|| editOutcomeNotes.value !== srcMeta.outcomeNotes
+		|| editPassCode.value !== srcMeta.passCode;
+});
+
 // Sample info: rich from the loaded operation, else the light list row.
 const sampleInfo = computed(() => {
 	if (opSample.value) {
@@ -1053,6 +1158,8 @@ const sampleInfo = computed(() => {
 	return null;
 });
 
+// Subtype/Sequence/New edge/Coolant/Operator moved into the editable "Operation metadata" box
+// below (srcMeta/editOp*) — kept out of this read-only list so they aren't shown twice.
 const opMeta = computed(() => {
 	const o = op.value;
 	if (!o) return [];
@@ -1061,11 +1168,6 @@ const opMeta = computed(() => {
 		['Recorded', fmtDateTime(detail.value?.trigger_time)],
 		['Machine', o.equipment_id?.equipment_name],
 		['Method', o.method_id?.method_name],
-		['Subtype', o.machining_operation_subtype],
-		['Sequence', o.operation_sequence != null ? `#${o.operation_sequence}` : null],
-		['New edge', o.machining_new_edge == null ? null : (o.machining_new_edge ? 'Yes' : 'No')],
-		['Coolant', o.machining_coolant_used == null ? null : (o.machining_coolant_used ? 'Yes' : 'No')],
-		['Operator', o.operator_name],
 	].filter(([, v]) => v != null && v !== '');
 });
 
@@ -1167,11 +1269,83 @@ async function saveCropAsOfficial() {
 	try {
 		await api.patch(`/items/machining_force_analysis/${d.id}`, { crop_start_idx_override: startIdx, crop_end_idx_override: endIdx });
 		d.crop_start_idx_override = startIdx; d.crop_end_idx_override = endIdx;   // so cropDirty/savedCropSec update
+		cropTouched.value = false;
 		cropSavedMsg.value = backToAuto ? 'Reverted to auto crop' : 'Saved as official crop';
 		window.setTimeout(() => { cropSavedMsg.value = ''; }, 2500);
 	} catch (e: any) {
 		cropSavedMsg.value = e?.response?.status === 403 ? 'Not permitted to save' : 'Save failed';
 	} finally { cropSaving.value = false; cropSavePrompt.value = false; }
+}
+
+// ---- Combined "Save changes" — metadata edits + crop, one dialog, one summary -------------
+function fmtBool(b: boolean | null): string { return b == null ? '—' : (b ? 'Yes' : 'No'); }
+function fmtOrDash(v: unknown): string { return (v == null || v === '') ? '—' : String(v); }
+function buildMetaPatch(): Record<string, any> {
+	const patch: Record<string, any> = {};
+	if (editOpSubtype.value !== srcMeta.subtype) patch.machining_operation_subtype = editOpSubtype.value || null;
+	if (editOpSequence.value !== srcMeta.sequence) patch.operation_sequence = editOpSequence.value;
+	if (editOpNewEdge.value !== srcMeta.newEdge) patch.machining_new_edge = editOpNewEdge.value;
+	if (editOpCoolant.value !== srcMeta.coolant) patch.machining_coolant_used = editOpCoolant.value;
+	if (editOperatorName.value !== srcMeta.operator) patch.operator_name = editOperatorName.value || null;
+	if (!near(editOpCuttingSpeed.value || 0, srcMeta.cuttingSpeed || 0)) patch.machining_cutting_speed_m_per_min = editOpCuttingSpeed.value;
+	if (!near(editOpFeedMmPerRev.value || 0, srcMeta.feedMmPerRev || 0)) patch.machining_feed_mm_per_rev = editOpFeedMmPerRev.value;
+	if (!near(editOpAxialDoc.value || 0, srcMeta.axialDoc || 0)) patch.machining_axial_depth_of_cut_mm = editOpAxialDoc.value;
+	if (editOutcomeNotes.value !== srcMeta.outcomeNotes) patch.outcome_notes = editOutcomeNotes.value || null;
+	const finalName = passCodeManual.value ? editPassCode.value : regeneratedPassCode.value;
+	if (finalName && finalName !== srcMeta.passCode) patch.pass_code = finalName;
+	return patch;
+}
+// What the confirmation dialog shows before writing — every changed field as old -> new, plus
+// the crop window (if dirty) and the resulting operation name (if it differs).
+const changeSummary = computed(() => {
+	const rows: { label: string; from: string; to: string }[] = [];
+	const push = (label: string, from: string, to: string) => { if (from !== to) rows.push({ label, from, to }); };
+	push('Subtype', fmtOrDash(srcMeta.subtype), fmtOrDash(editOpSubtype.value));
+	push('Sequence', fmtOrDash(srcMeta.sequence), fmtOrDash(editOpSequence.value));
+	push('New edge', fmtBool(srcMeta.newEdge), fmtBool(editOpNewEdge.value));
+	push('Coolant', fmtBool(srcMeta.coolant), fmtBool(editOpCoolant.value));
+	push('Operator', fmtOrDash(srcMeta.operator), fmtOrDash(editOperatorName.value));
+	if (!near(editOpCuttingSpeed.value || 0, srcMeta.cuttingSpeed || 0)) rows.push({ label: 'Surface speed', from: fmtOrDash(srcMeta.cuttingSpeed), to: fmtOrDash(editOpCuttingSpeed.value) });
+	if (!near(editOpFeedMmPerRev.value || 0, srcMeta.feedMmPerRev || 0)) rows.push({ label: 'Feed', from: fmtOrDash(srcMeta.feedMmPerRev), to: fmtOrDash(editOpFeedMmPerRev.value) });
+	if (!near(editOpAxialDoc.value || 0, srcMeta.axialDoc || 0)) rows.push({ label: 'Depth of cut', from: fmtOrDash(srcMeta.axialDoc), to: fmtOrDash(editOpAxialDoc.value) });
+	push('Notes', fmtOrDash(srcMeta.outcomeNotes), fmtOrDash(editOutcomeNotes.value));
+	if (cropTouched.value && cropDirty.value) {
+		const base = savedCropSec.value || cropWindow.value;
+		rows.push({
+			label: 'Crop window',
+			from: base ? `${base.start.toFixed(1)}–${base.end.toFixed(1)}s` : '—',
+			to: `${cropStartSec.value.toFixed(1)}–${cropEndSec.value.toFixed(1)}s`,
+		});
+	}
+	const finalName = passCodeManual.value ? editPassCode.value : regeneratedPassCode.value;
+	if (finalName && finalName !== srcMeta.passCode) {
+		rows.push({ label: 'Operation code', from: fmtOrDash(srcMeta.passCode), to: `${finalName}${passCodeManual.value ? ' (manual)' : ''}` });
+	}
+	return rows;
+});
+const hasChanges = computed(() => metaDirty.value || (cropTouched.value && cropDirty.value));
+const changesDialogOpen = ref(false);
+const metaSaving = ref(false);
+const metaSaveErr = ref('');
+async function saveChanges() {
+	const o = op.value;
+	if (!o?.operation_id || metaSaving.value) return;
+	metaSaving.value = true; metaSaveErr.value = '';
+	try {
+		const patch = buildMetaPatch();
+		if (Object.keys(patch).length) {
+			await api.patch(`/items/manufacturing_operations/${o.operation_id}`, patch);
+			Object.assign(o, patch);   // optimistic update — op.value is detail.value.operation_id
+			seedMetaFromDetail();      // re-snapshot srcMeta from the now-updated op
+		}
+	} catch (e: any) {
+		metaSaveErr.value = e?.response?.status === 403 ? 'Not permitted to save this operation.' : (e?.message || 'metadata save failed');
+		metaSaving.value = false;
+		return;   // don't attempt the crop write if metadata failed — one clear error, no half-applied state
+	}
+	metaSaving.value = false;
+	changesDialogOpen.value = false;
+	if (cropTouched.value && cropDirty.value) await saveCropAsOfficial();
 }
 
 // Live and the chart mode (Force/FFT) are independent: Live drives the FRM cloud +
@@ -1383,7 +1557,7 @@ function radialValuesFor(bucketT: number[] | Float32Array | undefined): Float32A
 
 function resetLive() {
 	const d = detail.value;
-	if (cropWindow.value) { cropStartSec.value = cropWindow.value.start; cropEndSec.value = cropWindow.value.end; }
+	if (cropWindow.value) { cropStartSec.value = cropWindow.value.start; cropEndSec.value = cropWindow.value.end; cropTouched.value = true; }
 	if (d) {
 		editFeed.value = Number(d.feed) || editFeed.value;
 		editDiam.value = Number(d.outer_diameter) || Number(d.cut_diameter) || editDiam.value;
@@ -1611,6 +1785,31 @@ function fmtDateTime(v: string | null | undefined) {
 							<div v-if="compactMeta.length" class="kv">
 								<template v-for="m in compactMeta" :key="m[0]"><span>{{ m[0] }}</span><span>{{ m[1] }}</span></template>
 							</div>
+
+							<!-- Editable operation metadata: Subtype/Sequence/New edge/Coolant/Operator/cutting
+							     params/notes/name. Machine/Method stay read-only above (see opMeta). Combined
+							     with any pending crop edit into one "Save changes" summary dialog below. -->
+							<div class="stat-sep">Operation metadata
+								<button v-if="metaDirty" class="linkbtn" @click="seedMetaFromDetail">Reset</button>
+							</div>
+							<div class="edit-grid">
+								<label>Subtype<input v-model="editOpSubtype" type="text" :class="{ modified: editOpSubtype !== srcMeta.subtype }" /></label>
+								<label>Sequence<input v-model.number="editOpSequence" type="number" step="1" :class="{ modified: editOpSequence !== srcMeta.sequence }" /></label>
+								<label>Surface speed <span class="u">m/min</span><input v-model.number="editOpCuttingSpeed" type="number" step="0.1" min="0" :class="{ modified: !near(editOpCuttingSpeed || 0, srcMeta.cuttingSpeed || 0) }" /></label>
+								<label>Feed <span class="u">mm/rev</span><input v-model.number="editOpFeedMmPerRev" type="number" step="0.001" min="0" :class="{ modified: !near(editOpFeedMmPerRev || 0, srcMeta.feedMmPerRev || 0) }" /></label>
+								<label>Depth of cut <span class="u">mm</span><input v-model.number="editOpAxialDoc" type="number" step="0.01" min="0" :class="{ modified: !near(editOpAxialDoc || 0, srcMeta.axialDoc || 0) }" /></label>
+								<label>Operator<input v-model="editOperatorName" type="text" :class="{ modified: editOperatorName !== srcMeta.operator }" /></label>
+								<label class="chk">New edge<input v-model="editOpNewEdge" type="checkbox" /></label>
+								<label class="chk">Coolant<input v-model="editOpCoolant" type="checkbox" /></label>
+								<label class="wide">Operation code
+									<div class="speed-row">
+										<input v-model="editPassCode" type="text" @input="onPassCodeInput" :class="{ modified: editPassCode !== srcMeta.passCode }" />
+										<button class="linkbtn" title="Regenerate from fields" @click="regeneratePassCode"><v-icon name="refresh" x-small /></button>
+									</div>
+								</label>
+								<label class="wide">Notes<textarea v-model="editOutcomeNotes" rows="2" :class="{ modified: editOutcomeNotes !== srcMeta.outcomeNotes }"></textarea></label>
+							</div>
+							<button v-if="hasChanges" class="crop-save" @click="changesDialogOpen = true">Save changes</button>
 
 							<!-- Editable cut-parameter boxes (Feed/Diameter/Inner Ø/PPR): drive the Live plot
 							     and are threaded into any host bake. Measured values stay read-only. A box is
@@ -2010,6 +2209,29 @@ function fmtDateTime(v: string | null | undefined) {
 					</GridLayout>
 				</div>
 			</div>
+
+			<!-- Combined metadata + crop "Save changes" summary — one dialog, one write sequence
+			     (metadata to manufacturing_operations, then crop to machining_force_analysis via
+			     saveCropAsOfficial, see saveChanges()). Self-contained (no ConfirmDialog import — this
+			     package has no path into apps/force-app/web/src/ui/, which is where that component
+			     lives), mirroring its <dl> diff-list structure rather than importing it. -->
+			<div v-if="changesDialogOpen" class="changes-backdrop" @click.self="changesDialogOpen = false">
+				<div class="changes-dialog">
+					<h3>Save changes</h3>
+					<p v-if="!changeSummary.length" class="empty sm">Nothing to save.</p>
+					<dl v-else class="changes-list">
+						<template v-for="row in changeSummary" :key="row.label">
+							<dt>{{ row.label }}</dt>
+							<dd>{{ row.from }} → {{ row.to }}</dd>
+						</template>
+					</dl>
+					<div v-if="metaSaveErr" class="render-msg">{{ metaSaveErr }}</div>
+					<div class="changes-actions">
+						<button class="cd-no" :disabled="metaSaving" @click="changesDialogOpen = false">Cancel</button>
+						<button class="cd-yes" :disabled="metaSaving || !changeSummary.length" @click="saveChanges">{{ metaSaving ? 'Saving…' : 'Save' }}</button>
+					</div>
+				</div>
+			</div>
 		</div>
 	</private-view>
 </template>
@@ -2358,12 +2580,14 @@ function fmtDateTime(v: string | null | undefined) {
 .edit-grid label.wide { grid-column: 1 / -1; }
 .edit-grid label.chk { flex-direction: row; align-items: center; gap: 6px; text-transform: none; letter-spacing: 0; font-size: 12px; }
 .edit-grid .u { font-weight: 500; color: var(--theme--foreground-subdued, #a4adba); text-transform: none; }
-.edit-grid input[type="number"], .edit-grid select, .render-row input {
+.edit-grid input[type="number"], .edit-grid input[type="text"], .edit-grid select, .edit-grid textarea, .render-row input {
 	font: inherit; font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; padding: 5px 8px;
 	border: 1px solid var(--theme--border-color, #d1d9e6); border-radius: 8px; background: var(--theme--background, #fff);
 	color: var(--theme--foreground, #1e293b); width: 100%; box-sizing: border-box;
 }
+.edit-grid textarea { resize: vertical; min-height: 44px; }
 .edit-grid input:disabled { opacity: 0.5; cursor: not-allowed; }
+.edit-grid input.modified, .edit-grid textarea.modified { border-color: var(--theme--primary, #1d4ed8); box-shadow: inset 0 0 0 1px var(--theme--primary, #1d4ed8); }
 .speed-row { display: flex; gap: 6px; }
 .speed-row select { flex: 1 1 auto; } .speed-row input { flex: 0 0 82px; }
 .render-row { display: flex; align-items: flex-end; gap: 8px; }
@@ -2380,4 +2604,20 @@ function fmtDateTime(v: string | null | undefined) {
 }
 .applybtn:disabled { opacity: 0.5; cursor: not-allowed; }
 .render-msg { margin-top: 7px; font-size: 11px; color: var(--theme--foreground-subdued, #6b7684); font-style: italic; }
+.changes-backdrop {
+	position: fixed; inset: 0; background: rgba(15, 23, 42, 0.55); display: grid; place-items: center; z-index: 200;
+}
+.changes-dialog {
+	width: min(460px, 92vw); max-height: 80vh; overflow-y: auto; background: var(--theme--background, #fff);
+	border: 1px solid var(--theme--border-color, #d1d9e6); border-radius: 14px; padding: 18px 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+}
+.changes-dialog h3 { margin: 0 0 10px; font-size: 15px; font-weight: 750; color: var(--theme--foreground, #1e293b); }
+.changes-list { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 0 0 14px; font-size: 12.5px; }
+.changes-list dt { font-weight: 700; color: var(--theme--foreground-subdued, #6b7684); }
+.changes-list dd { margin: 0; color: var(--theme--foreground, #1e293b); font-variant-numeric: tabular-nums; }
+.changes-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.cd-no, .cd-yes { font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; padding: 6px 14px; border-radius: 8px; border: 1px solid transparent; }
+.cd-no { color: var(--theme--foreground-subdued, #6b7684); background: transparent; border-color: var(--theme--border-color, #d1d9e6); }
+.cd-yes { color: #fff; background: #0ea5e9; }
+.cd-yes:disabled, .cd-no:disabled { opacity: 0.6; cursor: default; }
 </style>
