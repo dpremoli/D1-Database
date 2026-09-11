@@ -28,9 +28,14 @@ if (-not (Test-Path $ScriptPath)) {
 
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`""
+# [TimeSpan]::MaxValue serialises to a duration string ("P99999999DT23H59M59S") Task
+# Scheduler's XML schema rejects outright ("incorrectly formatted or out of range"), which
+# silently left NO task registered the first time this ran. 10 years is effectively
+# indefinite for a task nobody is expected to leave un-touched for a decade, and it is a
+# value Task Scheduler actually accepts.
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
-    -RepetitionDuration ([TimeSpan]::MaxValue)
+    -RepetitionDuration (New-TimeSpan -Days 3650)
 # IgnoreNew: a slow gh download must not stack a second poll on top of one already running.
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -StartWhenAvailable -MultipleInstances IgnoreNew
@@ -38,6 +43,14 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
     -Force -Description 'Polls GitHub every few minutes for a new force-app-v* release and publishes it to the Tailscale-only electron-updater feed. See apps/force-app/desktop/scripts/auto-publish-release.ps1.' `
     | Out-Null
+
+# Register-ScheduledTask can report an error (bad trigger XML, permissions) without PowerShell
+# treating it as terminating in every host -- verify the task actually exists rather than
+# trusting a clean return, which is exactly the gap that let this script print "Installed"
+# the first time it failed.
+if (-not (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {
+    throw "Register-ScheduledTask did not raise, but '$TaskName' does not exist afterwards -- check the errors above."
+}
 
 Write-Host "Installed scheduled task '$TaskName', polling every $IntervalMinutes minute(s)."
 Write-Host "Running it once now to publish whatever release is already current..."
