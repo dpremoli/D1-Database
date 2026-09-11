@@ -55,6 +55,10 @@ export interface PathResult {
 	idx: Int32Array;     // cache index of each emitted point
 	count: number;
 	bounds: PathBounds;
+	// turning_spiral only: geometric radial position (mm from the part's center axis) per
+	// emitted point, aligned 1:1 with pos/idx. Undefined for linear_feed/machine_xyz, which
+	// have no analogous "radius" concept.
+	rho?: Float32Array;
 }
 
 /**
@@ -88,6 +92,7 @@ function buildTurningSpiral(
 	const cap = Math.max(1, Math.ceil((c.N - cs) / stride) + 1);
 	const pos = new Float32Array(cap * 3);
 	const idx = new Int32Array(cap);
+	const rhoArr = new Float32Array(cap);
 	let m = 0;
 	let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 	for (let i = cs; i < c.N; i += stride) {
@@ -107,6 +112,7 @@ function buildTurningSpiral(
 		const x = rho * Math.cos(theta), y = rho * Math.sin(theta);
 		pos[m * 3] = x; pos[m * 3 + 1] = y; pos[m * 3 + 2] = 0;
 		idx[m] = i;
+		rhoArr[m] = rho;
 		m++;
 		if (x < minX) minX = x; if (x > maxX) maxX = x;
 		if (y < minY) minY = y; if (y > maxY) maxY = y;
@@ -115,7 +121,29 @@ function buildTurningSpiral(
 	return {
 		pos: pos.subarray(0, m * 3), idx: idx.subarray(0, m), count: m,
 		bounds: { minX, maxX, minY, maxY, minZ: 0, maxZ: 0 },
+		rho: rhoArr.subarray(0, m),
 	};
+}
+
+/**
+ * Look up the geometric radial position (rho, mm) at each of a set of bucket timestamps, via
+ * the cache's own raw t[] index (nearest sample). `path` must come from a turning_spiral
+ * buildPath call made with `stride: 1` — the lookup assumes `path.idx` is the contiguous run
+ * [cs, cs+1, cs+2, ...], which only holds at stride 1. Returns NaN for any bucket time before
+ * the path's start, after its end, or past wherever the spiral stopped early (cut-out /
+ * inner-diameter reached) — callers must render a blank tick for NaN, never clamp to the last
+ * valid value.
+ */
+export function alignRhoToBuckets(path: PathResult, c: Cache, bucketTimes: ArrayLike<number>): Float32Array {
+	const out = new Float32Array(bucketTimes.length);
+	if (!path.rho || !path.count) { out.fill(NaN); return out; }
+	const cs = path.idx[0];
+	const lastIdx = path.idx[path.count - 1];
+	for (let i = 0; i < bucketTimes.length; i++) {
+		const j = idxOfTime(c.t, bucketTimes[i]);
+		out[i] = (j < cs || j > lastIdx) ? NaN : path.rho[j - cs];
+	}
+	return out;
 }
 
 function buildLinearFeed(

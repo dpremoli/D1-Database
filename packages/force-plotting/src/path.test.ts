@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPath } from './path';
+import { buildPath, alignRhoToBuckets } from './path';
 import type { Cache } from './liveCache';
 
 function makeCache(overrides: Partial<Cache> = {}): Cache {
@@ -69,9 +69,33 @@ describe('buildPath / turning_spiral', () => {
 		const radLast = Math.hypot(r!.pos[(r!.count - 1) * 3], r!.pos[(r!.count - 1) * 3 + 1]);
 		expect(radLast).toBeLessThan(rad0);
 	});
+
+	it('exposes rho matching hypot(x,y) at every emitted point', () => {
+		const c = makeCache();
+		const r = buildPath(c, {
+			kind: 'turning_spiral', feed: 40, diam: 80, innerDiam: 20,
+			speedMode: 'measured', rpm: 0, vc: 0, timeScale: 1, ppr: 1,
+		}, WINDOW);
+		expect(r).not.toBeNull();
+		expect(r!.rho).toBeDefined();
+		expect(r!.rho!.length).toBe(r!.count);
+		for (let k = 0; k < r!.count; k++) {
+			expect(r!.rho![k]).toBeCloseTo(Math.hypot(r!.pos[k * 3], r!.pos[k * 3 + 1]), 4);
+		}
+		expect(r!.rho![0]).toBeCloseTo(40, 4); // diam/2 at the crop start (r=0)
+	});
 });
 
 describe('buildPath / linear_feed', () => {
+	it('leaves rho undefined (no geometric radius concept for a straight pass)', () => {
+		const c = makeCache({ N: 20 });
+		const r = buildPath(c, {
+			kind: 'linear_feed', feedRate: 100, timeScale: 1, yOffset: 0, zOffset: 0,
+		}, WINDOW);
+		expect(r).not.toBeNull();
+		expect(r!.rho).toBeUndefined();
+	});
+
 	it('advances x at feedRate mm/min, holds y and z constant', () => {
 		const c = makeCache({ N: 601, t: Float32Array.from({ length: 601 }, (_, i) => i * 0.01) }); // 6s window
 		const r = buildPath(c, {
@@ -153,5 +177,47 @@ describe('buildPath / degenerate input', () => {
 			speedMode: 'measured', rpm: 0, vc: 0, timeScale: 1, ppr: 1,
 		}, { cropStartSec: 1000, cropEndSec: 0, stride: 1 });
 		expect(r).toBeNull();
+	});
+});
+
+describe('alignRhoToBuckets', () => {
+	// N=100, t=i*0.01 (0..0.99s), revs=i*0.02. Crop starts at i=10 (t=0.10s, revs=0.2). With
+	// feed=40/diam=80/innerDiam=20 (innerR = innerDiam/2 = 10): rho=40-40*r,
+	// r=(revs[i]-0.2)/1 => rho<10 first at i=48 (revs=0.96 => r=0.76 => rho=9.6), so the path
+	// covers i=10..47 (rho[47]=10.4).
+	const c = makeCache({ N: 100 });
+	const r = buildPath(c, {
+		kind: 'turning_spiral', feed: 40, diam: 80, innerDiam: 20,
+		speedMode: 'measured', rpm: 0, vc: 0, timeScale: 1, ppr: 1,
+	}, { cropStartSec: 0.1, cropEndSec: 1e9, stride: 1 });
+
+	it('returns the path rho at an in-range bucket time', () => {
+		expect(r).not.toBeNull();
+		// i=20: revs=0.4, r=0.2, rho=40-40*0.2=32
+		const out = alignRhoToBuckets(r!, c, [0.20]);
+		expect(out[0]).toBeCloseTo(32, 4);
+	});
+
+	it('returns NaN for a bucket time before the crop start', () => {
+		const out = alignRhoToBuckets(r!, c, [0.05]);
+		expect(Number.isNaN(out[0])).toBe(true);
+	});
+
+	it('returns NaN for a bucket time past where the spiral stopped (cut-out)', () => {
+		// t[60]=0.60 is past i=47, the last index the spiral actually reached before innerDiam.
+		const out = alignRhoToBuckets(r!, c, [0.60]);
+		expect(Number.isNaN(out[0])).toBe(true);
+	});
+
+	it('returns an all-NaN array of the right length when rho is absent (e.g. no path)', () => {
+		const empty = buildPath(c, {
+			kind: 'turning_spiral', feed: 0.05, diam: 80, innerDiam: 0,
+			speedMode: 'measured', rpm: 0, vc: 0, timeScale: 1, ppr: 1,
+		}, { cropStartSec: 1000, cropEndSec: 0, stride: 1 });
+		expect(empty).toBeNull();
+		const out = alignRhoToBuckets({ pos: new Float32Array(0), idx: new Int32Array(0), count: 0, bounds: { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0 } }, c, [0.1, 0.2]);
+		expect(out.length).toBe(2);
+		expect(Number.isNaN(out[0])).toBe(true);
+		expect(Number.isNaN(out[1])).toBe(true);
 	});
 });

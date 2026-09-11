@@ -9,6 +9,7 @@ import FrmOctree from './FrmOctree.vue';
 import WearTrend from './WearTrend.vue';
 import type { SpeedMode } from './liveCloud';
 import { cacheGet, cachePut, decimateCache, parseCache, type Cache } from './liveCache';
+import { buildPath, alignRhoToBuckets, type TurningSpiralParams } from './path';
 import { computeSignalStats, type SignalStats } from './signalStats';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
@@ -1194,16 +1195,19 @@ const PEAK_FIELD: Record<string, string> = { Fx: 'peak_fx', Fy: 'peak_fy', Fz: '
 function chartsFor(item: RPanel) {
 	const d = detail.value;
 	const sel = (item.channels && item.channels.length ? item.channels : AXES) as readonly Axis[];
+	const secondXLabel = secondXField.value === 'radial' ? 'radial (mm)' : undefined;
 	const base = AXES.filter((a) => sel.includes(a)).map((a) => (
 		effectiveMode.value === 'force'
 			? { key: a, title: `${a} · force`, kind: 'env' as const, data: d?.series?.[a], color: AXIS_COLOR[a], xUnit: 's', yUnit: 'N',
 				cropStart: activeCrop.value?.start, cropEnd: activeCrop.value?.end, peak: d?.[PEAK_FIELD[a]],
-				compare: compareSeriesFor(a) }
+				compare: compareSeriesFor(a),
+				secondXValues: radialValuesFor(d?.series?.[a]?.t), secondXLabel }
 			: { key: a, title: `${a} · spectrum`, kind: 'line' as const, data: d?.fft?.[a], color: AXIS_COLOR[a], xUnit: 'Hz', yUnit: '', logY: true }
 	));
 	if (effectiveMode.value === 'force' && item.rpm) {
 		base.push({ key: 'RPM', title: 'RPM', kind: 'env', data: detail.value?.series?.RPM, color: '#a855f7', xUnit: 's', yUnit: 'rpm',
-			cropStart: activeCrop.value?.start, cropEnd: activeCrop.value?.end } as any);
+			cropStart: activeCrop.value?.start, cropEnd: activeCrop.value?.end,
+			secondXValues: radialValuesFor(detail.value?.series?.RPM?.t), secondXLabel } as any);
 	}
 	return base;
 }
@@ -1297,7 +1301,86 @@ function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam:
 	editVc.value = Math.round(Math.PI * meta.diam * meta.rpm / 1000) || 100;
 	// the cache's feed/diam/rate are the "source" for the modified-highlight in Live
 	srcCut.feed = editFeed.value; srcCut.diam = editDiam.value; srcCut.rate = editRate.value;
+	cacheEpoch.value++;   // the cache just landed in the LRU — let radialValuesFor() see it
 }
+
+// ---- Second X-axis (radial tool position) on the time-series charts ------------------------
+// 'measured' speed mode needs the cache's baked revs_cum, so it may require an on-demand fetch
+// (see fetchRadialCache); 'rpm'/'vc' modes are closed-form in elapsed time alone and never do.
+// Defaults to 'none' — selecting the cache-backed 'measured' mode fetches a multi-MB asset the
+// moment it's turned on, so that has to be an explicit user action, never the initial state.
+const secondXField = ref<'none' | 'radial'>('none');
+// cacheGet() reads a plain (non-reactive) Map — a computed calling it would never re-run once
+// the cache lands after a later on-demand fetch. Bump this whenever the cache changes and read
+// it (even unused) wherever radialValuesFor() might depend on a just-arrived cache.
+const cacheEpoch = ref(0);
+const radialFetchBusy = ref(false);
+async function fetchRadialCache() {
+	const d = detail.value;
+	if (!d?.live_cache_file || radialFetchBusy.value || cacheGet(d.live_cache_file)) return;
+	radialFetchBusy.value = true;
+	try {
+		const res = await api.get(`/assets/${d.live_cache_file}`, { responseType: 'arraybuffer' });
+		cachePut(d.live_cache_file, parseCache(res.data as ArrayBuffer));
+		cacheEpoch.value++;
+	} catch { /* leave the second axis blank until the user retries (e.g. reselecting the field) */ }
+	finally { radialFetchBusy.value = false; }
+}
+// Memoized once per (op, geometry, crop, cache-arrival) rather than recomputed per axis per
+// render: chartsFor() calls radialValuesFor() once per open axis (+ RPM), and buildPath() over
+// the raw cache is O(N) with a cos/sin per point (N up to ~250k+) — without this, dragging the
+// mouse (hoverIndex re-renders every open chart, see the Phase-1.3 rAF fix) would re-run that
+// O(N) work 3-4x per animation frame. rho is axis-independent (a function of time only), so one
+// path serves every axis + RPM chart in the panel.
+const measuredRadialPath = computed(() => {
+	if (secondXField.value !== 'radial' || speedMode.value !== 'measured') return null;
+	const d = detail.value;
+	const cropStart = activeCrop.value?.start;
+	if (!d?.live_cache_file || cropStart == null) return null;
+	void cacheEpoch.value;
+	const c = cacheGet(d.live_cache_file);
+	if (!c) { fetchRadialCache(); return null; }
+	const p: TurningSpiralParams = {
+		kind: 'turning_spiral', feed: editFeed.value, diam: editDiam.value, innerDiam: editInnerDiam.value,
+		speedMode: 'measured', rpm: editRpm.value, vc: editVc.value, timeScale: timeScale.value, ppr: editPpr.value,
+	};
+	return { c, path: buildPath(c, p, { cropStartSec: cropStart, cropEndSec: c.t[c.N - 1], stride: 1 }) };
+});
+// bucketT: the chart's own x-axis time array (d.series[a].t) — a full-range, uncropped envelope,
+// same as what cropStart/cropEnd shade a sub-window of. Radial position is only meaningful from
+// the crop start onward (r=0 there, matching path.ts's buildTurningSpiral); earlier bucket times
+// get NaN, same as any time past wherever the spiral stops (cut-out / inner-diameter reached).
+function radialValuesFor(bucketT: number[] | Float32Array | undefined): Float32Array | null {
+	if (secondXField.value !== 'radial' || !bucketT || !bucketT.length) return null;
+	const cropStart = activeCrop.value?.start;
+	if (cropStart == null) return null;
+	const rho0 = editDiam.value / 2;
+	const innerR = Math.max(0, (editInnerDiam.value || 0) / 2);
+	if (speedMode.value === 'measured') {
+		const m = measuredRadialPath.value;
+		const out = new Float32Array(bucketT.length);
+		if (!m?.path) { out.fill(NaN); return out; }
+		return alignRhoToBuckets(m.path, m.c, bucketT);
+	}
+	const out = new Float32Array(bucketT.length);
+	if (speedMode.value === 'rpm') {
+		const revPerSec = editRpm.value / 60;
+		for (let i = 0; i < bucketT.length; i++) {
+			if (bucketT[i] < cropStart) { out[i] = NaN; continue; }
+			const rho = rho0 - editFeed.value * (revPerSec * (bucketT[i] - cropStart) * timeScale.value);
+			out[i] = rho < innerR ? NaN : rho;
+		}
+	} else {   // vc
+		const K = editFeed.value * editVc.value * 1000 / (Math.PI * 120);
+		for (let i = 0; i < bucketT.length; i++) {
+			if (bucketT[i] < cropStart) { out[i] = NaN; continue; }
+			const under = rho0 * rho0 - 2 * K * (bucketT[i] - cropStart) * timeScale.value;
+			out[i] = under < innerR * innerR ? NaN : Math.sqrt(under);
+		}
+	}
+	return out;
+}
+
 function resetLive() {
 	const d = detail.value;
 	if (cropWindow.value) { cropStartSec.value = cropWindow.value.start; cropEndSec.value = cropWindow.value.end; }
@@ -1757,6 +1840,11 @@ function fmtDateTime(v: string | null | undefined) {
 									<button v-if="effectiveMode === 'force'" class="tbtn rpmbtn" :class="{ on: item.rpm }"
 										:style="item.rpm ? { background: '#a855f7', borderColor: '#a855f7' } : {}"
 										@click="item.rpm = !item.rpm">RPM</button>
+									<select v-if="effectiveMode === 'force'" v-model="secondXField" class="zsel" title="Second X-axis (top margin)">
+										<option value="none">No 2nd axis</option>
+										<option value="radial">Radial position</option>
+									</select>
+									<span v-if="effectiveMode === 'force' && radialFetchBusy" class="cmp-hint">loading radial…</span>
 									<button class="tbtn" :class="{ on: chartMode === 'force' }"
 										:style="chartMode === 'force' ? { background: '#334155', borderColor: '#334155' } : {}"
 										@click="chartMode = 'force'">Force</button>

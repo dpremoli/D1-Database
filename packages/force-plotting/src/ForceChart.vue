@@ -31,6 +31,12 @@ const props = defineProps<{
 	// insert edge, to see wear develop). Drawn as mid-lines, not filled envelopes: three or four
 	// translucent bands over each other turn to mush, whereas lines stay readable.
 	compare?: { id: string; label: string; color: string; data: any }[] | null;
+	// Optional second x-axis (top margin), e.g. radial tool position — a derived/correlated
+	// value aligned 1:1 with `data.t` (same length, same index). NaN entries render as a blank
+	// tick (the underlying quantity is undefined there, e.g. past a spiral's cut-out), never
+	// clamped to the nearest valid value.
+	secondXValues?: Float32Array | number[] | null;
+	secondXLabel?: string;
 }>();
 const emit = defineEmits<{
 	(e: 'hover', i: number | null): void;
@@ -40,6 +46,10 @@ const emit = defineEmits<{
 }>();
 
 const ML = 46, MR = 12, MT = 8, MB = 24;
+// A second x-axis needs its own tick/label band above the plot — grow the top margin only
+// when one is actually supplied, so charts without it keep today's exact layout.
+const hasSecondX = computed(() => !!(props.secondXValues && props.secondXValues.length));
+const MT_EFF = computed(() => (hasSecondX.value ? MT + 16 : MT));
 const stroke = computed(() => props.color || '#0d9488');
 const peakNum = computed(() => {
 	if (props.peak == null) return null;
@@ -88,7 +98,8 @@ const geom = computed(() => {
 	const xs: number[] = props.kind === 'env' ? d.t : d.f;
 	if (!xs || xs.length < 2) return null;
 	const W = w.value, Hh = h.value;
-	const plotH = Hh - MT - MB;
+	const mt = MT_EFF.value;
+	const plotH = Hh - mt - MB;
 	const plotW = W - ML - MR;
 
 	// Visible x-window (shared zoom). Snap the index range to the requested view
@@ -144,12 +155,12 @@ const geom = computed(() => {
 		const loRaw = Math.max(minPos, hi / 1e5);          // clamp to 5 decades below peak
 		const L0 = Math.log10(loRaw), L1 = Math.log10(hi);
 		const den = (L1 - L0) || 1;
-		sy = (y) => MT + (1 - (Math.log10(Math.max(y, loRaw)) - L0) / den) * plotH;
+		sy = (y) => mt + (1 - (Math.log10(Math.max(y, loRaw)) - L0) / den) * plotH;
 		yticks = [];
 		for (let k = Math.ceil(L0); k <= Math.floor(L1); k++) yticks.push({ y: sy(10 ** k), label: niceNum(10 ** k) });
 		if (yticks.length < 2) yticks = [loRaw, hi].map((v) => ({ y: sy(v), label: niceNum(v) }));
 	} else {
-		sy = (y) => MT + (1 - (y - lo) / (hi - lo)) * plotH;
+		sy = (y) => mt + (1 - (y - lo) / (hi - lo)) * plotH;
 		const vals = (props.kind === 'env' && lo < 0 && hi > 0) ? [hi, 0, lo] : [hi, (lo + hi) / 2, lo];
 		yticks = vals.map((v) => ({ y: sy(v), label: niceNum(v) }));
 	}
@@ -196,6 +207,27 @@ const geom = computed(() => {
 	}
 	if (xticks.length < 2) { xticks.length = 0; xticks.push({ x: sx(x0), label: niceNum(x0) }, { x: sx(x1), label: niceNum(x1) }); }
 
+	// Second x-axis (e.g. radial position): a derived/correlated quantity aligned 1:1 with xs,
+	// not necessarily linear in time (the Vc speed model's sqrt curve, in particular) — unlike
+	// the primary axis's "nice round step" ticks, evenly-spaced pixel positions are the honest
+	// choice here, each labeled with the (linearly interpolated) value at that x. A NaN result
+	// (past a spiral's cut-out) is skipped — a blank tick, never clamped to the last valid value.
+	const xticks2: { x: number; label: string }[] = [];
+	if (hasSecondX.value && props.secondXValues) {
+		const sv = props.secondXValues;
+		const n2 = Math.max(3, Math.min(8, Math.round(plotW / 100)));
+		for (let k = 0; k <= n2; k++) {
+			const xVal = x0 + (k / n2) * (x1 - x0);
+			let loI = 0, hiI = xs.length - 1;
+			while (loI < hiI) { const mid = (loI + hiI) >> 1; if (xs[mid] < xVal) loI = mid + 1; else hiI = mid; }
+			const j1 = loI, j0 = Math.max(0, j1 - 1);
+			const val = (j0 === j1 || xs[j1] === xs[j0]) ? sv[j1]
+				: sv[j0] + ((xVal - xs[j0]) / (xs[j1] - xs[j0])) * (sv[j1] - sv[j0]);
+			if (!Number.isFinite(val)) continue;
+			xticks2.push({ x: sx(xVal), label: niceNum(val) });
+		}
+	}
+
 	const zeroY = (lo < 0 && hi > 0) ? sy(0) : null;
 	const cropStartX = props.cropStart != null ? sx(props.cropStart) : null;
 	const cropEndX = props.cropEnd != null ? sx(props.cropEnd) : null;
@@ -231,7 +263,7 @@ const geom = computed(() => {
 			if (path) compareLines.push({ id: c.id, label: c.label, color: c.color, d: path });
 		}
 	}
-	return { W, Hh, xs, x0, x1, iA, iB, lo, hi, sx, sy, area, line, cropArea, xticks, yticks, zeroY, cropStartX, cropEndX, overlayLine, compareLines };
+	return { W, Hh, xs, x0, x1, iA, iB, lo, hi, sx, sy, area, line, cropArea, xticks, xticks2, yticks, zeroY, cropStartX, cropEndX, overlayLine, compareLines };
 });
 
 const hoverPt = computed(() => {
@@ -375,8 +407,8 @@ function onWheel(ev: WheelEvent) {
 	<div class="chart" :class="{ active }" :style="active ? { '--accent': stroke } : {}">
 		<div class="chart-head">
 			<span class="chart-title">{{ title }}</span>
-			<span v-if="peakNum != null" class="chart-peak">peak {{ peakNum.toFixed(2) }} {{ yUnit }}</span>
-			<span v-else-if="geom" class="chart-unit">{{ logY ? 'log ' : '' }}{{ yUnit || (kind === 'line' ? 'amp' : '') }}</span>
+			<span v-if="peakNum != null" class="chart-peak">peak {{ peakNum.toFixed(2) }} {{ yUnit }}<template v-if="hasSecondX && secondXLabel"> · {{ secondXLabel }}</template></span>
+			<span v-else-if="geom" class="chart-unit">{{ logY ? 'log ' : '' }}{{ yUnit || (kind === 'line' ? 'amp' : '') }}<template v-if="hasSecondX && secondXLabel"> · {{ secondXLabel }}</template></span>
 		</div>
 		<svg
 			ref="svgEl" v-if="geom" :viewBox="`0 0 ${geom.W} ${geom.Hh}`" class="chart-svg" :class="{ zoomtool: zoomTool }"
@@ -384,7 +416,7 @@ function onWheel(ev: WheelEvent) {
 			@pointerdown="onZoomDown" @pointermove="onZoomMove" @pointerup="onZoomUp" @pointercancel="onZoomUp"
 		>
 			<line v-for="(t, i) in geom.yticks" :key="'gy' + i" :x1="ML" :x2="geom.W - MR" :y1="t.y" :y2="t.y" class="fc-grid" stroke-width="0.5" />
-			<line v-for="(t, i) in geom.xticks" :key="'gx' + i" :x1="t.x" :x2="t.x" :y1="MT" :y2="geom.Hh - MB" class="fc-grid" stroke-width="0.5" />
+			<line v-for="(t, i) in geom.xticks" :key="'gx' + i" :x1="t.x" :x2="t.x" :y1="MT_EFF" :y2="geom.Hh - MB" class="fc-grid" stroke-width="0.5" />
 			<line v-if="geom.zeroY != null" :x1="ML" :x2="geom.W - MR" :y1="geom.zeroY" :y2="geom.zeroY" class="fc-zero" stroke-width="0.9" />
 			<!-- full-range area at low saturation; the analysed [cropStart,cropEnd] window overpaints at full saturation -->
 			<path v-if="kind === 'env'" :d="geom.area" :fill="stroke" :fill-opacity="geom.cropArea ? 0.09 : 0.2" :stroke="stroke" stroke-opacity="0.35" stroke-width="0.6" />
@@ -395,7 +427,7 @@ function onWheel(ev: WheelEvent) {
 				 visual subject and the others read as reference traces. -->
 			<path v-for="c in geom.compareLines" :key="c.id" :d="c.d" fill="none"
 				:stroke="c.color" stroke-width="1.2" stroke-dasharray="4 2" opacity="0.85" />
-			<line :x1="ML" :x2="ML" :y1="MT" :y2="geom.Hh - MB" class="fc-axis" stroke-width="0.8" />
+			<line :x1="ML" :x2="ML" :y1="MT_EFF" :y2="geom.Hh - MB" class="fc-axis" stroke-width="0.8" />
 			<line :x1="ML" :x2="geom.W - MR" :y1="geom.Hh - MB" :y2="geom.Hh - MB" class="fc-axis" stroke-width="0.8" />
 			<g v-for="(t, i) in geom.yticks" :key="'y' + i">
 				<line :x1="ML - 3" :x2="ML" :y1="t.y" :y2="t.y" class="fc-axis" stroke-width="0.8" />
@@ -406,8 +438,20 @@ function onWheel(ev: WheelEvent) {
 				<text :x="t.x" :y="geom.Hh - MB + 12" text-anchor="middle" class="tick">{{ t.label }}</text>
 			</g>
 			<text :x="(ML + geom.W - MR) / 2" :y="geom.Hh - 3" text-anchor="middle" class="axis-label">{{ xUnit }}</text>
+			<!-- Second x-axis (e.g. radial position) — mirrors the bottom axis (line at the plot's
+			     top edge, ticks extending up into the grown top margin). Its unit label lives in the
+			     chart-head row (chart-peak/chart-unit below), not here — the ~16px top-margin band
+			     only has room for one text row before ascenders start clipping against the viewBox.
+			     Blank where geom.xticks2 skipped a NaN (past a spiral's cut-out). -->
+			<g v-if="hasSecondX">
+				<line :x1="ML" :x2="geom.W - MR" :y1="MT_EFF" :y2="MT_EFF" class="fc-axis" stroke-width="0.8" />
+				<g v-for="(t, i) in geom.xticks2" :key="'x2' + i">
+					<line :x1="t.x" :x2="t.x" :y1="MT_EFF - 3" :y2="MT_EFF" class="fc-axis" stroke-width="0.8" />
+					<text :x="t.x" :y="MT_EFF - 6" text-anchor="middle" class="tick">{{ t.label }}</text>
+				</g>
+			</g>
 			<g v-if="hoverPt">
-				<line :x1="hoverPt.px" :x2="hoverPt.px" :y1="MT" :y2="geom.Hh - MB" stroke="#64748b" stroke-width="0.6" stroke-dasharray="3 3" />
+				<line :x1="hoverPt.px" :x2="hoverPt.px" :y1="MT_EFF" :y2="geom.Hh - MB" stroke="#64748b" stroke-width="0.6" stroke-dasharray="3 3" />
 				<circle :cx="hoverPt.px" :cy="hoverPt.py" r="2.8" :fill="stroke" />
 			</g>
 			<!-- Live-mode draggable crop handles (start = teal, end = red); wide invisible
@@ -415,15 +459,15 @@ function onWheel(ev: WheelEvent) {
 			<g v-if="cropEditable">
 				<template v-for="(hx, k) in [{ x: geom.cropStartX, c: '#0f766e' }, { x: geom.cropEndX, c: '#b91c1c' }]" :key="'ch' + k">
 					<template v-if="hx.x != null">
-						<line :x1="hx.x" :x2="hx.x" :y1="MT" :y2="geom.Hh - MB" :stroke="hx.c" stroke-width="1.4" />
-						<rect :x="hx.x - 3" :y="MT" width="6" :height="geom.Hh - MB - MT" :fill="hx.c" fill-opacity="0.001"
+						<line :x1="hx.x" :x2="hx.x" :y1="MT_EFF" :y2="geom.Hh - MB" :stroke="hx.c" stroke-width="1.4" />
+						<rect :x="hx.x - 3" :y="MT_EFF" width="6" :height="geom.Hh - MB - MT_EFF" :fill="hx.c" fill-opacity="0.001"
 							class="crop-hit" @pointerdown="onCropDown" @pointermove="onCropMove" @pointerup="onCropUp" @pointercancel="onCropUp" />
-						<rect :x="hx.x - 3.5" :y="MT" width="7" height="5" :fill="hx.c" />
+						<rect :x="hx.x - 3.5" :y="MT_EFF" width="7" height="5" :fill="hx.c" />
 					</template>
 				</template>
 			</g>
 			<!-- rubber-band x-zoom rectangle -->
-			<rect v-if="zoomRect" :x="zoomRect.x" :y="MT" :width="zoomRect.w" :height="geom.Hh - MB - MT"
+			<rect v-if="zoomRect" :x="zoomRect.x" :y="MT_EFF" :width="zoomRect.w" :height="geom.Hh - MB - MT_EFF"
 				fill="#38bdf8" fill-opacity="0.16" stroke="#0ea5e9" stroke-width="0.8" />
 		</svg>
 		<div v-else class="chart-empty">no data</div>

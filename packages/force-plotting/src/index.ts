@@ -18,7 +18,7 @@ export type { Cache, EnvSeries } from './liveCache';
 export { COLORMAPS, axisAutoLimits } from './liveCloud';
 export type { Axis, CloudChannel } from './liveCloud';
 export type { SpeedMode } from './liveCloud';
-export { buildPath } from './path';
+export { buildPath, alignRhoToBuckets } from './path';
 export type {
 	PathKind, PathParams, PathWindow, PathBounds, PathResult,
 	TurningSpiralParams, LinearFeedParams, MachineXyzParams,
