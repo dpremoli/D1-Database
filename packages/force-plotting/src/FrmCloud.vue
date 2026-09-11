@@ -12,10 +12,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { useForceHost } from './host';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { type Cache, cacheGet, cachePut, parseCache } from './liveCache';
+import { type Cache, cacheGet, cachePut, idxOfTime, parseCache } from './liveCache';
 import { type Axis, type Cloud, type CloudChannel, type SpeedMode, axisAutoLimits, buildCloud, COLORMAPS } from './liveCloud';
-import type { PathParams } from './path';
+import { buildPath, type PathParams } from './path';
 import { exportFrmFigure } from './frmExport';
+import {
+	buildColormapLUT, buildStaticAttributes, spiralUniformValues,
+	TURNING_SPIRAL_FRAG, TURNING_SPIRAL_VERT,
+} from './frmCloudShader';
 
 const props = defineProps<{
 	cacheFileId: string;
@@ -196,9 +200,26 @@ let pointsObj: THREE.Points | null = null;
 let discTex: THREE.CanvasTexture | null = null;
 let controls: OrbitControls | null = null;   // 3D mode only (Z series active)
 let ready = false;
+// GPU (turning-spiral) path — see usesGpuPath above and frmCloudShader.ts. gpuGeom's aT/aRevs/
+// aVal attributes are STATIC (uploaded once per real geometry change); crop dragging only
+// updates gpuMat.uniforms (updateGpuCropUniforms), never touches the geometry.
+let gpuGeom: THREE.BufferGeometry | null = null;
+let gpuMat: THREE.ShaderMaterial | null = null;
+let gpuObj: THREE.Points | null = null;
+let colormapTex: THREE.DataTexture | null = null;
+let colormapTexName = '';   // which props.colormap colormapTex currently holds
+let gpuUploaded = false;   // whether gpuGeom currently holds this op's data at all
 // 3D when a Z series is selected: the cloud gets a Z displacement and OrbitControls owns
 // the camera; the custom 2D pan/pinch/wheel/rect handlers stand down. Flat is unchanged.
 const is3D = computed(() => !!props.zSeries && props.zSeries !== 'none');
+// GPU shader path (frmCloudShader.ts) — the crop-drag lag fix. Deliberately narrow: gridding is
+// a genuine many-to-one CPU reduction a per-vertex shader can't express, a Z-series overlay/3D
+// needs OrbitControls + a second static attribute this file doesn't wire up, and linear_feed/
+// machine_xyz have no shader implementation — none of those three is what a user drags
+// continuously, so none needed the rewrite. Everything else (the default 2D turning-spiral
+// scatter, which IS what was laggy) gets it.
+const usesGpuPath = computed(() =>
+	!props.gridding && (!props.zSeries || props.zSeries === 'none') && effPath.value.kind === 'turning_spiral');
 
 // a soft white disc so points render as filled circles (matching the old fragment
 // shader's round-point discard), not squares. alphaTest keeps them crisp + opaque.
@@ -243,6 +264,26 @@ function setupRenderer() {
 	pointsMat = new THREE.PointsMaterial({ size: 1.4, sizeAttenuation: false, vertexColors: true, map: discTex, alphaTest: 0.5, transparent: false });
 	pointsObj = new THREE.Points(pointsGeom, pointsMat);
 	scene.add(pointsObj);
+
+	colormapTex = new THREE.DataTexture(buildColormapLUT(COLORMAPS[props.colormap] || COLORMAPS.viridis), 64, 1, THREE.RGBAFormat);
+	colormapTex.minFilter = THREE.LinearFilter; colormapTex.magFilter = THREE.LinearFilter;
+	colormapTex.wrapS = colormapTex.wrapT = THREE.ClampToEdgeWrapping;
+	colormapTex.needsUpdate = true;
+	colormapTexName = props.colormap;
+	gpuGeom = new THREE.BufferGeometry();
+	gpuMat = new THREE.ShaderMaterial({
+		vertexShader: TURNING_SPIRAL_VERT, fragmentShader: TURNING_SPIRAL_FRAG,
+		uniforms: {
+			uFeed: { value: 0 }, uRho0: { value: 1 }, uInnerR: { value: 0 }, uSpeedMode: { value: 0 },
+			uRevPerSec: { value: 0 }, uTimeScale: { value: 1 }, uPpr: { value: 1 }, uK: { value: 0 },
+			uTCs: { value: 0 }, uRevsCs: { value: 0 }, uCropStart: { value: 0 }, uCropEnd: { value: 0 },
+			uCmin: { value: 0 }, uCmax: { value: 1 }, uPointSize: { value: 1.4 }, uColormap: { value: colormapTex },
+		},
+		transparent: false,
+	});
+	gpuObj = new THREE.Points(gpuGeom, gpuMat);
+	gpuObj.visible = false;
+	scene.add(gpuObj);
 	// preventDefault keeps the canvas eligible for a restore event; on restore we re-upload
 	// the resident buffers and resume, so a context the browser reclaimed (e.g. too many
 	// live GL contexts while compare mode holds several clouds) recovers on its own instead
@@ -287,7 +328,7 @@ let cloud: Cloud | null = null;
 // scale matches Full's baked scale per axis and doesn't drift while cropping. Manual limits
 // (props.cmin/cmax) still win. Cleared when the cache changes.
 const autoLimitsByAxis = new Map<string, [number, number]>();
-watch(cache, () => autoLimitsByAxis.clear());
+watch(cache, () => { autoLimitsByAxis.clear(); gpuUploaded = false; });
 function effClimits(): { cmin: number; cmax: number } {
 	let auto = autoLimitsByAxis.get(effChannel.value);
 	if (!auto && cache.value) { auto = axisAutoLimits(cache.value, effChannel.value); autoLimitsByAxis.set(effChannel.value, auto); }
@@ -298,7 +339,17 @@ function effClimits(): { cmin: number; cmax: number } {
 	};
 }
 function rebuild() {
-	if (!ready || !pointsGeom || !canvasEl.value || !cache.value) return;
+	if (!ready || !canvasEl.value || !cache.value) return;
+	if (usesGpuPath.value) {
+		if (pointsObj) pointsObj.visible = false;
+		if (gpuObj) gpuObj.visible = true;
+		cloud = null;
+		uploadGpuGeometry();
+		return;
+	}
+	if (gpuObj) gpuObj.visible = false;
+	if (pointsObj) pointsObj.visible = true;
+	if (!pointsGeom) return;
 	const eff = effClimits();
 	cloud = buildCloud(cache.value, {
 		channel: effChannel.value,
@@ -332,6 +383,87 @@ function rebuild() {
 	if (!climits.value || climits.value.cmin !== cl.cmin || climits.value.cmax !== cl.cmax) {
 		climits.value = cl; emit('climits', cl);
 	}
+}
+
+// ---- GPU (turning-spiral) path: static geometry uploaded once, crop is a free uniform -------
+// Real geometry change (op load, channel select, stride change, colormap change, or the
+// gridding/zSeries/path-kind toggles that flip usesGpuPath itself) — mirrors the CPU rebuild's
+// cost, just for the shader's static attributes instead of a pre-coloured/pre-positioned buffer.
+function uploadGpuGeometry() {
+	if (!gpuGeom || !gpuMat || !cache.value) return;
+	const c = cache.value;
+	const pp = effPath.value;
+	if (pp.kind !== 'turning_spiral') return;   // usesGpuPath already guards this; defensive only
+
+	if (colormapTex && colormapTexName !== props.colormap) {
+		colormapTex.image.data.set(buildColormapLUT(COLORMAPS[props.colormap] || COLORMAPS.viridis));
+		colormapTex.needsUpdate = true;
+		colormapTexName = props.colormap;
+	}
+
+	const { aT, aRevs, aVal, count } = buildStaticAttributes(c, effChannel.value, props.stride);
+	gpuGeom.setAttribute('aT', new THREE.BufferAttribute(aT, 1));
+	gpuGeom.setAttribute('aRevs', new THREE.BufferAttribute(aRevs, 1));
+	gpuGeom.setAttribute('aVal', new THREE.BufferAttribute(aVal, 1));
+	gpuGeom.setDrawRange(0, count);
+	gpuUploaded = true;
+
+	// Colour limits reuse the SAME cached-per-axis whole-cut auto limits the CPU path already
+	// uses (effClimits/axisAutoLimits) — NOT a crop-scoped recompute. That matches this file's
+	// existing behaviour exactly (effClimits always hands buildCloud a concrete cmin/cmax, so its
+	// own internal crop-scoped percentile branch never actually runs for this caller) and its own
+	// doc comment's intent: "Live's scale matches Full's baked scale per axis and doesn't drift
+	// while cropping." A per-crop recompute would be a silent behaviour change, not a bug fix.
+	const eff = effClimits();
+	gpuMat.uniforms.uCmin.value = eff.cmin;
+	gpuMat.uniforms.uCmax.value = eff.cmax;
+	if (!climits.value || climits.value.cmin !== eff.cmin || climits.value.cmax !== eff.cmax) {
+		climits.value = eff; emit('climits', eff);
+	}
+
+	updateGpuCropUniforms();
+	refineGpuPointCount();   // exact count — cheap enough to also pay here, not just at drag-end
+	scaleBar.value = null;   // recomputed by draw()/updateScaleBar()
+}
+
+// Crop drag: the free path. O(log N) index lookup + a handful of uniform writes, no CPU
+// recompute over the point data and no GPU re-upload — this is the actual Phase-5 fix.
+function updateGpuCropUniforms() {
+	if (!gpuMat || !cache.value) return;
+	const c = cache.value;
+	const pp = effPath.value;
+	if (pp.kind !== 'turning_spiral') return;
+	const cs = idxOfTime(c.t, props.cropStartSec);
+	const tCs = cs >= 0 ? c.t[cs] : 0, revsCs = cs >= 0 ? c.revs[cs] : 0;
+	const u = spiralUniformValues({ ...pp, tCs, revsCs });
+	const uni = gpuMat.uniforms;
+	uni.uFeed.value = u.uFeed; uni.uRho0.value = u.uRho0; uni.uInnerR.value = u.uInnerR;
+	uni.uSpeedMode.value = u.uSpeedMode; uni.uRevPerSec.value = u.uRevPerSec; uni.uTimeScale.value = u.uTimeScale;
+	uni.uPpr.value = u.uPpr; uni.uK.value = u.uK; uni.uTCs.value = u.uTCs; uni.uRevsCs.value = u.uRevsCs;
+	uni.uCropStart.value = props.cropStartSec; uni.uCropEnd.value = props.cropEndSec;
+
+	// O(1) analytic fit: r=0 exactly AT the crop-start sample by construction (see
+	// frmCloudShader.ts), so rho there is always rho0 — for any window spanning at least one
+	// full revolution (virtually every real cut) the bounding box is the square of side 2*rho0,
+	// regardless of where the crop-end/inner-diameter cutoff lands.
+	fitCx = 0; fitCy = 0; fitSpan = Math.max(1, u.uRho0 * 2);
+}
+
+// Exact visible-point count needs the inner-diameter cutoff, which (per frmCloudShader.ts's
+// documented, real-cache-checked assumption) isn't a closed-form function of crop time alone for
+// measured-speed mode — so debounce a single CPU pass rather than either running it every drag
+// frame (defeats the point of this rewrite) or leaving the "N pts" readout permanently stale.
+let gpuRefineTimer = 0;
+function scheduleGpuRefine() {
+	if (gpuRefineTimer) window.clearTimeout(gpuRefineTimer);
+	gpuRefineTimer = window.setTimeout(() => { gpuRefineTimer = 0; refineGpuPointCount(); }, 150);
+}
+function refineGpuPointCount() {
+	const c = cache.value; const pp = effPath.value;
+	if (!c || pp.kind !== 'turning_spiral') return;
+	const path = buildPath(c, pp, { cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec, stride: props.stride });
+	pointCount.value = path?.count ?? 0;
+	emit('points', pointCount.value);
 }
 
 // Z exaggeration in world units = fraction of the data span; applied via the Points
@@ -382,7 +514,8 @@ watch(() => props.zScale, () => { applyZScale(); scheduleDraw(); });
 function draw() {
 	if (!ready || !renderer || !scene || !camera || !canvasEl.value) return;
 	sizeCanvas(canvasEl.value);
-	if (!cloud) {
+	const hasContent = usesGpuPath.value ? gpuUploaded : !!cloud;
+	if (!hasContent) {
 		// Nothing to show yet (still loading, or a degenerate/empty crop window) — explicitly
 		// clear rather than skipping the render entirely, so the canvas shows the intended
 		// background instead of whatever was left in the (preserveDrawingBuffer) buffer before.
@@ -407,6 +540,7 @@ function draw() {
 	camera.position.set(v.cx, v.cy, 10);
 	camera.updateProjectionMatrix();
 	if (pointsMat) pointsMat.size = Math.max(1, props.pointSize || 1.4);
+	if (gpuMat) gpuMat.uniforms.uPointSize.value = Math.max(1, props.pointSize || 1.4);
 	renderer.render(scene, camera);
 
 	updateScaleBar();
@@ -464,6 +598,8 @@ onBeforeUnmount(() => {
 	if (cropTimer) clearTimeout(cropTimer);
 	controls?.dispose();
 	pointsGeom?.dispose(); pointsMat?.dispose(); discTex?.dispose();
+	gpuGeom?.dispose(); gpuMat?.dispose(); colormapTex?.dispose();
+	if (gpuRefineTimer) clearTimeout(gpuRefineTimer);
 	// dispose() alone does NOT free the WebGL context; forceContextLoss() releases it so a
 	// mode/filter toggle (which unmounts one cloud and mounts another) can't accumulate live
 	// contexts until the browser reclaims one — the "Lite never recovered" bug on big ops.
@@ -480,12 +616,23 @@ watch(() => [effChannel.value, effPath.value, props.stride,
 	props.gridding, props.gridN, props.colormap, props.cmin, props.cmax, props.zSeries], scheduleRebuild, { deep: true });
 watch(() => props.pointSize, scheduleDraw);
 
-// Crop is DRAGGED, and its rebuild is the full O(N) recompute + percentile sort + GPU
-// re-upload — running that every drag frame is what makes millions-of-points laggy. So
-// throttle it to ~12fps (leading rebuild, then a trailing one so the final crop is
-// exact). The force charts' crop shading stays instant regardless (cheap SVG overlay).
+// Crop is DRAGGED, and — for the CPU path only (gridded mode, a Z-series overlay/3D, or a
+// linear_feed/machine_xyz path; see usesGpuPath) — its rebuild is still the full O(N) recompute +
+// percentile sort + GPU re-upload that makes millions-of-points laggy. So throttle IT to ~12fps
+// (leading rebuild, then a trailing one so the final crop is exact). The GPU (turning-spiral,
+// ungridded, flat) path below skips this entirely — that's the actual Phase-5 fix; this throttle
+// is now only a fallback for the cases that were deliberately kept on the old CPU path.
+// The force charts' crop shading stays instant regardless (cheap SVG overlay).
 let cropTimer = 0, cropTrailing = false;
 function onCropChange() {
+	if (usesGpuPath.value) {
+		// The actual Phase-5 fix: no CPU recompute, no GPU re-upload, no throttle — just a
+		// handful of uniform writes, so this runs on every single drag frame for free.
+		updateGpuCropUniforms();
+		scheduleDraw();
+		scheduleGpuRefine();
+		return;
+	}
 	if (cropTimer) { cropTrailing = true; return; }
 	scheduleRebuild();
 	const step = () => {
