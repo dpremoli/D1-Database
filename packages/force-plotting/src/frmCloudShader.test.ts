@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildPath, type TurningSpiralParams } from './path';
 import { idxOfTime, type Cache } from './liveCache';
-import { computeSpiralVertexJS, type SpiralUniformParams } from './frmCloudShader';
+import { buildStaticAttributes, computeSpiralVertexJS, type SpiralUniformParams } from './frmCloudShader';
 
 function makeCache(): Cache {
 	const N = 2000;
@@ -101,5 +101,82 @@ describe('frmCloudShader: computeSpiralVertexJS matches buildTurningSpiral', () 
 		expect(path).not.toBeNull();
 		// first emitted point is exactly at the crop-start sample -> r=0 -> rho=rho0=40
 		expect(Math.hypot(path!.pos[0], path!.pos[1])).toBeCloseTo(40, 3);
+	});
+});
+
+// FrmCloud.vue's real UI exposes stride 1/2/5/10/25 ("show every Nth point") specifically for
+// the large ops the GPU rewrite targets, and buildStaticAttributes decimates the STATIC gpu
+// buffer from index 0 (phase-0-anchored) while buildPath's exact-count refine (used for both the
+// "N pts" readout and the old CPU path) decimates from the crop-start index (cs-anchored) — see
+// buildStaticAttributes's doc comment. This suite checks that phase mismatch never produces a
+// wrong or wildly-off render, only a bounded, cosmetic point-count difference.
+describe('frmCloudShader: buildStaticAttributes under stride > 1 (GPU-buffer phase vs. cs-anchored count)', () => {
+	const base: TurningSpiralParams = {
+		kind: 'turning_spiral', feed: 0.05, diam: 80, innerDiam: 0,
+		speedMode: 'measured', rpm: 1200, vc: 0, timeScale: 1, ppr: 1,
+	};
+
+	function countVisibleInStaticBuffer(
+		pathParams: TurningSpiralParams, cropStartSec: number, cropEndSec: number, stride: number,
+	): number {
+		const { aT, aRevs, count } = buildStaticAttributes(cache, 'Fx', stride);
+		const cs = idxOfTime(cache.t, cropStartSec);
+		const uParams: SpiralUniformParams = {
+			feed: pathParams.feed, diam: pathParams.diam, innerDiam: pathParams.innerDiam,
+			speedMode: pathParams.speedMode, rpm: pathParams.rpm, vc: pathParams.vc,
+			timeScale: pathParams.timeScale, ppr: pathParams.ppr,
+			tCs: cache.t[cs], revsCs: cache.revs[cs],
+		};
+		let n = 0;
+		for (let k = 0; k < count; k++) {
+			const v = computeSpiralVertexJS(aT[k], aRevs[k], uParams, cropStartSec, cropEndSec);
+			// Every point the shader marks visible must still land at a sane, finite position —
+			// per-vertex math never depends on decimation phase, only on that vertex's own aT/aRevs.
+			expect(Number.isFinite(v.x)).toBe(true);
+			expect(Number.isFinite(v.y)).toBe(true);
+			if (v.visible) n++;
+		}
+		return n;
+	}
+
+	// 503 is coprime (or at least non-divisible) w.r.t. every stride below, so cropStart's index
+	// (cs=503 exactly, via t[503] — never hand-pick a float seconds value and hope idxOfTime lands
+	// on it, f32 rounding isn't that reliable) sits OFF-phase from the phase-0 buffer's kept
+	// indices (0, stride, 2*stride, ...) for every one of them. Anchoring the window here (instead
+	// of at cs=0 or cs=500, both divisible by every stride tested) is what actually exercises the
+	// phase-0-vs-cs-anchored mismatch these tests exist to bound — a window starting exactly on a
+	// multiple of stride would make both decimations select the identical index set and pass
+	// trivially regardless of whether the ≤1 bound holds.
+	const CS_OFFPHASE = 503;
+	const cropStart = cache.t[CS_OFFPHASE];
+
+	for (const stride of [2, 5, 10, 25]) {
+		it(`stride=${stride}: crop start is genuinely off-phase (test sanity check)`, () => {
+			expect(idxOfTime(cache.t, cropStart)).toBe(CS_OFFPHASE);
+			expect(CS_OFFPHASE % stride).not.toBe(0);
+		});
+
+		it(`stride=${stride}: full window count is within 1 of the cs-anchored exact count`, () => {
+			const exact = buildPath(cache, base, { cropStartSec: cropStart, cropEndSec: 1e9, stride });
+			expect(exact).not.toBeNull();
+			const gpuCount = countVisibleInStaticBuffer(base, cropStart, 1e9, stride);
+			expect(Math.abs(gpuCount - exact!.count)).toBeLessThanOrEqual(1);
+		});
+
+		it(`stride=${stride}: narrowed window count is within 1 of the cs-anchored exact count`, () => {
+			const cropEnd = cache.t[CS_OFFPHASE + 1000];
+			const exact = buildPath(cache, base, { cropStartSec: cropStart, cropEndSec: cropEnd, stride });
+			expect(exact).not.toBeNull();
+			const gpuCount = countVisibleInStaticBuffer(base, cropStart, cropEnd, stride);
+			expect(Math.abs(gpuCount - exact!.count)).toBeLessThanOrEqual(1);
+		});
+	}
+
+	it('donut cut under stride=10 still discards correctly past the inner-diameter boundary', () => {
+		const donut = { ...base, diam: 80, innerDiam: 40 };
+		const exact = buildPath(cache, donut, { cropStartSec: cropStart, cropEndSec: 1e9, stride: 10 });
+		expect(exact).not.toBeNull();
+		const gpuCount = countVisibleInStaticBuffer(donut, cropStart, 1e9, 10);
+		expect(Math.abs(gpuCount - exact!.count)).toBeLessThanOrEqual(1);
 	});
 });

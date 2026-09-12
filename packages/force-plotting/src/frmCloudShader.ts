@@ -141,10 +141,16 @@ export function computeSpiralVertexJS(
 // Decimate the FULL cache (index 0..N, not just the crop window) into the static per-vertex
 // attributes the shader reads. Uploaded once per real geometry change (op load, channel select,
 // stride change) — crop dragging alone never touches this. `stride` here intentionally uses the
-// SAME phase (starting at index 0) regardless of where the crop window currently sits, unlike
-// the CPU path's cs-anchored decimation — FrmCloud.vue re-derives the cs-anchored version once at
-// drag-end (see its `refineGeometry`) so the resting state always matches the CPU path exactly;
-// only the live-during-drag preview uses this phase-0 buffer.
+// SAME phase (starting at index 0) regardless of where the crop window currently sits, unlike the
+// CPU path's cs-anchored decimation (path.ts's buildTurningSpiral iterates from `cs`, not 0).
+// The GPU buffer stays phase-0 forever, including at rest — FrmCloud.vue only re-derives the
+// cs-anchored count (via refineGpuPointCount/buildPath) for the "N pts" readout, it never
+// re-uploads geometry at drag-end. This is safe: each shader vertex's position depends only on
+// its OWN aT/aRevs plus the crop-start uniforms (uTCs/uRevsCs), never on decimation phase, so a
+// phase-0-kept point renders at the exact same (correct) place a cs-anchored one would. The one
+// observable effect is a point COUNT that can differ from the cs-anchored exact count by at most
+// one point (verified across strides 2/5/10/25 in frmCloudShader.test.ts) — never a wrong shape,
+// never a resolution loss.
 export function buildStaticAttributes(
 	c: Cache, channel: CloudChannel, stride: number,
 ): { aT: Float32Array; aRevs: Float32Array; aVal: Float32Array; count: number } {
