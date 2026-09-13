@@ -30,6 +30,20 @@ angle are not equally trustworthy.
 
 ![Polar Plot panel](docs/images/polar-panel.png)
 
+**The Plot dashboard** — the finished-cut analysis view (`packages/force-plotting/`, shared
+with the Directus-hosted UI). Per-axis Force/FFT/Power/Spectrogram/Waterfall charts with a
+crop-shaded time axis and an optional second, top-margin axis for radial tool position; the
+FRM point cloud renders its crop-drag preview entirely on the GPU (a vertex-shader rewrite of
+the turning-spiral geometry) so dragging the crop handles stays responsive even at 5M+ points.
+
+![The Plot dashboard, with the radial-position second axis enabled](docs/images/plot-dashboard.png)
+
+Editing an operation's metadata or dragging a new crop window batches both into one combined
+"Save changes" summary — old value → new value for every changed field, computed against the
+same auto-naming logic `OperationCode.vue` uses, before anything is written.
+
+![The combined metadata + crop "Save changes" dialog](docs/images/plot-save-changes.png)
+
 ## The pieces
 
 | Piece | Where it runs | What it is |
