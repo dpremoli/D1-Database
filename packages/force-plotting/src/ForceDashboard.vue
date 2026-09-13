@@ -120,6 +120,22 @@ const editInnerDiam = ref(0);   // donut/diaphragm inner Ø (mm); 0 = solid disc
 // changed vs what was loaded.
 const srcCut = reactive({ feed: 0, diam: 0, inner: 0, ppr: 1, rate: 25600 });
 const near = (a: number, b: number) => Math.abs(Number(a) - Number(b)) < 1e-6;
+// v-model.number leaves a cleared numeric input as '' (Vue's looseToNumber falls back to the raw
+// string when parseFloat('') is NaN) rather than coercing it to null — normalize that (and any
+// other non-numeric junk) to null so "unset" and "explicitly 0" stay distinguishable, matching
+// how the text-field patches below already send `value || null`.
+function numOrNull(v: unknown): number | null {
+	if (v === '' || v == null) return null;
+	const n = Number(v);
+	return Number.isNaN(n) ? null : n;
+}
+// Dirty/patch/summary comparator for the nullable numeric metadata fields (Sequence, Surface
+// speed, Feed, Depth of cut): null must never compare equal to 0 (a real, unset value vs. an
+// explicitly recorded zero), but two present numbers still want float tolerance, not `!==`.
+function numDiffers(a: number | null, b: number | null): boolean {
+	if (a == null || b == null) return a !== b;
+	return !near(a, b);
+}
 function seedCutFromDetail() {
 	const d = detail.value; if (!d) return;
 	srcCut.feed = Number(d.feed) || 0;
@@ -1132,13 +1148,13 @@ function regeneratePassCode() { passCodeManual.value = false; if (regeneratedPas
 const metaDirty = computed(() => {
 	if (!op.value) return false;
 	return editOpSubtype.value !== srcMeta.subtype
-		|| editOpSequence.value !== srcMeta.sequence
+		|| numDiffers(numOrNull(editOpSequence.value), srcMeta.sequence)
 		|| editOpNewEdge.value !== srcMeta.newEdge
 		|| editOpCoolant.value !== srcMeta.coolant
 		|| editOperatorName.value !== srcMeta.operator
-		|| !near(editOpCuttingSpeed.value || 0, srcMeta.cuttingSpeed || 0)
-		|| !near(editOpFeedMmPerRev.value || 0, srcMeta.feedMmPerRev || 0)
-		|| !near(editOpAxialDoc.value || 0, srcMeta.axialDoc || 0)
+		|| numDiffers(numOrNull(editOpCuttingSpeed.value), srcMeta.cuttingSpeed)
+		|| numDiffers(numOrNull(editOpFeedMmPerRev.value), srcMeta.feedMmPerRev)
+		|| numDiffers(numOrNull(editOpAxialDoc.value), srcMeta.axialDoc)
 		|| editOutcomeNotes.value !== srcMeta.outcomeNotes
 		|| editPassCode.value !== srcMeta.passCode;
 });
@@ -1283,13 +1299,13 @@ function fmtOrDash(v: unknown): string { return (v == null || v === '') ? '—' 
 function buildMetaPatch(): Record<string, any> {
 	const patch: Record<string, any> = {};
 	if (editOpSubtype.value !== srcMeta.subtype) patch.machining_operation_subtype = editOpSubtype.value || null;
-	if (editOpSequence.value !== srcMeta.sequence) patch.operation_sequence = editOpSequence.value;
+	if (numDiffers(numOrNull(editOpSequence.value), srcMeta.sequence)) patch.operation_sequence = numOrNull(editOpSequence.value);
 	if (editOpNewEdge.value !== srcMeta.newEdge) patch.machining_new_edge = editOpNewEdge.value;
 	if (editOpCoolant.value !== srcMeta.coolant) patch.machining_coolant_used = editOpCoolant.value;
 	if (editOperatorName.value !== srcMeta.operator) patch.operator_name = editOperatorName.value || null;
-	if (!near(editOpCuttingSpeed.value || 0, srcMeta.cuttingSpeed || 0)) patch.machining_cutting_speed_m_per_min = editOpCuttingSpeed.value;
-	if (!near(editOpFeedMmPerRev.value || 0, srcMeta.feedMmPerRev || 0)) patch.machining_feed_mm_per_rev = editOpFeedMmPerRev.value;
-	if (!near(editOpAxialDoc.value || 0, srcMeta.axialDoc || 0)) patch.machining_axial_depth_of_cut_mm = editOpAxialDoc.value;
+	if (numDiffers(numOrNull(editOpCuttingSpeed.value), srcMeta.cuttingSpeed)) patch.machining_cutting_speed_m_per_min = numOrNull(editOpCuttingSpeed.value);
+	if (numDiffers(numOrNull(editOpFeedMmPerRev.value), srcMeta.feedMmPerRev)) patch.machining_feed_mm_per_rev = numOrNull(editOpFeedMmPerRev.value);
+	if (numDiffers(numOrNull(editOpAxialDoc.value), srcMeta.axialDoc)) patch.machining_axial_depth_of_cut_mm = numOrNull(editOpAxialDoc.value);
 	if (editOutcomeNotes.value !== srcMeta.outcomeNotes) patch.outcome_notes = editOutcomeNotes.value || null;
 	const finalName = passCodeManual.value ? editPassCode.value : regeneratedPassCode.value;
 	if (finalName && finalName !== srcMeta.passCode) patch.pass_code = finalName;
@@ -1301,13 +1317,13 @@ const changeSummary = computed(() => {
 	const rows: { label: string; from: string; to: string }[] = [];
 	const push = (label: string, from: string, to: string) => { if (from !== to) rows.push({ label, from, to }); };
 	push('Subtype', fmtOrDash(srcMeta.subtype), fmtOrDash(editOpSubtype.value));
-	push('Sequence', fmtOrDash(srcMeta.sequence), fmtOrDash(editOpSequence.value));
+	if (numDiffers(numOrNull(editOpSequence.value), srcMeta.sequence)) rows.push({ label: 'Sequence', from: fmtOrDash(srcMeta.sequence), to: fmtOrDash(numOrNull(editOpSequence.value)) });
 	push('New edge', fmtBool(srcMeta.newEdge), fmtBool(editOpNewEdge.value));
 	push('Coolant', fmtBool(srcMeta.coolant), fmtBool(editOpCoolant.value));
 	push('Operator', fmtOrDash(srcMeta.operator), fmtOrDash(editOperatorName.value));
-	if (!near(editOpCuttingSpeed.value || 0, srcMeta.cuttingSpeed || 0)) rows.push({ label: 'Surface speed', from: fmtOrDash(srcMeta.cuttingSpeed), to: fmtOrDash(editOpCuttingSpeed.value) });
-	if (!near(editOpFeedMmPerRev.value || 0, srcMeta.feedMmPerRev || 0)) rows.push({ label: 'Feed', from: fmtOrDash(srcMeta.feedMmPerRev), to: fmtOrDash(editOpFeedMmPerRev.value) });
-	if (!near(editOpAxialDoc.value || 0, srcMeta.axialDoc || 0)) rows.push({ label: 'Depth of cut', from: fmtOrDash(srcMeta.axialDoc), to: fmtOrDash(editOpAxialDoc.value) });
+	if (numDiffers(numOrNull(editOpCuttingSpeed.value), srcMeta.cuttingSpeed)) rows.push({ label: 'Surface speed', from: fmtOrDash(srcMeta.cuttingSpeed), to: fmtOrDash(numOrNull(editOpCuttingSpeed.value)) });
+	if (numDiffers(numOrNull(editOpFeedMmPerRev.value), srcMeta.feedMmPerRev)) rows.push({ label: 'Feed', from: fmtOrDash(srcMeta.feedMmPerRev), to: fmtOrDash(numOrNull(editOpFeedMmPerRev.value)) });
+	if (numDiffers(numOrNull(editOpAxialDoc.value), srcMeta.axialDoc)) rows.push({ label: 'Depth of cut', from: fmtOrDash(srcMeta.axialDoc), to: fmtOrDash(numOrNull(editOpAxialDoc.value)) });
 	push('Notes', fmtOrDash(srcMeta.outcomeNotes), fmtOrDash(editOutcomeNotes.value));
 	if (cropTouched.value && cropDirty.value) {
 		const base = savedCropSec.value || cropWindow.value;
@@ -1532,8 +1548,7 @@ function radialValuesFor(bucketT: number[] | Float32Array | undefined): Float32A
 	const innerR = Math.max(0, (editInnerDiam.value || 0) / 2);
 	if (speedMode.value === 'measured') {
 		const m = measuredRadialPath.value;
-		const out = new Float32Array(bucketT.length);
-		if (!m?.path) { out.fill(NaN); return out; }
+		if (!m?.path) { const out = new Float32Array(bucketT.length); out.fill(NaN); return out; }
 		return alignRhoToBuckets(m.path, m.c, bucketT);
 	}
 	const out = new Float32Array(bucketT.length);
@@ -1794,10 +1809,10 @@ function fmtDateTime(v: string | null | undefined) {
 							</div>
 							<div class="edit-grid">
 								<label>Subtype<input v-model="editOpSubtype" type="text" :class="{ modified: editOpSubtype !== srcMeta.subtype }" /></label>
-								<label>Sequence<input v-model.number="editOpSequence" type="number" step="1" :class="{ modified: editOpSequence !== srcMeta.sequence }" /></label>
-								<label>Surface speed <span class="u">m/min</span><input v-model.number="editOpCuttingSpeed" type="number" step="0.1" min="0" :class="{ modified: !near(editOpCuttingSpeed || 0, srcMeta.cuttingSpeed || 0) }" /></label>
-								<label>Feed <span class="u">mm/rev</span><input v-model.number="editOpFeedMmPerRev" type="number" step="0.001" min="0" :class="{ modified: !near(editOpFeedMmPerRev || 0, srcMeta.feedMmPerRev || 0) }" /></label>
-								<label>Depth of cut <span class="u">mm</span><input v-model.number="editOpAxialDoc" type="number" step="0.01" min="0" :class="{ modified: !near(editOpAxialDoc || 0, srcMeta.axialDoc || 0) }" /></label>
+								<label>Sequence<input v-model.number="editOpSequence" type="number" step="1" :class="{ modified: numDiffers(numOrNull(editOpSequence), srcMeta.sequence) }" /></label>
+								<label>Surface speed <span class="u">m/min</span><input v-model.number="editOpCuttingSpeed" type="number" step="0.1" min="0" :class="{ modified: numDiffers(numOrNull(editOpCuttingSpeed), srcMeta.cuttingSpeed) }" /></label>
+								<label>Feed <span class="u">mm/rev</span><input v-model.number="editOpFeedMmPerRev" type="number" step="0.001" min="0" :class="{ modified: numDiffers(numOrNull(editOpFeedMmPerRev), srcMeta.feedMmPerRev) }" /></label>
+								<label>Depth of cut <span class="u">mm</span><input v-model.number="editOpAxialDoc" type="number" step="0.01" min="0" :class="{ modified: numDiffers(numOrNull(editOpAxialDoc), srcMeta.axialDoc) }" /></label>
 								<label>Operator<input v-model="editOperatorName" type="text" :class="{ modified: editOperatorName !== srcMeta.operator }" /></label>
 								<label class="chk">New edge<input v-model="editOpNewEdge" type="checkbox" /></label>
 								<label class="chk">Coolant<input v-model="editOpCoolant" type="checkbox" /></label>
