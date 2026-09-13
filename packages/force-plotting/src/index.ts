@@ -82,3 +82,6 @@ export { default as RecipeLibrary } from './RecipeLibrary.vue';
 
 export { alignAndDiff } from './compare';
 export type { AlignedDiff } from './compare';
+
+export { diagnose, activeFindings, worstSeverity, CROP_COVERAGE_MIN } from './metadataDoctor';
+export type { Finding, Dismissal, DoctorSeverity, DoctorFix } from './metadataDoctor';

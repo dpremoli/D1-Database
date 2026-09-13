@@ -11,6 +11,7 @@ import type { SpeedMode } from './liveCloud';
 import { cacheGet, cachePut, decimateCache, parseCache, type Cache } from './liveCache';
 import { buildPath, alignRhoToBuckets, type TurningSpiralParams } from './path';
 import { computeAutoCode } from './operationCode';
+import { activeFindings, diagnose, worstSeverity, type Finding } from './metadataDoctor';
 import { computeSignalStats, type SignalStats } from './signalStats';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
@@ -752,7 +753,8 @@ onBeforeUnmount(() => {
 // Samples/Operations + detail stay as the docked left rail; only the plots are flexible.
 // Per-instance panel state: a Signals panel carries its own selected channels + RPM toggle so
 // duplicated panels can differ (e.g. one showing only Fz next to one showing Fx/Fy).
-type RPanel = { i: string; type: 'signals' | 'frm' | 'wear'; x: number; y: number; w: number; h: number; channels?: Axis[]; rpm?: boolean };
+type RPanelType = 'signals' | 'frm' | 'wear' | 'doctor';
+type RPanel = { i: string; type: RPanelType; x: number; y: number; w: number; h: number; channels?: Axis[]; rpm?: boolean };
 const RIGHT_KEY = 'd1-force-right-layout-v2';
 const RIGHT_DEFAULT: RPanel[] = [
 	{ i: 'signals', type: 'signals', x: 0, y: 0, w: 6, h: 20, channels: ['Fx', 'Fy', 'Fz'], rpm: false },
@@ -762,7 +764,11 @@ const R_META: Record<string, { title: string; icon: string }> = {
 	signals: { title: 'Signals', icon: 'insights' },
 	frm: { title: 'FRM map', icon: 'fingerprint' },
 	wear: { title: 'Wear trend', icon: 'trending_up' },
+	doctor: { title: 'Metadata doctor', icon: 'health_and_safety' },
 };
+// NOTE: loadRight() validates a persisted layout with `every(p => R_META[p.type])`, so ADDING a
+// type is backwards compatible and RIGHT_KEY must NOT be bumped — bumping it would throw away
+// every user's saved panel arrangement to add one optional panel.
 function loadRight(): RPanel[] {
 	try {
 		const v = JSON.parse(localStorage.getItem(RIGHT_KEY) || 'null');
@@ -791,7 +797,7 @@ const rightRowH = computed(() =>
 );
 const rightAddOpen = ref(false);
 const hasPanel = (t: string) => rightLayout.value.some((p) => p.type === t);
-function addRightPanel(type: 'signals' | 'frm' | 'wear') {
+function addRightPanel(type: RPanelType) {
 	rightAddOpen.value = false;
 	// Place a new panel beside the shortest existing column when there's room on the top row,
 	// otherwise start a fresh row below. Half-height (h:10) so a stacked pair fits one screen and
@@ -812,7 +818,7 @@ function addRightPanel(type: 'signals' | 'frm' | 'wear') {
 	});
 }
 function closeRightPanel(i: string) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.i !== i); }
-function toggleRightType(type: 'signals' | 'frm' | 'wear') {
+function toggleRightType(type: RPanelType) {
 	if (hasPanel(type)) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.type !== type); }
 	else addRightPanel(type);
 }
@@ -869,6 +875,21 @@ onMounted(async () => {
 					'operation_id.sample_id.sample_id', 'operation_id.sample_id.sample_code',
 					'operation_id.sample_id.nickname', 'operation_id.sample_id.material_id.common_name',
 					'operation_id.sample_id.owner_person_id.full_name',
+					// Metadata Doctor (metadataDoctor.ts) runs client-side over this whole list, so every
+					// value it compares has to be fetched here — the archive is ~190 rows and these are all
+					// scalars, so widening the one existing `limit:-1` query is cheaper than a second pass.
+					// CAUTION: Directus rejects the ENTIRE request if any one field is unknown to it, so a
+					// typo here (or a schema change the running container hasn't picked up) empties the
+					// whole dashboard, not just one check. `doctor_dismissed` in particular needs
+					// `docker restart d1-database-directus-1` after its migration — AUTO_RELOAD does not
+					// fire on Docker-Windows, and until then every query below returns FORBIDDEN.
+					'n_raw', 'cut_start_idx', 'cut_end_idx', 'crop_start_idx_override', 'crop_end_idx_override',
+					'feed', 'depth_of_cut', 'surface_speed', 'cut_diameter', 'outer_diameter',
+					'trigger_time', 'doctor_dismissed',
+					'operation_id.operation_sequence', 'operation_id.machining_operation_subtype',
+					'operation_id.process_category', 'operation_id.machining_cutting_speed_m_per_min',
+					'operation_id.machining_feed_mm_per_rev', 'operation_id.machining_axial_depth_of_cut_mm',
+					'operation_id.machining_workpiece_diameter_mm',
 				],
 			},
 		});
@@ -966,6 +987,57 @@ function frmQuality(o: any): { level: string; label: string } {
 	return { level: 'red', label: 'No plot data' };
 }
 
+// ---- Metadata Doctor ------------------------------------------------------------------------
+// Metadata health is a DIFFERENT axis from frmQuality above: that one answers "is this plottable",
+// this one "do the .mat and D1 agree". They get separate markers on purpose — folding a feed
+// conflict into "no plot data" would lose the distinction the user needs in order to act.
+//
+// The two noisy checks are opt-in (see metadataDoctor.ts): legacy pass_codes came from filenames
+// rather than computeAutoCode, and docs/force-file-standards.md §7 records that dates in filenames
+// and pass codes are frequently wrong — so both are informational and off until asked for.
+const DOCTOR_OPTIONAL = [
+	{ id: 'name.stale', label: 'Name vs fields' },
+	{ id: 'date.trigger', label: 'Recording vs operation date' },
+];
+const DOCTOR_OPTS_KEY = 'd1-force-doctor-opts';
+const DOCTOR_ONLY_KEY = 'd1-force-doctor-only';
+function loadStoredList(key: string): string[] {
+	try {
+		const v = JSON.parse(localStorage.getItem(key) || 'null');
+		return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+	} catch { return []; }
+}
+const doctorScope = ref<'op' | 'all'>('op');
+const doctorOptional = ref<string[]>(loadStoredList(DOCTOR_OPTS_KEY));
+const issuesOnly = ref((() => { try { return localStorage.getItem(DOCTOR_ONLY_KEY) === '1'; } catch { return false; } })());
+watch(doctorOptional, (v) => { try { localStorage.setItem(DOCTOR_OPTS_KEY, JSON.stringify(v)); } catch { /* ignore */ } }, { deep: true });
+watch(issuesOnly, (v) => { try { localStorage.setItem(DOCTOR_ONLY_KEY, v ? '1' : '0'); } catch { /* ignore */ } });
+
+// Findings per list row, recomputed whenever a row or the enabled-check set changes. Cached in one
+// Map rather than called per-cell: the dot, the filter, the counts and the panel all want the same
+// answer, and diagnose() runs over every row in the list.
+const doctorByRow = computed(() => {
+	const opts = doctorOptional.value;
+	const m = new Map<string, Finding[]>();
+	for (const r of rows.value) m.set(r.id, diagnose(r, opts));
+	return m;
+});
+function doctorFindingsFor(r: any): Finding[] { return doctorByRow.value.get(r?.id) ?? []; }
+function doctorQuality(r: any): { level: string; label: string; count: number } | null {
+	const active = activeFindings(doctorFindingsFor(r));
+	if (!active.length) return null;
+	const level = worstSeverity(doctorFindingsFor(r)) ?? 'info';
+	const head = active[0].title;
+	return {
+		level,
+		count: active.length,
+		label: active.length === 1 ? head : `${head} (+${active.length - 1} more)`,
+	};
+}
+// Every operation carrying at least one finding that still needs action.
+const doctorFlaggedCount = computed(() =>
+	rows.value.reduce((n, r) => n + (activeFindings(doctorFindingsFor(r)).length ? 1 : 0), 0));
+
 const displayedOps = computed(() => {
 	let list = filterSampleId.value
 		? rows.value.filter((r) => sampleOf(r)?.sample_id === filterSampleId.value)
@@ -974,6 +1046,7 @@ const displayedOps = computed(() => {
 	if (q) list = list.filter((r) =>
 		(r.operation_id?.pass_code || '').toLowerCase().includes(q)
 		|| (sampleOf(r)?.sample_code || '').toLowerCase().includes(q));
+	if (issuesOnly.value) list = list.filter((r) => activeFindings(doctorFindingsFor(r)).length > 0);
 	return list.sort(byPassCode);
 });
 
@@ -1030,6 +1103,10 @@ async function selectOp(row: any) {
 					// without these the regenerated pass_code silently drops its parameter suffix.
 					'operation_id.machining_cutting_speed_m_per_min', 'operation_id.machining_feed_mm_per_rev',
 					'operation_id.machining_axial_depth_of_cut_mm',
+					// Needed by the Metadata Doctor's diameter pair (metadataDoctor.ts). `*` above covers
+					// only machining_force_analysis's own columns, so without this the check reads the
+					// operation's diameter as null and reports a spurious backfill.
+					'operation_id.machining_workpiece_diameter_mm', 'operation_id.machining_spindle_speed_rpm',
 					'operation_id.equipment_id.equipment_name', 'operation_id.method_id.method_name',
 					'operation_id.sample_id.sample_id', 'operation_id.sample_id.sample_code', 'operation_id.sample_id.nickname',
 					'operation_id.sample_id.form', 'operation_id.sample_id.manufactured_date',
@@ -1083,6 +1160,7 @@ const opLabel = computed(() => op.value?.pass_code || opSample.value?.sample_cod
 const srcMeta = reactive({
 	subtype: '', sequence: null as number | null, newEdge: null as boolean | null, coolant: null as boolean | null,
 	operator: '', cuttingSpeed: null as number | null, feedMmPerRev: null as number | null, axialDoc: null as number | null,
+	workpieceDiam: null as number | null,
 	outcomeNotes: '', passCode: '',
 });
 const editOpSubtype = ref('');
@@ -1095,6 +1173,11 @@ const editOperatorName = ref('');
 const editOpCuttingSpeed = ref<number | null>(null);   // machining_cutting_speed_m_per_min (Vc)
 const editOpFeedMmPerRev = ref<number | null>(null);   // machining_feed_mm_per_rev
 const editOpAxialDoc = ref<number | null>(null);       // machining_axial_depth_of_cut_mm
+// The operation record's own workpiece diameter. NOT the same field as the FRM "Diameter" control
+// above (that one is machining_force_analysis.outer_diameter, a geometry override for the spiral):
+// this is the operation's recorded stock diameter, and unlike the three params above it does not
+// feed computeAutoCode, so editing it never changes the operation name.
+const editOpWorkpieceDiam = ref<number | null>(null);  // machining_workpiece_diameter_mm
 const editOutcomeNotes = ref('');
 const editPassCode = ref('');
 // Mirrors OperationCode.vue's manual-vs-auto toggle: typing into the name field flips to manual
@@ -1112,6 +1195,7 @@ function seedMetaFromDetail() {
 	srcMeta.cuttingSpeed = o.machining_cutting_speed_m_per_min ?? null;
 	srcMeta.feedMmPerRev = o.machining_feed_mm_per_rev ?? null;
 	srcMeta.axialDoc = o.machining_axial_depth_of_cut_mm ?? null;
+	srcMeta.workpieceDiam = o.machining_workpiece_diameter_mm ?? null;
 	srcMeta.outcomeNotes = o.outcome_notes || '';
 	srcMeta.passCode = o.pass_code || '';
 	editOpSubtype.value = srcMeta.subtype;
@@ -1122,6 +1206,7 @@ function seedMetaFromDetail() {
 	editOpCuttingSpeed.value = srcMeta.cuttingSpeed;
 	editOpFeedMmPerRev.value = srcMeta.feedMmPerRev;
 	editOpAxialDoc.value = srcMeta.axialDoc;
+	editOpWorkpieceDiam.value = srcMeta.workpieceDiam;
 	editOutcomeNotes.value = srcMeta.outcomeNotes;
 	editPassCode.value = srcMeta.passCode;
 	passCodeManual.value = true;
@@ -1155,9 +1240,104 @@ const metaDirty = computed(() => {
 		|| numDiffers(numOrNull(editOpCuttingSpeed.value), srcMeta.cuttingSpeed)
 		|| numDiffers(numOrNull(editOpFeedMmPerRev.value), srcMeta.feedMmPerRev)
 		|| numDiffers(numOrNull(editOpAxialDoc.value), srcMeta.axialDoc)
+		|| numDiffers(numOrNull(editOpWorkpieceDiam.value), srcMeta.workpieceDiam)
 		|| editOutcomeNotes.value !== srcMeta.outcomeNotes
 		|| editPassCode.value !== srcMeta.passCode;
 });
+
+// ---- Metadata Doctor, selected operation ----------------------------------------------------
+// Diagnosed from `detail` (not the list row) so the panel reflects edits the moment they're saved
+// and the detail row is refreshed. Falls back to the list row while the detail is still loading.
+const doctorFindings = computed<Finding[]>(() => {
+	const d = detail.value;
+	if (d) return diagnose(d, doctorOptional.value);
+	const r = rows.value.find((x) => x.id === selectedRowId.value);
+	return r ? doctorFindingsFor(r) : [];
+});
+const doctorActive = computed(() => activeFindings(doctorFindings.value));
+const doctorDismissedList = computed(() => doctorFindings.value.filter((f) => f.dismissed));
+
+// The `adopt` fix writes the .mat's value into the operation record by seeding the SAME edit ref
+// the metadata box binds to, so the change flows through the existing combined save dialog (one
+// confirm, one write, old -> new summary) instead of introducing a second write path.
+const ADOPT_TARGETS: Record<string, { ref: typeof editOpFeedMmPerRev; label: string }> = {
+	machining_feed_mm_per_rev: { ref: editOpFeedMmPerRev, label: 'Feed' },
+	machining_axial_depth_of_cut_mm: { ref: editOpAxialDoc, label: 'Depth of cut' },
+	machining_cutting_speed_m_per_min: { ref: editOpCuttingSpeed, label: 'Surface speed' },
+	machining_workpiece_diameter_mm: { ref: editOpWorkpieceDiam, label: 'Workpiece Ø' },
+};
+// The numeric test belongs HERE, not in adoptFinding: canAdopt gates whether the button renders,
+// so if the two disagree the UI can offer a button whose handler silently refuses to act.
+function canAdopt(f: Finding): boolean {
+	return f.fix === 'adopt' && typeof f.matValue === 'number' && !!f.field && f.field in ADOPT_TARGETS;
+}
+// NOTE: adopting deliberately does NOT rename the operation. Feed/DoC/Vc all feed computeAutoCode,
+// but passCodeManual starts true, so the stored name is left alone unless the user explicitly hits
+// regenerate — pass_code is the key the archive filenames and the .mat-linking work are matched on,
+// so a one-click backfill must not silently rename the operation. The save dialog still shows what
+// the regenerated name WOULD be, as information.
+function adoptFinding(f: Finding) {
+	if (!canAdopt(f)) return;
+	const t = ADOPT_TARGETS[f.field!];
+	t.ref.value = f.matValue as number;
+	// Reveal the metadata box holding the field we just seeded, so the pending edit is visible
+	// rather than silently staged behind a folded accordion.
+	openPanel.value = 'detail';
+}
+function applyFix(f: Finding) {
+	if (f.fix === 'adopt') return adoptFinding(f);
+	if (f.fix === 'regen') return regeneratePassCode();
+	if (f.fix === 'crop') return startCropFix();
+	if (f.fix === 'link') return openOpForm();
+}
+// No auto-fix for a bad crop: the right window is a human judgement. Put the crop handles in front
+// of the user instead — Lite is the only mode that recomputes the crop live (see onCropEdit).
+function startCropFix() {
+	if (liveAvailable.value) frmMode.value = 'lite';
+	document.querySelector('.charts-col')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+const doctorBusy = ref('');
+const doctorErr = ref('');
+async function setDismissed(f: Finding, dismissed: boolean) {
+	const d = detail.value;
+	if (!d) return;
+	doctorBusy.value = f.id;
+	doctorErr.value = '';
+	const next: Record<string, any> = { ...(d.doctor_dismissed || {}) };
+	if (dismissed) next[f.id] = { sig: f.sig, at: new Date().toISOString(), by: host.currentUser()?.id ?? null };
+	else delete next[f.id];
+	const payload = Object.keys(next).length ? next : null;
+	try {
+		await api.patch(`/items/machining_force_analysis/${d.id}`, { doctor_dismissed: payload });
+		d.doctor_dismissed = payload;
+		// Keep the list row in step so the dot and the "issues only" filter update without a refetch.
+		const r = rows.value.find((x) => x.id === d.id);
+		if (r) r.doctor_dismissed = payload;
+	} catch (e: any) {
+		doctorErr.value = e?.response?.status === 403 ? 'Not permitted' : 'Could not save';
+	} finally { doctorBusy.value = ''; }
+}
+
+// "All operations" mode: every finding across the archive, grouped by check, worst severity first.
+const doctorGroups = computed(() => {
+	const g = new Map<string, { id: string; title: string; severity: string; rows: any[] }>();
+	for (const r of rows.value) {
+		for (const f of activeFindings(doctorFindingsFor(r))) {
+			let e = g.get(f.id);
+			if (!e) { e = { id: f.id, title: f.title, severity: f.severity, rows: [] }; g.set(f.id, e); }
+			e.rows.push(r);
+		}
+	}
+	const rank: Record<string, number> = { error: 3, warn: 2, info: 1 };
+	return [...g.values()].sort((a, b) =>
+		(rank[b.severity] - rank[a.severity]) || (b.rows.length - a.rows.length));
+});
+function toggleOptionalCheck(id: string) {
+	const i = doctorOptional.value.indexOf(id);
+	if (i >= 0) doctorOptional.value.splice(i, 1);
+	else doctorOptional.value.push(id);
+}
 
 // Sample info: rich from the loaded operation, else the light list row.
 const sampleInfo = computed(() => {
@@ -1306,6 +1486,7 @@ function buildMetaPatch(): Record<string, any> {
 	if (numDiffers(numOrNull(editOpCuttingSpeed.value), srcMeta.cuttingSpeed)) patch.machining_cutting_speed_m_per_min = numOrNull(editOpCuttingSpeed.value);
 	if (numDiffers(numOrNull(editOpFeedMmPerRev.value), srcMeta.feedMmPerRev)) patch.machining_feed_mm_per_rev = numOrNull(editOpFeedMmPerRev.value);
 	if (numDiffers(numOrNull(editOpAxialDoc.value), srcMeta.axialDoc)) patch.machining_axial_depth_of_cut_mm = numOrNull(editOpAxialDoc.value);
+	if (numDiffers(numOrNull(editOpWorkpieceDiam.value), srcMeta.workpieceDiam)) patch.machining_workpiece_diameter_mm = numOrNull(editOpWorkpieceDiam.value);
 	if (editOutcomeNotes.value !== srcMeta.outcomeNotes) patch.outcome_notes = editOutcomeNotes.value || null;
 	const finalName = passCodeManual.value ? editPassCode.value : regeneratedPassCode.value;
 	if (finalName && finalName !== srcMeta.passCode) patch.pass_code = finalName;
@@ -1324,6 +1505,7 @@ const changeSummary = computed(() => {
 	if (numDiffers(numOrNull(editOpCuttingSpeed.value), srcMeta.cuttingSpeed)) rows.push({ label: 'Surface speed', from: fmtOrDash(srcMeta.cuttingSpeed), to: fmtOrDash(numOrNull(editOpCuttingSpeed.value)) });
 	if (numDiffers(numOrNull(editOpFeedMmPerRev.value), srcMeta.feedMmPerRev)) rows.push({ label: 'Feed', from: fmtOrDash(srcMeta.feedMmPerRev), to: fmtOrDash(numOrNull(editOpFeedMmPerRev.value)) });
 	if (numDiffers(numOrNull(editOpAxialDoc.value), srcMeta.axialDoc)) rows.push({ label: 'Depth of cut', from: fmtOrDash(srcMeta.axialDoc), to: fmtOrDash(numOrNull(editOpAxialDoc.value)) });
+	if (numDiffers(numOrNull(editOpWorkpieceDiam.value), srcMeta.workpieceDiam)) rows.push({ label: 'Workpiece Ø', from: fmtOrDash(srcMeta.workpieceDiam), to: fmtOrDash(numOrNull(editOpWorkpieceDiam.value)) });
 	push('Notes', fmtOrDash(srcMeta.outcomeNotes), fmtOrDash(editOutcomeNotes.value));
 	if (cropTouched.value && cropDirty.value) {
 		const base = savedCropSec.value || cropWindow.value;
@@ -1703,6 +1885,7 @@ function fmtDateTime(v: string | null | undefined) {
 							<button @click="addRightPanel('signals')"><v-icon name="insights" x-small /> Signals</button>
 							<button @click="addRightPanel('frm')"><v-icon name="fingerprint" x-small /> FRM map</button>
 							<button @click="addRightPanel('wear')"><v-icon name="trending_up" x-small /> Wear trend</button>
+							<button @click="addRightPanel('doctor')"><v-icon name="health_and_safety" x-small /> Metadata doctor</button>
 						</div>
 					</div>
 					<button class="pt-chip" title="Reset panel layout" @click="resetRightLayout"><v-icon name="grid_view" x-small /></button>
@@ -1737,10 +1920,19 @@ function fmtDateTime(v: string | null | undefined) {
 							<button v-if="filterSampleId" class="clearbtn" @click="filterSampleId = null">all</button>
 						</div>
 						<input v-model="opSearch" class="search" placeholder="Search operations…" />
+						<!-- Metadata Doctor filter. Separate from the plot-readiness dot: this one is about
+						     whether the .mat and D1 agree, which is a different question. -->
+						<label v-if="doctorFlaggedCount" class="doc-filter">
+							<input v-model="issuesOnly" type="checkbox" />
+							<span>Metadata issues only</span>
+							<span class="chip">{{ doctorFlaggedCount }}</span>
+						</label>
 						<div class="list">
 							<button v-for="o in displayedOps" :key="o.id"
 								class="rowcard" :class="{ active: selectedRowId === o.id }" @click="selectOp(o)">
 								<span class="mono sm"><span class="qdot" :class="frmQuality(o).level" :title="frmQuality(o).label"></span>{{ o.operation_id?.pass_code || '—' }}
+									<span v-if="doctorQuality(o)" class="docdot" :class="doctorQuality(o)!.level"
+										:title="`Metadata: ${doctorQuality(o)!.label}`">{{ doctorQuality(o)!.count }}</span>
 									<span v-if="o.id === latestRowId" class="latest-chip" title="The most recently saved recording">
 										<v-icon name="bolt" x-small />Latest
 									</span>
@@ -1813,6 +2005,10 @@ function fmtDateTime(v: string | null | undefined) {
 								<label>Surface speed <span class="u">m/min</span><input v-model.number="editOpCuttingSpeed" type="number" step="0.1" min="0" :class="{ modified: numDiffers(numOrNull(editOpCuttingSpeed), srcMeta.cuttingSpeed) }" /></label>
 								<label>Feed <span class="u">mm/rev</span><input v-model.number="editOpFeedMmPerRev" type="number" step="0.001" min="0" :class="{ modified: numDiffers(numOrNull(editOpFeedMmPerRev), srcMeta.feedMmPerRev) }" /></label>
 								<label>Depth of cut <span class="u">mm</span><input v-model.number="editOpAxialDoc" type="number" step="0.01" min="0" :class="{ modified: numDiffers(numOrNull(editOpAxialDoc), srcMeta.axialDoc) }" /></label>
+								<!-- The operation's recorded stock diameter — distinct from the FRM "Diameter"
+								     control above (machining_force_analysis.outer_diameter, a spiral-geometry
+								     override). Editable so the Doctor's diameter backfill has somewhere to write. -->
+								<label>Workpiece Ø <span class="u">mm</span><input v-model.number="editOpWorkpieceDiam" type="number" step="0.1" min="0" :class="{ modified: numDiffers(numOrNull(editOpWorkpieceDiam), srcMeta.workpieceDiam) }" /></label>
 								<label>Operator<input v-model="editOperatorName" type="text" :class="{ modified: editOperatorName !== srcMeta.operator }" /></label>
 								<label class="chk">New edge<input v-model="editOpNewEdge" type="checkbox" /></label>
 								<label class="chk">Coolant<input v-model="editOpCoolant" type="checkbox" /></label>
@@ -2123,6 +2319,94 @@ function fmtDateTime(v: string | null | undefined) {
 							<WearTrend :detail="detail" />
 						</div>
 
+						<!-- Metadata doctor. Two views over the same diagnose() output: the selected
+						     operation's findings with their fixes, and a scan of the whole archive. -->
+						<div v-else-if="item.type === 'doctor'" class="card pg-card doc-card">
+							<div class="pg-bar">
+								<span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span>
+								<span class="pg-title"><v-icon name="health_and_safety" x-small /> Metadata doctor</span>
+								<span class="segmode doc-mode">
+									<button class="segbtn" :class="{ on: doctorScope === 'op' }" @click="doctorScope = 'op'">This op</button>
+									<button class="segbtn" :class="{ on: doctorScope === 'all' }" @click="doctorScope = 'all'">All</button>
+								</span>
+								<button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button>
+							</div>
+
+							<div class="doc-body">
+								<div class="doc-opts">
+									<span class="doc-optlabel">Also check</span>
+									<label v-for="c in DOCTOR_OPTIONAL" :key="c.id" class="doc-opt">
+										<input type="checkbox" :checked="doctorOptional.includes(c.id)" @change="toggleOptionalCheck(c.id)" />
+										<span>{{ c.label }}</span>
+									</label>
+								</div>
+
+								<!-- Selected operation -->
+								<template v-if="doctorScope === 'op'">
+									<div v-if="!detail" class="empty">Select an operation</div>
+									<div v-else-if="!doctorActive.length && !doctorDismissedList.length" class="doc-ok">
+										<v-icon name="check_circle" small /> No metadata issues found
+									</div>
+									<template v-else>
+										<div v-for="f in doctorActive" :key="f.id" class="doc-find" :class="f.severity">
+											<div class="doc-find-head">
+												<span class="doc-sev" :class="f.severity"></span>
+												<span class="doc-title">{{ f.title }}</span>
+											</div>
+											<p class="doc-detail">{{ f.detail }}</p>
+											<div v-if="f.matValue != null || f.dbValue != null" class="doc-cmp">
+												<span class="doc-side"><em>.mat</em> <b>{{ fmtOrDash(f.matValue) }}</b></span>
+												<span class="doc-arrow">vs</span>
+												<span class="doc-side"><em>D1</em> <b>{{ fmtOrDash(f.dbValue) }}</b></span>
+											</div>
+											<div class="doc-acts">
+												<!-- Labelled so it is unambiguous which record changes: the .mat is never
+												     written (see mat-metadata-migration — fileVersion selects the force
+												     matrix parser, so editing legacy metadata corrupts parsing). -->
+												<button v-if="canAdopt(f)" class="doc-btn primary" @click="applyFix(f)">
+													Use .mat value in D1
+												</button>
+												<button v-else-if="f.fix === 'regen'" class="doc-btn primary" @click="applyFix(f)">Regenerate name</button>
+												<button v-else-if="f.fix === 'crop'" class="doc-btn primary" @click="applyFix(f)">Adjust crop…</button>
+												<button v-else-if="f.fix === 'link'" class="doc-btn primary" @click="applyFix(f)">Open record…</button>
+												<button class="doc-btn" :disabled="doctorBusy === f.id" @click="setDismissed(f, true)">Not a problem</button>
+											</div>
+										</div>
+
+										<div v-if="doctorDismissedList.length" class="doc-dismissed">
+											<span class="doc-optlabel">Dismissed</span>
+											<div v-for="f in doctorDismissedList" :key="f.id" class="doc-dis-row">
+												<span class="doc-title">{{ f.title }}</span>
+												<button class="doc-btn" :disabled="doctorBusy === f.id" @click="setDismissed(f, false)">Restore</button>
+											</div>
+										</div>
+									</template>
+									<div v-if="doctorErr" class="doc-err">{{ doctorErr }}</div>
+								</template>
+
+								<!-- Whole archive -->
+								<template v-else>
+									<div v-if="!doctorGroups.length" class="doc-ok">
+										<v-icon name="check_circle" small /> No metadata issues across {{ rows.length }} operations
+									</div>
+									<div v-for="g in doctorGroups" :key="g.id" class="doc-group">
+										<div class="doc-group-head">
+											<span class="doc-sev" :class="g.severity"></span>
+											<span class="doc-title">{{ g.title }}</span>
+											<span class="chip">{{ g.rows.length }}</span>
+										</div>
+										<!-- data-row-id is the ANALYSIS-row id, which is not 1:1 with the pass_code
+										     shown: one operation can have more than one .mat, so two rows can
+										     carry the same name. Count on this, never on the label. -->
+										<button v-for="r in g.rows" :key="r.id" class="doc-oprow" :data-row-id="r.id"
+											:class="{ active: selectedRowId === r.id }" @click="selectOp(r)">
+											<span class="mono sm">{{ r.operation_id?.pass_code || sampleOf(r)?.sample_code || r.id }}</span>
+										</button>
+									</div>
+								</template>
+							</div>
+						</div>
+
 						<div v-else-if="item.type === 'frm'" class="card col-frm frm-col pg-card">
 							<div class="frm-head pg-headbar">
 								<span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span>
@@ -2359,6 +2643,74 @@ function fmtDateTime(v: string | null | undefined) {
 	vertical-align: middle;
 }
 .latest-chip .v-icon-shim { font-size: 11px !important; }
+
+/* ---- Metadata doctor -------------------------------------------------------------------
+   .docdot is an inline count badge, NOT a second corner dot: .qdot already owns the corner and
+   answers a different question (is this plottable), so the two must stay visually distinct. */
+.docdot {
+	display: inline-flex; align-items: center; justify-content: center; margin-left: 5px;
+	min-width: 14px; height: 14px; padding: 0 4px; border-radius: 99px;
+	font-family: var(--theme--fonts--sans--font-family, system-ui, sans-serif);
+	font-size: 9px; font-weight: 700; vertical-align: middle; color: #fff;
+}
+.docdot.error { background: #dc2626; }
+.docdot.warn { background: #d97706; }
+.docdot.info { background: #64748b; }
+.doc-filter {
+	display: flex; align-items: center; gap: 6px; padding: 4px 10px 6px;
+	font-size: 11px; color: var(--theme--foreground-subdued, #6b7684); cursor: pointer;
+}
+.doc-filter input { margin: 0; cursor: pointer; }
+.doc-card { display: flex; flex-direction: column; min-height: 0; }
+.doc-mode { margin-left: auto; }
+.doc-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px 10px 10px; }
+.doc-opts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.doc-optlabel {
+	font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+	color: var(--theme--foreground-subdued, #6b7684);
+}
+.doc-opt { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; }
+.doc-opt input { margin: 0; cursor: pointer; }
+.doc-ok { display: flex; align-items: center; gap: 6px; padding: 14px 2px; font-size: 12px; color: #16a34a; }
+.doc-find {
+	border: 1px solid var(--theme--border-color-subdued, #e7ebf0);
+	border-left-width: 3px; border-radius: 6px; padding: 8px 10px; margin-bottom: 8px;
+}
+.doc-find.error { border-left-color: #dc2626; }
+.doc-find.warn { border-left-color: #d97706; }
+.doc-find.info { border-left-color: #64748b; }
+.doc-find-head { display: flex; align-items: center; gap: 6px; }
+.doc-sev { width: 7px; height: 7px; border-radius: 99px; flex: none; }
+.doc-sev.error { background: #dc2626; }
+.doc-sev.warn { background: #d97706; }
+.doc-sev.info { background: #64748b; }
+.doc-title { font-size: 12px; font-weight: 600; }
+.doc-detail { margin: 4px 0 0; font-size: 11px; line-height: 1.45; color: var(--theme--foreground-subdued, #6b7684); }
+.doc-cmp { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 11px; }
+.doc-side em { font-style: normal; text-transform: uppercase; font-size: 9px; letter-spacing: 0.04em;
+	color: var(--theme--foreground-subdued, #6b7684); margin-right: 4px; }
+.doc-side b { font-family: var(--theme--fonts--monospace--font-family, ui-monospace, monospace); }
+.doc-arrow { color: var(--theme--foreground-subdued, #6b7684); }
+.doc-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.doc-btn {
+	border: 1px solid var(--theme--border-color, #d3dae4); background: transparent;
+	border-radius: 5px; padding: 3px 9px; font-size: 11px; cursor: pointer;
+	color: var(--theme--foreground, #263238);
+}
+.doc-btn:hover:not(:disabled) { background: var(--theme--background-subdued, #f4f6f8); }
+.doc-btn:disabled { opacity: 0.5; cursor: default; }
+.doc-btn.primary { border-color: var(--theme--primary, #6644ff); color: var(--theme--primary, #6644ff); font-weight: 600; }
+.doc-dismissed { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--theme--border-color-subdued, #e7ebf0); }
+.doc-dis-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; opacity: 0.65; }
+.doc-err { margin-top: 8px; font-size: 11px; color: #dc2626; }
+.doc-group { margin-bottom: 10px; }
+.doc-group-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.doc-oprow {
+	display: block; width: 100%; text-align: left; border: 0; background: transparent;
+	padding: 3px 8px; border-radius: 4px; cursor: pointer;
+}
+.doc-oprow:hover { background: var(--theme--background-subdued, #f4f6f8); }
+.doc-oprow.active { background: color-mix(in srgb, var(--theme--primary, #6644ff) 12%, transparent); }
 /* Multi-cut comparison bar (Signals panel, force mode). */
 .cmp-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 10px;
 	border-bottom: 1px solid var(--theme--border-color-subdued, #e7ebf0); }
