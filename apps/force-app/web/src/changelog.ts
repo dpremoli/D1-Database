@@ -9,6 +9,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.20',
+		date: '2026-09-13',
+		notes: [
+			'Plot dashboard: dragging the FRM point-cloud crop handles is now instant even on multi-million-point cuts (previously visibly laggy) — the crop preview moved onto the GPU instead of being recomputed on every drag frame.',
+			'Plot dashboard: the mouse cursor no longer lags when scrubbing across multiple open charts at once.',
+			'Fixed: a saved crop override stopped being applied once you left Live mode, silently reverting to the auto-detected crop window.',
+			'Plot dashboard: dark mode grid lines and axis ticks are now dim instead of bright white, and axis text is larger and easier to read.',
+			'Plot dashboard: an optional second axis showing the tool\'s radial position (distance from the part centre) can now be added to the Signals charts.',
+			'Plot dashboard: Power, Spectrogram, and Waterfall views now have the same per-axis layout, axis labels, hover readout, and zoom/pan as Force/FFT (previously collapsed multi-axis panels to a single axis and had no interactive axes at all).',
+			'Plot dashboard: editing an operation\'s metadata (subtype, sequence, cutting parameters, notes) and adjusting its crop now save together in one combined "Save changes" summary, including a preview of the regenerated operation name.',
+			'Fixed: the Plot page could scroll slightly on a normal-size monitor even though nothing was actually cut off.',
+		],
+	},
+	{
 		version: '0.1.19',
 		date: '2026-09-11',
 		notes: [
