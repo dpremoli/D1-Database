@@ -144,3 +144,17 @@ async def create_issue(
         return {"ok": False, "reason": f"bug-report relay error (HTTP {res.status_code})"}
 
     return res.json()
+
+
+async def list_issues() -> dict:
+    """Returns {"ok": True, "issues": [...]} or {"ok": False, "reason": ...}. Never raises."""
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            res = await client.get(f"{_relay_url()}/issues")
+    except httpx.HTTPError as e:
+        return {"ok": False, "reason": f"could not reach the bug-report relay: {e}"}
+
+    if res.status_code >= 300:
+        return {"ok": False, "reason": f"bug-report relay error (HTTP {res.status_code})"}
+
+    return res.json()

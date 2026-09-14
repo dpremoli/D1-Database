@@ -1,5 +1,6 @@
 """Bug-report issue body assembly (apps/force-app/backend/app/bug_report.py)."""
 
+import httpx
 import pytest
 
 from app import bug_report
@@ -136,3 +137,57 @@ async def test_does_not_double_prefix_a_title_the_user_already_typed(fake_relay)
     title isn't doubled, never trusted in place of the picker to choose the label."""
     await bug_report.create_issue(**{**CREATE_ARGS, "title": "[Bug] already tagged"}, kind="bug")
     assert fake_relay.last_payload["title"] == "[Bug] already tagged"
+
+
+# ---- list_issues: proxies the relay's /issues, never raises ----------------------------------
+
+
+class _FakeGetResponse:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class _FakeAsyncClientGet:
+    def __init__(self, *a, **kw):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url):
+        return _FakeGetResponse(200, {"ok": True, "issues": [{"number": 1}]})
+
+
+@pytest.mark.anyio
+async def test_list_issues_returns_relay_payload(monkeypatch):
+    monkeypatch.setattr(bug_report.httpx, "AsyncClient", _FakeAsyncClientGet)
+    result = await bug_report.list_issues()
+    assert result == {"ok": True, "issues": [{"number": 1}]}
+
+
+@pytest.mark.anyio
+async def test_list_issues_surfaces_relay_http_error(monkeypatch):
+    class _Failing:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            raise httpx.ConnectError("boom")
+
+    monkeypatch.setattr(bug_report.httpx, "AsyncClient", _Failing)
+    result = await bug_report.list_issues()
+    assert result["ok"] is False
+    assert "could not reach" in result["reason"]

@@ -593,3 +593,16 @@ def test_report_bug_forwards_kind_and_defaults_to_bug(tmp_path, monkeypatch):
 
     assert calls[0]["kind"] == "bug"
     assert calls[1]["kind"] == "feature"
+
+
+def test_report_bug_issues_proxies_the_relay(monkeypatch):
+    async def _fake_list_issues():
+        return {"ok": True, "issues": [{"number": 3, "title": "[Bug] x"}]}
+
+    monkeypatch.setattr(main.bug_report, "list_issues", _fake_list_issues)
+
+    with TestClient(fastapi_app) as client:
+        r = client.get("/support/report-bug/issues")
+
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "issues": [{"number": 3, "title": "[Bug] x"}]}

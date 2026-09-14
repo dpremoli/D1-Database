@@ -100,3 +100,89 @@ def test_report_surfaces_github_rejection(client, monkeypatch):
     assert data["ok"] is False
     assert "422" in data["reason"]
     assert "Validation failed" in data["reason"]
+
+
+def test_issues_fails_closed_when_not_configured(client, monkeypatch):
+    monkeypatch.delenv("GITHUB_APP_ID", raising=False)
+    r = client.get("/issues")
+    data = r.json()
+    assert data["ok"] is False
+    assert "not configured" in data["reason"]
+
+
+def test_issues_lists_and_strips_pull_requests(client, monkeypatch):
+    monkeypatch.setattr(srv, "configured", lambda: True)
+
+    async def fake_get_token(self):
+        return "installation-token"
+
+    monkeypatch.setattr(srv._TokenCache, "get", fake_get_token)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer installation-token"
+        assert request.url.params["labels"] == "in-app-report"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 5,
+                    "title": "[Bug] plot lags",
+                    "html_url": "https://github.com/x/y/issues/5",
+                    "state": "open",
+                    "labels": [{"name": "bug"}, {"name": "in-app-report"}],
+                    "created_at": "2026-09-14T00:00:00Z",
+                },
+                {
+                    "number": 6,
+                    "title": "an actual PR, not a report",
+                    "pull_request": {"url": "https://api.github.com/x"},
+                    "state": "open",
+                    "labels": [],
+                },
+            ],
+        )
+
+    real_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kw: real_async_client(
+            transport=httpx.MockTransport(handler),
+            **{k: v for k, v in kw.items() if k != "transport"},
+        ),
+    )
+
+    r = client.get("/issues")
+    data = r.json()
+    assert data["ok"] is True
+    assert len(data["issues"]) == 1
+    assert data["issues"][0]["number"] == 5
+    assert data["issues"][0]["labels"] == ["bug", "in-app-report"]
+
+
+def test_issues_surfaces_github_rejection(client, monkeypatch):
+    monkeypatch.setattr(srv, "configured", lambda: True)
+
+    async def fake_get_token(self):
+        return "installation-token"
+
+    monkeypatch.setattr(srv._TokenCache, "get", fake_get_token)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"message": "rate limited"})
+
+    real_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kw: real_async_client(
+            transport=httpx.MockTransport(handler),
+            **{k: v for k, v in kw.items() if k != "transport"},
+        ),
+    )
+
+    r = client.get("/issues")
+    data = r.json()
+    assert data["ok"] is False
+    assert "403" in data["reason"]
+    assert "rate limited" in data["reason"]

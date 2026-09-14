@@ -470,6 +470,11 @@ async def report_bug_status() -> dict:
     return {"configured": bug_report.configured()}
 
 
+@app.get("/support/report-bug/issues")
+async def report_bug_issues() -> dict:
+    return await bug_report.list_issues()
+
+
 def _diag_lines() -> list[str]:
     """Machine state worth having on every bug report, gathered best-effort.
 
