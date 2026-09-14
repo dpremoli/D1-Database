@@ -1164,7 +1164,6 @@ const srcMeta = reactive({
 	outcomeNotes: '', passCode: '',
 });
 const editOpSubtype = ref('');
-const editOpSequence = ref<number | null>(null);
 const editOpNewEdge = ref<boolean | null>(null);
 const editOpCoolant = ref<boolean | null>(null);
 const editOperatorName = ref('');
@@ -1179,12 +1178,6 @@ const editOpAxialDoc = ref<number | null>(null);       // machining_axial_depth_
 // feed computeAutoCode, so editing it never changes the operation name.
 const editOpWorkpieceDiam = ref<number | null>(null);  // machining_workpiece_diameter_mm
 const editOutcomeNotes = ref('');
-const editPassCode = ref('');
-// Mirrors OperationCode.vue's manual-vs-auto toggle: typing into the name field flips to manual
-// (stops auto-tracking the regenerated value); the regenerate button flips back. Starts true —
-// never auto-clobber a saved name on open, same rule OperationCode.vue applies for an existing
-// record (isExistingItem()).
-const passCodeManual = ref(true);
 function seedMetaFromDetail() {
 	const o = op.value; if (!o) return;
 	srcMeta.subtype = o.machining_operation_subtype || '';
@@ -1199,7 +1192,6 @@ function seedMetaFromDetail() {
 	srcMeta.outcomeNotes = o.outcome_notes || '';
 	srcMeta.passCode = o.pass_code || '';
 	editOpSubtype.value = srcMeta.subtype;
-	editOpSequence.value = srcMeta.sequence;
 	editOpNewEdge.value = srcMeta.newEdge;
 	editOpCoolant.value = srcMeta.coolant;
 	editOperatorName.value = srcMeta.operator;
@@ -1208,32 +1200,28 @@ function seedMetaFromDetail() {
 	editOpAxialDoc.value = srcMeta.axialDoc;
 	editOpWorkpieceDiam.value = srcMeta.workpieceDiam;
 	editOutcomeNotes.value = srcMeta.outcomeNotes;
-	editPassCode.value = srcMeta.passCode;
-	passCodeManual.value = true;
 }
 // The name computeAutoCode() would produce from the currently-edited fields — recomputed live
-// so the combined-save dialog can show "old -> new" before the user confirms.
+// so the combined-save dialog can show "old -> new" before the user confirms. Operation code and
+// Sequence are NOT user-editable (see edit-grid below): the code is purely a consequence of the
+// other fields, and Sequence is the key archive .mat filenames are matched to an operation by
+// (see docs/superpowers/specs .mat-operation-linking notes) — hand-editing it here would silently
+// desync that link, so it stays fixed at whatever seedMetaFromDetail() loaded.
 const regeneratedPassCode = computed(() => {
 	const o = op.value; if (!o) return '';
 	return computeAutoCode({
 		processCategory: o.process_category,
 		sampleCode: opSample.value?.sample_code ?? null,
-		operationSequence: editOpSequence.value,
+		operationSequence: srcMeta.sequence,
 		machiningOperationSubtype: editOpSubtype.value,
 		machiningCuttingSpeedMPerMin: editOpCuttingSpeed.value,
 		machiningFeedMmPerRev: editOpFeedMmPerRev.value,
 		machiningAxialDepthOfCutMm: editOpAxialDoc.value,
 	});
 });
-// While in auto mode, keep the field in sync with the composed code — same "auto-track until
-// the user types" behavior as OperationCode.vue's own watch(autoCode, ...).
-watch(regeneratedPassCode, (code) => { if (!passCodeManual.value && code) editPassCode.value = code; });
-function onPassCodeInput() { passCodeManual.value = editPassCode.value !== regeneratedPassCode.value; }
-function regeneratePassCode() { passCodeManual.value = false; if (regeneratedPassCode.value) editPassCode.value = regeneratedPassCode.value; }
 const metaDirty = computed(() => {
 	if (!op.value) return false;
 	return editOpSubtype.value !== srcMeta.subtype
-		|| numDiffers(numOrNull(editOpSequence.value), srcMeta.sequence)
 		|| editOpNewEdge.value !== srcMeta.newEdge
 		|| editOpCoolant.value !== srcMeta.coolant
 		|| editOperatorName.value !== srcMeta.operator
@@ -1242,7 +1230,7 @@ const metaDirty = computed(() => {
 		|| numDiffers(numOrNull(editOpAxialDoc.value), srcMeta.axialDoc)
 		|| numDiffers(numOrNull(editOpWorkpieceDiam.value), srcMeta.workpieceDiam)
 		|| editOutcomeNotes.value !== srcMeta.outcomeNotes
-		|| editPassCode.value !== srcMeta.passCode;
+		|| (regeneratedPassCode.value !== '' && regeneratedPassCode.value !== srcMeta.passCode);
 });
 
 // ---- Metadata Doctor, selected operation ----------------------------------------------------
@@ -1271,11 +1259,10 @@ const ADOPT_TARGETS: Record<string, { ref: typeof editOpFeedMmPerRev; label: str
 function canAdopt(f: Finding): boolean {
 	return f.fix === 'adopt' && typeof f.matValue === 'number' && !!f.field && f.field in ADOPT_TARGETS;
 }
-// NOTE: adopting deliberately does NOT rename the operation. Feed/DoC/Vc all feed computeAutoCode,
-// but passCodeManual starts true, so the stored name is left alone unless the user explicitly hits
-// regenerate — pass_code is the key the archive filenames and the .mat-linking work are matched on,
-// so a one-click backfill must not silently rename the operation. The save dialog still shows what
-// the regenerated name WOULD be, as information.
+// Feed/DoC/Vc all feed computeAutoCode, so adopting one can change the derived operation code —
+// that's surfaced as an ordinary "Operation code" row in the save-changes summary below, same as
+// any other consequence of an edited field. Nothing here writes pass_code directly: it is never
+// user-editable (see edit-grid), only ever the live output of regeneratedPassCode.
 function adoptFinding(f: Finding) {
 	if (!canAdopt(f)) return;
 	const t = ADOPT_TARGETS[f.field!];
@@ -1286,7 +1273,10 @@ function adoptFinding(f: Finding) {
 }
 function applyFix(f: Finding) {
 	if (f.fix === 'adopt') return adoptFinding(f);
-	if (f.fix === 'regen') return regeneratePassCode();
+	// The regenerated code is already live (regeneratedPassCode) and not user-editable, so
+	// there's nothing to "regenerate" — just reveal the box so the pending rename is visible
+	// in the save-changes summary before the user confirms.
+	if (f.fix === 'regen') { openPanel.value = 'detail'; return; }
 	if (f.fix === 'crop') return startCropFix();
 	if (f.fix === 'link') return openOpForm();
 }
@@ -1479,7 +1469,6 @@ function fmtOrDash(v: unknown): string { return (v == null || v === '') ? '—' 
 function buildMetaPatch(): Record<string, any> {
 	const patch: Record<string, any> = {};
 	if (editOpSubtype.value !== srcMeta.subtype) patch.machining_operation_subtype = editOpSubtype.value || null;
-	if (numDiffers(numOrNull(editOpSequence.value), srcMeta.sequence)) patch.operation_sequence = numOrNull(editOpSequence.value);
 	if (editOpNewEdge.value !== srcMeta.newEdge) patch.machining_new_edge = editOpNewEdge.value;
 	if (editOpCoolant.value !== srcMeta.coolant) patch.machining_coolant_used = editOpCoolant.value;
 	if (editOperatorName.value !== srcMeta.operator) patch.operator_name = editOperatorName.value || null;
@@ -1488,17 +1477,16 @@ function buildMetaPatch(): Record<string, any> {
 	if (numDiffers(numOrNull(editOpAxialDoc.value), srcMeta.axialDoc)) patch.machining_axial_depth_of_cut_mm = numOrNull(editOpAxialDoc.value);
 	if (numDiffers(numOrNull(editOpWorkpieceDiam.value), srcMeta.workpieceDiam)) patch.machining_workpiece_diameter_mm = numOrNull(editOpWorkpieceDiam.value);
 	if (editOutcomeNotes.value !== srcMeta.outcomeNotes) patch.outcome_notes = editOutcomeNotes.value || null;
-	const finalName = passCodeManual.value ? editPassCode.value : regeneratedPassCode.value;
-	if (finalName && finalName !== srcMeta.passCode) patch.pass_code = finalName;
+	if (regeneratedPassCode.value && regeneratedPassCode.value !== srcMeta.passCode) patch.pass_code = regeneratedPassCode.value;
 	return patch;
 }
 // What the confirmation dialog shows before writing — every changed field as old -> new, plus
-// the crop window (if dirty) and the resulting operation name (if it differs).
+// the crop window (if dirty) and the resulting operation name (if it differs). Sequence has no
+// row here: it's not user-editable (see edit-grid), so it never differs from srcMeta.
 const changeSummary = computed(() => {
 	const rows: { label: string; from: string; to: string }[] = [];
 	const push = (label: string, from: string, to: string) => { if (from !== to) rows.push({ label, from, to }); };
 	push('Subtype', fmtOrDash(srcMeta.subtype), fmtOrDash(editOpSubtype.value));
-	if (numDiffers(numOrNull(editOpSequence.value), srcMeta.sequence)) rows.push({ label: 'Sequence', from: fmtOrDash(srcMeta.sequence), to: fmtOrDash(numOrNull(editOpSequence.value)) });
 	push('New edge', fmtBool(srcMeta.newEdge), fmtBool(editOpNewEdge.value));
 	push('Coolant', fmtBool(srcMeta.coolant), fmtBool(editOpCoolant.value));
 	push('Operator', fmtOrDash(srcMeta.operator), fmtOrDash(editOperatorName.value));
@@ -1515,9 +1503,8 @@ const changeSummary = computed(() => {
 			to: `${cropStartSec.value.toFixed(1)}–${cropEndSec.value.toFixed(1)}s`,
 		});
 	}
-	const finalName = passCodeManual.value ? editPassCode.value : regeneratedPassCode.value;
-	if (finalName && finalName !== srcMeta.passCode) {
-		rows.push({ label: 'Operation code', from: fmtOrDash(srcMeta.passCode), to: `${finalName}${passCodeManual.value ? ' (manual)' : ''}` });
+	if (regeneratedPassCode.value && regeneratedPassCode.value !== srcMeta.passCode) {
+		rows.push({ label: 'Operation code', from: fmtOrDash(srcMeta.passCode), to: regeneratedPassCode.value });
 	}
 	return rows;
 });
@@ -1993,15 +1980,19 @@ function fmtDateTime(v: string | null | undefined) {
 								<template v-for="m in compactMeta" :key="m[0]"><span>{{ m[0] }}</span><span>{{ m[1] }}</span></template>
 							</div>
 
-							<!-- Editable operation metadata: Subtype/Sequence/New edge/Coolant/Operator/cutting
-							     params/notes/name. Machine/Method stay read-only above (see opMeta). Combined
+							<!-- Editable operation metadata: Subtype/New edge/Coolant/Operator/cutting params/
+							     notes. Machine/Method stay read-only above (see opMeta). Sequence and Operation
+							     code are shown here for context but are NOT editable: Operation code is purely
+							     a derived consequence of the fields around it, and Sequence is the key archive
+							     .mat filenames are matched to an operation by, so hand-editing either from this
+							     panel would silently desync that link (see regeneratedPassCode above). Combined
 							     with any pending crop edit into one "Save changes" summary dialog below. -->
 							<div class="stat-sep">Operation metadata
 								<button v-if="metaDirty" class="linkbtn" @click="seedMetaFromDetail">Reset</button>
 							</div>
 							<div class="edit-grid">
 								<label>Subtype<input v-model="editOpSubtype" type="text" :class="{ modified: editOpSubtype !== srcMeta.subtype }" /></label>
-								<label>Sequence<input v-model.number="editOpSequence" type="number" step="1" :class="{ modified: numDiffers(numOrNull(editOpSequence), srcMeta.sequence) }" /></label>
+								<label>Sequence<input :value="fmtOrDash(srcMeta.sequence)" type="text" disabled title="Derived — matches the archive .mat filename this operation was linked from. Not editable here." /></label>
 								<label>Surface speed <span class="u">m/min</span><input v-model.number="editOpCuttingSpeed" type="number" step="0.1" min="0" :class="{ modified: numDiffers(numOrNull(editOpCuttingSpeed), srcMeta.cuttingSpeed) }" /></label>
 								<label>Feed <span class="u">mm/rev</span><input v-model.number="editOpFeedMmPerRev" type="number" step="0.001" min="0" :class="{ modified: numDiffers(numOrNull(editOpFeedMmPerRev), srcMeta.feedMmPerRev) }" /></label>
 								<label>Depth of cut <span class="u">mm</span><input v-model.number="editOpAxialDoc" type="number" step="0.01" min="0" :class="{ modified: numDiffers(numOrNull(editOpAxialDoc), srcMeta.axialDoc) }" /></label>
@@ -2013,10 +2004,7 @@ function fmtDateTime(v: string | null | undefined) {
 								<label class="chk">New edge<input v-model="editOpNewEdge" type="checkbox" /></label>
 								<label class="chk">Coolant<input v-model="editOpCoolant" type="checkbox" /></label>
 								<label class="wide">Operation code
-									<div class="speed-row">
-										<input v-model="editPassCode" type="text" @input="onPassCodeInput" :class="{ modified: editPassCode !== srcMeta.passCode }" />
-										<button class="linkbtn" title="Regenerate from fields" @click="regeneratePassCode"><v-icon name="refresh" x-small /></button>
-									</div>
+									<input :value="regeneratedPassCode || fmtOrDash(srcMeta.passCode)" type="text" disabled :class="{ modified: !!regeneratedPassCode && regeneratedPassCode !== srcMeta.passCode }" title="Derived from Subtype/Sequence/cutting params + the sample code. Not editable here." />
 								</label>
 								<label class="wide">Notes<textarea v-model="editOutcomeNotes" rows="2" :class="{ modified: editOutcomeNotes !== srcMeta.outcomeNotes }"></textarea></label>
 							</div>
