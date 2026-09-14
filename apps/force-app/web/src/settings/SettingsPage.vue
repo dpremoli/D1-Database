@@ -42,14 +42,20 @@ const active = ref<SettingsTab>(initialTab);
 				</button>
 			</nav>
 			<section class="pane">
-				<GeneralSettings v-if="active === 'general'" />
-				<AlarmsSettings v-else-if="active === 'alarms'" />
-				<ConnectivitySettings v-else-if="active === 'connectivity'" />
-				<BackupSettings v-else-if="active === 'backup'" />
-				<CapturesSettings v-else-if="active === 'captures'" />
-				<LogsSettings v-else-if="active === 'logs'" />
-				<ReportBugSettings v-else-if="active === 'report-bug'" />
-				<AboutSettings v-else-if="active === 'about'" />
+				<!-- Only General is cached: its "Recording storage" panel re-fetches the drive list on
+				     mount, so switching tabs away and back used to show a loading flash every time
+				     (#18). The other tabs remount on every switch same as before — most are cheap, and
+				     Logs specifically relies on that unmount to stop its poll interval. -->
+				<keep-alive include="GeneralSettings">
+					<GeneralSettings v-if="active === 'general'" />
+				</keep-alive>
+				<AlarmsSettings v-if="active === 'alarms'" />
+				<ConnectivitySettings v-if="active === 'connectivity'" />
+				<BackupSettings v-if="active === 'backup'" />
+				<CapturesSettings v-if="active === 'captures'" />
+				<LogsSettings v-if="active === 'logs'" />
+				<ReportBugSettings v-if="active === 'report-bug'" />
+				<AboutSettings v-if="active === 'about'" />
 			</section>
 		</div>
 	</div>

@@ -3,6 +3,11 @@ import { onMounted, ref } from 'vue';
 import { getConfig } from '../config';
 import { theme, applyTheme } from '../theme';
 
+// Named explicitly (not left to filename inference) so SettingsPage.vue's <keep-alive
+// include="GeneralSettings"> can target this component reliably regardless of build config —
+// see the comment there for why this tab specifically is cached across tab switches.
+defineOptions({ name: 'GeneralSettings' });
+
 // ---- Storage location ----
 interface DriveInfo {
 	path: string; letter?: string; label?: string; type: string; is_ssd: boolean | null;

@@ -1,5 +1,9 @@
 """Bug-report issue body assembly (apps/force-app/backend/app/bug_report.py)."""
 
+import httpx
+import pytest
+
+from app import bug_report
 from app.bug_report import build_body
 
 BASE = {
@@ -39,6 +43,13 @@ def test_console_and_log_tails_are_collapsed_separately():
     assert "console line" in body and "backend line" in body
 
 
+def test_reporter_is_always_recorded_even_when_not_signed_in():
+    """A missing 'Reported by' line must never be ambiguous between 'not signed in' and 'the
+    client forgot to send it' — so the line is always present, with an explicit fallback."""
+    body = build_body(**{**BASE, "reporter_email": ""})
+    assert "**Reported by:** _not signed in_" in body
+
+
 def test_absent_sections_are_omitted_entirely():
     body = build_body(**BASE)
     assert "<details>" not in body
@@ -60,3 +71,123 @@ def test_long_tails_are_truncated_from_the_front():
     body = build_body(**{**BASE, "log_tail": "X" * 50_000 + "TAIL_MARKER"})
     assert "TAIL_MARKER" in body
     assert len(body) < 30_000
+
+
+# ---- create_issue: kind -> title prefix + label (never trust a user-typed "[Bug]"/"[Feature]") --
+
+
+class _FakeResponse:
+    status_code = 200
+
+    def json(self):
+        return {"ok": True, "url": "https://example.invalid/issues/1", "number": 1}
+
+
+class _FakeAsyncClient:
+    last_payload: dict | None = None
+
+    def __init__(self, *a, **kw):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def post(self, url, json):
+        _FakeAsyncClient.last_payload = json
+        return _FakeResponse()
+
+
+@pytest.fixture()
+def fake_relay(monkeypatch):
+    monkeypatch.setattr(bug_report.httpx, "AsyncClient", _FakeAsyncClient)
+    return _FakeAsyncClient
+
+
+CREATE_ARGS = {**BASE, "title": "the plot lags"}
+
+
+@pytest.mark.anyio
+async def test_kind_bug_prefixes_title_and_labels_bug(fake_relay):
+    await bug_report.create_issue(**CREATE_ARGS, kind="bug")
+    payload = fake_relay.last_payload
+    assert payload["title"] == "[Bug] the plot lags"
+    assert payload["labels"] == ["force-app", "in-app-report", "bug"]
+
+
+@pytest.mark.anyio
+async def test_kind_feature_prefixes_title_and_labels_enhancement(fake_relay):
+    await bug_report.create_issue(**CREATE_ARGS, kind="feature")
+    payload = fake_relay.last_payload
+    assert payload["title"] == "[Feature] the plot lags"
+    assert payload["labels"] == ["force-app", "in-app-report", "enhancement"]
+
+
+@pytest.mark.anyio
+async def test_unrecognized_kind_falls_back_to_bug(fake_relay):
+    await bug_report.create_issue(**CREATE_ARGS, kind="nonsense")
+    assert fake_relay.last_payload["title"] == "[Bug] the plot lags"
+
+
+@pytest.mark.anyio
+async def test_does_not_double_prefix_a_title_the_user_already_typed(fake_relay):
+    """The picker is the single source of truth — a user-typed "[Bug]" is only skipped so the
+    title isn't doubled, never trusted in place of the picker to choose the label."""
+    await bug_report.create_issue(**{**CREATE_ARGS, "title": "[Bug] already tagged"}, kind="bug")
+    assert fake_relay.last_payload["title"] == "[Bug] already tagged"
+
+
+# ---- list_issues: proxies the relay's /issues, never raises ----------------------------------
+
+
+class _FakeGetResponse:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class _FakeAsyncClientGet:
+    def __init__(self, *a, **kw):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url):
+        return _FakeGetResponse(200, {"ok": True, "issues": [{"number": 1}]})
+
+
+@pytest.mark.anyio
+async def test_list_issues_returns_relay_payload(monkeypatch):
+    monkeypatch.setattr(bug_report.httpx, "AsyncClient", _FakeAsyncClientGet)
+    result = await bug_report.list_issues()
+    assert result == {"ok": True, "issues": [{"number": 1}]}
+
+
+@pytest.mark.anyio
+async def test_list_issues_surfaces_relay_http_error(monkeypatch):
+    class _Failing:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            raise httpx.ConnectError("boom")
+
+    monkeypatch.setattr(bug_report.httpx, "AsyncClient", _Failing)
+    result = await bug_report.list_issues()
+    assert result["ok"] is False
+    assert "could not reach" in result["reason"]

@@ -3,10 +3,16 @@
 // app is cross-origin to Directus and Bearer-authenticated, so raw fetches carry an
 // Authorization header and must NOT send cookies; assets cannot use a plain <a href> because
 // the token would not travel with it.
+//
 import { ForceDashboard, setForceHost } from '@d1/force-plotting';
 import { api, authHeaders } from '../directusClient';
 import { authStore } from '../authStore';
 import { getConfig } from '../config';
+
+// Named explicitly so AppShell.vue's <keep-alive include="StandaloneForceDashboard"> can target
+// it reliably — the Plot route used to fully remount (refetching samples/operations/octrees) on
+// every navigation to /plot, which is what made it feel like a full reload each time (#15).
+defineOptions({ name: 'StandaloneForceDashboard' });
 
 setForceHost({
 	api,

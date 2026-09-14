@@ -163,3 +163,65 @@ async def report(req: ReportRequest) -> dict:
 
     data = res.json()
     return {"ok": True, "url": data.get("html_url", ""), "number": data.get("number")}
+
+
+@app.get("/issues")
+async def issues() -> dict:
+    """Recent in-app-reported issues, for the app's own "has this already been reported" list.
+
+    Returns {"ok": True, "issues": [...]} or {"ok": False, "reason": ...}. Never raises — same
+    contract as /report. Scoped to the in-app-report label (not just force-app) so this never
+    leaks unrelated repo issues to a client that only asked about its own bug reports.
+    """
+    if not configured():
+        return {
+            "ok": False,
+            "reason": "Bug reporting relay is not configured (missing GitHub App credentials).",
+        }
+    try:
+        token = await _token_cache.get()
+    except httpx.HTTPError as e:
+        return {"ok": False, "reason": f"could not authenticate with GitHub: {e}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            res = await client.get(
+                f"{GITHUB_API}/repos/{_repo()}/issues",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                params={"labels": "in-app-report", "state": "all", "sort": "created",
+                        "direction": "desc", "per_page": 50},
+            )
+    except httpx.HTTPError as e:
+        return {"ok": False, "reason": f"could not reach GitHub: {e}"}
+
+    if res.status_code >= 300:
+        detail = ""
+        try:
+            detail = res.json().get("message", "")
+        except ValueError:
+            pass
+        return {
+            "ok": False,
+            "reason": f"GitHub rejected the request (HTTP {res.status_code}) {detail}".strip(),
+        }
+
+    out = []
+    for item in res.json():
+        if "pull_request" in item:  # the issues endpoint also returns PRs; this repo files none
+            continue                # with these labels, but skip defensively rather than assume
+        out.append({
+            "number": item.get("number"),
+            "title": item.get("title", ""),
+            "url": item.get("html_url", ""),
+            "state": item.get("state", ""),
+            "labels": [
+                (label if isinstance(label, str) else label.get("name", ""))
+                for label in item.get("labels", [])
+            ],
+            "created_at": item.get("created_at"),
+        })
+    return {"ok": True, "issues": out}

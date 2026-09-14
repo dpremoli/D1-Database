@@ -12,6 +12,7 @@ const base = () => getConfig().recorderUrl;
 const route = useRoute();
 
 const configured = ref<boolean | null>(null); // null = still checking
+const kind = ref<'bug' | 'feature'>('bug');
 const title = ref('');
 const description = ref('');
 const includeLogs = ref(true);
@@ -19,11 +20,40 @@ const submitting = ref(false);
 const result = ref<{ ok: boolean; url?: string; reason?: string } | null>(null);
 const appVersion = ref('');
 
+interface IssueRow {
+	number: number;
+	title: string;
+	url: string;
+	state: string;
+	labels: string[];
+	created_at?: string;
+}
+const issues = ref<IssueRow[]>([]);
+const issuesLoading = ref(false);
+const issuesErr = ref('');
+async function fetchIssues() {
+	issuesLoading.value = true;
+	issuesErr.value = '';
+	try {
+		const res = await fetch(`${base()}/support/report-bug/issues`);
+		const data = await res.json();
+		if (data.ok) issues.value = data.issues || [];
+		else issuesErr.value = data.reason || 'could not load recent reports';
+	} catch (e: any) {
+		issuesErr.value = e?.message || "couldn't reach the recording backend";
+	} finally {
+		issuesLoading.value = false;
+	}
+}
+
 onMounted(() => {
 	// Independent requests — run them concurrently rather than one-after-the-other.
 	const statusP = fetch(`${base()}/support/report-bug`)
 		.then((res) => res.json())
-		.then((data) => { configured.value = !!data.configured; })
+		.then((data) => {
+			configured.value = !!data.configured;
+			if (configured.value) fetchIssues();
+		})
 		.catch(() => { configured.value = false; });
 	const versionP = window.forceApp
 		? window.forceApp.getUpdateInfo()
@@ -46,6 +76,7 @@ async function submit() {
 			route: route.fullPath,
 			reporter_email: authStore.currentUser.value?.email || '',
 			include_logs: String(includeLogs.value),
+			kind: kind.value,
 			// Gated on the same checkbox as the backend log: both are diagnostic attachments, and
 			// an operator who declines to attach logs has not agreed to send their console either.
 			console_tail: includeLogs.value ? getConsoleTail() : '',
@@ -60,6 +91,7 @@ async function submit() {
 		if (data.ok) {
 			title.value = '';
 			description.value = '';
+			fetchIssues();
 		}
 	} catch (e: any) {
 		result.value = { ok: false, reason: e?.message || "couldn't reach the recording backend" };
@@ -71,7 +103,7 @@ async function submit() {
 
 <template>
 	<div class="report">
-		<h2>Report a bug</h2>
+		<h2>Report a bug or request a feature</h2>
 		<p class="lead">
 			Opens an issue directly on the project's GitHub, with your description plus the app version,
 			current page, and (optionally) a tail of the recent backend log — the same log Settings > Logs
@@ -88,13 +120,25 @@ async function submit() {
 		</div>
 
 		<template v-else>
+			<div class="kindpick" role="radiogroup" aria-label="Report type">
+				<button type="button" class="kindbtn" :class="{ on: kind === 'bug' }" role="radio" :aria-checked="kind === 'bug'"
+					:disabled="submitting" @click="kind = 'bug'">
+					<span class="material-symbols-rounded">bug_report</span> Bug
+				</button>
+				<button type="button" class="kindbtn" :class="{ on: kind === 'feature' }" role="radio" :aria-checked="kind === 'feature'"
+					:disabled="submitting" @click="kind = 'feature'">
+					<span class="material-symbols-rounded">lightbulb</span> Feature request
+				</button>
+			</div>
 			<label class="field">
 				<span>Title</span>
-				<input v-model="title" placeholder="short summary of what went wrong" maxlength="250" :disabled="submitting" />
+				<input v-model="title" :placeholder="kind === 'bug' ? 'short summary of what went wrong' : 'short summary of what you\'d like to see'" maxlength="250" :disabled="submitting" />
 			</label>
 			<label class="field">
-				<span>What happened?</span>
-				<textarea v-model="description" rows="6" placeholder="what you did, what you expected, what happened instead…" :disabled="submitting"></textarea>
+				<span>{{ kind === 'bug' ? 'What happened?' : 'What would you like?' }}</span>
+				<textarea v-model="description" rows="6"
+					:placeholder="kind === 'bug' ? 'what you did, what you expected, what happened instead…' : 'what you want, and why it would help…'"
+					:disabled="submitting"></textarea>
 			</label>
 			<label class="chk">
 				<input type="checkbox" v-model="includeLogs" :disabled="submitting" />
@@ -104,8 +148,8 @@ async function submit() {
 			</label>
 
 			<button class="btn save" :disabled="!title.trim() || submitting || configured === null" @click="submit">
-				<span class="material-symbols-rounded">{{ submitting ? 'hourglass_top' : 'bug_report' }}</span>
-				{{ submitting ? 'Filing…' : 'File report' }}
+				<span class="material-symbols-rounded">{{ submitting ? 'hourglass_top' : (kind === 'bug' ? 'bug_report' : 'lightbulb') }}</span>
+				{{ submitting ? 'Filing…' : (kind === 'bug' ? 'File bug report' : 'File feature request') }}
 			</button>
 
 			<p v-if="result?.ok" class="ok">
@@ -115,6 +159,23 @@ async function submit() {
 			<p v-else-if="result && !result.ok" class="err">
 				<span class="material-symbols-rounded">error</span>{{ result.reason }}
 			</p>
+
+			<div class="issues">
+				<div class="issues-head">
+					<h3>Recently reported</h3>
+					<button class="linkbtn" type="button" :disabled="issuesLoading" @click="fetchIssues">
+						<span class="material-symbols-rounded" :class="{ spin: issuesLoading }">refresh</span>
+					</button>
+				</div>
+				<p v-if="issuesErr" class="err"><span class="material-symbols-rounded">error</span>{{ issuesErr }}</p>
+				<p v-else-if="!issuesLoading && !issues.length" class="empty">Nothing reported from the app yet.</p>
+				<ul v-else class="issue-list">
+					<li v-for="i in issues" :key="i.number">
+						<a :href="i.url" target="_blank" rel="noopener">#{{ i.number }} {{ i.title }}</a>
+						<span class="badge" :class="i.state">{{ i.state }}</span>
+					</li>
+				</ul>
+			</div>
 		</template>
 	</div>
 </template>
@@ -129,6 +190,13 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .warnbox div { display: flex; flex-direction: column; gap: 2px; }
 .warnbox b { font-size: 13px; }
 .warnbox span { color: var(--text-dim); line-height: 1.45; }
+
+.kindpick { display: flex; gap: 8px; margin-bottom: 16px; }
+.kindbtn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; font-size: 12.5px; font-weight: 600;
+	color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.kindbtn .material-symbols-rounded { font-size: 17px; }
+.kindbtn.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.kindbtn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--text-dim); margin-bottom: 14px; }
 .field input, .field textarea { padding: 9px 11px; font: inherit; font-size: 13px; color: var(--text);
@@ -145,4 +213,22 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .ok { display: flex; align-items: center; gap: 5px; color: #4ade80; font-size: 12.5px; margin-top: 10px; }
 .ok a { color: inherit; text-decoration: underline; }
 .err { display: flex; align-items: center; gap: 5px; color: var(--danger); font-size: 12.5px; margin-top: 10px; }
+
+.issues { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--border); }
+.issues-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.issues-head h3 { margin: 0; font-size: 12.5px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.linkbtn { display: inline-flex; padding: 3px; color: var(--text-dim); background: transparent; border: none; cursor: pointer; border-radius: 6px; }
+.linkbtn:hover:not(:disabled) { color: var(--text); }
+.linkbtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.linkbtn .material-symbols-rounded { font-size: 17px; }
+.linkbtn .spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.empty { font-size: 12.5px; color: var(--text-dim); }
+.issue-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.issue-list li { display: flex; align-items: center; gap: 8px; padding: 7px 9px; font-size: 12.5px; background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
+.issue-list a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); text-decoration: none; }
+.issue-list a:hover { text-decoration: underline; }
+.badge { flex: 0 0 auto; padding: 2px 8px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; border-radius: 99px; }
+.badge.open { color: #4ade80; background: rgba(74,222,128,0.12); }
+.badge.closed { color: var(--text-dim); background: rgba(255,255,255,0.06); }
 </style>

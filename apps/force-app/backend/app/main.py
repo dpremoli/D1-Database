@@ -470,6 +470,11 @@ async def report_bug_status() -> dict:
     return {"configured": bug_report.configured()}
 
 
+@app.get("/support/report-bug/issues")
+async def report_bug_issues() -> dict:
+    return await bug_report.list_issues()
+
+
 def _diag_lines() -> list[str]:
     """Machine state worth having on every bug report, gathered best-effort.
 
@@ -534,6 +539,7 @@ async def report_bug(
     reporter_email: str = Form(""),
     include_logs: bool = Form(True),
     console_tail: str = Form(""),
+    kind: str = Form("bug"),
 ) -> dict:
     log_tail = ""
     diagnostics = ""
@@ -559,6 +565,7 @@ async def report_bug(
         log_tail=log_tail,
         diagnostics=diagnostics,
         console_tail=console_tail,
+        kind=kind,
     )
     if not result["ok"]:
         log.warning("bug report failed: %s", result.get("reason"))

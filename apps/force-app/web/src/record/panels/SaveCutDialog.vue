@@ -148,8 +148,14 @@ async function confirmSave() {
 
 function askDiscard() { stage.value = 'discard-confirm'; }
 function cancelDiscard() { stage.value = 'ask'; }
+// Regression: this used to only close the dialog (w.saveOpen.value = false) without resetting the
+// workspace, unlike startNew() below. The finished cut's full force/FFT/spectrogram buffers (and
+// finishedCache) stayed live in `w.client` — the plots kept showing the just-discarded recording,
+// and every plot-type switch kept recomputing against that stale, still-full-size data instead of
+// an idle/empty one. w.newRun() (client.reset() + finishedCache = null, same as startNew()) is
+// what actually clears it.
 function confirmDiscard() {
-	w.saveOpen.value = false;
+	w.newRun();
 	stage.value = 'ask';
 }
 
