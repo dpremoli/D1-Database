@@ -148,7 +148,15 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 				<router-link to="/record" class="rec-banner-link">Go to Record</router-link>
 				<button class="rec-banner-dismiss" title="Dismiss" @click="dismissBanner"><span class="material-symbols-rounded">close</span></button>
 			</div>
-			<router-view />
+			<!-- Every other route remounts on each navigation (cheap, and Record relies on its own
+			     unmount to disconnect its websocket). Plot alone is cached: it fetches the full
+			     samples/operations list and rebuilds octree loaders on mount, which is expensive
+			     enough that leaving /plot and coming back used to feel like a full page reload (#15). -->
+			<router-view v-slot="{ Component }">
+				<keep-alive include="StandaloneForceDashboard">
+					<component :is="Component" />
+				</keep-alive>
+			</router-view>
 		</main>
 	</div>
 </template>
@@ -169,8 +177,11 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 	box-shadow: 8px 0 28px rgba(0,0,0,0.28);
 }
 .trigger {
+	/* margin: 0, not 0 auto — this pill's left edge is deliberately square (border-radius only on
+	   the right) so it can sit flush against the screen's left border; centering it in the wider
+	   .sidebar hitbox left an ~8px gap instead (#13). */
 	display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
-	width: 14px; height: 64px; margin: 0 auto; padding: 8px 2px; overflow: hidden;
+	width: 14px; height: 64px; margin: 0; padding: 8px 2px; overflow: hidden;
 	background: var(--bg-2); border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
 	border-radius: 0 14px 14px 0;
 }
