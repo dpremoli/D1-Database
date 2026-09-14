@@ -581,3 +581,15 @@ def test_report_bug_includes_console_tail_when_logs_are_included(tmp_path, monke
         assert r.status_code == 200, r.text
 
     assert "console line 1" in calls[0]["console_tail"]
+
+
+def test_report_bug_forwards_kind_and_defaults_to_bug(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    calls = _install_fake_create_issue(monkeypatch)
+
+    with TestClient(fastapi_app) as client:
+        client.post("/support/report-bug", data={"title": "no kind sent"})
+        client.post("/support/report-bug", data={"title": "a feature idea", "kind": "feature"})
+
+    assert calls[0]["kind"] == "bug"
+    assert calls[1]["kind"] == "feature"

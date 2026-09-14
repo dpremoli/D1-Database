@@ -40,6 +40,10 @@ def _fence(text: str, limit: int) -> list[str]:
     return ["```", text.strip()[-limit:].replace("```", "`​`​`"), "```"]
 
 
+KIND_LABELS = {"bug": "bug", "feature": "enhancement"}
+KIND_PREFIXES = {"bug": "[Bug]", "feature": "[Feature]"}
+
+
 def build_body(
     *,
     description: str,
@@ -58,9 +62,10 @@ def build_body(
         f"**App version:** {app_version or 'unknown'}  ",
         f"**Platform:** {platform or 'unknown'}  ",
         f"**Route at time of report:** `{route or 'unknown'}`  ",
+        # Always present, never silently dropped — a triager should never have to guess whether a
+        # missing line here means "not signed in" or "the client forgot to send it".
+        f"**Reported by:** {reporter_email or '_not signed in_'}  ",
     ]
-    if reporter_email:
-        parts.append(f"**Reported by:** {reporter_email}  ")
     # Machine state first: it is short, and it answers the questions that otherwise cost a
     # round-trip with the operator ("is the amp in real or mock mode?", "which DAQ is attached?",
     # "was it actually recording?"). Not collapsed, unlike the two long tails below.
@@ -99,11 +104,18 @@ async def create_issue(
     log_tail: str,
     diagnostics: str = "",
     console_tail: str = "",
+    kind: str = "bug",
 ) -> dict:
     """Returns {"ok": True, "url": ...} or {"ok": False, "reason": ...}. Never raises."""
     title = title.strip()
     if not title:
         return {"ok": False, "reason": "A title is required."}
+    kind = kind if kind in KIND_LABELS else "bug"
+    prefix = KIND_PREFIXES[kind]
+    # Tag by prefix, not by trusting any "[Bug]"/"[Feature]" the reporter typed themselves — the
+    # picker is the single source of truth so the title prefix and the label can never disagree.
+    if not title.startswith(prefix):
+        title = f"{prefix} {title}"
 
     body = build_body(
         description=description,
@@ -119,7 +131,11 @@ async def create_issue(
         async with httpx.AsyncClient(timeout=20.0) as client:
             res = await client.post(
                 f"{_relay_url()}/report",
-                json={"title": title[:250], "body": body, "labels": ["force-app", "in-app-report"]},
+                json={
+                    "title": title[:250],
+                    "body": body,
+                    "labels": ["force-app", "in-app-report", KIND_LABELS[kind]],
+                },
             )
     except httpx.HTTPError as e:
         return {"ok": False, "reason": f"could not reach the bug-report relay: {e}"}
