@@ -784,10 +784,16 @@ watch(rightLayout, (v) => {
 // `(H - marginY) / bottomRow - marginY` — the previous `(H - 24) / 20` overflowed by ~186px (hidden
 // only because .right-area scrolls), and its hardcoded /20 (the DEFAULT panel h) stopped being
 // right the moment a user resized or added a panel. Both are derived properly now.
+//
+// NOT floored: grid-layout-plus renders each row's offset as `row * (rowHeight + marginY)`, a plain
+// CSS pixel translate that handles a fractional rowHeight fine, so flooring it here bought nothing
+// but lost up to `bottomRow` px overall (each of `bottomRow` rows independently rounds its own
+// height down) — with a typical bottomRow of ~20 that is a very visible gap at the bottom of the
+// Signals/FRM column versus the other columns, which stretch to the exact CSS height instead (#16).
 const RIGHT_MARGIN = 10;   // must match :margin="[10, 10]" on the right-hand GridLayout
 const rightBottomRow = computed(() => rightLayout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0) || 1);
 const rightRowH = computed(() =>
-	Math.max(16, Math.floor((availableHeight.value - RIGHT_MARGIN) / rightBottomRow.value) - RIGHT_MARGIN),
+	Math.max(16, (availableHeight.value - RIGHT_MARGIN) / rightBottomRow.value - RIGHT_MARGIN),
 );
 const rightAddOpen = ref(false);
 const hasPanel = (t: string) => rightLayout.value.some((p) => p.type === t);
