@@ -9,6 +9,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.22',
+		date: '2026-09-15',
+		notes: [
+			'No user-facing changes — a formatting fix to the bug-report relay to get CI passing again after 0.1.21.',
+		],
+	},
+	{
 		version: '0.1.21',
 		date: '2026-09-15',
 		notes: [
