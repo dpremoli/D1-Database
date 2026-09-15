@@ -9,6 +9,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.23',
+		date: '2026-09-15',
+		notes: [
+			'Report a bug/feature page: reports now carry an Area tag (Recording, Plotting, Diagnostics, Settings, Lab Amp, NI-DAQ, GUI, General), pre-selected from whichever page you were on before opening the report form.',
+			'Fixed: the "current page" recorded on a filed report always said Settings, regardless of where the issue actually happened — it now correctly records the page you came from.',
+		],
+	},
+	{
 		version: '0.1.22',
 		date: '2026-09-15',
 		notes: [
