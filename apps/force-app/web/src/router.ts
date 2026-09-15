@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
+import { ref } from 'vue';
 import { authStore } from './authStore';
 
 const routes: RouteRecordRaw[] = [
@@ -41,6 +42,15 @@ router.beforeEach((to) => {
 	if (to.meta.public) return true;
 	if (authStore.isAuthenticated.value) return true;
 	return { name: 'login', query: to.fullPath !== '/' ? { redirect: to.fullPath } : undefined };
+});
+
+// The most recent route that wasn't /settings itself. Settings > Report a Bug is only ever
+// reached AT /settings, so a report's own `route.fullPath` at submit time is always "/settings" —
+// useless for saying where the issue actually was. This tracks where the operator came from, so
+// the report body and the area picker's default both point at the section that actually matters.
+export const lastNonSettingsRoute = ref('/record');
+router.afterEach((to) => {
+	if (!to.path.startsWith('/settings')) lastNonSettingsRoute.value = to.fullPath;
 });
 
 // Electron desktop shell only (see electronBridge.d.ts): the main process's Help menu and the

@@ -540,6 +540,7 @@ async def report_bug(
     include_logs: bool = Form(True),
     console_tail: str = Form(""),
     kind: str = Form("bug"),
+    area: str = Form("general"),
 ) -> dict:
     log_tail = ""
     diagnostics = ""
@@ -566,6 +567,7 @@ async def report_bug(
         diagnostics=diagnostics,
         console_tail=console_tail,
         kind=kind,
+        area=area,
     )
     if not result["ok"]:
         log.warning("bug report failed: %s", result.get("reason"))

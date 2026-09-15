@@ -43,6 +43,12 @@ def _fence(text: str, limit: int) -> list[str]:
 KIND_LABELS = {"bug": "bug", "feature": "enhancement"}
 KIND_PREFIXES = {"bug": "[Bug]", "feature": "[Feature]"}
 
+# Mirrors the app's real sections (see web/src/router.ts) plus "gui" for cross-cutting UI/layout
+# issues not tied to one page, and "general" as the catch-all. Kept as a fixed set (not whatever
+# string a client sends) so the resulting `area:*` label is always one of these, never freeform —
+# the whole point is a stable set of labels to filter/catalogue by later.
+AREAS = {"gui", "recording", "plotting", "diagnostics", "settings", "labamp", "nidaq", "general"}
+
 
 def build_body(
     *,
@@ -105,12 +111,14 @@ async def create_issue(
     diagnostics: str = "",
     console_tail: str = "",
     kind: str = "bug",
+    area: str = "general",
 ) -> dict:
     """Returns {"ok": True, "url": ...} or {"ok": False, "reason": ...}. Never raises."""
     title = title.strip()
     if not title:
         return {"ok": False, "reason": "A title is required."}
     kind = kind if kind in KIND_LABELS else "bug"
+    area = area if area in AREAS else "general"
     prefix = KIND_PREFIXES[kind]
     # Tag by prefix, not by trusting any "[Bug]"/"[Feature]" the reporter typed themselves — the
     # picker is the single source of truth so the title prefix and the label can never disagree.
@@ -134,7 +142,7 @@ async def create_issue(
                 json={
                     "title": title[:250],
                     "body": body,
-                    "labels": ["force-app", "in-app-report", KIND_LABELS[kind]],
+                    "labels": ["force-app", "in-app-report", KIND_LABELS[kind], f"area:{area}"],
                 },
             )
     except httpx.HTTPError as e:

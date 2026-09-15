@@ -3,16 +3,42 @@
 // backend/app/bug_report.py) — this form only ever talks to our own recorder backend, never to
 // GitHub directly, so no credential of any kind lives in the renderer.
 import { onMounted, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { lastNonSettingsRoute } from '../router';
 import { getConfig } from '../config';
 import { authStore } from '../authStore';
 import { getConsoleTail } from '../clientLog';
 
 const base = () => getConfig().recorderUrl;
-const route = useRoute();
 
 const configured = ref<boolean | null>(null); // null = still checking
 const kind = ref<'bug' | 'feature'>('bug');
+
+// Mirrors backend/app/bug_report.py's AREAS — keep both lists in sync. A fixed set (not free
+// text) so the resulting `area:*` GitHub label is always one of these, which is the whole point:
+// a stable, filterable catalogue instead of re-reading every report's body to find its section.
+const AREAS: { value: string; label: string }[] = [
+	{ value: 'recording', label: 'Recording' },
+	{ value: 'plotting', label: 'Plotting' },
+	{ value: 'diagnostics', label: 'Diagnostics' },
+	{ value: 'settings', label: 'Settings' },
+	{ value: 'labamp', label: 'Lab Amp' },
+	{ value: 'nidaq', label: 'NI-DAQ' },
+	{ value: 'gui', label: 'GUI / layout (not page-specific)' },
+	{ value: 'general', label: 'General / other' },
+];
+// Pre-select based on where the report is actually being filed from — the reporter can still
+// override it (e.g. a plotting bug noticed while back on Settings). Detached popout windows
+// (/live, /diag-panel) map to the section they're a window onto, not to "general".
+function areaForRoute(path: string): string {
+	if (path.startsWith('/record') || path.startsWith('/live')) return 'recording';
+	if (path.startsWith('/plot')) return 'plotting';
+	if (path.startsWith('/diagnostics') || path.startsWith('/diag-panel')) return 'diagnostics';
+	if (path.startsWith('/settings')) return 'settings';
+	if (path.startsWith('/labamp')) return 'labamp';
+	if (path.startsWith('/nidaq')) return 'nidaq';
+	return 'general';
+}
+const area = ref<string>(areaForRoute(lastNonSettingsRoute.value));
 const title = ref('');
 const description = ref('');
 const includeLogs = ref(true);
@@ -73,10 +99,11 @@ async function submit() {
 			description: description.value.trim(),
 			app_version: appVersion.value,
 			platform: navigator.platform || '',
-			route: route.fullPath,
+			route: lastNonSettingsRoute.value,
 			reporter_email: authStore.currentUser.value?.email || '',
 			include_logs: String(includeLogs.value),
 			kind: kind.value,
+			area: area.value,
 			// Gated on the same checkbox as the backend log: both are diagnostic attachments, and
 			// an operator who declines to attach logs has not agreed to send their console either.
 			console_tail: includeLogs.value ? getConsoleTail() : '',
@@ -130,6 +157,12 @@ async function submit() {
 					<span class="material-symbols-rounded">lightbulb</span> Feature request
 				</button>
 			</div>
+			<label class="field area-field">
+				<span>Area</span>
+				<select v-model="area" :disabled="submitting">
+					<option v-for="a in AREAS" :key="a.value" :value="a.value">{{ a.label }}</option>
+				</select>
+			</label>
 			<label class="field">
 				<span>Title</span>
 				<input v-model="title" :placeholder="kind === 'bug' ? 'short summary of what went wrong' : 'short summary of what you\'d like to see'" maxlength="250" :disabled="submitting" />
@@ -199,9 +232,10 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .kindbtn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .field { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--text-dim); margin-bottom: 14px; }
-.field input, .field textarea { padding: 9px 11px; font: inherit; font-size: 13px; color: var(--text);
+.field input, .field textarea, .field select { padding: 9px 11px; font: inherit; font-size: 13px; color: var(--text);
 	background: var(--surface); border: 1px solid var(--border); border-radius: 8px; outline: none; resize: vertical; }
-.field input:focus, .field textarea:focus { border-color: var(--accent); }
+.field input:focus, .field textarea:focus, .field select:focus { border-color: var(--accent); }
+.area-field select { max-width: 280px; }
 
 .chk { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--text); cursor: pointer; margin-bottom: 16px; line-height: 1.4; }
 .chk input { accent-color: var(--accent); margin-top: 2px; }

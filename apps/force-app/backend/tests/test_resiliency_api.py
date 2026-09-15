@@ -595,6 +595,18 @@ def test_report_bug_forwards_kind_and_defaults_to_bug(tmp_path, monkeypatch):
     assert calls[1]["kind"] == "feature"
 
 
+def test_report_bug_forwards_area_and_defaults_to_general(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    calls = _install_fake_create_issue(monkeypatch)
+
+    with TestClient(fastapi_app) as client:
+        client.post("/support/report-bug", data={"title": "no area sent"})
+        client.post("/support/report-bug", data={"title": "a plotting bug", "area": "plotting"})
+
+    assert calls[0]["area"] == "general"
+    assert calls[1]["area"] == "plotting"
+
+
 def test_report_bug_issues_proxies_the_relay(monkeypatch):
     async def _fake_list_issues():
         return {"ok": True, "issues": [{"number": 3, "title": "[Bug] x"}]}

@@ -114,7 +114,7 @@ async def test_kind_bug_prefixes_title_and_labels_bug(fake_relay):
     await bug_report.create_issue(**CREATE_ARGS, kind="bug")
     payload = fake_relay.last_payload
     assert payload["title"] == "[Bug] the plot lags"
-    assert payload["labels"] == ["force-app", "in-app-report", "bug"]
+    assert payload["labels"] == ["force-app", "in-app-report", "bug", "area:general"]
 
 
 @pytest.mark.anyio
@@ -122,7 +122,7 @@ async def test_kind_feature_prefixes_title_and_labels_enhancement(fake_relay):
     await bug_report.create_issue(**CREATE_ARGS, kind="feature")
     payload = fake_relay.last_payload
     assert payload["title"] == "[Feature] the plot lags"
-    assert payload["labels"] == ["force-app", "in-app-report", "enhancement"]
+    assert payload["labels"] == ["force-app", "in-app-report", "enhancement", "area:general"]
 
 
 @pytest.mark.anyio
@@ -137,6 +137,32 @@ async def test_does_not_double_prefix_a_title_the_user_already_typed(fake_relay)
     title isn't doubled, never trusted in place of the picker to choose the label."""
     await bug_report.create_issue(**{**CREATE_ARGS, "title": "[Bug] already tagged"}, kind="bug")
     assert fake_relay.last_payload["title"] == "[Bug] already tagged"
+
+
+# ---- create_issue: area -> `area:*` label, restricted to the fixed AREAS set -----------------
+
+
+@pytest.mark.anyio
+async def test_area_is_appended_as_a_dedicated_label(fake_relay):
+    await bug_report.create_issue(**CREATE_ARGS, kind="bug", area="plotting")
+    assert fake_relay.last_payload["labels"] == [
+        "force-app",
+        "in-app-report",
+        "bug",
+        "area:plotting",
+    ]
+
+
+@pytest.mark.anyio
+async def test_unrecognized_area_falls_back_to_general(fake_relay):
+    await bug_report.create_issue(**CREATE_ARGS, kind="bug", area="nonsense")
+    assert fake_relay.last_payload["labels"][-1] == "area:general"
+
+
+@pytest.mark.anyio
+async def test_missing_area_defaults_to_general(fake_relay):
+    await bug_report.create_issue(**CREATE_ARGS, kind="bug")
+    assert fake_relay.last_payload["labels"][-1] == "area:general"
 
 
 # ---- list_issues: proxies the relay's /issues, never raises ----------------------------------
