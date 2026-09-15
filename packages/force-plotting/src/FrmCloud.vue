@@ -283,6 +283,15 @@ function setupRenderer() {
 	});
 	gpuObj = new THREE.Points(gpuGeom, gpuMat);
 	gpuObj.visible = false;
+	// gpuGeom carries only aT/aRevs/aVal — position is computed procedurally in the vertex shader,
+	// never uploaded as a real `position` attribute — so THREE has nothing to derive a meaningful
+	// bounding sphere from and computeBoundingSphere() degenerates to a zero-radius sphere. Default
+	// frustumCulled (true) then tests the camera frustum against THAT degenerate sphere instead of
+	// where the spiral actually is, so the object gets silently culled — invisible, no error — once
+	// the frustum shrinks enough for the (wrong) test to start failing, i.e. zoomed in a bit further
+	// than usual (bug #14). There's no bounding volume to compute correctly here short of deriving
+	// one from the geometry parameters every draw, so skip culling for this object entirely.
+	gpuObj.frustumCulled = false;
 	scene.add(gpuObj);
 	// preventDefault keeps the canvas eligible for a restore event; on restore we re-upload
 	// the resident buffers and resume, so a context the browser reclaimed (e.g. too many

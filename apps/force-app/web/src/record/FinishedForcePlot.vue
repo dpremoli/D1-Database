@@ -8,12 +8,58 @@ import type { Cache } from '@d1/force-plotting';
 import { CH_COLOR } from './types';
 import { theme } from '../theme';
 
-const props = defineProps<{ cache: Cache; channels?: string[] }>();
+const props = defineProps<{
+	cache: Cache;
+	channels?: string[];
+	// Override the cache's own auto-detected csSec/ceSec for the shaded cut window — the
+	// end-of-cut save dialog seeds these from csSec/ceSec but lets the operator drag them before
+	// saving (#7). Falls back to the cache's own values when not given, same shading as before.
+	cropStartSec?: number | null;
+	cropEndSec?: number | null;
+	cropEditable?: boolean;
+}>();
+const emit = defineEmits<{
+	(e: 'update:cropStartSec', v: number): void;
+	(e: 'update:cropEndSec', v: number): void;
+}>();
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
 let ro: ResizeObserver | null = null;
 
 const ML = 48, MR = 10, MT = 10, MB = 22;
+// Updated every draw() so pointer handlers can convert canvas-local px <-> data seconds without
+// redoing the layout math.
+let lastXOf: ((t: number) => number) | null = null;
+let lastT0 = 0, lastT1 = 0, lastW = 0;
+function xToSec(px: number): number {
+	if (lastW <= 0) return lastT0;
+	const t = lastT0 + ((px - ML) / lastW) * (lastT1 - lastT0);
+	return Math.min(lastT1, Math.max(lastT0, t));
+}
+let lastHandles: { startX: number; endX: number; top: number; bottom: number } | null = null;
+let dragging: 'start' | 'end' | null = null;
+
+function localPx(ev: PointerEvent): { x: number; y: number } {
+	const r = canvasEl.value!.getBoundingClientRect();
+	return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+}
+function onPointerDown(ev: PointerEvent) {
+	if (!props.cropEditable || !lastHandles) return;
+	const { x, y } = localPx(ev);
+	if (y < lastHandles.top - 6 || y > lastHandles.bottom + 6) return;
+	const ds = Math.abs(x - lastHandles.startX), de = Math.abs(x - lastHandles.endX);
+	const nearest = ds <= de ? 'start' : 'end';
+	if (Math.min(ds, de) > 10) return;   // clicked well away from either handle — not a drag
+	dragging = nearest;
+	(ev.target as Element).setPointerCapture(ev.pointerId);
+}
+function onPointerMove(ev: PointerEvent) {
+	if (!dragging) return;
+	const sec = xToSec(localPx(ev).x);
+	if (dragging === 'start') emit('update:cropStartSec', Math.min(sec, props.cropEndSec ?? sec));
+	else emit('update:cropEndSec', Math.max(sec, props.cropStartSec ?? sec));
+}
+function onPointerUp() { dragging = null; }
 
 function resize() {
 	const c = canvasEl.value;
@@ -83,6 +129,7 @@ function draw() {
 
 	const xOf = (t: number) => ML + ((t - t0) / span) * W;
 	const yOf = (v: number) => MT + H - ((v - lo) / yr) * H;
+	lastXOf = xOf; lastT0 = t0; lastT1 = t1; lastW = W;
 
 	ctx.font = '10px system-ui'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
 	const yStep = niceStep(yr, Math.max(2, Math.floor(H / 50)));
@@ -115,10 +162,13 @@ function draw() {
 
 	if (lo < 0 && hi > 0) { ctx.strokeStyle = pal.axisLine; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(ML, yOf(0)); ctx.lineTo(ML + W, yOf(0)); ctx.stroke(); }
 
-	// Cut window shading, if this cache carries a detected cut region.
-	if (cache.ceSec > cache.csSec) {
+	// Cut window shading — props override the cache's own auto-detected csSec/ceSec when given
+	// (the save dialog's editable crop), otherwise this is exactly the old read-only display.
+	const csSec = props.cropStartSec ?? cache.csSec;
+	const ceSec = props.cropEndSec ?? cache.ceSec;
+	if (ceSec > csSec) {
 		ctx.fillStyle = 'rgba(74,222,128,0.06)';
-		ctx.fillRect(xOf(cache.csSec), MT, xOf(cache.ceSec) - xOf(cache.csSec), H);
+		ctx.fillRect(xOf(csSec), MT, xOf(ceSec) - xOf(csSec), H);
 	}
 
 	for (const [key, arr] of series) {
@@ -129,10 +179,21 @@ function draw() {
 		ctx.stroke();
 	}
 	ctx.globalAlpha = 1;
+
+	if (props.cropEditable && ceSec > csSec) {
+		lastHandles = { startX: xOf(csSec), endX: xOf(ceSec), top: MT, bottom: MT + H };
+		for (const [x, col] of [[lastHandles.startX, '#0f766e'], [lastHandles.endX, '#b91c1c']] as const) {
+			ctx.strokeStyle = col; ctx.lineWidth = 2;
+			ctx.beginPath(); ctx.moveTo(x, MT); ctx.lineTo(x, MT + H); ctx.stroke();
+		}
+	} else {
+		lastHandles = null;
+	}
 }
 
 watch(() => props.cache, () => draw());
 watch(() => props.channels, () => draw());
+watch(() => [props.cropStartSec, props.cropEndSec], () => draw());
 watch(theme, () => draw());
 
 onMounted(() => { resize(); window.addEventListener('resize', resize); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); nextTick(resize); });
@@ -140,8 +201,8 @@ onBeforeUnmount(() => { window.removeEventListener('resize', resize); ro?.discon
 </script>
 
 <template>
-	<div class="finished-force">
-		<canvas ref="canvasEl"></canvas>
+	<div class="finished-force" :class="{ editable: cropEditable }">
+		<canvas ref="canvasEl" @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp"></canvas>
 		<div class="legend">
 			<span v-for="k in (channels ?? ['Fx', 'Fy', 'Fz'])" :key="k" class="lg" :style="{ color: CH_COLOR[k] }">
 				<i :style="{ background: CH_COLOR[k] }"></i>{{ k }}
@@ -153,6 +214,7 @@ onBeforeUnmount(() => { window.removeEventListener('resize', resize); ro?.discon
 <style scoped>
 .finished-force { position: relative; width: 100%; height: 100%; min-height: 160px; border-radius: 8px; overflow: hidden; background: var(--plot-bg); }
 .finished-force canvas { width: 100%; height: 100%; display: block; }
+.finished-force.editable canvas { cursor: ew-resize; }
 .legend { position: absolute; top: 6px; right: 8px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 8px; font-size: 11px; font-weight: 600; max-width: 60%; }
 .lg i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 3px; vertical-align: middle; }
 </style>

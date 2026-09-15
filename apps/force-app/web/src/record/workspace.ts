@@ -137,6 +137,12 @@ export function createWorkspace() {
 	const finishedCache = shallowRef<Cache | null>(null);
 	const st = client.status;
 	const saveOpen = ref(false);
+	// User-adjustable cut start/end for the end-of-cut save dialog, seeded from the cache's own
+	// auto-detected csSec/ceSec once it loads (see loadFinished()). Only sent as an explicit
+	// crop_start_idx_override/crop_end_idx_override on save when they differ from that detected
+	// default — leaving them alone means "trust auto-detection", same as it always has.
+	const editCutStartSec = ref<number | null>(null);
+	const editCutEndSec = ref<number | null>(null);
 
 	// Directus links for the run write-back (2d)
 	const link = reactive({
@@ -346,13 +352,22 @@ export function createWorkspace() {
 		for (let attempt = 0; attempt < 4; attempt++) {
 			try {
 				const res = await fetch(client.cacheUrl(id));
-				if (res.ok) { finishedCache.value = parseCache(await res.arrayBuffer()); return; }
+				if (res.ok) {
+					const cache = parseCache(await res.arrayBuffer());
+					finishedCache.value = cache;
+					editCutStartSec.value = cache.csSec;
+					editCutEndSec.value = cache.ceSec;
+					return;
+				}
 			} catch { /* retry */ }
 			if (attempt < 3) await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
 		}
 	}
 
-	function newRun() { client.reset(); finishedCache.value = null; errMsg.value = null; logged.value = false; saveOpen.value = false; }
+	function newRun() {
+		client.reset(); finishedCache.value = null; errMsg.value = null; logged.value = false; saveOpen.value = false;
+		editCutStartSec.value = null; editCutEndSec.value = null;
+	}
 
 	// End-of-cut save/upload: pushes the manufacturing_operations row (bypassing the offline queue,
 	// since we need its operation_id back synchronously to link machining_force_analysis), then
@@ -415,7 +430,21 @@ export function createWorkspace() {
 		// ForceDashboard's chart reads its plot data from `series` (a JSONB min/max envelope), not
 		// from live_cache_file — without this, upload "succeeds" (peaks/FRM all show up fine) but
 		// the force/RPM charts render "no data" forever, since series is otherwise left null.
-		const series = finishedCache.value ? buildSeriesEnvelope(finishedCache.value) : null;
+		const cache = finishedCache.value;
+		const series = cache ? buildSeriesEnvelope(cache) : null;
+		// Only an explicit override when the operator actually moved a handle in the save dialog —
+		// left untouched, editCutStartSec/editCutEndSec still equal the cache's own csSec/ceSec
+		// (seeded in loadFinished()), so this stays null and auto-detection keeps deciding, same as
+		// before this field existed.
+		const cropOverride: Record<string, number | null> = {};
+		if (cache) {
+			if (editCutStartSec.value != null && editCutStartSec.value !== cache.csSec) {
+				cropOverride.crop_start_idx_override = Math.round(editCutStartSec.value * cache.Fs);
+			}
+			if (editCutEndSec.value != null && editCutEndSec.value !== cache.ceSec) {
+				cropOverride.crop_end_idx_override = Math.round(editCutEndSec.value * cache.Fs);
+			}
+		}
 		try {
 		await api.post('/items/machining_force_analysis', {
 			operation_id: opId,
@@ -430,6 +459,7 @@ export function createWorkspace() {
 			peak_fy: peaks?.Fy ?? null,
 			peak_fz: peaks?.Fz ?? null,
 			series,
+			...cropOverride,
 			matlab_version: 'force-app-direct',
 			processed_at: new Date().toISOString(),
 		});
@@ -672,6 +702,7 @@ export function createWorkspace() {
 
 	return {
 		client, source, setSource, nidaqChannels, cfg, meta, machining, plot, replay, st, busy, errMsg, finishedCache,
+		editCutStartSec, editCutEndSec,
 		isIdle, isRecording, isFinalizing, isDone, locked, saveOpen,
 		mode, playback, rpmTarget,
 		start, stop, newRun, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
