@@ -1458,9 +1458,21 @@ async function saveCropAsOfficial() {
 	const backToAuto = !!auto && Math.abs(cropStartSec.value - auto.start) <= tol && Math.abs(cropEndSec.value - auto.end) <= tol;
 	const startIdx = backToAuto ? null : Math.max(0, Math.round(cropStartSec.value * d.sample_rate));
 	const endIdx = backToAuto ? null : Math.max(0, Math.round(cropEndSec.value * d.sample_rate));
+	// A previously-built Full-res octree (plain or gridded) was baked from the old crop window —
+	// once the crop changes it no longer matches the signal shown everywhere else, so invalidate
+	// it the same way the manual "Build" buttons request a build (#10): flip status back to
+	// 'pending' with a fresh *_requested_at, which the host-side force orchestrator already polls
+	// for (see buildOctree/buildGridOctree above). Lite reads live_cache_file directly and is
+	// already always current; Figure mode (frm_fx/fy/fz) has no such live-triggerable rebuild path.
+	const invalidate: Record<string, any> = {};
+	const now = new Date().toISOString();
+	if (d.octree_status === 'done') { invalidate.octree_status = 'pending'; invalidate.octree_requested_at = now; }
+	if (d.grid_octree_status === 'done') { invalidate.grid_octree_status = 'pending'; invalidate.grid_octree_requested_at = now; }
 	try {
-		await api.patch(`/items/machining_force_analysis/${d.id}`, { crop_start_idx_override: startIdx, crop_end_idx_override: endIdx });
+		await api.patch(`/items/machining_force_analysis/${d.id}`, { crop_start_idx_override: startIdx, crop_end_idx_override: endIdx, ...invalidate });
 		d.crop_start_idx_override = startIdx; d.crop_end_idx_override = endIdx;   // so cropDirty/savedCropSec update
+		if (invalidate.octree_status) { d.octree_status = 'pending'; if (frmMode.value === 'full' && !gridFull.value) frmMode.value = 'lite'; }
+		if (invalidate.grid_octree_status) { d.grid_octree_status = 'pending'; if (frmMode.value === 'full' && gridFull.value) frmMode.value = 'lite'; }
 		cropTouched.value = false;
 		cropSavedMsg.value = backToAuto ? 'Reverted to auto crop' : 'Saved as official crop';
 		window.setTimeout(() => { cropSavedMsg.value = ''; }, 2500);
