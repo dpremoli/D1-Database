@@ -9,6 +9,21 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.21',
+		date: '2026-09-15',
+		notes: [
+			'New Metadata Doctor (Plot dashboard): flags operations where the archived .mat file\'s recorded parameters disagree with, or are missing from, the database — undersized crop windows, conflicting feed/depth-of-cut/speed/diameter, unlinked samples — with one-click fixes that route through the existing "Save changes" dialog. A severity badge and filter show flagged ops directly in the Operations list; a workpiece diameter field was added to the metadata box so it has somewhere to adopt into.',
+			'Fixed: the operation code and sequence fields in the Plot dashboard\'s metadata box looked editable but any edits were silently discarded — both are now shown as the fixed, non-editable values they always actually were.',
+			'End-of-cut save dialog: the detected cut start/end can now be dragged to adjust before saving, with a note and one-click reset if you want to revert to the auto-detected window.',
+			'Report a bug/feature page: you can now tag whether you\'re filing a bug or a feature request, your signed-in email is always attached to the report, and the page shows your recently-filed reports with their open/closed status.',
+			'Fixed: leaving the Plot page and coming back reloaded it from scratch every time, including re-fetching the drive list on every visit to Settings > General.',
+			'Fixed: discarding a just-finished recording (instead of saving it) could leave its plot data showing on the next recording.',
+			'Fixed: the Signals/FRM column on the Plot page could fall slightly short of matching the record window\'s exact height.',
+			'Fixed: the FRM point cloud in Lite mode could vanish when zoomed in, not reappearing until you zoomed back out.',
+			'Fixed: a Full-res (Potree) point cloud kept showing the old crop window after the crop was adjusted and saved — it\'s now automatically rebuilt on the next save.',
+		],
+	},
+	{
 		version: '0.1.20',
 		date: '2026-09-13',
 		notes: [
