@@ -30,6 +30,21 @@ const saveCsv = ref(false);
 // reads as "this will happen" and `save()` only tests uploadDb.
 watch(canUpload, (v) => { if (!v) uploadDb.value = false; });
 
+// Whether the operator dragged a crop handle away from the auto-detected default (#7) — gates the
+// "adjusted" note and its Reset button; save() sends an explicit override only in that case too
+// (see workspace.ts's uploadCutToDatabase).
+const cutWindowEdited = computed(() => {
+	const c = w.finishedCache.value;
+	if (!c) return false;
+	return w.editCutStartSec.value !== c.csSec || w.editCutEndSec.value !== c.ceSec;
+});
+function resetCutWindow() {
+	const c = w.finishedCache.value;
+	if (!c) return;
+	w.editCutStartSec.value = c.csSec;
+	w.editCutEndSec.value = c.ceSec;
+}
+
 const stage = ref<'ask' | 'saving' | 'done' | 'discard-confirm'>('ask');
 const errMsg = ref<string | null>(null);
 const savedOpId = ref<string | null>(null);
@@ -209,12 +224,23 @@ function startNew() {
 			</template>
 
 			<template v-else>
+			<p v-if="w.finishedCache.value" class="scd-plot-hint">Drag the shaded window's edges to adjust the detected cut start/end before saving.</p>
 			<div class="scd-plot">
-				<FinishedForcePlot v-if="w.finishedCache.value" :cache="w.finishedCache.value" />
+				<FinishedForcePlot v-if="w.finishedCache.value" :cache="w.finishedCache.value"
+					crop-editable
+					:crop-start-sec="w.editCutStartSec.value" :crop-end-sec="w.editCutEndSec.value"
+					@update:crop-start-sec="w.editCutStartSec.value = $event"
+					@update:crop-end-sec="w.editCutEndSec.value = $event" />
 				<div v-else class="scd-loading">
 					<span class="material-symbols-rounded spin">progress_activity</span>
 					<span>Loading recorded trace…</span>
 				</div>
+			</div>
+			<div v-if="w.finishedCache.value && cutWindowEdited" class="scd-crop-note">
+				<span class="material-symbols-rounded">tune</span>
+				<span>Cut window adjusted: {{ w.editCutStartSec.value?.toFixed(2) }}s – {{ w.editCutEndSec.value?.toFixed(2) }}s
+					(auto-detected: {{ w.finishedCache.value.csSec.toFixed(2) }}s – {{ w.finishedCache.value.ceSec.toFixed(2) }}s)</span>
+				<button class="scd-crop-reset" type="button" @click="resetCutWindow">Reset</button>
 			</div>
 
 			<template v-if="stage === 'ask' || stage === 'saving'">
@@ -296,7 +322,14 @@ function startNew() {
 .scd-title { display: flex; flex-direction: column; }
 .scd-title b { font-size: 15px; }
 .scd-sub { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.scd-plot-hint { margin: 0 0 6px; font-size: 11px; color: var(--text-dim); }
 .scd-plot { height: 280px; }
+.scd-crop-note { display: flex; align-items: center; gap: 7px; margin-top: 8px; padding: 7px 10px; font-size: 11.5px; color: var(--text-dim);
+	background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.25); border-radius: 8px; }
+.scd-crop-note .material-symbols-rounded { font-size: 15px; color: #4ade80; flex-shrink: 0; }
+.scd-crop-note span:nth-child(2) { flex: 1; font-variant-numeric: tabular-nums; }
+.scd-crop-reset { flex-shrink: 0; padding: 3px 9px; font-size: 11px; font-weight: 700; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.scd-crop-reset:hover { background: var(--surface); }
 .scd-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 200px; color: var(--text); }
 .scd-loading b { font-size: 14px; font-weight: 600; }
 .scd-loading-sub { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; text-align: center; margin-top: 4px; }
