@@ -192,8 +192,13 @@ async def issues() -> dict:
                     "Accept": "application/vnd.github+json",
                     "X-GitHub-Api-Version": "2022-11-28",
                 },
-                params={"labels": "in-app-report", "state": "all", "sort": "created",
-                        "direction": "desc", "per_page": 50},
+                params={
+                    "labels": "in-app-report",
+                    "state": "all",
+                    "sort": "created",
+                    "direction": "desc",
+                    "per_page": 50,
+                },
             )
     except httpx.HTTPError as e:
         return {"ok": False, "reason": f"could not reach GitHub: {e}"}
@@ -211,17 +216,21 @@ async def issues() -> dict:
 
     out = []
     for item in res.json():
-        if "pull_request" in item:  # the issues endpoint also returns PRs; this repo files none
-            continue                # with these labels, but skip defensively rather than assume
-        out.append({
-            "number": item.get("number"),
-            "title": item.get("title", ""),
-            "url": item.get("html_url", ""),
-            "state": item.get("state", ""),
-            "labels": [
-                (label if isinstance(label, str) else label.get("name", ""))
-                for label in item.get("labels", [])
-            ],
-            "created_at": item.get("created_at"),
-        })
+        if (
+            "pull_request" in item
+        ):  # the issues endpoint also returns PRs; this repo files none
+            continue  # with these labels, but skip defensively rather than assume
+        out.append(
+            {
+                "number": item.get("number"),
+                "title": item.get("title", ""),
+                "url": item.get("html_url", ""),
+                "state": item.get("state", ""),
+                "labels": [
+                    (label if isinstance(label, str) else label.get("name", ""))
+                    for label in item.get("labels", [])
+                ],
+                "created_at": item.get("created_at"),
+            }
+        )
     return {"ok": True, "issues": out}
