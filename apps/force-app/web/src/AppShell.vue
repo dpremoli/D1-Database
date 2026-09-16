@@ -163,7 +163,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 					<span class="rec-stat"><b>{{ fmtSamples(recording!.samples) }}</b> samples</span>
 					<span class="rec-stat"><b>{{ recording!.peakN.toFixed(0) }} N</b> peak</span>
 				</span>
-				<router-link to="/record" class="rec-banner-link">Go to Record</router-link>
+				<router-link to="/record" class="rec-banner-link">Go to Recording</router-link>
 				<button class="rec-banner-dismiss" title="Dismiss" @click="dismissBanner"><span class="material-symbols-rounded">close</span></button>
 			</div>
 			<!-- Every other route remounts on each navigation (cheap, and Record relies on its own

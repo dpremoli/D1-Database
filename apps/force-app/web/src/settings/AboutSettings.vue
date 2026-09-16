@@ -111,7 +111,15 @@ onMounted(async () => {
 			<p class="sub">The app will close and reopen automatically — this takes a few seconds.</p>
 		</div>
 
-		<h2 class="mt">What's new</h2>
+		<div class="changelog-head mt">
+			<h2>What's new</h2>
+			<!-- #43 -->
+			<a href="https://github.com/dpremoli/D1-Database/releases" target="_blank" rel="noopener" class="releases-link">
+				<span class="material-symbols-rounded">open_in_new</span> View all releases on GitHub
+			</a>
+		</div>
+		<!-- #44: this list only ever grows (one entry per release, never pruned), so without its own
+			 scroll area it eventually pushes the whole Settings window's height along with it. -->
 		<div class="changelog">
 			<div v-for="c in CHANGELOG" :key="c.version" class="entry" :class="{ current: isElectron && c.version === appVersion }">
 				<div class="entry-head">
@@ -148,7 +156,15 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .spin { animation: spin 1.1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.changelog { display: flex; flex-direction: column; gap: 14px; }
+.changelog-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.changelog-head h2 { margin: 0; }
+.releases-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.releases-link:hover { text-decoration: underline; }
+.releases-link .material-symbols-rounded { font-size: 14px; }
+/* #44: capped so a long, ever-growing history scrolls in place instead of pushing the whole
+   Settings window taller — max-height is a viewport fraction (not a fixed px) so it still leaves
+   room to see other page content above it on a shorter window. */
+.changelog { display: flex; flex-direction: column; gap: 14px; max-height: 55vh; overflow-y: auto; padding-right: 4px; }
 .entry { padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .entry.current { border-color: var(--accent); background: rgba(56,189,248,0.06); }
 .entry-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }

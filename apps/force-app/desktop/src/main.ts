@@ -209,6 +209,15 @@ async function createWindow(): Promise<void> {
   });
   if (savedMain?.maximized) mainWindow.maximize();
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  // #35: F11 fullscreen, the conventional browser/desktop-app shortcut -- Electron doesn't wire
+  // this up on its own. before-input-event (not a Menu accelerator) keeps it working even though
+  // this app runs frameless-menu-less; scoped to just the main window, not a global shortcut, so
+  // it doesn't fire while a detached panel window has focus instead.
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.type === 'keyDown' && input.key === 'F11') {
+      mainWindow?.setFullScreen(!mainWindow.isFullScreen());
+    }
+  });
   // Bounds while maximized are the whole-screen size, not a meaningful "last used" size to
   // restore into next launch — save the pre-maximize bounds instead and just reapply maximize().
   mainWindow.on('close', (event) => {

@@ -94,7 +94,7 @@ function measureGrid() {
 // row count, which changed the grid's own height and incidentally re-triggered the observer; it
 // stayed broken on dismissal (and on a same-layout Reset) because nothing forced that. Watching
 // the banners' own visibility directly is the actual fix, not a coincidence of some other resize.
-watch([() => !!st.diskAction, () => recoveryItems.value.length > 0], () => measureGrid(), { flush: 'post' });
+watch([() => !!st.diskAction, () => visibleRecoveryItems.value.length > 0], () => measureGrid(), { flush: 'post' });
 // Derived from the LIVE layout, not the default: `layout` is user-editable and persisted, so the
 // row span is arbitrary after any drag/resize/add.
 const bottomRow = computed(() => layout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0) || 1);
@@ -252,6 +252,20 @@ interface IncompleteSession {
 	manifest?: { config?: { sample_name?: string } } | null;
 }
 const recoveryItems = ref<IncompleteSession[]>([]);
+// #27: "dismiss for now" without recovering or discarding -- the crashed capture stays exactly
+// where it is on disk (still visible to the health-doctor's "Crashed recordings" check and
+// Settings > General's purge option), this only stops the Record page banner from nagging about
+// it every visit. Persisted (not just this component's lifetime) since "deal with it later" means
+// "maybe after restarting the app," not just "for the rest of this session."
+const DISMISSED_RECOVERY_LS_KEY = 'force-app.dismissedRecoveryIds';
+const dismissedRecoveryIds = ref<Set<string>>(
+	new Set(JSON.parse(localStorage.getItem(DISMISSED_RECOVERY_LS_KEY) || '[]')),
+);
+function dismissRecovery(id: string) {
+	dismissedRecoveryIds.value.add(id);
+	localStorage.setItem(DISMISSED_RECOVERY_LS_KEY, JSON.stringify([...dismissedRecoveryIds.value]));
+}
+const visibleRecoveryItems = computed(() => recoveryItems.value.filter((s) => !dismissedRecoveryIds.value.has(s.id)));
 const recoveryBusy = ref<Record<string, boolean>>({});
 // Recover/discard on a crashed session's raw.d1raw can take a while for a large/long-running
 // capture (finalize has to re-derive everything, discard has to delete a potentially multi-GB
@@ -458,13 +472,13 @@ onBeforeUnmount(() => {
 			</div>
 
 			<!-- Recovery banner for incomplete recordings found on startup -->
-			<div v-if="recoveryItems.length" class="recovery-banner">
+			<div v-if="visibleRecoveryItems.length" class="recovery-banner">
 				<div class="rb-head">
 					<span class="material-symbols-rounded">restore</span>
-					<b>{{ recoveryItems.length }} incomplete recording{{ recoveryItems.length > 1 ? 's' : '' }} found</b>
+					<b>{{ visibleRecoveryItems.length }} incomplete recording{{ visibleRecoveryItems.length > 1 ? 's' : '' }} found</b>
 					<span class="rb-hint">These recordings were interrupted by a crash or power failure. You can recover the data or discard them.</span>
 				</div>
-				<div v-for="s in recoveryItems" :key="s.id" class="rb-item">
+				<div v-for="s in visibleRecoveryItems" :key="s.id" class="rb-item">
 					<div class="rb-info">
 						<span class="rb-id" :title="s.id">{{ s.id }}</span>
 						<span class="rb-detail" :title="`${s.raw.duration_sec.toFixed(1)}s · ${s.raw.n_rows.toLocaleString()} samples · ${s.raw.raw_size_mb} MB`">{{ s.raw.duration_sec.toFixed(1) }}s · {{ s.raw.n_rows.toLocaleString() }} samples · {{ s.raw.raw_size_mb }} MB</span>
@@ -475,6 +489,12 @@ onBeforeUnmount(() => {
 					</button>
 					<button class="rb-btn discard" :disabled="!!recoveryBusy[s.id]" @click="discardSession(s.id)">
 						<span class="material-symbols-rounded" :class="{ spin: recoveryBusy[s.id] }">{{ recoveryBusy[s.id] ? 'progress_activity' : 'delete' }}</span>{{ recoveryBusy[s.id] ? `Discarding… ${recoveryElapsed(s.id).toFixed(0)}s` : 'Discard' }}
+					</button>
+					<!-- #27: neither recovers nor discards -- just stops nagging about this one. The
+						 capture stays on disk exactly as-is (still visible to the health-doctor's
+						 "Crashed recordings" check if it's forgotten about entirely). -->
+					<button class="rb-btn dismiss" :disabled="!!recoveryBusy[s.id]" title="Deal with this later — stop showing it here, without recovering or discarding it" @click="dismissRecovery(s.id)">
+						<span class="material-symbols-rounded">visibility_off</span>Ignore for now
 					</button>
 				</div>
 			</div>
@@ -577,6 +597,8 @@ onBeforeUnmount(() => {
 .rb-btn.recover:hover:not(:disabled) { background: #16a34a; }
 .rb-btn.discard { color: var(--text-dim); background: var(--surface-2); }
 .rb-btn.discard:hover:not(:disabled) { color: var(--danger); background: rgba(239,68,68,0.1); }
+.rb-btn.dismiss { color: var(--text-dim); background: transparent; border: 1px solid var(--border); }
+.rb-btn.dismiss:hover:not(:disabled) { color: var(--text); background: var(--surface); }
 .rb-btn .spin { animation: rb-spin 1s linear infinite; }
 @keyframes rb-spin { to { transform: rotate(360deg); } }
 /* Wrapper exists purely so the responsive row-height maths has a real element to measure from

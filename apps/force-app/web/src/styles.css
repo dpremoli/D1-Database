@@ -86,6 +86,16 @@
 ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.25); }
 [data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.2); }
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.35); }
+
+/* #41: every native <select>'s closed box already themes correctly wherever it's used (each
+   component sets its own color/background from these same tokens) -- but Chromium renders the
+   OPEN <option> list using its own color-scheme-driven palette, not the page's, unless each
+   option is styled explicitly. Global rather than per-component since every select in the app
+   (Report a Bug's area field, source pickers, etc.) shares this same gap. --bg-2, not --surface:
+   the popup needs an opaque backdrop of its own (same choice the floating .addmenu/.subpop
+   popovers elsewhere make) -- --surface is a translucent tint meant to layer over an existing
+   dark background, which a native option-list popup doesn't have one of. */
+select option { background: var(--bg-2); color: var(--text); }
 html,
 body {
 	margin: 0;
