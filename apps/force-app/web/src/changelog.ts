@@ -9,6 +9,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.27',
+		date: '2026-09-16',
+		notes: [
+			'Fixed: navigating away from the Record page and back during a live cut could silently reset the plotted history and buffers, as if the recording had just started, even though the recording itself never stopped.',
+			'Fixed: the disk-space-warning and incomplete-recordings banners pushed the whole recording layout down while shown, then left it squeezed into the smaller space after being dismissed — both now overlay the page instead of shifting it.',
+			'Fixed: the cross-page "recording in progress" banner\'s elapsed-time counter only advanced once every 5 seconds instead of ticking live.',
+			'Fixed: the Spectrogram and Waterfall views let you tick multiple channels even though only the first ever rendered — selecting a channel in either view now replaces the selection instead of silently no-oping.',
+		],
+	},
+	{
 		version: '0.1.26',
 		date: '2026-09-16',
 		notes: [
