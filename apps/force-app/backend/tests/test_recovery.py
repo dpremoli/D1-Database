@@ -92,6 +92,18 @@ def test_scan_incomplete_finds_crashed_session(tmp_path):
     assert incomplete[0]["raw"]["duration_sec"] > 0
 
 
+def test_scan_incomplete_excludes_the_live_session(tmp_path):
+    # #29: a still-recording session has a raw.d1raw and no summary.json yet -- looks identical to
+    # a crashed one unless the caller tells scan_incomplete which id is still actively streaming.
+    sid = "20240101-120000-abc123"
+    d = str(tmp_path / sid)
+    _make_raw(d, n_rows=200)
+
+    assert scan_incomplete(str(tmp_path), exclude_id=sid) == []
+    assert len(scan_incomplete(str(tmp_path), exclude_id="some-other-id")) == 1
+    assert len(scan_incomplete(str(tmp_path))) == 1
+
+
 def test_scan_incomplete_skips_finalized(tmp_path):
     sid = "20240101-120000-fin001"
     d = str(tmp_path / sid)

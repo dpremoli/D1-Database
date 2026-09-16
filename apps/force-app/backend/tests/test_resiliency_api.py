@@ -53,6 +53,42 @@ def test_recovery_check_finds_incomplete(tmp_path, monkeypatch):
         assert items[0]["raw"]["n_rows"] == 300
 
 
+def test_recovery_check_excludes_the_live_recording_session(tmp_path, monkeypatch):
+    # #29: while a recording is actively streaming, its dir has a raw.d1raw and no summary.json
+    # yet -- looks identical to a crashed session unless /recovery/check knows to exclude whichever
+    # id the live session object says it's currently writing to.
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    sid = "20240101-120000-abc123"
+    _make_raw(str(tmp_path / sid), n_rows=300)
+
+    class _StubSession:
+        id = sid
+        state = "recording"
+
+    monkeypatch.setattr(main, "_session", _StubSession())
+    with TestClient(fastapi_app) as client:
+        r = client.get("/recovery/check")
+        assert r.json()["incomplete"] == []
+
+
+def test_recovery_check_still_lists_a_session_after_recording_ends(tmp_path, monkeypatch):
+    # A session lingers with state 'done'/'error' briefly, but by then finalize() already wrote
+    # summary.json -- covered by the summary_path check. This asserts the *id* exclusion itself is
+    # scoped to genuinely-active states, not "whatever _session last pointed at".
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    sid = "20240101-120000-abc123"
+    _make_raw(str(tmp_path / sid), n_rows=300)
+
+    class _StubSession:
+        id = sid
+        state = "idle"
+
+    monkeypatch.setattr(main, "_session", _StubSession())
+    with TestClient(fastapi_app) as client:
+        r = client.get("/recovery/check")
+        assert len(r.json()["incomplete"]) == 1
+
+
 def test_recovery_recover_success(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
     sid = "20240101-120000-rec001"

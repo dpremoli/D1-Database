@@ -418,12 +418,19 @@ export function createWorkspace() {
 		const id = st.captureId;
 		if (!id) throw new Error('no capture id for this recording');
 		const opId = await logRunSync();
+		// A capture too large for the MAT5 format (see finalize.py's MAT_MAX_BYTES) never had a
+		// capture.mat written at all -- fetching it would 404 and abort the whole save. Everything
+		// else (series, peaks, live_cache) still comes from the decimated cache, so the analysis
+		// record is still fully usable without it; directus_files_id just goes in as null.
+		const matWritten = st.summary?.mat_written !== false;
 		const [matBlob, cacheBlob] = await Promise.all([
-			fetch(client.matUrl(id)).then((r) => { if (!r.ok) throw new Error('capture.mat fetch failed'); return r.blob(); }),
+			matWritten
+				? fetch(client.matUrl(id)).then((r) => { if (!r.ok) throw new Error('capture.mat fetch failed'); return r.blob(); })
+				: Promise.resolve(null),
 			fetch(client.cacheUrl(id)).then((r) => { if (!r.ok) throw new Error('live_cache.bin fetch failed'); return r.blob(); }),
 		]);
 		const [matFileId, cacheFileId] = await Promise.all([
-			uploadFile(matBlob, `${id}.mat`),
+			matBlob ? uploadFile(matBlob, `${id}.mat`) : Promise.resolve(null),
 			uploadFile(cacheBlob, `${id}_live_cache.bin`),
 		]);
 		const peaks = st.summary?.peaks;
