@@ -9,6 +9,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.26',
+		date: '2026-09-16',
+		notes: [
+			'Fixed: the live bandwidth readout on the Record page could flicker constantly between e.g. "1 MB/s" and "1000 KB/s".',
+			'Fixed: the report-a-bug/feature form could lose whatever you\'d already typed if you switched Settings tabs or popped the window before submitting.',
+			'Fixed: discarding an incomplete recording said this "cannot be undone" even when a remote backup copy still existed — the dialog now says so and points you to Settings > Remote Live Backup when that\'s the case.',
+			'Renamed the Force panel\'s time-domain tab from "Force" to "Time" — the channels shown there aren\'t always force (e.g. Tacho, or a milling recording\'s torque/position channels).',
+		],
+	},
+	{
 		version: '0.1.25',
 		date: '2026-09-16',
 		notes: [
