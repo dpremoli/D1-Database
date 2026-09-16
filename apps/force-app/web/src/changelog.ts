@@ -9,6 +9,17 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.29',
+		date: '2026-09-16',
+		notes: [
+			'F11 now toggles fullscreen.',
+			'Fixed: dropdown menus (e.g. the Report a Bug area field) could show unreadable colouring when opened in dark mode.',
+			'Settings > About: a link to the full GitHub releases page, and the changelog list now scrolls within its own area instead of growing the whole window taller.',
+			'The recording-in-progress banner shown on other pages now says "Go to Recording".',
+			'The incomplete-recordings banner gained an "Ignore for now" option, for when you want to deal with a crashed recording later instead of recovering or discarding it immediately.',
+		],
+	},
+	{
 		version: '0.1.28',
 		date: '2026-09-16',
 		notes: [
