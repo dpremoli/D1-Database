@@ -9,6 +9,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.24',
+		date: '2026-09-16',
+		notes: [
+			'Fixed: recording a very large capture could crash the whole app during finalize (an internal file-format limit on the archived .mat file). Oversized captures now finalize successfully — the plot data and summary are still produced and saved, just without a full-resolution .mat archive.',
+			'Fixed: a recording that was still actively streaming could appear in the "incomplete recordings" recovery list with a Restore option, as if it had crashed.',
+			'Fixed: changing the Lab Amp\'s mode, ranges, or calibration is now blocked while a recording is in progress, instead of being able to corrupt the live capture.',
+			'Fixed: the safety alarm banner could show a nonsensical "0.0 N" for the tacho/RPM signal-integrity alarm, reading as a misbehaving force alarm even when force alarms were turned off.',
+		],
+	},
+	{
 		version: '0.1.23',
 		date: '2026-09-15',
 		notes: [
