@@ -724,6 +724,25 @@ export function createWorkspace() {
 }
 
 export type Workspace = ReturnType<typeof createWorkspace>;
+// #25: this file's own top comment says the workspace is "created once in RecordPage," but
+// RecordPage.vue used to call createWorkspace() itself in its <script setup> -- which runs again
+// on every mount, not once, since Vue unmounts route components by default. Navigating away from
+// /record and back during a live cut silently built a brand-new RecordClient with empty buffers,
+// discarding all previously-plotted data even though the recording itself (server-side) kept
+// running untouched.
+//
+// A true module-level singleton fixes that, but it must be built LAZILY, not at import time:
+// createWorkspace() touches localStorage on its very first line, and eagerly constructing it as
+// `export const workspace = createWorkspace()` means merely IMPORTING this module -- e.g. a future
+// unit test importing some unrelated export from this same file -- throws `ReferenceError:
+// localStorage is not defined` in a plain Node/vitest environment with no DOM. getWorkspace() only
+// builds the instance the first time something actually needs it (RecordPage.vue's own mount,
+// same timing as before), then reuses it for the app's lifetime.
+let _workspace: Workspace | null = null;
+export function getWorkspace(): Workspace {
+	if (!_workspace) _workspace = createWorkspace();
+	return _workspace;
+}
 export const WORKSPACE: InjectionKey<Workspace> = Symbol('record-workspace');
 export function useWorkspace(): Workspace {
 	const w = inject(WORKSPACE);

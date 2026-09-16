@@ -4,7 +4,7 @@
 // persisted to localStorage; panels share one workspace store via provide/inject.
 import { onMounted, onBeforeUnmount, provide, reactive, ref, watch, watchEffect, computed } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
-import { createWorkspace, WORKSPACE } from './workspace';
+import { getWorkspace, WORKSPACE } from './workspace';
 import { startSync, syncStatus } from './directusSync';
 import { hwStatus } from './hwStatus';
 import { labamp } from './labampApi';
@@ -20,7 +20,10 @@ import SaveCutDialog from './panels/SaveCutDialog.vue';
 import { confirmAction } from '../ui/confirm';
 
 
-const w = createWorkspace();
+// #25: getWorkspace() returns a lazily-built module-level singleton (see workspace.ts) so its
+// live buffers/config survive this component unmounting and remounting -- not a fresh instance
+// per mount.
+const w = getWorkspace();
 provide(WORKSPACE, w);
 const st = w.st;
 
@@ -436,14 +439,45 @@ onBeforeUnmount(() => {
 
 <template>
 	<div class="rec-wrap" @click="addOpen = false">
-		<!-- Disk-full protection: the backend watches free space during a recording independently of
-			 this page's own polling, and reports what (if anything) it had to do about it. -->
-		<div v-if="st.diskAction" class="disk-action-banner" :class="st.diskAction.action">
-			<span class="material-symbols-rounded">{{ st.diskAction.action === 'forced_stop' ? 'dangerous' : st.diskAction.action === 'backup_started' ? 'cloud_upload' : 'warning' }}</span>
-			<span v-if="st.diskAction.action === 'backup_started'">Disk space is low ({{ st.diskAction.freeGb.toFixed(1) }} GB free) — remote backup was switched on automatically to protect this recording.</span>
-			<span v-else-if="st.diskAction.action === 'forced_stop'">Recording was stopped automatically — disk space ran critically low ({{ st.diskAction.freeGb.toFixed(1) }} GB free). The data captured so far is safe.</span>
-			<span v-else>Disk space is low ({{ st.diskAction.freeGb.toFixed(1) }} GB free) and no remote backup is configured — free up space or configure a backup server soon.</span>
-			<button class="disk-action-ack" @click="st.diskAction = null">Dismiss</button>
+		<!-- #26: disk-action and recovery banners used to sit in normal document flow (disk-action
+			 was even "sticky", which still reserves flow space), pushing the grid down while shown and
+			 lifting it back up when dismissed -- the .alarm-overlay below has always been a true
+			 fixed-position overlay with zero flow impact, by contrast. This wrapper gives the other two
+			 banners that same treatment: fixed, stacked in DOM order, never affecting the grid's layout.
+			 #36's ResizeObserver-plus-explicit-watch fix stays in place regardless -- harmless if this
+			 makes it a no-op remeasure, and still correct if any future banner goes back to flow. -->
+		<div class="top-overlays">
+			<!-- Disk-full protection: the backend watches free space during a recording independently of
+				 this page's own polling, and reports what (if anything) it had to do about it. -->
+			<div v-if="st.diskAction" class="disk-action-banner" :class="st.diskAction.action">
+				<span class="material-symbols-rounded">{{ st.diskAction.action === 'forced_stop' ? 'dangerous' : st.diskAction.action === 'backup_started' ? 'cloud_upload' : 'warning' }}</span>
+				<span v-if="st.diskAction.action === 'backup_started'">Disk space is low ({{ st.diskAction.freeGb.toFixed(1) }} GB free) — remote backup was switched on automatically to protect this recording.</span>
+				<span v-else-if="st.diskAction.action === 'forced_stop'">Recording was stopped automatically — disk space ran critically low ({{ st.diskAction.freeGb.toFixed(1) }} GB free). The data captured so far is safe.</span>
+				<span v-else>Disk space is low ({{ st.diskAction.freeGb.toFixed(1) }} GB free) and no remote backup is configured — free up space or configure a backup server soon.</span>
+				<button class="disk-action-ack" @click="st.diskAction = null">Dismiss</button>
+			</div>
+
+			<!-- Recovery banner for incomplete recordings found on startup -->
+			<div v-if="recoveryItems.length" class="recovery-banner">
+				<div class="rb-head">
+					<span class="material-symbols-rounded">restore</span>
+					<b>{{ recoveryItems.length }} incomplete recording{{ recoveryItems.length > 1 ? 's' : '' }} found</b>
+					<span class="rb-hint">These recordings were interrupted by a crash or power failure. You can recover the data or discard them.</span>
+				</div>
+				<div v-for="s in recoveryItems" :key="s.id" class="rb-item">
+					<div class="rb-info">
+						<span class="rb-id" :title="s.id">{{ s.id }}</span>
+						<span class="rb-detail" :title="`${s.raw.duration_sec.toFixed(1)}s · ${s.raw.n_rows.toLocaleString()} samples · ${s.raw.raw_size_mb} MB`">{{ s.raw.duration_sec.toFixed(1) }}s · {{ s.raw.n_rows.toLocaleString() }} samples · {{ s.raw.raw_size_mb }} MB</span>
+						<span v-if="s.manifest?.config?.sample_name" class="rb-detail" :title="s.manifest.config.sample_name">{{ s.manifest.config.sample_name }}</span>
+					</div>
+					<button class="rb-btn recover" :disabled="!!recoveryBusy[s.id]" @click="recoverSession(s.id)">
+						<span class="material-symbols-rounded" :class="{ spin: recoveryBusy[s.id] }">{{ recoveryBusy[s.id] ? 'progress_activity' : 'healing' }}</span>{{ recoveryBusy[s.id] ? `Recovering… ${recoveryElapsed(s.id).toFixed(0)}s` : 'Recover' }}
+					</button>
+					<button class="rb-btn discard" :disabled="!!recoveryBusy[s.id]" @click="discardSession(s.id)">
+						<span class="material-symbols-rounded" :class="{ spin: recoveryBusy[s.id] }">{{ recoveryBusy[s.id] ? 'progress_activity' : 'delete' }}</span>{{ recoveryBusy[s.id] ? `Discarding… ${recoveryElapsed(s.id).toFixed(0)}s` : 'Discard' }}
+					</button>
+				</div>
+			</div>
 		</div>
 
 		<!-- Global safety-alarm overlay (2e): prominent, blocks nothing but demands acknowledgement. -->
@@ -454,28 +488,6 @@ onBeforeUnmount(() => {
 				<span v-for="al in w.alarms.active" :key="al.key" class="ao-item">{{ al.label }}{{ al.kind === 'tacho' ? '' : ' ' + alarmValueText(al) }}</span>
 			</div>
 			<button class="ao-ack" @click="ackAlarm">Acknowledge</button>
-		</div>
-
-		<!-- Recovery banner for incomplete recordings found on startup -->
-		<div v-if="recoveryItems.length" class="recovery-banner">
-			<div class="rb-head">
-				<span class="material-symbols-rounded">restore</span>
-				<b>{{ recoveryItems.length }} incomplete recording{{ recoveryItems.length > 1 ? 's' : '' }} found</b>
-				<span class="rb-hint">These recordings were interrupted by a crash or power failure. You can recover the data or discard them.</span>
-			</div>
-			<div v-for="s in recoveryItems" :key="s.id" class="rb-item">
-				<div class="rb-info">
-					<span class="rb-id" :title="s.id">{{ s.id }}</span>
-					<span class="rb-detail" :title="`${s.raw.duration_sec.toFixed(1)}s · ${s.raw.n_rows.toLocaleString()} samples · ${s.raw.raw_size_mb} MB`">{{ s.raw.duration_sec.toFixed(1) }}s · {{ s.raw.n_rows.toLocaleString() }} samples · {{ s.raw.raw_size_mb }} MB</span>
-					<span v-if="s.manifest?.config?.sample_name" class="rb-detail" :title="s.manifest.config.sample_name">{{ s.manifest.config.sample_name }}</span>
-				</div>
-				<button class="rb-btn recover" :disabled="!!recoveryBusy[s.id]" @click="recoverSession(s.id)">
-					<span class="material-symbols-rounded" :class="{ spin: recoveryBusy[s.id] }">{{ recoveryBusy[s.id] ? 'progress_activity' : 'healing' }}</span>{{ recoveryBusy[s.id] ? `Recovering… ${recoveryElapsed(s.id).toFixed(0)}s` : 'Recover' }}
-				</button>
-				<button class="rb-btn discard" :disabled="!!recoveryBusy[s.id]" @click="discardSession(s.id)">
-					<span class="material-symbols-rounded" :class="{ spin: recoveryBusy[s.id] }">{{ recoveryBusy[s.id] ? 'progress_activity' : 'delete' }}</span>{{ recoveryBusy[s.id] ? `Discarding… ${recoveryElapsed(s.id).toFixed(0)}s` : 'Discard' }}
-				</button>
-			</div>
 		</div>
 
 		<div ref="gridEl" class="gridwrap">
@@ -524,7 +536,8 @@ onBeforeUnmount(() => {
 .ao-text b { font-size: 15px; letter-spacing: 0.04em; }
 .ao-item { font-size: 13px; font-variant-numeric: tabular-nums; background: rgba(0,0,0,0.2); padding: 2px 8px; border-radius: 6px; }
 .ao-ack { margin-left: auto; padding: 8px 18px; font-size: 14px; font-weight: 700; color: #dc2626; background: #fff; border: none; border-radius: 8px; cursor: pointer; }
-.disk-action-banner { position: sticky; top: 0; z-index: 90; display: flex; align-items: center; gap: 12px; padding: 10px 18px; font-size: 13px; color: #fff; }
+.top-overlays { position: fixed; top: 0; left: 0; right: 0; z-index: 90; display: flex; flex-direction: column; max-height: 60vh; overflow-y: auto; }
+.disk-action-banner { display: flex; align-items: center; gap: 12px; padding: 10px 18px; font-size: 13px; color: #fff; flex: none; }
 .disk-action-banner.backup_started { background: #2563eb; }
 .disk-action-banner.backup_unavailable { background: #b45309; }
 .disk-action-banner.forced_stop { background: #dc2626; }
@@ -547,7 +560,7 @@ onBeforeUnmount(() => {
 .rec-dot.live { background: #ef4444; animation: pulse 1.4s infinite; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); } 70% { box-shadow: 0 0 0 8px rgba(239,68,68,0); } 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); } }
 /* Recovery banner */
-.recovery-banner { background: color-mix(in srgb, var(--bg-2) 95%, #fbbf24 5%); border-bottom: 1px solid rgba(251,191,36,0.3); padding: 14px 18px; }
+.recovery-banner { background: color-mix(in srgb, var(--bg-2) 95%, #fbbf24 5%); border-bottom: 1px solid rgba(251,191,36,0.3); padding: 14px 18px; flex: none; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
 .rb-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .rb-head > .material-symbols-rounded { font-size: 22px; color: #fbbf24; }
 .rb-head b { font-size: 14px; color: var(--text); }

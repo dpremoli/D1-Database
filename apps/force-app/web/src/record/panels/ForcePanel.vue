@@ -3,7 +3,7 @@
 // per-panel state — the selected channels (summed Fx/Fy/Fz and/or individual dyno sub-channels
 // Fx1…Fz4) + the mode — so duplicated panels are independent (e.g. one showing only Fz1 to isolate
 // a single sensor). Falls back to defaults (all summed axes, Force mode) for the detached window.
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useWorkspace } from '../workspace';
 import LiveForcePlot from '../LiveForcePlot.vue';
 import FinishedForcePlot from '../FinishedForcePlot.vue';
@@ -40,7 +40,20 @@ function setSel(next: string[]) {
 	const ordered = ORDER.filter((k) => next.includes(k));
 	if (props.inst) props.inst.channels = ordered; else localCh.value = ordered;
 }
+// #32: spectrogram/waterfall only ever render selected[0] (a heatmap has nowhere to put a second
+// channel), but this chip toggle used to let you tick as many as you liked regardless of mode --
+// the extra chips lit up "on" with no visible effect, which reads as broken multi-select rather
+// than the single-channel views they actually are. In singleChannelMode, picking a new channel
+// REPLACES the selection instead of adding to it, so what's ticked always matches what's shown.
+// Switching INTO spectrogram/waterfall from a mode that had several channels ticked (Time/FFT/
+// Power all support that) must collapse to just the first, same reasoning as toggle() below --
+// otherwise the chips still show a stale multi-selection that the view was never going to honor.
+watch(singleChannelMode, (single) => {
+	if (single && selected.value.length > 1) setSel([selected.value[0]]);
+});
+
 function toggle(key: string) {
+	if (singleChannelMode.value) { setSel([key]); return; }
 	const s = selected.value.slice();
 	const i = s.indexOf(key);
 	if (i >= 0) { if (s.length > 1) s.splice(i, 1); } else s.push(key);

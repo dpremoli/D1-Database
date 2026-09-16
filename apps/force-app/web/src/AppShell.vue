@@ -26,10 +26,22 @@ onMounted(() => alarmController.reset());
 const recording = ref<{
 	id: string;
 	sampleName: string;
-	elapsedSec: number;
 	samples: number;
 	peakN: number;
 } | null>(null);
+// #22: elapsedSec above only refreshes once per 5s poll, so displaying it directly made the
+// banner's clock visibly jump in 5-second steps instead of ticking live. elapsedBase/-At snapshot
+// each poll's value and the moment it arrived; displayedElapsedSec (below) extrapolates from that
+// snapshot on a fast local tick, the same base+performance.now()-delta pattern RecordPage.vue's
+// recoveryElapsed() uses for the same reason.
+let elapsedBaseSec = 0;
+let elapsedBaseAt = 0;
+const tick = ref(0);
+let tickTimer: ReturnType<typeof setInterval> | null = null;
+const displayedElapsedSec = computed(() => {
+	void tick.value;
+	return elapsedBaseSec + (performance.now() - elapsedBaseAt) / 1000;
+});
 const bannerDismissedFor = ref<string | null>(null);
 let recordingPollTimer: ReturnType<typeof setInterval> | null = null;
 async function pollRecordingStatus() {
@@ -40,10 +52,12 @@ async function pollRecordingStatus() {
 		const data = await res.json();
 		if (data.state === 'recording') {
 			const p = data.peaks ?? {};
+			elapsedBaseSec = Number(data.elapsed_sec ?? 0);
+			elapsedBaseAt = performance.now();
+			if (!tickTimer) tickTimer = setInterval(() => { tick.value++; }, 250);
 			recording.value = {
 				id: data.id,
 				sampleName: data.config?.sample_name || data.id,
-				elapsedSec: Number(data.elapsed_sec ?? 0),
 				samples: Number(data.n_total ?? 0),
 				// One headline number rather than three: the banner is a reassurance strip on
 				// another page, not the Record page's readout.
@@ -51,6 +65,7 @@ async function pollRecordingStatus() {
 			};
 		} else {
 			recording.value = null;
+			if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
 		}
 	} catch { recording.value = null; }
 }
@@ -62,7 +77,10 @@ function fmtSamples(n: number): string {
 	return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : String(n);
 }
 onMounted(() => { pollRecordingStatus(); recordingPollTimer = setInterval(pollRecordingStatus, 5000); });
-onBeforeUnmount(() => { if (recordingPollTimer) clearInterval(recordingPollTimer); });
+onBeforeUnmount(() => {
+	if (recordingPollTimer) clearInterval(recordingPollTimer);
+	if (tickTimer) clearInterval(tickTimer);
+});
 const userName = computed(() => {
 	const u = authStore.currentUser.value;
 	if (!u) return '';
@@ -141,7 +159,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 				<span class="rec-banner-dot"></span>
 				<span class="rec-banner-name">Recording — {{ recording!.sampleName }}</span>
 				<span class="rec-banner-stats">
-					<span class="rec-stat"><b>{{ formatDuration(recording!.elapsedSec) }}</b> elapsed</span>
+					<span class="rec-stat"><b>{{ formatDuration(displayedElapsedSec) }}</b> elapsed</span>
 					<span class="rec-stat"><b>{{ fmtSamples(recording!.samples) }}</b> samples</span>
 					<span class="rec-stat"><b>{{ recording!.peakN.toFixed(0) }} N</b> peak</span>
 				</span>
