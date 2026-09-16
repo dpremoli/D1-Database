@@ -7,11 +7,12 @@ import { lastNonSettingsRoute } from '../router';
 import { getConfig } from '../config';
 import { authStore } from '../authStore';
 import { getConsoleTail } from '../clientLog';
+// #42: draft form fields live in this sibling module (not local refs) so switching Settings tabs
+// or popping the window — either of which unmounts this component — no longer wipes whatever the
+// operator had already typed. See reportBugDraft.ts for why.
+import { draftArea, draftDescription, draftIncludeLogs, draftKind, draftTitle, resetDraft } from './reportBugDraft';
 
 const base = () => getConfig().recorderUrl;
-
-const configured = ref<boolean | null>(null); // null = still checking
-const kind = ref<'bug' | 'feature'>('bug');
 
 // Mirrors backend/app/bug_report.py's AREAS — keep both lists in sync. A fixed set (not free
 // text) so the resulting `area:*` GitHub label is always one of these, which is the whole point:
@@ -38,10 +39,14 @@ function areaForRoute(path: string): string {
 	if (path.startsWith('/nidaq')) return 'nidaq';
 	return 'general';
 }
-const area = ref<string>(areaForRoute(lastNonSettingsRoute.value));
-const title = ref('');
-const description = ref('');
-const includeLogs = ref(true);
+
+const kind = draftKind;
+const area = draftArea;
+const title = draftTitle;
+const description = draftDescription;
+const includeLogs = draftIncludeLogs;
+
+const configured = ref<boolean | null>(null); // null = still checking
 const submitting = ref(false);
 const result = ref<{ ok: boolean; url?: string; reason?: string } | null>(null);
 const appVersion = ref('');
@@ -73,6 +78,10 @@ async function fetchIssues() {
 }
 
 onMounted(() => {
+	// Only re-guess the area for a genuinely fresh form — once a draft has content, remounting
+	// (switching tabs and back) must not clobber an area the operator may have deliberately
+	// changed away from the route-based guess.
+	if (!title.value && !description.value) area.value = areaForRoute(lastNonSettingsRoute.value);
 	// Independent requests — run them concurrently rather than one-after-the-other.
 	const statusP = fetch(`${base()}/support/report-bug`)
 		.then((res) => res.json())
@@ -116,8 +125,7 @@ async function submit() {
 		const data = await res.json();
 		result.value = data;
 		if (data.ok) {
-			title.value = '';
-			description.value = '';
+			resetDraft();
 			fetchIssues();
 		}
 	} catch (e: any) {

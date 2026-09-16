@@ -32,15 +32,18 @@ const initStride = ref(Number(q.get('stride')) || 1);
 const polarRadius = ref<'Fz' | 'Fxy' | 'Mz'>((q.get('radius') as 'Fz' | 'Fxy' | 'Mz') || 'Fz');
 const polarAngleSource = ref<'tacho' | 'force_vector'>((q.get('angle') as 'tacho' | 'force_vector') || 'tacho');
 
+// #23: matches ForcePanel.vue/RecordPage.vue's own rename -- "Time" names the mode (raw
+// time-domain, vs. FFT/Power/Spectrogram/Waterfall), not what's plotted on it, which isn't always
+// force (Tacho, or a milling recording's Mz/X/Y/Z channels).
 const MODES: { key: string; label: string }[] = [
-	{ key: 'time', label: 'Force' }, { key: 'fft', label: 'FFT' }, { key: 'psd', label: 'Power' },
+	{ key: 'time', label: 'Time' }, { key: 'fft', label: 'FFT' }, { key: 'psd', label: 'Power' },
 	{ key: 'spectrogram', label: 'Spectrogram' }, { key: 'waterfall', label: 'Waterfall' },
 ];
-const MODE_LABEL: Record<string, string> = { time: 'Force Plot', fft: 'FFT', psd: 'Power', spectrogram: 'Spectrogram', waterfall: 'Waterfall' };
+const MODE_LABEL: Record<string, string> = { time: 'Time Plot', fft: 'FFT', psd: 'Power', spectrogram: 'Spectrogram', waterfall: 'Waterfall' };
 const title = computed(() => {
 	if (isFrm.value) return 'Live FRM Fingerprint';
 	if (isPolar.value) return 'Live Polar Plot';
-	return 'Live ' + (MODE_LABEL[mode.value] || 'Force');
+	return 'Live ' + (MODE_LABEL[mode.value] || 'Time Plot');
 });
 
 const singleChannelMode = computed(() => mode.value === 'spectrogram' || mode.value === 'waterfall');

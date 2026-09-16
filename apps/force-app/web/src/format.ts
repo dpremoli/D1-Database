@@ -14,3 +14,16 @@ export function formatDuration(sec: number): string {
 	const h = Math.floor(m / 60);
 	return `${h}:${String(m % 60).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
 }
+
+/** Bytes/sec as B/s, KB/s or MB/s. Compares the ALREADY-ROUNDED value against each unit's
+ *  threshold rather than the raw one -- a live rate hovering right at 1e3 or 1e6 would otherwise
+ *  flicker: e.g. 999,950 B/s takes the KB branch but *displays* as "1000.0 KB/s" (already at the
+ *  value that should have promoted it to MB), then the next tick nudges past 1e6 and shows "1.00
+ *  MB/s", then back. Rounding first means the unit only flips once the digits shown actually
+ *  cross the line, so a reading near the boundary settles instead of oscillating every update. */
+export function formatBandwidth(bytesPerSec: number): string {
+	const kb = Math.round((bytesPerSec / 1e3) * 10) / 10;
+	if (kb < 1) return bytesPerSec.toFixed(0) + ' B/s';
+	if (kb < 1000) return kb.toFixed(1) + ' KB/s';
+	return (bytesPerSec / 1e6).toFixed(2) + ' MB/s';
+}

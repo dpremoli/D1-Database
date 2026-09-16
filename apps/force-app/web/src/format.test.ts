@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDuration } from './format';
+import { formatBandwidth, formatDuration } from './format';
 
 describe('formatDuration', () => {
 	it('formats sub-minute durations as m:ss', () => {
@@ -28,5 +28,26 @@ describe('formatDuration', () => {
 		expect(formatDuration(-1)).toBe('0:00');
 		expect(formatDuration(NaN)).toBe('0:00');
 		expect(formatDuration(Infinity)).toBe('0:00');
+	});
+});
+
+describe('formatBandwidth', () => {
+	it('formats each unit tier', () => {
+		expect(formatBandwidth(500)).toBe('500 B/s');
+		expect(formatBandwidth(2500)).toBe('2.5 KB/s');
+		expect(formatBandwidth(2_500_000)).toBe('2.50 MB/s');
+	});
+
+	// #38: a live rate hovering right at the 1e6 KB/MB boundary used to flicker between "1 MB/s"
+	// and "1000 KB/s" on every tick, because the raw (unrounded) byte rate was compared against
+	// the threshold while the DISPLAYED value was already rounded past it -- 999,950 B/s took the
+	// KB branch but rendered as "1000.0 KB/s", the exact value that should have promoted it.
+	it('promotes to MB once the rounded KB value would display as 1000.0', () => {
+		expect(formatBandwidth(999_950)).toBe('1.00 MB/s');
+		expect(formatBandwidth(1_000_000)).toBe('1.00 MB/s');
+	});
+
+	it('stays on KB just below where rounding would tip it over to MB', () => {
+		expect(formatBandwidth(999_940)).toBe('999.9 KB/s');
 	});
 });

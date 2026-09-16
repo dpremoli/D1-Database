@@ -15,8 +15,11 @@ import { CH_COLOR } from '../types';
 import { appUrl } from '../../appUrl';
 
 type PlotMode = 'time' | 'fft' | 'psd' | 'spectrogram' | 'waterfall';
+// #23: this tab was labeled "Force," but the channels actually plotted here aren't always force
+// (e.g. Tacho, or the Mz/X/Y/Z channels a milling recording adds) -- "Time" names what the mode
+// actually is (the raw time-domain view, vs. FFT/Power/Spectrogram/Waterfall), not what's on it.
 const MODES: { key: PlotMode; label: string }[] = [
-	{ key: 'time', label: 'Force' }, { key: 'fft', label: 'FFT' }, { key: 'psd', label: 'Power' },
+	{ key: 'time', label: 'Time' }, { key: 'fft', label: 'FFT' }, { key: 'psd', label: 'Power' },
 	{ key: 'spectrogram', label: 'Spectrogram' }, { key: 'waterfall', label: 'Waterfall' },
 ];
 const props = defineProps<{ inst?: { mode?: PlotMode; channels?: string[]; axes?: string[] } }>();

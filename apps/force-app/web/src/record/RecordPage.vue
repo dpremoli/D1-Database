@@ -126,10 +126,13 @@ const displayLayout = computed<Inst[]>({
 
 const addOpen = ref(false);
 const hasType = (t: string) => layout.value.some((p) => p.type === t);
-const MODE_LABEL: Record<string, string> = { time: 'Force Plot', fft: 'FFT', psd: 'Power', spectrogram: 'Spectrogram', waterfall: 'Waterfall' };
+// #23: 'time' used to read "Force Plot," but this mode isn't always plotting force (Tacho, or a
+// milling recording's Mz/X/Y/Z channels) -- "Time Plot" names the mode (raw time-domain, vs.
+// FFT/Power/Spectrogram/Waterfall), matching ForcePanel.vue's own tab label for it.
+const MODE_LABEL: Record<string, string> = { time: 'Time Plot', fft: 'FFT', psd: 'Power', spectrogram: 'Spectrogram', waterfall: 'Waterfall' };
 function panelTitle(p: Inst) {
 	if (p.type === 'force') {
-		const mode = MODE_LABEL[p.mode || 'time'] || 'Force Plot';
+		const mode = MODE_LABEL[p.mode || 'time'] || 'Time Plot';
 		const ch = p.channels && p.channels.join() !== 'Fx,Fy,Fz' ? ` · ${p.channels.join(' ')}` : '';
 		return mode + ch;
 	}
@@ -280,6 +283,22 @@ async function checkRecovery() {
 	} catch { /* backend unreachable */ }
 }
 
+// #48: the discard confirmation used to unconditionally say "this cannot be undone," which is
+// simply wrong for a session that was also streamed to a remote backup server -- discarding the
+// local copy here doesn't touch the remote one, so the data isn't actually gone. Checked
+// alongside recovery rather than on every discard click so the dialog opens instantly; a session
+// that finished streaming after this last ran would just get the more conservative (safe) wording.
+const remoteBackupIds = ref<Set<string>>(new Set());
+async function checkRemoteBackupIds() {
+	try {
+		const res = await fetch(`${w.client.baseUrl}/backup/remote-sessions`);
+		if (res.ok) {
+			const data = await res.json();
+			remoteBackupIds.value = new Set((data.sessions || []).map((s: { id: string }) => s.id));
+		}
+	} catch { /* no backup server configured, or unreachable -- treat as "no known remote copy" */ }
+}
+
 // #49: a session that ends via a crash/force-quit never reaches workspace.ts's stop(), whose
 // finally block is the only place that resets the amp out of MEASURE — so it's left integrating
 // charge drift indefinitely until the next recording's start() happens to reset it first. Recover
@@ -310,9 +329,12 @@ async function recoverSession(id: string) {
 }
 
 async function discardSession(id: string) {
+	const alsoRemote = remoteBackupIds.value.has(id);
 	const ok = await confirmAction({
 		title: 'Discard this incomplete recording?',
-		message: `Recording ${id} and its captured data will be deleted. This cannot be undone.`,
+		message: alsoRemote
+			? `The local copy of recording ${id} will be deleted. It was also streamed to the remote backup server, so it isn't gone for good — restore it from Settings > Remote Live Backup if you need it later.`
+			: `Recording ${id} and its captured data will be deleted. This cannot be undone.`,
 		detail: 'Recover it instead if you are not certain — an interrupted recording usually still holds usable data.',
 		confirmLabel: 'Discard permanently',
 		tone: 'danger',
@@ -382,7 +404,7 @@ function onVisibilityChange() {
 }
 
 onMounted(() => {
-	w.client.connect(); startSync(); checkDisk(); checkRecovery(); checkBackup();
+	w.client.connect(); startSync(); checkDisk(); checkRecovery(); checkRemoteBackupIds(); checkBackup();
 	// ResizeObserver catches content reflow (a banner appearing/dismissing shifts the grid's top);
 	// the window listener is the belt-and-braces fallback, since RO can fire unreliably under rapid
 	// or programmatic viewport changes. Same pairing ForceDashboard uses.

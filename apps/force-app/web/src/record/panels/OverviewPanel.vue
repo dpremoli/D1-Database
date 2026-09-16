@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { useWorkspace } from '../workspace';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS } from '../liveClient';
-import { formatDuration } from '../../format';
+import { formatBandwidth, formatDuration } from '../../format';
 const w = useWorkspace();
 const st = w.st;
 const ROW_BYTES = RAW_COLUMNS * RAW_BYTES_PER_SAMPLE;
@@ -29,10 +29,7 @@ function fmtSize(mb: number): string {
 
 const bandwidth = computed(() => {
 	if (st.tSec <= 0 || st.nTotal === 0) return '—';
-	const bytesPerSec = (st.nTotal * ROW_BYTES) / st.tSec;
-	if (bytesPerSec < 1e3) return (bytesPerSec).toFixed(0) + ' B/s';
-	if (bytesPerSec < 1e6) return (bytesPerSec / 1e3).toFixed(1) + ' KB/s';
-	return (bytesPerSec / 1e6).toFixed(2) + ' MB/s';
+	return formatBandwidth((st.nTotal * ROW_BYTES) / st.tSec);
 });
 
 const eta = computed(() => {
