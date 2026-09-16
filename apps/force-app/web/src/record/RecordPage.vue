@@ -7,6 +7,7 @@ import { GridLayout, GridItem } from 'grid-layout-plus';
 import { createWorkspace, WORKSPACE } from './workspace';
 import { startSync, syncStatus } from './directusSync';
 import { hwStatus } from './hwStatus';
+import { labamp } from './labampApi';
 import PanelFrame from './panels/PanelFrame.vue';
 import RecordingOptions from './panels/RecordingOptions.vue';
 import RecordingActions from './panels/RecordingActions.vue';
@@ -83,6 +84,14 @@ function measureGrid() {
 	const top = gridEl.value.getBoundingClientRect().top + window.scrollY;
 	availableHeight.value = Math.max(320, Math.floor(window.innerHeight - top - BOTTOM_PAD));
 }
+// #36: ResizeObserver only reports the OBSERVED element's own box size changing -- a banner above
+// the grid appearing/disappearing shifts the grid's top (via normal document flow) without
+// necessarily changing the grid element's own rendered height, so gridRO below can silently miss
+// it. It "worked" when a banner appeared because Reset View also happened to change the layout's
+// row count, which changed the grid's own height and incidentally re-triggered the observer; it
+// stayed broken on dismissal (and on a same-layout Reset) because nothing forced that. Watching
+// the banners' own visibility directly is the actual fix, not a coincidence of some other resize.
+watch([() => !!st.diskAction, () => recoveryItems.value.length > 0], () => measureGrid(), { flush: 'post' });
 // Derived from the LIVE layout, not the default: `layout` is user-editable and persisted, so the
 // row span is arbitrary after any drag/resize/add.
 const bottomRow = computed(() => layout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0) || 1);
@@ -271,12 +280,28 @@ async function checkRecovery() {
 	} catch { /* backend unreachable */ }
 }
 
+// #49: a session that ends via a crash/force-quit never reaches workspace.ts's stop(), whose
+// finally block is the only place that resets the amp out of MEASURE — so it's left integrating
+// charge drift indefinitely until the next recording's start() happens to reset it first. Recover
+// and discard are both "this session is conclusively over" points that stop() itself would have
+// reset at, so both do the same best-effort reset here. Unconditional (not gated on the crashed
+// session's own source) because RESET is a no-op-safe request even against a mock/idle amp, and
+// we may not know what it recorded with without threading its manifest through.
+// The .catch() also absorbs #33's /labamp/mode 409 in the (rare) case a DIFFERENT recording is
+// genuinely live on this machine while an old crashed session is being cleaned up -- correctly a
+// no-op then, since resetting the amp out from under that other live recording is exactly what
+// #33 exists to prevent.
+function resetAmpAfterRecoveryAction(): void {
+	labamp.setMode('RESET').catch(() => {});
+}
+
 async function recoverSession(id: string) {
 	beginRecoveryBusy(id);
 	try {
 		const res = await fetch(`${w.client.baseUrl}/recovery/recover/${id}`, { method: 'POST' });
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		recoveryItems.value = recoveryItems.value.filter((s) => s.id !== id);
+		resetAmpAfterRecoveryAction();
 	} catch (e: any) {
 		alert(`Recovery failed: ${e?.message || e}`);
 	} finally {
@@ -298,6 +323,7 @@ async function discardSession(id: string) {
 		const res = await fetch(`${w.client.baseUrl}/recovery/discard/${id}`, { method: 'POST' });
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		recoveryItems.value = recoveryItems.value.filter((s) => s.id !== id);
+		resetAmpAfterRecoveryAction();
 	} catch (e: any) {
 		alert(`Discard failed: ${e?.message || e}`);
 	} finally {
