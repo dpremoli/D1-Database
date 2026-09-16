@@ -9,6 +9,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.28',
+		date: '2026-09-16',
+		notes: [
+			'Recording Settings: the Sample Rate field now warns immediately if the configured rate exceeds what the assigned NI-DAQ hardware can actually deliver, instead of only failing once a recording is started.',
+			'Lab Amp > Auto-range: "Recommend from peaks" can now use several previous recordings at once (not just the last one picked) — the recommendation uses each channel\'s largest peak across all of them.',
+			'Fixed: the Plot dashboard\'s FRM panel could briefly claim the Signals column\'s space too when returning to the page from elsewhere, before snapping back to the correct layout a moment later.',
+			'Fixed: the Logs view\'s timestamp column could overlap the level tag next to it; timestamps are now genuinely UTC (previously shown unlabeled machine-local time).',
+		],
+	},
+	{
 		version: '0.1.27',
 		date: '2026-09-16',
 		notes: [
