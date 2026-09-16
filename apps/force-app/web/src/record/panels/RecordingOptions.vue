@@ -1,11 +1,31 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useWorkspace } from '../workspace';
 import LookupField from './LookupField.vue';
 import CutPicker from './CutPicker.vue';
 import StatTile from './StatTile.vue';
 
 const w = useWorkspace();
+
+// #46: the app used to find out a sample rate was too high for the assigned NI-DAQ hardware only
+// when acquisition itself threw a raw DAQmx error ("Maximum Value: 51.367188e3") -- flag it on the
+// tile before the operator ever presses Start instead. Re-checked whenever the channel assignment
+// changes (moving to a different module can change the achievable rate); null means "no real
+// limit to check" (simulated hardware, or DAQmx isn't available here), not "unlimited by measurement".
+const maxSampleRateHz = ref<number | null>(null);
+async function checkMaxSampleRate() {
+	if (w.source.value !== 'nidaq') { maxSampleRateHz.value = null; return; }
+	const chans = w.nidaqChannels.value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+	if (!chans.length) { maxSampleRateHz.value = null; return; }
+	try {
+		const res = await fetch(`${w.client.baseUrl}/nidaq/max_rate?channels=${encodeURIComponent(chans.join(','))}`);
+		maxSampleRateHz.value = res.ok ? (await res.json()).max_rate_hz : null;
+	} catch { maxSampleRateHz.value = null; }
+}
+watch([() => w.source.value, () => w.nidaqChannels.value], checkMaxSampleRate, { immediate: true });
+const sampleRateInvalid = computed(() =>
+	maxSampleRateHz.value !== null && w.cfg.sample_rate > maxSampleRateHz.value,
+);
 // Surface speed (m/min) = pi * diam(mm) * rpm / 1000 — the same formula buildRunPayload() already
 // logs to Directus as machining_cutting_speed_m_per_min, just surfaced here too.
 const replaySurfaceSpeed = computed(() => (Math.PI * w.replay.diam * w.replay.rpm) / 1000);
@@ -77,7 +97,9 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 				<StatTile editable label="Feed" unit="mm/rev" step="0.01" v-model="w.cfg.feed" :disabled="w.locked.value" />
 				<StatTile editable label="Outer Ø" unit="mm" v-model="w.cfg.diam" :disabled="w.locked.value" />
 				<StatTile editable label="Inner Ø" unit="mm" v-model="w.cfg.inner_diam" :disabled="w.locked.value" />
-				<StatTile editable label="Sample rate" unit="Hz" v-model="w.cfg.sample_rate" :disabled="w.locked.value" />
+				<StatTile editable label="Sample rate" unit="Hz" v-model="w.cfg.sample_rate" :disabled="w.locked.value"
+					:invalid="sampleRateInvalid"
+					:title="sampleRateInvalid ? `Exceeds the assigned hardware's maximum of ${maxSampleRateHz?.toFixed(0)} Hz for this channel selection — recording would fail to start.` : ''" />
 				<StatTile editable :label="w.source.value === 'sim' ? 'Duration' : 'Planned duration'" unit="s"
 					v-model="w.cfg.duration_sec" :disabled="w.locked.value"
 					:title="w.source.value === 'sim' ? '' : 'Not enforced for real recordings — used only to estimate disk space needed and warn before you start.'" />

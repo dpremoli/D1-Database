@@ -148,7 +148,13 @@ try:
     _file_handler = RotatingFileHandler(
         LOG_PATH, maxBytes=2_000_000, backupCount=3, encoding="utf-8"
     )
-    _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    # #45: the in-app log viewer's timestamp column claims to be UTC, but Formatter.converter
+    # defaults to localtime -- an operator's machine-local time was being shown unlabeled.
+    # Instance-scoped (not the logging.Formatter class default) so only this file's log lines are
+    # affected, not the console handler above.
+    _file_formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    _file_formatter.converter = time.gmtime
+    _file_handler.setFormatter(_file_formatter)
     _handlers.append(_file_handler)
 except OSError:
     # Read-only or otherwise unwritable location — degrade to stderr-only. Logging is diagnostic;
@@ -2010,6 +2016,18 @@ async def nidaq_autoassign() -> dict:
     channels = chan.autoassign(_devices())
     _save_json(NIDAQ_CHANNELS_PATH, {"channels": channels})
     return {"channels": channels}
+
+
+@app.get("/nidaq/max_rate")
+async def nidaq_max_rate(channels: str = "") -> dict:
+    """#46: lets the Recording Settings tab warn before start that a requested sample rate exceeds
+    what the assigned hardware can actually deliver, instead of only finding out from a raw DAQmx
+    error once acquisition is already underway. `channels` is a comma-separated physical channel
+    list (same format the frontend already keeps in nidaqChannels); max_rate_hz is null when there
+    's no real limit to check (simulated hardware, or the DAQmx runtime isn't available here)."""
+    chans = [c.strip() for c in channels.split(",") if c.strip()]
+    rate = await run_in_threadpool(nidaq_enum.max_sample_rate, chans)
+    return {"max_rate_hz": rate}
 
 
 # ---- Tacho signal generator (cDAQ-9178 built-in counter → PFI0) ----

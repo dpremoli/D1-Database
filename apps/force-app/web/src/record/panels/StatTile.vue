@@ -11,6 +11,11 @@ withDefaults(defineProps<{
 	disabled?: boolean;
 	step?: string | number;
 	title?: string;
+	/** #46: flags the field immediately (an info icon + the tile's title tooltip) when its current
+	 *  value is known to be out of bounds -- e.g. a sample rate the assigned NI-DAQ hardware can't
+	 *  actually deliver -- rather than only surfacing as a raw acquisition-time error once a
+	 *  recording has already started. */
+	invalid?: boolean;
 }>(), { editable: false, step: 'any' });
 const model = defineModel<number | string>();
 // Read-only values often arrive as floats decoded from a float32 wire/cache format (e.g. the D1LC
@@ -24,11 +29,12 @@ const display = computed(() => {
 </script>
 
 <template>
-	<div class="stat-tile" :title="title">
+	<div class="stat-tile" :class="{ invalid }" :title="title">
 		<div class="value">
 			<input v-if="editable" type="number" :step="step" v-model.number="model" :disabled="disabled" />
 			<span v-else class="value-text">{{ display }}</span>
 			<span v-if="unit" class="unit">{{ unit }}</span>
+			<span v-if="invalid" class="material-symbols-rounded warn-icon">info</span>
 		</div>
 		<div class="label">{{ label }}</div>
 	</div>
@@ -36,6 +42,8 @@ const display = computed(() => {
 
 <style scoped>
 .stat-tile { padding: 10px 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 10px; min-width: 0; overflow: hidden; }
+.stat-tile.invalid { border-color: #fbbf24; background: rgba(251,191,36,0.08); }
+.warn-icon { font-size: 15px; color: #fbbf24; margin-left: auto; }
 .value { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
 .value input, .value-text { font-size: 16px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; min-width: 0; }
 .value-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

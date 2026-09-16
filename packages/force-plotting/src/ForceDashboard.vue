@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onActivated, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import { useRoute, useRouter } from 'vue-router';
 import ForceChart from './ForceChart.vue';
@@ -733,6 +733,16 @@ function measureLayout() {
 	layoutW.value = layoutEl.value.getBoundingClientRect().width;
 	updateAvailableHeight();
 }
+// #24: AppShell.vue keeps this component alive (<keep-alive include="StandaloneForceDashboard">)
+// rather than unmounting it when navigating away -- so onMounted below only ever runs ONCE, the
+// very first time the Plot page is visited in a session, never again on later visits. Deactivating
+// hides the element (effectively display:none), so layoutW/availableHeight go stale at whatever
+// they were the moment it was hidden; reactivating doesn't touch them until ResizeObserver's own
+// (queued, not synchronous) callback eventually fires. In the gap, grid-layout-plus renders with
+// the stale/default measurements -- e.g. the FRM panel claiming the Signals column's width too --
+// then snaps to the correct layout a moment later once the observer catches up. onActivated forces
+// an immediate remeasure instead of waiting on that.
+onActivated(() => { measureLayout(); nextTick(measureLayout); });
 let layoutRO: ResizeObserver | undefined;
 onMounted(() => {
 	// ResizeObserver covers content reflow (panel resize, hide/show toggles);

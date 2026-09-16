@@ -261,7 +261,9 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 
 .loglist { height: 52vh; min-height: 260px; overflow: auto; background: var(--bg);
 	border: 1px solid var(--border); border-radius: 9px; padding: 6px 0; }
-.row { display: grid; grid-template-columns: 62px 62px 78px 1fr; gap: 8px; padding: 2px 11px;
+/* #45: the ts column was 62px, too narrow for "HH:MM:SS,mmm" (12 monospace chars, ~83px) at this
+   font-size -- it overflowed into the level column next to it, reading as an overlap. */
+.row { display: grid; grid-template-columns: 86px 62px 78px 1fr; gap: 8px; padding: 2px 11px;
 	font-family: var(--mono); font-size: 11.5px; line-height: 1.5; align-items: baseline; }
 .row:hover { background: var(--surface); }
 .ts { color: var(--text-dim); font-variant-numeric: tabular-nums; }

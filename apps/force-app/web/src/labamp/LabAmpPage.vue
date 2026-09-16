@@ -2,7 +2,7 @@
 // Dedicated Kistler LabAmp page: connection, operation mode, the per-channel sensor table, and a
 // settings reference explaining each parameter with recommended values. Talks to the backend
 // /labamp/* (which proxies the link-local amp; mock by default so this works without hardware).
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { labamp, type AutoRangeRec, type LabAmpStatus, type SensorRow } from '../record/labampApi';
 import { searchPastOperations } from '../record/directusLookups';
 import LookupField from '../record/panels/LookupField.vue';
@@ -27,21 +27,40 @@ async function persistDaq() {
 const arSource = ref<'live' | 'previous'>('live');
 // Searches both local recordings on this machine (exact per-channel peaks) and past operations
 // already uploaded to the database (peaks approximated per channel — see directusLookups.ts).
+//
+// #39: multiple previous cuts can be selected at once, not just the last one picked — useful when
+// no single recent cut alone reached the true worst-case peak on every channel (e.g. a roughing
+// pass maxed Fz while a separate finishing pass maxed Fx). aggregatedPeaks (below) takes the
+// element-wise MAX across every selected cut's peaks, the conservative choice for a range
+// recommendation: it must safely cover the largest peak seen on each channel across whichever
+// cuts are being considered, not their average.
 const prevOpId = ref('');
-const prevOpPeaks = ref<number[] | null>(null);
-const prevOpExact = ref(true);
-function onPickPastOp(item: { extra?: { peaksN?: number[]; exact?: boolean } }) {
-	prevOpPeaks.value = item.extra?.peaksN ?? null;
-	prevOpExact.value = item.extra?.exact ?? true;
+interface PrevOp { id: string; label: string; peaksN: number[]; exact: boolean }
+const prevOps = ref<PrevOp[]>([]);
+// Remounts LookupField after each pick so its internal "chosen" state resets to a blank search box
+// ready for the next selection, rather than needing to reach into its internals to clear it.
+const pickerKey = ref(0);
+function onPickPastOp(item: { id: string; label: string; extra?: { peaksN?: number[]; exact?: boolean } }) {
+	if (!item.extra?.peaksN || prevOps.value.some((o) => o.id === item.id)) return;
+	prevOps.value.push({ id: item.id, label: item.label, peaksN: item.extra.peaksN, exact: item.extra.exact ?? true });
+	prevOpId.value = '';
+	pickerKey.value++;
 }
+function removePrevOp(id: string) { prevOps.value = prevOps.value.filter((o) => o.id !== id); }
+const aggregatedPeaks = computed<number[] | null>(() => {
+	if (!prevOps.value.length) return null;
+	const n = prevOps.value[0].peaksN.length;
+	return Array.from({ length: n }, (_, i) => Math.max(...prevOps.value.map((o) => o.peaksN[i] ?? 0)));
+});
+const aggregatedExact = computed(() => prevOps.value.length > 0 && prevOps.value.every((o) => o.exact));
 async function measure() {
 	arBusy.value = true; err.value = null; arStatus.value = null;
 	try {
 		await persistDaq();
 		if (arSource.value === 'previous') {
-			if (!prevOpPeaks.value) { err.value = 'pick a previous recording'; arBusy.value = false; return; }
+			if (!aggregatedPeaks.value) { err.value = 'pick at least one previous recording'; arBusy.value = false; return; }
 			const currents = sensors.value.map(s => s.range ?? 10000);
-			const r = await labamp.converge({ peaks: prevOpPeaks.value, currents, headroom: headroom.value, apply: false });
+			const r = await labamp.converge({ peaks: aggregatedPeaks.value, currents, headroom: headroom.value, apply: false });
 			recs.value = r.recommendations; effBits.value = r.effective_bits;
 		} else {
 			const r = await labamp.autorange(headroom.value);
@@ -193,20 +212,30 @@ onMounted(refresh);
 					</div>
 				</div>
 				<div v-if="arSource === 'previous'" class="prev-peaks">
-					<LookupField v-model="prevOpId" label="Previous recording" placeholder="search sample code or pass code…"
+					<!-- #39: pick several previous cuts, not just one -- each pick adds a chip below
+						 rather than replacing the last one. :key remounts the field after each pick so
+						 its "chosen" state resets to a blank search box for the next selection. -->
+					<LookupField :key="pickerKey" v-model="prevOpId" label="Previous recording(s)" placeholder="search sample code or pass code…"
 						:search="searchPastOperations" @select="onPickPastOp" />
-					<span v-if="prevOpPeaks" class="tag" :class="prevOpExact ? 'exact' : 'approx'"
-						:title="prevOpExact ? 'Exact per-channel peaks from this recorder\'s own capture history.' : 'The database only stores summed-axis peaks (Fx/Fy/Fz), not per-channel — these are estimated by splitting each axis peak evenly across its sub-channels.'">
-						{{ prevOpExact ? 'exact' : 'approximate' }}
-					</span>
-					<p class="hint">Searches local recordings on this machine (exact per-channel peaks) and past operations in the database (peaks approximated per channel) — no need to copy numbers by hand.</p>
+					<div v-if="prevOps.length" class="prev-op-chips">
+						<span v-for="o in prevOps" :key="o.id" class="chip" :class="o.exact ? 'exact' : 'approx'"
+							:title="o.exact ? 'Exact per-channel peaks from this recorder\'s own capture history.' : 'The database only stores summed-axis peaks (Fx/Fy/Fz), not per-channel — these are estimated by splitting each axis peak evenly across its sub-channels.'">
+							{{ o.label }}
+							<button type="button" @click="removePrevOp(o.id)" title="Remove"><span class="material-symbols-rounded">close</span></button>
+						</span>
+						<span class="tag" :class="aggregatedExact ? 'exact' : 'approx'"
+							title="The recommendation below uses, per channel, the largest peak seen across ALL selected cuts.">
+							{{ prevOps.length }} selected · {{ aggregatedExact ? 'exact' : 'includes approximate' }}
+						</span>
+					</div>
+					<p class="hint">Searches local recordings on this machine (exact per-channel peaks) and past operations in the database (peaks approximated per channel) — pick as many as are relevant; the recommendation uses each channel's largest peak across all of them.</p>
 				</div>
 				<div class="ar-controls">
 					<label>Headroom ×<input type="number" step="0.1" min="1" v-model.number="headroom" /></label>
 					<label>Amp DAC bits<input type="number" step="1" v-model.number="daq.labamp_dac_bits" /></label>
 					<label>NI-DAQ bits<input type="number" step="1" v-model.number="daq.nidaq_bits" /></label>
 					<label>Analog full-scale (±V)<input type="number" step="0.5" v-model.number="daq.analog_fullscale_v" /></label>
-					<button class="btn ghost" :disabled="arBusy || (arSource === 'live' && !status?.reachable) || (arSource === 'previous' && !prevOpPeaks)" @click="measure">{{ arSource === 'previous' ? 'Recommend from peaks' : 'Measure & recommend' }}</button>
+					<button class="btn ghost" :disabled="arBusy || (arSource === 'live' && !status?.reachable) || (arSource === 'previous' && !prevOps.length)" @click="measure">{{ arSource === 'previous' ? 'Recommend from peaks' : 'Measure & recommend' }}</button>
 					<button class="btn save" :disabled="arBusy || !recs" @click="applyRanges">Apply recommended ranges</button>
 				</div>
 				<table v-if="recs">
@@ -288,6 +317,13 @@ th { color: var(--text-dim); font-weight: 600; }
 .prev-peaks .tag { margin-bottom: 8px; }
 .prev-peaks :deep(.lookup) { flex: 1; min-width: 260px; margin-bottom: 0; }
 .prev-peaks .hint { flex-basis: 100%; margin: 0; }
+.prev-op-chips { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.prev-op-chips .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 4px 2px 8px; border-radius: 10px; cursor: help; }
+.prev-op-chips .chip.exact { color: #4ade80; background: rgba(74,222,128,0.12); }
+.prev-op-chips .chip.approx { color: #fbbf24; background: rgba(251,191,36,0.12); }
+.prev-op-chips .chip button { display: inline-flex; padding: 2px; color: inherit; background: transparent; border: none; border-radius: 50%; cursor: pointer; opacity: 0.7; }
+.prev-op-chips .chip button:hover { opacity: 1; background: rgba(0,0,0,0.15); }
+.prev-op-chips .chip .material-symbols-rounded { font-size: 13px; }
 .ar-controls { display: flex; align-items: flex-end; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 .ar-controls label { margin: 0; }
 .ar-controls input { width: 90px; }

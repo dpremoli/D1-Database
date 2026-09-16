@@ -148,3 +148,31 @@ def _local_system():
         return System.local()
     except Exception:
         return None
+
+
+def max_sample_rate(channels: list[str], system=None) -> float | None:
+    """The real achievable sample rate for a set of physical channel names ("cDAQ1Mod1/ai0"),
+    e.g. what a live /record/start's requested sample_rate must not exceed (#46: a rate request
+    the hardware can't actually deliver surfaces as a raw DAQmx acquisition-time error --
+    "DAQmx_SampClk_Rate ... Maximum Value: 51.367188e3" -- rather than a clear pre-flight warning).
+
+    Queries each involved device's own ai_max_multi_chan_rate (this already accounts for the
+    device's per-channel vs. multi-channel aggregate throughput, which is why a flat per-product
+    constant from nidaq_catalog wouldn't be accurate here) and returns the minimum across devices
+    actually in play -- the binding constraint when channels span more than one module. None when
+    there's no real DAQmx system to ask (simulated hardware, or the runtime isn't installed): a
+    simulated device has no physical rate ceiling to check against.
+    """
+    sysobj = system if system is not None else _local_system()
+    if sysobj is None:
+        return None
+    dev_names = {ch.split("/")[0] for ch in channels if "/" in ch}
+    if not dev_names:
+        return None
+    rates = []
+    for dev in getattr(sysobj, "devices", []) or []:
+        if dev.name in dev_names:
+            rate = _safe(lambda: dev.ai_max_multi_chan_rate, None)
+            if rate:
+                rates.append(float(rate))
+    return min(rates) if rates else None

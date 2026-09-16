@@ -84,6 +84,61 @@ def test_real_enumeration_groups_modules_under_chassis():
     assert mods[0]["ports"][0]["physical"] == "cDAQ1Mod1/ai0"
 
 
+# ---- max_sample_rate (#46) ----
+def test_max_sample_rate_is_the_minimum_across_devices_in_use():
+    m1 = _Dev("cDAQ1Mod1", "NI 9215", ai=4)
+    m1.ai_max_multi_chan_rate = 100_000.0
+    m2 = _Dev("cDAQ1Mod2", "NI 9234", ai=4)
+    m2.ai_max_multi_chan_rate = 51_367.188
+    rate = nidaq_enum.max_sample_rate(["cDAQ1Mod1/ai0", "cDAQ1Mod2/ai0"], system=_System([m1, m2]))
+    assert rate == 51_367.188
+
+
+def test_max_sample_rate_ignores_devices_not_in_the_channel_list():
+    m1 = _Dev("cDAQ1Mod1", "NI 9215", ai=4)
+    m1.ai_max_multi_chan_rate = 100_000.0
+    m2 = _Dev("cDAQ1Mod2", "NI 9234", ai=4)
+    m2.ai_max_multi_chan_rate = 51_367.188  # not referenced by any channel below
+    rate = nidaq_enum.max_sample_rate(["cDAQ1Mod1/ai0"], system=_System([m1, m2]))
+    assert rate == 100_000.0
+
+
+def test_max_sample_rate_none_without_a_real_system():
+    assert nidaq_enum.max_sample_rate(["cDAQ1Mod1/ai0"], system=None) is None
+
+
+def test_max_sample_rate_none_for_channels_with_no_device_prefix():
+    m1 = _Dev("cDAQ1Mod1", "NI 9215", ai=4)
+    m1.ai_max_multi_chan_rate = 100_000.0
+    assert nidaq_enum.max_sample_rate([], system=_System([m1])) is None
+
+
+def test_max_sample_rate_skips_a_device_that_cant_report_its_own_limit():
+    # A device present in the tree but whose rate property raises (or is absent) must not take
+    # down the whole check -- same defensive pattern as enumerate_real's _safe() guard.
+    m1 = _Dev("cDAQ1Mod1", "NI 9215", ai=4)  # no ai_max_multi_chan_rate set at all
+    m2 = _Dev("cDAQ1Mod2", "NI 9234", ai=4)
+    m2.ai_max_multi_chan_rate = 51_367.188
+    rate = nidaq_enum.max_sample_rate(["cDAQ1Mod1/ai0", "cDAQ1Mod2/ai0"], system=_System([m1, m2]))
+    assert rate == 51_367.188
+
+
+def test_nidaq_max_rate_endpoint(monkeypatch):
+    m1 = _Dev("cDAQ1Mod1", "NI 9215", ai=4)
+    m1.ai_max_multi_chan_rate = 51_367.188
+    monkeypatch.setattr(nidaq_enum, "_local_system", lambda: _System([m1]))
+    with TestClient(fastapi_app) as client:
+        r = client.get("/nidaq/max_rate", params={"channels": "cDAQ1Mod1/ai0,cDAQ1Mod1/ai1"})
+        assert r.status_code == 200
+        assert r.json()["max_rate_hz"] == 51_367.188
+
+
+def test_nidaq_max_rate_endpoint_null_when_no_channels(monkeypatch):
+    with TestClient(fastapi_app) as client:
+        r = client.get("/nidaq/max_rate")
+        assert r.json()["max_rate_hz"] is None
+
+
 # ---- channel model ----
 def test_autoassign_force_first_and_tacho_on_next_module_ai0():
     d = nidaq_enum.enumerate_simulated()  # Mod1/Mod2 (4 AI each) + Mod3 (9234, 4 AI)

@@ -15,6 +15,15 @@ def client():
         yield c
 
 
+def test_file_log_formatter_uses_utc_not_local_time():
+    # #45: the in-app log viewer's ts column is labeled/assumed UTC, but a plain logging.Formatter
+    # defaults to localtime -- verify the file handler's formatter was actually switched to
+    # time.gmtime, not just that timestamps get produced at all.
+    import time
+
+    assert main._file_formatter.converter is time.gmtime
+
+
 def test_parses_the_formatter_output():
     recs = _parse_log_lines(
         [
