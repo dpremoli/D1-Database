@@ -9,6 +9,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.25',
+		date: '2026-09-16',
+		notes: [
+			'Fixed: the Lab Amp could be left in MEASURE mode indefinitely after a crashed recording was recovered or discarded, instead of resetting like a normal end-of-cut.',
+			'Fixed: the "Reset view" button on the Record page could stop working after a banner (disk warning, incomplete recordings) was dismissed — the layout stayed squeezed into the smaller space even though more room was now available.',
+		],
+	},
+	{
 		version: '0.1.24',
 		date: '2026-09-16',
 		notes: [
