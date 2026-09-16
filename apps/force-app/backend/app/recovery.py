@@ -72,8 +72,14 @@ def _raw_info(capture_dir: str) -> dict | None:
     }
 
 
-def scan_incomplete(captures_root: str) -> list[dict]:
-    """Return a list of session dirs that look like crashed/incomplete recordings."""
+def scan_incomplete(captures_root: str, exclude_id: str | None = None) -> list[dict]:
+    """Return a list of session dirs that look like crashed/incomplete recordings.
+
+    `exclude_id` is the currently live session (state 'recording' or 'finalizing'), if any: its
+    raw.d1raw exists and summary.json doesn't yet, same as a genuinely crashed session, so without
+    this it showed up as "crashed" in the recovery list -- with a restore option -- while it was
+    still actively streaming (#29).
+    """
     incomplete = []
     if not os.path.isdir(captures_root):
         return incomplete
@@ -90,6 +96,8 @@ def scan_incomplete(captures_root: str) -> list[dict]:
         if not os.path.isfile(raw_path):
             continue
         if name in _discarding:
+            continue
+        if name == exclude_id:
             continue
 
         info = _raw_info(d)

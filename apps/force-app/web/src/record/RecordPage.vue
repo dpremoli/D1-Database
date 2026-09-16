@@ -305,6 +305,18 @@ async function discardSession(id: string) {
 	}
 }
 
+// Shared by the overlay banner and ackAlarm()'s confirm dialog below, so both ever say the same
+// thing for the same alarm. A tacho alarm's value/threshold are always 0 (it's a signal-present
+// check, not a magnitude) — falling through to the force branch's " N" suffix produced a
+// nonsensical "cannot protect 0.0 N" banner that read as a misbehaving FORCE alarm even when
+// force alarms were unticked and only the (separately-gated) RPM alarm's tacho check had fired.
+function alarmValueText(al: { kind: string; value: number; threshold: number }): string {
+	if (al.kind === 'tacho') return 'no signal';
+	if (al.kind === 'rpm') return `${al.value.toFixed(0)} RPM`;
+	if (al.kind === 'disk') return `${al.value.toFixed(1)} GB`;
+	return `${al.value.toFixed(1)} N`;
+}
+
 // Silencing a tripped alarm is a safety-relevant action (it stops the tone/overlay for a real
 // force/RPM/disk/tacho breach, not just a test) — a confirm gate prevents an accidental click while
 // reaching for something else on the overlay from instantly clearing it. The prompt lists what
@@ -323,13 +335,7 @@ async function ackAlarm() {
 		message: 'The tone stops and the banner clears. This does not fix the underlying condition, and the recording keeps running.',
 		stats: tripped.map((al) => ({
 			label: al.label,
-			value: al.kind === 'tacho'
-				? 'no signal'
-				: al.kind === 'rpm'
-					? `${al.value.toFixed(0)} RPM (limit ${al.threshold.toFixed(0)})`
-					: al.kind === 'disk'
-						? `${al.value.toFixed(1)} GB free (limit ${al.threshold.toFixed(1)} GB)`
-						: `${al.value.toFixed(1)} N (limit ${al.threshold.toFixed(1)} N)`,
+			value: al.kind === 'tacho' ? 'no signal' : `${alarmValueText(al)} (limit ${alarmValueText({ ...al, value: al.threshold })})`,
 		})),
 		confirmLabel: 'Silence',
 		cancelLabel: 'Keep alerting',
@@ -397,7 +403,7 @@ onBeforeUnmount(() => {
 			<span class="material-symbols-rounded">warning</span>
 			<div class="ao-text">
 				<b>SAFETY ALARM</b>
-				<span v-for="al in w.alarms.active" :key="al.key" class="ao-item">{{ al.label }} {{ al.value.toFixed(al.kind === 'rpm' ? 0 : 1) }}{{ al.kind === 'rpm' ? '' : al.kind === 'disk' ? ' GB' : ' N' }}</span>
+				<span v-for="al in w.alarms.active" :key="al.key" class="ao-item">{{ al.label }}{{ al.kind === 'tacho' ? '' : ' ' + alarmValueText(al) }}</span>
 			</div>
 			<button class="ao-ack" @click="ackAlarm">Acknowledge</button>
 		</div>

@@ -22,6 +22,13 @@ from .dsp import drift_check, order_spectrum_quick, rpm_from_tacho, sum_axes, ta
 
 VAR_NAMES = ["Time"] + SIGNAL_CHANNELS  # 10 columns
 LIVE_CACHE_TARGET = 300_000  # decimate the cache to ~this many points for the client
+# MAT5's data-element header holds a size in a 32-bit field (scipy hits this as an OverflowError,
+# "Python int too large to convert to C long", once the uncompressed array crosses roughly 2GB) --
+# this is a format ceiling, not a scipy bug, so oversized captures skip the .mat write entirely
+# rather than crash finalize (see #40: a ~245M-sample capture allocated 19.6GB for `data` and then
+# blew past this ceiling, taking the whole app down with it). Threshold has generous headroom
+# under the real ~2^31 byte limit.
+MAT_MAX_BYTES = 1_500_000_000
 
 
 def _cut_window(fz: np.ndarray, t: np.ndarray, frac: float = 0.2) -> tuple[float, float]:
@@ -113,30 +120,44 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     }
 
     # --- .mat (v1.0), full resolution ---
-    data = np.empty((n, 10), dtype=np.float64)
-    data[:, 0] = t
-    data[:, 1:] = signals
-    metadata = {
-        "fileVersion": 1.0,
-        "SampleName": cfg.sample_name,
-        "Rate": fs,
-        "CutDiameter": cfg.diam,
-        "InnerDiameter": cfg.inner_diam,
-        "Feed": cfg.feed,
-        "MaxRPM": cfg.rpm,
-        "SurfaceSpeed": np.pi * cfg.diam * cfg.rpm / 1000.0,  # m/min
-        "PulsesPerRev": cfg.ppr,
-        "Source": "force-app 2a",
-    }
-    # Stamp any UI-compiled metadata (sample/insert/tool/etc.) into the .mat struct.
-    for k, v in (cfg.extra_metadata or {}).items():
-        if k not in metadata and v not in (None, ""):
-            metadata[str(k)] = v
-    savemat(
-        os.path.join(capture_dir, "capture.mat"),
-        {"DATA": data, "metadata": metadata, "VariableNames": np.array(VAR_NAMES, dtype=object)},
-        do_compression=True,
-    )
+    mat_bytes = n * 10 * 8
+    mat_written = mat_bytes <= MAT_MAX_BYTES
+    mat_skip_reason = None
+    if mat_written:
+        data = np.empty((n, 10), dtype=np.float64)
+        data[:, 0] = t
+        data[:, 1:] = signals
+        metadata = {
+            "fileVersion": 1.0,
+            "SampleName": cfg.sample_name,
+            "Rate": fs,
+            "CutDiameter": cfg.diam,
+            "InnerDiameter": cfg.inner_diam,
+            "Feed": cfg.feed,
+            "MaxRPM": cfg.rpm,
+            "SurfaceSpeed": np.pi * cfg.diam * cfg.rpm / 1000.0,  # m/min
+            "PulsesPerRev": cfg.ppr,
+            "Source": "force-app 2a",
+        }
+        # Stamp any UI-compiled metadata (sample/insert/tool/etc.) into the .mat struct.
+        for k, v in (cfg.extra_metadata or {}).items():
+            if k not in metadata and v not in (None, ""):
+                metadata[str(k)] = v
+        savemat(
+            os.path.join(capture_dir, "capture.mat"),
+            {
+                "DATA": data,
+                "metadata": metadata,
+                "VariableNames": np.array(VAR_NAMES, dtype=object),
+            },
+            do_compression=True,
+        )
+    else:
+        mat_skip_reason = (
+            f"capture has {n:,} samples ({mat_bytes / 1e9:.1f}GB uncompressed) -- "
+            "too large for the MAT5 format's 32-bit size field. live_cache.bin and summary.json "
+            "were still produced; the raw capture remains on disk at full resolution."
+        )
 
     # --- live_cache.bin (D1LC), decimated for the client ---
     stride = max(1, n // LIVE_CACHE_TARGET)
@@ -179,6 +200,8 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         # reading this capture later can tell "spindle genuinely stopped / sensor dead" apart from
         # a real 0, instead of trusting a number that was never measured.
         "tacho_measured": bool(tacho_measured),
+        "mat_written": mat_written,
+        "mat_skip_reason": mat_skip_reason,
         "file_sizes_mb": file_sizes,
         # Per-channel ranging (drives converging between-cuts auto-range + records the per-cut N/V).
         "channels_ranging": {
@@ -190,7 +213,11 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         },
         "metadata": cfg.extra_metadata or {},
         "config": cfg.model_dump(),
-        "files": {"mat": "capture.mat", "live_cache": "live_cache.bin", "raw": "raw.d1raw"},
+        "files": {
+            "mat": "capture.mat" if mat_written else None,
+            "live_cache": "live_cache.bin",
+            "raw": "raw.d1raw",
+        },
     }
     with open(os.path.join(capture_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2)

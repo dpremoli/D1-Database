@@ -181,6 +181,14 @@ backup_mod.LEGACY_BACKUP_CONFIG_PATH = os.path.join(LEGACY_CONFIG_DIR, "backup_c
 _broadcaster: Broadcaster | None = None
 _session: RecordingSession | None = None
 
+
+def _active_session_id() -> str | None:
+    """The session directory currently being written to, or None -- see recovery.scan_incomplete."""
+    if _session is not None and _session.state in ("recording", "finalizing"):
+        return _session.id
+    return None
+
+
 # Suggested live-backup endpoint. The backup server runs as a compose service on the lab server and
 # is reached through Caddy's /backup-ingest route rather than on its own published port, so it
 # inherits that single TLS, tailnet-only entry point (see infra/caddy/Caddyfile). A direct
@@ -1141,7 +1149,7 @@ async def health_doctor(request: Request) -> dict:
         )
 
     # 9. Incomplete recordings
-    incomplete = recovery.scan_incomplete(CAPTURES_ROOT)
+    incomplete = recovery.scan_incomplete(CAPTURES_ROOT, exclude_id=_active_session_id())
     if incomplete:
         total_mb = sum(s.get("raw", {}).get("raw_size_mb", 0) for s in incomplete)
         findings.append(
@@ -1162,7 +1170,9 @@ async def health_doctor(request: Request) -> dict:
 # ---- Recovery of crashed recordings ----
 @app.get("/recovery/check")
 async def recovery_check() -> dict:
-    incomplete = await run_in_threadpool(recovery.scan_incomplete, CAPTURES_ROOT)
+    incomplete = await run_in_threadpool(
+        recovery.scan_incomplete, CAPTURES_ROOT, _active_session_id()
+    )
     return {"incomplete": incomplete}
 
 
@@ -1676,8 +1686,19 @@ async def labamp_status() -> dict:
     }
 
 
+_LABAMP_BUSY_MSG = (
+    "a recording is in progress -- changing the amp's live hardware state would corrupt it"
+)
+
+
 @app.post("/labamp/mode")
 async def labamp_set_mode(body: dict) -> dict:
+    # #33: the amp's analog outputs feed straight into the NI-DAQ channels a live recording is
+    # sampling -- switching operation mode mid-capture (e.g. MEASURE -> RESET) writes garbage or
+    # zeroed voltages directly into the in-progress capture, same class of risk as the autorange
+    # endpoints below.
+    if _busy():
+        raise HTTPException(409, _LABAMP_BUSY_MSG)
     mode = str(body.get("mode", ""))
     try:
         await run_in_threadpool(_labamp.set_operation_mode, mode)
@@ -1755,6 +1776,10 @@ async def labamp_autorange(headroom: float | None = None) -> dict:
 
 @app.post("/labamp/autorange/apply")
 async def labamp_autorange_apply(body: dict) -> dict:
+    # #33: this sets the amp to RESET and rewrites per-channel ranges -- only safe in the gap
+    # between cuts, never mid-recording (see labamp_autorange_converge's docstring below).
+    if _busy():
+        raise HTTPException(409, _LABAMP_BUSY_MSG)
     hr = float(body.get("headroom") or _labamp_cfg.get("autorange_headroom", 1.5))
     ch = int(_labamp_cfg["channels"])
     nidaq, dac, eff, vfs = _daq()
@@ -1788,6 +1813,10 @@ async def labamp_autorange_converge(body: dict) -> dict:
     recs = converge_ranges(peaks, clipped, currents, headroom=hr, bits=eff, fullscale_v=vfs)
     status: dict[str, str] = {}
     if body.get("apply"):
+        # Computing recommendations (above) is a pure read + math, safe anytime -- only writing
+        # them to the amp needs the between-cuts guard (#33).
+        if _busy():
+            raise HTTPException(409, _LABAMP_BUSY_MSG)
         try:
             await run_in_threadpool(_labamp.set_operation_mode, "RESET")
             for r in recs:
@@ -1810,6 +1839,8 @@ async def labamp_autorange_converge(body: dict) -> dict:
 @app.post("/labamp/sensors/write")
 async def labamp_write_sensors(body: dict) -> dict:
     """Write calibration values (sensitivity, range) to the amp for specific channels."""
+    if _busy():
+        raise HTTPException(409, _LABAMP_BUSY_MSG)
     updates = body.get("updates", [])
     if not updates:
         raise HTTPException(400, "updates required")
@@ -1859,6 +1890,10 @@ def _validate_outbound_url(url: str, what: str = "URL") -> str:
 
 @app.post("/labamp/config")
 async def labamp_post_config(body: dict) -> dict:
+    # #33: this rebuilds the module-global _labamp client (_rebuild_labamp() below), replacing
+    # the amp connection an in-progress recording's ranging/status calls are using mid-flight.
+    if _busy():
+        raise HTTPException(409, _LABAMP_BUSY_MSG)
     if "base_url" in body:
         body["base_url"] = _validate_outbound_url(str(body["base_url"]), "amp URL")
     for k in (
