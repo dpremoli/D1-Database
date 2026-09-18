@@ -16,6 +16,7 @@ surface as-is.
 from __future__ import annotations
 
 import os
+import re
 
 import httpx
 
@@ -38,6 +39,16 @@ def _fence(text: str, limit: int) -> list[str]:
     zero-width space.
     """
     return ["```", text.strip()[-limit:].replace("```", "`​`​`"), "```"]
+
+
+# Diagnostics embed filesystem paths (captures_root) that aren't typed by the reporter, so unlike
+# the description text they can leak an identifying Windows account name into a GitHub issue body
+# no one meant to put there.
+_WINDOWS_USER_PATH = re.compile(r"(?i)(C:\\Users\\)([^\\]+)(\\)")
+
+
+def _redact_paths(text: str) -> str:
+    return _WINDOWS_USER_PATH.sub(r"\1<redacted>\3", text)
 
 
 KIND_LABELS = {"bug": "bug", "feature": "enhancement"}
@@ -74,9 +85,10 @@ def build_body(
     ]
     # Machine state first: it is short, and it answers the questions that otherwise cost a
     # round-trip with the operator ("is the amp in real or mock mode?", "which DAQ is attached?",
-    # "was it actually recording?"). Not collapsed, unlike the two long tails below.
+    # "was it actually recording?"). Not collapsed, unlike the two long tails below. Paths within
+    # it are redacted (see _redact_paths) since they can carry the operator's Windows account name.
     if diagnostics.strip():
-        parts += ["", "**Machine state at time of report**", "", *_fence(diagnostics, 6000)]
+        parts += ["", "**Machine state at time of report**", "", *_fence(_redact_paths(diagnostics), 6000)]
     if console_tail.strip():
         parts += [
             "",

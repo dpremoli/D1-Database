@@ -27,11 +27,12 @@ from __future__ import annotations
 
 import os
 import time
+from typing import Annotated
 
 import httpx
 import jwt
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 GITHUB_API = "https://api.github.com"
 DEFAULT_REPO = "dpremoli/D1-Database"
@@ -106,10 +107,16 @@ class _TokenCache:
 _token_cache = _TokenCache()
 
 
+_Label = Annotated[str, Field(max_length=100)]
+
+
 class ReportRequest(BaseModel):
     title: str
-    body: str
-    labels: list[str] = []
+    # title is truncated (not bounded here) at the /report call site below — body and labels have
+    # no such truncation downstream, so an unbounded client payload would otherwise be buffered
+    # fully in memory before the GitHub call ever runs.
+    body: str = Field(max_length=100_000)
+    labels: list[_Label] = Field(default_factory=list, max_length=20)
 
 
 @app.get("/health")
