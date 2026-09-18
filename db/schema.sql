@@ -3785,7 +3785,8 @@ CREATE TABLE public.tool_boxes (
     owner uuid,
     cascade_ownership boolean DEFAULT false NOT NULL,
     project_id uuid,
-    owner_person_id uuid
+    owner_person_id uuid,
+    version integer DEFAULT 1 NOT NULL
 );
 
 
