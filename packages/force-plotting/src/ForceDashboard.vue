@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import { useRoute, useRouter } from 'vue-router';
 import ForceChart from './ForceChart.vue';
@@ -929,7 +929,17 @@ onMounted(async () => {
 	}
 });
 
-onBeforeUnmount(() => { for (const u of frmCache.values()) URL.revokeObjectURL(u); });
+// #24 keeps this component alive across navigation, so onBeforeUnmount alone never fires when
+// the operator leaves /plot -- these blob URLs would otherwise accumulate for the rest of the
+// session as more operations are browsed. Clear frmCache too, not just revoke: the Map itself
+// survives deactivation (this closure isn't destroyed), so a stale revoked URL would otherwise
+// be handed back to loadFrm()'s `frmCache.has(fileId)` fast path on reactivation.
+function releaseFrmCache() {
+	for (const u of frmCache.values()) URL.revokeObjectURL(u);
+	frmCache.clear();
+}
+onDeactivated(releaseFrmCache);
+onBeforeUnmount(releaseFrmCache);
 
 function sampleOf(r: any) { return r.operation_id?.sample_id; }
 

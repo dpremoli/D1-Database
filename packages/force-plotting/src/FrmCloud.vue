@@ -8,7 +8,7 @@
  * in the parent (ForceDashboard); the interactive VIEW (zoom/pan/rect-zoom) is local to
  * this renderer since it's purely a display transform over the same cloud.
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, reactive, ref, watch } from 'vue';
 import { useForceHost } from './host';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -601,7 +601,16 @@ onMounted(() => {
 	else if (props.cacheFileId) load(props.cacheFileId);
 	else if (cache.value) nextTick(() => { setupRenderer(); scheduleRebuild(); });
 });
-onBeforeUnmount(() => {
+// #57: ForceDashboard's Plot route is kept alive across navigation (<keep-alive>), and Vue
+// propagates onActivated/onDeactivated (not onBeforeUnmount) to components nested inside that
+// cached subtree — this component is one of them (rendered via v-if inside ForceDashboard). Left
+// as onBeforeUnmount-only, an operator who opens FRM then leaves /plot and returns repeatedly
+// would never hit this cleanup, accumulating live WebGL contexts for the rest of the session.
+// teardownRenderer mirrors onMounted's setupRenderer()/scheduleRebuild() pair below so a
+// deactivated cloud tears down exactly like an unmounted one, and reactivating re-runs the same
+// first-mount setup path (setupRenderer's `if (ready ...) return` guard is why this is safe to
+// call again — ready is reset to false here).
+function teardownRenderer() {
 	if (raf) cancelAnimationFrame(raf);
 	ro?.disconnect();
 	if (cropTimer) clearTimeout(cropTimer);
@@ -614,7 +623,19 @@ onBeforeUnmount(() => {
 	// contexts until the browser reclaims one — the "Lite never recovered" bug on big ops.
 	try { renderer?.forceContextLoss(); } catch { /* ignore */ }
 	renderer?.dispose();
-});
+	if (canvasEl.value) {
+		canvasEl.value.removeEventListener('webglcontextlost', onCtxLost, false);
+		canvasEl.value.removeEventListener('webglcontextrestored', onCtxRestored, false);
+	}
+	renderer = null; scene = null; camera = null; controls = null;
+	pointsGeom = null; pointsMat = null; pointsObj = null; discTex = null;
+	gpuGeom = null; gpuMat = null; gpuObj = null; colormapTex = null; colormapTexName = '';
+	gpuUploaded = false;
+	ready = false;
+}
+onBeforeUnmount(teardownRenderer);
+onDeactivated(teardownRenderer);
+onActivated(() => { if (!ready) nextTick(() => { setupRenderer(); scheduleRebuild(); }); });
 
 // Geometry/colour props → rebuild immediately. pointSize is view-only (a uniform). Crop
 // (cropStartSec/cropEndSec) is DELIBERATELY excluded here — it has its own throttled watcher
