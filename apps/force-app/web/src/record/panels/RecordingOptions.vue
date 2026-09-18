@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useWorkspace } from '../workspace';
 import LookupField from './LookupField.vue';
 import CutPicker from './CutPicker.vue';
 import StatTile from './StatTile.vue';
+import MachineOperatorPanel from './MachineOperatorPanel.vue';
 
 const w = useWorkspace();
 
@@ -46,26 +47,96 @@ watch(() => [w.link.sampleId, w.link.equipmentId, w.meta.op_type], () => {
 	if (w.source.value === 'replay') w.searchCuts(w.replay.query);
 });
 
-const MACHINING_SUBTYPES = [
-	{ value: 'MT-F', text: 'Turning – Facing' },
-	{ value: 'MT-R', text: 'Turning – Roughing' },
-	{ value: 'MT-O', text: 'Turning – OD' },
-	{ value: 'MT-G', text: 'Turning – Grooving' },
-	{ value: 'MT-B', text: 'Turning – Boring' },
-	{ value: 'MT-H', text: 'Turning – Threading' },
-	{ value: 'MT-P', text: 'Turning – Parting' },
-	{ value: 'MT-D', text: 'Turning – Drilling' },
-	{ value: 'MM-F', text: 'Milling – Facing' },
-	{ value: 'MM-R', text: 'Milling – Roughing' },
-	{ value: 'MM-S', text: 'Milling – Slotting' },
-	{ value: 'MM-D', text: 'Milling – Drilling' },
-	{ value: 'other', text: 'Other' },
-] as const;
 function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insertId || undefined); }
+
+// Diameter: assume solid stock (one diameter) by default — Outer Ø and Inner Ø used to always be
+// two separate tiles even though most cuts only ever set one. Double-clicking the single tile
+// splits it, in the same grid footprint, into Outer/Inner for tube or annular stock; double-
+// clicking Outer while split merges back down (zeroing inner — solid stock has none). Synced both
+// ways so loading a config that already has a real inner diameter (a previous run, a copied setup)
+// reveals the split view instead of hiding a nonzero value inside the collapsed one.
+const diamSplit = ref(w.cfg.inner_diam > 0);
+watch(() => w.cfg.inner_diam, (v) => { if (v > 0) diamSplit.value = true; });
+function splitDiam() { diamSplit.value = true; }
+function mergeDiam() { w.cfg.inner_diam = 0; diamSplit.value = false; }
+
+// Folding subpanels (Direction B / "Cards"): each grouped section is independently collapsible,
+// and how many start open responds to the actual height the grid has given this panel — a small
+// window/monitor gets just Tooling; a tall one gets everything open. Tooling (Insert/Edge/Tool)
+// is the baseline that's always open: per the earlier field-frequency review these change far more
+// often between cuts than Machine/Operator do, so they're worth the space on any screen. Coolant &
+// geometry opens next as height allows (still per-cut, if not always changed); Post-cut last (only
+// relevant once the cut is done, so the least useful to show while setting one up). Acquisition's
+// processing toggles used to be a third card here but live in the footer now, next to Start — see
+// RecordingActions.vue.
+//
+// `touched` records a card the OPERATOR has manually toggled, so a later resize (dragging the grid
+// panel, moving the window to a different monitor) never fights a deliberate choice — auto-fold
+// only ever adjusts a card the operator hasn't already decided about themselves.
+const open = reactive({ tooling: true, coolant: false, postCut: false });
+const touched = reactive({ tooling: false, coolant: false, postCut: false });
+function toggleCard(card: keyof typeof open) {
+	touched[card] = true;
+	open[card] = !open[card];
+}
+
+// Least-essential-first: the order auto-fold closes cards in when content overflows.
+const CLOSE_ORDER: (keyof typeof open)[] = ['postCut', 'coolant'];
+
+// Measures instead of guessing: a fixed BASE/STEP pixel model can't know the real rendered height
+// of this form (it's never been seen rendered from here), and the first version of this shipped
+// with numbers that were simply too low — every card came out "open" on an ordinary screen and the
+// panel scrolled anyway. This instead opens every untouched card, checks whether panel-body
+// actually overflows (scrollHeight vs its own clientHeight), and if so closes cards one at a time,
+// least-essential-first, re-checking after each — so it's correct by construction on any screen
+// size instead of tuned-and-hopefully-right for one.
+let fitting = false;
+async function fitToScreen() {
+	const container = rootEl.value?.parentElement;
+	if (!container || fitting) return;
+	fitting = true;
+	try {
+		if (!touched.tooling) open.tooling = true;
+		for (const card of CLOSE_ORDER) if (!touched[card]) open[card] = true;
+		await nextTick();
+		for (const card of CLOSE_ORDER) {
+			if (container.scrollHeight <= container.clientHeight + 1) break;
+			if (touched[card] || !open[card]) continue;
+			open[card] = false;
+			await nextTick();
+		}
+	} finally {
+		fitting = false;
+	}
+}
+
+const rootEl = ref<HTMLElement | null>(null);
+let resizeObserver: ResizeObserver | null = null;
+let resizeDebounce: ReturnType<typeof setTimeout> | null = null;
+onMounted(() => {
+	// The height that matters is the SHARED panel-body's (see PanelFrame.vue's container-type:size),
+	// not this component's own root — .opts has no fixed size of its own, its parent does.
+	const container = rootEl.value?.parentElement;
+	if (!container) return;
+	void fitToScreen();
+	if (typeof ResizeObserver === 'undefined') return;
+	resizeObserver = new ResizeObserver(() => {
+		// Debounced: a drag-resize of the grid panel fires many events in quick succession, and
+		// each fit pass forces a couple of extra renders (see fitToScreen) — no reason to run that
+		// on every intermediate frame instead of once the size settles.
+		if (resizeDebounce) clearTimeout(resizeDebounce);
+		resizeDebounce = setTimeout(fitToScreen, 120);
+	});
+	resizeObserver.observe(container);
+});
+onBeforeUnmount(() => {
+	resizeObserver?.disconnect();
+	if (resizeDebounce) clearTimeout(resizeDebounce);
+});
 </script>
 
 <template>
-	<div class="opts">
+	<div class="opts" ref="rootEl">
 		<!-- Source selector -->
 		<div class="seg">
 			<button :class="{ on: w.source.value === 'sim' }" :disabled="w.locked.value" @click="w.setSource('sim')">Simulated</button>
@@ -73,19 +144,12 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 			<button :class="{ on: w.source.value === 'nidaq' }" :disabled="w.locked.value" @click="w.setSource('nidaq')">NI-DAQ</button>
 		</div>
 
-		<!-- ─── Sample, then its operation type — always first: this is "what am I recording/
-			 replaying", the identity of the cut. ─── -->
+		<!-- ─── Sample — always first: this is "what am I recording/replaying", the identity of the
+			 cut. Machine/Operator/Operation type (also identity-ish, but set-once-per-session facts
+			 rather than per-cut ones) live together in their own subpanel below. ─── -->
 		<div class="links">
 			<LookupField v-model="w.link.sampleId" :display-label="w.link.sampleLabel" label="Sample" placeholder="search sample code…"
-				:search="w.searchSamples" :disabled="w.locked.value" @select="w.onSelectSample" />
-		</div>
-		<div class="grid2">
-			<label>Operation type
-				<select v-model="w.meta.op_type" :disabled="w.locked.value">
-					<option value="">—</option>
-					<option v-for="t in MACHINING_SUBTYPES" :key="t.value" :value="t.value">{{ t.text }}</option>
-				</select>
-			</label>
+				icon="search" :search="w.searchSamples" :disabled="w.locked.value" @select="w.onSelectSample" />
 		</div>
 
 		<!-- ─── Feed & speed — the key numeric readout, right after identity. For sim/nidaq this is
@@ -95,14 +159,23 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 			<div class="stat-grid">
 				<StatTile editable label="Spindle" unit="RPM" v-model="w.cfg.rpm" :disabled="w.locked.value" />
 				<StatTile editable label="Feed" unit="mm/rev" step="0.01" v-model="w.cfg.feed" :disabled="w.locked.value" />
-				<StatTile editable label="Outer Ø" unit="mm" v-model="w.cfg.diam" :disabled="w.locked.value" />
-				<StatTile editable label="Inner Ø" unit="mm" v-model="w.cfg.inner_diam" :disabled="w.locked.value" />
+				<!-- Diameter: one tile (solid stock assumed) unless split — see script comment. -->
+				<StatTile v-if="!diamSplit" editable label="Diameter" unit="mm" v-model="w.cfg.diam" :disabled="w.locked.value"
+					class="span2" title="Double-click to split into outer/inner, for tube or annular stock" @dblclick="splitDiam" />
+				<template v-else>
+					<StatTile editable label="Outer Ø" unit="mm" v-model="w.cfg.diam" :disabled="w.locked.value"
+						title="Double-click to merge back to a single diameter" @dblclick="mergeDiam" />
+					<StatTile editable label="Inner Ø" unit="mm" v-model="w.cfg.inner_diam" :disabled="w.locked.value" />
+				</template>
 				<StatTile editable label="Sample rate" unit="Hz" v-model="w.cfg.sample_rate" :disabled="w.locked.value"
 					:invalid="sampleRateInvalid"
 					:title="sampleRateInvalid ? `Exceeds the assigned hardware's maximum of ${maxSampleRateHz?.toFixed(0)} Hz for this channel selection — recording would fail to start.` : ''" />
-				<StatTile editable :label="w.source.value === 'sim' ? 'Duration' : 'Planned duration'" unit="s"
-					v-model="w.cfg.duration_sec" :disabled="w.locked.value"
-					:title="w.source.value === 'sim' ? '' : 'Not enforced for real recordings — used only to estimate disk space needed and warn before you start.'" />
+				<!-- Duration removed from view — but w.cfg.duration_sec is still real state: it drives
+					 checkDiskBeforeStart()/estimatedRecordingGb() in workspace.ts, the pre-Start
+					 disk-space warning. With no field left to change it, that warning now always
+					 estimates off its fixed default (8s) rather than the actual planned length. Flagged
+					 rather than silently left inaccurate — reinstate an input (even a hidden/advanced
+					 one) if that warning still needs to mean something for real (nidaq) recordings. -->
 				<StatTile editable label="Pulses/rev" v-model="w.cfg.ppr" :disabled="w.locked.value" />
 			</div>
 		</template>
@@ -131,52 +204,87 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 		<!-- ─── Everything else ─── -->
 		<div class="section-divider"><span>Details</span></div>
 
-		<div class="links pair">
-			<LookupField v-model="w.link.equipmentId" :display-label="w.link.equipmentLabel" label="Machine" placeholder="search machine…"
-				:search="w.searchEquipmentForOp" :disabled="w.locked.value" @select="(i: any) => (w.link.equipmentLabel = i.label)" />
-			<LookupField v-model="w.link.operatorId" :display-label="w.link.operatorLabel" label="Operator" placeholder="search operator…"
-				:search="w.searchOperators" :disabled="w.locked.value" @select="(i: any) => (w.link.operatorLabel = i.label)" />
+		<MachineOperatorPanel />
+
+		<!-- NI-DAQ channel count used to be echoed here too ("N channels configured — edit in
+			 Settings"); dropped as pure duplication of the Settings page itself, which is the only
+			 place it's actually editable. -->
+
+		<!-- Acquisition's processing toggles (Cut start / Drift / Converge) used to be their own
+			 card here. Moved to the footer, left of Start, in RecordingActions.vue — they're the one
+			 group of settings worth checking in the moment right before pressing Start, not something
+			 to have folded away in Details. -->
+
+		<div class="card" :class="{ collapsed: !open.tooling }">
+			<button type="button" class="card-head" @click="toggleCard('tooling')">
+				<span class="material-symbols-rounded chev">{{ open.tooling ? 'expand_more' : 'chevron_right' }}</span>
+				<span class="material-symbols-rounded">build_circle</span>Tooling
+			</button>
+			<div v-show="open.tooling" class="card-body">
+				<div class="links pair">
+					<LookupField v-model="w.link.insertId" :display-label="w.link.insertLabel" label="Insert" placeholder="search insert code…"
+						icon="change_history" :search="w.searchInserts" :disabled="w.locked.value" @select="(i: any) => { w.link.insertLabel = i.label; w.link.edgeId = ''; w.link.edgeLabel = ''; }" />
+					<!-- New edge lives on the Edge field itself now (it's a property of the specific edge
+						 in use, not a fact about the insert) — no longer a separate checkbox down by Chips
+						 collected. -->
+					<LookupField v-model="w.link.edgeId" :display-label="w.link.edgeLabel" label="Edge" placeholder="search edge code…"
+						icon="change_history" :search="searchEdgesForInsert" :disabled="w.locked.value"
+						@select="(i: any) => { w.link.edgeLabel = i.label; if (i.extra?.insertId) { w.link.insertId = i.extra.insertId; w.link.insertLabel = i.extra.insertLabel; } }">
+						<template #badge>
+							<button type="button" class="new-badge" :class="{ on: w.machining.new_edge }" :disabled="w.locked.value"
+								title="Mark this as a new edge" @click="w.machining.new_edge = !w.machining.new_edge">
+								<span class="material-symbols-rounded">fiber_new</span>
+							</button>
+						</template>
+					</LookupField>
+				</div>
+				<div class="links">
+					<LookupField v-model="w.link.toolId" :display-label="w.link.toolLabel" label="Tool" placeholder="search tool name…"
+						icon="build" :search="w.searchToolsForOp" :disabled="w.locked.value" @select="(i: any) => (w.link.toolLabel = i.label)" />
+				</div>
+			</div>
 		</div>
 
-		<!-- NI-DAQ channel summary (configured in Settings) -->
-		<p v-if="w.source.value === 'nidaq'" class="hint nidaq-hint">
-			<span class="material-symbols-rounded">memory</span>
-			{{ w.nidaqChannels.value.split(/[\n,]+/).filter(Boolean).length }} channels configured
-			<span class="sub">(edit in Settings)</span>
-		</p>
-
-		<!-- Processing options -->
-		<div v-if="w.source.value !== 'replay'" class="proc">
-			<label class="chk"><input type="checkbox" v-model="w.cfg.frm_from_cut" :disabled="w.locked.value" /> Detect cut start (live FRM begins at the cut)</label>
-			<label class="chk"><input type="checkbox" v-model="w.cfg.drift_comp" :disabled="w.locked.value" /> Drift compensation <span class="sub">(saved outputs only — raw stays raw)</span></label>
-			<label class="chk"><input type="checkbox" v-model="w.converge.enabled" :disabled="w.locked.value" /> Converging auto-range <span class="sub">(tune per-channel ranges between cuts)</span></label>
-			<p v-if="w.converge.enabled && w.source.value !== 'nidaq'" class="hint">Applies live only with the NI-DAQ source; on sim/replay it just previews the recommendation.</p>
-			<p v-if="w.converge.status" class="sync" :class="w.converge.busy ? 'warn' : 'ok'"><span class="material-symbols-rounded">tune</span>{{ w.converge.status }}</p>
+		<div class="card" :class="{ collapsed: !open.coolant }">
+			<button type="button" class="card-head" @click="toggleCard('coolant')">
+				<span class="material-symbols-rounded chev">{{ open.coolant ? 'expand_more' : 'chevron_right' }}</span>
+				<span class="material-symbols-rounded">water_drop</span>Coolant &amp; geometry
+			</button>
+			<div v-show="open.coolant" class="grid2">
+				<label>Coolant<input v-model="w.meta.coolant" :disabled="w.locked.value" /></label>
+				<label>Coolant pressure
+					<div class="unit-box"><input type="number" step="0.1" v-model="w.machining.coolant_pressure" :disabled="w.locked.value" /><span class="unit">bar</span></div>
+				</label>
+				<label>Axial DoC
+					<div class="unit-box"><input type="number" step="0.01" v-model="w.machining.axial_doc" :disabled="w.locked.value" /><span class="unit">mm</span></div>
+				</label>
+				<label>Radial DoC
+					<div class="unit-box"><input type="number" step="0.01" v-model="w.machining.radial_doc" :disabled="w.locked.value" /><span class="unit">mm</span></div>
+				</label>
+				<label>Cutting length
+					<div class="unit-box"><input type="number" v-model="w.machining.cutting_length" :disabled="w.locked.value" /><span class="unit">mm</span></div>
+				</label>
+			</div>
 		</div>
 
-		<div class="links pair">
-			<LookupField v-model="w.link.insertId" :display-label="w.link.insertLabel" label="Insert" placeholder="search insert code…"
-				:search="w.searchInserts" :disabled="w.locked.value" @select="(i: any) => { w.link.insertLabel = i.label; w.link.edgeId = ''; w.link.edgeLabel = ''; }" />
-			<LookupField v-model="w.link.edgeId" :display-label="w.link.edgeLabel" label="Edge" placeholder="search edge code…"
-				:search="searchEdgesForInsert" :disabled="w.locked.value"
-				@select="(i: any) => { w.link.edgeLabel = i.label; if (i.extra?.insertId) { w.link.insertId = i.extra.insertId; w.link.insertLabel = i.extra.insertLabel; } }" />
+		<div class="card" :class="{ collapsed: !open.postCut }">
+			<button type="button" class="card-head" @click="toggleCard('postCut')">
+				<span class="material-symbols-rounded chev">{{ open.postCut ? 'expand_more' : 'chevron_right' }}</span>
+				<span class="material-symbols-rounded">recycling</span>Post-cut
+			</button>
+			<div v-show="open.postCut" class="card-body">
+				<!-- TODO: auto-generate + pre-fill from the cut parameters and the DB's ref-code
+					 rules (still editable after). MetadataPanel.vue's `cutId` computed
+					 ({sample_code}-{TYPE}{seq}) is the likely pattern but needs confirming against
+					 the actual chips-ref rule before wiring it up — left as a plain field for now
+					 rather than guessing at generation logic. -->
+				<label>Chips ref code<input v-model="w.machining.chips_ref" :disabled="w.locked.value" /></label>
+				<div class="chks">
+					<label class="chk"><input type="checkbox" v-model="w.machining.chips_collected" :disabled="w.locked.value" /> Chips collected</label>
+				</div>
+			</div>
 		</div>
-		<div class="links">
-			<LookupField v-model="w.link.toolId" :display-label="w.link.toolLabel" label="Tool" placeholder="search tool name…"
-				:search="w.searchToolsForOp" :disabled="w.locked.value" @select="(i: any) => (w.link.toolLabel = i.label)" />
-		</div>
-		<div class="grid2">
-			<label>Coolant<input v-model="w.meta.coolant" :disabled="w.locked.value" /></label>
-			<label>Coolant pressure (bar)<input type="number" step="0.1" v-model="w.machining.coolant_pressure" :disabled="w.locked.value" /></label>
-			<label>Axial DoC (mm)<input type="number" step="0.01" v-model="w.machining.axial_doc" :disabled="w.locked.value" /></label>
-			<label>Radial DoC (mm)<input type="number" step="0.01" v-model="w.machining.radial_doc" :disabled="w.locked.value" /></label>
-			<label>Cutting length (mm)<input type="number" v-model="w.machining.cutting_length" :disabled="w.locked.value" /></label>
-			<label>Chips ref code<input v-model="w.machining.chips_ref" :disabled="w.locked.value" /></label>
-		</div>
-		<div class="chks">
-			<label class="chk"><input type="checkbox" v-model="w.machining.new_edge" :disabled="w.locked.value" /> New edge</label>
-			<label class="chk"><input type="checkbox" v-model="w.machining.chips_collected" :disabled="w.locked.value" /> Chips collected</label>
-		</div>
+
 		<label class="wide">Notes
 			<textarea v-model="w.meta.notes" rows="2" :disabled="w.locked.value"></textarea>
 		</label>
@@ -201,6 +309,7 @@ function searchEdgesForInsert(q: string) { return w.searchEdges(q, w.link.insert
 .grid2 > * { min-width: 0; }
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
 .stat-grid.cut-params { margin-top: -2px; }
+.stat-grid .span2 { grid-column: 1 / -1; }
 label { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px; }
 label.wide { display: block; }
 input:not([type="checkbox"]), textarea, select { display: block; width: 100%; margin-top: 3px; padding: 7px 9px; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; outline: none; font-family: inherit; }
@@ -208,14 +317,37 @@ select option { background: var(--bg); color: var(--text); }
 textarea { font-family: var(--mono); font-size: 12px; resize: vertical; }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
+/* Unit shown inside the field itself (a trailing suffix in the same bordered box), not folded into
+   the label text above it — the box, not the input, carries the border so the unit reads as part
+   of one control. */
+.unit-box { display: flex; align-items: center; margin-top: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
+.unit-box:focus-within { border-color: var(--accent); }
+.unit-box input { flex: 1; min-width: 0; margin-top: 0; border: none; background: transparent; }
+.unit-box input:disabled { opacity: 1; }
+.unit-box .unit { flex: 0 0 auto; padding-right: 9px; font-size: 11px; color: var(--text-dim); }
+.unit-box.disabled, .unit-box:has(input:disabled) { opacity: 0.55; }
 .sub { color: var(--text-dim); font-weight: 400; font-size: 10.5px; }
-.nidaq-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
-.nidaq-hint .material-symbols-rounded { font-size: 16px; color: var(--accent); }
-.proc { display: flex; flex-direction: column; gap: 7px; padding: 8px 0 2px; border-top: 1px solid var(--border); }
-.proc .chk { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text); cursor: pointer; margin-bottom: 0; }
-.proc .chk input { accent-color: var(--accent); }
 .section-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
 .section-divider::before, .section-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+/* Folding subpanels (Direction B / "Cards"): Tooling, Coolant & geometry, Post-cut. Body content
+   is v-show (not v-if) so folding a card never remounts/resets a LookupField's own search state —
+   it just hides. */
+.card { border: 1px solid var(--border); background: rgba(255,255,255,0.02); border-radius: 10px; padding: 10px 11px; }
+.card + .card { margin-top: 2px; }
+.card.collapsed { padding-bottom: 10px; }
+.card-head { display: flex; align-items: center; gap: 6px; width: 100%; margin: -4px -4px 5px; padding: 4px; border-radius: 6px; background: transparent; border: none; outline: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); cursor: pointer; }
+.card-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.card.collapsed .card-head { margin-bottom: -4px; }
+.card-head .material-symbols-rounded { font-size: 14px; color: var(--accent); }
+.card-head .chev { font-size: 16px; color: var(--text-dim); margin-right: -2px; }
+.card-head:hover { color: var(--text); }
+/* New-edge toggle, inline in the Edge LookupField's own box via its #badge slot — a property of
+   this specific edge, not a fact about the insert, so it lives next to Edge, not off in its own
+   checkbox elsewhere. */
+.new-badge { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-right: 4px; padding: 0; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-faint); cursor: pointer; }
+.new-badge .material-symbols-rounded { font-size: 15px; }
+.new-badge.on { border-color: rgba(56,189,248,0.5); background: rgba(56,189,248,0.14); color: #7dd3fc; }
+.new-badge:disabled { opacity: 0.5; cursor: not-allowed; }
 .links { display: flex; flex-direction: column; }
 .links :deep(.lookup) { min-width: 0; }
 /* Two lookups side by side (Machine|Operator, Insert|Edge) to save vertical space. Each LookupField
@@ -225,4 +357,35 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 .chks { display: flex; gap: 16px; margin-top: 4px; }
 .chk { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text); cursor: pointer; }
 .chk input { accent-color: var(--accent); }
+
+/* --- Adaptive compression ------------------------------------------------------------------
+   PanelFrame's .panel-body declares `container-type:size` under the name "panel-body" (see
+   PanelFrame.vue), so this panel can react to the ACTUAL space the grid has given it, not just
+   scroll once content overflows. Two stages, least-important-first: spacing/padding tightens
+   first, then secondary explanatory text (the "(saved outputs only...)"-style asides, the NI-DAQ
+   live-only note) drops — never the field labels themselves, since most fields here have no
+   leading icon to fall back on for identification, unlike a dedicated compact-list redesign would.
+   If that still isn't enough, panel-body's own overflow-y:auto (unchanged) takes over.
+
+   The thresholds below are a first estimate sized off this form's own field count/spacing, not
+   measured against the live grid panel (its actual pixel width depends on RecordPage.vue's grid
+   units, not a fixed mockup width) — resize the Recording & Metadata panel in the running app and
+   retune these two numbers to wherever it actually starts feeling cramped. --------------------- */
+@container panel-body (max-height: 760px) {
+	.opts { gap: 6px; }
+	.links :deep(.lookup) { margin-bottom: 4px; }
+	label { margin-bottom: 4px; }
+	.grid2 { gap: 0 8px; }
+	.stat-grid { gap: 5px; margin-bottom: 4px; }
+	.stat-grid :deep(.stat-tile) { padding: 6px 9px; }
+	.stat-grid :deep(.value-text), .stat-grid :deep(.value input) { font-size: 14px; }
+	.section-divider { margin: 4px 0 1px; }
+	.card { padding: 7px 9px; }
+	.card + .card { margin-top: 0; }
+	.card-head { margin-bottom: 6px; }
+}
+@container panel-body (max-height: 600px) {
+	.sub { display: none; }
+	label.wide textarea { min-height: 0; }
+}
 </style>

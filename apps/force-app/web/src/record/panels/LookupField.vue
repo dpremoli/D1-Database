@@ -11,6 +11,8 @@ const props = defineProps<{
 	placeholder?: string;
 	disabled?: boolean;
 	displayLabel?: string;
+	/** Material Symbols Rounded ligature name, shown leading the input box. */
+	icon?: string;
 }>();
 const emit = defineEmits<{ (e: 'update:modelValue', v: string): void; (e: 'select', item: LookupItem): void }>();
 
@@ -67,12 +69,14 @@ function delayedBlurClose() { window.setTimeout(() => { open.value = false; }, 1
 	<label ref="rootEl" class="lookup">
 		<span class="lbl">{{ label }}</span>
 		<div class="box" :class="{ set: !!modelValue }">
+			<span v-if="icon" class="material-symbols-rounded lead">{{ icon }}</span>
 			<input ref="inputEl" v-model="text" :placeholder="placeholder" :disabled="disabled"
 				@input="onInput" @focus="focus" @keydown.esc.prevent="close" @keydown.enter.prevent="items[0] && pick(items[0])"
 				@blur="delayedBlurClose" />
 			<button v-if="modelValue" class="x" type="button" :disabled="disabled" @mousedown.prevent="clear">
 				<span class="material-symbols-rounded">close</span>
 			</button>
+			<slot name="badge" />
 		</div>
 		<div v-if="open && !disabled" class="menu">
 			<div v-if="loading" class="mi hint">searching…</div>
@@ -90,6 +94,8 @@ function delayedBlurClose() { window.setTimeout(() => { open.value = false; }, 1
 .lbl { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 3px; }
 .box { display: flex; align-items: center; background: var(--bg-3); border: 1px solid var(--border); border-radius: 7px; }
 .box.set { border-color: rgba(56,189,248,0.5); }
+.box .lead { flex: 0 0 auto; font-size: 15px; color: var(--text-dim); margin-left: 9px; }
+.box:has(.lead) input { padding-left: 6px; }
 .box input { flex: 1; min-width: 0; padding: 7px 9px; font-size: 13px; color: var(--text); background: transparent; border: none; outline: none; }
 .box input:disabled { opacity: 0.55; }
 .x { display: inline-flex; align-items: center; padding: 0 6px; background: transparent; border: none; color: var(--text-dim); cursor: pointer; }

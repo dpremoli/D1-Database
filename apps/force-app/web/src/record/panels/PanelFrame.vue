@@ -34,6 +34,12 @@ defineEmits<{ close: [] }>();
 .panel-close { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: none; background: transparent; color: var(--text-dim); cursor: pointer; border-radius: 5px; }
 .panel-close:hover { color: var(--danger); background: rgba(239,68,68,0.12); }
 .panel-close .material-symbols-rounded { font-size: 15px; }
-.panel-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px; }
+/* container-type:size makes this box a @container reference for its content — panels whose
+	   content wants to compress as the grid resizes (rather than just scroll) query against
+	   container name "panel-body" (see RecordingOptions.vue). Safe for every other panel here:
+	   they already size their own content to fill available space (flex:1/min-height:0,
+	   absolutely-positioned children) instead of growing this box to fit, so contain:size
+	   (implied by container-type:size) changes nothing for them. */
+	.panel-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px; container-type: size; container-name: panel-body; }
 .panel-footer { flex-shrink: 0; padding: 10px 12px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg-2) 80%, transparent); }
 </style>
