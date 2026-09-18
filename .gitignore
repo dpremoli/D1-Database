@@ -32,6 +32,7 @@ apps/force-app/desktop/release/
 !apps/force-app/desktop/build/icon.*
 # Playwright smoke-test output (traces, screenshots, error-context.md on failure)
 apps/force-app/desktop/test-results/
+apps/force-app/web/test-results/
 
 # ---- Node / front-end ----
 node_modules/

@@ -135,6 +135,7 @@ async function upload(c: Capture) {
 			cacheUrl: `${base()}/captures/${c.id}/live_cache.bin`,
 			cfg: sum.config || {},
 			peaks: sum.peaks,
+			matWritten: sum.mat_written,
 		});
 		uploaded.value = { ...uploaded.value, [c.id]: true };
 		rowMsg.value[c.id] = 'uploaded';

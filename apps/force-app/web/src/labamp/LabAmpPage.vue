@@ -49,7 +49,7 @@ function onPickPastOp(item: { id: string; label: string; extra?: { peaksN?: numb
 function removePrevOp(id: string) { prevOps.value = prevOps.value.filter((o) => o.id !== id); }
 const aggregatedPeaks = computed<number[] | null>(() => {
 	if (!prevOps.value.length) return null;
-	const n = prevOps.value[0].peaksN.length;
+	const n = Math.max(...prevOps.value.map((o) => o.peaksN.length));
 	return Array.from({ length: n }, (_, i) => Math.max(...prevOps.value.map((o) => o.peaksN[i] ?? 0)));
 });
 const aggregatedExact = computed(() => prevOps.value.length > 0 && prevOps.value.every((o) => o.exact));

@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
+import { configDefaults } from 'vitest/config';
 import vue from '@vitejs/plugin-vue';
 
 // Served at a sub-path (/app/) behind Caddy in production so it shares the Directus origin over
@@ -20,4 +21,7 @@ export default defineConfig(({ mode }) => ({
 		},
 	},
 	server: { port: 5180 },
+	// vitest's default include glob (**/*.{test,spec}.*) otherwise also picks up e2e/*.spec.ts —
+	// those are @playwright/test files (a real Directus login, a real browser), not vitest's.
+	test: { exclude: [...configDefaults.exclude, 'e2e/**'] },
 }));

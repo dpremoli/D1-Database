@@ -48,9 +48,11 @@ function setSel(next: string[]) {
 // Switching INTO spectrogram/waterfall from a mode that had several channels ticked (Time/FFT/
 // Power all support that) must collapse to just the first, same reasoning as toggle() below --
 // otherwise the chips still show a stale multi-selection that the view was never going to honor.
+// immediate: true also collapses a stale multi-selection persisted from before this mode existed,
+// or loaded from localStorage already in single-channel mode -- not just live mode switches.
 watch(singleChannelMode, (single) => {
 	if (single && selected.value.length > 1) setSel([selected.value[0]]);
-});
+}, { immediate: true });
 
 function toggle(key: string) {
 	if (singleChannelMode.value) { setSel([key]); return; }

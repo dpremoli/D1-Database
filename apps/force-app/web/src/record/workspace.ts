@@ -446,10 +446,10 @@ export function createWorkspace() {
 		const cropOverride: Record<string, number | null> = {};
 		if (cache) {
 			if (editCutStartSec.value != null && editCutStartSec.value !== cache.csSec) {
-				cropOverride.crop_start_idx_override = Math.round(editCutStartSec.value * cache.Fs);
+				cropOverride.crop_start_idx_override = Math.round(editCutStartSec.value * cfg.sample_rate);
 			}
 			if (editCutEndSec.value != null && editCutEndSec.value !== cache.ceSec) {
-				cropOverride.crop_end_idx_override = Math.round(editCutEndSec.value * cache.Fs);
+				cropOverride.crop_end_idx_override = Math.round(editCutEndSec.value * cfg.sample_rate);
 			}
 		}
 		try {

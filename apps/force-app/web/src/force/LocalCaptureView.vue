@@ -60,6 +60,7 @@ async function retryUpload() {
 			cfg: summary.value.config || {},
 			peaks: summary.value.peaks,
 			cache: cache.value,
+			matWritten: summary.value.mat_written,
 		});
 	} catch (e: any) {
 		retryErr.value = e?.message || 'retry failed';

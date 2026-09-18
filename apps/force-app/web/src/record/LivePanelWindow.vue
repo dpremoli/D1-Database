@@ -48,11 +48,18 @@ const title = computed(() => {
 
 const singleChannelMode = computed(() => mode.value === 'spectrogram' || mode.value === 'waterfall');
 function toggleChannel(key: string) {
+	if (singleChannelMode.value) { channels.value = [key]; return; }
 	const s = channels.value.slice();
 	const i = s.indexOf(key);
 	if (i >= 0) { if (s.length > 1) s.splice(i, 1); } else s.push(key);
 	channels.value = ORDER.filter((k) => s.includes(k));
 }
+// Matches ForcePanel.vue's guard (#32/#58): collapses a stale multi-selection when switching into,
+// or opening the pop-out already in, spectrogram/waterfall mode -- a heatmap has nowhere to put a
+// second channel, so what's ticked must always match what's shown.
+watch(singleChannelMode, (single) => {
+	if (single && channels.value.length > 1) channels.value = [channels.value[0]];
+}, { immediate: true });
 const subsOpen = ref(false);
 const subCount = computed(() => channels.value.filter((k) => (SUB_NAMES as readonly string[]).includes(k)).length);
 

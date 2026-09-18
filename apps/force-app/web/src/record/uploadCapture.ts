@@ -16,6 +16,7 @@ export interface ColdUploadInfo {
 	cfg: Record<string, any>; // RecordConfig.model_dump(), as echoed in summary.json's "config"
 	peaks?: { Fx: number; Fy: number; Fz: number } | null;
 	cache?: Cache | null; // already-parsed live_cache, if the caller has it (avoids re-fetching)
+	matWritten?: boolean; // summary.json's top-level mat_written; false for captures over MAT_MAX_BYTES, which never got a capture.mat written
 }
 
 function directusErrorMessage(e: any): string {
@@ -68,12 +69,18 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 	const opId = res.data?.data?.operation_id;
 	if (!opId) throw new Error('run was logged but the server did not return its operation_id - cannot link the capture');
 
+	// A capture too large for the MAT5 format (see finalize.py's MAT_MAX_BYTES) never had a
+	// capture.mat written at all -- fetching it would 404 and abort the whole retry. Same fix as
+	// the live-session upload path (workspace.ts).
+	const matWritten = info.matWritten !== false;
 	const [matBlob, cacheBlob] = await Promise.all([
-		fetch(info.matUrl).then((r) => { if (!r.ok) throw new Error('capture.mat fetch failed'); return r.blob(); }),
+		matWritten
+			? fetch(info.matUrl).then((r) => { if (!r.ok) throw new Error('capture.mat fetch failed'); return r.blob(); })
+			: Promise.resolve(null),
 		fetch(info.cacheUrl).then((r) => { if (!r.ok) throw new Error('live_cache.bin fetch failed'); return r.blob(); }),
 	]);
 	const [matFileId, cacheFileId] = await Promise.all([
-		uploadFile(matBlob, `${info.captureId}.mat`),
+		matBlob ? uploadFile(matBlob, `${info.captureId}.mat`) : Promise.resolve(null),
 		uploadFile(cacheBlob, `${info.captureId}_live_cache.bin`),
 	]);
 

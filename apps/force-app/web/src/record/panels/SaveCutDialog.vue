@@ -30,6 +30,12 @@ const saveCsv = ref(false);
 // reads as "this will happen" and `save()` only tests uploadDb.
 watch(canUpload, (v) => { if (!v) uploadDb.value = false; });
 
+// finalize.py skips writing capture.mat for captures over its size limit (mat_written:false in the
+// summary) — matches the check in workspace.ts's uploadCutToDatabase. Untick (not just disable) for
+// the same reason as uploadDb above: a checked-but-disabled box still reads as "this will happen".
+const matAvailable = computed(() => w.st.summary?.mat_written !== false);
+watch(matAvailable, (v) => { if (!v) saveMat.value = false; });
+
 // Whether the operator dragged a crop handle away from the auto-detected default (#7) — gates the
 // "adjusted" note and its Reset button; save() sends an explicit override only in that case too
 // (see workspace.ts's uploadCutToDatabase).
@@ -131,7 +137,7 @@ function downloadUrl(href: string, filename: string) {
 
 function downloadMat() {
 	const id = w.st.captureId;
-	if (!id) return;
+	if (!id || !matAvailable.value) return;
 	downloadUrl(w.client.matUrl(id), `${id}.mat`);
 }
 
@@ -255,8 +261,11 @@ function startNew() {
 						</div>
 					</label>
 					<label class="scd-opt">
-						<input type="checkbox" v-model="saveMat" :disabled="stage === 'saving'" />
-						<span>Save a local copy (.mat)</span>
+						<input type="checkbox" v-model="saveMat" :disabled="stage === 'saving' || !matAvailable" />
+						<div>
+							<span>Save a local copy (.mat)</span>
+							<small v-if="!matAvailable">exceeds size limit — not written for this capture</small>
+						</div>
 					</label>
 					<label class="scd-opt">
 						<input type="checkbox" v-model="saveCsv" :disabled="stage === 'saving'" />
