@@ -19,7 +19,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { COLORMAPS } from './liveCloud';
+import { buildScaleLUT, type ColorScale } from './colorScale';
 import { CLUSTER_PALETTE } from './clusterPalette';
 import { matches } from './selection';
 import type { ChannelKey, Selection, WorkingSet } from './selection';
@@ -28,7 +28,7 @@ import type { DiagLayer } from './diagLayers';
 const props = withDefaults(defineProps<{
 	workingSet: WorkingSet | null;
 	channel: ChannelKey;
-	colormap?: string;
+	colorScale: ColorScale;
 	pointSize?: number;
 	selection?: Selection;
 	clusterMode?: boolean;
@@ -36,7 +36,7 @@ const props = withDefaults(defineProps<{
 	activeLayerName?: string | null;
 	paintMode?: 'off' | 'draw';
 }>(), {
-	colormap: 'viridis', pointSize: 3, selection: null, clusterMode: false,
+	pointSize: 3, selection: null, clusterMode: false,
 	layers: () => [], activeLayerName: null, paintMode: 'off',
 });
 
@@ -68,25 +68,31 @@ let cssW = 1, cssH = 1;
 let needsRender = true;
 function invalidate() { needsRender = true; }
 
-function gradientTexture(name: string): THREE.DataTexture {
-	const cm = COLORMAPS[name] || COLORMAPS.viridis;
-	const N = 256, data = new Uint8Array(N * 4);
-	for (let i = 0; i < N; i++) {
-		const [r, g, b] = cm(i / (N - 1));
-		data[i * 4] = r * 255; data[i * 4 + 1] = g * 255; data[i * 4 + 2] = b * 255; data[i * 4 + 3] = 255;
-	}
-	const t = new THREE.DataTexture(data, N, 1, THREE.RGBAFormat);
+// Colour-scale LUT texture, shared with every other FRM renderer via colorScale.ts's
+// buildScaleLUT -- this used to be its own hand-rolled 256-sample loop (duplicate of the near-
+// identical one in frmCloudShader.ts); consolidating removes that duplication and means every
+// renderer's ramp/steps/symlog maths comes from exactly one place.
+function lutTexture(scale: ColorScale): THREE.DataTexture {
+	const data = buildScaleLUT(scale, 256);
+	const t = new THREE.DataTexture(data, 256, 1, THREE.RGBAFormat);
 	t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.needsUpdate = true;
 	return t;
 }
 
 function makeMaterial(): THREE.ShaderMaterial {
 	const paletteFlat = new Float32Array(CLUSTER_PALETTE.flat());
+	const s = props.colorScale;
 	return new THREE.ShaderMaterial({
 		transparent: true,
 		uniforms: {
-			uGradient: { value: gradientTexture(props.colormap) },
-			uRange: { value: new THREE.Vector2(0, 1) },
+			uGradient: { value: lutTexture(s) },
+			uRange: { value: new THREE.Vector2(s.satMin, s.satMax) },
+			// Displayed-range filter (separate from uRange, the saturation/colour range): points
+			// whose raw value falls outside [uDisp.x, uDisp.y] are either greyed (uGreyOOR>0.5,
+			// vColor overridden) or hidden (fragment discard via vHidden) -- never both, and never
+			// applied to categorical/cluster mode, which has no continuous "out of range" concept.
+			uDisp: { value: new THREE.Vector2(s.dispMin, s.dispMax) },
+			uGreyOOR: { value: s.greyOutOfRange ? 1 : 0 },
 			uSize: { value: props.pointSize },
 			uCluster: { value: categorical.value ? 1 : 0 },
 			uPalette: { value: paletteFlat },
@@ -97,14 +103,19 @@ function makeMaterial(): THREE.ShaderMaterial {
 			attribute float aSelected;
 			uniform sampler2D uGradient;
 			uniform vec2 uRange;
+			uniform vec2 uDisp;
+			uniform float uGreyOOR;
 			uniform float uSize;
 			uniform float uCluster;
 			uniform float uPalette[36];
 			uniform float uSelActive;
 			varying vec3 vColor;
 			varying float vDim;
+			varying float vHidden;
 			void main() {
 				bool isNan = (aValue != aValue);
+				bool outOfDisplay = (!isNan) && (uCluster < 0.5) && (aValue < uDisp.x || aValue > uDisp.y);
+				vHidden = (outOfDisplay && uGreyOOR < 0.5) ? 1.0 : 0.0;
 				if (isNan) {
 					vColor = vec3(0.12);
 				} else if (uCluster > 0.5) {
@@ -117,6 +128,7 @@ function makeMaterial(): THREE.ShaderMaterial {
 				} else {
 					float u = clamp((aValue - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
 					vColor = texture2D(uGradient, vec2(u, 0.5)).rgb;
+					if (outOfDisplay && uGreyOOR > 0.5) vColor = vec3(0.5);
 				}
 				vDim = isNan ? 0.25 : ((uSelActive > 0.5 && aSelected < 0.5) ? 0.15 : 1.0);
 				gl_PointSize = uSize;
@@ -127,7 +139,9 @@ function makeMaterial(): THREE.ShaderMaterial {
 			precision mediump float;
 			varying vec3 vColor;
 			varying float vDim;
+			varying float vHidden;
 			void main() {
+				if (vHidden > 0.5) discard;                     // displayed-range filter, hide mode
 				vec2 d = gl_PointCoord - vec2(0.5);
 				if (dot(d, d) > 0.25) discard;                 // round points
 				gl_FragColor = vec4(vColor * vDim, vDim < 1.0 ? 0.5 : 1.0);
@@ -175,8 +189,11 @@ function packValue() {
 	(attr.array as Float32Array).set(col.subarray(0, ws.n));
 	attr.needsUpdate = true;
 	if (!categorical.value) {
+		// Detected purely from the data, for the host to seed a fresh ColorScale (colorScale.ts's
+		// defaultScale/applyParams) on a channel switch. What is actually RENDERED always comes
+		// from props.colorScale via the watcher below, never from this detection directly -- unlike
+		// before this conversion, packValue() no longer writes to uRange itself.
 		const [lo, hi] = percentileRange(col.subarray(0, ws.n));
-		material.uniforms.uRange.value.set(lo, hi);
 		emit('climits', { cmin: lo, cmax: hi });
 	}
 	invalidate();
@@ -347,12 +364,20 @@ watch([() => props.channel, categorical], () => {
 	if (material) material.uniforms.uCluster.value = categorical.value ? 1 : 0;
 	packValue();
 });
-watch(() => props.colormap, () => {
+// One watcher for the whole ColorScale: the LUT texture is only rebuilt when the colormap or step
+// count actually changed (the only two fields baked into its bytes); saturation/displayed-range/
+// grey-vs-hide are plain uniform pushes every time, same as the pre-conversion uRange-only model.
+watch(() => props.colorScale, (s, prev) => {
 	if (!material) return;
-	(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
-	material.uniforms.uGradient.value = gradientTexture(props.colormap);
+	if (!prev || s.colormap !== prev.colormap || s.steps !== prev.steps) {
+		(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
+		material.uniforms.uGradient.value = lutTexture(s);
+	}
+	material.uniforms.uRange.value.set(s.satMin, s.satMax);
+	material.uniforms.uDisp.value.set(s.dispMin, s.dispMax);
+	material.uniforms.uGreyOOR.value = s.greyOutOfRange ? 1 : 0;
 	invalidate();
-});
+}, { deep: true });
 watch(() => props.pointSize, () => { if (material) { material.uniforms.uSize.value = props.pointSize; invalidate(); } });
 watch(() => props.selection, packSelected, { deep: true });
 watch(() => [props.layers, props.activeLayerName], rebuildOverlay, { deep: true });
