@@ -9,6 +9,21 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.30',
+		date: '2026-09-24',
+		notes: [
+			'Fixed: replaying a file broke as soon as you left the Recording window and came back — the transport still looked active but play, pause and scrubbing all did nothing. Replay now keeps its place and resumes properly.',
+			'Fixed: after leaving and returning to the Recording window during replay, only the time-series plot still worked — FFT, Power, Spectrogram and Waterfall stayed blank for the rest of the session.',
+			'The FRM map can now be panned (drag) and zoomed (scroll wheel) instead of being locked to an automatic fit, with a "Reset view" button to return to the automatic framing.',
+			'Fixed: changing the colormap during replay only recoloured newly-drawn points, leaving the rest of the spiral on the old colormap until you navigated away and back. The whole map now repaints immediately.',
+			'Fixed: the Recording window always had a small scrollbar in its default layout, even with nothing to scroll to.',
+			'The Recording panel has been reorganised: Machine and Operator now have their own subpanel, and the recording toggles sit next to Start.',
+			'Fixed: captures too large to export as .mat no longer fail their whole upload — the "Save a local copy (.mat)" option is now correctly unavailable for them, with an explanation, instead of silently downloading nothing.',
+			'Fixed: the Plot window leaked graphics resources each time you navigated away and back, which could leave the point cloud unable to recover on large operations.',
+			'Bug reports no longer include your Windows account name in the attached diagnostics.',
+		],
+	},
+	{
 		version: '0.1.29',
 		date: '2026-09-16',
 		notes: [
