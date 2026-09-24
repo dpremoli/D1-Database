@@ -1,12 +1,28 @@
 <script setup lang="ts">
 // FRM panel: the live accumulating spiral while recording; the captured fingerprint (rendered via
 // the plotting FrmCloud from the backend's D1LC) once done.
+import { computed, ref } from 'vue';
 import { useWorkspace } from '../workspace';
 import LiveFrm from '../LiveFrm.vue';
-import { FrmCloud } from '@d1/force-plotting';
+import { FrmCloud, defaultScale, type ColorScale } from '@d1/force-plotting';
 import { appUrl } from '../../appUrl';
 const w = useWorkspace();
 const STRIDES = [1, 2, 5, 10, 25, 50];
+
+// FrmCloud.vue takes a ColorScale prop (Stage 2/3 of the colour-scale port) -- this panel has no
+// manual cmin/cmax control (never has), so always track whatever FrmCloud's own climits report.
+// Dedup guard mirrors ForceDashboard.vue's onClimits: without it, a value-identical re-emission
+// would still be a fresh object -> a fresh `colorScale` computed -> FrmCloud's deep watcher fires
+// for nothing.
+const autoClimits = ref<{ cmin: number; cmax: number } | null>(null);
+function onClimits(v: { cmin: number; cmax: number }) {
+	if (autoClimits.value && autoClimits.value.cmin === v.cmin && autoClimits.value.cmax === v.cmax) return;
+	autoClimits.value = v;
+}
+const colorScale = computed<ColorScale>(() => ({
+	...defaultScale(autoClimits.value?.cmin ?? 0, autoClimits.value?.cmax ?? 1),
+	colormap: w.plot.colormap,
+}));
 function openLive() {
 	const q = new URLSearchParams({ colormap: w.plot.colormap, pointSize: String(w.plot.pointSize), frmAxis: w.plot.frmAxis, stride: String(w.plot.liveFrmStride) });
 	window.open(appUrl(`/live/frm?${q}`), '_blank', 'noopener,width=1200,height=1000');
@@ -40,7 +56,8 @@ function openLive() {
 			:inner-diam="w.mode.value === 'playback' ? (w.replay.innerDiam ?? 0) : w.cfg.inner_diam"
 			speed-mode="measured" :rpm="w.cfg.rpm" :vc="0" :time-scale="1" :ppr="w.cfg.ppr"
 			:crop-start-sec="w.finishedCache.value.csSec" :crop-end-sec="w.finishedCache.value.ceSec"
-			:stride="1" :gridding="false" :grid-n="600" :point-size="w.plot.pointSize" :colormap="w.plot.colormap" pane-label="captured" />
+			:stride="1" :gridding="false" :grid-n="600" :point-size="w.plot.pointSize" :color-scale="colorScale"
+			pane-label="captured" @climits="onClimits" />
 		<!-- diam is only the empty-canvas fallback (LiveFrm auto-fits to the real point bounds), but
 			 in playback it should still describe the cut being played, not the recording form. -->
 		<LiveFrm v-else :client="w.client" :diam="w.mode.value === 'playback' ? (w.replay.diam || w.cfg.diam) : w.cfg.diam"

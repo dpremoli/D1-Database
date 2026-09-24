@@ -18,6 +18,11 @@ export type { Cache, EnvSeries } from './liveCache';
 export { COLORMAPS, axisAutoLimits } from './liveCloud';
 export type { Axis, CloudChannel } from './liveCloud';
 export type { SpeedMode } from './liveCloud';
+export {
+	defaultScale, applyParams, normalize, denormalize, sampleScale, sampleScaleAt, buildScaleLUT,
+	OPEN_DISP,
+} from './colorScale';
+export type { ColorScale } from './colorScale';
 export { buildPath, alignRhoToBuckets } from './path';
 export type {
 	PathKind, PathParams, PathWindow, PathBounds, PathResult,
