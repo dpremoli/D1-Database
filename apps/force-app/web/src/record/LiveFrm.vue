@@ -72,21 +72,95 @@ function sizeCanvas() {
 	frameCamera();
 }
 
-// Fit the orthographic camera to the actual point bounds (falls back to diam when empty).
+// ---- View framing -------------------------------------------------------------------------
+// The current framing in world units (mm): centre + half-height. Auto-fit recomputes these from
+// the point bounds every frame; once the user pans/zooms, `userView` latches and auto-fit stops
+// touching them (#52 — the view read as "locked" precisely because the per-frame re-fit stomped
+// any attempt to move it). Reset View hands control back to auto-fit.
+let viewCx = 0, viewCy = 0, viewHalf = 1;
+const userView = ref(false);
+
+function halfExtents() {
+	const aspect = cssW / cssH;
+	return { hw: viewHalf * (aspect >= 1 ? aspect : 1), hh: viewHalf / (aspect >= 1 ? 1 : aspect) };
+}
+
+function applyCamera() {
+	if (!camera) return;
+	const { hw, hh } = halfExtents();
+	camera.left = viewCx - hw; camera.right = viewCx + hw;
+	camera.top = viewCy + hh; camera.bottom = viewCy - hh;
+	camera.position.set(viewCx, viewCy, 5);
+	camera.updateProjectionMatrix();
+}
+
+// Fit to the actual point bounds (falls back to diam when empty), unless the user owns the view.
 function frameCamera() {
 	if (!camera) return;
-	const has = bx1 >= bx0;
-	const cx = has ? (bx0 + bx1) / 2 : 0;
-	const cy = has ? (by0 + by1) / 2 : 0;
-	const span = has ? Math.max(bx1 - bx0, by1 - by0, 1) : props.diam;
-	const half = (span * 1.12) / 2;
-	const aspect = cssW / cssH;
-	camera.left = cx - half * (aspect >= 1 ? aspect : 1);
-	camera.right = cx + half * (aspect >= 1 ? aspect : 1);
-	camera.top = cy + half / (aspect >= 1 ? 1 : aspect);
-	camera.bottom = cy - half / (aspect >= 1 ? 1 : aspect);
-	camera.position.set(cx, cy, 5);
-	camera.updateProjectionMatrix();
+	if (!userView.value) {
+		const has = bx1 >= bx0;
+		viewCx = has ? (bx0 + bx1) / 2 : 0;
+		viewCy = has ? (by0 + by1) / 2 : 0;
+		const span = has ? Math.max(bx1 - bx0, by1 - by0, 1) : props.diam;
+		viewHalf = (span * 1.12) / 2;
+	}
+	applyCamera();
+}
+
+function resetView() { userView.value = false; frameCamera(); }
+
+// ---- Pan / zoom ---------------------------------------------------------------------------
+// Hand-rolled against the orthographic camera rather than OrbitControls: this is a flat XY
+// fingerprint map, so orbiting has no meaning here — only pan and zoom do, and OrbitControls
+// would additionally fight the auto-fit above for ownership of the camera each frame.
+const MIN_HALF = 0.05;            // mm — stop zooming in once a single point fills the panel
+const ZOOM_OUT_FACTOR = 20;       // relative to the auto-fit span, so "way out" is still bounded
+
+function worldAt(ev: { clientX: number; clientY: number }) {
+	const c = canvasEl.value!;
+	const r = c.getBoundingClientRect();
+	const { hw, hh } = halfExtents();
+	return {
+		x: viewCx - hw + ((ev.clientX - r.left) / r.width) * 2 * hw,
+		y: viewCy + hh - ((ev.clientY - r.top) / r.height) * 2 * hh,
+	};
+}
+
+function onWheel(ev: WheelEvent) {
+	const before = worldAt(ev);
+	userView.value = true;
+	const span = bx1 >= bx0 ? Math.max(bx1 - bx0, by1 - by0, 1) : props.diam;
+	const maxHalf = (span * 1.12) / 2 * ZOOM_OUT_FACTOR;
+	viewHalf = Math.min(maxHalf, Math.max(MIN_HALF, viewHalf * Math.exp(ev.deltaY * 0.0015)));
+	// Keep the point under the cursor pinned while the scale changes.
+	const after = worldAt(ev);
+	viewCx += before.x - after.x;
+	viewCy += before.y - after.y;
+	applyCamera();
+}
+
+const dragging = ref(false);
+let lastX = 0, lastY = 0;
+function onPointerDown(ev: PointerEvent) {
+	if (ev.button !== 0) return;
+	dragging.value = true; lastX = ev.clientX; lastY = ev.clientY;
+	canvasEl.value?.setPointerCapture(ev.pointerId);
+}
+function onPointerMove(ev: PointerEvent) {
+	if (!dragging.value) return;
+	const c = canvasEl.value; if (!c) return;
+	const r = c.getBoundingClientRect();
+	const { hw, hh } = halfExtents();
+	userView.value = true;
+	viewCx -= ((ev.clientX - lastX) / r.width) * 2 * hw;
+	viewCy += ((ev.clientY - lastY) / r.height) * 2 * hh;
+	lastX = ev.clientX; lastY = ev.clientY;
+	applyCamera();
+}
+function onPointerUp(ev: PointerEvent) {
+	if (!dragging.value) return;
+	dragging.value = false;
+	canvasEl.value?.releasePointerCapture?.(ev.pointerId);
 }
 
 function resetUpload() {
@@ -165,6 +239,11 @@ watch(() => props.pointStride, () => resetUpload());
 // Switching axis must recolour the entire accumulated spiral (all cx/cy/cz are already
 // resident client-side), not just future points — same rebuild as a stride change.
 watch(() => props.axis, () => resetUpload());
+// #65: colour is baked into the GPU buffer at upload time, so without this a colormap change only
+// tinted points appended AFTER it — the already-drawn spiral kept the old map until something else
+// forced a full re-upload (navigating away and back remounted the component, which is exactly why
+// the round trip appeared to "fix" it). Same whole-spiral rebuild as an axis change.
+watch(() => props.colormap, () => resetUpload());
 onMounted(() => { setup(); window.addEventListener('resize', sizeCanvas); ro = new ResizeObserver(sizeCanvas); if (canvasEl.value) ro.observe(canvasEl.value); nextTick(sizeCanvas); });
 onBeforeUnmount(() => {
 	cancelAnimationFrame(raf);
@@ -178,13 +257,38 @@ onBeforeUnmount(() => {
 
 <template>
 	<div class="live-frm">
-		<canvas ref="canvasEl"></canvas>
+		<canvas
+			ref="canvasEl"
+			:class="{ grabbing: dragging }"
+			@wheel.prevent="onWheel"
+			@pointerdown="onPointerDown"
+			@pointermove="onPointerMove"
+			@pointerup="onPointerUp"
+			@pointercancel="onPointerUp"
+			@dblclick="resetView"
+		></canvas>
+		<!-- Only offered once the user has actually moved the view: until then auto-fit IS the
+		     reset state, so the button would do nothing. Doubles as the discoverability cue that
+		     the map is pannable at all. -->
+		<button v-if="userView" class="reset-view" title="Back to auto-fit (or double-click the map)" @click="resetView">
+			<span class="material-symbols-rounded">recenter</span> Reset view
+		</button>
 		<span class="pts">{{ ptsLabel.toLocaleString() }} pts</span>
 	</div>
 </template>
 
 <style scoped>
 .live-frm { position: relative; width: 100%; height: 100%; min-height: 200px; border-radius: 8px; overflow: hidden; background: var(--plot-bg); }
-.live-frm canvas { width: 100%; height: 100%; display: block; }
+.live-frm canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+.live-frm canvas.grabbing { cursor: grabbing; }
+.reset-view {
+	position: absolute; left: 6px; bottom: 4px;
+	display: inline-flex; align-items: center; gap: 3px;
+	padding: 2px 7px 2px 5px; font-size: 10px; line-height: 1.6;
+	color: var(--text); background: var(--bg-2); border: 1px solid var(--border);
+	border-radius: 999px; cursor: pointer; opacity: 0.85;
+}
+.reset-view:hover { opacity: 1; }
+.reset-view .material-symbols-rounded { font-size: 13px; }
 .pts { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 </style>

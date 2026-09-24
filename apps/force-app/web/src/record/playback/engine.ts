@@ -30,7 +30,14 @@ export interface PlaybackEngine {
 	seek(tSec: number, o?: { commit?: boolean }): void;
 	setSpeed(x: number): void;
 	setAxis(axis: Axis): void;
-	dispose(): void;
+	/**
+	 * Stop the frame loop but keep the loaded cut, the playhead and the spectrum transport intact,
+	 * so returning to the Record page resumes exactly where the user left off. There is
+	 * deliberately no destructive teardown: the workspace that owns this engine is an app-lifetime
+	 * module singleton (#25), so a "dispose" here could only ever run once and would poison replay
+	 * for the rest of the session -- which is precisely what #63/#66/#50 were.
+	 */
+	suspend(): void;
 	state: PlaybackState;
 }
 
@@ -346,6 +353,6 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 			const [lo, hi] = axisAutoLimits(cache, axis);
 			client.frm.cLo = lo; client.frm.cHi = hi;
 		},
-		dispose() { pause(); spectra.dispose(); cache = null; },
+		suspend() { pause(); },
 	};
 }
