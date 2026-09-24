@@ -9,11 +9,19 @@ import { appUrl } from '../../appUrl';
 const w = useWorkspace();
 const STRIDES = [1, 2, 5, 10, 25, 50];
 
-// FrmCloud.vue takes a ColorScale prop (Stage 2/3 of the colour-scale port) -- this panel has no
-// manual cmin/cmax control (never has), so always track whatever FrmCloud's own climits report.
-// Dedup guard mirrors ForceDashboard.vue's onClimits: without it, a value-identical re-emission
-// would still be a fresh object -> a fresh `colorScale` computed -> FrmCloud's deep watcher fires
-// for nothing.
+// FrmCloud.vue and LiveFrm.vue both take a ColorScale prop now (Stage 2/3 and Stage 4 of the
+// colour-scale port) -- this panel has no manual cmin/cmax control (never has), so always track
+// whatever's currently emitting climits. Sharing one computed/handler between them is safe ONLY
+// because the v-if/v-else below makes them mutually exclusive (never both mounted) -- it is NOT
+// continuous across the live-to-captured swap: autoClimits still holds LiveFrm's last symmetric
+// running-max range for one to two frames after w.isDone flips FrmCloud in, until FrmCloud's own
+// emitAutoRange() fires and snaps to its percentile range, so the very first captured-view frame
+// briefly washes colour toward the middle of the ramp. Not worth fixing -- resetting autoClimits
+// on the swap would flash [0,1] instead, which is worse -- but real, and invisible only because it
+// self-corrects within a frame or two. Dedup guard mirrors ForceDashboard.vue's onClimits: without
+// it, a value-identical re-emission would still be a fresh object -> a fresh `colorScale` computed
+// -> a deep watcher firing for nothing (LiveFrm's own emitAutoRange() already dedupes at the source
+// too, but this guards FrmCloud's side the same way, and is cheap insurance either way).
 const autoClimits = ref<{ cmin: number; cmax: number } | null>(null);
 function onClimits(v: { cmin: number; cmax: number }) {
 	if (autoClimits.value && autoClimits.value.cmin === v.cmin && autoClimits.value.cmax === v.cmax) return;
@@ -61,7 +69,8 @@ function openLive() {
 		<!-- diam is only the empty-canvas fallback (LiveFrm auto-fits to the real point bounds), but
 			 in playback it should still describe the cut being played, not the recording form. -->
 		<LiveFrm v-else :client="w.client" :diam="w.mode.value === 'playback' ? (w.replay.diam || w.cfg.diam) : w.cfg.diam"
-			:colormap="w.plot.colormap" :point-size="w.plot.pointSize" :point-stride="w.plot.liveFrmStride" :axis="w.plot.frmAxis" />
+			:color-scale="colorScale" :point-size="w.plot.pointSize" :point-stride="w.plot.liveFrmStride" :axis="w.plot.frmAxis"
+			@climits="onClimits" />
 		</div>
 	</div>
 </template>

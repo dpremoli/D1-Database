@@ -1,16 +1,27 @@
 <script setup lang="ts">
 // Live FRM fingerprint: a three.js point cloud that accumulates the spiral as frames arrive from
 // the RecordClient. Preallocated buffers filled incrementally (partial GPU upload of only the new
-// points each frame). Colour uses the plotting app's shared COLORMAPS (viridis by default),
-// mapping each point's chosen-axis force symmetrically around zero by the running |c| max.
+// points each frame).
+//
+// Stage 4 of the CloudCompare colour-scale port (see .claude/plans/parallel-drifting-twilight.md):
+// converted from baking RGB into a colour attribute at append time (cm(tnorm), one cm() call per
+// point) to the DiagScatter.vue/FrmOctree.vue model -- upload a raw scalar `aVal` attribute once,
+// resolve colour in-shader from a LUT built from props.colorScale. This is the load-bearing
+// conversion in the whole port: it's the ONLY renderer on the actual acquisition path (every other
+// converted renderer works off an already-finished cut), so a colour-scale change here must never
+// cost more than a uniform push -- before this conversion, EVERY colormap change replayed the
+// entire accumulated spiral through a full CPU recolour + re-upload (the #65 bug this file used to
+// carry a comment about), which is exactly the kind of per-drag-frame cost the "Full live editor"/
+// "Applies live" design decisions for this feature cannot tolerate here.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import type { RecordClient } from './liveClient';
-import { COLORMAPS, type Axis } from '@d1/force-plotting';
+import { buildScaleLUT, type Axis, type ColorScale } from '@d1/force-plotting';
 
-const props = withDefaults(defineProps<{ client: RecordClient; diam: number; colormap?: string; pointSize?: number; pointStride?: number; axis?: Axis }>(), {
-	colormap: 'viridis', pointSize: 1.8, pointStride: 1, axis: 'Fz',
+const props = withDefaults(defineProps<{ client: RecordClient; diam: number; colorScale: ColorScale; pointSize?: number; pointStride?: number; axis?: Axis }>(), {
+	pointSize: 1.8, pointStride: 1, axis: 'Fz',
 });
+const emit = defineEmits<{ (e: 'climits', v: { cmin: number; cmax: number }): void }>();
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 // Matches RecordClient's own accumulator cap (liveClient.ts: `private cap = 2_000_000`) — this used
@@ -24,9 +35,8 @@ let scene: THREE.Scene | null = null;
 let camera: THREE.OrthographicCamera | null = null;
 let geom: THREE.BufferGeometry | null = null;
 let posAttr: THREE.BufferAttribute | null = null;
-let colAttr: THREE.BufferAttribute | null = null;
-let mat: THREE.PointsMaterial | null = null;
-let disc: THREE.CanvasTexture | null = null;
+let valAttr: THREE.BufferAttribute | null = null;   // raw per-point force value, CAP*1 (was colAttr, CAP*3 baked RGB)
+let material: THREE.ShaderMaterial | null = null;
 let raf = 0;
 let uploaded = 0;   // source-side cursor into client.frm (every point seen, pre-decimation)
 let rendered = 0;   // destination-side cursor into the GPU buffer (post-decimation)
@@ -35,11 +45,55 @@ let ro: ResizeObserver | null = null;
 // tracked point bounds (mm) for auto-fit framing — robust for both sim and replayed real cuts
 let bx0 = Infinity, bx1 = -Infinity, by0 = Infinity, by1 = -Infinity;
 
-function makeDisc(): THREE.CanvasTexture {
-	const s = 64, cv = document.createElement('canvas'); cv.width = cv.height = s;
-	const c = cv.getContext('2d')!;
-	c.beginPath(); c.arc(s / 2, s / 2, s / 2 - 2, 0, Math.PI * 2); c.fillStyle = '#fff'; c.fill();
-	const t = new THREE.CanvasTexture(cv); t.needsUpdate = true; return t;
+// Shared with every other FRM renderer via colorScale.ts's buildScaleLUT (see Stage 1's
+// consolidation) -- was its own hand-rolled per-point cm() call before this conversion.
+function lutTexture(scale: ColorScale): THREE.DataTexture {
+	const data = buildScaleLUT(scale, 256);
+	const t = new THREE.DataTexture(data, 256, 1, THREE.RGBAFormat);
+	t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.needsUpdate = true;
+	return t;
+}
+function makeMaterial(): THREE.ShaderMaterial {
+	const s = props.colorScale;
+	return new THREE.ShaderMaterial({
+		transparent: false,
+		uniforms: {
+			uGradient: { value: lutTexture(s) },
+			uRange: { value: new THREE.Vector2(s.satMin, s.satMax) },
+			uDisp: { value: new THREE.Vector2(s.dispMin, s.dispMax) },
+			uGreyOOR: { value: s.greyOutOfRange ? 1 : 0 },
+			uSize: { value: props.pointSize },
+		},
+		vertexShader: `
+			attribute float aVal;
+			uniform sampler2D uGradient;
+			uniform vec2 uRange;
+			uniform vec2 uDisp;
+			uniform float uGreyOOR;
+			uniform float uSize;
+			varying vec3 vColor;
+			varying float vHidden;
+			void main() {
+				bool outOfDisplay = aVal < uDisp.x || aVal > uDisp.y;
+				vHidden = (outOfDisplay && uGreyOOR < 0.5) ? 1.0 : 0.0;
+				float u = clamp((aVal - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
+				vColor = texture2D(uGradient, vec2(u, 0.5)).rgb;
+				if (outOfDisplay && uGreyOOR > 0.5) vColor = vec3(0.5);
+				gl_PointSize = uSize;
+				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+			}
+		`,
+		fragmentShader: `
+			varying vec3 vColor;
+			varying float vHidden;
+			void main() {
+				if (vHidden > 0.5) discard;               // displayed-range filter, hide mode
+				vec2 d = gl_PointCoord - vec2(0.5);
+				if (dot(d, d) > 0.25) discard;             // round points (was a disc texture + alphaTest)
+				gl_FragColor = vec4(vColor, 1.0);
+			}
+		`,
+	});
 }
 
 function setup() {
@@ -52,14 +106,13 @@ function setup() {
 	camera.position.set(0, 0, 5);
 	geom = new THREE.BufferGeometry();
 	posAttr = new THREE.BufferAttribute(new Float32Array(CAP * 3), 3);
-	colAttr = new THREE.BufferAttribute(new Float32Array(CAP * 3), 3);
-	posAttr.setUsage(THREE.DynamicDrawUsage); colAttr.setUsage(THREE.DynamicDrawUsage);
+	valAttr = new THREE.BufferAttribute(new Float32Array(CAP), 1);
+	posAttr.setUsage(THREE.DynamicDrawUsage); valAttr.setUsage(THREE.DynamicDrawUsage);
 	geom.setAttribute('position', posAttr);
-	geom.setAttribute('color', colAttr);
+	geom.setAttribute('aVal', valAttr);
 	geom.setDrawRange(0, 0);
-	disc = makeDisc();
-	mat = new THREE.PointsMaterial({ size: props.pointSize, sizeAttenuation: false, vertexColors: true, map: disc, alphaTest: 0.5, transparent: false });
-	scene.add(new THREE.Points(geom, mat));
+	material = makeMaterial();
+	scene.add(new THREE.Points(geom, material));
 	sizeCanvas(); frame();
 	loop();
 }
@@ -163,30 +216,58 @@ function onPointerUp(ev: PointerEvent) {
 	canvasEl.value?.releasePointerCapture?.(ev.pointerId);
 }
 
+// Auto range, computed once per frame purely for the host to seed/reseed a fresh ColorScale
+// (colorScale.ts's defaultScale/applyParams) as the recording progresses -- decoupled from what is
+// actually RENDERED, which always comes from props.colorScale (the uRange uniform below). Same
+// "climits reports the data, colorScale drives the render" split every other converted renderer
+// uses, but with two differences forced by this being the only renderer on the live acquisition
+// path: it has its own (not axisAutoLimits) range logic, and cAbsMaxByAxis is a running max that
+// can change on almost every frame, not a one-shot/axis-switch-triggered detection.
+let lastEmittedAutoKey = '';
+function emitAutoRange() {
+	const fm = props.client.frm;
+	// Prefer the percentile-based cLo/cHi playback sets at load time (matches the finished-cut
+	// view's own colour scale exactly, computed once over the whole cut). A true live recording
+	// never sets these — it can't know its final range while still acquiring — so it falls back
+	// to the running |max|, symmetric about zero. A mode switch, not a fallback ordering: silently
+	// preferring one shape over the other would desync this view's colours from the finished-cut
+	// FrmCloud view's, which is exactly the parity haveRange exists to preserve.
+	const axisMax = fm.cAbsMaxByAxis[props.axis];
+	const haveRange = fm.cHi !== undefined && fm.cLo !== undefined && fm.cHi > fm.cLo;
+	const lo = haveRange ? fm.cLo! : -Math.max(1e-6, axisMax);
+	const hi = haveRange ? fm.cHi! : Math.max(1e-6, axisMax);
+	// Quantised to 2dp for the dedup key only (still emits full-precision lo/hi): cAbsMaxByAxis
+	// ticks up by tiny increments on nearly every frame early in a live recording, so an exact
+	// float-equality key would almost never repeat and this would emit -- and propagate a fresh
+	// colorScale object to the host -- on nearly every frame for the whole cut, even though
+	// nothing visibly different would render at that precision.
+	const key = `${props.axis}:${lo.toFixed(2)}:${hi.toFixed(2)}`;
+	if (key === lastEmittedAutoKey) return;
+	lastEmittedAutoKey = key;
+	emit('climits', { cmin: lo, cmax: hi });
+}
+
 function resetUpload() {
 	uploaded = 0; rendered = 0;
 	geom?.setDrawRange(0, 0);
 	bx0 = by0 = Infinity; bx1 = by1 = -Infinity;
+	lastEmittedAutoKey = '';
 }
 
 function frame() {
-	const cm = COLORMAPS[props.colormap] || COLORMAPS.viridis;
+	// Runs every tick, unconditionally -- NOT inside the `to > from` block below. cAbsMaxByAxis can
+	// tick up on a frame that appends no new points (or while paused, if a future editor lets the
+	// user drag a handle mid-pause), and the reported range must never go stale just because
+	// appends stalled.
+	emitAutoRange();
 	const fm = props.client.frm;
 	// New run detected (buffers reset) -> clear our upload cursor + bounds.
 	if (fm.count < uploaded) resetUpload();
 	const from = uploaded, to = fm.count;
-	if (to > from && posAttr && colAttr) {
-		// Prefer the percentile-based cLo/cHi playback sets at load time (matches the finished-cut
-		// view's own colour scale exactly, computed once over the whole cut). A true live recording
-		// never sets these — it can't know its final range while still acquiring — so it falls back
-		// to the running |max|, symmetric about zero.
-		const axisMax = fm.cAbsMaxByAxis[props.axis];
-		const haveRange = fm.cHi !== undefined && fm.cLo !== undefined && fm.cHi > fm.cLo;
-		const cLo = haveRange ? fm.cLo! : -Math.max(1e-6, axisMax);
-		const cSpan = haveRange ? (fm.cHi! - fm.cLo!) : 2 * Math.max(1e-6, axisMax);
+	if (to > from && posAttr && valAttr) {
 		const cArr = props.axis === 'Fx' ? fm.cx : props.axis === 'Fy' ? fm.cy : fm.cz;
 		const pos = posAttr.array as Float32Array;
-		const col = colAttr.array as Float32Array;
+		const val = valAttr.array as Float32Array;
 		// pointStride thins the LIVE map by keeping every Nth accumulated point (indexed on the
 		// absolute source index, so the kept subset is stable regardless of chunking) — this is
 		// what lets a long/dense cut stay responsive and under the GPU buffer cap, independent of
@@ -200,9 +281,7 @@ function frame() {
 			if (w >= CAP) break;
 			pos[w * 3] = x; pos[w * 3 + 1] = y; pos[w * 3 + 2] = 0;
 			if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
-			const tnorm = Math.min(1, Math.max(0, (cArr[i] - cLo) / cSpan));
-			const [r, g, b] = cm(tnorm);
-			col[w * 3] = r; col[w * 3 + 1] = g; col[w * 3 + 2] = b;
+			val[w] = cArr[i];
 			rendered++;
 		}
 		// Only re-upload the newly-written slice, not the whole CAP-sized buffer — a plain
@@ -210,11 +289,13 @@ function frame() {
 		// 2M-point buffer to the GPU on every frame that adds even one point, which is what made
 		// long replays/recordings visibly stutter as the spiral grew. addUpdateRange restricts the
 		// upload to [writeStart, rendered) so transfer cost stays proportional to new points only.
+		// NOTE the offsets differ per attribute: pos is stride-3, val is stride-1 (was colAttr,
+		// also stride-3) -- the one place this conversion changes the update-range arithmetic.
 		if (rendered > writeStart) {
-			posAttr.clearUpdateRanges(); colAttr.clearUpdateRanges();
+			posAttr.clearUpdateRanges(); valAttr.clearUpdateRanges();
 			posAttr.addUpdateRange(writeStart * 3, (rendered - writeStart) * 3);
-			colAttr.addUpdateRange(writeStart * 3, (rendered - writeStart) * 3);
-			posAttr.needsUpdate = true; colAttr.needsUpdate = true;
+			valAttr.addUpdateRange(writeStart, rendered - writeStart);
+			posAttr.needsUpdate = true; valAttr.needsUpdate = true;
 		}
 		geom!.setDrawRange(0, rendered);
 		uploaded = to;
@@ -225,7 +306,7 @@ function loop() {
 	raf = requestAnimationFrame(loop);
 	frame();
 	frameCamera();  // cheap; keeps the view fitted as the spiral grows
-	if (mat && mat.size !== props.pointSize) mat.size = props.pointSize;
+	if (material && material.uniforms.uSize.value !== props.pointSize) material.uniforms.uSize.value = props.pointSize;
 	if (renderer && scene && camera) renderer.render(scene, camera);
 }
 
@@ -237,19 +318,34 @@ watch(() => props.diam, () => sizeCanvas());
 // (not just future points) so the displayed map is consistent at a single stride throughout.
 watch(() => props.pointStride, () => resetUpload());
 // Switching axis must recolour the entire accumulated spiral (all cx/cy/cz are already
-// resident client-side), not just future points — same rebuild as a stride change.
+// resident client-side), not just future points — same rebuild as a stride change, and unlike a
+// colour-scale change, this genuinely needs a full re-pack: aVal's SOURCE array changes (cx vs cy
+// vs cz), not just how it's mapped to colour.
 watch(() => props.axis, () => resetUpload());
-// #65: colour is baked into the GPU buffer at upload time, so without this a colormap change only
-// tinted points appended AFTER it — the already-drawn spiral kept the old map until something else
-// forced a full re-upload (navigating away and back remounted the component, which is exactly why
-// the round trip appeared to "fix" it). Same whole-spiral rebuild as an axis change.
-watch(() => props.colormap, () => resetUpload());
+// A colour-scale change (including what used to be the separate `colormap` prop) is now a plain
+// uniform push -- colour is resolved in-shader from the resident aVal attribute, so unlike before
+// this conversion (colour baked into the GPU buffer at upload time, needing a full resetUpload()
+// to recolour anything already drawn -- the #65 bug this file used to carry a comment about) NO
+// re-pack is needed here at all. This is Stage 4's actual point: a saturation/displayed-range drag
+// during a live recording costs a LUT rebuild (only if colormap/steps changed) plus four uniform
+// writes, never an O(N) CPU pass over up to 2M already-accumulated points.
+watch(() => props.colorScale, (s, prev) => {
+	if (!material) return;
+	if (!prev || s.colormap !== prev.colormap || s.steps !== prev.steps) {
+		(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
+		material.uniforms.uGradient.value = lutTexture(s);
+	}
+	material.uniforms.uRange.value.set(s.satMin, s.satMax);
+	material.uniforms.uDisp.value.set(s.dispMin, s.dispMax);
+	material.uniforms.uGreyOOR.value = s.greyOutOfRange ? 1 : 0;
+}, { deep: true });
 onMounted(() => { setup(); window.addEventListener('resize', sizeCanvas); ro = new ResizeObserver(sizeCanvas); if (canvasEl.value) ro.observe(canvasEl.value); nextTick(sizeCanvas); });
 onBeforeUnmount(() => {
 	cancelAnimationFrame(raf);
 	window.removeEventListener('resize', sizeCanvas);
 	ro?.disconnect();
-	geom?.dispose(); disc?.dispose();
+	geom?.dispose(); material?.dispose();
+	(material?.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
 	try { renderer?.forceContextLoss(); } catch { /* ignore */ }
 	renderer?.dispose();
 });
