@@ -311,4 +311,64 @@ describe('playback engine', () => {
 		// recolour changes the axis's own cLo/cHi.
 		expect(h.client.frm.cLo === beforeCLo && h.client.frm.cHi === beforeCHi).toBe(false);
 	});
+
+	// #63/#66/#50. The workspace (and therefore this engine) is an app-lifetime module singleton
+	// since #25, but RecordPage still tore the engine down in onBeforeUnmount -- so the FIRST
+	// navigation away from Record permanently killed replay for the rest of the session: the cut
+	// cache was nulled while state.loaded stayed true (transport bar looked alive, every control
+	// silently no-opped -> #63/#66) and the spectrum client latched disposed with no way back, so
+	// FFT/Power/Spectrogram/Waterfall never rendered again -> #50. Navigation must SUSPEND, not
+	// destroy.
+	describe('suspend (navigating away from the Record page)', () => {
+		it('stops the frame loop without discarding the loaded cut', () => {
+			const h = harness();
+			h.engine.load(makeCache(), { ppr: 1, stride: 1 });
+			h.engine.play();
+			h.tick(100);
+			const tAtSuspend = h.engine.state.tSec;
+			expect(tAtSuspend).toBeGreaterThan(0);
+
+			h.engine.suspend();
+
+			expect(h.engine.state.playing).toBe(false);
+			// The cut itself must survive -- this is what #63/#66 lost.
+			expect(h.engine.state.loaded).toBe(true);
+			expect(h.engine.state.duration).toBeCloseTo(9.99, 2);
+			expect(h.engine.state.tSec).toBeCloseTo(tAtSuspend, 5);
+		});
+
+		it('still seeks and still requests spectra after being suspended and resumed', async () => {
+			// Dense fixture on purpose: the spectrum window is FFT_WINDOW_SEC (1 s) wide and is only
+			// sent once it holds >= 256 samples, so the 100 Hz makeCache() never requests one at all.
+			const h = harness();
+			h.engine.load(makeDenseCache(), { ppr: 1, stride: 1 });
+			h.engine.play();
+			h.tick(100);
+
+			h.engine.suspend();              // leave the Record page
+			(globalThis.fetch as any).mockClear();
+
+			// Come back and scrub: a commit-seek force-requests a spectrum, so a live spectrum
+			// client must still issue the /dsp/spectrum call. A disposed one silently drops it.
+			h.engine.seek(5, { commit: true });
+			await new Promise((r) => setTimeout(r, 0));
+
+			expect(h.engine.state.tSec).toBeCloseTo(5, 5);
+			const calls = (globalThis.fetch as any).mock.calls as any[][];
+			expect(calls.some((c) => String(c[0]).includes('/dsp/spectrum'))).toBe(true);
+		});
+
+		it('can play again after a suspend, advancing the playhead', () => {
+			const h = harness();
+			h.engine.load(makeCache(), { ppr: 1, stride: 1 });
+			h.engine.suspend();
+
+			h.engine.play();
+			const before = h.engine.state.tSec;
+			h.tick(100);
+
+			expect(h.engine.state.playing).toBe(true);
+			expect(h.engine.state.tSec).toBeGreaterThan(before);
+		});
+	});
 });

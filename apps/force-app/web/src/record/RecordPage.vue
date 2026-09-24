@@ -85,16 +85,14 @@ function measureGrid() {
 	// taller still — a feedback loop that runs away as the user scrolls. The document offset is
 	// scroll-invariant, so the measurement means the same thing wherever the page happens to be.
 	const top = gridEl.value.getBoundingClientRect().top + window.scrollY;
-	availableHeight.value = Math.max(320, Math.floor(window.innerHeight - top - BOTTOM_PAD));
+	// #51: .rec-wrap carries its own padding-bottom BELOW the grid, which this measurement used to
+	// ignore entirely -- so the grid was sized to reach the viewport floor and that padding then
+	// pushed the page past it, giving the default layout a permanent ~8px scrollbar. Read it from
+	// the live computed style rather than hardcoding, so the two cannot drift apart again.
+	const wrap = gridEl.value.closest('.rec-wrap');
+	const below = wrap ? parseFloat(getComputedStyle(wrap).paddingBottom) || 0 : 0;
+	availableHeight.value = Math.max(320, Math.floor(window.innerHeight - top - below - BOTTOM_PAD));
 }
-// #36: ResizeObserver only reports the OBSERVED element's own box size changing -- a banner above
-// the grid appearing/disappearing shifts the grid's top (via normal document flow) without
-// necessarily changing the grid element's own rendered height, so gridRO below can silently miss
-// it. It "worked" when a banner appeared because Reset View also happened to change the layout's
-// row count, which changed the grid's own height and incidentally re-triggered the observer; it
-// stayed broken on dismissal (and on a same-layout Reset) because nothing forced that. Watching
-// the banners' own visibility directly is the actual fix, not a coincidence of some other resize.
-watch([() => !!st.diskAction, () => visibleRecoveryItems.value.length > 0], () => measureGrid(), { flush: 'post' });
 // Derived from the LIVE layout, not the default: `layout` is user-editable and persisted, so the
 // row span is arbitrary after any drag/resize/add.
 const bottomRow = computed(() => layout.value.reduce((m, p) => Math.max(m, p.y + p.h), 0) || 1);
@@ -266,6 +264,21 @@ function dismissRecovery(id: string) {
 	localStorage.setItem(DISMISSED_RECOVERY_LS_KEY, JSON.stringify([...dismissedRecoveryIds.value]));
 }
 const visibleRecoveryItems = computed(() => recoveryItems.value.filter((s) => !dismissedRecoveryIds.value.has(s.id)));
+
+// #36: ResizeObserver only reports the OBSERVED element's own box size changing -- a banner above
+// the grid appearing/disappearing shifts the grid's top (via normal document flow) without
+// necessarily changing the grid element's own rendered height, so gridRO can silently miss it.
+// Watching the banners' own visibility directly is the actual fix, not a coincidence of some
+// other resize.
+//
+// Must stay BELOW visibleRecoveryItems' declaration: watch() invokes its source getters once
+// immediately to collect dependencies, so declaring this any earlier put `visibleRecoveryItems`
+// in its temporal dead zone and threw ReferenceError on every single RecordPage setup. Vue's
+// error boundary swallowed it, so the page still rendered -- but dep collection aborted at the
+// throw, leaving this watcher permanently blind to the recovery banner (it kept the diskAction
+// dep, read before the throw, which is why it looked half-working).
+watch([() => !!st.diskAction, () => visibleRecoveryItems.value.length > 0], () => measureGrid(), { flush: 'post' });
+
 const recoveryBusy = ref<Record<string, boolean>>({});
 // Recover/discard on a crashed session's raw.d1raw can take a while for a large/long-running
 // capture (finalize has to re-derive everything, discard has to delete a potentially multi-GB
@@ -436,7 +449,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
 	document.removeEventListener('visibilitychange', onVisibilityChange);
 	w.client.disconnect();
-	w.playback.dispose();
+	// Suspend, never tear down: `w` is the app-lifetime workspace singleton (#25), so anything
+	// destroyed here is destroyed for the rest of the session -- see PlaybackEngine.suspend().
+	w.playback.suspend();
 	if (diskTimer) clearInterval(diskTimer);
 	if (backupTimer) clearInterval(backupTimer);
 	if (recoveryTickTimer) clearInterval(recoveryTickTimer);
@@ -547,7 +562,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.rec-wrap { min-height: 100vh; background: radial-gradient(1200px 600px at 50% -10%, var(--bg-2), var(--bg)); padding-bottom: 24px; }
+/* display:flow-root is load-bearing (#51): .gridwrap's 8px top margin used to collapse straight
+   through this wrapper, so .rec-wrap started 8px down the page while still claiming min-height
+   100vh -- guaranteeing exactly 8px of overflow, and a scrollbar, on the default layout at every
+   window size. A block formatting context keeps that margin inside. */
+.rec-wrap { min-height: 100vh; display: flow-root; background: radial-gradient(1200px 600px at 50% -10%, var(--bg-2), var(--bg)); padding-bottom: 24px; }
 .alarm-overlay { position: fixed; top: 0; left: 0; right: 0; z-index: 100; display: flex; align-items: center; gap: 14px; padding: 12px 20px;
 	color: #fff; background: #dc2626; box-shadow: 0 6px 24px rgba(220,38,38,0.5); animation: alarmpulse 0.9s ease-in-out infinite; }
 @keyframes alarmpulse { 0%,100% { background: #dc2626; } 50% { background: #991b1b; } }
