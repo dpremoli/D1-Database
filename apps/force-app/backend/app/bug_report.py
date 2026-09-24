@@ -88,7 +88,12 @@ def build_body(
     # "was it actually recording?"). Not collapsed, unlike the two long tails below. Paths within
     # it are redacted (see _redact_paths) since they can carry the operator's Windows account name.
     if diagnostics.strip():
-        parts += ["", "**Machine state at time of report**", "", *_fence(_redact_paths(diagnostics), 6000)]
+        parts += [
+            "",
+            "**Machine state at time of report**",
+            "",
+            *_fence(_redact_paths(diagnostics), 6000),
+        ]
     if console_tail.strip():
         parts += [
             "",
