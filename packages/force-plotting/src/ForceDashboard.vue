@@ -8,6 +8,7 @@ import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
 import WearTrend from './WearTrend.vue';
 import type { SpeedMode } from './liveCloud';
+import { defaultScale, type ColorScale } from './colorScale';
 import { cacheGet, cachePut, decimateCache, parseCache, type Cache } from './liveCache';
 import { buildPath, alignRhoToBuckets, type TurningSpiralParams } from './path';
 import { computeAutoCode } from './operationCode';
@@ -593,9 +594,32 @@ const autoClimits = ref<{ cmin: number; cmax: number } | null>(null);
 const cmin = computed(() => (cauto.value ? null : cminManual.value));
 const cmax = computed(() => (cauto.value ? null : cmaxManual.value));
 function onClimits(v: { cmin: number; cmax: number }) {
+	// Bail on a value-identical re-emission: `autoClimits` feeds `colorScale` below, which every
+	// FrmOctree/FrmCloud instance on this dashboard watches deeply -- reassigning to a fresh object
+	// with the SAME numbers (e.g. FrmOctree re-emitting its already-current auto range on an
+	// unrelated axis switch) would otherwise still be a ref-identity change and trigger every one
+	// of them to re-evaluate their colour scale, including a full CPU-path rebuild on any FrmCloud
+	// pane using it (see FrmCloud.vue's colorScaleUnchanged guard, which exists for the same reason
+	// but shouldn't be the only line of defence).
+	if (autoClimits.value && autoClimits.value.cmin === v.cmin && autoClimits.value.cmax === v.cmax) return;
 	autoClimits.value = v;
 	if (cauto.value) { cminManual.value = Number(v.cmin.toFixed(2)); cmaxManual.value = Number(v.cmax.toFixed(2)); }
 }
+// Bridges this dashboard's existing colour-limit state (cauto/cminManual/cmaxManual/colormap) into
+// the ColorScale every FRM renderer now takes. `cauto` is exactly the "lock scale" concept the
+// colour-scale editor design calls for -- true tracks whatever climits last reported (auto), false
+// freezes at the manual fields -- so this is a straight read-through, not new state. No shaping
+// params (log/symmetrical/always-zero) or displayed-range filter are exposed by this dashboard's
+// UI yet; defaultScale's linear, filter-inert defaults keep every renderer's behaviour identical to
+// before this conversion. One shared computed feeds all five FrmOctree/FrmCloud instances below,
+// including both compare-mode panes, so they stay on one comparable scale exactly as they did when
+// this was five copies of the same colormap/cmin/cmax props.
+const colorScale = computed<ColorScale>(() => {
+	const [lo, hi] = cauto.value
+		? [autoClimits.value?.cmin ?? 0, autoClimits.value?.cmax ?? 1]
+		: [cminManual.value, cmaxManual.value];
+	return { ...defaultScale(lo, hi), colormap: colormap.value };
+});
 // Filtering shifts the force range (e.g. a high-pass strips the DC offset), so any manually
 // locked colour limits become meaningless — auto-unlock so both panes recompute their own
 // scale over the (raw / filtered) data.
@@ -2481,7 +2505,7 @@ function fmtDateTime(v: string | null | undefined) {
 								<div v-if="!detail" class="empty">Select an operation</div>
 								<FrmOctree v-else-if="octreeOn" ref="frmOctreeRef"
 									:octree-path="gridActive ? detail.grid_octree_path : detail.octree_path" :axis="axis"
-									:colormap="colormap" :point-size="pointSize" :cmin="cmin" :cmax="cmax"
+									:color-scale="colorScale" :point-size="pointSize"
 									:z-series="zSeries" :z-scale="zScale"
 									:total-points="gridActive ? Number(detail.grid_octree_points) : (fullResPoints ?? undefined)"
 									:fill="gridActive" :cell-size="Number(detail.grid_cell_mm) || 1"
@@ -2494,7 +2518,7 @@ function fmtDateTime(v: string | null | undefined) {
 										:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
 										:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
 										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
-										:point-size="pointSize" :colormap="colormap" :cmin="cmin" :cmax="cmax"
+										:point-size="pointSize" :color-scale="colorScale"
 										:shared-view="compareView" pane-label="raw"
 										@loaded="onCloudLoaded" @climits="onClimits" @points="displayedPoints = $event" />
 									<FrmCloud :cache-override="filteredCache" :cache-file-id="detail.live_cache_file"
@@ -2502,8 +2526,7 @@ function fmtDateTime(v: string | null | undefined) {
 										:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
 										:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
 										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
-										:point-size="pointSize" :colormap="colormap"
-										:cmin="cmin" :cmax="cmax"
+										:point-size="pointSize" :color-scale="colorScale"
 										:shared-view="compareView" pane-label="filtered" />
 								</div>
 								<FrmCloud v-else-if="filteredSoloOn" ref="frmCloudRef" :cache-override="filteredCache" :cache-file-id="detail.live_cache_file"
@@ -2511,7 +2534,7 @@ function fmtDateTime(v: string | null | undefined) {
 										:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
 										:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
 										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
-										:point-size="pointSize" :colormap="colormap" :cmin="cmin" :cmax="cmax"
+										:point-size="pointSize" :color-scale="colorScale"
 										:z-series="zSeries" :z-scale="zScale"
 										@loaded="onCloudLoaded" @climits="onClimits" @points="displayedPoints = $event"
 										@zscale="zScale = $event" />
@@ -2520,7 +2543,7 @@ function fmtDateTime(v: string | null | undefined) {
 									:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
 									:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
 									:stride="plotStride" :gridding="gridding" :grid-n="gridN"
-									:point-size="pointSize" :colormap="colormap" :cmin="cmin" :cmax="cmax"
+									:point-size="pointSize" :color-scale="colorScale"
 									:z-series="zSeries" :z-scale="zScale"
 									@loaded="onCloudLoaded" @climits="onClimits" @points="displayedPoints = $event"
 									@zscale="zScale = $event" />

@@ -16,8 +16,9 @@ import { type Cache, cacheGet, cachePut, idxOfTime, parseCache } from './liveCac
 import { type Axis, type Cloud, type CloudChannel, type SpeedMode, axisAutoLimits, buildCloud, COLORMAPS } from './liveCloud';
 import { buildPath, type PathParams } from './path';
 import { exportFrmFigure } from './frmExport';
+import { buildScaleLUT, type ColorScale } from './colorScale';
 import {
-	buildColormapLUT, buildStaticAttributes, spiralUniformValues,
+	buildStaticAttributes, spiralUniformValues,
 	TURNING_SPIRAL_FRAG, TURNING_SPIRAL_VERT,
 } from './frmCloudShader';
 
@@ -42,9 +43,7 @@ const props = defineProps<{
 	gridding: boolean;
 	gridN: number;
 	pointSize: number;
-	colormap: string;
-	cmin?: number | null;
-	cmax?: number | null;
+	colorScale: ColorScale;
 	zSeries?: 'none' | 'Fx' | 'Fy' | 'Fz';    // drive Z from a force series -> true 3D (like Full)
 	zScale?: number;                          // height exaggeration as a fraction of the x/y span
 	// Compare mode (filtering suite): a parent-owned view object shared by both panes so
@@ -154,14 +153,21 @@ function screenToWorld(px: number, py: number) {
 }
 
 // ---- overlays: colorbar + scale bar (reactive, refreshed each draw) ----
-const climits = ref<{ cmin: number; cmax: number } | null>(null);
+// The colorbar always shows exactly what's rendered, so it reads straight from props.colorScale
+// rather than tracking a separately-updated ref -- see emitAutoRange() below for the SEPARATE
+// signal (the 'climits' event) a host uses to seed/reseed a fresh ColorScale on a channel switch.
+const climits = computed(() => (cache.value ? { cmin: props.colorScale.satMin, cmax: props.colorScale.satMax } : null));
 const scaleBar = ref<{ px: number; label: string } | null>(null);
+// Sampled from the SAME LUT the GPU renders with (buildScaleLUT), not a separate 0..1 colormap
+// re-sample -- so this CSS ramp is pixel-consistent with the on-screen render, including step
+// quantisation and log-scale banding, rather than a smooth approximation that could silently
+// diverge from it.
 const rampCss = computed(() => {
-	const cm = COLORMAPS[props.colormap] || COLORMAPS.viridis;
+	const width = 32;
+	const lut = buildScaleLUT(props.colorScale, width);
 	const stops: string[] = [];
-	for (let i = 0; i <= 10; i++) {
-		const [r, g, b] = cm(i / 10);
-		stops.push(`rgb(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)}) ${i * 10}%`);
+	for (let i = 0; i < width; i++) {
+		stops.push(`rgb(${lut[i * 4]},${lut[i * 4 + 1]},${lut[i * 4 + 2]}) ${(i / (width - 1)) * 100}%`);
 	}
 	return `linear-gradient(to top, ${stops.join(', ')})`;
 });
@@ -207,7 +213,6 @@ let gpuGeom: THREE.BufferGeometry | null = null;
 let gpuMat: THREE.ShaderMaterial | null = null;
 let gpuObj: THREE.Points | null = null;
 let colormapTex: THREE.DataTexture | null = null;
-let colormapTexName = '';   // which props.colormap colormapTex currently holds
 let gpuUploaded = false;   // whether gpuGeom currently holds this op's data at all
 // 3D when a Z series is selected: the cloud gets a Z displacement and OrbitControls owns
 // the camera; the custom 2D pan/pinch/wheel/rect handlers stand down. Flat is unchanged.
@@ -265,11 +270,10 @@ function setupRenderer() {
 	pointsObj = new THREE.Points(pointsGeom, pointsMat);
 	scene.add(pointsObj);
 
-	colormapTex = new THREE.DataTexture(buildColormapLUT(COLORMAPS[props.colormap] || COLORMAPS.viridis), 64, 1, THREE.RGBAFormat);
+	colormapTex = new THREE.DataTexture(buildScaleLUT(props.colorScale, 256), 256, 1, THREE.RGBAFormat);
 	colormapTex.minFilter = THREE.LinearFilter; colormapTex.magFilter = THREE.LinearFilter;
 	colormapTex.wrapS = colormapTex.wrapT = THREE.ClampToEdgeWrapping;
 	colormapTex.needsUpdate = true;
-	colormapTexName = props.colormap;
 	gpuGeom = new THREE.BufferGeometry();
 	gpuMat = new THREE.ShaderMaterial({
 		vertexShader: TURNING_SPIRAL_VERT, fragmentShader: TURNING_SPIRAL_FRAG,
@@ -277,7 +281,10 @@ function setupRenderer() {
 			uFeed: { value: 0 }, uRho0: { value: 1 }, uInnerR: { value: 0 }, uSpeedMode: { value: 0 },
 			uRevPerSec: { value: 0 }, uTimeScale: { value: 1 }, uPpr: { value: 1 }, uK: { value: 0 },
 			uTCs: { value: 0 }, uRevsCs: { value: 0 }, uCropStart: { value: 0 }, uCropEnd: { value: 0 },
-			uCmin: { value: 0 }, uCmax: { value: 1 }, uPointSize: { value: 1.4 }, uColormap: { value: colormapTex },
+			uCmin: { value: props.colorScale.satMin }, uCmax: { value: props.colorScale.satMax },
+			uDisp: { value: new THREE.Vector2(props.colorScale.dispMin, props.colorScale.dispMax) },
+			uGreyOOR: { value: props.colorScale.greyOutOfRange ? 1 : 0 },
+			uPointSize: { value: 1.4 }, uColormap: { value: colormapTex },
 		},
 		transparent: false,
 	});
@@ -333,19 +340,22 @@ function sizeCanvas(canvas: HTMLCanvasElement) {
 // O(N) recompute + percentile sort + full buffer re-upload on every frame.
 let cloud: Cloud | null = null;
 
-// Auto colour limits computed once per (cache, axis) over the WHOLE cut window, so Live's
-// scale matches Full's baked scale per axis and doesn't drift while cropping. Manual limits
-// (props.cmin/cmax) still win. Cleared when the cache changes.
+// Auto colour limits, computed once per (cache, axis) over the WHOLE cut window, purely for a
+// host to seed/reseed a fresh ColorScale (colorScale.ts's defaultScale/applyParams) on a channel
+// switch -- decoupled from what is actually RENDERED, which always comes from props.colorScale
+// (climits.value above). Same "climits reports the data, colorScale drives the render" split
+// Stage 1/2 established for every other converted renderer.
 const autoLimitsByAxis = new Map<string, [number, number]>();
-watch(cache, () => { autoLimitsByAxis.clear(); gpuUploaded = false; });
-function effClimits(): { cmin: number; cmax: number } {
+watch(cache, () => { autoLimitsByAxis.clear(); gpuUploaded = false; lastEmittedAutoKey = ''; });
+let lastEmittedAutoKey = '';
+function emitAutoRange() {
 	let auto = autoLimitsByAxis.get(effChannel.value);
 	if (!auto && cache.value) { auto = axisAutoLimits(cache.value, effChannel.value); autoLimitsByAxis.set(effChannel.value, auto); }
 	auto = auto || [0, 1];
-	return {
-		cmin: Number.isFinite(props.cmin as number) ? (props.cmin as number) : auto[0],
-		cmax: Number.isFinite(props.cmax as number) ? (props.cmax as number) : auto[1],
-	};
+	const key = `${effChannel.value}:${auto[0]}:${auto[1]}`;
+	if (key === lastEmittedAutoKey) return;   // avoid re-seeding the host's scale on every rebuild
+	lastEmittedAutoKey = key;
+	emit('climits', { cmin: auto[0], cmax: auto[1] });
 }
 function rebuild() {
 	if (!ready || !canvasEl.value || !cache.value) return;
@@ -359,19 +369,20 @@ function rebuild() {
 	if (gpuObj) gpuObj.visible = false;
 	if (pointsObj) pointsObj.visible = true;
 	if (!pointsGeom) return;
-	const eff = effClimits();
+	emitAutoRange();
+	const s = props.colorScale;
 	cloud = buildCloud(cache.value, {
 		channel: effChannel.value,
 		path: effPath.value,
 		window: { cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec, stride: props.stride },
 		gridding: props.gridding, gridN: props.gridN,
-		colormap: COLORMAPS[props.colormap] || COLORMAPS.viridis,
-		cmin: eff.cmin, cmax: eff.cmax,
+		colormap: COLORMAPS[s.colormap] || COLORMAPS.viridis,
+		cmin: s.satMin, cmax: s.satMax,
 		zSeries: props.zSeries || 'none',
 	});
 	pointCount.value = cloud?.count ?? 0;
 	emit('points', pointCount.value);
-	if (!cloud) { climits.value = null; scaleBar.value = null; return; }
+	if (!cloud) { scaleBar.value = null; return; }
 
 	// data-fit params (used when the view is in auto-fit mode + as reset target)
 	fitCx = (cloud.bounds.minX + cloud.bounds.maxX) / 2; fitCy = (cloud.bounds.minY + cloud.bounds.maxY) / 2;
@@ -379,19 +390,15 @@ function rebuild() {
 
 	// upload ONCE per rebuild. cloud.pos is already stride-3 (buildPath emits x,y,z directly —
 	// this used to expand a stride-2 cloud.pos into a stride-3 GPU buffer by hand). Colours are
-	// already 3-component (0..1) → vertex colours.
+	// already 3-component (0..1) → vertex colours. Note: the CPU path bakes colour per-vertex, so
+	// it has no cheap "just repaint colour" path -- unlike the GPU path below, ANY colorScale
+	// change here still needs this full rebuild (see the colorScale watcher further down).
 	const n = cloud.count;
 	pointsGeom.setAttribute('position', new THREE.BufferAttribute(cloud.pos, 3));
 	pointsGeom.setAttribute('color', new THREE.BufferAttribute(cloud.col, 3));
 	pointsGeom.setDrawRange(0, n);
 	applyZScale();
 	if (is3D.value && !controls) enter3D();   // mounted straight into 3D (Z picked before Lite)
-
-	// colorbar limits (only changes with the cloud)
-	const cl = { cmin: cloud.cmin, cmax: cloud.cmax };
-	if (!climits.value || climits.value.cmin !== cl.cmin || climits.value.cmax !== cl.cmax) {
-		climits.value = cl; emit('climits', cl);
-	}
 }
 
 // ---- GPU (turning-spiral) path: static geometry uploaded once, crop is a free uniform -------
@@ -404,12 +411,6 @@ function uploadGpuGeometry() {
 	const pp = effPath.value;
 	if (pp.kind !== 'turning_spiral') return;   // usesGpuPath already guards this; defensive only
 
-	if (colormapTex && colormapTexName !== props.colormap) {
-		colormapTex.image.data.set(buildColormapLUT(COLORMAPS[props.colormap] || COLORMAPS.viridis));
-		colormapTex.needsUpdate = true;
-		colormapTexName = props.colormap;
-	}
-
 	const { aT, aRevs, aVal, count } = buildStaticAttributes(c, effChannel.value, props.stride);
 	gpuGeom.setAttribute('aT', new THREE.BufferAttribute(aT, 1));
 	gpuGeom.setAttribute('aRevs', new THREE.BufferAttribute(aRevs, 1));
@@ -417,18 +418,17 @@ function uploadGpuGeometry() {
 	gpuGeom.setDrawRange(0, count);
 	gpuUploaded = true;
 
-	// Colour limits reuse the SAME cached-per-axis whole-cut auto limits the CPU path already
-	// uses (effClimits/axisAutoLimits) — NOT a crop-scoped recompute. That matches this file's
-	// existing behaviour exactly (effClimits always hands buildCloud a concrete cmin/cmax, so its
-	// own internal crop-scoped percentile branch never actually runs for this caller) and its own
-	// doc comment's intent: "Live's scale matches Full's baked scale per axis and doesn't drift
-	// while cropping." A per-crop recompute would be a silent behaviour change, not a bug fix.
-	const eff = effClimits();
-	gpuMat.uniforms.uCmin.value = eff.cmin;
-	gpuMat.uniforms.uCmax.value = eff.cmax;
-	if (!climits.value || climits.value.cmin !== eff.cmin || climits.value.cmax !== eff.cmax) {
-		climits.value = eff; emit('climits', eff);
-	}
+	// Apply whatever colour scale is currently in effect -- a real geometry change (e.g. switching
+	// channel) must render with today's colorScale, not stale defaults. Ongoing colour-only
+	// changes (dragging a saturation/displayed handle) are handled by the dedicated colorScale
+	// watcher further down WITHOUT re-running this O(N) attribute rebuild -- that watcher is the
+	// actual point of this GPU path, so this function must never become its trigger.
+	const s = props.colorScale;
+	gpuMat.uniforms.uCmin.value = s.satMin;
+	gpuMat.uniforms.uCmax.value = s.satMax > s.satMin ? s.satMax : s.satMin + 1;
+	gpuMat.uniforms.uDisp.value.set(s.dispMin, s.dispMax);
+	gpuMat.uniforms.uGreyOOR.value = s.greyOutOfRange ? 1 : 0;
+	emitAutoRange();
 
 	updateGpuCropUniforms();
 	refineGpuPointCount();   // exact count — cheap enough to also pay here, not just at drag-end
@@ -582,11 +582,11 @@ function exportViewport(filename: string, subtitle?: string) {
 	const c = canvasEl.value;
 	if (!c || !ready) return false;
 	draw();
-	const cl = climits.value;
+	const s = props.colorScale;
 	return exportFrmFigure({
 		canvas: c, bounds: currentBounds(),
-		cmin: cl?.cmin ?? 0, cmax: cl?.cmax ?? 1,
-		colormap: props.colormap, axis: effChannel.value, subtitle, filename,
+		cmin: s.satMin, cmax: s.satMax,
+		colormap: s.colormap, axis: effChannel.value, subtitle, filename,
 	});
 }
 defineExpose({ currentBounds, exportViewport });
@@ -629,7 +629,7 @@ function teardownRenderer() {
 	}
 	renderer = null; scene = null; camera = null; controls = null;
 	pointsGeom = null; pointsMat = null; pointsObj = null; discTex = null;
-	gpuGeom = null; gpuMat = null; gpuObj = null; colormapTex = null; colormapTexName = '';
+	gpuGeom = null; gpuMat = null; gpuObj = null; colormapTex = null;
 	gpuUploaded = false;
 	ready = false;
 }
@@ -643,8 +643,47 @@ onActivated(() => { if (!ready) nextTick(() => { setupRenderer(); scheduleRebuil
 // drag frame is the O(N) recompute + percentile sort + GPU re-upload lag this file's other
 // comments describe. Including it in this list too would silently bypass that throttle.
 watch(() => [effChannel.value, effPath.value, props.stride,
-	props.gridding, props.gridN, props.colormap, props.cmin, props.cmax, props.zSeries], scheduleRebuild, { deep: true });
+	props.gridding, props.gridN, props.zSeries], scheduleRebuild, { deep: true });
 watch(() => props.pointSize, scheduleDraw);
+
+// A host's colorScale is typically a computed that returns a FRESH object literal on every
+// recompute (see ForceDashboard.vue's `colorScale`) — Vue's deep watch fires on that identity
+// change alone, even when every field is byte-identical (e.g. an unrelated renderer on the same
+// dashboard re-emitting its own already-current auto range). The GPU branch below was already
+// guarding its one expensive step (the LUT rebuild) against exactly this; extend the same guard to
+// the front of the whole handler so a no-op colorScale never reaches the CPU branch's full rebuild
+// either — colormap/steps/satMin/satMax/dispMin/dispMax/greyOutOfRange are every field either path
+// actually reads (see rebuild()'s CPU branch and uploadGpuGeometry()/this watcher's GPU branch);
+// alwaysShowZero/symmetrical/logScale/barVisible never reach FrmCloud.vue directly -- they're
+// already folded into satMin/satMax/dispMin/dispMax upstream by applyParams.
+function colorScaleUnchanged(a: ColorScale, b: ColorScale | undefined): boolean {
+	return !!b && a.colormap === b.colormap && a.steps === b.steps &&
+		a.satMin === b.satMin && a.satMax === b.satMax &&
+		a.dispMin === b.dispMin && a.dispMax === b.dispMax &&
+		a.greyOutOfRange === b.greyOutOfRange;
+}
+// Colour-scale changes are split by path, unlike every geometry prop above:
+//   - CPU path bakes colour per-vertex (buildCloud) with no cheap "just repaint" option, so it
+//     gets the same full rebuild geometry changes trigger — no regression from the pre-conversion
+//     behaviour, where any colormap/cmin/cmax change already did the same.
+//   - GPU path must NEVER re-upload aT/aRevs/aVal (an O(N) CPU pass) just because a saturation or
+//     displayed-range handle moved — that would defeat the entire point of this renderer existing.
+//     Only the LUT texture rebuilds (colormap/steps changed); satMin/satMax/dispMin/dispMax/
+//     greyOutOfRange are plain uniform pushes, exactly like every other converted renderer.
+watch(() => props.colorScale, (s, prev) => {
+	if (colorScaleUnchanged(s, prev)) return;
+	if (!usesGpuPath.value) { scheduleRebuild(); return; }
+	if (!gpuMat) return;
+	if (colormapTex && (!prev || s.colormap !== prev.colormap || s.steps !== prev.steps)) {
+		colormapTex.image.data.set(buildScaleLUT(s, 256));
+		colormapTex.needsUpdate = true;
+	}
+	gpuMat.uniforms.uCmin.value = s.satMin;
+	gpuMat.uniforms.uCmax.value = s.satMax > s.satMin ? s.satMax : s.satMin + 1;
+	gpuMat.uniforms.uDisp.value.set(s.dispMin, s.dispMax);
+	gpuMat.uniforms.uGreyOOR.value = s.greyOutOfRange ? 1 : 0;
+	scheduleDraw();
+}, { deep: true });
 
 // Crop is DRAGGED, and — for the CPU path only (gridded mode, a Z-series overlay/3D, or a
 // linear_feed/machine_xyz path; see usesGpuPath) — its rebuild is still the full O(N) recompute +

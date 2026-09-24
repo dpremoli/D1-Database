@@ -5,8 +5,8 @@
 // against it explicitly rather than assumed.
 import { describe, expect, it } from 'vitest';
 import {
-	applyParams, buildScaleLUT, defaultScale, denormalize, normalize, sampleScale, sampleScaleAt,
-	type ColorScale,
+	applyParams, buildScaleLUT, defaultScale, denormalize, normalize, OPEN_DISP, sampleScale,
+	sampleScaleAt, type ColorScale,
 } from './colorScale';
 
 function scale(overrides: Partial<ColorScale> = {}): ColorScale {
@@ -17,7 +17,7 @@ describe('defaultScale', () => {
 	it('spans the given range with sane defaults', () => {
 		const s = defaultScale(0, 100);
 		expect(s).toMatchObject({
-			satMin: 0, satMax: 100, dispMin: 0, dispMax: 100,
+			satMin: 0, satMax: 100,
 			colormap: 'viridis', steps: 256, logScale: false, symmetrical: false, alwaysShowZero: false,
 			greyOutOfRange: true, barVisible: true,
 		});
@@ -27,6 +27,30 @@ describe('defaultScale', () => {
 		expect(s.satMax).toBeGreaterThan(s.satMin);
 		const s2 = defaultScale(5, 2);
 		expect(s2.satMax).toBeGreaterThan(s2.satMin);
+	});
+	it('leaves the displayed-range filter wide open regardless of the saturation range', () => {
+		// satMin/satMax are commonly a PERCENTILE range (e.g. axisAutoLimits' 1st/99th), so a
+		// freshly defaulted scale must never filter/grey a point just because it falls outside
+		// [satMin, satMax] -- that decision belongs to a user narrowing the range deliberately,
+		// via the editor, not to this factory's defaults.
+		const s = defaultScale(1, 99);   // narrower than the data range below, like a percentile clip
+		expect(s.dispMin).toBeLessThanOrEqual(0);
+		expect(s.dispMax).toBeGreaterThanOrEqual(100);
+		// A value outside the saturation range (a real tail point under a percentile auto-range)
+		// must NOT be outside the displayed range -- the exact bug this test pins.
+		const tailValue = 100;
+		expect(tailValue).toBeGreaterThan(s.satMax);
+		expect(tailValue).toBeGreaterThanOrEqual(s.dispMin);
+		expect(tailValue).toBeLessThanOrEqual(s.dispMax);
+	});
+	it('uses a finite sentinel for the open displayed range, not literal Infinity', () => {
+		// GLSL ES 1.00 (three.js's default WebGL1 path) does not guarantee IEEE Infinity semantics
+		// in a uniform -- OPEN_DISP must be finite so it survives a GPU uniform upload correctly.
+		const s = defaultScale(0, 1);
+		expect(Number.isFinite(s.dispMin)).toBe(true);
+		expect(Number.isFinite(s.dispMax)).toBe(true);
+		expect(s.dispMin).toBe(-OPEN_DISP);
+		expect(s.dispMax).toBe(OPEN_DISP);
 	});
 });
 

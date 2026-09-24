@@ -44,11 +44,27 @@ function invSymlog(sv: number): number {
 	return Math.sign(sv) * (Math.exp(Math.abs(sv)) - 1);
 }
 
+// A finite stand-in for "the displayed-range filter is off." GLSL ES 1.00 (three.js's default
+// WebGL1 path) does not guarantee IEEE Infinity semantics in a uniform, so an actual +-Infinity
+// here would be one driver quirk away from silently misbehaving; 1e20 is unambiguously outside any
+// real force (N), residual, or z-score while staying far from float32 overflow (~3.4e38).
+// Exported so every consumer that needs an inert displayed range (e.g. an overlay with no
+// host-driven ColorScale yet) uses this exact value rather than each picking its own.
+export const OPEN_DISP = 1e20;
+
 export function defaultScale(lo: number, hi: number): ColorScale {
 	if (!(hi > lo)) hi = lo + 1;   // degenerate guard, mirrors axisAutoLimits' `if (!(hi > lo))`
 	return {
 		colormap: 'viridis', steps: 256,
-		satMin: lo, satMax: hi, dispMin: lo, dispMax: hi,
+		satMin: lo, satMax: hi,
+		// Deliberately NOT [lo, hi]: satMin/satMax are commonly a PERCENTILE range (e.g.
+		// axisAutoLimits' 1st/99th), so ~2% of real points sit outside them by construction. If
+		// the displayed range defaulted to the saturation range, greyOutOfRange's default (true,
+		// below) would immediately greyle out those tail points instead of showing their existing
+		// clamped colormap-endpoint colour -- a silent behaviour change the moment ANY host uses
+		// this factory with a percentile range, which is the common case. A freshly defaulted scale
+		// must filter nothing until something -- a user, via the editor -- deliberately narrows it.
+		dispMin: -OPEN_DISP, dispMax: OPEN_DISP,
 		greyOutOfRange: true, alwaysShowZero: false, symmetrical: false, logScale: false,
 		barVisible: true,
 	};

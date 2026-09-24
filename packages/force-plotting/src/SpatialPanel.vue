@@ -8,6 +8,7 @@
 // painted layers, the cross-panel selection -- comes in as props; edits go out as events.
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import DiagOctreeView from './DiagOctreeView.vue';
+import { defaultScale, type ColorScale } from './colorScale';
 import InfoTip from './InfoTip.vue';
 import { fetchViewportCompute, type ViewportResult, type ViewportStep, type ViewportOp } from './diagViewport';
 import { layersForRequest, type DiagLayer } from './diagLayers';
@@ -43,6 +44,17 @@ const emit = defineEmits<{
 
 const channel = ref<ChannelKey>((props.initialChannel as ChannelKey) || 'residZ');
 watch(channel, (c) => emit('update:channel', c));
+
+// This panel has no colour-scale editor UI yet -- always viridis, always auto-ranged from the
+// octree's own per-channel data (climits), matching the exact behaviour the old hardcoded
+// `:colormap="'viridis'"` + cmin/cmax-absent props had. DiagOctreeView.vue no longer auto-detects
+// internally (Stage 2 moved that decision entirely to the host via climits), so seeding this from
+// the climits event is required, not optional -- without it the octree would render pinned to the
+// placeholder [0,1] range forever.
+const colorScale = ref<ColorScale>(defaultScale(0, 1));
+function onClimits(v: { cmin: number; cmax: number }) {
+	colorScale.value = defaultScale(v.cmin, v.cmax);
+}
 // `initialChannel` is not just a seed: DiagnosticsWorkbench changes it to redirect an
 // already-mounted panel (e.g. "click a step card to revert the hero view to its channel").
 // Without this watch that only updated the persisted layout, never the live view.
@@ -181,7 +193,7 @@ onBeforeUnmount(() => {
 		<DiagOctreeView
 			:octree-path="octreePath"
 			:channel="'residZ'"
-			:colormap="'viridis'"
+			:color-scale="colorScale"
 			:point-size="1.5"
 			:selection="selection"
 			:analysis-result="analysisResult"
@@ -192,6 +204,7 @@ onBeforeUnmount(() => {
 			:paint-mode="drawing ? 'draw' : 'off'"
 			@polygon="(r) => emit('polygon', r)"
 			@bounds="onBounds"
+			@climits="onClimits"
 		/>
 		<div class="sp-bar">
 			<label class="sp-field">
