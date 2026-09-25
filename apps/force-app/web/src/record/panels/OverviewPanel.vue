@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { useWorkspace } from '../workspace';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS } from '../liveClient';
-import { formatBandwidth, formatDuration } from '../../format';
+import { formatBandwidth, formatDuration, formatMegabytes } from '../../format';
 const w = useWorkspace();
 const st = w.st;
 const ROW_BYTES = RAW_COLUMNS * RAW_BYTES_PER_SAMPLE;
@@ -21,11 +21,6 @@ const estSizeMb = computed(() => {
 	if (st.nTotal === 0) return 0;
 	return st.nTotal * ROW_BYTES / 1e6;
 });
-function fmtSize(mb: number): string {
-	if (mb < 1) return (mb * 1000).toFixed(0) + ' KB';
-	if (mb < 1000) return mb.toFixed(1) + ' MB';
-	return (mb / 1000).toFixed(2) + ' GB';
-}
 
 const bandwidth = computed(() => {
 	if (st.tSec <= 0 || st.nTotal === 0) return '—';
@@ -50,7 +45,7 @@ const eta = computed(() => {
 			<div class="ro"><span>Cut</span><b :class="{ cut: st.cutStartSec !== null }">{{ st.cutStartSec !== null ? fmtTime(st.cutStartSec) : '—' }}</b></div>
 			<div class="ro"><span>RPM</span><b>{{ Math.round(st.rpm) }}</b></div>
 			<div class="ro"><span>Samples</span><b>{{ st.nTotal.toLocaleString() }}</b></div>
-			<div class="ro"><span>File size</span><b>{{ fmtSize(estSizeMb) }}</b></div>
+			<div class="ro"><span>File size</span><b>{{ formatMegabytes(estSizeMb) }}</b></div>
 			<div class="ro"><span>Bandwidth</span><b>{{ bandwidth }}</b></div>
 			<div class="ro"><span>Fx</span><b class="fx">{{ st.peaks.Fx.toFixed(1) }}</b></div>
 			<div class="ro"><span>Fy</span><b class="fy">{{ st.peaks.Fy.toFixed(1) }}</b></div>

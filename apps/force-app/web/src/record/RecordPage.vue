@@ -5,7 +5,7 @@
 import { onMounted, onBeforeUnmount, provide, reactive, ref, watch, watchEffect, computed } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import { getWorkspace, WORKSPACE } from './workspace';
-import { startSync, syncStatus } from './directusSync';
+import { startSync } from './directusSync';
 import { hwStatus } from './hwStatus';
 import { labamp } from './labampApi';
 import PanelFrame from './panels/PanelFrame.vue';

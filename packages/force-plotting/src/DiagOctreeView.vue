@@ -21,9 +21,8 @@ import { Potree, type PointCloudOctree } from 'potree-core';
 import { defaultScale, OPEN_DISP, type ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { CLUSTER_PALETTE } from './clusterPalette';
-import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
-import type { Selection } from './selection';
+import { percentileRange, type Selection } from './selection';
 import type { DiagLayer } from './diagLayers';
 import type { ViewportResult } from './diagViewport';
 
@@ -182,14 +181,10 @@ function disposePco() {
 	pco = null;
 }
 
-// The colour range currently applied (for the figure export) -- mirrors props.colorScale's own
-// satMin/satMax, tracked separately only so exportViewport() need not re-derive it.
-let appliedLo = 0, appliedHi = 1;
 function applyRange() {
 	if (!material) return;
 	const s = props.colorScale;
-	appliedLo = s.satMin; appliedHi = s.satMax > s.satMin ? s.satMax : s.satMin + 1;
-	material.uniforms.uRange.value.set(appliedLo, appliedHi);
+	material.uniforms.uRange.value.set(s.satMin, s.satMax > s.satMin ? s.satMax : s.satMin + 1);
 	material.uniforms.uDisp.value.set(s.dispMin, s.dispMax);
 	material.uniforms.uGreyOOR.value = s.greyOutOfRange ? 1 : 0;
 	invalidate();
@@ -224,14 +219,6 @@ function applySelection() {
 // A separate THREE.Points (not potree-managed) fed by props.analysisResult. Reuses
 // DiagScatter's viridis / cluster-palette shader, minus the selection-dim path.
 let analysisPoints: THREE.Points | null = null;
-
-function percentileRange(a: Float32Array): [number, number] {
-	const s = Float32Array.from(a).filter((v) => Number.isFinite(v)).sort();
-	if (s.length === 0) return [0, 1];
-	const lo = s[Math.floor(0.01 * (s.length - 1))];
-	const hi = s[Math.floor(0.99 * (s.length - 1))];
-	return hi > lo ? [lo, hi] : [lo, lo + 1];
-}
 
 function makeAnalysisMaterial(): THREE.ShaderMaterial {
 	const paletteFlat = new Float32Array(CLUSTER_PALETTE.flat());
@@ -612,7 +599,7 @@ watch(() => props.pointSize, () => { if (material) { material.uniforms.uSize.val
 watch(() => props.selection, applySelection, { deep: true });
 
 // The world rectangle (mm) the orthographic camera currently shows (pan target ± half the
-// zoom-scaled frustum). Meaningful in the flat 2D view; the export is a 2D figure anyway.
+// zoom-scaled frustum). Meaningful in the flat 2D view.
 function currentBounds(): { xmin: number; xmax: number; ymin: number; ymax: number } {
 	if (!camera) return { xmin: -1, xmax: 1, ymin: -1, ymax: 1 };
 	const cx = controls?.target.x ?? camera.position.x;
@@ -621,20 +608,6 @@ function currentBounds(): { xmin: number; xmax: number; ymin: number; ymax: numb
 	const hh = (camera.top - camera.bottom) / 2 / (camera.zoom || 1);
 	return { xmin: cx - hw, xmax: cx + hw, ymin: cy - hh, ymax: cy + hh };
 }
-// Export the current view as a formatted figure (client-side, no host round-trip). The render
-// loop paints every frame + preserveDrawingBuffer is on, so the canvas pixels are live. Not
-// wired to any UI trigger yet in this component (deferred, see plan) -- kept for parity with
-// FrmOctree.vue, whose figure-export button this can be wired to in a later pass.
-function exportViewport(filename: string, subtitle?: string) {
-	const c = canvasEl.value;
-	if (!c) return false;
-	return exportFrmFigure({
-		canvas: c, bounds: currentBounds(),
-		cmin: appliedLo, cmax: appliedHi, colorScale: props.colorScale,
-		axis: props.channel, subtitle, filename,
-	});
-}
-defineExpose({ currentBounds, exportViewport });
 </script>
 
 <template>

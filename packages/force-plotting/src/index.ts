@@ -13,7 +13,7 @@ export * from './frmExport';
 
 export { default as FrmCloud } from './FrmCloud.vue';
 export { default as FrmOctree } from './FrmOctree.vue';
-export { bucketEnvelope, buildSeriesEnvelope, cacheGet, cachePut, decimateCache, parseCache } from './liveCache';
+export { bucketEnvelope, buildSeriesEnvelope, cacheGet, cachePut, decimateCache, idxOfTime, parseCache } from './liveCache';
 export type { Cache, EnvSeries } from './liveCache';
 export { COLORMAPS, COLORMAP_LABELS, colormapLabel, axisAutoLimits } from './liveCloud';
 export type { Axis, CloudChannel } from './liveCloud';

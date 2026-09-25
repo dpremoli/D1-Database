@@ -3,11 +3,23 @@ free space, and total capacity. Windows-focused (the acquisition PC runs Windows
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import shutil
 import subprocess
 import time as _time
+
+
+def atomic_write_json(path: str, data, *, fsync: bool = False, **dump_kw) -> None:
+    """Write JSON via a temp file + os.replace, so a reader never sees a half-written file."""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, **dump_kw)
+        if fsync:
+            f.flush()
+            os.fsync(f.fileno())
+    os.replace(tmp, path)
 
 
 def _drive_letters() -> list[str]:

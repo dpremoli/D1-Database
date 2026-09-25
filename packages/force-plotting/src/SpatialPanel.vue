@@ -36,7 +36,6 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
 	(e: 'polygon', ring: [number, number][]): void;
 	(e: 'update:channel', c: string): void;
-	(e: 'cluster-select', id: number | null): void;
 	(e: 'result', r: ViewportResult | null): void;
 	(e: 'busy', v: boolean): void;
 	(e: 'popout', channel: string): void;

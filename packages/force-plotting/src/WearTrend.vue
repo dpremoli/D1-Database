@@ -15,7 +15,6 @@ const props = defineProps<{
 const AXES = ['Fx', 'Fy', 'Fz'] as const;
 type Axis = typeof AXES[number];
 const AXIS_COLOR: Record<Axis, string> = { Fx: '#dc2626', Fy: '#16a34a', Fz: '#2563eb' };
-const PEAK_FIELD: Record<Axis, string> = { Fx: 'peak_fx', Fy: 'peak_fy', Fz: 'peak_fz' };
 
 const host = useForceHost();
 const api = host.api;

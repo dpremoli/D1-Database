@@ -94,6 +94,11 @@ class RecordingSession:
         }
         self._fft_cap = int(max(2048, min(200_000, self.source.rate)))  # ~1 s, bounded
         self._fft_last = 0.0
+        # Chunks since the last fold into _fft_bufs. Folding (concatenate + trim a ~1 s window per
+        # channel) only when a spectrum is due, not per chunk, avoids re-copying 12 windows tens of
+        # times a second for spectra published a few times a second.
+        self._fft_pending: dict[str, list[np.ndarray]] = {n: [] for n in self._fft_names}
+        self._fft_pending_n = 0
 
     # ---- lifecycle ----
     def start(self) -> None:
@@ -335,15 +340,20 @@ class RecordingSession:
         for n in ("Fx", "Fy", "Fz"):
             y = axes.get(n)
             if y is not None:
-                self._fft_bufs[n] = np.concatenate([self._fft_bufs[n], y])[-self._fft_cap :]
+                self._fft_pending[n].append(y)
         subcols = np.asarray(data[:, :9], dtype=np.float64)
         for j, n in enumerate(SUB_NAMES):
             if j < subcols.shape[1]:
-                self._fft_bufs[n] = np.concatenate([self._fft_bufs[n], subcols[:, j]])[
-                    -self._fft_cap :
-                ]
+                # A copy, not a view: the source may reuse its chunk buffer.
+                self._fft_pending[n].append(subcols[:, j].copy())
+        self._fft_pending_n += data.shape[0]
         now = time.perf_counter()
-        if now - self._fft_last < 0.3 or self._fft_bufs[self._fft_axis].size < 256:
+        if now - self._fft_last < 0.3:
+            if self._fft_pending_n >= self._fft_cap:  # bound memory if spectra are slow to come due
+                self._fold_fft_pending()
+            return
+        self._fold_fft_pending()
+        if self._fft_bufs[self._fft_axis].size < 256:
             return
         self._fft_last = now
         fs = float(self.source.rate)
@@ -361,6 +371,13 @@ class RecordingSession:
                 "amp": spectra_out.get(self._fft_axis, []),  # back-compat
             }
         )
+
+    def _fold_fft_pending(self) -> None:
+        for n, parts in self._fft_pending.items():
+            if parts:
+                self._fft_bufs[n] = np.concatenate([self._fft_bufs[n], *parts])[-self._fft_cap :]
+                parts.clear()
+        self._fft_pending_n = 0
 
     def _publish_control(self, msg: dict) -> None:
         if self.broadcaster is not None:

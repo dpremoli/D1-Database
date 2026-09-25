@@ -175,22 +175,9 @@ const geom = computed(() => {
 		return `${up}L ${dn}Z`;
 	}
 
-	let area = '', line = '', cropArea = '';
+	let area = '', line = '';
 	if (props.kind === 'env') {
 		area = areaPath(iA, iB);
-		if (props.cropStart != null && props.cropEnd != null) {
-			// i0 = -1 when the crop starts after all data; revIdx = -1 when it ends
-			// before all data — in both cases there's no in-range window to shade
-			// (guard, else areaPath would index past the array and emit NaN paths).
-			// Clamp to the visible [iA,iB] window so a zoom doesn't paint off-plot.
-			const i0 = Math.max(iA, xs.findIndex((v) => v >= props.cropStart!));
-			// Scan backward in place rather than xs.slice().reverse().findIndex(...) — that clones
-			// the whole array on every recompute, and this runs on every crop-drag pointermove.
-			let i1 = -1;
-			for (let k = xs.length - 1; k >= 0; k--) { if (xs[k] <= props.cropEnd!) { i1 = k; break; } }
-			i1 = i1 < 0 ? -1 : Math.min(iB, i1);
-			if (i0 >= iA && i1 >= i0) cropArea = areaPath(i0, i1);
-		}
 	} else {
 		line = 'M';
 		for (let i = iA; i <= iB; i++) line += `${sx(xs[i]).toFixed(1)},${sy(d.amp[i]).toFixed(1)} `;
@@ -229,8 +216,6 @@ const geom = computed(() => {
 	}
 
 	const zeroY = (lo < 0 && hi > 0) ? sy(0) : null;
-	const cropStartX = props.cropStart != null ? sx(props.cropStart) : null;
-	const cropEndX = props.cropEnd != null ? sx(props.cropEnd) : null;
 
 	// Filtered-spectrum overlay (FFT charts only): map the overlay's own (f,amp) through the
 	// SAME sx/sy so it lands on the current axes/zoom; clipped to the visible x-window.
@@ -263,7 +248,34 @@ const geom = computed(() => {
 			if (path) compareLines.push({ id: c.id, label: c.label, color: c.color, d: path });
 		}
 	}
-	return { W, Hh, xs, x0, x1, iA, iB, lo, hi, sx, sy, area, line, cropArea, xticks, xticks2, yticks, zeroY, cropStartX, cropEndX, overlayLine, compareLines };
+	return { W, Hh, xs, x0, x1, iA, iB, lo, hi, sx, sy, areaPath, area, line, xticks, xticks2, yticks, zeroY, overlayLine, compareLines };
+});
+
+// The crop window is dragged continuously; kept out of `geom` so a drag frame only redraws the
+// shaded window and handles, not the whole envelope, ticks and overlays.
+const crop = computed(() => {
+	const g = geom.value;
+	if (!g) return { cropArea: '', cropStartX: null, cropEndX: null };
+	const { xs, iA, iB, sx, areaPath } = g;
+	let cropArea = '';
+	if (props.kind === 'env' && props.cropStart != null && props.cropEnd != null) {
+		// i0 = -1 when the crop starts after all data; revIdx = -1 when it ends
+		// before all data — in both cases there's no in-range window to shade
+		// (guard, else areaPath would index past the array and emit NaN paths).
+		// Clamp to the visible [iA,iB] window so a zoom doesn't paint off-plot.
+		const i0 = Math.max(iA, xs.findIndex((v) => v >= props.cropStart!));
+		// Scan backward in place rather than xs.slice().reverse().findIndex(...) — that clones
+		// the whole array on every recompute, and this runs on every crop-drag pointermove.
+		let i1 = -1;
+		for (let k = xs.length - 1; k >= 0; k--) { if (xs[k] <= props.cropEnd!) { i1 = k; break; } }
+		i1 = i1 < 0 ? -1 : Math.min(iB, i1);
+		if (i0 >= iA && i1 >= i0) cropArea = areaPath(i0, i1);
+	}
+	return {
+		cropArea,
+		cropStartX: props.cropStart != null ? sx(props.cropStart) : null,
+		cropEndX: props.cropEnd != null ? sx(props.cropEnd) : null,
+	};
 });
 
 const hoverPt = computed(() => {
@@ -419,8 +431,8 @@ function onWheel(ev: WheelEvent) {
 			<line v-for="(t, i) in geom.xticks" :key="'gx' + i" :x1="t.x" :x2="t.x" :y1="MT_EFF" :y2="geom.Hh - MB" class="fc-grid" stroke-width="0.5" />
 			<line v-if="geom.zeroY != null" :x1="ML" :x2="geom.W - MR" :y1="geom.zeroY" :y2="geom.zeroY" class="fc-zero" stroke-width="0.9" />
 			<!-- full-range area at low saturation; the analysed [cropStart,cropEnd] window overpaints at full saturation -->
-			<path v-if="kind === 'env'" :d="geom.area" :fill="stroke" :fill-opacity="geom.cropArea ? 0.09 : 0.2" :stroke="stroke" stroke-opacity="0.35" stroke-width="0.6" />
-			<path v-if="kind === 'env' && geom.cropArea" :d="geom.cropArea" :fill="stroke" fill-opacity="0.28" :stroke="stroke" stroke-width="0.8" />
+			<path v-if="kind === 'env'" :d="geom.area" :fill="stroke" :fill-opacity="crop.cropArea ? 0.09 : 0.2" :stroke="stroke" stroke-opacity="0.35" stroke-width="0.6" />
+			<path v-if="kind === 'env' && crop.cropArea" :d="crop.cropArea" :fill="stroke" fill-opacity="0.28" :stroke="stroke" stroke-width="0.8" />
 			<path v-if="kind === 'line'" :d="geom.line" fill="none" :stroke="stroke" stroke-width="1.1" />
 			<path v-if="geom.overlayLine" :d="geom.overlayLine" fill="none" stroke="#0891b2" stroke-width="1" stroke-dasharray="3 2" opacity="0.9" />
 			<!-- Comparison cuts, drawn over the primary envelope so the current cut stays the
@@ -457,7 +469,7 @@ function onWheel(ev: WheelEvent) {
 			<!-- Live-mode draggable crop handles (start = teal, end = red); wide invisible
 			     hit rects keep them easy to grab. Pointer events are captured on drag. -->
 			<g v-if="cropEditable">
-				<template v-for="(hx, k) in [{ x: geom.cropStartX, c: '#0f766e' }, { x: geom.cropEndX, c: '#b91c1c' }]" :key="'ch' + k">
+				<template v-for="(hx, k) in [{ x: crop.cropStartX, c: '#0f766e' }, { x: crop.cropEndX, c: '#b91c1c' }]" :key="'ch' + k">
 					<template v-if="hx.x != null">
 						<line :x1="hx.x" :x2="hx.x" :y1="MT_EFF" :y2="geom.Hh - MB" :stroke="hx.c" stroke-width="1.4" />
 						<rect :x="hx.x - 3" :y="MT_EFF" width="6" :height="geom.Hh - MB - MT_EFF" :fill="hx.c" fill-opacity="0.001"

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 import ForceChart from './ForceChart.vue';
 import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
@@ -23,7 +23,6 @@ import { useForceHost } from './host';
 
 const host = useForceHost();
 const api = host.api;
-const router = useRouter();
 const route = useRoute();
 
 // Roles that see every sample/operation regardless of ownership (Administrator,
@@ -464,6 +463,15 @@ const liveOn = computed(() => frmMode.value === 'lite' && liveAvailable.value);
 const compareOn = computed(() => liveOn.value && chainActive(workChain.value) && filtersOpen.value);
 // Both live panes share ONE view object so pan/zoom in either drives both.
 const compareView = reactive({ cx: 0, cy: 0, span: 1, active: false });
+// Geometry/display props every Lite FrmCloud pane shares; each pane adds its own cache override,
+// colour scale and events. Evaluated at render time, so the refs declared further down are set.
+const cloudProps = computed(() => ({
+	cacheFileId: detail.value?.live_cache_file, axis: axis.value,
+	feed: editFeed.value, diam: editDiam.value, innerDiam: editInnerDiam.value, speedMode: speedMode.value,
+	rpm: editRpm.value, vc: editVc.value, timeScale: timeScale.value, ppr: editPpr.value,
+	cropStartSec: cropStartSec.value, cropEndSec: cropEndSec.value,
+	stride: plotStride.value, gridding: gridding.value, gridN: gridN.value, pointSize: pointSize.value,
+}));
 function mergeChain(raw: any): FilterChain {
 	const d = defaultChain();
 	if (!raw) return d;
@@ -514,14 +522,18 @@ async function runPreview() {
 	const ac = new AbortController(); previewAbort = ac;
 	filterBusy.value = true; filterErr.value = null;
 	try {
-		const { cache, skipped, stride } = await fetchFiltered(d.live_cache_file, chain, 1_500_000, ac.signal);
+		// Independent requests to the filter service: run them together rather than back to back.
+		const [{ cache, skipped, stride }, fftOverlay] = await Promise.all([
+			fetchFiltered(d.live_cache_file, chain, 1_500_000, ac.signal),
+			chartMode.value === 'fft' ? fetchFilteredFft(d.live_cache_file, chain, axis.value) : Promise.resolve(undefined),
+		]);
 		if (ac.signal.aborted) return;
 		filteredCache.value = cache; filterSkipped.value = skipped;
 		// Decimate the local full cache by the SAME stride so the raw pane plots the identical
 		// samples (honest side-by-side: same geometry, filtered only changes the colour).
 		const full = cacheGet(d.live_cache_file);
 		rawDecimatedCache.value = full ? decimateCache(full, stride) : null;
-		if (chartMode.value === 'fft') filterFftOverlay.value = await fetchFilteredFft(d.live_cache_file, chain, axis.value);
+		if (fftOverlay !== undefined) filterFftOverlay.value = fftOverlay;
 	} catch (e: any) {
 		if (e?.name === 'AbortError' || ac.signal.aborted) return;   // superseded — not an error
 		filterErr.value = (e?.message || 'filter service unreachable').includes('Failed to fetch')
@@ -716,24 +728,12 @@ const frmLoading = ref(false);
 const frmCache = new Map<string, string>();
 
 // ---------------------------------------------------------------- layout state
-// Column widths + the Force/FRM split are user-resizable (drag handles) and each
-// of Force/FRM can be hidden so the other takes the full width. Persisted per
-// browser so the layout survives a reload.
+// Column widths are user-resizable (drag handles); persisted per browser so the layout survives a
+// reload. Keys from the old split layout (rightSplit/showForce/showFRM/visAxes) are ignored.
 const LAYOUT_KEY = 'd1-force-dashboard-layout-v1';
 const colA = ref(240);          // Samples/Operations column width (px)
 const colB = ref(300);          // Sample/Operation detail column width (px)
-const rightSplit = ref(0.46);   // fraction of the right area given to Signals vs FRM
-const showForce = ref(true);
-const showFRM = ref(true);
 const dragging = ref(false);
-// Per-channel selection for the Signals graphs — pick which summed axes to plot (matches the
-// recording view's channel chips). At least one axis stays on.
-const visAxes = ref<Record<Axis, boolean>>({ Fx: true, Fy: true, Fz: true });
-function toggleAxis(a: Axis) {
-	const on = AXES.filter((x) => visAxes.value[x]);
-	if (visAxes.value[a] && on.length <= 1) return;  // keep at least one visible
-	visAxes.value = { ...visAxes.value, [a]: !visAxes.value[a] };  // reassign so the layout watch fires
-}
 
 (function loadLayout() {
 	try {
@@ -742,19 +742,14 @@ function toggleAxis(a: Axis) {
 		const v = JSON.parse(raw);
 		if (typeof v.colA === 'number') colA.value = v.colA;
 		if (typeof v.colB === 'number') colB.value = v.colB;
-		if (typeof v.rightSplit === 'number') rightSplit.value = v.rightSplit;
-		if (typeof v.showForce === 'boolean') showForce.value = v.showForce;
-		if (typeof v.showFRM === 'boolean') showFRM.value = v.showFRM;
 		if (typeof v.colStackHidden === 'boolean') colStackHidden.value = v.colStackHidden;
 		if (typeof v.detailHidden === 'boolean') detailHidden.value = v.detailHidden;
 		if (v.frmMode === 'figure' || v.frmMode === 'lite' || v.frmMode === 'full') frmMode.value = v.frmMode;
-		if (v.visAxes && typeof v.visAxes === 'object') for (const a of AXES) if (typeof v.visAxes[a] === 'boolean') visAxes.value[a] = v.visAxes[a];
 	} catch { /* ignore malformed/absent saved layout */ }
 })();
-watch([colA, colB, rightSplit, showForce, showFRM, colStackHidden, detailHidden, frmMode, visAxes], () => {
+watch([colA, colB, colStackHidden, detailHidden, frmMode], () => {
 	localStorage.setItem(LAYOUT_KEY, JSON.stringify({
-		colA: colA.value, colB: colB.value, rightSplit: rightSplit.value,
-		showForce: showForce.value, showFRM: showFRM.value, visAxes: visAxes.value,
+		colA: colA.value, colB: colB.value,
 		colStackHidden: colStackHidden.value, detailHidden: detailHidden.value,
 		// Persist Live so returning to the dashboard keeps the interactive FRM cloud
 		// instead of silently dropping back to the static PNG. (liveOn still requires a
@@ -783,24 +778,6 @@ const startColAResize = dragAxis(() => colA.value, (v) => { colA.value = v; }, 1
 const startColBResize = dragAxis(() => colB.value, (v) => { colB.value = v; }, 220, 460);
 
 const rightAreaEl = ref<HTMLElement | null>(null);
-function startSplitResize(ev: PointerEvent) {
-	ev.preventDefault();
-	const rect = rightAreaEl.value?.getBoundingClientRect();
-	if (!rect) return;
-	dragging.value = true;
-	// rect! : the `if (!rect) return` above guarantees it, but TS drops the narrowing
-	// inside a hoisted function declaration (onMove is hoisted above the guard).
-	function onMove(e: PointerEvent) {
-		rightSplit.value = Math.min(0.78, Math.max(0.22, (e.clientX - rect!.left) / rect!.width));
-	}
-	function onUp() {
-		dragging.value = false;
-		window.removeEventListener('pointermove', onMove);
-		window.removeEventListener('pointerup', onUp);
-	}
-	window.addEventListener('pointermove', onMove);
-	window.addEventListener('pointerup', onUp);
-}
 
 // Below this content width, fixed pixel columns would overflow — stack instead.
 // Tracks the real element (Directus reserves side chrome, so the viewport is
@@ -1504,22 +1481,6 @@ function fmtCutTime(d: any): string {
 	return `${secs.toFixed(1)}s`;
 }
 
-// Cut parameters: how the operation was set up + what it measured. Shown in BOTH view
-// modes (previously they vanished the moment Lite was on — reference data shouldn't
-// depend on an unrelated display toggle).
-const cutParams = computed(() => {
-	const d = detail.value;
-	if (!d) return [];
-	const mrpm = d.mean_rpm != null ? Number(d.mean_rpm).toFixed(0) : '—';
-	return [
-		{ label: 'Surface speed', value: fmt(d.surface_speed), unit: 'm/min' },
-		{ label: 'Feed', value: fmt(d.feed), unit: 'mm/rev' },
-		{ label: 'Depth of cut', value: fmt(d.depth_of_cut), unit: 'mm' },
-		{ label: 'Diameter', value: fmt(d.cut_diameter), unit: 'mm' },
-		{ label: 'Mean RPM', value: mrpm, unit: '' },
-		{ label: 'Cut time', value: fmtCutTime(d), unit: '' },
-	];
-});
 // Capture/technical info: rarely needed at a glance -> its own collapsed accordion.
 const captureInfo = computed(() => {
 	const d = detail.value;
@@ -1535,10 +1496,6 @@ const captureInfo = computed(() => {
 });
 // Accordion state for the reworked op panel (persist nothing; sensible defaults).
 const captureOpen = ref(false);
-const displayOpen = ref(false);
-const hostOpen = ref(false);
-
-const showRpm = ref(false);
 
 // Entering Live collapses the sample detail + the op's date/coolant rows to free
 // vertical space for the crop plots, cloud, and plotting-settings panel.
@@ -2596,38 +2553,18 @@ function fmtDateTime(v: string | null | undefined) {
 									@climits="onClimits" @points="displayedPoints = $event" @zscale="zScale = $event" />
 								<!-- Compare mode: raw | filtered, sharing one view (linked pan/zoom) + colour scale. -->
 								<div v-else-if="compareOn" class="frm-compare" :class="{ stacked }">
-									<FrmCloud ref="frmCloudRef" :cache-file-id="detail.live_cache_file" :cache-override="rawDecimatedCache"
-										:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
-										:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
-										:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
-										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
-										:point-size="pointSize" :color-scale="colorScale"
+									<FrmCloud ref="frmCloudRef" v-bind="cloudProps" :cache-override="rawDecimatedCache" :color-scale="colorScale"
 										:shared-view="compareView" pane-label="raw"
 										@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event" />
-									<FrmCloud :cache-override="filteredCache" :cache-file-id="detail.live_cache_file"
-										:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
-										:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
-										:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
-										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
-										:point-size="pointSize" :color-scale="filteredColorScale"
+									<FrmCloud v-bind="cloudProps" :cache-override="filteredCache" :color-scale="filteredColorScale"
 										:shared-view="compareView" pane-label="filtered"
 										@climits="filteredAuto = $event" />
 								</div>
-								<FrmCloud v-else-if="filteredSoloOn" ref="frmCloudRef" :cache-override="filteredCache" :cache-file-id="detail.live_cache_file"
-										:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
-										:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
-										:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
-										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
-										:point-size="pointSize" :color-scale="colorScale"
+								<FrmCloud v-else-if="filteredSoloOn" ref="frmCloudRef" v-bind="cloudProps" :cache-override="filteredCache" :color-scale="colorScale"
 										:z-series="zSeries" :z-scale="zScale"
 										@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event"
 										@zscale="zScale = $event" />
-									<FrmCloud v-else-if="liveOn" ref="frmCloudRef" :cache-file-id="detail.live_cache_file"
-									:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
-									:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
-									:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
-									:stride="plotStride" :gridding="gridding" :grid-n="gridN"
-									:point-size="pointSize" :color-scale="colorScale"
+									<FrmCloud v-else-if="liveOn" ref="frmCloudRef" v-bind="cloudProps" :color-scale="colorScale"
 									:z-series="zSeries" :z-scale="zScale"
 									@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event"
 									@zscale="zScale = $event" />
@@ -2950,9 +2887,6 @@ function fmtDateTime(v: string | null | undefined) {
 }
 .pt-chip.on { color: var(--theme--primary, #1d4ed8); background: color-mix(in srgb, var(--theme--primary, #1d4ed8) 10%, transparent); border-color: color-mix(in srgb, var(--theme--primary, #1d4ed8) 30%, transparent); }
 .pt-chip:disabled { opacity: 0.55; cursor: not-allowed; }
-.right-row { display: flex; gap: 0; flex: 1 1 auto; min-height: 0; align-items: stretch; }
-.right-row.stacked { flex-direction: column; }
-.right-row > .card { flex: 1 1 auto; min-width: 0; overflow: hidden; }
 
 /* Flexible plot-panel grid (Signals / FRM as draggable, resizable, closeable panels). Pull the grid
    up by its top margin so row-0 panels align with the top of the samples/detail columns (the empty
@@ -2977,7 +2911,6 @@ function fmtDateTime(v: string | null | undefined) {
 .pt-menu button { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 8px; font: inherit; font-size: 12px; color: var(--theme--foreground, #1e293b); background: transparent; border: none; border-radius: 6px; cursor: pointer; text-align: left; }
 .pt-menu button:hover { background: var(--theme--background-subdued, #f1f5f9); }
 
-.graphs-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; flex-wrap: wrap; gap: 6px; }
 .graphs-title, .frm-kicker {
 	display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700;
 	letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684);

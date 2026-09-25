@@ -9,6 +9,7 @@ import { useRouter } from 'vue-router';
 import { useWorkspace } from '../workspace';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS } from '../liveClient';
 import FinishedForcePlot from '../FinishedForcePlot.vue';
+import { formatMegabytes } from '../../format';
 
 const w = useWorkspace();
 const router = useRouter();
@@ -123,11 +124,6 @@ onBeforeUnmount(() => { if (manualRetryTimer) clearTimeout(manualRetryTimer); })
 
 // float32 rows, matching the raw writer — see RAW_BYTES_PER_SAMPLE.
 const estSizeMb = computed(() => (w.st.nTotal ? (w.st.nTotal * RAW_COLUMNS * RAW_BYTES_PER_SAMPLE) / 1e6 : 0));
-function fmtSize(mb: number): string {
-	if (mb < 1) return (mb * 1000).toFixed(0) + ' KB';
-	if (mb < 1000) return mb.toFixed(1) + ' MB';
-	return (mb / 1000).toFixed(2) + ' GB';
-}
 
 function downloadUrl(href: string, filename: string) {
 	const a = document.createElement('a');
@@ -213,7 +209,7 @@ function startNew() {
 						<span class="scd-stage-label">{{ s.label }}</span>
 						<span v-if="stageStatus(s.key) !== 'pending'" class="scd-stage-time">{{ stageElapsed(s.key).toFixed(1) }}s</span>
 					</div>
-					<span v-if="w.st.nTotal" class="scd-loading-sub">{{ w.st.nTotal.toLocaleString() }} samples · ~{{ fmtSize(estSizeMb) }}</span>
+					<span v-if="w.st.nTotal" class="scd-loading-sub">{{ w.st.nTotal.toLocaleString() }} samples · ~{{ formatMegabytes(estSizeMb) }}</span>
 					<button v-if="showManualRetry" class="scd-btn" @click="w.loadFinished()">Still loading — try again</button>
 				</div>
 			</template>

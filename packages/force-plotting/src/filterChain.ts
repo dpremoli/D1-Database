@@ -27,18 +27,6 @@ export function chainActive(c: FilterChain | null | undefined): boolean {
 	return !!c && (c.despike.on || c.detrend.on || c.highpass.on || c.lowpass.on || c.notch.on);
 }
 
-// Only the enabled stages matter for identity (toggling params of a disabled stage
-// shouldn't refetch); stable key order via manual serialisation.
-export function chainKey(c: FilterChain): string {
-	const parts: string[] = [];
-	if (c.despike.on) parts.push(`d${c.despike.window}_${c.despike.sigma}`);
-	if (c.detrend.on) parts.push(`t${c.detrend.mode}_${c.detrend.cutoff_hz}`);
-	if (c.highpass.on) parts.push(`h${c.highpass.cutoff_hz}_${c.highpass.order}`);
-	if (c.lowpass.on) parts.push(`l${c.lowpass.cutoff_hz}_${c.lowpass.order}`);
-	if (c.notch.on) parts.push(`n${c.notch.harmonics.join('.')}_${c.notch.q}`);
-	return parts.join('|') || 'raw';
-}
-
 export function chainSummary(c: FilterChain | null | undefined): string {
 	if (!c) return '';
 	const s: string[] = [];

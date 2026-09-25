@@ -22,7 +22,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { CLUSTER_PALETTE } from './clusterPalette';
-import { matches } from './selection';
+import { matches, percentileRange } from './selection';
 import type { ChannelKey, Selection, WorkingSet } from './selection';
 import type { DiagLayer } from './diagLayers';
 
@@ -139,15 +139,6 @@ function makeMaterial(): THREE.ShaderMaterial {
 			}
 		`,
 	});
-}
-
-function percentileRange(a: Float32Array): [number, number] {
-	// filter out NaN: a masked channel (resid_z under a paint mask) is full of them.
-	const s = Float32Array.from(a).filter((v) => Number.isFinite(v)).sort();
-	if (s.length === 0) return [0, 1];
-	const lo = s[Math.floor(0.01 * (s.length - 1))];
-	const hi = s[Math.floor(0.99 * (s.length - 1))];
-	return hi > lo ? [lo, hi] : [lo, lo + 1];
 }
 
 function channelArray(ws: WorkingSet, ch: ChannelKey): Float32Array {

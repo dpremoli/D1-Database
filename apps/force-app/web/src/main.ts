@@ -15,9 +15,8 @@ async function bootstrap() {
 	// Honour an optional runtime /config.json before anything reads the service URLs.
 	await loadRuntimeConfig();
 
-	// Install the shared plotting package's host ONCE, here, at app start -- not only from
-	// StandaloneForceDashboard.vue/StandaloneDiagnosticsWorkbench.vue/DiagPanelWindow.vue (the
-	// three places that used to be the only callers). Every FrmCloud consumer (FrmPanel.vue on
+	// Install the shared plotting package's host ONCE, here, at app start. Every window (including
+	// the pop-outs) boots through this file, so no component installs its own. Every FrmCloud consumer (FrmPanel.vue on
 	// /record, LocalCaptureView.vue on /plot/local/:id) calls useForceHost() unconditionally in
 	// its own setup() -- with no host installed yet, that threw "no host installed" the instant a
 	// recording finished and FrmPanel swapped its v-if from LiveFrm to FrmCloud, UNLESS the user
@@ -26,8 +25,6 @@ async function bootstrap() {
 	// while visually verifying the buildCloud/path-model refactor
 	// (docs/superpowers/specs/2026-09-07-milling-path-models-and-polar-design.md) -- fixed here
 	// rather than left as a note, since it sat directly in the rendering path that work touches.
-	// Same shape as StandaloneForceDashboard.vue's call; installing it twice (there too) is
-	// harmless -- setForceHost just overwrites with equivalent values.
 	setForceHost({
 		api,
 		currentUser: () => authStore.currentUser.value,

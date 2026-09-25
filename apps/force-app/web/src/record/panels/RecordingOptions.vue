@@ -330,12 +330,6 @@ onBeforeUnmount(() => {
 .seg button { flex: 1; padding: 8px; font-size: 12.5px; background: transparent; color: var(--text-dim); border: none; cursor: pointer; }
 .seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .seg button:disabled { opacity: 0.5; cursor: not-allowed; }
-/* min-width: 0 on every grid item: grid tracks default to min-width:auto, sized to the child's
-   min-content width. A <label> wrapping an <input> doesn't shrink below that on its own, so a
-   narrow panel (PanelFrame resized small, or a LookupField's flex .box inside) pushed the second
-   column past the panel's right edge instead of the columns actually sharing 1fr each. */
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
-.grid2 > * { min-width: 0; }
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
 .stat-grid.cut-params { margin-top: -2px; }
 .stat-grid .span2 { grid-column: 1 / -1; }
@@ -346,15 +340,6 @@ select option { background: var(--bg); color: var(--text); }
 textarea { font-family: var(--mono); font-size: 12px; resize: vertical; }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
-/* Unit shown inside the field itself (a trailing suffix in the same bordered box), not folded into
-   the label text above it — the box, not the input, carries the border so the unit reads as part
-   of one control. */
-.unit-box { display: flex; align-items: center; margin-top: 3px; background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
-.unit-box:focus-within { border-color: var(--accent); }
-.unit-box input { flex: 1; min-width: 0; margin-top: 0; border: none; background: transparent; }
-.unit-box input:disabled { opacity: 1; }
-.unit-box .unit { flex: 0 0 auto; padding-right: 9px; font-size: 11px; color: var(--text-dim); }
-.unit-box.disabled, .unit-box:has(input:disabled) { opacity: 0.55; }
 .sub { color: var(--text-dim); font-weight: 400; font-size: 10.5px; }
 .nidaq-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
 .nidaq-hint .material-symbols-rounded { font-size: 16px; color: var(--accent); }
@@ -416,7 +401,6 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 	.opts { gap: 6px; }
 	.links :deep(.lookup) { margin-bottom: 4px; }
 	label { margin-bottom: 4px; }
-	.grid2 { gap: 0 8px; }
 	.stat-grid { gap: 5px; margin-bottom: 4px; }
 	.stat-grid :deep(.stat-tile) { padding: 6px 9px; }
 	.stat-grid :deep(.value-text), .stat-grid :deep(.value input) { font-size: 14px; }

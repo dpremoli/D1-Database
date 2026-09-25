@@ -11,6 +11,7 @@ import { alarmController } from './alarms';
 import { recordingPrefs } from './recordingPrefs';
 import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
+import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
 import { confirmAction } from '../ui/confirm';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
@@ -418,26 +419,6 @@ export function createWorkspace() {
 	// uploads the capture.mat + live_cache.bin as Directus files and links them into a new
 	// machining_force_analysis row. Throws on failure (offline, validation, etc) so the save dialog
 	// can surface the error and let the user retry or fall back to a local-only save.
-	// Directus surfaces validation/constraint failures as a JSON body with an `errors[]` array; a
-	// bare axios error.message is just "Request failed with status code 500" and tells the user
-	// nothing actionable. Pull the real reason out when it's there.
-	function directusErrorMessage(e: any): string {
-		const status = e?.response?.status;
-		const detail = e?.response?.data?.errors?.[0]?.message;
-		if (status && detail) return `${status}: ${detail}`;
-		if (status) return `${status}: ${e?.message || 'request failed'}`;
-		return e?.message || String(e);
-	}
-	async function uploadFile(blob: Blob, filename: string): Promise<string> {
-		const fd = new FormData();
-		fd.append('file', blob, filename);
-		try {
-			const res = await api.post('/files', fd);
-			return res.data.data.id;
-		} catch (e: any) {
-			throw new Error(`file upload (${filename}) failed - ${directusErrorMessage(e)}`);
-		}
-	}
 	async function logRunSync(): Promise<string> {
 		const payload = buildRunPayload();
 		payload.method_id = await resolveMachiningMethodId(meta.op_type).catch(() => null);
@@ -461,22 +442,15 @@ export function createWorkspace() {
 	async function uploadCutToDatabase(): Promise<string> {
 		const id = st.captureId;
 		if (!id) throw new Error('no capture id for this recording');
+		// The local blob reads don't need the logged run, so they start alongside it; the uploads
+		// still wait for it, so a failed insert never leaves orphaned files. Without a capture.mat
+		// (over MAT_MAX_BYTES) the analysis record is still fully usable from the decimated cache;
+		// directus_files_id just goes in as null.
+		const blobs = fetchCaptureBlobs(client.matUrl(id), client.cacheUrl(id), st.summary?.mat_written !== false);
+		blobs.catch(() => {});   // surfaced by the await below, not as an unhandled rejection
 		const opId = await logRunSync();
-		// A capture too large for the MAT5 format (see finalize.py's MAT_MAX_BYTES) never had a
-		// capture.mat written at all -- fetching it would 404 and abort the whole save. Everything
-		// else (series, peaks, live_cache) still comes from the decimated cache, so the analysis
-		// record is still fully usable without it; directus_files_id just goes in as null.
-		const matWritten = st.summary?.mat_written !== false;
-		const [matBlob, cacheBlob] = await Promise.all([
-			matWritten
-				? fetch(client.matUrl(id)).then((r) => { if (!r.ok) throw new Error('capture.mat fetch failed'); return r.blob(); })
-				: Promise.resolve(null),
-			fetch(client.cacheUrl(id)).then((r) => { if (!r.ok) throw new Error('live_cache.bin fetch failed'); return r.blob(); }),
-		]);
-		const [matFileId, cacheFileId] = await Promise.all([
-			matBlob ? uploadFile(matBlob, `${id}.mat`) : Promise.resolve(null),
-			uploadFile(cacheBlob, `${id}_live_cache.bin`),
-		]);
+		const [matBlob, cacheBlob] = await blobs;
+		const [matFileId, cacheFileId] = await uploadCaptureFiles(id, matBlob, cacheBlob);
 		const peaks = st.summary?.peaks;
 		// ForceDashboard's chart reads its plot data from `series` (a JSONB min/max envelope), not
 		// from live_cache_file — without this, upload "succeeds" (peaks/FRM all show up fine) but
@@ -523,7 +497,6 @@ export function createWorkspace() {
 	// Build + enqueue the manufacturing_operations run record (offline-queued in directusSync).
 	function buildRunPayload(): Record<string, any> {
 		const surface = Math.PI * cfg.diam * cfg.rpm / 1000;
-		const num = (s: string) => (s !== '' && Number.isFinite(Number(s)) ? Number(s) : null);
 		return {
 			sample_id: link.sampleId || null,
 			operator_person_id: link.operatorId || null,
@@ -544,11 +517,11 @@ export function createWorkspace() {
 			capture_frequency_khz: Number((cfg.sample_rate / 1000).toFixed(3)),
 			outcome_notes: meta.notes || null,
 			// Machining details (folded Directus form section)
-			machining_axial_depth_of_cut_mm: num(machining.axial_doc),
-			machining_radial_depth_of_cut_mm: num(machining.radial_doc),
-			machining_cutting_length_mm: num(machining.cutting_length),
-			machining_coolant_pressure_bar: num(machining.coolant_pressure),
-			operation_sequence: num(machining.operation_sequence),
+			machining_axial_depth_of_cut_mm: numOrNull(machining.axial_doc),
+			machining_radial_depth_of_cut_mm: numOrNull(machining.radial_doc),
+			machining_cutting_length_mm: numOrNull(machining.cutting_length),
+			machining_coolant_pressure_bar: numOrNull(machining.coolant_pressure),
+			operation_sequence: numOrNull(machining.operation_sequence),
 			machining_new_edge: machining.new_edge,
 			machining_chips_collected: machining.chips_collected,
 			machining_chips_ref_code: machining.chips_ref || null,
