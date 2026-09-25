@@ -18,7 +18,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Potree, type PointCloudOctree } from 'potree-core';
-import { buildScaleLUT, defaultScale, OPEN_DISP, type ColorScale } from './colorScale';
+import { buildScaleLUT, defaultScale, lutKey, OPEN_DISP, type ColorScale } from './colorScale';
 import { CLUSTER_PALETTE } from './clusterPalette';
 import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
@@ -610,12 +610,11 @@ watch(() => props.paintMode, () => {
 	else nextTick(() => paintEl.value?.focus());
 });
 watch(() => props.channel, () => { if (material) { material.uniforms.uChannel.value = CHANNEL_IDX[props.channel] ?? 1; emitAutoRange(); } });
-// One watcher for the whole ColorScale: rebuild the LUT texture only when the colormap or step
-// count changed (the only two fields baked into its bytes); saturation/displayed-range/grey-vs-hide
-// are plain uniform pushes every time, same split as FrmOctree.vue / DiagScatter.vue.
+// One watcher for the whole ColorScale: rebuild the LUT texture only when lutKey changes (what is
+// baked into its bytes); saturation/displayed-range/grey-vs-hide are plain uniform pushes.
 watch(() => props.colorScale, (s, prev) => {
 	if (!material) return;
-	if (!prev || s.colormap !== prev.colormap || s.steps !== prev.steps) {
+	if (!prev || lutKey(s) !== lutKey(prev)) {
 		(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
 		material.uniforms.uGradient.value = lutTexture(s);
 	}
@@ -643,7 +642,7 @@ function exportViewport(filename: string, subtitle?: string) {
 	if (!c) return false;
 	return exportFrmFigure({
 		canvas: c, bounds: currentBounds(),
-		cmin: appliedLo, cmax: appliedHi,
+		cmin: appliedLo, cmax: appliedHi, colorScale: props.colorScale,
 		colormap: props.colorScale.colormap, axis: props.channel, subtitle, filename,
 	});
 }

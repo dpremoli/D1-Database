@@ -81,6 +81,17 @@ describe('pickHandle', () => {
 		expect(pickHandle(rounded, 200, H / 2, W, H)).toBe('dispMax');
 		expect(pickHandle(rounded, 200, 2, W, H)).toBe('satMax');
 	});
+
+	it('splits coincident saturation flags by pointer side so satMax stays draggable', () => {
+		const collapsed: HandleGeom[] = [
+			{ key: 'satMin', style: 'flag', pct: 50, dotY: H - 3 },
+			{ key: 'satMax', style: 'flag', pct: 50, dotY: H - 3 },
+		];
+		expect(pickHandle(collapsed, 203, 2, W, H)).toBe('satMax');
+		expect(pickHandle(collapsed, 197, 2, W, H)).toBe('satMin');
+		expect(pickHandle(collapsed, 200, 2, W, H, 'satMin')).toBe('satMin');
+		expect(pickHandle(collapsed, 200, 2, W, H)).toBe('satMax');
+	});
 });
 
 describe('handleDragPatch', () => {

@@ -75,7 +75,16 @@ export function defaultScale(lo: number, hi: number): ColorScale {
 // saturation range (e.g. a freshly defaulted scale, or NaN survivors), never to auto-widen a range
 // the user has already set.
 export function applyParams(s: ColorScale, dataLo: number, dataHi: number): ColorScale {
-	let { satMin, satMax, dispMin, dispMax } = s;
+	// A cleared <input v-model.number> yields '' (not NaN), which `>` would silently coerce to 0;
+	// normalise anything that isn't a finite number so it takes the repair paths below instead.
+	const fin = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : NaN);
+	let satMin = fin(s.satMin), satMax = fin(s.satMax);
+	let dispMin = fin(s.dispMin), dispMax = fin(s.dispMax);
+
+	if (Number.isNaN(satMin)) satMin = Number.isNaN(satMax) || dataLo < satMax ? dataLo : satMax - 1;
+	if (Number.isNaN(satMax)) satMax = dataHi > satMin ? dataHi : satMin + 1;
+	if (Number.isNaN(dispMin)) dispMin = -OPEN_DISP;
+	if (Number.isNaN(dispMax)) dispMax = OPEN_DISP;
 
 	if (!(satMax > satMin)) {
 		satMin = dataLo; satMax = dataHi;
@@ -144,6 +153,37 @@ export function sampleScale(t: number, s: ColorScale): [number, number, number] 
 // Convenience: raw value straight to a (quantised, symlog-aware) colour in one call.
 export function sampleScaleAt(v: number, s: ColorScale): [number, number, number] {
 	return sampleScale(normalize(v, s), s);
+}
+
+// CPU mirror of frmCloudShader.ts's colour branch, for renderers that bake per-vertex colour:
+// linear LUT index over [satMin, satMax] (same as every shader), out-of-displayed-range points grey
+// (0.5) or alpha 0 (hidden -- the host material's alphaTest drops them). `out` is RGBA, stride 4.
+export function colorizeValues(vals: ArrayLike<number>, count: number, s: ColorScale, out: Float32Array, lutWidth = 1024): void {
+	const w = Math.max(2, lutWidth);
+	const lut = buildScaleLUT(s, w);
+	const lo = s.satMin, span = s.satMax > s.satMin ? s.satMax - s.satMin : 1;
+	const dLo = s.dispMin, dHi = s.dispMax, grey = s.greyOutOfRange;
+	for (let k = 0; k < count; k++) {
+		const v = vals[k];
+		const o = k * 4;
+		if (v < dLo || v > dHi) {
+			out[o] = out[o + 1] = out[o + 2] = 0.5;
+			out[o + 3] = grey ? 1 : 0;
+			continue;
+		}
+		let t = (v - lo) / span;
+		t = t > 0 ? (t < 1 ? t : 1) : 0;   // also maps NaN to 0, like clamp01
+		const i = Math.round(t * (w - 1)) * 4;
+		out[o] = lut[i] / 255; out[o + 1] = lut[i + 1] / 255; out[o + 2] = lut[i + 2] / 255;
+		out[o + 3] = 1;
+	}
+}
+
+// Everything buildScaleLUT's bytes depend on. Renderers compare this, not individual fields, to
+// decide when to rebuild their texture: under logScale the LUT also bakes in the saturation range.
+export function lutKey(s: ColorScale): string {
+	const base = `${s.colormap}|${s.steps}|${s.logScale ? 1 : 0}`;
+	return s.logScale ? `${base}|${s.satMin}|${s.satMax}` : base;
 }
 
 // Build an RGBA8 colour-ramp LUT for GPU upload (THREE.DataTexture), `width` samples wide. Mirrors

@@ -16,7 +16,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import type { RecordClient } from './liveClient';
-import { buildScaleLUT, createAccumulator, ColorBar, type Axis, type ColorScale, type Histogram, type HistogramAccumulator } from '@d1/force-plotting';
+import { buildScaleLUT, createAccumulator, ColorBar, lutKey, type Axis, type ColorScale, type Histogram, type HistogramAccumulator } from '@d1/force-plotting';
 
 const props = withDefaults(defineProps<{ client: RecordClient; diam: number; colorScale: ColorScale; pointSize?: number; pointStride?: number; axis?: Axis }>(), {
 	pointSize: 1.8, pointStride: 1, axis: 'Fz',
@@ -66,6 +66,9 @@ function makeMaterial(): THREE.ShaderMaterial {
 			uDisp: { value: new THREE.Vector2(s.dispMin, s.dispMax) },
 			uGreyOOR: { value: s.greyOutOfRange ? 1 : 0 },
 			uSize: { value: props.pointSize },
+			// gl_PointSize is in device pixels; PointsMaterial (which this replaced) scaled by the
+			// renderer's pixel ratio, so do the same to keep points the same on-screen size.
+			uPixelRatio: { value: 1 },
 		},
 		vertexShader: `
 			attribute float aVal;
@@ -74,6 +77,7 @@ function makeMaterial(): THREE.ShaderMaterial {
 			uniform vec2 uDisp;
 			uniform float uGreyOOR;
 			uniform float uSize;
+			uniform float uPixelRatio;
 			varying vec3 vColor;
 			varying float vHidden;
 			void main() {
@@ -82,7 +86,7 @@ function makeMaterial(): THREE.ShaderMaterial {
 				float u = clamp((aVal - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
 				vColor = texture2D(uGradient, vec2(u, 0.5)).rgb;
 				if (outOfDisplay && uGreyOOR > 0.5) vColor = vec3(0.5);
-				gl_PointSize = uSize;
+				gl_PointSize = uSize * uPixelRatio;
 				gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 			}
 		`,
@@ -115,6 +119,7 @@ function setup() {
 	geom.setAttribute('aVal', valAttr);
 	geom.setDrawRange(0, 0);
 	material = makeMaterial();
+	material.uniforms.uPixelRatio.value = renderer.getPixelRatio();
 	scene.add(new THREE.Points(geom, material));
 	sizeCanvas(); frame();
 	loop();
@@ -264,13 +269,13 @@ function emitAutoRange() {
 	const haveRange = fm.cHi !== undefined && fm.cLo !== undefined && fm.cHi > fm.cLo;
 	const lo = haveRange ? fm.cLo! : -Math.max(1e-6, axisMax);
 	const hi = haveRange ? fm.cHi! : Math.max(1e-6, axisMax);
-	// Quantised to 2dp for the dedup key only (still emits full-precision lo/hi): cAbsMaxByAxis
-	// ticks up by tiny increments on nearly every frame early in a live recording, so an exact
-	// float-equality key would almost never repeat and this would emit -- and propagate a fresh
-	// colorScale object to the host -- on nearly every frame for the whole cut, even though
-	// nothing visibly different would render at that precision.
-	const key = `${props.axis}:${lo.toFixed(2)}:${hi.toFixed(2)}`;
-	if (key === lastEmittedAutoKey) return;
+	// cAbsMaxByAxis ticks up on nearly every frame of a live recording; each emit re-seeds the host's
+	// scale and rebins up to 2M points, so only re-emit when the range moved by >2% of its span.
+	const key = `${props.axis}:${haveRange ? 'r' : 'm'}`;
+	if (key === lastEmittedAutoKey) {
+		const tol = (autoHi.value - autoLo.value) * 0.02;
+		if (Math.abs(lo - autoLo.value) <= tol && Math.abs(hi - autoHi.value) <= tol) return;
+	}
 	lastEmittedAutoKey = key;
 	autoLo.value = lo; autoHi.value = hi;
 	emit('climits', { cmin: lo, cmax: hi });
@@ -377,7 +382,7 @@ watch(() => props.axis, () => resetUpload());
 // writes, never an O(N) CPU pass over up to 2M already-accumulated points.
 watch(() => props.colorScale, (s, prev) => {
 	if (!material) return;
-	if (!prev || s.colormap !== prev.colormap || s.steps !== prev.steps) {
+	if (!prev || lutKey(s) !== lutKey(prev)) {
 		(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
 		material.uniforms.uGradient.value = lutTexture(s);
 	}
@@ -446,5 +451,5 @@ onBeforeUnmount(() => {
 }
 .reset-view:hover { opacity: 1; }
 .reset-view .material-symbols-rounded { font-size: 13px; }
-.pts { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.pts { position: absolute; right: 6px; top: 4px; font-size: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 </style>

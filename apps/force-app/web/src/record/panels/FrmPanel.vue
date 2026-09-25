@@ -1,10 +1,10 @@
 <script setup lang="ts">
 // FRM panel: the live accumulating spiral while recording; the captured fingerprint (rendered via
 // the plotting FrmCloud from the backend's D1LC) once done.
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useWorkspace } from '../workspace';
 import LiveFrm from '../LiveFrm.vue';
-import { FrmCloud, ColorScaleEditor, defaultScale, applyParams, type ColorScale, type Histogram } from '@d1/force-plotting';
+import { FrmCloud, ColorScaleEditor, defaultScale, applyParams, OPEN_DISP, type ColorScale, type Histogram } from '@d1/force-plotting';
 import { appUrl } from '../../appUrl';
 const w = useWorkspace();
 const STRIDES = [1, 2, 5, 10, 25, 50];
@@ -24,20 +24,28 @@ const locked = ref(false);
 // self-corrects within a frame or two.
 const autoClimits = ref<{ cmin: number; cmax: number } | null>(null);
 const colorScale = ref<ColorScale>({ ...defaultScale(0, 1), colormap: w.plot.colormap });
+function seedAuto(v: { cmin: number; cmax: number }) {
+	colorScale.value = applyParams({ ...colorScale.value, satMin: v.cmin, satMax: v.cmax }, v.cmin, v.cmax);
+}
 function onClimits(v: { cmin: number; cmax: number }) {
-	// Dedup guard: without it, a value-identical re-emission would still be a fresh object -> a
-	// fresh colorScale assignment -> every deep watcher on it firing for nothing (LiveFrm's own
-	// emitAutoRange() already dedupes at the source too, but this guards this panel's side the same
-	// way, and is cheap insurance either way).
+	// Dedup guard: a value-identical re-emission would still be a fresh colorScale object.
 	if (autoClimits.value && autoClimits.value.cmin === v.cmin && autoClimits.value.cmax === v.cmax) return;
 	autoClimits.value = v;
-	if (!locked.value) {
-		colorScale.value = applyParams({ ...colorScale.value, satMin: v.cmin, satMax: v.cmax }, v.cmin, v.cmax);
-	}
+	if (!locked.value) seedAuto(v);
 }
+// Unlocking hands the saturation range back to auto straight away.
+watch(locked, (l) => { if (!l && autoClimits.value) seedAuto(autoClimits.value); });
+// The displayed range is in absolute units of the channel it was set on; reopen it on a switch.
+watch(() => w.plot.frmAxis, () => {
+	colorScale.value = { ...colorScale.value, dispMin: -OPEN_DISP, dispMax: OPEN_DISP };
+});
+// Two-way with the shared workspace colormap (Polar panel's select, pop-out seed).
+watch(() => w.plot.colormap, (c) => {
+	if (c && c !== colorScale.value.colormap) colorScale.value = { ...colorScale.value, colormap: c };
+});
 function onColorScaleUpdate(v: ColorScale) {
 	colorScale.value = v;
-	w.plot.colormap = v.colormap;   // keep the shared workspace colormap (Polar panel, pop-out seed) in sync
+	w.plot.colormap = v.colormap;
 }
 const colorDomainLo = computed(() => autoClimits.value?.cmin ?? colorScale.value.satMin);
 const colorDomainHi = computed(() => autoClimits.value?.cmax ?? colorScale.value.satMax);

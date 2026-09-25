@@ -32,7 +32,8 @@ export interface Cloud {
 	count: number;
 	bounds: PathBounds;
 	cmin: number; cmax: number;   // colour-scale limits actually applied (for the colorbar)
-	zv?: Float32Array;   // centred -0.5..0.5 force-as-height, only set for flat (z-constant) paths
+	val: Float32Array;   // the channel value behind each point's colour, so a host can recolour without a rebuild
+	zv?: Float32Array;  // centred -0.5..0.5 force-as-height, only set for flat (z-constant) paths
 }
 
 function percentile(sorted: Float32Array, p: number): number {
@@ -76,10 +77,13 @@ export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 
 	// colour scale: manual limits when supplied, else percentile-clamped like the app —
 	// prctile(DATA,1) / prctile(DATA,99), matching process_force.m's prctile(cc,[1 99]).
-	const sorted = fv.slice().sort();
-	let lo = Number.isFinite(p.cmin as number) ? (p.cmin as number) : percentile(sorted, 1);
-	let hi = Number.isFinite(p.cmax as number) ? (p.cmax as number) : percentile(sorted, 99);
-	if (!(hi > lo)) { lo = sorted[0]; hi = sorted[sorted.length - 1]; if (!(hi > lo)) hi = lo + 1; }
+	// The sort is O(N log N) on up to millions of points, so only pay for it when a limit is
+	// actually auto-derived (or the supplied pair is degenerate).
+	let sorted: Float32Array | null = null;
+	const getSorted = () => (sorted ??= fv.slice().sort());
+	let lo = Number.isFinite(p.cmin as number) ? (p.cmin as number) : percentile(getSorted(), 1);
+	let hi = Number.isFinite(p.cmax as number) ? (p.cmax as number) : percentile(getSorted(), 99);
+	if (!(hi > lo)) { const s = getSorted(); lo = s[0]; hi = s[s.length - 1]; if (!(hi > lo)) hi = lo + 1; }
 	const span = hi - lo || 1;
 
 	// Optional force-as-height overlay. Gated on the PATH'S OWN Z actually being flat
@@ -112,7 +116,7 @@ export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 		col[k * 3] = rr; col[k * 3 + 1] = gg; col[k * 3 + 2] = bb;
 		if (zv && zSrc) zv[k] = (zSrc[path.idx[k]] - zlo) / zspan - 0.5;
 	}
-	return { pos, col, count: m, bounds: path.bounds, cmin: lo, cmax: hi, zv };
+	return { pos, col, count: m, bounds: path.bounds, cmin: lo, cmax: hi, val: fv, zv };
 }
 
 // Bin the scatter into a gridN x gridN grid on X/Y; emit one point per non-empty cell at its
@@ -163,7 +167,7 @@ function gridCloud(
 		col[k * 3] = rr; col[k * 3 + 1] = gg; col[k * 3 + 2] = bb;
 		if (zv) zv[k] = (zsg[k] - zlo) / zspan - 0.5;
 	}
-	return { pos, col, count: n, bounds: path.bounds, cmin: lo, cmax: lo + span, zv };
+	return { pos, col, count: n, bounds: path.bounds, cmin: lo, cmax: lo + span, val: Float32Array.from(cg), zv };
 }
 
 // ---- colormaps (0..1 -> rgb 0..1) ----
