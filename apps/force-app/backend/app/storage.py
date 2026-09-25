@@ -7,6 +7,7 @@ import os
 import platform
 import shutil
 import subprocess
+import time as _time
 
 
 def _drive_letters() -> list[str]:
@@ -63,6 +64,27 @@ def _detect_ssd_map() -> dict[str, bool]:
         return {}
 
 
+# _detect_ssd_map() shells out to PowerShell for a real CIM/WMI query (Get-PhysicalDisk) that takes
+# multiple seconds — measured at ~3.2s against real hardware, essentially all of it PowerShell/WMI,
+# not process-launch overhead. Physical disk media type doesn't change while the app is running, so
+# paying that cost on every /storage/drives call (i.e. every time the General settings tab is
+# opened, since the frontend caches nothing of its own either) made that view stall every time.
+# A short TTL — rather than caching forever — means a drive attached mid-session (e.g. a new
+# external SSD) is picked up within a few minutes without requiring an app restart.
+SSD_CACHE_TTL_SEC = 300
+_ssd_cache: dict[str, bool] | None = None
+_ssd_cache_at: float = 0.0
+
+
+def _detect_ssd_map_cached() -> dict[str, bool]:
+    global _ssd_cache, _ssd_cache_at
+    now = _time.monotonic()
+    if _ssd_cache is None or (now - _ssd_cache_at) > SSD_CACHE_TTL_SEC:
+        _ssd_cache = _detect_ssd_map()
+        _ssd_cache_at = now
+    return _ssd_cache
+
+
 def _usable_root(root: str) -> str:
     """Return the path that should actually be offered for a drive, not necessarily its bare root.
 
@@ -100,7 +122,7 @@ def list_drives() -> list[dict]:
             return []
 
     letters = _drive_letters()
-    ssd_map = _detect_ssd_map()
+    ssd_map = _detect_ssd_map_cached()
     drives: list[dict] = []
     for letter in letters:
         root = f"{letter}:\\"

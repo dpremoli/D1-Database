@@ -13,19 +13,20 @@ const w = useWorkspace();
 		<TransportBar v-if="w.mode.value === 'playback'" />
 		<div v-else class="actions-row">
 			<!-- Acquisition's processing toggles: moved here from a Details card so they're checked
-				 in the moment right before Start, not folded away. Same w.cfg/w.converge bindings as
-				 before, just relocated. -->
+				 in the moment right before Start, not folded away. Bound to w.recordingPrefs, the
+				 persisted singleton shared with Settings > Recording — not w.cfg/w.converge, which
+				 only carry per-session/transient state now (see recordingPrefs.ts). -->
 			<div v-if="w.source.value !== 'replay'" class="segproc">
-				<button type="button" :class="{ on: w.cfg.frm_from_cut }" :disabled="w.locked.value"
-					title="Detect cut start — live FRM begins at the cut" @click="w.cfg.frm_from_cut = !w.cfg.frm_from_cut">
+				<button type="button" :class="{ on: w.recordingPrefs.frmFromCut }" :disabled="w.locked.value"
+					title="Detect cut start — live FRM begins at the cut" @click="w.recordingPrefs.frmFromCut = !w.recordingPrefs.frmFromCut">
 					<span class="material-symbols-rounded">flag</span>Cut start
 				</button>
-				<button type="button" :class="{ on: w.cfg.drift_comp }" :disabled="w.locked.value"
-					title="Drift compensation — saved outputs only, raw stays raw" @click="w.cfg.drift_comp = !w.cfg.drift_comp">
+				<button type="button" :class="{ on: w.recordingPrefs.driftComp }" :disabled="w.locked.value"
+					title="Drift compensation — saved outputs only, raw stays raw" @click="w.recordingPrefs.driftComp = !w.recordingPrefs.driftComp">
 					<span class="material-symbols-rounded">compare_arrows</span>Drift
 				</button>
-				<button type="button" :class="{ on: w.converge.enabled }" :disabled="w.locked.value"
-					title="Converging auto-range — tune per-channel ranges between cuts" @click="w.converge.enabled = !w.converge.enabled">
+				<button type="button" :class="{ on: w.recordingPrefs.convergeEnabled }" :disabled="w.locked.value"
+					title="Converging auto-range — tune per-channel ranges between cuts" @click="w.recordingPrefs.convergeEnabled = !w.recordingPrefs.convergeEnabled">
 					<span class="material-symbols-rounded">tune</span>Converge
 				</button>
 			</div>
@@ -40,7 +41,7 @@ const w = useWorkspace();
 			</div>
 		</div>
 		<div v-if="w.mode.value !== 'playback' && w.source.value !== 'replay'" class="proc-notes">
-			<p v-if="w.converge.enabled && w.source.value !== 'nidaq'" class="hint">Applies live only with the NI-DAQ source; on sim/replay it just previews the recommendation.</p>
+			<p v-if="w.recordingPrefs.convergeEnabled && w.source.value !== 'nidaq'" class="hint">Applies live only with the NI-DAQ source; on sim/replay it just previews the recommendation.</p>
 			<p v-if="w.converge.status" class="sync" :class="w.converge.busy ? 'warn' : 'ok'"><span class="material-symbols-rounded">tune</span>{{ w.converge.status }}</p>
 		</div>
 		<p v-if="w.errMsg.value" class="err">{{ w.errMsg.value }}</p>

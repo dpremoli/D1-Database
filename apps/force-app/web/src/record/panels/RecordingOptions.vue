@@ -5,6 +5,7 @@ import LookupField from './LookupField.vue';
 import CutPicker from './CutPicker.vue';
 import StatTile from './StatTile.vue';
 import MachineOperatorPanel from './MachineOperatorPanel.vue';
+import ToggleSwitch from '../../ui/ToggleSwitch.vue';
 
 const w = useWorkspace();
 
@@ -64,24 +65,24 @@ function mergeDiam() { w.cfg.inner_diam = 0; diamSplit.value = false; }
 // and how many start open responds to the actual height the grid has given this panel — a small
 // window/monitor gets just Tooling; a tall one gets everything open. Tooling (Insert/Edge/Tool)
 // is the baseline that's always open: per the earlier field-frequency review these change far more
-// often between cuts than Machine/Operator do, so they're worth the space on any screen. Coolant &
-// geometry opens next as height allows (still per-cut, if not always changed); Post-cut last (only
-// relevant once the cut is done, so the least useful to show while setting one up). Acquisition's
-// processing toggles used to be a third card here but live in the footer now, next to Start — see
-// RecordingActions.vue.
+// often between cuts than Machine/Operator do, so they're worth the space on any screen. Post-cut
+// opens next as height allows (only relevant once the cut is done, so the least useful to show
+// while setting one up). Coolant & geometry now live in MetadataPanel.vue's Advanced section, not
+// here. Acquisition's processing toggles used to be a third card here but live in the footer now,
+// next to Start — see RecordingActions.vue.
 //
 // `touched` records a card the OPERATOR has manually toggled, so a later resize (dragging the grid
 // panel, moving the window to a different monitor) never fights a deliberate choice — auto-fold
 // only ever adjusts a card the operator hasn't already decided about themselves.
-const open = reactive({ tooling: true, coolant: false, postCut: false });
-const touched = reactive({ tooling: false, coolant: false, postCut: false });
+const open = reactive({ tooling: true, postCut: false });
+const touched = reactive({ tooling: false, postCut: false });
 function toggleCard(card: keyof typeof open) {
 	touched[card] = true;
 	open[card] = !open[card];
 }
 
 // Least-essential-first: the order auto-fold closes cards in when content overflows.
-const CLOSE_ORDER: (keyof typeof open)[] = ['postCut', 'coolant'];
+const CLOSE_ORDER: (keyof typeof open)[] = ['postCut'];
 
 // Measures instead of guessing: a fixed BASE/STEP pixel model can't know the real rendered height
 // of this form (it's never been seen rendered from here), and the first version of this shipped
@@ -245,26 +246,54 @@ onBeforeUnmount(() => {
 			</div>
 		</div>
 
-		<div class="card" :class="{ collapsed: !open.coolant }">
-			<button type="button" class="card-head" @click="toggleCard('coolant')">
-				<span class="material-symbols-rounded chev">{{ open.coolant ? 'expand_more' : 'chevron_right' }}</span>
-				<span class="material-symbols-rounded">water_drop</span>Coolant &amp; geometry
-			</button>
-			<div v-show="open.coolant" class="grid2">
-				<label>Coolant<input v-model="w.meta.coolant" :disabled="w.locked.value" /></label>
-				<label>Coolant pressure
-					<div class="unit-box"><input type="number" step="0.1" v-model="w.machining.coolant_pressure" :disabled="w.locked.value" /><span class="unit">bar</span></div>
-				</label>
-				<label>Axial DoC
-					<div class="unit-box"><input type="number" step="0.01" v-model="w.machining.axial_doc" :disabled="w.locked.value" /><span class="unit">mm</span></div>
-				</label>
-				<label>Radial DoC
-					<div class="unit-box"><input type="number" step="0.01" v-model="w.machining.radial_doc" :disabled="w.locked.value" /><span class="unit">mm</span></div>
-				</label>
-				<label>Cutting length
-					<div class="unit-box"><input type="number" v-model="w.machining.cutting_length" :disabled="w.locked.value" /><span class="unit">mm</span></div>
-				</label>
+		<!-- NI-DAQ channel summary (configured in Settings) -->
+		<p v-if="w.source.value === 'nidaq'" class="hint nidaq-hint">
+			<span class="material-symbols-rounded">memory</span>
+			{{ w.nidaqChannels.value.split(/[\n,]+/).filter(Boolean).length }} channels configured
+			<span class="sub">(edit in Settings)</span>
+		</p>
+
+		<!-- Processing options — each materially changes what gets recorded, so each gets a real
+			 label + description, a link to where it's actually configured, and a real switch rather
+			 than a plain checkbox easy to overlook. -->
+		<div v-if="w.source.value !== 'replay'" class="proc">
+			<div class="section-divider"><span>Recording behaviour</span></div>
+
+			<div class="proc-row">
+				<div class="proc-text">
+					<b>Detect cut start</b>
+					<span class="sub">Live FRM begins at the cut, not at t=0</span>
+				</div>
+				<router-link class="proc-cfg" to="/settings?tab=recording" title="Set the detection threshold in Settings">
+					<span class="material-symbols-rounded">tune</span>
+				</router-link>
+				<ToggleSwitch v-model="w.recordingPrefs.frmFromCut" :disabled="w.locked.value" label="Detect cut start" />
 			</div>
+
+			<div class="proc-row">
+				<div class="proc-text">
+					<b>Drift compensation</b>
+					<span class="sub">Saved outputs only — raw stays raw</span>
+				</div>
+				<router-link class="proc-cfg" to="/settings?tab=recording" title="What this does — Settings">
+					<span class="material-symbols-rounded">tune</span>
+				</router-link>
+				<ToggleSwitch v-model="w.recordingPrefs.driftComp" :disabled="w.locked.value" label="Drift compensation" />
+			</div>
+
+			<div class="proc-row">
+				<div class="proc-text">
+					<b>Converging auto-range</b>
+					<span class="sub">Tune per-channel ranges between cuts</span>
+				</div>
+				<router-link class="proc-cfg" to="/labamp" title="Set headroom on the Lab Amp page">
+					<span class="material-symbols-rounded">tune</span>
+				</router-link>
+				<ToggleSwitch v-model="w.recordingPrefs.convergeEnabled" :disabled="w.locked.value" label="Converging auto-range" />
+			</div>
+
+			<p v-if="w.recordingPrefs.convergeEnabled && w.source.value !== 'nidaq'" class="hint">Applies live only with the NI-DAQ source; on sim/replay it just previews the recommendation.</p>
+			<p v-if="w.converge.status" class="sync" :class="w.converge.busy ? 'warn' : 'ok'"><span class="material-symbols-rounded">tune</span>{{ w.converge.status }}</p>
 		</div>
 
 		<div class="card" :class="{ collapsed: !open.postCut }">
@@ -327,6 +356,18 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 .unit-box .unit { flex: 0 0 auto; padding-right: 9px; font-size: 11px; color: var(--text-dim); }
 .unit-box.disabled, .unit-box:has(input:disabled) { opacity: 0.55; }
 .sub { color: var(--text-dim); font-weight: 400; font-size: 10.5px; }
+.nidaq-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.nidaq-hint .material-symbols-rounded { font-size: 16px; color: var(--accent); }
+.proc { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 2px; border-top: 1px solid var(--border); }
+.proc .section-divider { margin: 2px 0 4px; }
+.proc-row { display: flex; align-items: center; gap: 10px; padding: 8px 2px; }
+.proc-row + .proc-row { border-top: 1px solid var(--border); }
+.proc-text { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; margin: 0; }
+.proc-text b { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.proc-text .sub { font-size: 10.5px; color: var(--text-dim); font-weight: 400; }
+.proc-cfg { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 24px; height: 24px; border-radius: 7px; color: var(--text-dim); text-decoration: none; }
+.proc-cfg:hover { background: var(--surface); color: var(--accent); }
+.proc-cfg .material-symbols-rounded { font-size: 16px; }
 .section-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
 .section-divider::before, .section-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 /* Folding subpanels (Direction B / "Cards"): Tooling, Coolant & geometry, Post-cut. Body content

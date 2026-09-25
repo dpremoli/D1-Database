@@ -10,6 +10,10 @@ export interface RecordConfig {
 	duration_sec?: number;
 	ppr?: number;
 	axis?: 'Fx' | 'Fy' | 'Fz';
+	frm_from_cut?: boolean;
+	drift_comp?: boolean;
+	/** Absolute cut-detect force threshold (N) on |Fz|; 0 = adaptive. See Settings > Recording. */
+	cut_detect_force?: number;
 }
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';

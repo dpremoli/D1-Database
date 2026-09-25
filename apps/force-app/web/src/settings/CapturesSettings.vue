@@ -9,6 +9,7 @@ import { api } from '../directusClient';
 import { uploadCaptureColdStart } from '../record/uploadCapture';
 import { discardQueued, listQueue, retryQueued, syncStatus, type QueuedRun } from '../record/directusSync';
 import { confirmAction } from '../ui/confirm';
+import EditCaptureMetadataDialog from './EditCaptureMetadataDialog.vue';
 
 interface Capture {
 	id: string;
@@ -36,7 +37,11 @@ const rowMsg = ref<Record<string, string>>({});
 // Which captures already exist in Directus. Looked up once per load so the list can distinguish
 // "safe to delete, it's in the database" from "this is the only copy".
 const uploaded = ref<Record<string, boolean>>({});
+// capture_id -> operation_id, for the metadata editor: present means "PATCH the Directus row too,
+// not just the local summary.json".
+const uploadedOpId = ref<Record<string, string>>({});
 const uploadedKnown = ref(false);
+const editing = ref<Capture | null>(null);
 
 async function load() {
 	loading.value = true;
@@ -69,15 +74,17 @@ async function checkUploaded() {
 		const res = await api.get('/items/manufacturing_operations', {
 			params: {
 				filter: { recorded_metadata: { capture_id: { _in: ids } } },
-				fields: ['recorded_metadata'], limit: -1,
+				fields: ['operation_id', 'recorded_metadata'], limit: -1,
 			},
 		});
 		const found: Record<string, boolean> = {};
+		const opIds: Record<string, string> = {};
 		for (const row of res.data?.data ?? []) {
 			const cid = row?.recorded_metadata?.capture_id;
-			if (cid) found[cid] = true;
+			if (cid) { found[cid] = true; if (row.operation_id) opIds[cid] = row.operation_id; }
 		}
 		uploaded.value = found;
+		uploadedOpId.value = opIds;
 		uploadedKnown.value = true;
 	} catch {
 		// Offline or not permitted — leave the state unknown rather than claiming "not uploaded",
@@ -119,6 +126,23 @@ async function remove(c: Capture) {
 	} finally {
 		delete busy.value[c.id];
 	}
+}
+
+function openEdit(c: Capture) { editing.value = c; }
+async function onMetadataSaved() {
+	const id = editing.value?.id;
+	editing.value = null;
+	if (!id) return;
+	// Refresh just this row's summary-derived fields (sample_name etc.) rather than a full re-scan
+	// of every capture on disk — the same data /captures/browse already extracts, straight from the
+	// file this dialog just wrote.
+	try {
+		const res = await fetch(`${base()}/captures/${id}/summary`);
+		if (!res.ok) return;
+		const s = await res.json();
+		const c = captures.value.find((x) => x.id === id);
+		if (c) c.sample_name = s.sample_name;
+	} catch { /* best effort — Refresh button still works */ }
 }
 
 async function upload(c: Capture) {
@@ -294,7 +318,11 @@ onMounted(() => { load(); refreshQueue(); });
 		<div v-for="c in captures" :key="c.id" class="row">
 			<div class="rmain">
 				<div class="rtop">
-					<span class="rname">{{ c.sample_name || c.id }}</span>
+					<span
+						class="rname" :class="{ clickable: c.finalized }"
+						:title="c.finalized ? 'Click to edit this capture\'s metadata' : ''"
+						@click="c.finalized && openEdit(c)"
+					>{{ c.sample_name || c.id }}</span>
 					<span v-if="!c.finalized" class="tag warn" title="No summary.json — this recording was never finalized">incomplete</span>
 					<span v-else-if="!uploadedKnown" class="tag">upload state unknown</span>
 					<span v-else-if="uploaded[c.id]" class="tag ok">uploaded</span>
@@ -312,6 +340,9 @@ onMounted(() => { load(); refreshQueue(); });
 				<p v-if="rowMsg[c.id]" class="rmsg" :class="{ bad: rowMsg[c.id].includes('failed') }">{{ rowMsg[c.id] }}</p>
 			</div>
 			<div class="ract">
+				<button v-if="c.finalized" class="btn ghost sm" :disabled="!!busy[c.id]" @click="openEdit(c)">
+					<span class="material-symbols-rounded">edit</span>Edit
+				</button>
 				<button v-if="canUpload(c)" class="btn ghost sm" :disabled="!!busy[c.id]" @click="upload(c)">
 					<span class="material-symbols-rounded">{{ busy[c.id] === 'uploading' ? 'hourglass_top' : 'cloud_upload' }}</span>
 					{{ busy[c.id] === 'uploading' ? 'Uploading…' : 'Upload' }}
@@ -322,6 +353,14 @@ onMounted(() => { load(); refreshQueue(); });
 				</button>
 			</div>
 		</div>
+
+		<EditCaptureMetadataDialog
+			v-if="editing"
+			:capture-id="editing.id"
+			:operation-id="uploadedOpId[editing.id] || null"
+			@close="editing = null"
+			@saved="onMetadataSaved"
+		/>
 	</div>
 </template>
 
@@ -352,6 +391,8 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .rmain { flex: 1; min-width: 0; }
 .rtop { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .rname { font-size: 13.5px; font-weight: 600; }
+.rname.clickable { cursor: pointer; }
+.rname.clickable:hover { color: var(--accent); text-decoration: underline; }
 .rsub { display: flex; gap: 12px; margin-top: 3px; font-size: 11.5px; color: var(--text-dim);
 	flex-wrap: wrap; font-variant-numeric: tabular-nums; }
 .mono { font-family: var(--mono); }

@@ -12,6 +12,7 @@ import uuid
 
 import numpy as np
 
+from . import virtual_channels
 from .acquisition.consumers import CutDetector, Decimator, FrmIntegrator
 from .acquisition.ring import Ring
 from .backup import BackupStreamer
@@ -79,6 +80,9 @@ class RecordingSession:
         # None (not False) so the first chunk always publishes, giving the client its initial state
         # instead of leaving it to assume one. False => the tacho is not producing readable pulses.
         self._tacho_ok: bool | None = None
+        # Names of virtual channels whose formula has already failed once this session — logged
+        # once, not once per chunk (this runs tens of times a second).
+        self._extra_eval_errors: set[str] = set()
 
         # Rolling windows per channel for the live spectra (per-channel FFT / power / spectrogram /
         # waterfall), plus a wall-clock throttle. We keep the 3 summed axes AND the 8 dyno
@@ -262,6 +266,24 @@ class RecordingSession:
             }
         )
 
+    def _extra_values(self, data: np.ndarray, axes: dict[str, np.ndarray]) -> np.ndarray:
+        """This chunk's value for every configured extra (Aux/virtual) channel — see
+        virtual_channels.compute_extra_columns for the shared logic (also used by finalize.py, so
+        the two can't disagree). `data` is this chunk straight from the acquisition source: columns
+        0-7 are the dyno sub-channels, 8 is Tacho, and 9+ are any real hardware extra channels
+        NidaqSource appended (never gain-corrected here — same as the live Fx/Fy/Fz preview, which
+        is also pre-gain; finalize.py's archived values are the gain/drift-corrected ones)."""
+        hw_raw = data[:, 9:] if data.shape[1] > 9 else None
+
+        def _on_error(name: str, e: virtual_channels.FormulaError) -> None:
+            if name not in self._extra_eval_errors:  # log once per session, not once per chunk
+                self._extra_eval_errors.add(name)
+                log.warning("virtual channel '%s' evaluation failed: %s", name, e)
+
+        return virtual_channels.compute_extra_columns(
+            self.cfg.extra_channels, data[:, :8], data[:, 8], axes, hw_raw, on_error=_on_error
+        )
+
     def _consume(self) -> None:
         seq = 0
         while True:
@@ -282,9 +304,11 @@ class RecordingSession:
                 self.frm.mark_cut_start()
                 self._publish_control({"type": "cutstart", "t": ct})
             trace = self.decimator.process(t, axes)
-            # Per-sub-channel envelopes (the 8 dyno columns) so the client can plot any single
-            # sensor live, not just the summed axes.
-            sub = self.decimator.process_cols(t, np.asarray(data[:, :9], dtype=np.float64))
+            # Per-sub-channel envelopes (the 8 dyno columns, plus any configured Aux/virtual extra)
+            # so the client can plot any single sensor live, not just the summed axes.
+            extra = self._extra_values(data, axes)
+            sub_cols = np.concatenate([data[:, :9], extra], axis=1) if extra.size else data[:, :9]
+            sub = self.decimator.process_cols(t, np.asarray(sub_cols, dtype=np.float64))
             pts, rpm, tacho_ok = self.frm.process(t, axes, tacho_column(data))
             # Only on a transition — this runs per chunk (tens of times a second), and the client
             # only needs to know when the tacho starts or stops being readable.

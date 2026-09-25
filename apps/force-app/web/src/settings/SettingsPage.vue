@@ -3,6 +3,7 @@
 import { ref } from 'vue';
 import { useRoute } from 'vue-router';
 import GeneralSettings from './GeneralSettings.vue';
+import RecordingSettings from './RecordingSettings.vue';
 import AlarmsSettings from './AlarmsSettings.vue';
 import ConnectivitySettings from './ConnectivitySettings.vue';
 import BackupSettings from './BackupSettings.vue';
@@ -13,6 +14,7 @@ import AboutSettings from './AboutSettings.vue';
 
 const tabs = [
 	{ id: 'general', label: 'General', icon: 'tune' },
+	{ id: 'recording', label: 'Recording', icon: 'fiber_manual_record' },
 	{ id: 'alarms', label: 'Safety Alarms', icon: 'warning' },
 	{ id: 'connectivity', label: 'Connectivity', icon: 'network_check' },
 	{ id: 'backup', label: 'Live Backup', icon: 'cloud_upload' },
@@ -21,7 +23,7 @@ const tabs = [
 	{ id: 'report-bug', label: 'Report a Bug', icon: 'bug_report' },
 	{ id: 'about', label: 'About', icon: 'info' },
 ];
-const VALID_TABS = ['general', 'alarms', 'connectivity', 'backup', 'captures', 'logs', 'report-bug', 'about'] as const;
+const VALID_TABS = ['general', 'recording', 'alarms', 'connectivity', 'backup', 'captures', 'logs', 'report-bug', 'about'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 const route = useRoute();
@@ -49,6 +51,7 @@ const active = ref<SettingsTab>(initialTab);
 				<keep-alive include="GeneralSettings">
 					<GeneralSettings v-if="active === 'general'" />
 				</keep-alive>
+				<RecordingSettings v-if="active === 'recording'" />
 				<AlarmsSettings v-if="active === 'alarms'" />
 				<ConnectivitySettings v-if="active === 'connectivity'" />
 				<BackupSettings v-if="active === 'backup'" />

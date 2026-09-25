@@ -1,10 +1,13 @@
 // Stand-alone (workspace-independent) upload of a finished capture into the database. Used by
 // LocalCaptureView to retry an upload from a cold page load, where the live RecordClient/workspace
-// from the recording session no longer exists (navigating away from /record unmounts it). Rebuilds
-// what it can purely from summary.json's echoed RecordConfig + extra_metadata - it can't recover
-// the Directus lookup selections (sample/operator/equipment/insert) the user made in the UI, since
-// those were never persisted anywhere but the live session, so this produces a validly-linked but
-// less-annotated manufacturing_operations row than the live-session upload does.
+// from the recording session no longer exists (navigating away from /record unmounts it), and by
+// the capture metadata editor after correcting a capture that was never uploaded. Rebuilds the
+// manufacturing_operations row purely from summary.json's echoed RecordConfig + extra_metadata —
+// including the resolved Directus lookup selections (sample/operator/equipment/insert/edge/tool),
+// which workspace.ts::metaObj() persists there under `link_*` keys specifically so this path can
+// recover them. (That persistence is relatively new — a capture recorded before it existed will
+// only have the free-text labels, not the resolved IDs, and won't link a sample here until its
+// metadata is corrected through the editor, which re-resolves them via the same lookups.)
 import { api } from '../directusClient';
 import { resolveMachiningMethodId } from './directusLookups';
 import { buildSeriesEnvelope, parseCache, type Cache } from '@d1/force-plotting';
@@ -27,6 +30,13 @@ function directusErrorMessage(e: any): string {
 	return e?.message || String(e);
 }
 
+// Matches buildRunPayload()'s own `num` helper — extra_metadata's machining-detail fields are
+// stored as strings (they're plain <input> v-models), Directus wants numbers or null.
+function numOrNull(s: unknown): number | null {
+	const str = String(s ?? '');
+	return str !== '' && Number.isFinite(Number(str)) ? Number(str) : null;
+}
+
 async function uploadFile(blob: Blob, filename: string): Promise<string> {
 	const fd = new FormData();
 	fd.append('file', blob, filename);
@@ -43,6 +53,17 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 	const extra: Record<string, any> = cfg.extra_metadata || {};
 	const surface = Math.PI * (Number(cfg.diam) || 0) * (Number(cfg.rpm) || 0) / 1000;
 	const payload: Record<string, any> = {
+		// Resolved lookups, if this recording persisted them (see workspace.ts::metaObj — a real gap
+		// until it was fixed alongside this: these used to only ever reach Directus via
+		// buildRunPayload()'s immediate-upload path, so a cold-started upload could never link a
+		// sample or any other lookup at all, only free-text labels). `|| null`, not left absent: an
+		// absent key lets manufacturing_operations_has_sample fall through to NULL/NULL/NULL and the
+		// insert fails the CHECK constraint with a raw, unhelpful database error.
+		sample_id: extra.link_sample_id || null,
+		operator_person_id: extra.link_operator_id || null,
+		equipment_id: extra.link_equipment_id || null,
+		insert_edge_id: extra.link_edge_id || null,
+		tool_id: extra.link_tool_id || null,
 		operation_date: new Date().toISOString(),
 		process_category: 'machining',
 		machining_operation_subtype: extra.op_type || null,
@@ -56,6 +77,16 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 		capture_software: 'force-app',
 		capture_frequency_khz: cfg.sample_rate ? Number((cfg.sample_rate / 1000).toFixed(3)) : null,
 		outcome_notes: extra.notes || null,
+		// Machining details (folded Directus form section) — same fields buildRunPayload() sends,
+		// previously missing here for the identical reason the relational IDs were.
+		machining_axial_depth_of_cut_mm: numOrNull(extra.axial_doc),
+		machining_radial_depth_of_cut_mm: numOrNull(extra.radial_doc),
+		machining_cutting_length_mm: numOrNull(extra.cutting_length),
+		machining_coolant_pressure_bar: numOrNull(extra.coolant_pressure),
+		operation_sequence: numOrNull(extra.operation_sequence),
+		machining_new_edge: !!extra.new_edge,
+		machining_chips_collected: !!extra.chips_collected,
+		machining_chips_ref_code: extra.chips_ref || null,
 		recorded_metadata: { ...extra, capture_id: info.captureId, peaks: info.peaks, source: cfg.source, uploaded_via: 'local-capture-retry' },
 	};
 	payload.method_id = await resolveMachiningMethodId(extra.op_type).catch(() => null);

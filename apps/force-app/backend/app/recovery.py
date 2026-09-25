@@ -75,15 +75,21 @@ def _raw_info(capture_dir: str) -> dict | None:
 def scan_incomplete(captures_root: str, exclude_id: str | None = None) -> list[dict]:
     """Return a list of session dirs that look like crashed/incomplete recordings.
 
-    `exclude_id` is the currently live session (state 'recording' or 'finalizing'), if any: its
-    raw.d1raw exists and summary.json doesn't yet, same as a genuinely crashed session, so without
-    this it showed up as "crashed" in the recovery list -- with a restore option -- while it was
-    still actively streaming (#29).
+    `exclude_id` must be the CURRENTLY ACTIVE recording session's id, if any. Having no
+    summary.json is not on its own evidence of a crash — a session still genuinely recording looks
+    identical on disk (raw.d1raw present and growing, summary.json not written yet, because it
+    hasn't finished). Without this exclusion, an in-progress recording could be listed here and
+    offered for discard; discarding it then runs shutil.rmtree on a directory whose raw.d1raw is
+    still open by the live acquisition thread, which fails with PermissionError on Windows — in a
+    background task the client never learns about, while the real recording keeps running,
+    untouched, underneath (#29). Caller (main.py) is the one that knows the live session id.
     """
     incomplete = []
     if not os.path.isdir(captures_root):
         return incomplete
     for name in sorted(os.listdir(captures_root), reverse=True):
+        if name == exclude_id:
+            continue
         d = os.path.join(captures_root, name)
         if not os.path.isdir(d):
             continue

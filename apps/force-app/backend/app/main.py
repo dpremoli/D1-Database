@@ -21,6 +21,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
+from typing import Any
 from urllib.parse import urlparse
 
 import numpy as np
@@ -36,10 +37,11 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from . import backup as backup_mod
-from . import bug_report, nidaq_catalog, nidaq_enum, recovery, storage
+from . import bug_report, nidaq_catalog, nidaq_enum, recovery, storage, virtual_channels
 from . import channels as chan
 from .config import DEFAULT_NIDAQ_CHANNELS, RecordConfig
 from .d1lc import read_d1lc_header
@@ -1184,6 +1186,13 @@ async def recovery_check() -> dict:
 
 @app.post("/recovery/recover/{session_id}")
 async def recovery_recover(session_id: str) -> dict:
+    # Defense in depth against the same race scan_incomplete's exclude_id closes: the client's
+    # recovery list is a snapshot from whenever it last polled, so a recording that started (or was
+    # still running) between that poll and this click could otherwise slip through.
+    if session_id == _active_session_id():
+        raise HTTPException(
+            400, f"session {session_id} is still recording — nothing to recover yet"
+        )
     try:
         summary = await run_in_threadpool(recovery.recover_session, CAPTURES_ROOT, session_id)
     except FileNotFoundError as e:
@@ -1205,6 +1214,14 @@ async def recovery_discard(session_id: str) -> dict:
     # excludes _discarding ids so the item just vanishes from the recovery list once it finishes.
     if session_id in recovery._discarding:
         return {"discarded": True, "session_id": session_id}  # already in flight — idempotent
+    # Same race scan_incomplete's exclude_id guards against, at the point of action rather than
+    # listing: this is exactly the check that was missing when a live recording got discarded out
+    # from under itself — the rmtree hit an open raw.d1raw and failed silently in the background
+    # while the recording kept running untouched.
+    if session_id == _active_session_id():
+        raise HTTPException(
+            400, f"session {session_id} is still recording — stop it, don't discard it"
+        )
     capture_dir = os.path.join(CAPTURES_ROOT, session_id)
     if not os.path.isdir(capture_dir):
         log.info("recovery_discard: id=%s not found", session_id)
@@ -1338,6 +1355,13 @@ def _busy() -> bool:
     return bool(_session and _session.state in ("recording", "finalizing"))
 
 
+def _active_session_id() -> str | None:
+    """The in-flight session's id, or None. A session mid-recording/finalizing has no summary.json
+    yet — indistinguishable on disk from a genuinely crashed one — so recovery must never treat it
+    as recoverable/discardable. See scan_incomplete's `exclude_id`."""
+    return _session.id if _busy() and _session else None
+
+
 @app.post("/record/start")
 async def record_start(cfg: RecordConfig) -> dict:
     global _session
@@ -1366,12 +1390,21 @@ async def record_start(cfg: RecordConfig) -> dict:
                 cfg.nidaq_channels = chan.to_record_channels(cc, kind=dyno_kind)
             except ValueError as e:
                 raise HTTPException(400, str(e))
+            cfg.extra_channels = chan.to_extra_channels(cc)
+            # Widen the physical list to match: NidaqSource reads one physical channel per
+            # HARDWARE-source name in cfg.extra_channels, in this same order (virtual channels need
+            # no physical channel at all — they're computed, never acquired).
+            cfg.nidaq_channels = cfg.nidaq_channels + [
+                c.physical for c in cfg.extra_channels if c.source == "hardware" and c.physical
+            ]
         if not cfg.dyno_gains:
             g = chan.dyno_gains(cc, kind=dyno_kind)
             if g:
                 cfg.dyno_gains = g
         try:
-            source = NidaqSource(cfg, physical_channels=cfg.nidaq_channels or None)
+            source = NidaqSource(
+                cfg, physical_channels=cfg.nidaq_channels or None, extra_channels=cfg.extra_channels
+            )
         except (ValueError, NidaqUnavailableError) as e:
             raise HTTPException(400, str(e))
         # Per-channel volts→N gains from the amp's (auto-ranged) ranges: N/V = range / analog_fs.
@@ -1656,6 +1689,60 @@ async def delete_capture(cid: str) -> dict:
 async def capture_summary(cid: str) -> JSONResponse:
     with open(_capture_file(cid, "summary.json")) as f:
         return JSONResponse(json.load(f))
+
+
+class CaptureMetadataPatch(BaseModel):
+    """Editable fields on a finalized capture — for correcting metadata that was missing or wrong
+    at record time and only noticed later (a forgotten Sample being the motivating case: without
+    one, Upload is unavailable at cut end with no way back in). All fields optional; only the ones
+    provided are changed. `rpm`/`feed`/`diam`/`sample_rate` have a direct home on RecordConfig;
+    everything else (lookups, machining details, notes) lives in `extra_metadata`, sent as a single
+    object that REPLACES the stored one wholesale — the same full-replacement semantics
+    `/record/start` already uses (extra_metadata: metaObj()), not a per-key deep merge."""
+
+    sample_name: str | None = None
+    rpm: float | None = None
+    feed: float | None = None
+    diam: float | None = None
+    sample_rate: float | None = None
+    extra_metadata: dict[str, Any] | None = None
+
+
+@app.patch("/captures/{cid}/metadata")
+async def patch_capture_metadata(cid: str, patch: CaptureMetadataPatch) -> dict:
+    """Correct a finalized capture's local record after the fact.
+
+    Only summary.json is rewritten — capture.mat and raw.d1raw are archival originals of what was
+    actually recorded and are never touched, matching how drift_comp already treats the raw file as
+    sacrosanct. For a capture that has already been uploaded to Directus, the frontend PATCHes the
+    manufacturing_operations row directly (it already talks to Directus for reads — see
+    CapturesSettings.vue's checkUploaded()) in addition to calling this endpoint, so the local
+    record and the database row are corrected together rather than one drifting from the other.
+    """
+    path = _capture_file(cid, "summary.json")
+    with open(path) as f:
+        summary = json.load(f)
+    cfg = summary.setdefault("config", {})
+
+    changed = patch.model_dump(exclude_unset=True)
+    if "sample_name" in changed:
+        # Kept in step deliberately: finalize.py stamps both from the same RecordConfig.sample_name
+        # at record time, and CapturesSettings.vue's list reads the top-level one.
+        summary["sample_name"] = changed["sample_name"]
+        cfg["sample_name"] = changed["sample_name"]
+    for key in ("rpm", "feed", "diam", "sample_rate"):
+        if key in changed:
+            cfg[key] = changed[key]
+    if "extra_metadata" in changed:
+        cfg["extra_metadata"] = changed["extra_metadata"]
+        summary["metadata"] = changed["extra_metadata"]  # finalize.py's own top-level echo of it
+
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(summary, f, indent=2)
+    os.replace(tmp, path)  # atomic — a reader never sees a half-written summary.json
+    log.info("patch_capture_metadata: id=%s fields=%s", cid, sorted(changed.keys()))
+    return summary
 
 
 @app.get("/captures/{cid}/live_cache.bin")
@@ -2007,8 +2094,33 @@ async def nidaq_put_channels(body: dict) -> dict:
     channels = body.get("channels")
     if not isinstance(channels, list):
         raise HTTPException(400, "channels list required")
+    try:
+        chan.validate_virtual_formulas(channels)
+    except virtual_channels.FormulaError as e:
+        raise HTTPException(400, str(e))
     _save_json(NIDAQ_CHANNELS_PATH, {"channels": channels})
     return {"channels": channels}
+
+
+@app.post("/nidaq/channels/validate-formula")
+async def nidaq_validate_formula(body: dict) -> dict:
+    """Validate a single formula against the CURRENTLY SAVED channel list, without saving anything
+    — what the equation-builder UI calls on every edit for live feedback, well before the operator
+    hits Save. Only hardware channels can ever be referenced (never another virtual one, formulas
+    are flat by design), so which virtual channel is mid-edit is irrelevant here."""
+    formula = str(body.get("formula") or "")
+    try:
+        refs = virtual_channels.referenced_channels(formula)
+    except virtual_channels.FormulaError as e:
+        return {"valid": False, "error": str(e)}
+    known = {*chan.FORCE_ORDER, "Tacho", "Fx", "Fy", "Fz"}
+    known |= {
+        c["name"] for c in _channel_config() if c.get("source") == "hardware" and c.get("name")
+    }
+    unknown = refs - known
+    if unknown:
+        return {"valid": False, "error": f"unknown channel(s): {', '.join(sorted(unknown))}"}
+    return {"valid": True, "references": sorted(refs)}
 
 
 @app.post("/nidaq/channels/autoassign")

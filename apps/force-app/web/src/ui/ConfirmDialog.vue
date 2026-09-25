@@ -3,23 +3,28 @@
 // the login page) can prompt without each page owning dialog markup. See ui/confirm.ts for why
 // this exists rather than window.confirm().
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { confirmState, resolveActive } from './confirm';
+import { confirmState, resolveActive, setPromptValue } from './confirm';
 
 const cancelBtn = ref<HTMLButtonElement | null>(null);
 const confirmBtn = ref<HTMLButtonElement | null>(null);
+const promptInput = ref<HTMLInputElement | null>(null);
 const panel = ref<HTMLElement | null>(null);
 
-function cancel() { resolveActive(false); }
-function accept() { resolveActive(true); }
+const isPrompt = () => confirmState.current?.kind === 'prompt';
+function cancel() { resolveActive(isPrompt() ? null : false); }
+function accept() { resolveActive(isPrompt() ? confirmState.promptValue : true); }
 
 // Focus lands on Cancel for destructive prompts and Confirm for benign ones: a stray Enter or
 // Space on a "disable the high-force alarm" prompt must not arm the dangerous outcome, but making
-// every routine confirmation need a deliberate Tab is friction for no safety gain.
+// every routine confirmation need a deliberate Tab is friction for no safety gain. A prompt always
+// focuses its input, pre-selected — matching window.prompt()'s own behaviour, so typing straight
+// away replaces the default value instead of appending to it.
 watch(
 	() => confirmState.current,
 	async (cur) => {
 		if (!cur) return;
 		await nextTick();
+		if (cur.kind === 'prompt') { promptInput.value?.focus(); promptInput.value?.select(); return; }
 		const danger = cur.tone === 'danger' || cur.tone === 'warning';
 		(danger ? cancelBtn.value : confirmBtn.value)?.focus();
 	},
@@ -32,7 +37,7 @@ function onKeydown(e: KeyboardEvent) {
 	// Keep focus inside the dialog: it is modal, so tabbing to the page behind it would let the
 	// operator interact with controls the prompt is meant to be blocking.
 	if (e.key === 'Tab' && panel.value) {
-		const els = panel.value.querySelectorAll<HTMLElement>('button');
+		const els = panel.value.querySelectorAll<HTMLElement>('button, input');
 		if (!els.length) return;
 		const first = els[0];
 		const last = els[els.length - 1];
@@ -69,15 +74,30 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true));
 					<b id="cd-title">{{ confirmState.current.title }}</b>
 				</header>
 
-				<p id="cd-message" class="cd-message">{{ confirmState.current.message }}</p>
+				<p v-if="confirmState.current.message" id="cd-message" class="cd-message">{{ confirmState.current.message }}</p>
 				<p v-if="confirmState.current.detail" class="cd-detail">{{ confirmState.current.detail }}</p>
 
-				<dl v-if="confirmState.current.stats?.length" class="cd-stats">
+				<dl v-if="confirmState.current.kind === 'confirm' && confirmState.current.stats?.length" class="cd-stats">
 					<div v-for="s in confirmState.current.stats" :key="s.label" class="cd-stat">
 						<dt>{{ s.label }}</dt>
 						<dd>{{ s.value }}</dd>
 					</div>
 				</dl>
+
+				<template v-if="confirmState.current.kind === 'prompt'">
+					<input
+						ref="promptInput"
+						class="cd-input"
+						:class="{ bad: confirmState.promptError }"
+						type="text"
+						data-testid="confirm-input"
+						:placeholder="confirmState.current.placeholder"
+						:value="confirmState.promptValue"
+						@input="setPromptValue(($event.target as HTMLInputElement).value)"
+						@keydown.enter.prevent="accept"
+					/>
+					<p v-if="confirmState.promptError" class="cd-input-err">{{ confirmState.promptError }}</p>
+				</template>
 
 				<div class="cd-actions">
 					<button ref="cancelBtn" class="cd-btn" data-testid="confirm-cancel" @click="cancel">
@@ -115,6 +135,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true));
 .cd-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .cd-stat dt { font-size: 12px; color: var(--text-dim); }
 .cd-stat dd { margin: 0; font-size: 12.5px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.cd-input { padding: 9px 11px; font-size: 13.5px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 9px; outline: none; }
+.cd-input:focus { border-color: var(--accent); }
+.cd-input.bad { border-color: #ef4444; }
+.cd-input-err { margin: -6px 0 0; font-size: 11.5px; color: #ef4444; }
 .cd-actions { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
 .cd-spacer { flex: 1; }
 .cd-btn { padding: 9px 16px; font-size: 13px; font-weight: 600; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 9px; cursor: pointer; }

@@ -648,7 +648,6 @@ signal and it will faithfully report that the middle of the part differs from th
 every cut, forever. Removing the radial trend first is what makes the remaining variation
 attributable to the material rather than to the geometry.
 
-Binned median + MAD rather than a polynomial fit: the trend shape is not known a priori, and
 a median is not dragged around by the very outliers being searched for -- up to a point. A
 macrozone is spatially contiguous, so it can be the *majority* of the points in the bin it
 falls in; median has only a 50% breakdown point, so a single pass lets a large-enough,
@@ -787,7 +786,7 @@ Wires Tasks 1–4 into one analysis pass, and adds the synthetic ground-truth te
   - `read_d1lc(path: str) -> dict` with keys `n, fs, feed, diam, cs_sec, ce_sec, t, fx, fy, fz, rpm, revs`
   - `analyse(cache: dict, x: np.ndarray, y: np.ndarray, *, mount_deg: float = 0.0, samples_per_rev: int = 256, fn_hz: float | None = None, channel: str = "fp") -> tuple[dict[str, np.ndarray], dict]` returning `(columns, metrics)`
 
-`columns` is the D1AN column dict; `metrics` is the JSON-serialisable metrics record. `channel` selects which of the frame-transformed axes drives the pipeline, defaulting to `"fp"` (the unrotated dyno Z axis, matching the app's own FRM colour-axis default) rather than `"fc"`, since Fc/Ff are not a real tool-frame decomposition until a real `mount_deg` exists (see the design spec's Phase 6).
+`columns` is the D1AN column dict; `metrics` is the JSON-serialisable metrics record. `channel` selects which of the frame-transformed axes drives the pipeline, defaulting to `"fp"` (the unrotated dyno Z axis, matching the app's own FRM colour-axis default) rather than `"fc"`, since Fc/Ff are not a real tool-frame decomposition until a real `mount_deg` exists (see the design spec's Phase 6). Phase 1 emits `t`, `rev`, `tsa_resid`, `resid_z`; the statistics columns arrive in Phase 3.
 
 The D1LC reader mirrors `apps/force-app/backend/app/d1lc.py` and `plugins/filter-service/app/d1lc.py`. Those are already documented as byte-identical copies; this is a third, and its docstring must say so.
 
@@ -1057,6 +1056,9 @@ def analyse(
     resid_z = radial_detrend(r, residual)
 
     orders, amp = order_spectrum(sig_ang, samples_per_rev)
+    # Keep only the low orders for the metrics payload — everything diagnostically
+    # interesting (insert passing, its harmonics, and the non-integer chatter orders between
+    # them) lives below ~16x shaft speed, and the full spectrum is far too large for jsonb.
     keep = orders <= 16.0
 
     span_sec = float(t_in[-1] - t_in[0]) if t_in.size > 1 else 0.0
@@ -1078,6 +1080,8 @@ def analyse(
         "resid_z_p99": float(np.percentile(np.abs(resid_z), 99)) if n else 0.0,
     }
     if fn_hz is not None and fn_hz > 0:
+        # Kistler specifies the valid quantitative measurement range as fn/5. Above it the
+        # dynamometer amplifies rather than measures, so that band is event-detection only.
         metrics["dyno_fn_hz"] = float(fn_hz)
         metrics["quantitative_limit_hz"] = float(fn_hz) / 5.0
 
@@ -1093,7 +1097,7 @@ def analyse(
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `python -m pytest tests/scripts/diag/ -v`
-Expected: all pass
+Expected: all pass (4 + 5 + 6 + 5 + 4 = 24)
 
 - [ ] **Step 6: Lint and commit**
 
@@ -1118,14 +1122,19 @@ git commit -m "feat(diag): add D1LC reader and phase-1 analysis pipeline"
 
 ```sql
 -- migrate:up
+-- Diagnostics Workbench: a third Potree octree variant per operation, carrying derived
+-- analysis attributes (TSA residual, radial-detrended z-score, and later the spatial
+-- statistics) as float32 LAS extra dims alongside the force axes. Built by the diag handler
+-- in scripts/force_orchestrator.py and published under ./infra/octrees/diag/<diag_path>/.
+-- Request/poll mirrors the octree and grid-octree patterns exactly.
 ALTER TABLE machining_force_analysis
-    ADD COLUMN IF NOT EXISTS diag_status        text,
-    ADD COLUMN IF NOT EXISTS diag_path          text,
-    ADD COLUMN IF NOT EXISTS diag_points        bigint,
+    ADD COLUMN IF NOT EXISTS diag_status        text,        -- null | pending | processing | done | error
+    ADD COLUMN IF NOT EXISTS diag_path          text,        -- served subdir under /octrees/diag/ (usually the operation_id)
+    ADD COLUMN IF NOT EXISTS diag_points        bigint,      -- points in the diag octree (informational)
     ADD COLUMN IF NOT EXISTS diag_error         text,
     ADD COLUMN IF NOT EXISTS diag_requested_at  timestamptz,
-    ADD COLUMN IF NOT EXISTS diag_version       integer,
-    ADD COLUMN IF NOT EXISTS diag_metrics       jsonb;
+    ADD COLUMN IF NOT EXISTS diag_version       integer,     -- analysis version; bump to invalidate and requeue
+    ADD COLUMN IF NOT EXISTS diag_metrics       jsonb;       -- order spectrum, TSA signature, validity limits, provenance
 
 -- migrate:down
 ALTER TABLE machining_force_analysis
@@ -1138,13 +1147,16 @@ ALTER TABLE machining_force_analysis
     DROP COLUMN IF EXISTS diag_metrics;
 ```
 
-- [ ] **Step 2: Apply and verify**
+- [ ] **Step 2: Apply and verify up**
 
-Run: `dbmate up`, then check `\d machining_force_analysis` lists all seven `diag_*` columns.
+Run: `dbmate up`
+Then: `psql "$DATABASE_URL" -c "\d machining_force_analysis" | grep diag_`
+Expected: all seven `diag_*` columns listed.
 
 - [ ] **Step 3: Verify down is reversible**
 
-Run: `dbmate down && dbmate up` — both must succeed.
+Run: `dbmate down && dbmate up`
+Expected: both succeed with no error; the grep above still lists seven columns.
 
 - [ ] **Step 4: Commit**
 
@@ -1164,15 +1176,24 @@ git commit -m "feat(diag): add diag_* columns to machining_force_analysis"
 - Consumes: `diag.pipeline.{analyse, read_d1lc}`, `diag.d1an.write_d1an`, and the existing `_read_octree_bin`, `_patch_octree_climits`, `mlq`, `unc_for`, `_ml_literal`, `OCTREE_DIR`, `MATLAB_SRC`
 - Produces: `claim_diag(conn, limit=1)`, `process_diag_row(conn, row, exe, timeout, matlab_opts, potree_exe) -> str`, `handle_diags(conn, exe) -> int`
 
-`DIAG_CACHE_POINTS = 5_000_000` — the analysis needs its own high-resolution cache, not the dashboard's 250 000-point one.
+`process_diag_row` invokes `process_force.m` once with **both** `octree_out` (for the spiral coordinates) and a raised `live_cache_points` (for the analysis input), so a single MATLAB launch produces everything the pass needs.
 
-- [ ] **Step 1: Add constants and the claim function**
+`DIAG_CACHE_POINTS = 5_000_000` — the analysis needs its own high-resolution cache, not the dashboard's 250 000-point one. This matches `process_force.m:43`'s own default and `_octree_threshold`'s fallback.
+
+- [ ] **Step 1: Add the module constants and claim function**
+
+Insert after `OCTREE_DIR` (near line 86):
 
 ```python
+# Diagnostics Workbench: the analysis needs a far denser live cache than the dashboard's
+# (the orchestrator sets live_cache_points=250000 for that). 5M matches process_force.m's own
+# default and _octree_threshold's fallback, and is the WorkingSet floor the browser expects.
 DIAG_CACHE_POINTS = 5_000_000
 DIAG_VERSION = 1
 DIAG_SAMPLES_PER_REV = 256
 ```
+
+Insert beside `claim_octree` (near line 626):
 
 ```python
 def claim_diag(conn, limit: int = 1):
@@ -1196,6 +1217,8 @@ def claim_diag(conn, limit: int = 1):
 ```
 
 - [ ] **Step 2: Add the row processor**
+
+Insert after `process_octree_row`:
 
 ```python
 def process_diag_row(
@@ -1258,18 +1281,22 @@ def process_diag_row(
         n = columns["t"].size
         write_d1an(str(Path(outdir) / "attrs.d1an"), columns)
 
+        # The analysis grid is shorter than the cloud (TSA truncates to whole revolutions and
+        # resampling moves onto an angular grid), so re-sample the spatial coordinates onto
+        # the same grid rather than assuming a 1:1 index match.
         revs = np.asarray(cache["revs"], dtype=np.float64)
         _, xa = angular_resample(revs, np.asarray(x, np.float64), DIAG_SAMPLES_PER_REV)
         _, ya = angular_resample(revs, np.asarray(y, np.float64), DIAG_SAMPLES_PER_REV)
-        _, fza = angular_resample(
-            revs, np.asarray(fz, np.float64), DIAG_SAMPLES_PER_REV
-        )
+        _, fza = angular_resample(revs, np.asarray(fz, np.float64), DIAG_SAMPLES_PER_REV)
         xa, ya, fza = xa[:n], ya[:n], fza[:n]
 
         las_path = str(Path(outdir) / "diag.las")
         h = laspy.LasHeader(point_format=3)
         h.offsets = [float(xa.min()), float(ya.min()), 0.0]
         h.scales = [0.001, 0.001, 0.001]
+        # float32 extra dims, never int16: PotreeConverter ignores extra-dim scale/offset and
+        # stores the raw codes, so an int16-packed attribute reaches the viewer as codes
+        # rather than physical values. This was tried for the grid octree and reverted.
         for nm in columns:
             h.add_extra_dim(laspy.ExtraBytesParams(name=nm, type=np.float32))
         las = laspy.LasData(h)
@@ -1330,6 +1357,8 @@ def process_diag_row(
 
 - [ ] **Step 3: Add the queue handler**
 
+Insert after `handle_octrees`:
+
 ```python
 def handle_diags(conn, exe: str) -> int:
     """Build diagnostics octrees for any pending requests. Needs PotreeConverter + laspy +
@@ -1347,6 +1376,8 @@ def handle_diags(conn, exe: str) -> int:
     rows = claim_diag(conn, limit=1)
     done = 0
     for row in rows:
+        # process_diag_row returns "done" or "error" — both truthy, so compare explicitly
+        # or an errored row would be counted as a success and mask a broken queue.
         if (
             process_diag_row(conn, row, exe, 3600, load_sampling_opts(conn), potree_exe)
             == "done"
@@ -1357,13 +1388,30 @@ def handle_diags(conn, exe: str) -> int:
 
 - [ ] **Step 4: Wire into the queue and daemon loop**
 
-Add a `handle_diags(conn, exe)` call immediately after every `handle_octrees(` call site (in `run_queue` and the daemon loop).
+Find every call site of `handle_octrees(` (in `run_queue` and the daemon loop) and add a `handle_diags(conn, exe)` call immediately after each, so diagnostics drain on the same passes as octrees and grids.
 
-- [ ] **Step 5: Verify the module still imports and lints, smoke test against one real operation**
+- [ ] **Step 5: Verify the module still imports and lints**
 
-Run: `python -c "import sys; sys.path.insert(0,'scripts'); import force_orchestrator"`, then `ruff check scripts/force_orchestrator.py scripts/diag`, then set one `diag_status='pending'` row and `python scripts/force_orchestrator.py --run -v`, and confirm `diag_status='done'` with a non-null `diag_points`.
+Run: `python -c "import sys; sys.path.insert(0,'scripts'); import force_orchestrator"`
+Expected: no output, exit 0
 
-- [ ] **Step 6: Commit**
+Run: `ruff check scripts/force_orchestrator.py scripts/diag`
+Expected: no findings
+
+- [ ] **Step 6: End-to-end smoke test against one real operation**
+
+```bash
+psql "$DATABASE_URL" -c "UPDATE machining_force_analysis SET diag_status='pending', diag_requested_at=now() WHERE archive_path IS NOT NULL AND status='done' LIMIT 1;"
+python scripts/force_orchestrator.py --run -v
+psql "$DATABASE_URL" -c "SELECT diag_status, diag_points, diag_error FROM machining_force_analysis WHERE diag_status IS NOT NULL;"
+ls infra/octrees/diag/
+```
+
+Expected: `diag_status = 'done'`, a non-null `diag_points`, a null `diag_error`, and `metadata.json` / `hierarchy.bin` / `octree.bin` present under `infra/octrees/diag/<op_id>/`.
+
+If `diag_error` is set, read it — it is the actual exception text, truncated to 2000 chars.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add scripts/force_orchestrator.py

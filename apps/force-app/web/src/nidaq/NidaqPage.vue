@@ -5,6 +5,8 @@
 // captures. Simulated on dev machines, real hardware on the rig.
 import { onMounted, ref, computed } from 'vue';
 import { nidaqApi, ROLE_COLORS, type Devices, type Channel, type CatalogCard, type Port, type Module } from './nidaqApi';
+import { promptAction } from '../ui/confirm';
+import VirtualChannelBuilder from './VirtualChannelBuilder.vue';
 
 const devices = ref<Devices | null>(null);
 const channels = ref<Channel[]>([]);
@@ -66,23 +68,44 @@ function assignTo(name: string) {
 		c.name === name ? { ...c, physical, source: 'hardware' } : c.physical === physical ? { ...c, physical: null } : c);
 	pop.value = null; save();
 }
-function newAux() {
+async function newAux() {
 	const physical = pop.value!.physical;
-	const name = window.prompt('Name for the new Aux channel (e.g. Temp, AE):', 'Aux');
+	pop.value = null; // close the port popover immediately — the name prompt is its own dialog
+	// window.prompt() is not implemented by Electron's BrowserWindow at all (confirmed: it throws
+	// "prompt() is not supported." — unlike alert()/confirm(), which Electron does implement via a
+	// native dialog). This button previously called it directly with no try/catch, so clicking it
+	// threw immediately and silently: no dialog appeared, no channel was created, no error shown.
+	const name = await promptAction({
+		title: 'New Aux channel',
+		message: `Bound to ${physical}.`,
+		defaultValue: 'Aux',
+		confirmLabel: 'Create',
+	});
 	if (!name) return;
 	const cleaned = channels.value.map((c) => (c.physical === physical ? { ...c, physical: null } : c));
 	cleaned.push({ name, role: 'Aux', physical, sensitivity_pc_per_n: null, gain_n_per_v: null, source: 'hardware', color: ROLE_COLORS.Aux });
-	channels.value = cleaned; pop.value = null; save();
+	channels.value = cleaned; save();
 }
 function unassignPop() {
 	const physical = pop.value!.physical;
 	channels.value = channels.value.map((c) => (c.physical === physical ? { ...c, physical: null } : c));
 	pop.value = null; save();
 }
+// The equation-builder dialog is shared for creating a new virtual channel and editing an
+// existing one. `null` name = not editing anything real yet — Cancel just closes it, nothing is
+// added to `channels` until Save.
+const editingVirtual = ref<Channel | null>(null);
 function addVirtual() {
-	const name = window.prompt('Name for the virtual channel:', 'Virtual 1');
-	if (!name) return;
-	channels.value = [...channels.value, { name, role: 'Aux', physical: null, sensitivity_pc_per_n: null, gain_n_per_v: null, source: 'virtual', color: ROLE_COLORS.Virtual }];
+	editingVirtual.value = { name: '', role: 'Aux', physical: null, sensitivity_pc_per_n: null, gain_n_per_v: null, source: 'virtual', formula: '', color: ROLE_COLORS.Virtual };
+}
+function editVirtual(c: Channel) { editingVirtual.value = c; }
+function saveVirtual(name: string, formula: string) {
+	const editingName = editingVirtual.value!.name;
+	const entry: Channel = { name, role: 'Aux', physical: null, sensitivity_pc_per_n: null, gain_n_per_v: null, source: 'virtual', formula, color: ROLE_COLORS.Virtual };
+	channels.value = editingName
+		? channels.value.map((c) => (c.name === editingName ? entry : c))
+		: [...channels.value, entry];
+	editingVirtual.value = null;
 	save();
 }
 function removeChannel(name: string) { channels.value = channels.value.filter((c) => c.name !== name); save(); }
@@ -174,18 +197,39 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 						</template>
 					</div>
 				</div>
+
+				<!-- Virtual channels get their own "chassis" — same slot/card mental model as the real
+					 hardware above, since a virtual channel is conceptually the same kind of thing (a
+					 named, colour-coded input to the recorder) even though it has no physical port. -->
+				<div class="chassis virtual-chassis">
+					<div class="chassis-top"><b>Virtual Channels</b><span class="sub">computed, not acquired</span></div>
+					<div class="slots">
+						<div v-for="c in channels.filter((c) => c.source === 'virtual')" :key="c.name" class="mod virtual-mod" @click.stop="editVirtual(c)">
+							<div class="mod-head">
+								<span class="slotno" :style="{ color: c.color }">{{ c.name }}</span>
+								<button class="rm" title="Remove" @click.stop="removeChannel(c.name)"><span class="material-symbols-rounded">close</span></button>
+							</div>
+							<div class="formula-preview">{{ c.formula || '—' }}</div>
+						</div>
+						<div class="mod empty" @click.stop="addVirtual">
+							<span class="slotno">NEW</span>
+							<div class="plus-wrap"><span class="plus">+</span></div>
+						</div>
+					</div>
+				</div>
+
 				<p class="hint">Click a port to assign it to a channel. Click <b>+</b> on an empty slot to add a card.</p>
 			</div>
 
 			<!-- Channel model list -->
 			<aside class="channels">
 				<div class="ch-head"><b>Channels</b><button class="btn tiny" @click="addVirtual">+ Virtual</button></div>
-				<div v-for="c in channels" :key="c.name" class="chrow">
+				<div v-for="c in channels" :key="c.name" class="chrow" :class="{ clickable: c.source === 'virtual' }" @click="c.source === 'virtual' && editVirtual(c)">
 					<span class="dot" :style="{ background: c.color }"></span>
-					<span class="cname">{{ c.name }}</span>
+					<span class="cname" :title="c.name">{{ c.name }}</span>
 					<span class="crole">{{ c.role }}</span>
-					<span class="cbind" :class="{ unbound: !c.physical }">{{ c.physical || (c.source === 'virtual' ? 'virtual' : 'unbound') }}</span>
-					<button class="rm" @click="removeChannel(c.name)"><span class="material-symbols-rounded">close</span></button>
+					<span class="cbind" :class="{ unbound: !c.physical }">{{ c.physical || (c.source === 'virtual' ? c.formula || 'virtual' : 'unbound') }}</span>
+					<button class="rm" @click.stop="removeChannel(c.name)"><span class="material-symbols-rounded">close</span></button>
 				</div>
 				<p v-if="!channels.length" class="hint">No channels — hit Auto-assign force.</p>
 			</aside>
@@ -216,6 +260,15 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 				</div>
 			</div>
 		</div>
+
+		<VirtualChannelBuilder
+			v-if="editingVirtual"
+			:channels="channels"
+			:initial-name="editingVirtual.name || undefined"
+			:initial-formula="editingVirtual.formula || undefined"
+			@save="saveVirtual"
+			@cancel="editingVirtual = null"
+		/>
 	</div>
 </template>
 
@@ -250,6 +303,14 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .mod .rm { margin-left: auto; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; color: var(--text-faint); cursor: pointer; border-radius: 4px; }
 .mod .rm:hover { color: var(--danger); background: rgba(239,68,68,.1); }
 .mod .rm .material-symbols-rounded { font-size: 13px; }
+/* Virtual channels have no ports to list — a real chassis module's tall portrait shape (above)
+   would just be mostly empty space for a name + a one-line formula. */
+.virtual-chassis .slots { flex-wrap: wrap; }
+.virtual-mod { flex: 0 0 150px; min-height: 0; cursor: pointer; gap: 6px; }
+.virtual-mod:hover { border-color: var(--accent); }
+.virtual-mod .slotno { font-size: 11px; font-weight: 700; font-family: var(--mono); letter-spacing: 0; }
+.formula-preview { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); overflow-wrap: break-word; }
+.virtual-chassis .mod.empty { flex: 0 0 90px; min-height: 68px; }
 .model { font-size: 12px; font-weight: 700; margin: 1px 0 1px; display: flex; align-items: center; gap: 5px; }
 .iepe { font-size: 8px; font-weight: 700; padding: 1px 4px; border-radius: 4px; background: rgba(96,165,250,.16); color: #60a5fa; }
 .conn-note { font-size: 9px; color: var(--text-dim); margin-bottom: 8px; }
@@ -278,8 +339,12 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .ch-head { display: flex; align-items: center; margin-bottom: 8px; }
 .ch-head b { flex: 1; }
 .chrow { display: flex; align-items: center; gap: 7px; padding: 6px 4px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.chrow.clickable { cursor: pointer; }
+.chrow.clickable:hover { background: var(--surface); }
 .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
-.cname { font-weight: 700; width: 46px; }
+/* Hardware channel names are always short (Fx1, Tacho, ...) but a virtual channel's name is
+   user-typed and can run longer — clip it instead of letting it collide with .crole. */
+.cname { font-weight: 700; flex: 0 1 auto; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crole { color: var(--text-dim); font-size: 10.5px; width: 38px; }
 .cbind { flex: 1; font-family: var(--mono); font-size: 10px; color: var(--text-dim); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cbind.unbound { color: var(--text-faint); font-style: italic; }

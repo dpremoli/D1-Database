@@ -8,6 +8,7 @@ import { buildSeriesEnvelope, parseCache, type Cache } from '@d1/force-plotting'
 import { searchSamples, searchOperators, searchEquipment, searchTools, searchInserts, searchEdges, getMethods, resolveMachiningMethodId, type LookupItem } from './directusLookups';
 import { logRun, syncStatus } from './directusSync';
 import { alarmController } from './alarms';
+import { recordingPrefs } from './recordingPrefs';
 import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
 import { confirmAction } from '../ui/confirm';
@@ -76,8 +77,6 @@ export function createWorkspace() {
 	const cfg = reactive({
 		rpm: 1200, feed: 0.05, diam: 80, inner_diam: 0,
 		sample_rate: 25000, duration_sec: 8, ppr: 1,
-		drift_comp: false,   // optional drift compensation on the saved .mat/live_cache (raw stays raw)
-		frm_from_cut: false, // when true, live FRM waits for cut detection — off by default for immediate feedback
 	});
 	const meta = reactive<Record<string, string>>({
 		sample_name: 'SIM-CUT-001', sample_code: '', operation: '', op_type: '',
@@ -172,8 +171,10 @@ export function createWorkspace() {
 	// the amp is enough — the next nidaq run re-derives its N/V gains from the amp's ranges. Range
 	// changes only ever happen here, between cuts, never mid-cut (which the charge amp can't do
 	// cleanly). Clipped channels over-shoot upward and converge back down over the next pass or two.
-	const converge = reactive<{ enabled: boolean; busy: boolean; status: string | null; recs: AutoRangeRec[] | null }>(
-		{ enabled: false, busy: false, status: null, recs: null },
+	// `enabled` lives on recordingPrefs now (persisted, shared with Settings > Recording) — this
+	// only keeps the session-transient state of an actual converge run.
+	const converge = reactive<{ busy: boolean; status: string | null; recs: AutoRangeRec[] | null }>(
+		{ busy: false, status: null, recs: null },
 	);
 	async function convergeAfterCut() {
 		const cr = st.summary?.channels_ranging;
@@ -192,7 +193,7 @@ export function createWorkspace() {
 		} finally { converge.busy = false; }
 	}
 	// Fire once per completed cut (covers both manual stop and self-terminating duration runs).
-	watch(() => st.state, (s, prev) => { if (s === 'done' && prev !== 'done' && converge.enabled) convergeAfterCut(); });
+	watch(() => st.state, (s, prev) => { if (s === 'done' && prev !== 'done' && recordingPrefs.convergeEnabled) convergeAfterCut(); });
 
 	function onSelectSample(it: LookupItem) {
 		link.sampleLabel = it.label;
@@ -214,9 +215,33 @@ export function createWorkspace() {
 	const isDone = computed(() => st.state === 'done');
 	const locked = computed(() => isRecording.value || isFinalizing.value);
 
-	function metaObj(): Record<string, string> {
-		const o: Record<string, string> = {};
+	// The resolved Sample/Operator/Machine/Tool/Insert/Edge picks (`link.*`) and the folded
+	// machining-details section (`machining.*`) used to reach Directus ONLY via buildRunPayload()'s
+	// top-level columns, written at upload time — never persisted into extra_metadata at all. A
+	// capture that wasn't uploaded immediately (saved locally, or a sample was never picked so
+	// Upload wasn't even available) lost every resolved ID the moment the session ended: only the
+	// free-text labels in `meta` survived to summary.json. `link_`-prefixed to stay unambiguous
+	// against `meta.insert`/`meta.edge_id`, which are older free-text fields with a different
+	// meaning. Found and fixed while building the capture metadata editor, which needs these to
+	// pre-fill a correction with real lookups instead of starting from a blank search every time.
+	function metaObj(): Record<string, string | boolean> {
+		const o: Record<string, string | boolean> = {};
 		for (const [k, v] of Object.entries(meta)) if (v && v.trim()) o[k] = v.trim();
+		const links: [string, string][] = [
+			['link_sample_id', link.sampleId], ['link_sample_label', link.sampleLabel],
+			['link_operator_id', link.operatorId], ['link_operator_label', link.operatorLabel],
+			['link_equipment_id', link.equipmentId], ['link_equipment_label', link.equipmentLabel],
+			['link_insert_id', link.insertId], ['link_insert_label', link.insertLabel],
+			['link_edge_id', link.edgeId], ['link_edge_label', link.edgeLabel],
+			['link_tool_id', link.toolId], ['link_tool_label', link.toolLabel],
+		];
+		for (const [k, v] of links) if (v) o[k] = v;
+		for (const k of ['axial_doc', 'radial_doc', 'cutting_length', 'coolant_pressure', 'operation_sequence', 'chips_ref'] as const) {
+			const v = machining[k];
+			if (v && v.trim()) o[k] = v.trim();
+		}
+		o.new_edge = machining.new_edge;
+		o.chips_collected = machining.chips_collected;
 		return o;
 	}
 
@@ -288,6 +313,25 @@ export function createWorkspace() {
 		return true;
 	}
 
+	// The toggles that used to live directly on `cfg` — now sourced from recordingPrefs
+	// (Settings > Recording) so a value set there actually reaches the next recording.
+	//
+	// `sample_name` belongs here too, even though it isn't a recordingPrefs field: RecordConfig has
+	// its own top-level `sample_name` (Pydantic default "SIM-CUT"), completely separate from
+	// `extra_metadata.sample_name`, and neither client.start() call ever sent it — every REAL
+	// recording silently archived as "SIM-CUT" in summary.json/capture.mat regardless of which
+	// sample was actually picked, with the true name buried one level down in extra_metadata. Found
+	// while building the capture metadata editor, which needs a single correct source of truth for
+	// this field to correct.
+	function recordingPrefsPayload() {
+		return {
+			frm_from_cut: recordingPrefs.frmFromCut,
+			drift_comp: recordingPrefs.driftComp,
+			cut_detect_force: recordingPrefs.cutDetectForce,
+			sample_name: meta.sample_name || undefined,
+		};
+	}
+
 	async function start() {
 		if (busy.value) return;
 		if (!(await checkAlarmsBeforeStart())) return;
@@ -307,9 +351,9 @@ export function createWorkspace() {
 					await labamp.setMode('MEASURE');
 				} catch { /* amp unreachable — proceed anyway, gains were set at last range */ }
 				const chans = nidaqChannels.value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
-				await client.start({ ...cfg, source: 'nidaq', nidaq_channels: chans, axis: plot.frmAxis, extra_metadata: metaObj() } as any);
+				await client.start({ ...cfg, ...recordingPrefsPayload(), source: 'nidaq', nidaq_channels: chans, axis: plot.frmAxis, extra_metadata: metaObj() } as any);
 			} else {
-				await client.start({ ...cfg, source: 'sim', axis: plot.frmAxis, extra_metadata: metaObj() } as any);
+				await client.start({ ...cfg, ...recordingPrefsPayload(), source: 'sim', axis: plot.frmAxis, extra_metadata: metaObj() } as any);
 			}
 		} catch (e: any) {
 			const m = e?.message || 'failed to start';
@@ -720,6 +764,9 @@ export function createWorkspace() {
 		alarms,
 		// converging between-cuts auto-range
 		converge, convergeAfterCut,
+		// Recording-behaviour toggles (Detect cut start / Drift compensation / Converging auto-range)
+		// and the cut-detect threshold — persisted, shared with Settings > Recording.
+		recordingPrefs,
 	};
 }
 
