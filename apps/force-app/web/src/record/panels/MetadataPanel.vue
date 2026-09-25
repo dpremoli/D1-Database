@@ -82,7 +82,7 @@ const textFields: { key: string; label: string }[] = [
 .cutid { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 8px 11px; border-radius: 9px;
 	background: rgba(56,189,248,0.09); border: 1px solid rgba(56,189,248,0.35); }
 .cutid.empty { background: rgba(0,0,0,0.2); border-color: var(--border); }
-.cutid-lab { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
+.cutid-lab { font-size: 9.5px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-dim); }
 .cutid-val { flex: 1; min-width: 0; font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent);
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cutid.empty .cutid-val { color: var(--text-dim); font-weight: 400; font-family: inherit; font-size: 12px; }

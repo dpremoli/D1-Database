@@ -146,6 +146,25 @@ describe('axisAutoLimits', () => {
 		const [lo, hi] = axisAutoLimits(c, 'Fz');
 		expect(hi).toBeGreaterThan(lo);
 	});
+
+	// NaN sorts to the END of a Float32Array, so the degenerate-range fallback could pick one up
+	// and then propagate it through `hi = lo + 1`. These limits go straight into shader uniforms
+	// and the colour-scale editor's axis, where one NaN bound blanks the render.
+	it('never returns NaN for a channel carrying NaN samples', () => {
+		const Fz = Float32Array.from({ length: 100 }, (_, i) => (i % 2 ? NaN : 7));
+		const [lo, hi] = axisAutoLimits(makeCache({ N: 100, Fz }), 'Fz');
+		expect(Number.isFinite(lo)).toBe(true);
+		expect(Number.isFinite(hi)).toBe(true);
+		expect(hi).toBeGreaterThan(lo);
+	});
+
+	it('never returns NaN for an all-NaN channel', () => {
+		const Fz = Float32Array.from({ length: 50 }, () => NaN);
+		const [lo, hi] = axisAutoLimits(makeCache({ N: 50, Fz }), 'Fz');
+		expect(Number.isFinite(lo)).toBe(true);
+		expect(Number.isFinite(hi)).toBe(true);
+		expect(hi).toBeGreaterThan(lo);
+	});
 });
 
 describe('COLORMAPS', () => {

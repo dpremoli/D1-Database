@@ -53,6 +53,11 @@ export function axisAutoLimits(c: Cache, channel: CloudChannel): [number, number
 	const pc = (q: number) => s[Math.min(s.length - 1, Math.max(0, Math.round((q / 100) * (s.length - 1))))];
 	let lo = pc(1), hi = pc(99);
 	if (!(hi > lo)) { lo = s[0]; hi = s[s.length - 1]; if (!(hi > lo)) hi = lo + 1; }
+	// A channel carrying NaN sorts those to the END, so the fallback above can pick one up and
+	// then `hi = lo + 1` propagates it. Callers feed this straight into shader uniforms and into
+	// the colour-scale editor's axis, where a single NaN bound silently blanks the whole render
+	// (NaN fails every comparison), so never hand one back.
+	if (!Number.isFinite(lo) || !Number.isFinite(hi) || !(hi > lo)) return [0, 1];
 	return [lo, hi];
 }
 
@@ -208,6 +213,37 @@ function inferno(x: number): [number, number, number] {
 }
 function grayscale(x: number): [number, number, number] { const v = clamp01(x); return [v, v, v]; }
 
+// CloudCompare's own scalar-field ramps, added for the colour-scale editor port. BGYR is
+// CloudCompare's default scale and the one the port's plan names explicitly; BWR is its diverging
+// scale, which is what the signed-force cases this feature is built around (symmetrical about
+// zero, symmetric log) actually want -- a sequential ramp buries the sign change those modes exist
+// to expose, since +50 N and -50 N land at opposite ends of the ramp with no visual "zero".
+const BGYR_ANCHORS: [number, number, number][] = [
+	[0, 0, 1],   // blue
+	[0, 1, 0],   // green
+	[1, 1, 0],   // yellow
+	[1, 0, 0],   // red
+];
+const BWR_ANCHORS: [number, number, number][] = [
+	[0, 0, 1],   // blue
+	[1, 1, 1],   // white (lands on zero under a symmetrical range)
+	[1, 0, 0],   // red
+];
+function bgyr(x: number): [number, number, number] { return lutLerp(BGYR_ANCHORS, x); }
+function bwr(x: number): [number, number, number] { return lutLerp(BWR_ANCHORS, x); }
+
 export const COLORMAPS: Record<string, (x: number) => [number, number, number]> = {
-	viridis, inferno, grayscale,
+	viridis, inferno, grayscale, bgyr, bwr,
 };
+
+// Display names for the keys above. Keys stay short and stable (they're persisted in
+// workspace.plot.colormap and passed in the live pop-out's querystring); this is purely what a
+// picker shows, so every consumer spells them the same way.
+export const COLORMAP_LABELS: Record<string, string> = {
+	viridis: 'Viridis',
+	inferno: 'Inferno',
+	grayscale: 'Greyscale',
+	bgyr: 'Blue → Green → Yellow → Red',
+	bwr: 'Blue → White → Red',
+};
+export function colormapLabel(key: string): string { return COLORMAP_LABELS[key] ?? key; }

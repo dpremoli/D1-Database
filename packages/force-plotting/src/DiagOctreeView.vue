@@ -18,7 +18,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Potree, type PointCloudOctree } from 'potree-core';
-import { COLORMAPS } from './liveCloud';
+import { buildScaleLUT, defaultScale, OPEN_DISP, type ColorScale } from './colorScale';
 import { CLUSTER_PALETTE } from './clusterPalette';
 import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
@@ -29,10 +29,8 @@ import type { ViewportResult } from './diagViewport';
 const props = defineProps<{
 	octreePath: string;                       // served subdir: /octrees/diag/<octreePath>/
 	channel: 'tsaResid' | 'residZ';
-	colormap: string;
+	colorScale: ColorScale;
 	pointSize: number;
-	cmin?: number | null;
-	cmax?: number | null;
 	totalPoints?: number;                     // octree's full point count -> sizes the LOD budget
 	minNodePx?: number;                       // Potree LOD cutoff (settings; default 1)
 	budgetCap?: number;                       // Potree point-budget hard cap (settings; default 25M)
@@ -90,14 +88,11 @@ const ATTR_NAME: Record<string, string> = { tsaResid: 'tsa_resid', residZ: 'resi
 const CHANNEL_IDX: Record<string, number> = { tsaResid: 0, residZ: 1 };
 const SEL_KIND_IDX: Record<string, number> = { time: 1, attribute: 2, lasso: 3 };
 
-function gradientTexture(name: string): THREE.DataTexture {
-	const cm = COLORMAPS[name] || COLORMAPS.viridis;
-	const N = 256, data = new Uint8Array(N * 4);
-	for (let i = 0; i < N; i++) {
-		const [r, g, b] = cm(i / (N - 1));
-		data[i * 4] = r * 255; data[i * 4 + 1] = g * 255; data[i * 4 + 2] = b * 255; data[i * 4 + 3] = 255;
-	}
-	const t = new THREE.DataTexture(data, N, 1, THREE.RGBAFormat);
+// Shared with every other FRM renderer via colorScale.ts's buildScaleLUT (was its own hand-rolled
+// 256-sample loop, a near-duplicate of FrmOctree.vue's and DiagScatter.vue's).
+function lutTexture(scale: ColorScale): THREE.DataTexture {
+	const data = buildScaleLUT(scale, 256);
+	const t = new THREE.DataTexture(data, 256, 1, THREE.RGBAFormat);
 	t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.needsUpdate = true;
 	return t;
 }
@@ -112,10 +107,15 @@ function gradientTexture(name: string): THREE.DataTexture {
 // complexity deferred to a later pass -- passing one here has no visible effect on this view
 // (it still drives Panel A / the Inspector via the JS-side matches()/computeStats()).
 function makeMaterial(): THREE.ShaderMaterial {
+	const s = props.colorScale;
 	const m = new THREE.ShaderMaterial({
 		uniforms: {
-			uGradient: { value: gradientTexture(props.colormap) },
-			uRange: { value: new THREE.Vector2(0, 1) },
+			uGradient: { value: lutTexture(s) },
+			uRange: { value: new THREE.Vector2(s.satMin, s.satMax) },
+			// Displayed-range filter, separate from uRange (saturation/colour): out-of-range points
+			// are greyed (uGreyOOR>0.5) or discarded -- independent of the selection-dim path below.
+			uDisp: { value: new THREE.Vector2(s.dispMin, s.dispMax) },
+			uGreyOOR: { value: s.greyOutOfRange ? 1 : 0 },
 			uChannel: { value: CHANNEL_IDX[props.channel] ?? 1 },
 			uSize: { value: props.pointSize || 1.5 },
 			uSelKind: { value: 0 },                          // 0=none, 1=time, 2=attribute, 3=lasso
@@ -132,6 +132,7 @@ function makeMaterial(): THREE.ShaderMaterial {
 			uniform vec2 uSelAttrRange;
 			uniform float uSelAttrChannel;
 			varying float vT;
+			varying float vRaw;
 			varying float vSelected;
 			float pick(float i) {
 				if (i < 0.5) return tsa_resid;
@@ -139,6 +140,7 @@ function makeMaterial(): THREE.ShaderMaterial {
 			}
 			void main() {
 				float v = pick(uChannel);
+				vRaw = v;
 				vT = clamp((v - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
 				vSelected = 1.0;
 				if (uSelKind > 0.5 && uSelKind < 1.5) {
@@ -152,12 +154,16 @@ function makeMaterial(): THREE.ShaderMaterial {
 			}`,
 		fragmentShader: `
 			precision mediump float;
-			uniform sampler2D uGradient; varying float vT; varying float vSelected;
+			uniform sampler2D uGradient; uniform vec2 uDisp; uniform float uGreyOOR;
+			varying float vT; varying float vRaw; varying float vSelected;
 			void main() {
 				vec2 d = gl_PointCoord - vec2(0.5); if (dot(d, d) > 0.25) discard;
-				vec3 c = texture2D(uGradient, vec2(vT, 0.5)).rgb;
+				bool outOfDisplay = (vRaw < uDisp.x || vRaw > uDisp.y);
+				if (outOfDisplay && uGreyOOR < 0.5) discard;
+				vec3 c = outOfDisplay ? vec3(0.5) : texture2D(uGradient, vec2(vT, 0.5)).rgb;
 				// Unselected points stay visible but muted -- an empty or wrong selection must
-				// never read as "the map failed to load".
+				// never read as "the map failed to load". Orthogonal to the displayed-range grey
+				// above -- a point can be both greyed (out of range) and dimmed (unselected).
 				float a = mix(0.15, 1.0, vSelected);
 				gl_FragColor = vec4(c, a);
 			}`,
@@ -184,16 +190,24 @@ function disposePco() {
 	pco = null;
 }
 
-let appliedLo = 0, appliedHi = 1;   // the colour range currently applied (for the figure export)
+// The colour range currently applied (for the figure export) -- mirrors props.colorScale's own
+// satMin/satMax, tracked separately only so exportViewport() need not re-derive it.
+let appliedLo = 0, appliedHi = 1;
 function applyRange() {
 	if (!material) return;
-	const auto = ranges[props.channel] || [0, 1];
-	const lo = (props.cmin ?? null) !== null && Number.isFinite(props.cmin as number) ? (props.cmin as number) : auto[0];
-	const hi = (props.cmax ?? null) !== null && Number.isFinite(props.cmax as number) ? (props.cmax as number) : auto[1];
-	appliedLo = lo; appliedHi = hi > lo ? hi : lo + 1;
+	const s = props.colorScale;
+	appliedLo = s.satMin; appliedHi = s.satMax > s.satMin ? s.satMax : s.satMin + 1;
 	material.uniforms.uRange.value.set(appliedLo, appliedHi);
+	material.uniforms.uDisp.value.set(s.dispMin, s.dispMax);
+	material.uniforms.uGreyOOR.value = s.greyOutOfRange ? 1 : 0;
 	invalidate();
-	emit('climits', { cmin: lo, cmax: hi });
+}
+// The octree's OWN per-channel metadata range, detected independently of whatever is currently
+// applied -- lets a host reseed a fresh ColorScale on a channel switch. Same "climits reports the
+// data, colorScale drives the render" split as FrmOctree.vue / DiagScatter.vue.
+function emitAutoRange() {
+	const auto = ranges[props.channel] || [0, 1];
+	emit('climits', { cmin: auto[0], cmax: auto[1] });
 }
 
 function applySelection() {
@@ -233,8 +247,18 @@ function makeAnalysisMaterial(): THREE.ShaderMaterial {
 	return new THREE.ShaderMaterial({
 		transparent: true,
 		uniforms: {
-			uGradient: { value: gradientTexture('viridis') },
+			uGradient: { value: lutTexture(defaultScale(0, 1)) },   // rebuilt to the real range below
 			uRange: { value: new THREE.Vector2(0, 1) },
+			// Displayed-range filter, wired for parity with the base octree material, but held
+			// permanently open (+-OPEN_DISP) here: this overlay has no host-driven ColorScale or
+			// editor yet (unlike the base octree, whose scale comes from props.colorScale) -- an
+			// auto percentile-derived displayed range would silently start greying the very 1%/99%
+			// tails this overlay's own auto-ranging already clips colour at, with no UI to see or
+			// undo it. Ready for a future pass that gives this overlay its own scale. Finite
+			// sentinel, not literal Infinity -- see colorScale.ts's OPEN_DISP doc comment (GLSL ES
+			// 1.00 does not guarantee IEEE Infinity semantics in a uniform).
+			uDisp: { value: new THREE.Vector2(-OPEN_DISP, OPEN_DISP) },
+			uGreyOOR: { value: 1 },
 			uSize: { value: (props.pointSize || 1.5) + 1.5 },   // read on top of the octree
 			uCluster: { value: categorical ? 1 : 0 },
 			uPalette: { value: paletteFlat },
@@ -246,14 +270,19 @@ function makeAnalysisMaterial(): THREE.ShaderMaterial {
 			attribute float aValue;
 			uniform sampler2D uGradient;
 			uniform vec2 uRange;
+			uniform vec2 uDisp;
+			uniform float uGreyOOR;
 			uniform float uSize;
 			uniform float uCluster;
 			uniform float uPalette[36];
 			uniform float uIsolate;
 			varying vec3 vColor;
 			varying float vDim;
+			varying float vHidden;
 			void main() {
 				bool isNan = (aValue != aValue);
+				bool outOfDisplay = (!isNan) && (uCluster < 0.5) && (aValue < uDisp.x || aValue > uDisp.y);
+				vHidden = (outOfDisplay && uGreyOOR < 0.5) ? 1.0 : 0.0;
 				if (isNan) {
 					vColor = vec3(0.12); vDim = 0.25;
 				} else if (uCluster > 0.5) {
@@ -268,6 +297,7 @@ function makeAnalysisMaterial(): THREE.ShaderMaterial {
 				} else {
 					float u = clamp((aValue - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
 					vColor = texture2D(uGradient, vec2(u, 0.5)).rgb;
+					if (outOfDisplay && uGreyOOR > 0.5) vColor = vec3(0.5);
 					vDim = 1.0;
 				}
 				gl_PointSize = uSize;
@@ -275,8 +305,9 @@ function makeAnalysisMaterial(): THREE.ShaderMaterial {
 			}`,
 		fragmentShader: `
 			precision mediump float;
-			varying vec3 vColor; varying float vDim;
+			varying vec3 vColor; varying float vDim; varying float vHidden;
 			void main() {
+				if (vHidden > 0.5) discard;
 				vec2 d = gl_PointCoord - vec2(0.5);
 				if (dot(d, d) > 0.25) discard;
 				gl_FragColor = vec4(vColor * vDim, vDim < 1.0 ? 0.5 : 1.0);
@@ -461,6 +492,7 @@ async function load() {
 		(pco as any).minNodePixelSize = props.minNodePx || 1;
 		material = makeMaterial();
 		(pco as any).material = material;
+		emitAutoRange();
 		applyRange();
 		applySelection();
 		scene!.add(pco);
@@ -577,15 +609,19 @@ watch(() => props.paintMode, () => {
 	if ((props.paintMode ?? 'off') !== 'draw') cancelRing();
 	else nextTick(() => paintEl.value?.focus());
 });
-watch(() => props.channel, () => { if (material) { material.uniforms.uChannel.value = CHANNEL_IDX[props.channel] ?? 1; applyRange(); } });
-watch(() => props.colormap, () => {
+watch(() => props.channel, () => { if (material) { material.uniforms.uChannel.value = CHANNEL_IDX[props.channel] ?? 1; emitAutoRange(); } });
+// One watcher for the whole ColorScale: rebuild the LUT texture only when the colormap or step
+// count changed (the only two fields baked into its bytes); saturation/displayed-range/grey-vs-hide
+// are plain uniform pushes every time, same split as FrmOctree.vue / DiagScatter.vue.
+watch(() => props.colorScale, (s, prev) => {
 	if (!material) return;
-	(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
-	material.uniforms.uGradient.value = gradientTexture(props.colormap);
-	invalidate();
-});
+	if (!prev || s.colormap !== prev.colormap || s.steps !== prev.steps) {
+		(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
+		material.uniforms.uGradient.value = lutTexture(s);
+	}
+	applyRange();
+}, { deep: true });
 watch(() => props.pointSize, () => { if (material) { material.uniforms.uSize.value = props.pointSize || 1.5; invalidate(); } });
-watch(() => [props.cmin, props.cmax], applyRange);
 watch(() => props.selection, applySelection, { deep: true });
 
 // The world rectangle (mm) the orthographic camera currently shows (pan target ± half the
@@ -608,7 +644,7 @@ function exportViewport(filename: string, subtitle?: string) {
 	return exportFrmFigure({
 		canvas: c, bounds: currentBounds(),
 		cmin: appliedLo, cmax: appliedHi,
-		colormap: props.colormap, axis: props.channel, subtitle, filename,
+		colormap: props.colorScale.colormap, axis: props.channel, subtitle, filename,
 	});
 }
 defineExpose({ currentBounds, exportViewport });

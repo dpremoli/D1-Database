@@ -210,7 +210,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 .brand-mark { display: inline-flex; gap: 3px; padding: 6px; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); }
 .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
 .dot.fx { background: var(--fx); } .dot.fy { background: var(--fy); } .dot.fz { background: var(--fz); }
-.brand-name { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--text-dim); text-transform: uppercase; }
+.brand-name { font-size: 11px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-dim); }
 .navrow { position: relative; flex-shrink: 0; }
 .popout { position: absolute; top: 4px; right: 4px; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; opacity: 0; transition: opacity 0.14s; }
 .popout .material-symbols-rounded { font-size: 13px; }

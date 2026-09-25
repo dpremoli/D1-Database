@@ -7,7 +7,7 @@
 // (the same gate FrmPanel.vue uses for its FrmCloud branch), not while a cut is in progress.
 import { computed } from 'vue';
 import { useWorkspace } from '../workspace';
-import { PolarPlot, type PolarParams } from '@d1/force-plotting';
+import { PolarPlot, COLORMAPS, colormapLabel, type PolarParams } from '@d1/force-plotting';
 import { appUrl } from '../../appUrl';
 
 const w = useWorkspace();
@@ -51,8 +51,11 @@ function openLive() {
 			<select class="cmap" v-model="w.plot.polarAngleSource" title="Angle source">
 				<option v-for="s in SOURCES" :key="s.key" :value="s.key">{{ s.label }}</option>
 			</select>
+			<!-- Driven off COLORMAPS rather than a hardcoded list: w.plot.colormap is shared with the
+				 FRM colour-scale editor, so a ramp picked there must be selectable (and spelled the
+				 same way) here too, or this select renders an unmatched/blank value. -->
 			<select class="cmap" v-model="w.plot.colormap" title="Colormap">
-				<option v-for="m in ['viridis', 'inferno', 'grayscale']" :key="m">{{ m }}</option>
+				<option v-for="m in Object.keys(COLORMAPS)" :key="m" :value="m">{{ colormapLabel(m) }}</option>
 			</select>
 			<button class="popout" title="Pop out to a new window" @click="openLive">
 				<span class="material-symbols-rounded">open_in_new</span>

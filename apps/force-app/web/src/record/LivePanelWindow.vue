@@ -11,6 +11,7 @@ import LiveFft from './LiveFft.vue';
 import LiveSpectrogram from './LiveSpectrogram.vue';
 import LiveWaterfall from './LiveWaterfall.vue';
 import LiveFrm from './LiveFrm.vue';
+import { defaultScale, COLORMAPS, colormapLabel, type ColorScale } from '@d1/force-plotting';
 
 const route = useRoute();
 const panel = computed(() => String(route.params.panel || 'force'));
@@ -72,7 +73,23 @@ const st = client.status;
 const ready = computed(() => client.snapshotReady.value);
 const colormap = ref(initColormap.value);
 const pointSize = ref(initPointSize.value);
-const maps = ['viridis', 'inferno', 'grayscale'];
+const maps = Object.keys(COLORMAPS);
+
+// This pop-out's own FRM colour scale -- FULLY INDEPENDENT of whatever the main window's is doing
+// (explicit design decision: a popped-out window can show the same live cut in a different colour
+// scale for side-by-side comparison, not a mirrored read-only view). Its own local autoClimits, fed
+// only by this LiveFrm instance's own climits event, never anything from the opener window; the
+// only thing carried across at all is the initial colormap choice via the querystring, matching
+// every other seed on this page (mode/channels/window/etc.).
+const autoClimits = ref<{ cmin: number; cmax: number } | null>(null);
+function onFrmClimits(v: { cmin: number; cmax: number }) {
+	if (autoClimits.value && autoClimits.value.cmin === v.cmin && autoClimits.value.cmax === v.cmax) return;
+	autoClimits.value = v;
+}
+const frmColorScale = computed<ColorScale>(() => ({
+	...defaultScale(autoClimits.value?.cmin ?? 0, autoClimits.value?.cmax ?? 1),
+	colormap: colormap.value,
+}));
 
 // Keeps the OS window title (taskbar/alt-tab) in sync with a mode change made after opening —
 // onMounted alone only ever set it once, from the URL the window was opened with.
@@ -94,7 +111,7 @@ onBeforeUnmount(() => client.disconnect());
 					<button class="segbtn" :class="{ on: frmAxis === 'Fy' }" @click="frmAxis = 'Fy'">Fy</button>
 					<button class="segbtn" :class="{ on: frmAxis === 'Fz' }" @click="frmAxis = 'Fz'">Fz</button>
 				</div>
-				<select v-model="colormap" class="cm"><option v-for="m in maps" :key="m">{{ m }}</option></select>
+				<select v-model="colormap" class="cm"><option v-for="m in maps" :key="m" :value="m">{{ colormapLabel(m) }}</option></select>
 			</template>
 			<template v-else-if="isPolar">
 				<div class="segmode">
@@ -146,7 +163,8 @@ onBeforeUnmount(() => client.disconnect());
 				<span>Syncing with parent…</span>
 			</div>
 			<template v-else>
-				<LiveFrm v-if="isFrm" :client="client" :diam="80" :colormap="colormap" :point-size="pointSize" :point-stride="initStride" :axis="frmAxis" />
+				<LiveFrm v-if="isFrm" :client="client" :diam="80" :color-scale="frmColorScale" :point-size="pointSize" :point-stride="initStride" :axis="frmAxis"
+					@climits="onFrmClimits" />
 				<div v-else-if="isPolar" class="syncing">Polar pop-out shows a finished/replayed cut — open it from the embedded panel once a cut is done.</div>
 				<LiveForcePlot v-else-if="mode === 'time'" :client="client" :channels="channels" />
 				<LiveFft v-else-if="mode === 'fft' || mode === 'psd'" :client="client" :channels="channels" :scale="mode === 'psd' ? 'psd' : 'amp'" />
@@ -164,7 +182,7 @@ onBeforeUnmount(() => client.disconnect());
 .rec-dot.live { background: #ef4444; animation: pulse 1.4s infinite; }
 @keyframes pulse { 50% { opacity: 0.4; } }
 .title { font-weight: 600; font-size: 15px; flex-shrink: 0; }
-.state { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); flex-shrink: 0; }
+.state { font-size: 11px; letter-spacing: 0.01em; color: var(--text-dim); flex-shrink: 0; }
 .state.recording { color: #fbbf24; } .state.done { color: #4ade80; } .state.error { color: var(--danger); }
 .cm { padding: 4px 8px; font-size: 12px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
 
