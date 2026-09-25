@@ -9,7 +9,7 @@ import FrmOctree from './FrmOctree.vue';
 import WearTrend from './WearTrend.vue';
 import type { SpeedMode } from './liveCloud';
 import { axisAutoLimits } from './liveCloud';
-import { defaultScale, applyParams, type ColorScale } from './colorScale';
+import { defaultScale, applyParams, OPEN_DISP, type ColorScale } from './colorScale';
 import { histogramFrom, type Histogram } from './histogram';
 import ColorScaleEditor from './ColorScaleEditor.vue';
 import PlotModeFlyout from './PlotModeFlyout.vue';
@@ -146,10 +146,11 @@ const near = (a: number, b: number) => Math.abs(Number(a) - Number(b)) < 1e-6;
  * worth seeing rather than hiding).
  */
 function addsInfoOverOp(captureVal: unknown, opVal: number | null | undefined): boolean {
-	const c = Number(captureVal);
-	if (!Number.isFinite(c)) return false;
-	const o = Number(opVal);
-	if (opVal == null || !Number.isFinite(o)) return true;
+	// numOrNull, not Number(): Number(null) is 0, which would flag an unrecorded value as a mismatch.
+	const c = numOrNull(captureVal);
+	if (c == null || !Number.isFinite(c)) return false;
+	const o = numOrNull(opVal);
+	if (o == null || !Number.isFinite(o)) return true;
 	return !near(c, o);
 }
 // v-model.number leaves a cleared numeric input as '' (Vue's looseToNumber falls back to the raw
@@ -630,18 +631,42 @@ const cacheEpoch = ref(0);
 const colorScale = ref<ColorScale>(defaultScale(0, 1));
 const locked = ref(false);
 const autoClimits = ref<{ cmin: number; cmax: number } | null>(null);
+function seedAuto(lo: number, hi: number) {
+	colorScale.value = applyParams({ ...colorScale.value, satMin: lo, satMax: hi }, lo, hi);
+}
 function onClimits(v: { cmin: number; cmax: number }) {
-	// Bail on a value-identical re-emission: reassigning colorScale on every one of these would
-	// still be a ref-identity change and trigger every FrmOctree/FrmCloud pane on this dashboard to
-	// re-evaluate its colour scale, including a full CPU-path rebuild on any FrmCloud pane using it
-	// (see FrmCloud.vue's colorScaleUnchanged guard, which exists for the same reason but shouldn't
-	// be the only line of defence).
+	// Bail on a value-identical re-emission: reassigning colorScale would still be an identity
+	// change that every FRM pane on this dashboard re-evaluates.
 	if (autoClimits.value && autoClimits.value.cmin === v.cmin && autoClimits.value.cmax === v.cmax) return;
 	autoClimits.value = v;
-	if (!locked.value) {
-		colorScale.value = applyParams({ ...colorScale.value, satMin: v.cmin, satMax: v.cmax }, v.cmin, v.cmax);
-	}
+	if (!locked.value) seedAuto(v.cmin, v.cmax);
 }
+// Histogram of what a mounted FrmCloud actually renders (e.g. the filtered data of a light-applied
+// chain); preferred over re-binning the raw cache.
+const rendererHistogram = ref<Histogram | null>(null);
+// Stale ranges from the previous operation/channel must not outlive it: the cache-derived fallback
+// below is only consulted while no renderer has reported for the current data. The displayed range
+// is in absolute units of the old data, so it reopens too.
+watch([() => detail.value?.id, axis], () => {
+	autoClimits.value = null; rendererHistogram.value = null;
+	colorScale.value = { ...colorScale.value, dispMin: -OPEN_DISP, dispMax: OPEN_DISP };
+});
+// Unlocking hands the scale back to auto: re-apply the current auto range immediately.
+watch(locked, (l) => {
+	if (l) return;
+	const r = autoClimits.value ? [autoClimits.value.cmin, autoClimits.value.cmax] : cacheAutoLimits.value;
+	if (r) seedAuto(r[0], r[1]);
+});
+// Compare mode's filtered pane scales to its own data (a high-pass shifts the whole range) unless
+// the user locked the scale, in which case both panes share it.
+const filteredAuto = ref<{ cmin: number; cmax: number } | null>(null);
+watch(() => filteredCache.value, () => { filteredAuto.value = null; });
+function onFilteredClimits(v: { cmin: number; cmax: number }) { filteredAuto.value = v; }
+const filteredColorScale = computed<ColorScale>(() => {
+	const s = colorScale.value, a = filteredAuto.value;
+	if (locked.value || !a) return s;
+	return applyParams({ ...s, satMin: a.cmin, satMax: a.cmax }, a.cmin, a.cmax);
+});
 // Derived straight from the resident cache rather than from a renderer's @climits/@histogram
 // events. Those only arrive when a FrmCloud is actually mounted -- not in Figure mode, not when
 // the FRM panel is closed, and never from FrmOctree (Full mode streams an octree with no flat
@@ -664,13 +689,16 @@ const colorDomainHi = computed(() => autoClimits.value?.cmax ?? cacheAutoLimits.
 // while the strip's axis shows the real data range. On a cut whose forces are fractions of a
 // newton that puts the entire ramp off the end of the axis, so the curve renders with no colour
 // band at all and every handle sits in the wrong place.
-watch(cacheAutoLimits, (range) => {
-	if (!range || locked.value || autoClimits.value) return;
+// Source short-circuits on autoClimits so the O(N log N) cache scan only runs when no renderer
+// has reported for the current data.
+watch(() => (autoClimits.value ? null : cacheAutoLimits.value), (range) => {
+	if (!range || locked.value) return;
 	const [lo, hi] = range;
 	if (!Number.isFinite(lo) || !Number.isFinite(hi)) return;
-	colorScale.value = applyParams({ ...colorScale.value, satMin: lo, satMax: hi }, lo, hi);
+	seedAuto(lo, hi);
 }, { immediate: true });
 const colorHistogram = computed<Histogram | null>(() => {
+	if (rendererHistogram.value) return rendererHistogram.value;
 	void cacheEpoch.value;
 	const d = detail.value;
 	const c = d?.live_cache_file ? cacheGet(d.live_cache_file) : null;
@@ -1870,7 +1898,11 @@ function resetLive() {
 	}
 	speedMode.value = 'measured';
 	plotStride.value = 1; gridding.value = false; pointSize.value = 1.4;
-	colorScale.value = defaultScale(0, 1); locked.value = false; autoClimits.value = null;
+	// Renderers dedupe their climits, so nothing would re-seed a blank scale: rebuild it from the
+	// current auto range instead of defaultScale(0, 1).
+	const r = autoClimits.value ? [autoClimits.value.cmin, autoClimits.value.cmax] : cacheAutoLimits.value;
+	colorScale.value = r ? defaultScale(r[0], r[1]) : defaultScale(0, 1);
+	locked.value = false;
 }
 // Rate override rescales time for the constant-RPM/Vc models (measured mode uses the
 // baked revs, so it's unaffected). timeScale = 1 when Rate is left at the cache's Fs.
@@ -2363,7 +2395,7 @@ function fmtDateTime(v: string | null | undefined) {
 								</span>
 								<div class="toggle pg-tools">
 									<button class="tbtn icobtn" :class="{ on: rectZoomTool }" title="Rectangular zoom — drag a box on any graph"
-										:style="rectZoomTool ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: 'var(--accent-ink)' } : {}"
+										:style="rectZoomTool ? { background: 'var(--accent, var(--theme--primary, #1d4ed8))', borderColor: 'var(--accent, var(--theme--primary, #1d4ed8))', color: 'var(--accent-ink, var(--theme--foreground-inverted, #fff))' } : {}"
 										@click="rectZoomTool = !rectZoomTool"><v-icon name="crop_free" x-small /></button>
 									<button class="tbtn icobtn" title="Reset zoom" :disabled="!zoomed" @click="resetZoom"><v-icon name="restart_alt" x-small /></button>
 									<button v-for="a in AXES" :key="a" class="tbtn axchip" :class="{ on: (item.channels || AXES).includes(a) }"
@@ -2536,7 +2568,7 @@ function fmtDateTime(v: string | null | undefined) {
 									</div>
 									<button v-if="frmMode==='full'" class="tbtn" :class="{ on: gridFull }" :disabled="buildingOctree"
 										:title="gridAvailable ? 'Interpolated-grid octree (filled surface)' : 'Build the interpolated grid on the host'"
-										:style="gridFull ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: 'var(--accent-ink)' } : {}"
+										:style="gridFull ? { background: 'var(--accent, var(--theme--primary, #1d4ed8))', borderColor: 'var(--accent, var(--theme--primary, #1d4ed8))', color: 'var(--accent-ink, var(--theme--foreground-inverted, #fff))' } : {}"
 										@click="gridFull = !gridFull"><v-icon name="grid_on" x-small /> Gridded</button>
 									<select v-if="octreeOn || liveOn" v-model="zSeries" class="zsel" title="Drive the Z axis from a force series (3D view — drag to rotate)">
 										<option value="none">2D</option>
@@ -2575,14 +2607,15 @@ function fmtDateTime(v: string | null | undefined) {
 										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
 										:point-size="pointSize" :color-scale="colorScale"
 										:shared-view="compareView" pane-label="raw"
-										@loaded="onCloudLoaded" @climits="onClimits" @points="displayedPoints = $event" />
+										@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event" />
 									<FrmCloud :cache-override="filteredCache" :cache-file-id="detail.live_cache_file"
 										:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
 										:rpm="editRpm" :vc="editVc" :time-scale="timeScale" :ppr="editPpr"
 										:crop-start-sec="cropStartSec" :crop-end-sec="cropEndSec"
 										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
-										:point-size="pointSize" :color-scale="colorScale"
-										:shared-view="compareView" pane-label="filtered" />
+										:point-size="pointSize" :color-scale="filteredColorScale"
+										:shared-view="compareView" pane-label="filtered"
+										@climits="onFilteredClimits" />
 								</div>
 								<FrmCloud v-else-if="filteredSoloOn" ref="frmCloudRef" :cache-override="filteredCache" :cache-file-id="detail.live_cache_file"
 										:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
@@ -2591,7 +2624,7 @@ function fmtDateTime(v: string | null | undefined) {
 										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
 										:point-size="pointSize" :color-scale="colorScale"
 										:z-series="zSeries" :z-scale="zScale"
-										@loaded="onCloudLoaded" @climits="onClimits" @points="displayedPoints = $event"
+										@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event"
 										@zscale="zScale = $event" />
 									<FrmCloud v-else-if="liveOn" ref="frmCloudRef" :cache-file-id="detail.live_cache_file"
 									:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
@@ -2600,7 +2633,7 @@ function fmtDateTime(v: string | null | undefined) {
 									:stride="plotStride" :gridding="gridding" :grid-n="gridN"
 									:point-size="pointSize" :color-scale="colorScale"
 									:z-series="zSeries" :z-scale="zScale"
-									@loaded="onCloudLoaded" @climits="onClimits" @points="displayedPoints = $event"
+									@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event"
 									@zscale="zScale = $event" />
 								<div v-else-if="frmLoading" class="loading"><v-progress-circular indeterminate /></div>
 								<img v-else-if="frmUrl" :src="frmUrl" :alt="`FRM ${axis}`" />
@@ -2973,9 +3006,9 @@ function fmtDateTime(v: string | null | undefined) {
 .segmode { display: inline-flex; border-radius: 8px; overflow: hidden; border: 1px solid var(--theme--border-color-subdued, #d7dee6); }
 .segbtn { font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; border: 0; padding: 5px 11px; background: var(--theme--background, #fff); color: var(--theme--foreground-subdued, #64748b); border-right: 1px solid var(--theme--border-color-subdued, #e7ebf0); }
 .segbtn:last-child { border-right: 0; }
-.segbtn.on { background: var(--accent); color: var(--accent-ink); }
+.segbtn.on { background: var(--accent, var(--theme--primary, #1d4ed8)); color: var(--accent-ink, var(--theme--foreground-inverted, #fff)); }
 .segbtn:disabled { opacity: 0.4; cursor: default; }
-.zslider { width: 70px; accent-color: var(--accent); vertical-align: middle; cursor: pointer; }
+.zslider { width: 70px; accent-color: var(--accent, var(--theme--primary, #1d4ed8)); vertical-align: middle; cursor: pointer; }
 .stats-table { width: 100%; border-collapse: collapse; font-size: 11.5px; margin: 6px 0 4px; }
 .stats-table th { text-align: right; font-size: 10px; letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); padding: 2px 6px; }
 .stats-table td { text-align: right; padding: 3px 6px; font-variant-numeric: tabular-nums; border-top: 1px solid var(--theme--border-color-subdued, #eef1f5); }
@@ -3017,13 +3050,13 @@ function fmtDateTime(v: string | null | undefined) {
 .live-badge { margin-left: 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.06em; color: #7c3aed;
 	background: color-mix(in srgb, #7c3aed 12%, transparent); padding: 2px 7px; border-radius: 99px; }
 /* "Save crop as official" affordance — only appears once the handles have been moved (cropDirty). */
-.crop-save { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: var(--accent); cursor: pointer;
-	background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+.crop-save { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: var(--accent, var(--theme--primary, #1d4ed8)); cursor: pointer;
+	background: color-mix(in srgb, var(--accent, var(--theme--primary, #1d4ed8)) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent, var(--theme--primary, #1d4ed8)) 45%, transparent);
 	padding: 2px 8px; border-radius: 99px; }
-.crop-save:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.crop-save:hover { background: color-mix(in srgb, var(--accent, var(--theme--primary, #1d4ed8)) 22%, transparent); }
 .crop-confirm { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: var(--theme--foreground, #e2e8f0); display: inline-flex; align-items: center; gap: 6px; }
 .crop-confirm .cc-yes, .crop-confirm .cc-no { font-size: 9.5px; font-weight: 700; cursor: pointer; padding: 2px 8px; border-radius: 99px; border: 1px solid transparent; }
-.crop-confirm .cc-yes { color: var(--accent-ink); background: var(--accent); }
+.crop-confirm .cc-yes { color: var(--accent-ink, var(--theme--foreground-inverted, #fff)); background: var(--accent, var(--theme--primary, #1d4ed8)); }
 .crop-confirm .cc-yes:disabled { opacity: 0.6; cursor: default; }
 .crop-confirm .cc-no { color: var(--theme--foreground-subdued, #94a3b8); background: transparent; border-color: color-mix(in srgb, currentColor 40%, transparent); }
 .crop-msg { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: #22c55e; }
@@ -3085,7 +3118,7 @@ function fmtDateTime(v: string | null | undefined) {
 	letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); flex: 1 1 auto; }
 .processbtn {
 	display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer;
-	padding: 7px 14px; border-radius: 9px; color: var(--accent-ink); background: var(--accent); border: 0; white-space: nowrap;
+	padding: 7px 14px; border-radius: 9px; color: var(--accent-ink, var(--theme--foreground-inverted, #fff)); background: var(--accent, var(--theme--primary, #1d4ed8)); border: 0; white-space: nowrap;
 }
 .processbtn:disabled { opacity: 0.6; cursor: progress; }
 .applybtn {

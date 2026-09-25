@@ -166,15 +166,15 @@ const ticks = computed(() => {
    root shorter than its own content, which painted the tick row and caption on top of whatever
    the host rendered next. */
 .cbar { position: relative; width: 100%; user-select: none; }
-.cbar-chart { display: block; width: 100%; border-radius: 4px; border: 1px solid var(--border); overflow: hidden; }
-.cbar-bg { fill: var(--surface); }
-.cbar-hist-grey { fill: var(--text-dim); opacity: 0.45; }
+.cbar-chart { display: block; width: 100%; border-radius: 4px; border: 1px solid var(--border, var(--theme--border-color-subdued, #e7ebf0)); overflow: hidden; }
+.cbar-bg { fill: var(--surface, var(--theme--background-subdued, #f7f9fb)); }
+.cbar-hist-grey { fill: var(--text-dim, var(--theme--foreground-subdued, #6b7684)); opacity: 0.45; }
 .cbar-hist-grey.hidden { opacity: 0.18; }
-.cbar-wall { fill: var(--text-dim); opacity: 0.22; }
-.cbar-axis { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.cbar-wall { fill: var(--text-dim, var(--theme--foreground-subdued, #6b7684)); opacity: 0.22; }
+.cbar-axis { stroke: var(--border, var(--theme--border-color-subdued, #e7ebf0)); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .cbar-ticks { position: relative; height: 22px; margin-top: 2px; }
 .cbar-tick { position: absolute; top: 0; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; }
-.cbar-tick-line { width: 1px; height: 5px; background: var(--border); }
-.cbar-tick-label { font-size: 10px; color: var(--text-dim); white-space: nowrap; margin-top: 1px; }
-.cbar-unit { text-align: center; font-size: 10px; color: var(--text-dim); margin-top: 4px; font-style: italic; }
+.cbar-tick-line { width: 1px; height: 5px; background: var(--border, var(--theme--border-color-subdued, #e7ebf0)); }
+.cbar-tick-label { font-size: 10px; color: var(--text-dim, var(--theme--foreground-subdued, #6b7684)); white-space: nowrap; margin-top: 1px; }
+.cbar-unit { text-align: center; font-size: 10px; color: var(--text-dim, var(--theme--foreground-subdued, #6b7684)); margin-top: 4px; font-style: italic; }
 </style>

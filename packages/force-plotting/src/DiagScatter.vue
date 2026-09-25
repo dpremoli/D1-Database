@@ -19,7 +19,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { buildScaleLUT, type ColorScale } from './colorScale';
+import { buildScaleLUT, lutKey, type ColorScale } from './colorScale';
 import { CLUSTER_PALETTE } from './clusterPalette';
 import { matches } from './selection';
 import type { ChannelKey, Selection, WorkingSet } from './selection';
@@ -364,12 +364,11 @@ watch([() => props.channel, categorical], () => {
 	if (material) material.uniforms.uCluster.value = categorical.value ? 1 : 0;
 	packValue();
 });
-// One watcher for the whole ColorScale: the LUT texture is only rebuilt when the colormap or step
-// count actually changed (the only two fields baked into its bytes); saturation/displayed-range/
-// grey-vs-hide are plain uniform pushes every time, same as the pre-conversion uRange-only model.
+// One watcher for the whole ColorScale: the LUT texture is only rebuilt when lutKey changes (what
+// is baked into its bytes); saturation/displayed-range/grey-vs-hide are plain uniform pushes.
 watch(() => props.colorScale, (s, prev) => {
 	if (!material) return;
-	if (!prev || s.colormap !== prev.colormap || s.steps !== prev.steps) {
+	if (!prev || lutKey(s) !== lutKey(prev)) {
 		(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
 		material.uniforms.uGradient.value = lutTexture(s);
 	}

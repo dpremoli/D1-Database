@@ -50,6 +50,15 @@ export function pickHandle(
 	const tied = candidates.filter((c) => c.dist <= best + 1);
 	if (tied.length === 1) return tied[0].key;
 	const wantCircle = Math.abs(py - height / 2) <= CIRCLE_BAND_PX;
+	// Coincident saturation flags (e.g. a collapsed range): split by which side of them the pointer
+	// is, so satMax can still be pulled out rightwards instead of satMin always winning.
+	const flags = tied.filter((c) => c.style === 'flag');
+	if (!wantCircle && flags.length === 2) {
+		const x = (flags[0].pct / 100) * width;
+		if (px > x + 0.5) return 'satMax';
+		if (px < x - 0.5) return 'satMin';
+		return lastDragged === 'satMin' || lastDragged === 'satMax' ? lastDragged : 'satMax';
+	}
 	return (
 		tied.find((c) => (c.style === 'circle') === wantCircle)?.key ??
 		tied.find((c) => c.key === lastDragged)?.key ??
