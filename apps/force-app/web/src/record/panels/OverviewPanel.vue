@@ -63,10 +63,13 @@ const eta = computed(() => {
 .overview { display: flex; align-items: center; justify-content: center; height: 100%; }
 .grid { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
 .ro { display: flex; flex-direction: column; align-items: center; padding: 3px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; min-width: 68px; }
-.ro span { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.ro span { font-size: 9px; color: var(--text-dim); letter-spacing: 0.01em; }
 .ro b { font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* DESIGN TEST: `cut` is an identifier, not a status, and it was rendered in the Fy green sitting
+   three tiles away in this same strip. Plain text -- only State keeps a status hue (a
+   traffic light reads as status from context, which an axis identity does not). */
 .ro b.recording { color: #fbbf24; } .ro b.done { color: #4ade80; } .ro b.error { color: var(--danger); }
-.ro b.cut { color: #4ade80; }
+.ro b.cut { color: var(--text); }
 .ro b.eta { color: #fbbf24; }
 .ro b.fx { color: #f87171; } .ro b.fy { color: #4ade80; } .ro b.fz { color: #60a5fa; }
 </style>

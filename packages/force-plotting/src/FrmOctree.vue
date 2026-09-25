@@ -13,17 +13,15 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Potree, type PointCloudOctree } from 'potree-core';
-import { COLORMAPS } from './liveCloud';
+import { buildScaleLUT, type ColorScale } from './colorScale';
 import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
 
 const props = defineProps<{
 	octreePath: string;                       // served subdir: /octrees/<octreePath>/
 	axis: 'Fx' | 'Fy' | 'Fz';
-	colormap: string;
+	colorScale: ColorScale;
 	pointSize: number;
-	cmin?: number | null;
-	cmax?: number | null;
 	zSeries?: 'none' | 'Fx' | 'Fy' | 'Fz';    // drive the Z axis from a force series -> true 3D
 	zScale?: number;                          // height exaggeration as a fraction of the x/y span
 	totalPoints?: number;                     // octree's full point count -> sizes the LOD budget
@@ -62,14 +60,11 @@ function invalidate() { needsRender = true; }
 const ranges: Record<string, [number, number]> = { Fx: [0, 1], Fy: [0, 1], Fz: [0, 1] };
 const AXIS_IDX: Record<string, number> = { Fx: 0, Fy: 1, Fz: 2 };
 
-function gradientTexture(name: string): THREE.DataTexture {
-	const cm = COLORMAPS[name] || COLORMAPS.viridis;
-	const N = 256, data = new Uint8Array(N * 4);
-	for (let i = 0; i < N; i++) {
-		const [r, g, b] = cm(i / (N - 1));
-		data[i * 4] = r * 255; data[i * 4 + 1] = g * 255; data[i * 4 + 2] = b * 255; data[i * 4 + 3] = 255;
-	}
-	const t = new THREE.DataTexture(data, N, 1, THREE.RGBAFormat);
+// Shared with every other FRM renderer via colorScale.ts's buildScaleLUT (was its own hand-rolled
+// 256-sample loop, a near-duplicate of the one DiagScatter.vue and frmCloudShader.ts each had).
+function lutTexture(scale: ColorScale): THREE.DataTexture {
+	const data = buildScaleLUT(scale, 256);
+	const t = new THREE.DataTexture(data, 256, 1, THREE.RGBAFormat);
 	t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.needsUpdate = true;
 	return t;
 }
@@ -77,10 +72,15 @@ function gradientTexture(name: string): THREE.DataTexture {
 // One material reads all three force attributes; a uAxis uniform selects which drives
 // the colour, and uRange normalises it before the viridis lookup.
 function makeMaterial(): THREE.ShaderMaterial {
+	const s = props.colorScale;
 	const m = new THREE.ShaderMaterial({
 		uniforms: {
-			uGradient: { value: gradientTexture(props.colormap) },
-			uRange: { value: new THREE.Vector2(0, 1) },
+			uGradient: { value: lutTexture(s) },
+			uRange: { value: new THREE.Vector2(s.satMin, s.satMax) },
+			// Displayed-range filter, separate from uRange (saturation/colour): a point whose raw
+			// value falls outside [uDisp.x, uDisp.y] is greyed (uGreyOOR>0.5) or discarded.
+			uDisp: { value: new THREE.Vector2(s.dispMin, s.dispMax) },
+			uGreyOOR: { value: s.greyOutOfRange ? 1 : 0 },
 			uAxis: { value: AXIS_IDX[props.axis] ?? 2 },
 			uSize: { value: props.pointSize || 1.5 },
 			uZAxis: { value: -1 },                        // -1 = flat (2D); 0/1/2 = Fx/Fy/Fz drive Z
@@ -96,9 +96,11 @@ function makeMaterial(): THREE.ShaderMaterial {
 			uniform float uZAxis; uniform vec2 uZRange; uniform float uZScale;
 			uniform float uFill; uniform float uPxPerMm; uniform float uCell;
 			varying float vT;
+			varying float vRaw;
 			float pick(float i) { return i < 0.5 ? Fx : (i < 1.5 ? Fy : Fz); }
 			void main() {
 				float v = pick(uAxis);
+				vRaw = v;
 				vT = clamp((v - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
 				float z = 0.0;
 				if (uZAxis >= 0.0) {
@@ -110,9 +112,14 @@ function makeMaterial(): THREE.ShaderMaterial {
 			}`,
 		fragmentShader: `
 			precision mediump float;
-			uniform sampler2D uGradient; varying float vT;
+			uniform sampler2D uGradient; uniform vec2 uDisp; uniform float uGreyOOR;
+			varying float vT; varying float vRaw;
 			void main() {
 				vec2 d = gl_PointCoord - vec2(0.5); if (dot(d, d) > 0.25) discard;
+				if (vRaw < uDisp.x || vRaw > uDisp.y) {
+					if (uGreyOOR > 0.5) { gl_FragColor = vec4(vec3(0.5), 1.0); return; }
+					discard;
+				}
 				gl_FragColor = vec4(texture2D(uGradient, vec2(vT, 0.5)).rgb, 1.0);
 			}`,
 	});
@@ -120,16 +127,25 @@ function makeMaterial(): THREE.ShaderMaterial {
 	return m;
 }
 
-let appliedLo = 0, appliedHi = 1;   // the colour range currently applied (for the figure export)
+// The colour range currently applied (for the figure export) -- mirrors props.colorScale's own
+// satMin/satMax, tracked separately only so exportViewport() need not re-derive it.
+let appliedLo = 0, appliedHi = 1;
 function applyRange() {
 	if (!material) return;
-	const auto = ranges[props.axis] || [0, 1];
-	const lo = (props.cmin ?? null) !== null && Number.isFinite(props.cmin as number) ? (props.cmin as number) : auto[0];
-	const hi = (props.cmax ?? null) !== null && Number.isFinite(props.cmax as number) ? (props.cmax as number) : auto[1];
-	appliedLo = lo; appliedHi = hi > lo ? hi : lo + 1;
+	const s = props.colorScale;
+	appliedLo = s.satMin; appliedHi = s.satMax > s.satMin ? s.satMax : s.satMin + 1;
 	material.uniforms.uRange.value.set(appliedLo, appliedHi);
+	material.uniforms.uDisp.value.set(s.dispMin, s.dispMax);
+	material.uniforms.uGreyOOR.value = s.greyOutOfRange ? 1 : 0;
 	invalidate();
-	emit('climits', { cmin: lo, cmax: hi });
+}
+// The octree's OWN per-axis metadata range, detected independently of whatever is currently
+// applied -- lets a host reseed a fresh ColorScale (colorScale.ts's defaultScale/applyParams) on
+// an axis switch, the same "climits reports the data, colorScale drives the render" split Stage 1
+// established for DiagScatter.vue.
+function emitAutoRange() {
+	const auto = ranges[props.axis] || [0, 1];
+	emit('climits', { cmin: auto[0], cmax: auto[1] });
 }
 
 // Drive the Z axis from a chosen force series -> true 3D. 'none' keeps it flat + top-down;
@@ -199,6 +215,7 @@ async function load() {
 		(pco as any).minNodePixelSize = props.minNodePx || 1;
 		material = makeMaterial();
 		(pco as any).material = material;
+		emitAutoRange();
 		applyRange();
 		scene!.add(pco);
 		pco.updateMatrixWorld(true);
@@ -314,14 +331,26 @@ onBeforeUnmount(() => {
 		c.removeEventListener('pointerup', onPtrUp);
 		c.removeEventListener('pointercancel', onPtrUp);
 	}
-	ro?.disconnect(); controls?.dispose(); material?.dispose();
+	ro?.disconnect(); controls?.dispose();
+	(material?.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
+	material?.dispose();
 	try { renderer?.forceContextLoss(); } catch { /* ignore */ }   // release the GL context (not freed by dispose())
 	renderer?.dispose();
 });
 
 watch(() => props.octreePath, () => { if (pco) { scene?.remove(pco); pco = null; } load(); });
-watch(() => props.axis, () => { if (material) { material.uniforms.uAxis.value = AXIS_IDX[props.axis] ?? 2; applyRange(); } });
-watch(() => props.colormap, () => { if (material) { material.uniforms.uGradient.value = gradientTexture(props.colormap); invalidate(); } });
+watch(() => props.axis, () => { if (material) { material.uniforms.uAxis.value = AXIS_IDX[props.axis] ?? 2; emitAutoRange(); } });
+// One watcher for the whole ColorScale: rebuild the LUT texture only when the colormap or step
+// count changed (the only two fields baked into its bytes); saturation/displayed-range/grey-vs-hide
+// are plain uniform pushes every time, same split as DiagScatter.vue's Stage 1 conversion.
+watch(() => props.colorScale, (s, prev) => {
+	if (!material) return;
+	if (!prev || s.colormap !== prev.colormap || s.steps !== prev.steps) {
+		(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
+		material.uniforms.uGradient.value = lutTexture(s);
+	}
+	applyRange();
+}, { deep: true });
 watch(() => props.pointSize, () => { if (material) { material.uniforms.uSize.value = props.pointSize || 1.5; invalidate(); } });
 watch(() => [props.fill, props.cellSize], () => {
 	if (material) {
@@ -330,7 +359,6 @@ watch(() => [props.fill, props.cellSize], () => {
 		invalidate();
 	}
 });
-watch(() => [props.cmin, props.cmax], applyRange);
 watch(() => [props.zSeries, props.zScale], applyZ);
 
 // The world rectangle (mm) the orthographic camera currently shows (pan target ± half the
@@ -351,7 +379,7 @@ function exportViewport(filename: string, subtitle?: string) {
 	return exportFrmFigure({
 		canvas: c, bounds: currentBounds(),
 		cmin: appliedLo, cmax: appliedHi,
-		colormap: props.colormap, axis: props.axis, subtitle, filename,
+		colormap: props.colorScale.colormap, axis: props.axis, subtitle, filename,
 	});
 }
 defineExpose({ currentBounds, exportViewport });

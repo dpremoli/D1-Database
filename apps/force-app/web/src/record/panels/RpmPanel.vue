@@ -69,9 +69,13 @@ const spark = computed(() => {
 .rpm-panel { display: flex; flex-direction: column; height: 100%; align-items: center; justify-content: center; gap: 6px; }
 .gauge { width: 100%; max-width: 260px; height: auto; }
 .track { fill: none; stroke: rgba(255,255,255,0.08); stroke-width: 12; stroke-linecap: round; }
-.value { fill: none; stroke: #4ade80; stroke-width: 12; stroke-linecap: round; transition: none; }
+/* DESIGN TEST: was #4ade80 -- the Fy axis colour. This gauge sits feet away from Fx/Fy/Fz
+   readouts, so spindle speed was being drawn in a hue that means "Y force" everywhere else in
+   the app. Spindle speed is not a force channel; it takes the interface accent instead, and
+   green goes back to meaning Fy and only Fy. */
+.value { fill: none; stroke: var(--accent); stroke-width: 12; stroke-linecap: round; transition: none; }
 .value.over { stroke: #ef4444; }
-.target { stroke: #fbbf24; stroke-width: 2.5; }
+.target { stroke: var(--text-dim); stroke-width: 2.5; }
 .needle { stroke: #e2e8f0; stroke-width: 3; stroke-linecap: round; }
 .needle.over { stroke: #ef4444; }
 .hub { fill: #e2e8f0; }

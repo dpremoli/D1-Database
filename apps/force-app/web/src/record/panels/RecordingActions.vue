@@ -61,7 +61,7 @@ const w = useWorkspace();
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 /* Acquisition's processing toggles — relocated from a Details card (see RecordingOptions.vue). */
 .segproc { display: flex; min-width: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.segproc button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 8px; background: rgba(255,255,255,0.03); border: none; border-right: 1px solid var(--border); color: var(--text-dim); font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; cursor: pointer; }
+.segproc button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 8px; background: rgba(255,255,255,0.03); border: none; border-right: 1px solid var(--border); color: var(--text-dim); font-size: 9.5px; font-weight: 600; letter-spacing: 0.01em; cursor: pointer; }
 .segproc button:last-child { border-right: none; }
 .segproc button.on { color: #7dd3fc; background: rgba(56,189,248,0.14); }
 .segproc button:disabled { opacity: 0.5; cursor: not-allowed; }

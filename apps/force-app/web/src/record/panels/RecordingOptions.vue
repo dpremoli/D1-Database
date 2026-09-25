@@ -376,7 +376,7 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 .card { border: 1px solid var(--border); background: rgba(255,255,255,0.02); border-radius: 10px; padding: 10px 11px; }
 .card + .card { margin-top: 2px; }
 .card.collapsed { padding-bottom: 10px; }
-.card-head { display: flex; align-items: center; gap: 6px; width: 100%; margin: -4px -4px 5px; padding: 4px; border-radius: 6px; background: transparent; border: none; outline: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); cursor: pointer; }
+.card-head { display: flex; align-items: center; gap: 6px; width: 100%; margin: -4px -4px 5px; padding: 4px; border-radius: 6px; background: transparent; border: none; outline: none; font-size: 10px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-dim); cursor: pointer; }
 .card-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card.collapsed .card-head { margin-bottom: -4px; }
 .card-head .material-symbols-rounded { font-size: 14px; color: var(--accent); }

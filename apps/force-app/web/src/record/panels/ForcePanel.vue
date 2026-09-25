@@ -12,6 +12,7 @@ import LiveSpectrogram from '../LiveSpectrogram.vue';
 import LiveWaterfall from '../LiveWaterfall.vue';
 import { SUB_NAMES } from '../liveClient';
 import { CH_COLOR } from '../types';
+import { PlotModeFlyout } from '@d1/force-plotting';
 import { appUrl } from '../../appUrl';
 
 type PlotMode = 'time' | 'fft' | 'psd' | 'spectrogram' | 'waterfall';
@@ -71,10 +72,9 @@ function openLive() {
 
 <template>
 	<div class="force-panel">
+		<!-- Control order is deliberate and shared with the Plot dashboard's Signals panel:
+			 channels (Fx/Fy/Fz) -> sub-channel dropdown -> time window -> plot mode last. -->
 		<div class="controls">
-			<div class="segmode">
-				<button v-for="m in MODES" :key="m.key" class="segbtn" :class="{ on: mode === m.key }" @click="mode = m.key">{{ m.label }}</button>
-			</div>
 			<div class="chips">
 				<button v-for="a in SUMMED" :key="a" class="chip" :style="selected.includes(a) ? { '--c': CH_COLOR[a] } : {}"
 					:class="{ on: selected.includes(a) }" @click="toggle(a)">{{ a }}</button>
@@ -99,6 +99,7 @@ function openLive() {
 				<input type="number" min="1" max="300" v-model.number="w.plot.windowSec" class="tw-num" />
 				<span class="tw-unit">s</span>
 			</div>
+			<PlotModeFlyout v-model="mode" :modes="MODES" class="mode-flyout" />
 			<button class="popout" title="Pop out to a new window (second monitor) — open before Start"
 				@click="openLive()">
 				<span class="material-symbols-rounded">open_in_new</span>
@@ -121,12 +122,7 @@ function openLive() {
 <style scoped>
 .force-panel { display: flex; flex-direction: column; height: 100%; gap: 8px; }
 .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.segmode { display: flex; gap: 4px; }
-.segbtn { padding: 5px 10px; font-size: 12px; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
-.segbtn.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; border-color: var(--accent); }
-.segbtn.fx.on { background: #f87171; border-color: #f87171; color: #2a0808; }
-.segbtn.fy.on { background: #4ade80; border-color: #4ade80; color: #05210f; }
-.segbtn.fz.on { background: #60a5fa; border-color: #60a5fa; color: #05173a; }
+.mode-flyout { margin-left: auto; }
 .chips { display: flex; gap: 5px; }
 .chip { display: inline-flex; align-items: center; gap: 3px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
 .chip.on { color: var(--c); border-color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
@@ -144,7 +140,9 @@ function openLive() {
 .tw-row input[type="range"] { width: 80px; accent-color: var(--accent); }
 .tw-num { width: 42px !important; text-align: center; padding: 3px 2px !important; font-size: 11px !important; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text); }
 .tw-unit { font-size: 11px; color: var(--text-dim); }
-.popout { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
+/* The flyout carries the margin-left:auto that used to be here, so it and the pop-out button stay
+   together at the right end instead of the free space splitting between them. */
+.popout { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
 .popout:hover { color: var(--accent); background: var(--surface-2); }
 .popout .material-symbols-rounded { font-size: 15px; }
 .plot { flex: 1; min-height: 0; position: relative; }

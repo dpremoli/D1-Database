@@ -5,8 +5,10 @@
 // FRM image" respects the current viewport without losing the report styling.
 import { COLORMAPS } from './liveCloud';
 
-// "Nice" round tick positions across [lo, hi] (~`target` of them).
-function niceTicks(lo: number, hi: number, target = 6): number[] {
+// "Nice" round tick positions across [lo, hi] (~`target` of them). Exported for ColorBar.vue's
+// tick labels too -- it's the same "nice" rounding either way, no reason for a second copy just
+// because the caller draws to a <canvas> here and a DOM strip there.
+export function niceTicks(lo: number, hi: number, target = 6): number[] {
 	const span = hi - lo;
 	if (!(span > 0) || !isFinite(span)) return [lo];
 	const raw = span / target;
@@ -17,7 +19,7 @@ function niceTicks(lo: number, hi: number, target = 6): number[] {
 	for (let t = Math.ceil(lo / step) * step; t <= hi + step * 1e-6; t += step) out.push(Number(t.toFixed(6)));
 	return out;
 }
-function fmt(v: number): string {
+export function fmt(v: number): string {
 	const a = Math.abs(v);
 	if (a === 0) return '0';
 	if (a >= 1000) return (v / 1000).toFixed(1) + 'k';
