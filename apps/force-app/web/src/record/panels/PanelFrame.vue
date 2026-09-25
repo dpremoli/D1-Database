@@ -26,8 +26,12 @@ defineEmits<{ close: [] }>();
 </template>
 
 <style scoped>
-.panel-frame { display: flex; flex-direction: column; height: 100%; background: color-mix(in srgb, var(--bg-2) 62%, transparent); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-.panel-handle { display: flex; align-items: center; gap: 7px; padding: 8px 12px; cursor: move; background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border); user-select: none; }
+/* DESIGN TEST: was color-mix(--bg-2 62%, transparent) -- a translucent wash that left every panel
+   within a few percent of the ground, so nine panels read as one undifferentiated dark field.
+   Opaque surface + a header that is a shade lighter again, so a panel reads as a stacked thing
+   with a lid rather than an outlined region of the background. */
+.panel-frame { display: flex; flex-direction: column; height: 100%; background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18); }
+.panel-handle { display: flex; align-items: center; gap: 7px; padding: 8px 12px; cursor: move; background: var(--surface); border-bottom: 1px solid var(--border); user-select: none; }
 .panel-handle .material-symbols-rounded { font-size: 17px; color: var(--text-dim); }
 .panel-title { font-size: 12.5px; font-weight: 640; letter-spacing: 0.01em; }
 .panel-grip { margin-left: auto; opacity: 0.5; }

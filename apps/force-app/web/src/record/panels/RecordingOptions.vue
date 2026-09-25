@@ -327,7 +327,7 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 .unit-box .unit { flex: 0 0 auto; padding-right: 9px; font-size: 11px; color: var(--text-dim); }
 .unit-box.disabled, .unit-box:has(input:disabled) { opacity: 0.55; }
 .sub { color: var(--text-dim); font-weight: 400; font-size: 10.5px; }
-.section-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+.section-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; font-size: 10px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-dim); }
 .section-divider::before, .section-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 /* Folding subpanels (Direction B / "Cards"): Tooling, Coolant & geometry, Post-cut. Body content
    is v-show (not v-if) so folding a card never remounts/resets a LookupField's own search state —
@@ -335,7 +335,7 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 .card { border: 1px solid var(--border); background: rgba(255,255,255,0.02); border-radius: 10px; padding: 10px 11px; }
 .card + .card { margin-top: 2px; }
 .card.collapsed { padding-bottom: 10px; }
-.card-head { display: flex; align-items: center; gap: 6px; width: 100%; margin: -4px -4px 5px; padding: 4px; border-radius: 6px; background: transparent; border: none; outline: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); cursor: pointer; }
+.card-head { display: flex; align-items: center; gap: 6px; width: 100%; margin: -4px -4px 5px; padding: 4px; border-radius: 6px; background: transparent; border: none; outline: none; font-size: 10px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-dim); cursor: pointer; }
 .card-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card.collapsed .card-head { margin-bottom: -4px; }
 .card-head .material-symbols-rounded { font-size: 14px; color: var(--accent); }

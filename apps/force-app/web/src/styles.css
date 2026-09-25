@@ -2,18 +2,27 @@
    cyan accent, Fx/Fy/Fz red/green/blue) so the shell and the explorer read as one product. */
 :root {
 	color-scheme: dark;
-	--bg: #0b1020;
-	--bg-2: #111a33;
+	/* ===== DESIGN TEST (2026-09-25) — revert with:
+	       git checkout -- apps/force-app/web/src/styles.css
+	   Two changes, both argued from the data rather than taste:
+	   1. The interface palette no longer borrows from the DATA palette. --accent was #38bdf8,
+	      a hair off the Fz axis blue (#60a5fa in the panels, --fz #2563eb here), so "selected"
+	      and "Z axis" were said in the same voice. Amber is used by no channel.
+	   2. Panels were rgba(255,255,255,0.04) over the ground — a 4% wash that made nine panels
+	      read as one dark field. The greys are opaque now and actually step apart.
+	   ===== */
+	--bg: #080c14;
+	--bg-2: #161d29;
 	--bg-3: rgba(255, 255, 255, 0.03);
-	--surface: rgba(255, 255, 255, 0.04);
-	--surface-2: rgba(255, 255, 255, 0.07);
-	--border: rgba(255, 255, 255, 0.12);
-	--border-2: rgba(255, 255, 255, 0.18);
-	--text: #e2e8f0;
-	--text-dim: #94a3b8;
-	--text-faint: #64748b;
-	--accent: #38bdf8;
-	--accent-ink: #0b1020;
+	--surface: #1b2433;
+	--surface-2: #232e40;
+	--border: #26323f;
+	--border-2: #34425a;
+	--text: #e6edf5;
+	--text-dim: #8494a8;
+	--text-faint: #61708a;
+	--accent: #f5a524;
+	--accent-ink: #12161f;
 	--danger: #fca5a5;
 	--fx: #dc2626;
 	--fy: #16a34a;
@@ -21,7 +30,7 @@
 	--overlay: rgba(0, 0, 0, 0.55);
 	/* Plot canvases (force plots, FRM map, FFT, spectrogram, waterfall) follow the theme rather
 	   than staying permanently dark as a fixed "instrument display" — single toggle point. */
-	--plot-bg: #0b1020;
+	--plot-bg: #090d15;
 	--radius: 14px;
 	--font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 	--mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
@@ -35,10 +44,13 @@
 	--theme--foreground: var(--text);
 	--theme--foreground-subdued: var(--text-dim);
 	--theme--primary: var(--accent);
-	--theme--background: #0e162c;
-	--theme--background-subdued: rgba(255, 255, 255, 0.045);
-	--theme--border-color: rgba(255, 255, 255, 0.16);
-	--theme--border-color-subdued: rgba(255, 255, 255, 0.09);
+	/* Mapped onto the Record page's own tokens rather than a parallel set of literals, so the
+	   Plot dashboard's cards, inputs and hairlines are literally the same surfaces as Record's
+	   panels instead of near-misses of them. */
+	--theme--background: var(--bg-2);
+	--theme--background-subdued: var(--surface);
+	--theme--border-color: var(--border);
+	--theme--border-color-subdued: var(--border);
 	--theme--fonts--sans--font-family: var(--font);
 	--theme--fonts--monospace--font-family: var(--mono);
 }

@@ -176,7 +176,7 @@ function goToDbPlot() {
 .lcv-retryerr { font-size: 12px; color: var(--danger); margin: -8px 0 0; }
 .lcv-stats { display: flex; gap: 8px; flex-wrap: wrap; }
 .lcv-stat { display: flex; flex-direction: column; align-items: center; padding: 6px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; min-width: 76px; }
-.lcv-stat span { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.lcv-stat span { font-size: 9px; color: var(--text-dim); letter-spacing: 0.01em; }
 .lcv-stat b { font-size: 14px; font-variant-numeric: tabular-nums; }
 .lcv-plots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; flex: 1; min-height: 420px; }
 .lcv-plot { display: flex; flex-direction: column; gap: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; min-height: 380px; }
