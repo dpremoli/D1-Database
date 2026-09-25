@@ -13,10 +13,11 @@ import { useForceHost } from './host';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { type Cache, cacheGet, cachePut, idxOfTime, parseCache } from './liveCache';
-import { type Axis, type Cloud, type CloudChannel, type SpeedMode, axisAutoLimits, buildCloud, COLORMAPS } from './liveCloud';
+import { type Axis, type Cloud, type CloudChannel, type SpeedMode, axisAutoLimits, buildCloud } from './liveCloud';
 import { buildPath, type PathParams } from './path';
 import { exportFrmFigure } from './frmExport';
 import { buildScaleLUT, colorizeValues, lutKey, type ColorScale } from './colorScale';
+import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { histogramFrom, type Histogram } from './histogram';
 import {
 	buildStaticAttributes, spiralUniformValues,
@@ -174,7 +175,6 @@ const rampCss = computed(() => {
 	return `linear-gradient(to top, ${stops.join(', ')})`;
 });
 function fmtN(v: number): string {
-	if (typeof v !== 'number' || !Number.isFinite(v)) return '–';
 	const a = Math.abs(v);
 	if (a >= 1000) return (v / 1000).toFixed(1) + 'k';
 	if (a >= 100) return v.toFixed(0);
@@ -216,7 +216,6 @@ let gpuGeom: THREE.BufferGeometry | null = null;
 let gpuMat: THREE.ShaderMaterial | null = null;
 let gpuObj: THREE.Points | null = null;
 let colormapTex: THREE.DataTexture | null = null;
-let texLutKey = '';        // lutKey() of what colormapTex currently holds
 let gpuUploaded = false;   // whether gpuGeom currently holds this op's data at all
 // 3D when a Z series is selected: the cloud gets a Z displacement and OrbitControls owns
 // the camera; the custom 2D pan/pinch/wheel/rect handlers stand down. Flat is unchanged.
@@ -274,11 +273,7 @@ function setupRenderer() {
 	pointsObj = new THREE.Points(pointsGeom, pointsMat);
 	scene.add(pointsObj);
 
-	colormapTex = new THREE.DataTexture(buildScaleLUT(props.colorScale, 256), 256, 1, THREE.RGBAFormat);
-	colormapTex.minFilter = THREE.LinearFilter; colormapTex.magFilter = THREE.LinearFilter;
-	colormapTex.wrapS = colormapTex.wrapT = THREE.ClampToEdgeWrapping;
-	colormapTex.needsUpdate = true;
-	texLutKey = lutKey(props.colorScale);
+	colormapTex = createScaleTexture(props.colorScale);
 	gpuGeom = new THREE.BufferGeometry();
 	gpuMat = new THREE.ShaderMaterial({
 		vertexShader: TURNING_SPIRAL_VERT, fragmentShader: TURNING_SPIRAL_FRAG,
@@ -350,13 +345,10 @@ let cloud: Cloud | null = null;
 // switch -- decoupled from what is actually RENDERED, which always comes from props.colorScale
 // (climits.value above). Same "climits reports the data, colorScale drives the render" split
 // Stage 1/2 established for every other converted renderer.
-const autoLimitsByAxis = new Map<string, [number, number]>();
-watch(cache, () => { autoLimitsByAxis.clear(); gpuUploaded = false; lastEmittedAutoKey = ''; });
+watch(cache, () => { gpuUploaded = false; lastEmittedAutoKey = ''; });
 let lastEmittedAutoKey = '';
 function emitAutoRange() {
-	let auto = autoLimitsByAxis.get(effChannel.value);
-	if (!auto && cache.value) { auto = axisAutoLimits(cache.value, effChannel.value); autoLimitsByAxis.set(effChannel.value, auto); }
-	auto = auto || [0, 1];
+	const auto = cache.value ? axisAutoLimits(cache.value, effChannel.value) : [0, 1];   // memoised per (cache, channel)
 	const key = `${effChannel.value}:${auto[0]}:${auto[1]}`;
 	if (key === lastEmittedAutoKey) return;   // avoid re-seeding the host's scale on every rebuild
 	lastEmittedAutoKey = key;
@@ -385,8 +377,7 @@ function rebuild() {
 		path: effPath.value,
 		window: { cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec, stride: props.stride },
 		gridding: props.gridding, gridN: props.gridN,
-		colormap: COLORMAPS[s.colormap] || COLORMAPS.viridis,
-		cmin: s.satMin, cmax: s.satMax,
+		cmin: s.satMin, cmax: s.satMax,   // no colormap: colour comes from colorizeValues below
 		zSeries: props.zSeries || 'none',
 	});
 	pointCount.value = cloud?.count ?? 0;
@@ -402,9 +393,9 @@ function rebuild() {
 	// a colour-only change recolours this buffer in place (recolorCpu) rather than rebuilding.
 	const n = cloud.count;
 	pointsGeom.setAttribute('position', new THREE.BufferAttribute(cloud.pos, 3));
-	const rgba = new Float32Array(n * 4);
+	const rgba = new Uint8Array(n * 4);
 	colorizeValues(cloud.val, n, s, rgba);
-	pointsGeom.setAttribute('color', new THREE.BufferAttribute(rgba, 4));
+	pointsGeom.setAttribute('color', new THREE.BufferAttribute(rgba, 4, true));
 	pointsGeom.setDrawRange(0, n);
 	applyZScale();
 	if (is3D.value && !controls) enter3D();   // mounted straight into 3D (Z picked before Lite)
@@ -433,7 +424,7 @@ function uploadGpuGeometry() {
 	// watcher further down WITHOUT re-running this O(N) attribute rebuild -- that watcher is the
 	// actual point of this GPU path, so this function must never become its trigger.
 	// The LUT too: colour changes made while the CPU path was active never touched colormapTex.
-	syncLut(props.colorScale);
+	if (colormapTex) syncScaleTexture(colormapTex, props.colorScale);
 	pushGpuColorUniforms(props.colorScale);
 	emitAutoRange();
 
@@ -580,16 +571,8 @@ function recolorCpu() {
 	if (!cloud || !pointsGeom) return;
 	const attr = pointsGeom.getAttribute('color') as THREE.BufferAttribute | undefined;
 	if (!attr || attr.itemSize !== 4 || attr.count !== cloud.count) { scheduleRebuild(); return; }
-	colorizeValues(cloud.val, cloud.count, props.colorScale, attr.array as Float32Array);
+	colorizeValues(cloud.val, cloud.count, props.colorScale, attr.array as Uint8Array);
 	attr.needsUpdate = true;
-}
-function syncLut(s: ColorScale) {
-	if (!colormapTex) return;
-	const key = lutKey(s);
-	if (key === texLutKey) return;
-	colormapTex.image.data.set(buildScaleLUT(s, 256));
-	colormapTex.needsUpdate = true;
-	texLutKey = key;
 }
 function pushGpuColorUniforms(s: ColorScale) {
 	if (!gpuMat) return;
@@ -619,7 +602,7 @@ function exportViewport(filename: string, subtitle?: string) {
 	return exportFrmFigure({
 		canvas: c, bounds: currentBounds(),
 		cmin: s.satMin, cmax: s.satMax, colorScale: s,
-		colormap: s.colormap, axis: effChannel.value, subtitle, filename,
+		axis: effChannel.value, subtitle, filename,
 	});
 }
 defineExpose({ currentBounds, exportViewport });
@@ -687,12 +670,13 @@ function colorScaleUnchanged(a: ColorScale, b: ColorScale | undefined): boolean 
 		a.dispMin === b.dispMin && a.dispMax === b.dispMax &&
 		a.greyOutOfRange === b.greyOutOfRange;
 }
-// Neither path re-runs geometry for a colour change: the GPU path pushes uniforms (and rebuilds
-// the LUT texture when lutKey changes); the CPU path repaints its resident colour buffer.
+// Neither path re-runs geometry for a colour change: the GPU path pushes uniforms (and rewrites
+// the LUT texture when lutKey changes); the CPU path repaints its resident colour buffer and
+// leaves the texture to uploadGpuGeometry's resync on the way back to the GPU path.
 watch(() => props.colorScale, (s, prev) => {
 	if (colorScaleUnchanged(s, prev)) return;
-	syncLut(s);
 	if (!usesGpuPath.value) { scheduleRecolor(); return; }
+	if (colormapTex) syncScaleTexture(colormapTex, s);
 	pushGpuColorUniforms(s);
 	scheduleDraw();
 }, { deep: true });

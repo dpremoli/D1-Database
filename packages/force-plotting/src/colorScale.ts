@@ -157,8 +157,9 @@ export function sampleScaleAt(v: number, s: ColorScale): [number, number, number
 
 // CPU mirror of frmCloudShader.ts's colour branch, for renderers that bake per-vertex colour:
 // linear LUT index over [satMin, satMax] (same as every shader), out-of-displayed-range points grey
-// (0.5) or alpha 0 (hidden -- the host material's alphaTest drops them). `out` is RGBA, stride 4.
-export function colorizeValues(vals: ArrayLike<number>, count: number, s: ColorScale, out: Float32Array, lutWidth = 1024): void {
+// or alpha 0 (hidden -- the host material's alphaTest drops them). `out` is RGBA8, stride 4 --
+// upload it as a normalized attribute.
+export function colorizeValues(vals: ArrayLike<number>, count: number, s: ColorScale, out: Uint8Array, lutWidth = 1024): void {
 	const w = Math.max(2, lutWidth);
 	const lut = buildScaleLUT(s, w);
 	const lo = s.satMin, span = s.satMax > s.satMin ? s.satMax - s.satMin : 1;
@@ -167,16 +168,26 @@ export function colorizeValues(vals: ArrayLike<number>, count: number, s: ColorS
 		const v = vals[k];
 		const o = k * 4;
 		if (v < dLo || v > dHi) {
-			out[o] = out[o + 1] = out[o + 2] = 0.5;
-			out[o + 3] = grey ? 1 : 0;
+			out[o] = out[o + 1] = out[o + 2] = 128;
+			out[o + 3] = grey ? 255 : 0;
 			continue;
 		}
 		let t = (v - lo) / span;
 		t = t > 0 ? (t < 1 ? t : 1) : 0;   // also maps NaN to 0, like clamp01
 		const i = Math.round(t * (w - 1)) * 4;
-		out[o] = lut[i] / 255; out[o + 1] = lut[i + 1] / 255; out[o + 2] = lut[i + 2] / 255;
-		out[o + 3] = 1;
+		out[o] = lut[i]; out[o + 1] = lut[i + 1]; out[o + 2] = lut[i + 2];
+		out[o + 3] = 255;
 	}
+}
+
+// Re-seed the saturation range from an auto-detected [lo, hi], keeping every other setting.
+export function withAutoRange(s: ColorScale, lo: number, hi: number): ColorScale {
+	return applyParams({ ...s, satMin: lo, satMax: hi }, lo, hi);
+}
+
+// Displayed-range filter off -- for when the data it was set against changes.
+export function withOpenDisplay(s: ColorScale): ColorScale {
+	return { ...s, dispMin: -OPEN_DISP, dispMax: OPEN_DISP };
 }
 
 // Everything buildScaleLUT's bytes depend on. Renderers compare this, not individual fields, to

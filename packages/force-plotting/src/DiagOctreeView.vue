@@ -18,7 +18,8 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Potree, type PointCloudOctree } from 'potree-core';
-import { buildScaleLUT, defaultScale, lutKey, OPEN_DISP, type ColorScale } from './colorScale';
+import { defaultScale, OPEN_DISP, type ColorScale } from './colorScale';
+import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { CLUSTER_PALETTE } from './clusterPalette';
 import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
@@ -88,15 +89,6 @@ const ATTR_NAME: Record<string, string> = { tsaResid: 'tsa_resid', residZ: 'resi
 const CHANNEL_IDX: Record<string, number> = { tsaResid: 0, residZ: 1 };
 const SEL_KIND_IDX: Record<string, number> = { time: 1, attribute: 2, lasso: 3 };
 
-// Shared with every other FRM renderer via colorScale.ts's buildScaleLUT (was its own hand-rolled
-// 256-sample loop, a near-duplicate of FrmOctree.vue's and DiagScatter.vue's).
-function lutTexture(scale: ColorScale): THREE.DataTexture {
-	const data = buildScaleLUT(scale, 256);
-	const t = new THREE.DataTexture(data, 256, 1, THREE.RGBAFormat);
-	t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.needsUpdate = true;
-	return t;
-}
-
 // One material reads tsa_resid/resid_z; a uChannel uniform selects which drives the colour, and
 // uRange normalises it before the viridis lookup. A separate selection-highlight
 // path (uSelKind/uSelTimeRange/uSelAttrRange/uSelAttrChannel) dims points outside the active
@@ -110,7 +102,7 @@ function makeMaterial(): THREE.ShaderMaterial {
 	const s = props.colorScale;
 	const m = new THREE.ShaderMaterial({
 		uniforms: {
-			uGradient: { value: lutTexture(s) },
+			uGradient: { value: createScaleTexture(s) },
 			uRange: { value: new THREE.Vector2(s.satMin, s.satMax) },
 			// Displayed-range filter, separate from uRange (saturation/colour): out-of-range points
 			// are greyed (uGreyOOR>0.5) or discarded -- independent of the selection-dim path below.
@@ -247,7 +239,7 @@ function makeAnalysisMaterial(): THREE.ShaderMaterial {
 	return new THREE.ShaderMaterial({
 		transparent: true,
 		uniforms: {
-			uGradient: { value: lutTexture(defaultScale(0, 1)) },   // rebuilt to the real range below
+			uGradient: { value: createScaleTexture(defaultScale(0, 1)) },   // rebuilt to the real range below
 			uRange: { value: new THREE.Vector2(0, 1) },
 			// Displayed-range filter, wired for parity with the base octree material, but held
 			// permanently open (+-OPEN_DISP) here: this overlay has no host-driven ColorScale or
@@ -610,14 +602,10 @@ watch(() => props.paintMode, () => {
 	else nextTick(() => paintEl.value?.focus());
 });
 watch(() => props.channel, () => { if (material) { material.uniforms.uChannel.value = CHANNEL_IDX[props.channel] ?? 1; emitAutoRange(); } });
-// One watcher for the whole ColorScale: rebuild the LUT texture only when lutKey changes (what is
-// baked into its bytes); saturation/displayed-range/grey-vs-hide are plain uniform pushes.
-watch(() => props.colorScale, (s, prev) => {
+// LUT bytes resync only when lutKey changes; saturation/displayed-range/grey-vs-hide are uniforms.
+watch(() => props.colorScale, (s) => {
 	if (!material) return;
-	if (!prev || lutKey(s) !== lutKey(prev)) {
-		(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
-		material.uniforms.uGradient.value = lutTexture(s);
-	}
+	syncScaleTexture(material.uniforms.uGradient.value, s);
 	applyRange();
 }, { deep: true });
 watch(() => props.pointSize, () => { if (material) { material.uniforms.uSize.value = props.pointSize || 1.5; invalidate(); } });
@@ -643,7 +631,7 @@ function exportViewport(filename: string, subtitle?: string) {
 	return exportFrmFigure({
 		canvas: c, bounds: currentBounds(),
 		cmin: appliedLo, cmax: appliedHi, colorScale: props.colorScale,
-		colormap: props.colorScale.colormap, axis: props.channel, subtitle, filename,
+		axis: props.channel, subtitle, filename,
 	});
 }
 defineExpose({ currentBounds, exportViewport });

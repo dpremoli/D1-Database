@@ -16,7 +16,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import type { RecordClient } from './liveClient';
-import { buildScaleLUT, createAccumulator, ColorBar, lutKey, type Axis, type ColorScale, type Histogram, type HistogramAccumulator } from '@d1/force-plotting';
+import { createAccumulator, createScaleTexture, syncScaleTexture, ColorBar, type Axis, type ColorScale, type Histogram, type HistogramAccumulator } from '@d1/force-plotting';
 
 const props = withDefaults(defineProps<{ client: RecordClient; diam: number; colorScale: ColorScale; pointSize?: number; pointStride?: number; axis?: Axis }>(), {
 	pointSize: 1.8, pointStride: 1, axis: 'Fz',
@@ -48,20 +48,12 @@ let ro: ResizeObserver | null = null;
 // tracked point bounds (mm) for auto-fit framing — robust for both sim and replayed real cuts
 let bx0 = Infinity, bx1 = -Infinity, by0 = Infinity, by1 = -Infinity;
 
-// Shared with every other FRM renderer via colorScale.ts's buildScaleLUT (see Stage 1's
-// consolidation) -- was its own hand-rolled per-point cm() call before this conversion.
-function lutTexture(scale: ColorScale): THREE.DataTexture {
-	const data = buildScaleLUT(scale, 256);
-	const t = new THREE.DataTexture(data, 256, 1, THREE.RGBAFormat);
-	t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.needsUpdate = true;
-	return t;
-}
 function makeMaterial(): THREE.ShaderMaterial {
 	const s = props.colorScale;
 	return new THREE.ShaderMaterial({
 		transparent: false,
 		uniforms: {
-			uGradient: { value: lutTexture(s) },
+			uGradient: { value: createScaleTexture(s) },
 			uRange: { value: new THREE.Vector2(s.satMin, s.satMax) },
 			uDisp: { value: new THREE.Vector2(s.dispMin, s.dispMax) },
 			uGreyOOR: { value: s.greyOutOfRange ? 1 : 0 },
@@ -378,14 +370,11 @@ watch(() => props.axis, () => resetUpload());
 // this conversion (colour baked into the GPU buffer at upload time, needing a full resetUpload()
 // to recolour anything already drawn -- the #65 bug this file used to carry a comment about) NO
 // re-pack is needed here at all. This is Stage 4's actual point: a saturation/displayed-range drag
-// during a live recording costs a LUT rebuild (only if colormap/steps changed) plus four uniform
+// during a live recording costs an in-place LUT rewrite (only if lutKey changed) plus four uniform
 // writes, never an O(N) CPU pass over up to 2M already-accumulated points.
-watch(() => props.colorScale, (s, prev) => {
+watch(() => props.colorScale, (s) => {
 	if (!material) return;
-	if (!prev || lutKey(s) !== lutKey(prev)) {
-		(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
-		material.uniforms.uGradient.value = lutTexture(s);
-	}
+	syncScaleTexture(material.uniforms.uGradient.value, s);
 	material.uniforms.uRange.value.set(s.satMin, s.satMax);
 	material.uniforms.uDisp.value.set(s.dispMin, s.dispMax);
 	material.uniforms.uGreyOOR.value = s.greyOutOfRange ? 1 : 0;

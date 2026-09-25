@@ -13,7 +13,8 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Potree, type PointCloudOctree } from 'potree-core';
-import { buildScaleLUT, lutKey, type ColorScale } from './colorScale';
+import type { ColorScale } from './colorScale';
+import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
 
@@ -60,22 +61,13 @@ function invalidate() { needsRender = true; }
 const ranges: Record<string, [number, number]> = { Fx: [0, 1], Fy: [0, 1], Fz: [0, 1] };
 const AXIS_IDX: Record<string, number> = { Fx: 0, Fy: 1, Fz: 2 };
 
-// Shared with every other FRM renderer via colorScale.ts's buildScaleLUT (was its own hand-rolled
-// 256-sample loop, a near-duplicate of the one DiagScatter.vue and frmCloudShader.ts each had).
-function lutTexture(scale: ColorScale): THREE.DataTexture {
-	const data = buildScaleLUT(scale, 256);
-	const t = new THREE.DataTexture(data, 256, 1, THREE.RGBAFormat);
-	t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.needsUpdate = true;
-	return t;
-}
-
 // One material reads all three force attributes; a uAxis uniform selects which drives
 // the colour, and uRange normalises it before the viridis lookup.
 function makeMaterial(): THREE.ShaderMaterial {
 	const s = props.colorScale;
 	const m = new THREE.ShaderMaterial({
 		uniforms: {
-			uGradient: { value: lutTexture(s) },
+			uGradient: { value: createScaleTexture(s) },
 			uRange: { value: new THREE.Vector2(s.satMin, s.satMax) },
 			// Displayed-range filter, separate from uRange (saturation/colour): a point whose raw
 			// value falls outside [uDisp.x, uDisp.y] is greyed (uGreyOOR>0.5) or discarded.
@@ -340,14 +332,10 @@ onBeforeUnmount(() => {
 
 watch(() => props.octreePath, () => { if (pco) { scene?.remove(pco); pco = null; } load(); });
 watch(() => props.axis, () => { if (material) { material.uniforms.uAxis.value = AXIS_IDX[props.axis] ?? 2; emitAutoRange(); } });
-// One watcher for the whole ColorScale: rebuild the LUT texture only when lutKey changes (what is
-// baked into its bytes); saturation/displayed-range/grey-vs-hide are plain uniform pushes.
-watch(() => props.colorScale, (s, prev) => {
+// LUT bytes resync only when lutKey changes; saturation/displayed-range/grey-vs-hide are uniforms.
+watch(() => props.colorScale, (s) => {
 	if (!material) return;
-	if (!prev || lutKey(s) !== lutKey(prev)) {
-		(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
-		material.uniforms.uGradient.value = lutTexture(s);
-	}
+	syncScaleTexture(material.uniforms.uGradient.value, s);
 	applyRange();
 }, { deep: true });
 watch(() => props.pointSize, () => { if (material) { material.uniforms.uSize.value = props.pointSize || 1.5; invalidate(); } });
@@ -378,7 +366,7 @@ function exportViewport(filename: string, subtitle?: string) {
 	return exportFrmFigure({
 		canvas: c, bounds: currentBounds(),
 		cmin: appliedLo, cmax: appliedHi, colorScale: props.colorScale,
-		colormap: props.colorScale.colormap, axis: props.axis, subtitle, filename,
+		axis: props.axis, subtitle, filename,
 	});
 }
 defineExpose({ currentBounds, exportViewport });

@@ -67,7 +67,7 @@ describe('buildCloud - degenerate input safety (the white-screen bug)', () => {
 		// Either null (no points in window) or, if a single boundary point sneaks in, must be finite.
 		if (cloud) {
 			assertNoNaN(cloud.pos, 'pos');
-			assertNoNaN(cloud.col, 'col');
+			assertNoNaN(cloud.col!, 'col');
 		}
 	});
 
@@ -76,7 +76,7 @@ describe('buildCloud - degenerate input safety (the white-screen bug)', () => {
 		const cloud = buildCloud(c, baseParams({ window: { cropStartSec: 0, cropEndSec: 1, stride: 1 } }));
 		if (cloud) {
 			assertNoNaN(cloud.pos, 'pos');
-			assertNoNaN(cloud.col, 'col');
+			assertNoNaN(cloud.col!, 'col');
 			expect(cloud.cmax).toBeGreaterThan(cloud.cmin - 1e-9);
 		}
 	});
@@ -89,7 +89,7 @@ describe('buildCloud - normal operation', () => {
 		expect(cloud).not.toBeNull();
 		expect(cloud!.count).toBe(200);
 		assertNoNaN(cloud!.pos, 'pos');
-		assertNoNaN(cloud!.col, 'col');
+		assertNoNaN(cloud!.col!, 'col');
 	});
 
 	it('stride thins the point count roughly by the stride factor', () => {
@@ -116,7 +116,7 @@ describe('buildCloud - normal operation', () => {
 		expect(cloud).not.toBeNull();
 		expect(cloud.count).toBeLessThanOrEqual(16 * 16);
 		assertNoNaN(cloud.pos, 'pos');
-		assertNoNaN(cloud.col, 'col');
+		assertNoNaN(cloud.col!, 'col');
 	});
 
 	it('manual cmin/cmax override the auto percentile scale', () => {

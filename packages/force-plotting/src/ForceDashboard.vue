@@ -9,7 +9,7 @@ import FrmOctree from './FrmOctree.vue';
 import WearTrend from './WearTrend.vue';
 import type { SpeedMode } from './liveCloud';
 import { axisAutoLimits } from './liveCloud';
-import { defaultScale, applyParams, OPEN_DISP, type ColorScale } from './colorScale';
+import { defaultScale, withAutoRange, withOpenDisplay, type ColorScale } from './colorScale';
 import { histogramFrom, type Histogram } from './histogram';
 import ColorScaleEditor from './ColorScaleEditor.vue';
 import PlotModeFlyout from './PlotModeFlyout.vue';
@@ -631,9 +631,7 @@ const cacheEpoch = ref(0);
 const colorScale = ref<ColorScale>(defaultScale(0, 1));
 const locked = ref(false);
 const autoClimits = ref<{ cmin: number; cmax: number } | null>(null);
-function seedAuto(lo: number, hi: number) {
-	colorScale.value = applyParams({ ...colorScale.value, satMin: lo, satMax: hi }, lo, hi);
-}
+function seedAuto(lo: number, hi: number) { colorScale.value = withAutoRange(colorScale.value, lo, hi); }
 function onClimits(v: { cmin: number; cmax: number }) {
 	// Bail on a value-identical re-emission: reassigning colorScale would still be an identity
 	// change that every FRM pane on this dashboard re-evaluates.
@@ -649,23 +647,17 @@ const rendererHistogram = ref<Histogram | null>(null);
 // is in absolute units of the old data, so it reopens too.
 watch([() => detail.value?.id, axis], () => {
 	autoClimits.value = null; rendererHistogram.value = null;
-	colorScale.value = { ...colorScale.value, dispMin: -OPEN_DISP, dispMax: OPEN_DISP };
+	colorScale.value = withOpenDisplay(colorScale.value);
 });
 // Unlocking hands the scale back to auto: re-apply the current auto range immediately.
-watch(locked, (l) => {
-	if (l) return;
-	const r = autoClimits.value ? [autoClimits.value.cmin, autoClimits.value.cmax] : cacheAutoLimits.value;
-	if (r) seedAuto(r[0], r[1]);
-});
+watch(locked, (l) => { const r = currentAuto.value; if (!l && r) seedAuto(r[0], r[1]); });
 // Compare mode's filtered pane scales to its own data (a high-pass shifts the whole range) unless
 // the user locked the scale, in which case both panes share it.
 const filteredAuto = ref<{ cmin: number; cmax: number } | null>(null);
-watch(() => filteredCache.value, () => { filteredAuto.value = null; });
-function onFilteredClimits(v: { cmin: number; cmax: number }) { filteredAuto.value = v; }
+watch(filteredCache, () => { filteredAuto.value = null; });
 const filteredColorScale = computed<ColorScale>(() => {
 	const s = colorScale.value, a = filteredAuto.value;
-	if (locked.value || !a) return s;
-	return applyParams({ ...s, satMin: a.cmin, satMax: a.cmax }, a.cmin, a.cmax);
+	return locked.value || !a ? s : withAutoRange(s, a.cmin, a.cmax);
 });
 // Derived straight from the resident cache rather than from a renderer's @climits/@histogram
 // events. Those only arrive when a FrmCloud is actually mounted -- not in Figure mode, not when
@@ -680,8 +672,12 @@ const cacheAutoLimits = computed<[number, number] | null>(() => {
 	const c = d?.live_cache_file ? cacheGet(d.live_cache_file) : null;
 	return c ? axisAutoLimits(c, axis.value) : null;
 });
-const colorDomainLo = computed(() => autoClimits.value?.cmin ?? cacheAutoLimits.value?.[0] ?? colorScale.value.satMin);
-const colorDomainHi = computed(() => autoClimits.value?.cmax ?? cacheAutoLimits.value?.[1] ?? colorScale.value.satMax);
+// The auto range currently in force: a renderer's report wins, else the cache-derived fallback.
+// Short-circuits, so the cache scan only runs when no renderer has reported.
+const currentAuto = computed<[number, number] | null>(() =>
+	autoClimits.value ? [autoClimits.value.cmin, autoClimits.value.cmax] : cacheAutoLimits.value);
+const colorDomainLo = computed(() => currentAuto.value?.[0] ?? colorScale.value.satMin);
+const colorDomainHi = computed(() => currentAuto.value?.[1] ?? colorScale.value.satMax);
 // Binned over the AUTO range, not the edited one, so dragging a handle never triggers an O(N)
 // re-bin (and the curve stays put under the moving handles).
 // Seed the scale from the cache whenever no renderer has reported climits -- Figure mode, a
@@ -1900,7 +1896,7 @@ function resetLive() {
 	plotStride.value = 1; gridding.value = false; pointSize.value = 1.4;
 	// Renderers dedupe their climits, so nothing would re-seed a blank scale: rebuild it from the
 	// current auto range instead of defaultScale(0, 1).
-	const r = autoClimits.value ? [autoClimits.value.cmin, autoClimits.value.cmax] : cacheAutoLimits.value;
+	const r = currentAuto.value;
 	colorScale.value = r ? defaultScale(r[0], r[1]) : defaultScale(0, 1);
 	locked.value = false;
 }
@@ -2395,7 +2391,7 @@ function fmtDateTime(v: string | null | undefined) {
 								</span>
 								<div class="toggle pg-tools">
 									<button class="tbtn icobtn" :class="{ on: rectZoomTool }" title="Rectangular zoom — drag a box on any graph"
-										:style="rectZoomTool ? { background: 'var(--accent, var(--theme--primary, #1d4ed8))', borderColor: 'var(--accent, var(--theme--primary, #1d4ed8))', color: 'var(--accent-ink, var(--theme--foreground-inverted, #fff))' } : {}"
+										:style="rectZoomTool ? { background: 'var(--fp-accent)', borderColor: 'var(--fp-accent)', color: 'var(--fp-accent-ink)' } : {}"
 										@click="rectZoomTool = !rectZoomTool"><v-icon name="crop_free" x-small /></button>
 									<button class="tbtn icobtn" title="Reset zoom" :disabled="!zoomed" @click="resetZoom"><v-icon name="restart_alt" x-small /></button>
 									<button v-for="a in AXES" :key="a" class="tbtn axchip" :class="{ on: (item.channels || AXES).includes(a) }"
@@ -2568,7 +2564,7 @@ function fmtDateTime(v: string | null | undefined) {
 									</div>
 									<button v-if="frmMode==='full'" class="tbtn" :class="{ on: gridFull }" :disabled="buildingOctree"
 										:title="gridAvailable ? 'Interpolated-grid octree (filled surface)' : 'Build the interpolated grid on the host'"
-										:style="gridFull ? { background: 'var(--accent, var(--theme--primary, #1d4ed8))', borderColor: 'var(--accent, var(--theme--primary, #1d4ed8))', color: 'var(--accent-ink, var(--theme--foreground-inverted, #fff))' } : {}"
+										:style="gridFull ? { background: 'var(--fp-accent)', borderColor: 'var(--fp-accent)', color: 'var(--fp-accent-ink)' } : {}"
 										@click="gridFull = !gridFull"><v-icon name="grid_on" x-small /> Gridded</button>
 									<select v-if="octreeOn || liveOn" v-model="zSeries" class="zsel" title="Drive the Z axis from a force series (3D view — drag to rotate)">
 										<option value="none">2D</option>
@@ -2615,7 +2611,7 @@ function fmtDateTime(v: string | null | undefined) {
 										:stride="plotStride" :gridding="gridding" :grid-n="gridN"
 										:point-size="pointSize" :color-scale="filteredColorScale"
 										:shared-view="compareView" pane-label="filtered"
-										@climits="onFilteredClimits" />
+										@climits="filteredAuto = $event" />
 								</div>
 								<FrmCloud v-else-if="filteredSoloOn" ref="frmCloudRef" :cache-override="filteredCache" :cache-file-id="detail.live_cache_file"
 										:axis="axis" :feed="editFeed" :diam="editDiam" :inner-diam="editInnerDiam" :speed-mode="speedMode"
@@ -2674,6 +2670,9 @@ function fmtDateTime(v: string | null | undefined) {
 
 <style scoped>
 .fd {
+	/* App tokens, falling back to the Directus theme when this renders inside the admin. */
+	--fp-accent: var(--accent, var(--theme--primary, #1d4ed8));
+	--fp-accent-ink: var(--accent-ink, var(--theme--foreground-inverted, #fff));
 	padding: 20px 24px 40px;
 	font-family: var(--theme--fonts--sans--font-family, -apple-system, 'Segoe UI', Roboto, sans-serif);
 	color: var(--theme--foreground, #1e293b);
@@ -3006,9 +3005,9 @@ function fmtDateTime(v: string | null | undefined) {
 .segmode { display: inline-flex; border-radius: 8px; overflow: hidden; border: 1px solid var(--theme--border-color-subdued, #d7dee6); }
 .segbtn { font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; border: 0; padding: 5px 11px; background: var(--theme--background, #fff); color: var(--theme--foreground-subdued, #64748b); border-right: 1px solid var(--theme--border-color-subdued, #e7ebf0); }
 .segbtn:last-child { border-right: 0; }
-.segbtn.on { background: var(--accent, var(--theme--primary, #1d4ed8)); color: var(--accent-ink, var(--theme--foreground-inverted, #fff)); }
+.segbtn.on { background: var(--fp-accent); color: var(--fp-accent-ink); }
 .segbtn:disabled { opacity: 0.4; cursor: default; }
-.zslider { width: 70px; accent-color: var(--accent, var(--theme--primary, #1d4ed8)); vertical-align: middle; cursor: pointer; }
+.zslider { width: 70px; accent-color: var(--fp-accent); vertical-align: middle; cursor: pointer; }
 .stats-table { width: 100%; border-collapse: collapse; font-size: 11.5px; margin: 6px 0 4px; }
 .stats-table th { text-align: right; font-size: 10px; letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); padding: 2px 6px; }
 .stats-table td { text-align: right; padding: 3px 6px; font-variant-numeric: tabular-nums; border-top: 1px solid var(--theme--border-color-subdued, #eef1f5); }
@@ -3050,13 +3049,13 @@ function fmtDateTime(v: string | null | undefined) {
 .live-badge { margin-left: 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.06em; color: #7c3aed;
 	background: color-mix(in srgb, #7c3aed 12%, transparent); padding: 2px 7px; border-radius: 99px; }
 /* "Save crop as official" affordance — only appears once the handles have been moved (cropDirty). */
-.crop-save { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: var(--accent, var(--theme--primary, #1d4ed8)); cursor: pointer;
-	background: color-mix(in srgb, var(--accent, var(--theme--primary, #1d4ed8)) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent, var(--theme--primary, #1d4ed8)) 45%, transparent);
+.crop-save { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: var(--fp-accent); cursor: pointer;
+	background: color-mix(in srgb, var(--fp-accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--fp-accent) 45%, transparent);
 	padding: 2px 8px; border-radius: 99px; }
-.crop-save:hover { background: color-mix(in srgb, var(--accent, var(--theme--primary, #1d4ed8)) 22%, transparent); }
+.crop-save:hover { background: color-mix(in srgb, var(--fp-accent) 22%, transparent); }
 .crop-confirm { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: var(--theme--foreground, #e2e8f0); display: inline-flex; align-items: center; gap: 6px; }
 .crop-confirm .cc-yes, .crop-confirm .cc-no { font-size: 9.5px; font-weight: 700; cursor: pointer; padding: 2px 8px; border-radius: 99px; border: 1px solid transparent; }
-.crop-confirm .cc-yes { color: var(--accent-ink, var(--theme--foreground-inverted, #fff)); background: var(--accent, var(--theme--primary, #1d4ed8)); }
+.crop-confirm .cc-yes { color: var(--fp-accent-ink); background: var(--fp-accent); }
 .crop-confirm .cc-yes:disabled { opacity: 0.6; cursor: default; }
 .crop-confirm .cc-no { color: var(--theme--foreground-subdued, #94a3b8); background: transparent; border-color: color-mix(in srgb, currentColor 40%, transparent); }
 .crop-msg { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: #22c55e; }
@@ -3118,7 +3117,7 @@ function fmtDateTime(v: string | null | undefined) {
 	letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); flex: 1 1 auto; }
 .processbtn {
 	display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer;
-	padding: 7px 14px; border-radius: 9px; color: var(--accent-ink, var(--theme--foreground-inverted, #fff)); background: var(--accent, var(--theme--primary, #1d4ed8)); border: 0; white-space: nowrap;
+	padding: 7px 14px; border-radius: 9px; color: var(--fp-accent-ink); background: var(--fp-accent); border: 0; white-space: nowrap;
 }
 .processbtn:disabled { opacity: 0.6; cursor: progress; }
 .applybtn {

@@ -16,7 +16,8 @@ export interface CloudParams {
 	window: PathWindow;
 	gridding: boolean;     // bin into a grid (mean colour per cell) vs raw scatter
 	gridN: number;         // grid resolution per axis when gridding
-	colormap: (x: number) => [number, number, number];
+	// Optional: when omitted `col` is not built (FrmCloud colours from `val` via colorizeValues).
+	colormap?: (x: number) => [number, number, number];
 	// Manual colour-scale limits (N). When either is null/undefined the limit is auto-computed
 	// from the data (prctile 1 / 99, mirroring process_force.m's canonical FRM colour scale).
 	cmin?: number | null;
@@ -28,7 +29,7 @@ export interface CloudParams {
 
 export interface Cloud {
 	pos: Float32Array;   // stride 3
-	col: Float32Array;   // stride 3, rgb 0..1
+	col?: Float32Array;  // stride 3, rgb 0..1 -- only when CloudParams.colormap is given
 	count: number;
 	bounds: PathBounds;
 	cmin: number; cmax: number;   // colour-scale limits actually applied (for the colorbar)
@@ -44,7 +45,16 @@ function percentile(sorted: Float32Array, p: number): number {
 // Auto colour limits (prctile 1/99) over the WHOLE cached channel array — NOT the current crop
 // and NOT decimation-dependent. Sampled to ~400k for speed. Returns [0, 1] for a missing/empty
 // channel array (e.g. axisAutoLimits(c, 'Mz') on a cache with no torque channel).
+// Memoised per (cache object, channel): the dashboard and each FRM pane ask for the same range.
+const autoLimitsMemo = new WeakMap<Cache, Map<CloudChannel, [number, number]>>();
 export function axisAutoLimits(c: Cache, channel: CloudChannel): [number, number] {
+	let byChannel = autoLimitsMemo.get(c);
+	if (!byChannel) { byChannel = new Map(); autoLimitsMemo.set(c, byChannel); }
+	let r = byChannel.get(channel);
+	if (!r) { r = computeAutoLimits(c, channel); byChannel.set(channel, r); }
+	return r;
+}
+function computeAutoLimits(c: Cache, channel: CloudChannel): [number, number] {
 	const a = (c as any)[channel] as Float32Array | undefined;
 	if (!a || a.length === 0) return [0, 1];
 	const stride = Math.max(1, Math.floor(a.length / 400_000));
@@ -106,14 +116,14 @@ export function buildCloud(c: Cache, p: CloudParams): Cloud | null {
 
 	if (p.gridding) return gridCloud(path, fv, lo, span, p, zSrc, zlo, zspan);
 
-	const pos = new Float32Array(m * 3), col = new Float32Array(m * 3);
+	const pos = new Float32Array(m * 3);
+	const cm = p.colormap, col = cm ? new Float32Array(m * 3) : undefined;
 	let zv: Float32Array | undefined;
 	if (zSrc) zv = new Float32Array(m);
 	for (let k = 0; k < m; k++) {
 		pos[k * 3] = path.pos[k * 3]; pos[k * 3 + 1] = path.pos[k * 3 + 1];
 		pos[k * 3 + 2] = zSrc ? 0 : path.pos[k * 3 + 2];   // machine_xyz's real Z passes through when there's no overlay
-		const [rr, gg, bb] = p.colormap((fv[k] - lo) / span);
-		col[k * 3] = rr; col[k * 3 + 1] = gg; col[k * 3 + 2] = bb;
+		if (col) { const [rr, gg, bb] = cm!((fv[k] - lo) / span); col[k * 3] = rr; col[k * 3 + 1] = gg; col[k * 3 + 2] = bb; }
 		if (zv && zSrc) zv[k] = (zSrc[path.idx[k]] - zlo) / zspan - 0.5;
 	}
 	return { pos, col, count: m, bounds: path.bounds, cmin: lo, cmax: hi, val: fv, zv };
@@ -157,14 +167,14 @@ function gridCloud(
 		zsg.push(sumZ[idx2] / n); cg.push(sum[idx2] / n);
 	}
 	const n = cg.length;
-	const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+	const pos = new Float32Array(n * 3);
+	const cm = p.colormap, col = cm ? new Float32Array(n * 3) : undefined;
 	let zv: Float32Array | undefined;
 	if (zSrc) zv = new Float32Array(n);
 	for (let k = 0; k < n; k++) {
 		pos[k * 3] = xsg[k]; pos[k * 3 + 1] = ysg[k];
 		pos[k * 3 + 2] = zSrc ? 0 : zsg[k];   // real (unbinned-overlay) Z; zero when the overlay drives height instead
-		const [rr, gg, bb] = p.colormap((cg[k] - lo) / span);
-		col[k * 3] = rr; col[k * 3 + 1] = gg; col[k * 3 + 2] = bb;
+		if (col) { const [rr, gg, bb] = cm!((cg[k] - lo) / span); col[k * 3] = rr; col[k * 3 + 1] = gg; col[k * 3 + 2] = bb; }
 		if (zv) zv[k] = (zsg[k] - zlo) / zspan - 0.5;
 	}
 	return { pos, col, count: n, bounds: path.bounds, cmin: lo, cmax: lo + span, val: Float32Array.from(cg), zv };

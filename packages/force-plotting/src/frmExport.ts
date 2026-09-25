@@ -3,8 +3,7 @@
 // a framed axis with x/y (mm) ticks + grid, a viridis colorbar labelled "<axis> (N)", and
 // a title + operation subtitle. Instant and offline — no host round-trip — so "Download this
 // FRM image" respects the current viewport without losing the report styling.
-import { COLORMAPS } from './liveCloud';
-import { sampleScaleAt, type ColorScale } from './colorScale';
+import { colorizeValues, type ColorScale } from './colorScale';
 
 // "Nice" round tick positions across [lo, hi] (~`target` of them). Exported for ColorBar.vue's
 // tick labels too -- it's the same "nice" rounding either way, no reason for a second copy just
@@ -42,10 +41,10 @@ function download(cv: HTMLCanvasElement, filename: string) {
 export interface FrmFigureOpts {
 	canvas: HTMLCanvasElement;                                   // the live WebGL view (already drawn)
 	bounds: { xmin: number; xmax: number; ymin: number; ymax: number }; // world mm the canvas shows
-	cmin: number; cmax: number; colormap: string; axis: string; // colour scale
-	// The full scale the render used; when given, the colorbar reproduces its steps, log mapping
-	// and displayed-range grey instead of a smooth colormap gradient.
-	colorScale?: ColorScale;
+	// The scale the render used (the colorbar reproduces its steps, log mapping and displayed-range
+	// grey); cmin/cmax override its saturation range with what the renderer actually applied.
+	colorScale: ColorScale;
+	cmin: number; cmax: number; axis: string;
 	subtitle?: string;                                         // op code, shown under the title
 	filename: string;
 }
@@ -54,7 +53,6 @@ export function exportFrmFigure(o: FrmFigureOpts): boolean {
 	const { canvas, bounds } = o;
 	const pw = canvas.width, ph = canvas.height;
 	if (!pw || !ph) return false;
-	const cm = COLORMAPS[o.colormap] || COLORMAPS.viridis;
 	const cmin = o.cmin, cmax = o.cmax > o.cmin ? o.cmax : o.cmin + 1;
 
 	// Scale figure furniture to the plot's device-pixel size so text stays proportionate.
@@ -92,21 +90,16 @@ export function exportFrmFigure(o: FrmFigureOpts): boolean {
 
 	// colorbar
 	const cbx = mL + pw + 30 * k, cbw = 22 * k, cbH = ph;
-	if (o.colorScale) {
-		const s = { ...o.colorScale, satMin: cmin, satMax: cmax };
-		const rows = Math.max(1, Math.round(cbH));
-		for (let i = 0; i < rows; i++) {
-			const v = cmin + ((i + 0.5) / rows) * (cmax - cmin);
-			const out = v < s.dispMin || v > s.dispMax;
-			if (out && !s.greyOutOfRange) continue;   // hidden values leave the bar blank
-			const [r, gg, b] = out ? [0.5, 0.5, 0.5] : sampleScaleAt(v, s);
-			g.fillStyle = `rgb(${r * 255 | 0},${gg * 255 | 0},${b * 255 | 0})`;
-			g.fillRect(cbx, mT + cbH - ((i + 1) / rows) * cbH, cbw, cbH / rows + 0.5);
-		}
-	} else {
-		const grad = g.createLinearGradient(0, mT + cbH, 0, mT);
-		for (let i = 0; i <= 24; i++) { const [r, gg, b] = cm(i / 24); grad.addColorStop(i / 24, `rgb(${r * 255 | 0},${gg * 255 | 0},${b * 255 | 0})`); }
-		g.fillStyle = grad; g.fillRect(cbx, mT, cbw, cbH);
+	// One row per value, coloured exactly as the renderer colours a point of that value.
+	const rows = Math.max(1, Math.round(cbH));
+	const vals = new Float32Array(rows);
+	for (let i = 0; i < rows; i++) vals[i] = cmin + ((i + 0.5) / rows) * (cmax - cmin);
+	const rgba = new Uint8Array(rows * 4);
+	colorizeValues(vals, rows, { ...o.colorScale, satMin: cmin, satMax: cmax }, rgba);
+	for (let i = 0; i < rows; i++) {
+		if (!rgba[i * 4 + 3]) continue;   // hidden values leave the bar blank
+		g.fillStyle = `rgb(${rgba[i * 4]},${rgba[i * 4 + 1]},${rgba[i * 4 + 2]})`;
+		g.fillRect(cbx, mT + cbH - ((i + 1) / rows) * cbH, cbw, cbH / rows + 0.5);
 	}
 	g.strokeStyle = '#000'; g.lineWidth = 1; g.strokeRect(cbx, mT, cbw, cbH);
 	g.fillStyle = '#000'; g.font = serif(17); g.textAlign = 'left'; g.textBaseline = 'middle';
