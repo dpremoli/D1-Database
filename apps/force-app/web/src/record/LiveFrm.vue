@@ -16,12 +16,15 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import type { RecordClient } from './liveClient';
-import { buildScaleLUT, type Axis, type ColorScale } from '@d1/force-plotting';
+import { buildScaleLUT, createAccumulator, ColorBar, type Axis, type ColorScale, type Histogram, type HistogramAccumulator } from '@d1/force-plotting';
 
 const props = withDefaults(defineProps<{ client: RecordClient; diam: number; colorScale: ColorScale; pointSize?: number; pointStride?: number; axis?: Axis }>(), {
 	pointSize: 1.8, pointStride: 1, axis: 'Fz',
 });
-const emit = defineEmits<{ (e: 'climits', v: { cmin: number; cmax: number }): void }>();
+const emit = defineEmits<{
+	(e: 'climits', v: { cmin: number; cmax: number }): void;
+	(e: 'histogram', v: Histogram): void;
+}>();
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 // Matches RecordClient's own accumulator cap (liveClient.ts: `private cap = 2_000_000`) — this used
@@ -224,6 +227,31 @@ function onPointerUp(ev: PointerEvent) {
 // path: it has its own (not axisAutoLimits) range logic, and cAbsMaxByAxis is a running max that
 // can change on almost every frame, not a one-shot/axis-switch-triggered detection.
 let lastEmittedAutoKey = '';
+// Incremental value-distribution accumulator (histogram.ts) for ColorScaleEditor.vue's strip --
+// the live-recording use case that module's push()/rebin() split was designed for: only the
+// newly-arrived slice each tick is pushed (O(1) amortised), and a domain change (a fresh
+// emitAutoRange() key, same trigger as a climits re-seed) rebins from the resident client.frm.cx/
+// cy/cz buffer, which holds every point up to fm.count (capped at 2M) -- bounded, no re-fetch.
+let histAcc: HistogramAccumulator | null = null;
+let lastHistEmitMs = 0;
+const HIST_BINS = 64;
+const HIST_EMIT_MS = 100;   // ~10Hz throttle, per histogram.ts's own doc guidance
+// Mirrored into refs for this component's OWN colorbar overlay (below). This surface renders both
+// live recording and all of replay -- replay never reaches FrmCloud -- so until now the most-used
+// FRM view showed a colour-coded cloud with no legend at all, which is the complaint the whole
+// colour-scale port started from.
+const autoLo = ref(0);
+const autoHi = ref(1);
+const liveHistogram = ref<Histogram | null>(null);
+function emitHistogram(force: boolean) {
+	if (!histAcc) return;
+	const now = performance.now();
+	if (!force && now - lastHistEmitMs < HIST_EMIT_MS) return;
+	lastHistEmitMs = now;
+	const snap = histAcc.snapshot();
+	liveHistogram.value = snap;
+	emit('histogram', snap);
+}
 function emitAutoRange() {
 	const fm = props.client.frm;
 	// Prefer the percentile-based cLo/cHi playback sets at load time (matches the finished-cut
@@ -244,7 +272,16 @@ function emitAutoRange() {
 	const key = `${props.axis}:${lo.toFixed(2)}:${hi.toFixed(2)}`;
 	if (key === lastEmittedAutoKey) return;
 	lastEmittedAutoKey = key;
+	autoLo.value = lo; autoHi.value = hi;
 	emit('climits', { cmin: lo, cmax: hi });
+	// Domain changed -- rebin to match and backfill from everything already uploaded as of the END
+	// of the LAST frame ([0, uploaded)); frame()'s own incremental push below covers
+	// [uploaded, fm.count) every tick and never overlaps this backfill.
+	const cArr = props.axis === 'Fx' ? fm.cx : props.axis === 'Fy' ? fm.cy : fm.cz;
+	if (!histAcc) histAcc = createAccumulator(lo, hi, HIST_BINS);
+	else histAcc.rebin(lo, hi);
+	if (uploaded > 0) histAcc.push(cArr, 0, uploaded);
+	emitHistogram(true);
 }
 
 function resetUpload() {
@@ -252,17 +289,21 @@ function resetUpload() {
 	geom?.setDrawRange(0, 0);
 	bx0 = by0 = Infinity; bx1 = by1 = -Infinity;
 	lastEmittedAutoKey = '';
+	histAcc = null;
 }
 
 function frame() {
+	const fm = props.client.frm;
+	// New run detected (buffers reset) -> clear our upload cursor + bounds. Must run BEFORE
+	// emitAutoRange()/the histogram backfill below, which both read `uploaded` as "everything
+	// already accounted for".
+	if (fm.count < uploaded) resetUpload();
 	// Runs every tick, unconditionally -- NOT inside the `to > from` block below. cAbsMaxByAxis can
 	// tick up on a frame that appends no new points (or while paused, if a future editor lets the
 	// user drag a handle mid-pause), and the reported range must never go stale just because
 	// appends stalled.
 	emitAutoRange();
-	const fm = props.client.frm;
-	// New run detected (buffers reset) -> clear our upload cursor + bounds.
-	if (fm.count < uploaded) resetUpload();
+	const preUploaded = uploaded;
 	const from = uploaded, to = fm.count;
 	if (to > from && posAttr && valAttr) {
 		const cArr = props.axis === 'Fx' ? fm.cx : props.axis === 'Fy' ? fm.cy : fm.cz;
@@ -299,6 +340,11 @@ function frame() {
 		}
 		geom!.setDrawRange(0, rendered);
 		uploaded = to;
+		// Incremental histogram push -- the contiguous [preUploaded, to) slice this frame appended,
+		// independent of pointStride (the distribution is over the full resident data, not just the
+		// decimated live-map subset) and never overlapping emitAutoRange()'s own backfill above.
+		histAcc?.push(cArr, preUploaded, to);
+		emitHistogram(false);
 	}
 }
 
@@ -369,6 +415,12 @@ onBeforeUnmount(() => {
 		<button v-if="userView" class="reset-view" title="Back to auto-fit (or double-click the map)" @click="resetView">
 			<span class="material-symbols-rounded">recenter</span> Reset view
 		</button>
+		<!-- The legend this whole feature exists to provide. Driven by the same ColorScale the
+			 shader renders from, so it can never drift from the cloud it describes. -->
+		<div v-if="colorScale.barVisible" class="lf-cbar">
+			<ColorBar :color-scale="colorScale" :domain-lo="autoLo" :domain-hi="autoHi"
+				:histogram="liveHistogram" :height="34" :unit="`${axis} (N)`" />
+		</div>
 		<span class="pts">{{ ptsLabel.toLocaleString() }} pts</span>
 	</div>
 </template>
@@ -377,6 +429,14 @@ onBeforeUnmount(() => {
 .live-frm { position: relative; width: 100%; height: 100%; min-height: 200px; border-radius: 8px; overflow: hidden; background: var(--plot-bg); }
 .live-frm canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .live-frm canvas.grabbing { cursor: grabbing; }
+/* Bottom-right so it clears the Reset-view button (bottom-left) and the point count (top-right).
+   pointer-events: none keeps it from stealing pan/zoom drags on the map underneath. */
+.lf-cbar {
+	position: absolute; right: 8px; bottom: 6px; width: min(210px, 45%);
+	padding: 5px 7px 1px; border-radius: 7px;
+	background: color-mix(in srgb, var(--bg-2) 82%, transparent);
+	border: 1px solid var(--border); pointer-events: none;
+}
 .reset-view {
 	position: absolute; left: 6px; bottom: 4px;
 	display: inline-flex; align-items: center; gap: 3px;

@@ -11,7 +11,7 @@ import LiveFft from './LiveFft.vue';
 import LiveSpectrogram from './LiveSpectrogram.vue';
 import LiveWaterfall from './LiveWaterfall.vue';
 import LiveFrm from './LiveFrm.vue';
-import { defaultScale, type ColorScale } from '@d1/force-plotting';
+import { defaultScale, COLORMAPS, colormapLabel, type ColorScale } from '@d1/force-plotting';
 
 const route = useRoute();
 const panel = computed(() => String(route.params.panel || 'force'));
@@ -73,7 +73,7 @@ const st = client.status;
 const ready = computed(() => client.snapshotReady.value);
 const colormap = ref(initColormap.value);
 const pointSize = ref(initPointSize.value);
-const maps = ['viridis', 'inferno', 'grayscale'];
+const maps = Object.keys(COLORMAPS);
 
 // This pop-out's own FRM colour scale -- FULLY INDEPENDENT of whatever the main window's is doing
 // (explicit design decision: a popped-out window can show the same live cut in a different colour
@@ -111,7 +111,7 @@ onBeforeUnmount(() => client.disconnect());
 					<button class="segbtn" :class="{ on: frmAxis === 'Fy' }" @click="frmAxis = 'Fy'">Fy</button>
 					<button class="segbtn" :class="{ on: frmAxis === 'Fz' }" @click="frmAxis = 'Fz'">Fz</button>
 				</div>
-				<select v-model="colormap" class="cm"><option v-for="m in maps" :key="m">{{ m }}</option></select>
+				<select v-model="colormap" class="cm"><option v-for="m in maps" :key="m" :value="m">{{ colormapLabel(m) }}</option></select>
 			</template>
 			<template v-else-if="isPolar">
 				<div class="segmode">
@@ -182,7 +182,7 @@ onBeforeUnmount(() => client.disconnect());
 .rec-dot.live { background: #ef4444; animation: pulse 1.4s infinite; }
 @keyframes pulse { 50% { opacity: 0.4; } }
 .title { font-weight: 600; font-size: 15px; flex-shrink: 0; }
-.state { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); flex-shrink: 0; }
+.state { font-size: 11px; letter-spacing: 0.01em; color: var(--text-dim); flex-shrink: 0; }
 .state.recording { color: #fbbf24; } .state.done { color: #4ade80; } .state.error { color: var(--danger); }
 .cm { padding: 4px 8px; font-size: 12px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
 

@@ -17,6 +17,7 @@ import { type Axis, type Cloud, type CloudChannel, type SpeedMode, axisAutoLimit
 import { buildPath, type PathParams } from './path';
 import { exportFrmFigure } from './frmExport';
 import { buildScaleLUT, type ColorScale } from './colorScale';
+import { histogramFrom, type Histogram } from './histogram';
 import {
 	buildStaticAttributes, spiralUniformValues,
 	TURNING_SPIRAL_FRAG, TURNING_SPIRAL_VERT,
@@ -56,6 +57,7 @@ const props = defineProps<{
 const emit = defineEmits<{
 	(e: 'loaded', meta: { csSec: number; ceSec: number; feed: number; diam: number; rpm: number; Fs: number; N: number }): void;
 	(e: 'climits', v: { cmin: number; cmax: number }): void;
+	(e: 'histogram', v: Histogram): void;   // value distribution over the same auto-limits window, for ColorScaleEditor.vue's strip
 	(e: 'points', n: number): void;   // rendered point count (for the resolution readout)
 	(e: 'zscale', v: number): void;   // 3-finger vertical swipe adjusts the Z exaggeration
 }>();
@@ -356,6 +358,10 @@ function emitAutoRange() {
 	if (key === lastEmittedAutoKey) return;   // avoid re-seeding the host's scale on every rebuild
 	lastEmittedAutoKey = key;
 	emit('climits', { cmin: auto[0], cmax: auto[1] });
+	// Same array/window axisAutoLimits sampled above -- the distribution ColorScaleEditor.vue's
+	// strip shows always matches the range climits just reported, never a different population.
+	const channelArr = cache.value ? (cache.value as any)[effChannel.value] as Float32Array | undefined : undefined;
+	if (channelArr && channelArr.length) emit('histogram', histogramFrom(channelArr, channelArr.length, auto[0], auto[1], 64));
 }
 function rebuild() {
 	if (!ready || !canvasEl.value || !cache.value) return;
@@ -857,8 +863,8 @@ function onUp(ev: PointerEvent) {
 		<!-- rubber-band zoom rectangle -->
 		<div v-if="rectSel" class="fc-rect" :style="{ left: rectSel.x + 'px', top: rectSel.y + 'px', width: rectSel.w + 'px', height: rectSel.h + 'px' }"></div>
 
-		<!-- colorbar (force -> colour) -->
-		<div v-if="climits && !loading && !error" class="fc-cbar">
+		<!-- colorbar (force -> colour); the editor's "Show colour bar on render" drives barVisible -->
+		<div v-if="climits && colorScale.barVisible && !loading && !error" class="fc-cbar">
 			<span class="fc-cval">{{ fmtN(climits.cmax) }}</span>
 			<div class="fc-ramp" :style="{ background: rampCss }"></div>
 			<span class="fc-cval">{{ fmtN(climits.cmin) }}</span>
@@ -898,7 +904,7 @@ function onUp(ev: PointerEvent) {
 .fc-msg.err { color: #fca5a5; font-size: 12px; padding: 12px; text-align: center; }
 .fc-count { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: var(--text-dim, #94a3b8); font-variant-numeric: tabular-nums; }
 .fc-swgl { position: absolute; left: 6px; bottom: 4px; font-size: 10px; font-weight: 700; color: #fbbf24; cursor: help; }
-.fc-pane { position: absolute; left: 6px; top: 4px; font-size: 10px; font-weight: 700; color: var(--text-dim, rgba(255,255,255,0.75)); text-transform: uppercase; letter-spacing: 0.06em; }
+.fc-pane { position: absolute; left: 6px; top: 4px; font-size: 10px; font-weight: 600; color: var(--text-dim, rgba(255,255,255,0.75)); letter-spacing: 0.01em; }
 
 .fc-rect { position: absolute; border: 1px solid #38bdf8; background: rgba(56,189,248,0.14); pointer-events: none; border-radius: 2px; }
 

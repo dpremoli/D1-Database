@@ -8,7 +8,11 @@ import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
 import WearTrend from './WearTrend.vue';
 import type { SpeedMode } from './liveCloud';
-import { defaultScale, type ColorScale } from './colorScale';
+import { axisAutoLimits } from './liveCloud';
+import { defaultScale, applyParams, type ColorScale } from './colorScale';
+import { histogramFrom, type Histogram } from './histogram';
+import ColorScaleEditor from './ColorScaleEditor.vue';
+import PlotModeFlyout from './PlotModeFlyout.vue';
 import { cacheGet, cachePut, decimateCache, parseCache, type Cache } from './liveCache';
 import { buildPath, alignRhoToBuckets, type TurningSpiralParams } from './path';
 import { computeAutoCode } from './operationCode';
@@ -58,6 +62,16 @@ const detail = ref<any | null>(null);
 const loadingDetail = ref(false);
 
 const chartMode = ref<'force' | 'fft' | 'psd' | 'spectrogram' | 'waterfall'>('force');
+// Same set/order the Record page's ForcePanel offers, so the two toolbars read identically. Its
+// first entry is the time-domain view under each page's own name for it ("Force" here, "Time"
+// there -- both stay as they were).
+const CHART_MODES = [
+	{ key: 'force', label: 'Force' },
+	{ key: 'fft', label: 'FFT' },
+	{ key: 'psd', label: 'Power', title: 'Power spectrum (dB)' },
+	{ key: 'spectrogram', label: 'Spectro', title: 'Time × frequency heatmap' },
+	{ key: 'waterfall', label: 'Waterfall', title: 'Stacked spectra over time' },
+];
 const SPECTRAL_MODES = ['psd', 'spectrogram', 'waterfall'] as const;
 const isSpectral = computed(() => (SPECTRAL_MODES as readonly string[]).includes(chartMode.value));
 const hoverIndex = ref<number | null>(null);   // shared across the 3 charts
@@ -122,6 +136,22 @@ const editInnerDiam = ref(0);   // donut/diaphragm inner Ø (mm); 0 = solid disc
 // changed vs what was loaded.
 const srcCut = reactive({ feed: 0, diam: 0, inner: 0, ppr: 1, rate: 25600 });
 const near = (a: number, b: number) => Math.abs(Number(a) - Number(b)) < 1e-6;
+/**
+ * Surface speed and depth of cut are stored on BOTH machining_force_analysis (this capture) and
+ * manufacturing_operations (the operation record), and they describe the same physical quantity,
+ * so they should always agree. When they do, printing the capture's copy under "Cut parameters"
+ * just restates a number the operation record already shows a few rows above, editable -- which
+ * reads as the same field twice. Worth showing only when it carries information: the operation
+ * record has no value (so this is the only source), or the two disagree (which is a data problem
+ * worth seeing rather than hiding).
+ */
+function addsInfoOverOp(captureVal: unknown, opVal: number | null | undefined): boolean {
+	const c = Number(captureVal);
+	if (!Number.isFinite(c)) return false;
+	const o = Number(opVal);
+	if (opVal == null || !Number.isFinite(o)) return true;
+	return !near(c, o);
+}
 // v-model.number leaves a cleared numeric input as '' (Vue's looseToNumber falls back to the raw
 // string when parseFloat('') is NaN) rather than coercing it to null — normalize that (and any
 // other non-numeric junk) to null so "unset" and "explicitly 0" stay distinguishable, matching
@@ -168,7 +198,6 @@ const plotStride = ref(1);
 const gridding = ref(false);
 const gridN = ref(400);
 const pointSize = ref(1.4);
-const colormap = ref('viridis');
 // Tier-2 host render request.
 const renderPoints = ref(5000000);   // full-res cut-window cache (host caps ~5M; >5M -> octree)
 // Auto-route threshold = the crawler's live_cache_points setting (fetched on mount): a
@@ -584,46 +613,76 @@ async function clearBake() {
 		}
 	} finally { baking.value = false; }
 }
-// Manual colour-scale limits for the live cloud (null => auto prctile 1/99 in
-// liveCloud). autoClimits mirrors what the cloud actually applied so the fields
-// can display/seed from the current auto values.
-const cauto = ref(true);
-const cminManual = ref(0);
-const cmaxManual = ref(1);
+// Full ColorScale editor (Stage 5/6): `colorScale` is now the real source of truth for every
+// FRM pane on this dashboard, driven by ColorScaleEditor.vue's update:colorScale. `locked`
+// replaces the old `cauto` checkbox -- unlocked (false) tracks whatever climits last reported
+// (auto), locked (true) freezes satMin/satMax at their current values regardless of new climits.
+// autoClimits mirrors what the cloud actually reports, purely to give the editor's histogram
+// strip a sensible domain (the full auto-detected range) independent of the user-narrowed
+// saturation window -- it no longer feeds colorScale directly the way the old cauto path did.
+// cacheGet() reads a plain (non-reactive) Map — a computed calling it would never re-run once
+// the cache lands after a later on-demand fetch. Bump this whenever the cache changes and read
+// it (even unused) wherever radialValuesFor() or the colour-scale histogram below might depend on
+// a just-arrived cache. Declared up here (it used to live down by radialValuesFor) so the
+// colour-scale computeds that read it are safe to evaluate eagerly -- an `immediate` watcher on
+// one of them would otherwise hit this in the temporal dead zone.
+const cacheEpoch = ref(0);
+const colorScale = ref<ColorScale>(defaultScale(0, 1));
+const locked = ref(false);
 const autoClimits = ref<{ cmin: number; cmax: number } | null>(null);
-const cmin = computed(() => (cauto.value ? null : cminManual.value));
-const cmax = computed(() => (cauto.value ? null : cmaxManual.value));
 function onClimits(v: { cmin: number; cmax: number }) {
-	// Bail on a value-identical re-emission: `autoClimits` feeds `colorScale` below, which every
-	// FrmOctree/FrmCloud instance on this dashboard watches deeply -- reassigning to a fresh object
-	// with the SAME numbers (e.g. FrmOctree re-emitting its already-current auto range on an
-	// unrelated axis switch) would otherwise still be a ref-identity change and trigger every one
-	// of them to re-evaluate their colour scale, including a full CPU-path rebuild on any FrmCloud
-	// pane using it (see FrmCloud.vue's colorScaleUnchanged guard, which exists for the same reason
-	// but shouldn't be the only line of defence).
+	// Bail on a value-identical re-emission: reassigning colorScale on every one of these would
+	// still be a ref-identity change and trigger every FrmOctree/FrmCloud pane on this dashboard to
+	// re-evaluate its colour scale, including a full CPU-path rebuild on any FrmCloud pane using it
+	// (see FrmCloud.vue's colorScaleUnchanged guard, which exists for the same reason but shouldn't
+	// be the only line of defence).
 	if (autoClimits.value && autoClimits.value.cmin === v.cmin && autoClimits.value.cmax === v.cmax) return;
 	autoClimits.value = v;
-	if (cauto.value) { cminManual.value = Number(v.cmin.toFixed(2)); cmaxManual.value = Number(v.cmax.toFixed(2)); }
+	if (!locked.value) {
+		colorScale.value = applyParams({ ...colorScale.value, satMin: v.cmin, satMax: v.cmax }, v.cmin, v.cmax);
+	}
 }
-// Bridges this dashboard's existing colour-limit state (cauto/cminManual/cmaxManual/colormap) into
-// the ColorScale every FRM renderer now takes. `cauto` is exactly the "lock scale" concept the
-// colour-scale editor design calls for -- true tracks whatever climits last reported (auto), false
-// freezes at the manual fields -- so this is a straight read-through, not new state. No shaping
-// params (log/symmetrical/always-zero) or displayed-range filter are exposed by this dashboard's
-// UI yet; defaultScale's linear, filter-inert defaults keep every renderer's behaviour identical to
-// before this conversion. One shared computed feeds all five FrmOctree/FrmCloud instances below,
-// including both compare-mode panes, so they stay on one comparable scale exactly as they did when
-// this was five copies of the same colormap/cmin/cmax props.
-const colorScale = computed<ColorScale>(() => {
-	const [lo, hi] = cauto.value
-		? [autoClimits.value?.cmin ?? 0, autoClimits.value?.cmax ?? 1]
-		: [cminManual.value, cmaxManual.value];
-	return { ...defaultScale(lo, hi), colormap: colormap.value };
+// Derived straight from the resident cache rather than from a renderer's @climits/@histogram
+// events. Those only arrive when a FrmCloud is actually mounted -- not in Figure mode, not when
+// the FRM panel is closed, and never from FrmOctree (Full mode streams an octree with no flat
+// scalar array to bin). The Display accordion holding the editor is independent of all of that,
+// so it was showing an empty strip and, with no climits, an x-axis that fell back to the scale's
+// own range and zoomed as you dragged it. Reading the cache directly makes the editor
+// self-sufficient; the always-on radial axis already guarantees the cache gets fetched.
+const cacheAutoLimits = computed<[number, number] | null>(() => {
+	void cacheEpoch.value;
+	const d = detail.value;
+	const c = d?.live_cache_file ? cacheGet(d.live_cache_file) : null;
+	return c ? axisAutoLimits(c, axis.value) : null;
+});
+const colorDomainLo = computed(() => autoClimits.value?.cmin ?? cacheAutoLimits.value?.[0] ?? colorScale.value.satMin);
+const colorDomainHi = computed(() => autoClimits.value?.cmax ?? cacheAutoLimits.value?.[1] ?? colorScale.value.satMax);
+// Binned over the AUTO range, not the edited one, so dragging a handle never triggers an O(N)
+// re-bin (and the curve stays put under the moving handles).
+// Seed the scale from the cache whenever no renderer has reported climits -- Figure mode, a
+// closed FRM panel, or Full/octree mode all leave satMin/satMax sitting at defaultScale's [0, 1]
+// while the strip's axis shows the real data range. On a cut whose forces are fractions of a
+// newton that puts the entire ramp off the end of the axis, so the curve renders with no colour
+// band at all and every handle sits in the wrong place.
+watch(cacheAutoLimits, (range) => {
+	if (!range || locked.value || autoClimits.value) return;
+	const [lo, hi] = range;
+	if (!Number.isFinite(lo) || !Number.isFinite(hi)) return;
+	colorScale.value = applyParams({ ...colorScale.value, satMin: lo, satMax: hi }, lo, hi);
+}, { immediate: true });
+const colorHistogram = computed<Histogram | null>(() => {
+	void cacheEpoch.value;
+	const d = detail.value;
+	const c = d?.live_cache_file ? cacheGet(d.live_cache_file) : null;
+	const arr = c ? (c as any)[axis.value] as Float32Array | undefined : undefined;
+	const range = cacheAutoLimits.value;
+	if (!arr?.length || !range) return null;
+	return histogramFrom(arr, arr.length, range[0], range[1], 64);
 });
 // Filtering shifts the force range (e.g. a high-pass strips the DC offset), so any manually
 // locked colour limits become meaningless — auto-unlock so both panes recompute their own
 // scale over the (raw / filtered) data.
-watch(() => chainActive(workChain.value), (active) => { if (active) cauto.value = true; });
+watch(() => chainActive(workChain.value), (active) => { if (active) locked.value = false; });
 // In-place collapses to free space when live.
 const sampleDetailOpen = ref(true);
 const colStackHidden = ref(false);               // hide the Samples/Operations column
@@ -1616,7 +1675,7 @@ const PEAK_FIELD: Record<string, string> = { Fx: 'peak_fx', Fy: 'peak_fy', Fz: '
 function chartsFor(item: RPanel) {
 	const d = detail.value;
 	const sel = (item.channels && item.channels.length ? item.channels : AXES) as readonly Axis[];
-	const secondXLabel = secondXField.value === 'radial' ? 'radial (mm)' : undefined;
+	const secondXLabel = 'radial (mm)';
 	const base = AXES.filter((a) => sel.includes(a)).map((a) => (
 		effectiveMode.value === 'force'
 			? { key: a, title: `${a} · force`, kind: 'env' as const, data: d?.series?.[a], color: AXIS_COLOR[a], xUnit: 's', yUnit: 'N',
@@ -1728,13 +1787,11 @@ function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam:
 // ---- Second X-axis (radial tool position) on the time-series charts ------------------------
 // 'measured' speed mode needs the cache's baked revs_cum, so it may require an on-demand fetch
 // (see fetchRadialCache); 'rpm'/'vc' modes are closed-form in elapsed time alone and never do.
-// Defaults to 'none' — selecting the cache-backed 'measured' mode fetches a multi-MB asset the
-// moment it's turned on, so that has to be an explicit user action, never the initial state.
-const secondXField = ref<'none' | 'radial'>('none');
-// cacheGet() reads a plain (non-reactive) Map — a computed calling it would never re-run once
-// the cache lands after a later on-demand fetch. Bump this whenever the cache changes and read
-// it (even unused) wherever radialValuesFor() might depend on a just-arrived cache.
-const cacheEpoch = ref(0);
+// The radial second X-axis is always on now (its old 'none'/'radial' picker is gone). It used to
+// default to 'none' because turning it on fetches a multi-MB cache asset, which wanted to be an
+// explicit user action -- that fetch is still lazy (measuredRadialPath below only calls
+// fetchRadialCache when the LRU misses, and Lite mode has usually already put it there), it just
+// no longer waits for a click.
 const radialFetchBusy = ref(false);
 async function fetchRadialCache() {
 	const d = detail.value;
@@ -1754,7 +1811,7 @@ async function fetchRadialCache() {
 // O(N) work 3-4x per animation frame. rho is axis-independent (a function of time only), so one
 // path serves every axis + RPM chart in the panel.
 const measuredRadialPath = computed(() => {
-	if (secondXField.value !== 'radial' || speedMode.value !== 'measured') return null;
+	if (speedMode.value !== 'measured') return null;
 	const d = detail.value;
 	const cropStart = activeCrop.value?.start;
 	if (!d?.live_cache_file || cropStart == null) return null;
@@ -1772,7 +1829,7 @@ const measuredRadialPath = computed(() => {
 // the crop start onward (r=0 there, matching path.ts's buildTurningSpiral); earlier bucket times
 // get NaN, same as any time past wherever the spiral stops (cut-out / inner-diameter reached).
 function radialValuesFor(bucketT: number[] | Float32Array | undefined): Float32Array | null {
-	if (secondXField.value !== 'radial' || !bucketT || !bucketT.length) return null;
+	if (!bucketT || !bucketT.length) return null;
 	const cropStart = activeCrop.value?.start;
 	if (cropStart == null) return null;
 	const rho0 = editDiam.value / 2;
@@ -1812,8 +1869,8 @@ function resetLive() {
 		editPpr.value = Number(d.pulses_per_rev) || 1;
 	}
 	speedMode.value = 'measured';
-	plotStride.value = 1; gridding.value = false; pointSize.value = 1.4; colormap.value = 'viridis';
-	cauto.value = true;
+	plotStride.value = 1; gridding.value = false; pointSize.value = 1.4;
+	colorScale.value = defaultScale(0, 1); locked.value = false; autoClimits.value = null;
 }
 // Rate override rescales time for the constant-RPM/Vc models (measured mode uses the
 // baked revs, so it's unaffected). timeScale = 1 when Rate is left at the cache's Fs.
@@ -2049,19 +2106,36 @@ function fmtDateTime(v: string | null | undefined) {
 							     .mat filenames are matched to an operation by, so hand-editing either from this
 							     panel would silently desync that link (see regeneratedPassCode above). Combined
 							     with any pending crop edit into one "Save changes" summary dialog below. -->
-							<div class="stat-sep">Operation metadata
+							<!-- Surface speed / Feed / Depth of cut / Workpiece Ø appear again under "Cut
+							     parameters" below, which reads as a duplicate until you know these two
+							     groups are different RECORDS: this one is the operation as specified
+							     (manufacturing_operations), that one is what this capture actually used
+							     (machining_force_analysis, and the source of the spiral geometry). The
+							     headings now say which is which. -->
+							<div class="stat-sep">Operation record <span class="u">(as specified)</span>
 								<button v-if="metaDirty" class="linkbtn" @click="seedMetaFromDetail">Reset</button>
 							</div>
 							<div class="edit-grid">
 								<label>Subtype<input v-model="editOpSubtype" type="text" :class="{ modified: editOpSubtype !== srcMeta.subtype }" /></label>
 								<label>Sequence<input :value="fmtOrDash(srcMeta.sequence)" type="text" disabled title="Derived — matches the archive .mat filename this operation was linked from. Not editable here." /></label>
-								<label>Surface speed <span class="u">m/min</span><input v-model.number="editOpCuttingSpeed" type="number" step="0.1" min="0" :class="{ modified: numDiffers(numOrNull(editOpCuttingSpeed), srcMeta.cuttingSpeed) }" /></label>
-								<label>Feed <span class="u">mm/rev</span><input v-model.number="editOpFeedMmPerRev" type="number" step="0.001" min="0" :class="{ modified: numDiffers(numOrNull(editOpFeedMmPerRev), srcMeta.feedMmPerRev) }" /></label>
-								<label>Depth of cut <span class="u">mm</span><input v-model.number="editOpAxialDoc" type="number" step="0.01" min="0" :class="{ modified: numDiffers(numOrNull(editOpAxialDoc), srcMeta.axialDoc) }" /></label>
+								<!-- Unit inside the field, right of the number, matching the Record page's
+								     .unit-box: folded into the label it wrapped these two-word labels onto a
+								     second line in this narrow column, which cost a row of height per field. -->
+								<label>Surface speed
+									<span class="unit-box"><input v-model.number="editOpCuttingSpeed" type="number" step="0.1" min="0" :class="{ modified: numDiffers(numOrNull(editOpCuttingSpeed), srcMeta.cuttingSpeed) }" /><span class="unit">m/min</span></span>
+								</label>
+								<label>Feed
+									<span class="unit-box"><input v-model.number="editOpFeedMmPerRev" type="number" step="0.001" min="0" :class="{ modified: numDiffers(numOrNull(editOpFeedMmPerRev), srcMeta.feedMmPerRev) }" /><span class="unit">mm/rev</span></span>
+								</label>
+								<label>Depth of cut
+									<span class="unit-box"><input v-model.number="editOpAxialDoc" type="number" step="0.01" min="0" :class="{ modified: numDiffers(numOrNull(editOpAxialDoc), srcMeta.axialDoc) }" /><span class="unit">mm</span></span>
+								</label>
 								<!-- The operation's recorded stock diameter — distinct from the FRM "Diameter"
 								     control above (machining_force_analysis.outer_diameter, a spiral-geometry
 								     override). Editable so the Doctor's diameter backfill has somewhere to write. -->
-								<label>Workpiece Ø <span class="u">mm</span><input v-model.number="editOpWorkpieceDiam" type="number" step="0.1" min="0" :class="{ modified: numDiffers(numOrNull(editOpWorkpieceDiam), srcMeta.workpieceDiam) }" /></label>
+								<label>Workpiece Ø
+									<span class="unit-box"><input v-model.number="editOpWorkpieceDiam" type="number" step="0.1" min="0" :class="{ modified: numDiffers(numOrNull(editOpWorkpieceDiam), srcMeta.workpieceDiam) }" /><span class="unit">mm</span></span>
+								</label>
 								<label>Operator<input v-model="editOperatorName" type="text" :class="{ modified: editOperatorName !== srcMeta.operator }" /></label>
 								<label class="chk">New edge<input v-model="editOpNewEdge" type="checkbox" /></label>
 								<label class="chk">Coolant<input v-model="editOpCoolant" type="checkbox" /></label>
@@ -2075,7 +2149,7 @@ function fmtDateTime(v: string | null | undefined) {
 							<!-- Editable cut-parameter boxes (Feed/Diameter/Inner Ø/PPR): drive the Live plot
 							     and are threaded into any host bake. Measured values stay read-only. A box is
 							     highlighted when its value differs from what the op was loaded with. -->
-							<div class="stat-sep">Cut parameters
+							<div class="stat-sep">Cut parameters <span class="u">(this capture — draws the fingerprint)</span>
 								<button v-if="!near(editFeed, srcCut.feed) || !near(editDiam, srcCut.diam) || !near(editInnerDiam, srcCut.inner) || !near(editPpr, srcCut.ppr)"
 									class="linkbtn" @click="seedCutFromDetail">Reset</button>
 							</div>
@@ -2096,8 +2170,8 @@ function fmtDateTime(v: string | null | undefined) {
 									<div class="s-top"><input class="s-inp" v-model.number="editPpr" type="number" step="1" min="1" /></div>
 									<span class="s-lab">Pulses/rev</span>
 								</div>
-								<div class="stat"><div class="s-top"><span class="s-val">{{ fmt(detail.surface_speed) }}</span><span class="s-unit">m/min</span></div><span class="s-lab">Surface speed</span></div>
-								<div class="stat"><div class="s-top"><span class="s-val">{{ fmt(detail.depth_of_cut) }}</span><span class="s-unit">mm</span></div><span class="s-lab">Depth of cut</span></div>
+								<div v-if="addsInfoOverOp(detail.surface_speed, srcMeta.cuttingSpeed)" class="stat mismatch"><div class="s-top"><span class="s-val">{{ fmt(detail.surface_speed) }}</span><span class="s-unit">m/min</span></div><span class="s-lab">Surface speed <span class="u">(capture)</span></span></div>
+								<div v-if="addsInfoOverOp(detail.depth_of_cut, srcMeta.axialDoc)" class="stat mismatch"><div class="s-top"><span class="s-val">{{ fmt(detail.depth_of_cut) }}</span><span class="s-unit">mm</span></div><span class="s-lab">Depth of cut <span class="u">(capture)</span></span></div>
 								<div class="stat edit" :class="{ modified: !near(editRate, srcCut.rate) }">
 									<div class="s-top"><input class="s-inp" v-model.number="editRateKHz" type="number" step="0.1" min="0.1" /><span class="s-unit">kHz</span></div>
 									<span class="s-lab">Capture</span>
@@ -2145,13 +2219,11 @@ function fmtDateTime(v: string | null | undefined) {
 						</div>
 						<template v-if="displayPanelOpen">
 							<div class="edit-grid">
-								<label>Colour<select v-model="colormap"><option value="viridis">viridis</option><option value="inferno">inferno</option><option value="grayscale">grayscale</option></select></label>
 								<label>Point size<input v-model.number="pointSize" type="number" step="0.2" min="0.4" max="6" /></label>
 								<label v-if="liveOn">Show every<select v-model.number="plotStride"><option :value="1">all pts</option><option :value="2">2nd</option><option :value="5">5th</option><option :value="10">10th</option><option :value="25">25th</option></select></label>
-								<label class="chk wide"><input v-model="cauto" type="checkbox" /> Auto colour limits <span class="u">(prctile 1 / 99)</span></label>
-								<label>Colour min <span class="u">N</span><input v-model.number="cminManual" type="number" step="1" :disabled="cauto" /></label>
-								<label>Colour max <span class="u">N</span><input v-model.number="cmaxManual" type="number" step="1" :disabled="cauto" /></label>
 							</div>
+							<ColorScaleEditor v-model:color-scale="colorScale" v-model:locked="locked"
+								:domain-lo="colorDomainLo" :domain-hi="colorDomainHi" :histogram="colorHistogram" :unit="`${axis} (N)`" />
 							<template v-if="liveOn">
 								<div class="stat-sep">Full-resolution render (host)</div>
 								<div class="render-row">
@@ -2278,7 +2350,7 @@ function fmtDateTime(v: string | null | undefined) {
 						<div v-if="item.type === 'signals'" class="card col-charts pg-card">
 							<div class="pg-bar">
 								<span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span>
-								<span class="pg-title"><v-icon name="insights" x-small /> Signals<span v-if="liveOn" class="live-badge">LIVE · drag to crop</span>
+								<span class="pg-title"><v-icon name="insights" x-small /> Signals<span v-if="liveOn" class="live-badge">LIVE</span>
 									<template v-if="liveOn && (cropDirty || cropSavePrompt || cropSavedMsg)">
 										<button v-if="!cropSavePrompt && !cropSavedMsg" class="crop-save" title="Persist this crop as the operation's official crop window" @click.stop="cropSavePrompt = true">Save crop</button>
 										<span v-if="cropSavePrompt" class="crop-confirm" @click.stop>
@@ -2291,7 +2363,7 @@ function fmtDateTime(v: string | null | undefined) {
 								</span>
 								<div class="toggle pg-tools">
 									<button class="tbtn icobtn" :class="{ on: rectZoomTool }" title="Rectangular zoom — drag a box on any graph"
-										:style="rectZoomTool ? { background: '#0ea5e9', borderColor: '#0ea5e9' } : {}"
+										:style="rectZoomTool ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: 'var(--accent-ink)' } : {}"
 										@click="rectZoomTool = !rectZoomTool"><v-icon name="crop_free" x-small /></button>
 									<button class="tbtn icobtn" title="Reset zoom" :disabled="!zoomed" @click="resetZoom"><v-icon name="restart_alt" x-small /></button>
 									<button v-for="a in AXES" :key="a" class="tbtn axchip" :class="{ on: (item.channels || AXES).includes(a) }"
@@ -2300,26 +2372,9 @@ function fmtDateTime(v: string | null | undefined) {
 									<button v-if="effectiveMode === 'force'" class="tbtn rpmbtn" :class="{ on: item.rpm }"
 										:style="item.rpm ? { background: '#a855f7', borderColor: '#a855f7' } : {}"
 										@click="item.rpm = !item.rpm">RPM</button>
-									<select v-if="effectiveMode === 'force'" v-model="secondXField" class="zsel" title="Second X-axis (top margin)">
-										<option value="none">No 2nd axis</option>
-										<option value="radial">Radial position</option>
-									</select>
 									<span v-if="effectiveMode === 'force' && radialFetchBusy" class="cmp-hint">loading radial…</span>
-									<button class="tbtn" :class="{ on: chartMode === 'force' }"
-										:style="chartMode === 'force' ? { background: '#334155', borderColor: '#334155' } : {}"
-										@click="chartMode = 'force'">Force</button>
-									<button class="tbtn" :class="{ on: chartMode === 'fft' }"
-										:style="chartMode === 'fft' ? { background: '#334155', borderColor: '#334155' } : {}"
-										@click="chartMode = 'fft'">FFT</button>
-									<button class="tbtn" :class="{ on: chartMode === 'psd' }"
-										:style="chartMode === 'psd' ? { background: '#334155', borderColor: '#334155' } : {}"
-										title="Power spectrum (dB)" @click="chartMode = 'psd'">Power</button>
-									<button class="tbtn" :class="{ on: chartMode === 'spectrogram' }"
-										:style="chartMode === 'spectrogram' ? { background: '#334155', borderColor: '#334155' } : {}"
-										title="Time × frequency heatmap" @click="chartMode = 'spectrogram'">Spectro</button>
-									<button class="tbtn" :class="{ on: chartMode === 'waterfall' }"
-										:style="chartMode === 'waterfall' ? { background: '#334155', borderColor: '#334155' } : {}"
-										title="Stacked spectra over time" @click="chartMode = 'waterfall'">Waterfall</button>
+									<!-- Plot mode last, matching the Record page's ForcePanel toolbar order. -->
+									<PlotModeFlyout v-model="chartMode" :modes="CHART_MODES" class="mode-flyout" />
 								</div>
 								<button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button>
 							</div>
@@ -2481,7 +2536,7 @@ function fmtDateTime(v: string | null | undefined) {
 									</div>
 									<button v-if="frmMode==='full'" class="tbtn" :class="{ on: gridFull }" :disabled="buildingOctree"
 										:title="gridAvailable ? 'Interpolated-grid octree (filled surface)' : 'Build the interpolated grid on the host'"
-										:style="gridFull ? { background: '#0891b2', borderColor: '#0891b2' } : {}"
+										:style="gridFull ? { background: 'var(--accent)', borderColor: 'var(--accent)', color: 'var(--accent-ink)' } : {}"
 										@click="gridFull = !gridFull"><v-icon name="grid_on" x-small /> Gridded</button>
 									<select v-if="octreeOn || liveOn" v-model="zSeries" class="zsel" title="Drive the Z axis from a force series (3D view — drag to rotate)">
 										<option value="none">2D</option>
@@ -2657,7 +2712,7 @@ function fmtDateTime(v: string | null | undefined) {
 .dense .panel-ops .list { max-height: none; }
 .panel-head {
 	display: flex; align-items: center; gap: 8px; padding: 12px 14px;
-	font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+	font-size: 12px; font-weight: 600; letter-spacing: 0.01em;
 	color: var(--theme--foreground-subdued, #6b7684);
 	border-bottom: 1px solid var(--theme--border-color-subdued, #e7ebf0);
 }
@@ -2686,7 +2741,7 @@ function fmtDateTime(v: string | null | undefined) {
 .latest-chip {
 	display: inline-flex; align-items: center; gap: 1px; margin-left: 5px;
 	font-family: var(--theme--fonts--sans--font-family, system-ui, sans-serif);
-	font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+	font-size: 9px; font-weight: 600; letter-spacing: 0.01em;
 	padding: 1px 6px 1px 4px; border-radius: 99px; color: #b45309;
 	background: color-mix(in srgb, #f59e0b 18%, transparent);
 	vertical-align: middle;
@@ -2715,7 +2770,7 @@ function fmtDateTime(v: string | null | undefined) {
 .doc-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px 10px 10px; }
 .doc-opts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .doc-optlabel {
-	font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+	font-size: 10px; font-weight: 600; letter-spacing: 0.01em;
 	color: var(--theme--foreground-subdued, #6b7684);
 }
 .doc-opt { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; }
@@ -2736,7 +2791,7 @@ function fmtDateTime(v: string | null | undefined) {
 .doc-title { font-size: 12px; font-weight: 600; }
 .doc-detail { margin: 4px 0 0; font-size: 11px; line-height: 1.45; color: var(--theme--foreground-subdued, #6b7684); }
 .doc-cmp { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 11px; }
-.doc-side em { font-style: normal; text-transform: uppercase; font-size: 9px; letter-spacing: 0.04em;
+.doc-side em { font-style: normal; font-size: 9px; letter-spacing: 0.01em;
 	color: var(--theme--foreground-subdued, #6b7684); margin-right: 4px; }
 .doc-side b { font-family: var(--theme--fonts--monospace--font-family, ui-monospace, monospace); }
 .doc-arrow { color: var(--theme--foreground-subdued, #6b7684); }
@@ -2764,7 +2819,7 @@ function fmtDateTime(v: string | null | undefined) {
 .cmp-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 10px;
 	border-bottom: 1px solid var(--theme--border-color-subdued, #e7ebf0); }
 .cmp-label { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 700;
-	text-transform: uppercase; letter-spacing: 0.04em; color: var(--theme--foreground-subdued, #6b7684); }
+	letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); }
 .cmp-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 700;
 	padding: 1px 4px 1px 8px; border: 1px solid; border-radius: 99px; }
 .cmp-x { border: 0; background: none; cursor: pointer; color: inherit; font-size: 13px; line-height: 1; padding: 0 3px; }
@@ -2795,14 +2850,16 @@ function fmtDateTime(v: string | null | undefined) {
 .empty { padding: 20px 16px; text-align: center; color: var(--theme--foreground-subdued, #98a2b3); font-size: 12.5px; }
 .empty.sm { padding: 14px; font-size: 12px; }
 
+/* Radius and elevation taken from the Record page's PanelFrame so a card here and a panel there
+   are the same object: 12px, one hairline border, one shallow shadow. */
 .card {
 	background: var(--theme--background, #fff); border: 1px solid var(--theme--border-color-subdued, #e7ebf0);
-	border-radius: 16px; padding: 16px 18px;
+	border-radius: 12px; padding: 16px 18px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 }
 .dense .card { padding: 12px 14px; }
 .info-head {
 	display: flex; align-items: center; justify-content: space-between; gap: 8px;
-	font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+	font-size: 11px; font-weight: 600; letter-spacing: 0.01em;
 	color: var(--theme--foreground-subdued, #6b7684); margin-bottom: 11px;
 }
 .dense .info-head { margin-bottom: 8px; }
@@ -2819,7 +2876,7 @@ function fmtDateTime(v: string | null | undefined) {
 .kv span:nth-child(odd) { color: var(--theme--foreground-subdued, #6b7684); white-space: nowrap; }
 .kv span:nth-child(even) { font-weight: 600; text-align: right; }
 .stat-sep {
-	margin: 12px 0 9px; font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+	margin: 12px 0 9px; font-size: 9.5px; font-weight: 600; letter-spacing: 0.01em;
 	color: var(--theme--foreground-subdued, #98a2b3); border-top: 1px solid var(--theme--border-color-subdued, #eef1f5); padding-top: 10px;
 }
 .statgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
@@ -2830,7 +2887,7 @@ function fmtDateTime(v: string | null | undefined) {
 .s-top { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; }
 .s-val { font-size: 13px; font-weight: 750; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .s-unit { font-size: 9.5px; font-weight: 600; color: var(--theme--foreground-subdued, #94a3b8); letter-spacing: 0.02em; }
-.s-lab { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--theme--foreground-subdued, #6b7684); font-weight: 600; margin-top: 1px; }
+.s-lab { font-size: 8.5px; letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); font-weight: 600; margin-top: 1px; }
 /* editable cut-param boxes: an input styled like the value, with a dashed underline so it
    reads as editable WITHOUT clicking; the unit sits inline to its right (like the read-only
    boxes) to save vertical space. Modified = accent ring. */
@@ -2852,7 +2909,7 @@ function fmtDateTime(v: string | null | undefined) {
    it shrink inside the fixed-height layout cell and overflow-y makes off-screen panels reachable. */
 .right-area { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .panel-toggles { display: flex; align-items: center; gap: 8px; padding: 0 2px; flex-wrap: wrap; }
-.pt-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--theme--foreground-subdued, #98a2b3); margin-right: 2px; }
+.pt-label { font-size: 11px; font-weight: 600; letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #98a2b3); margin-right: 2px; }
 .pt-chip {
 	display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 11.5px; font-weight: 650;
 	cursor: pointer; padding: 5px 12px; border-radius: 99px; color: var(--theme--foreground-subdued, #6b7684);
@@ -2875,7 +2932,7 @@ function fmtDateTime(v: string | null | undefined) {
 /* One-line panel bar: drag grip · title · inline tools · close — no separate title row. */
 .pg-bar { display: flex; align-items: center; gap: 6px; padding: 2px 4px 6px; flex: 0 0 auto; flex-wrap: wrap; }
 .pg-title { display: inline-flex; align-items: center; gap: 5px; margin-right: auto; font-size: 11px; font-weight: 700;
-	text-transform: uppercase; letter-spacing: 0.05em; color: var(--theme--foreground-subdued, #6b7684); white-space: nowrap; }
+	letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); white-space: nowrap; }
 .pg-tools { flex: 0 1 auto; }
 .pg-grip { cursor: move; display: inline-flex; color: var(--theme--foreground-subdued, #98a2b3); }
 .pg-grip:hover { color: var(--theme--foreground, #1e293b); }
@@ -2891,7 +2948,7 @@ function fmtDateTime(v: string | null | undefined) {
 .graphs-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; flex-wrap: wrap; gap: 6px; }
 .graphs-title, .frm-kicker {
 	display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700;
-	text-transform: uppercase; letter-spacing: 0.05em; color: var(--theme--foreground-subdued, #6b7684);
+	letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684);
 }
 .toggle { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .tbtn {
@@ -2916,11 +2973,11 @@ function fmtDateTime(v: string | null | undefined) {
 .segmode { display: inline-flex; border-radius: 8px; overflow: hidden; border: 1px solid var(--theme--border-color-subdued, #d7dee6); }
 .segbtn { font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; border: 0; padding: 5px 11px; background: var(--theme--background, #fff); color: var(--theme--foreground-subdued, #64748b); border-right: 1px solid var(--theme--border-color-subdued, #e7ebf0); }
 .segbtn:last-child { border-right: 0; }
-.segbtn.on { background: #0891b2; color: #fff; }
+.segbtn.on { background: var(--accent); color: var(--accent-ink); }
 .segbtn:disabled { opacity: 0.4; cursor: default; }
-.zslider { width: 70px; accent-color: #0891b2; vertical-align: middle; cursor: pointer; }
+.zslider { width: 70px; accent-color: var(--accent); vertical-align: middle; cursor: pointer; }
 .stats-table { width: 100%; border-collapse: collapse; font-size: 11.5px; margin: 6px 0 4px; }
-.stats-table th { text-align: right; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--theme--foreground-subdued, #6b7684); padding: 2px 6px; }
+.stats-table th { text-align: right; font-size: 10px; letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); padding: 2px 6px; }
 .stats-table td { text-align: right; padding: 3px 6px; font-variant-numeric: tabular-nums; border-top: 1px solid var(--theme--border-color-subdued, #eef1f5); }
 .stats-table td:first-child { text-align: left; color: var(--theme--foreground-subdued, #6b7684); font-weight: 600; white-space: nowrap; }
 .stat-bad { color: #dc2626; font-weight: 700; }
@@ -2930,7 +2987,7 @@ function fmtDateTime(v: string | null | undefined) {
 .acc-head {
 	display: flex; align-items: center; gap: 4px; width: 100%; text-align: left;
 	background: none; border: 0; cursor: pointer; font: inherit;
-	font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+	font-size: 10px; font-weight: 600; letter-spacing: 0.01em;
 	color: var(--theme--foreground-subdued, #98a2b3); margin: 6px 0 4px; padding: 6px 0 0;
 	border-top: 1px solid var(--theme--border-color-subdued, #eef1f5);
 }
@@ -2960,13 +3017,13 @@ function fmtDateTime(v: string | null | undefined) {
 .live-badge { margin-left: 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.06em; color: #7c3aed;
 	background: color-mix(in srgb, #7c3aed 12%, transparent); padding: 2px 7px; border-radius: 99px; }
 /* "Save crop as official" affordance — only appears once the handles have been moved (cropDirty). */
-.crop-save { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: #0ea5e9; cursor: pointer;
-	background: color-mix(in srgb, #0ea5e9 12%, transparent); border: 1px solid color-mix(in srgb, #0ea5e9 45%, transparent);
+.crop-save { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: var(--accent); cursor: pointer;
+	background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
 	padding: 2px 8px; border-radius: 99px; }
-.crop-save:hover { background: color-mix(in srgb, #0ea5e9 22%, transparent); }
+.crop-save:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .crop-confirm { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: var(--theme--foreground, #e2e8f0); display: inline-flex; align-items: center; gap: 6px; }
 .crop-confirm .cc-yes, .crop-confirm .cc-no { font-size: 9.5px; font-weight: 700; cursor: pointer; padding: 2px 8px; border-radius: 99px; border: 1px solid transparent; }
-.crop-confirm .cc-yes { color: #fff; background: #0ea5e9; }
+.crop-confirm .cc-yes { color: var(--accent-ink); background: var(--accent); }
 .crop-confirm .cc-yes:disabled { opacity: 0.6; cursor: default; }
 .crop-confirm .cc-no { color: var(--theme--foreground-subdued, #94a3b8); background: transparent; border-color: color-mix(in srgb, currentColor 40%, transparent); }
 .crop-msg { margin-left: 8px; font-size: 9.5px; font-weight: 700; color: #22c55e; }
@@ -2992,15 +3049,32 @@ function fmtDateTime(v: string | null | undefined) {
 	color: var(--theme--primary, #1d4ed8); text-transform: none; letter-spacing: 0; float: right; padding: 0; }
 .edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
 .edit-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; font-weight: 700;
-	text-transform: uppercase; letter-spacing: 0.03em; color: var(--theme--foreground-subdued, #6b7684); }
+	letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); }
 .edit-grid label.wide { grid-column: 1 / -1; }
 .edit-grid label.chk { flex-direction: row; align-items: center; gap: 6px; text-transform: none; letter-spacing: 0; font-size: 12px; }
 .edit-grid .u { font-weight: 500; color: var(--theme--foreground-subdued, #a4adba); text-transform: none; }
+/* The qualifier on a section heading ("as specified", "this capture") is what distinguishes two
+   groups that carry the same quantities from different records -- quieter than the heading, but
+   it has to stay readable, so it is not dimmed any further than the heading already is. */
+.stat-sep .u { font-weight: 400; opacity: 0.85; }
+/* These tiles now only appear when the capture disagrees with the operation record (or is the
+   only source), so they are a discrepancy to look at, not background reference. */
+.stat.mismatch { border-color: var(--theme--primary, #1d4ed8); }
+.stat.mismatch .s-lab .u { font-weight: 400; opacity: 0.8; }
 .edit-grid input[type="number"], .edit-grid input[type="text"], .edit-grid select, .edit-grid textarea, .render-row input {
 	font: inherit; font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; padding: 5px 8px;
 	border: 1px solid var(--theme--border-color, #d1d9e6); border-radius: 8px; background: var(--theme--background, #fff);
 	color: var(--theme--foreground, #1e293b); width: 100%; box-sizing: border-box;
 }
+/* The BOX carries the border, not the input, so the trailing unit reads as part of one control
+   (same construction as RecordingOptions.vue's .unit-box on the Record page). */
+.edit-grid .unit-box { display: flex; align-items: center; border: 1px solid var(--theme--border-color, #d1d9e6); border-radius: 8px; background: var(--theme--background, #fff); }
+.edit-grid .unit-box:focus-within { border-color: var(--theme--primary, #1d4ed8); }
+.edit-grid .unit-box input { flex: 1 1 auto; min-width: 0; border: none; background: transparent; border-radius: 0; }
+.edit-grid .unit-box input:focus { outline: none; }
+.edit-grid .unit-box input.modified { border: none; box-shadow: none; }
+.edit-grid .unit-box:has(input.modified) { border-color: var(--theme--primary, #1d4ed8); box-shadow: inset 0 0 0 1px var(--theme--primary, #1d4ed8); }
+.edit-grid .unit-box .unit { flex: 0 0 auto; padding-right: 8px; font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--theme--foreground-subdued, #a4adba); }
 .edit-grid textarea { resize: vertical; min-height: 44px; }
 .edit-grid input:disabled { opacity: 0.5; cursor: not-allowed; }
 .edit-grid input.modified, .edit-grid textarea.modified { border-color: var(--theme--primary, #1d4ed8); box-shadow: inset 0 0 0 1px var(--theme--primary, #1d4ed8); }
@@ -3008,10 +3082,10 @@ function fmtDateTime(v: string | null | undefined) {
 .speed-row select { flex: 1 1 auto; } .speed-row input { flex: 0 0 82px; }
 .render-row { display: flex; align-items: flex-end; gap: 8px; }
 .render-row label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; font-weight: 700;
-	text-transform: uppercase; letter-spacing: 0.03em; color: var(--theme--foreground-subdued, #6b7684); flex: 1 1 auto; }
+	letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); flex: 1 1 auto; }
 .processbtn {
 	display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer;
-	padding: 7px 14px; border-radius: 9px; color: #fff; background: #7c3aed; border: 0; white-space: nowrap;
+	padding: 7px 14px; border-radius: 9px; color: var(--accent-ink); background: var(--accent); border: 0; white-space: nowrap;
 }
 .processbtn:disabled { opacity: 0.6; cursor: progress; }
 .applybtn {
