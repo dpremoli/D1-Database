@@ -4,7 +4,7 @@
 import { computed, ref, watch } from 'vue';
 import { useWorkspace } from '../workspace';
 import LiveFrm from '../LiveFrm.vue';
-import { FrmCloud, ColorScaleEditor, defaultScale, applyParams, OPEN_DISP, type ColorScale, type Histogram } from '@d1/force-plotting';
+import { FrmCloud, ColorScaleEditor, defaultScale, withAutoRange, withOpenDisplay, type ColorScale, type Histogram } from '@d1/force-plotting';
 import { appUrl } from '../../appUrl';
 const w = useWorkspace();
 const STRIDES = [1, 2, 5, 10, 25, 50];
@@ -24,9 +24,7 @@ const locked = ref(false);
 // self-corrects within a frame or two.
 const autoClimits = ref<{ cmin: number; cmax: number } | null>(null);
 const colorScale = ref<ColorScale>({ ...defaultScale(0, 1), colormap: w.plot.colormap });
-function seedAuto(v: { cmin: number; cmax: number }) {
-	colorScale.value = applyParams({ ...colorScale.value, satMin: v.cmin, satMax: v.cmax }, v.cmin, v.cmax);
-}
+function seedAuto(v: { cmin: number; cmax: number }) { colorScale.value = withAutoRange(colorScale.value, v.cmin, v.cmax); }
 function onClimits(v: { cmin: number; cmax: number }) {
 	// Dedup guard: a value-identical re-emission would still be a fresh colorScale object.
 	if (autoClimits.value && autoClimits.value.cmin === v.cmin && autoClimits.value.cmax === v.cmax) return;
@@ -36,9 +34,7 @@ function onClimits(v: { cmin: number; cmax: number }) {
 // Unlocking hands the saturation range back to auto straight away.
 watch(locked, (l) => { if (!l && autoClimits.value) seedAuto(autoClimits.value); });
 // The displayed range is in absolute units of the channel it was set on; reopen it on a switch.
-watch(() => w.plot.frmAxis, () => {
-	colorScale.value = { ...colorScale.value, dispMin: -OPEN_DISP, dispMax: OPEN_DISP };
-});
+watch(() => w.plot.frmAxis, () => { colorScale.value = withOpenDisplay(colorScale.value); });
 // Two-way with the shared workspace colormap (Polar panel's select, pop-out seed).
 watch(() => w.plot.colormap, (c) => {
 	if (c && c !== colorScale.value.colormap) colorScale.value = { ...colorScale.value, colormap: c };

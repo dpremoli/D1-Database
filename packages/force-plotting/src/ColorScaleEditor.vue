@@ -238,13 +238,22 @@ function onStripPointerUp(ev: PointerEvent) {
 </template>
 
 <style scoped>
-.cse { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.cse {
+	/* App tokens, falling back to the Directus theme when this renders inside the admin. */
+	--fp-accent: var(--accent, var(--theme--primary, #1d4ed8));
+	--fp-accent-ink: var(--accent-ink, var(--theme--foreground-inverted, #fff));
+	--fp-border: var(--border, var(--theme--border-color-subdued, #e7ebf0));
+	--fp-surface: var(--surface, var(--theme--background-subdued, #f7f9fb));
+	--fp-text: var(--text, var(--theme--foreground, #1e293b));
+	--fp-text-dim: var(--text-dim, var(--theme--foreground-subdued, #6b7684));
+	display: flex; flex-direction: column; gap: 10px; min-width: 0;
+}
 .cse-top { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; }
-.cse-cmap { padding: 5px 7px; font-size: 12px; color: var(--text, var(--theme--foreground, #1e293b)); background: var(--surface, var(--theme--background-subdued, #f7f9fb)); border: 1px solid var(--border, var(--theme--border-color-subdued, #e7ebf0)); border-radius: 7px; min-width: 0; }
-.cse-steps { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim, var(--theme--foreground-subdued, #6b7684)); white-space: nowrap; }
-.cse-steps input { width: 52px; padding: 4px 6px; font-size: 12px; background: var(--surface, var(--theme--background-subdued, #f7f9fb)); border: 1px solid var(--border, var(--theme--border-color-subdued, #e7ebf0)); border-radius: 6px; color: var(--text, var(--theme--foreground, #1e293b)); }
+.cse-cmap { padding: 5px 7px; font-size: 12px; color: var(--fp-text); background: var(--fp-surface); border: 1px solid var(--fp-border); border-radius: 7px; min-width: 0; }
+.cse-steps { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fp-text-dim); white-space: nowrap; }
+.cse-steps input { width: 52px; padding: 4px 6px; font-size: 12px; background: var(--fp-surface); border: 1px solid var(--fp-border); border-radius: 6px; color: var(--fp-text); }
 .cse-lock { white-space: nowrap; }
-.chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim, var(--theme--foreground-subdued, #6b7684)); cursor: pointer; }
+.chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fp-text-dim); cursor: pointer; }
 .chk.wide { grid-column: 1 / -1; }
 .cse-hint { opacity: 0.7; }
 .cse-tabrow { display: flex; gap: 4px; width: 100%; }
@@ -252,10 +261,10 @@ function onStripPointerUp(ev: PointerEvent) {
 	flex: 1 1 0; min-width: 0; box-sizing: border-box;
 	padding: 6px 8px; font: inherit; font-size: 12px; line-height: 1.2; font-weight: 500;
 	text-align: center; white-space: nowrap;
-	color: var(--text-dim, var(--theme--foreground-subdued, #6b7684)); background: var(--surface, var(--theme--background-subdued, #f7f9fb));
-	border: 1px solid var(--border, var(--theme--border-color-subdued, #e7ebf0)); border-radius: 7px; cursor: pointer;
+	color: var(--fp-text-dim); background: var(--fp-surface);
+	border: 1px solid var(--fp-border); border-radius: 7px; cursor: pointer;
 }
-.cse-tab.on { background: var(--accent, var(--theme--primary, #1d4ed8)); color: var(--accent-ink, var(--theme--foreground-inverted, #fff)); font-weight: 600; border-color: var(--accent, var(--theme--primary, #1d4ed8)); }
+.cse-tab.on { background: var(--fp-accent); color: var(--fp-accent-ink); font-weight: 600; border-color: var(--fp-accent); }
 
 .cse-strip { position: relative; touch-action: none; }
 .cse-handles { position: absolute; top: 0; left: 0; right: 0; pointer-events: none; }
@@ -266,7 +275,7 @@ function onStripPointerUp(ev: PointerEvent) {
 /* Saturation handles: a downward triangle at the chart top, a stem running the full chart height,
    and a dot on the axis -- these drive the ramp/curve itself, so they get the strongest weight. */
 .cse-handle.flag { z-index: 2; }
-/* Neutral, NOT var(--accent, var(--theme--primary, #1d4ed8)): these markers sit on top of a user-selectable colour ramp, so any
+/* Neutral, NOT the accent colour: these markers sit on top of a user-selectable colour ramp, so any
    palette hue collides with some colormap -- an amber accent disappears into the yellow end of
    viridis, a cyan one into its blue-green middle, and grayscale eats anything desaturated. White
    with a dark outline reads against every ramp we ship. */
@@ -280,13 +289,13 @@ function onStripPointerUp(ev: PointerEvent) {
    the full chart height as the wall edge itself -- deliberately lighter-weight than the flags,
    matching CloudCompare's own secondary marker for this range. */
 .cse-handle.circle { z-index: 1; }
-.cse-disp-circle { position: absolute; top: 50%; left: 0; width: 12px; height: 12px; margin-left: -6px; margin-top: -6px; border-radius: 50%; background: var(--surface, var(--theme--background-subdued, #f7f9fb)); border: 2px solid var(--text-dim, var(--theme--foreground-subdued, #6b7684)); box-sizing: border-box; z-index: 1; }
-.cse-disp-line { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: var(--text-dim, var(--theme--foreground-subdued, #6b7684)); opacity: 0.6; pointer-events: none; }
+.cse-disp-circle { position: absolute; top: 50%; left: 0; width: 12px; height: 12px; margin-left: -6px; margin-top: -6px; border-radius: 50%; background: var(--fp-surface); border: 2px solid var(--fp-text-dim); box-sizing: border-box; z-index: 1; }
+.cse-disp-line { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: var(--fp-text-dim); opacity: 0.6; pointer-events: none; }
 
 /* 2 columns, not 4: a 4-across grid in a narrow sidebar left each number input ~60px wide,
    truncating even a rounded value -- see roundForEdit()'s comment for the other half of this fix. */
 .cse-numgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; align-items: end; margin-top: 2px; }
-.cse-numgrid label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-dim, var(--theme--foreground-subdued, #6b7684)); min-width: 0; }
-.cse-numgrid input[type="number"] { padding: 5px 7px; font-size: 12px; background: var(--surface, var(--theme--background-subdued, #f7f9fb)); border: 1px solid var(--border, var(--theme--border-color-subdued, #e7ebf0)); border-radius: 6px; color: var(--text, var(--theme--foreground, #1e293b)); width: 100%; min-width: 0; box-sizing: border-box; }
+.cse-numgrid label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--fp-text-dim); min-width: 0; }
+.cse-numgrid input[type="number"] { padding: 5px 7px; font-size: 12px; background: var(--fp-surface); border: 1px solid var(--fp-border); border-radius: 6px; color: var(--fp-text); width: 100%; min-width: 0; box-sizing: border-box; }
 .cse-params { display: flex; flex-direction: column; gap: 10px; }
 </style>

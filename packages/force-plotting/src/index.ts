@@ -20,8 +20,9 @@ export type { Axis, CloudChannel } from './liveCloud';
 export type { SpeedMode } from './liveCloud';
 export {
 	defaultScale, applyParams, normalize, denormalize, sampleScale, sampleScaleAt, buildScaleLUT,
-	lutKey, colorizeValues, OPEN_DISP,
+	lutKey, colorizeValues, withAutoRange, withOpenDisplay, OPEN_DISP,
 } from './colorScale';
+export { createScaleTexture, syncScaleTexture } from './scaleTexture';
 export type { ColorScale } from './colorScale';
 export { histogramFrom, createAccumulator } from './histogram';
 export type { Histogram, HistogramAccumulator } from './histogram';

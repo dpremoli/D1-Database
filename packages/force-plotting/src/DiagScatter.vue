@@ -19,7 +19,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { buildScaleLUT, lutKey, type ColorScale } from './colorScale';
+import type { ColorScale } from './colorScale';
+import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { CLUSTER_PALETTE } from './clusterPalette';
 import { matches } from './selection';
 import type { ChannelKey, Selection, WorkingSet } from './selection';
@@ -68,16 +69,6 @@ let cssW = 1, cssH = 1;
 let needsRender = true;
 function invalidate() { needsRender = true; }
 
-// Colour-scale LUT texture, shared with every other FRM renderer via colorScale.ts's
-// buildScaleLUT -- this used to be its own hand-rolled 256-sample loop (duplicate of the near-
-// identical one in frmCloudShader.ts); consolidating removes that duplication and means every
-// renderer's ramp/steps/symlog maths comes from exactly one place.
-function lutTexture(scale: ColorScale): THREE.DataTexture {
-	const data = buildScaleLUT(scale, 256);
-	const t = new THREE.DataTexture(data, 256, 1, THREE.RGBAFormat);
-	t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.needsUpdate = true;
-	return t;
-}
 
 function makeMaterial(): THREE.ShaderMaterial {
 	const paletteFlat = new Float32Array(CLUSTER_PALETTE.flat());
@@ -85,7 +76,7 @@ function makeMaterial(): THREE.ShaderMaterial {
 	return new THREE.ShaderMaterial({
 		transparent: true,
 		uniforms: {
-			uGradient: { value: lutTexture(s) },
+			uGradient: { value: createScaleTexture(s) },
 			uRange: { value: new THREE.Vector2(s.satMin, s.satMax) },
 			// Displayed-range filter (separate from uRange, the saturation/colour range): points
 			// whose raw value falls outside [uDisp.x, uDisp.y] are either greyed (uGreyOOR>0.5,
@@ -364,14 +355,10 @@ watch([() => props.channel, categorical], () => {
 	if (material) material.uniforms.uCluster.value = categorical.value ? 1 : 0;
 	packValue();
 });
-// One watcher for the whole ColorScale: the LUT texture is only rebuilt when lutKey changes (what
-// is baked into its bytes); saturation/displayed-range/grey-vs-hide are plain uniform pushes.
-watch(() => props.colorScale, (s, prev) => {
+// LUT bytes resync only when lutKey changes; saturation/displayed-range/grey-vs-hide are uniforms.
+watch(() => props.colorScale, (s) => {
 	if (!material) return;
-	if (!prev || lutKey(s) !== lutKey(prev)) {
-		(material.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
-		material.uniforms.uGradient.value = lutTexture(s);
-	}
+	syncScaleTexture(material.uniforms.uGradient.value, s);
 	material.uniforms.uRange.value.set(s.satMin, s.satMax);
 	material.uniforms.uDisp.value.set(s.dispMin, s.dispMax);
 	material.uniforms.uGreyOOR.value = s.greyOutOfRange ? 1 : 0;

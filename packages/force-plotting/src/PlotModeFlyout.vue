@@ -44,25 +44,19 @@ function pick(key: string) {
 // Hover-to-open is for mice only: touch fires emulated enter/leave around every tap.
 function onEnter(ev: PointerEvent) { if (ev.pointerType === 'mouse') show(); }
 function onLeave(ev: PointerEvent) { if (ev.pointerType === 'mouse') hide(); }
-// A tap focuses the button (focusin -> show) before its click lands, so toggling on the click's
-// view of `open` would immediately close what the tap just opened. Toggle on the state at press.
-let openAtPress: boolean | null = null;
-function onActivePress() { openAtPress = open.value; }
-function onActiveClick() {
-	const wasOpen = openAtPress ?? open.value;
-	openAtPress = null;
-	if (wasOpen) hide(); else show();
-}
+// Open on keyboard focus only: a tap also focuses the button, and opening there would let the
+// click that follows close it again straight away.
+function onFocusIn(ev: FocusEvent) { if ((ev.target as Element).matches(':focus-visible')) show(); }
 </script>
 
 <template>
 	<div ref="rootEl" class="pmf" :class="{ open, vertical }"
-		@pointerenter="onEnter" @pointerleave="onLeave" @focusin="show" @focusout="hide">
+		@pointerenter="onEnter" @pointerleave="onLeave" @focusin="onFocusIn" @focusout="hide">
 		<!-- data-mode is the stable hook for "select mode X": the visible label differs between
 			 hosts ("Force" vs "Time") and the active button carries a caret, so matching on text is
 			 unreliable. -->
 		<button type="button" class="pmf-btn pmf-active" :data-mode="active?.key"
-			:title="active?.title || active?.label" @pointerdown="onActivePress" @click="onActiveClick">
+			:title="active?.title || active?.label" @click="open ? hide() : show()">
 			{{ active?.label }}
 			<span class="pmf-caret" aria-hidden="true">›</span>
 		</button>
@@ -74,14 +68,25 @@ function onActiveClick() {
 </template>
 
 <style scoped>
-.pmf { position: relative; display: inline-flex; align-items: center; }
+.pmf {
+	/* App tokens, falling back to the Directus theme when this renders inside the admin. */
+	--fp-accent: var(--accent, var(--theme--primary, #1d4ed8));
+	--fp-accent-ink: var(--accent-ink, var(--theme--foreground-inverted, #fff));
+	--fp-bg-2: var(--bg-2, var(--theme--background, #fff));
+	--fp-border: var(--border, var(--theme--border-color-subdued, #e7ebf0));
+	--fp-surface: var(--surface, var(--theme--background-subdued, #f7f9fb));
+	--fp-surface-2: var(--surface-2, var(--theme--background-normal, #f0f4f9));
+	--fp-text: var(--text, var(--theme--foreground, #1e293b));
+	--fp-text-dim: var(--text-dim, var(--theme--foreground-subdued, #6b7684));
+	position: relative; display: inline-flex; align-items: center;
+}
 .pmf-btn {
 	padding: 5px 10px; font: inherit; font-size: 12px; line-height: 1.2; white-space: nowrap;
-	color: var(--text-dim, var(--theme--foreground-subdued, #6b7684)); background: var(--surface, var(--theme--background-subdued, #f7f9fb));
-	border: 1px solid var(--border, var(--theme--border-color-subdued, #e7ebf0)); border-radius: 7px; cursor: pointer;
+	color: var(--fp-text-dim); background: var(--fp-surface);
+	border: 1px solid var(--fp-border); border-radius: 7px; cursor: pointer;
 }
-.pmf-btn:hover { color: var(--text, var(--theme--foreground, #1e293b)); background: var(--surface-2, var(--theme--background-normal, #f0f4f9)); }
-.pmf-active { display: inline-flex; align-items: center; gap: 5px; background: var(--accent, var(--theme--primary, #1d4ed8)); color: var(--accent-ink, var(--theme--foreground-inverted, #fff)); font-weight: 600; border-color: var(--accent, var(--theme--primary, #1d4ed8)); }
+.pmf-btn:hover { color: var(--fp-text); background: var(--fp-surface-2); }
+.pmf-active { display: inline-flex; align-items: center; gap: 5px; background: var(--fp-accent); color: var(--fp-accent-ink); font-weight: 600; border-color: var(--fp-accent); }
 .pmf-caret { font-size: 13px; line-height: 1; transition: transform 0.24s ease; opacity: 0.85; }
 .pmf.open .pmf-caret { transform: rotate(90deg); }
 
@@ -98,11 +103,11 @@ function onActiveClick() {
 	position: absolute; top: calc(100% + 4px); left: 0; z-index: 40;
 	flex-direction: column; max-width: none; margin-left: 0;
 	max-height: 0; padding: 0;
-	background: var(--bg-2, var(--theme--background, #fff)); border: 1px solid transparent; border-radius: 9px;
+	background: var(--fp-bg-2); border: 1px solid transparent; border-radius: 9px;
 	transition: max-height 0.28s ease, opacity 0.18s ease, padding 0.2s ease;
 }
 .pmf.vertical.open .pmf-list {
-	max-height: 320px; padding: 4px; border-color: var(--border, var(--theme--border-color-subdued, #e7ebf0));
+	max-height: 320px; padding: 4px; border-color: var(--fp-border);
 	box-shadow: 0 12px 34px rgba(0, 0, 0, 0.3);
 }
 .pmf.vertical .pmf-btn { text-align: left; width: 100%; }

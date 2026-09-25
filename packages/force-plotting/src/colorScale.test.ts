@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	applyParams, buildScaleLUT, colorizeValues, defaultScale, denormalize, lutKey, normalize, OPEN_DISP, sampleScale,
-	sampleScaleAt, type ColorScale,
+	sampleScaleAt, withAutoRange, withOpenDisplay, type ColorScale,
 } from './colorScale';
 
 function scale(overrides: Partial<ColorScale> = {}): ColorScale {
@@ -124,29 +124,45 @@ describe('colorizeValues', () => {
 	it('matches the LUT colour for in-range values, including steps and log scale', () => {
 		const s = scale({ satMin: -100, satMax: 100, steps: 8, logScale: true });
 		const vals = new Float32Array([-100, -3, 0, 7, 100]);
-		const out = new Float32Array(vals.length * 4);
+		const out = new Uint8Array(vals.length * 4);
 		colorizeValues(vals, vals.length, s, out, 256);
 		const lut = buildScaleLUT(s, 256);
 		vals.forEach((v, k) => {
 			const i = Math.round(((v + 100) / 200) * 255) * 4;
-			expect(Math.round(out[k * 4] * 255)).toBe(lut[i]);
-			expect(Math.round(out[k * 4 + 1] * 255)).toBe(lut[i + 1]);
-			expect(out[k * 4 + 3]).toBe(1);
+			expect(out[k * 4]).toBe(lut[i]);
+			expect(out[k * 4 + 1]).toBe(lut[i + 1]);
+			expect(out[k * 4 + 3]).toBe(255);
 		});
 	});
 	it('greys or hides points outside the displayed range', () => {
 		const vals = new Float32Array([-50, 0, 50]);
-		const out = new Float32Array(12);
+		const out = new Uint8Array(12);
 		colorizeValues(vals, 3, scale({ satMin: -100, satMax: 100, dispMin: -10, dispMax: 10, greyOutOfRange: true }), out);
-		expect(Array.from(out.slice(0, 4))).toEqual([0.5, 0.5, 0.5, 1]);
-		expect(out[7]).toBe(1);
+		expect(Array.from(out.slice(0, 4))).toEqual([128, 128, 128, 255]);
+		expect(out[7]).toBe(255);
 		colorizeValues(vals, 3, scale({ satMin: -100, satMax: 100, dispMin: -10, dispMax: 10, greyOutOfRange: false }), out);
-		expect(out[3]).toBe(0); expect(out[7]).toBe(1); expect(out[11]).toBe(0);
+		expect(out[3]).toBe(0); expect(out[7]).toBe(255); expect(out[11]).toBe(0);
 	});
-	it('never writes NaN', () => {
-		const out = new Float32Array(4);
-		colorizeValues(new Float32Array([NaN]), 1, scale(), out);
-		for (const c of out) expect(Number.isFinite(c)).toBe(true);
+	it('maps NaN to the low end of the ramp rather than an undefined colour', () => {
+		const s = scale();
+		const out = new Uint8Array(4);
+		colorizeValues(new Float32Array([NaN]), 1, s, out, 256);
+		const lut = buildScaleLUT(s, 256);
+		expect(Array.from(out)).toEqual([lut[0], lut[1], lut[2], 255]);
+	});
+});
+
+describe('withAutoRange / withOpenDisplay', () => {
+	it('re-seeds only the saturation range and still applies the shaping params', () => {
+		const s = withAutoRange(scale({ symmetrical: true, colormap: 'inferno', dispMin: -2, dispMax: 2 }), 10, 30);
+		expect([s.satMin, s.satMax]).toEqual([-30, 30]);
+		expect(s.colormap).toBe('inferno');
+		expect([s.dispMin, s.dispMax]).toEqual([-2, 2]);
+	});
+	it('reopens the displayed range without touching anything else', () => {
+		const s = withOpenDisplay(scale({ satMin: -3, satMax: 3, dispMin: -1, dispMax: 1 }));
+		expect([s.dispMin, s.dispMax]).toEqual([-OPEN_DISP, OPEN_DISP]);
+		expect([s.satMin, s.satMax]).toEqual([-3, 3]);
 	});
 });
 
