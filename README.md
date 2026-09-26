@@ -56,7 +56,7 @@ See [`docs/adr/`](./docs/adr/) for the decisions behind this and
 | [`apps/`](./apps/) | Operator-facing applications — currently [`force-app/`](./apps/force-app/), the machining force-capture desktop app |
 | [`packages/`](./packages/) | Shared front-end libraries (e.g. `force-plotting` — the force cloud, polar plot, diagnostics workbench) |
 | [`infra/`](./infra/) | Caddy proxy config, backup/restore scripts (the compose file and `.env.example` sit at the root) |
-| [`docs/`](./docs/) | ADRs, runbooks, data dictionary, feature designs, legacy-data analysis |
+| [`docs/`](./docs/) | the wiki, ADRs, runbooks, data dictionary, feature designs, legacy-data analysis |
 | [`tests/`](./tests/) | Integration & end-to-end tests |
 
 ## Quick start
@@ -82,6 +82,7 @@ analysis adds Vue 3 + three.js, Electron, a FastAPI recorder and MATLAB processi
 
 ## Key documents
 
+- [`docs/wiki/`](./docs/wiki/README.md) — **the wiki**: illustrated user and developer guides for the [Force App](./docs/wiki/force-app/README.md) and the [D1 Database](./docs/wiki/database/README.md)
 - [`plan.md`](./plan.md) — the staggered implementation plan & status tracker
 - [`system_requirements_specification.md`](./system_requirements_specification.md) — requirements
 - [`docs/legacy-data-analysis.md`](./docs/legacy-data-analysis.md) — analysis of the legacy AppSheet/Sheets data

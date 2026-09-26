@@ -102,6 +102,8 @@ cd apps/force-app/backup-server && ..\backend\.venv\Scripts\pytest
 
 ## More
 
+- [The Force App wiki](../../docs/wiki/force-app/README.md) — the illustrated user guide: recording,
+  replay, the Plot dashboard, hardware setup, settings, recovery and troubleshooting
 - [`docs/force-app-operations.md`](../../docs/force-app-operations.md) — running, deploying and
   troubleshooting (the live-backup server, config locations, log access)
 - [`docs/force-file-standards.md`](../../docs/force-file-standards.md) — the capture `.mat` layouts

@@ -77,4 +77,5 @@ provisioned on it:
 | **Researcher** | Read everything, including audit_logs; no writes |
 | **Administrator** | Full access + system settings |
 
-See also the [API contract](../docs/api-contract.md).
+See also the [API contract](../docs/api-contract.md), and the [D1 Database wiki](../docs/wiki/database/README.md)
+for an illustrated guide to what these extensions look like in use.
