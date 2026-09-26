@@ -49,8 +49,8 @@ demo stack for this wiki:
 | migration `20260703000066_lab_member_people_permissions` | grants permissions to the Lab Member policy, which only `configure_users_and_policies.sql` creates | apply the roles/policies part of that script before this migration |
 | `scripts/configure_directus.sql` | re-inserts the field and relation metadata for the core collections from scratch, which removes the interfaces and relations later migrations registered (about 100 fields and 14 relations; `fast_recipes` then errors because its `runs` relation is gone) | build a second, migrations-only database and copy back the `directus_fields` / `directus_relations` rows that configure removed |
 | `scripts/configure_directus.sql` (fixed in this change) | wrote the module bar without `"enabled": true`, so the left-hand module rail was empty | fixed: re-run the script's section 0 |
-| `core/extensions/d1-material-inherit`, `d1-report` | `package-lock.json` is out of sync with `package.json`, so `npm ci` fails (`EUSAGE`) | `npm install` (and commit the refreshed lock file) |
-| `db/seeds/001_reference_data.sql` | the seeded machines have no `capabilities`, so the machine picker offers none of them | set `equipment.capabilities` (e.g. `machining` for the lathe, `sintering` for the FAST press) |
+| `core/extensions/d1-material-inherit`, `d1-report` (fixed in this change) | `package-lock.json` lacked the optional `@emnapi/*` packages, so `npm ci` failed (`EUSAGE`) | fixed: the lock files are refreshed |
+| `db/seeds/001_reference_data.sql` (fixed in this change) | the seeded machines had no `capabilities`, so the machine picker offered none of them | fixed: the seed sets them; on an existing dev database, set `equipment.capabilities` by hand |
 
 ### Without Docker
 

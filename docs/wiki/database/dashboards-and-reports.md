@@ -34,12 +34,12 @@ diameter, atmosphere, recipe, batch). For the full traces, use [FAST Analysis](f
 
 ### Node Graph
 
-A full-screen version of the connections graph. Click any item in the other tabs, or search for
-one, to explore outward from it.
+A full-screen version of the connections graph. Search for a sample, operation (by its code),
+machine, insert, edge or box, pick it from the results, and the graph draws its neighbours:
+material and project, operations and tests, machine, tooling, parent samples. Click any node to
+explore outward from it. Each exploration adds to the graph; ✕ clears it and ⌖ re-fits it.
 
-> **Known issue:** the graph's lookups ask Directus for an `operation_type` field that does not
-> exist, so expanding a sample, a machine or an edge returns nothing. Operations and FAST runs
-> still draw their own neighbours. See [Known issues](known-issues.md).
+![Lab Dashboard, Node Graph tab](../images/database/lab-node-graph.png)
 
 ## Ask the Database
 

@@ -43,7 +43,9 @@ disk. Find it in [Local Captures](captures-and-recovery.md#local-captures).
 
 ### Every local capture says "upload state unknown"
 
-A known v0.1.30 bug. See [Local captures](captures-and-recovery.md#local-captures).
+The app could not ask the database which captures are uploaded: check the *Directus* row in the
+Connectivity Doctor, and that you are signed in. (In v0.1.30 and earlier this happened on every
+PC because of a bug; see [Local captures](captures-and-recovery.md#local-captures).)
 
 ### Plot: Power / Spectro / Waterfall say "failed" or stay empty
 

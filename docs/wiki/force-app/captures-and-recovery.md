@@ -46,13 +46,9 @@ Other places the app keeps data:
 For every capture that is **not uploaded**, an **Upload** button appears, and **Upload N unsynced**
 uploads them all.
 
-> **Known issue (v0.1.30): every capture shows "upload state unknown".** The check asks
-> Directus for operations whose `recorded_metadata.capture_id` matches. Directus does not support
-> filtering on a key inside a JSON field, so it refuses the query with *403 You don't have
-> permission to access field "capture_id"*, even for administrators. As a result the Upload
-> buttons never appear. Until that is fixed, upload a forgotten capture from the save dialog
-> (**Open in Plot → Retry upload**), or ask an administrator to check in Directus whether it is
-> already there.
+The app works out the upload state by matching each capture's id against the `capture_id` that
+every upload stamps into the operation's `recorded_metadata`. In v0.1.30 and earlier that check
+always failed, so every capture showed *upload state unknown* and no Upload buttons appeared.
 
 **Edit** (or clicking a capture's name) corrects the metadata recorded with a capture, for
 example a sample that was forgotten at the end of a cut:
