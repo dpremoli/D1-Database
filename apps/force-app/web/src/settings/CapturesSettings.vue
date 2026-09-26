@@ -10,6 +10,7 @@ import { uploadCaptureColdStart } from '../record/uploadCapture';
 import { discardQueued, listQueue, retryQueued, syncStatus, type QueuedRun } from '../record/directusSync';
 import { confirmAction } from '../ui/confirm';
 import EditCaptureMetadataDialog from './EditCaptureMetadataDialog.vue';
+import { matchUploaded, uploadedRowsSince } from './captureUploadState';
 import { formatMegabytes } from '../format';
 
 interface Capture {
@@ -67,23 +68,21 @@ async function load() {
 
 async function checkUploaded() {
 	// recorded_metadata.capture_id is what both upload paths stamp (workspace.ts and
-	// uploadCapture.ts), so it is the link back from a local capture to its database row.
+	// uploadCapture.ts), so it is the link back from a local capture to its database row. Directus
+	// can't filter on that JSON key, so candidate rows are fetched and matched client-side (see
+	// captureUploadState.ts for why the created_at bound is safe).
 	uploadedKnown.value = false;
 	try {
 		const ids = captures.value.map((c) => c.id);
 		if (!ids.length) { uploadedKnown.value = true; return; }
+		const since = uploadedRowsSince(ids);
 		const res = await api.get('/items/manufacturing_operations', {
 			params: {
-				filter: { recorded_metadata: { capture_id: { _in: ids } } },
+				filter: { recorded_metadata: { _nnull: true }, ...(since ? { created_at: { _gte: since } } : {}) },
 				fields: ['operation_id', 'recorded_metadata'], limit: -1,
 			},
 		});
-		const found: Record<string, boolean> = {};
-		const opIds: Record<string, string> = {};
-		for (const row of res.data?.data ?? []) {
-			const cid = row?.recorded_metadata?.capture_id;
-			if (cid) { found[cid] = true; if (row.operation_id) opIds[cid] = row.operation_id; }
-		}
+		const { uploaded: found, opIds } = matchUploaded(res.data?.data ?? [], ids);
 		uploaded.value = found;
 		uploadedOpId.value = opIds;
 		uploadedKnown.value = true;
