@@ -76,11 +76,12 @@
 	--text: #1e293b;
 	--text-dim: #64748b;
 	--text-faint: #94a3b8;
-	/* The same amber as the dark theme, for the same reason (the design test above): the old sky
-	   #0284c7 sat next to the Fz blue, so "selected" and "Z axis" looked alike here too. amber-700
-	   rather than the dark theme's #f5a524, which is ~2:1 on white: this is ~5:1 against white, both
-	   as text on the light panels and as a fill under white ink. */
-	--accent: #b45309;
+	/* Neutral slate, not a hue. Same rule as the dark design test above (the interface doesn't
+	   borrow from the data palette): the old sky #0284c7 sat next to the Fz blue, teal next to the Fy
+	   green, violet on the Tacho channel, and amber is the warning colour here (--warn) and wasn't
+	   liked. On a light page every hue is taken by data or status, so "selected" is said in ink —
+	   ~10:1 on white as text, and as a fill under white ink. */
+	--accent: #334155;
 	--accent-ink: #fff;
 	--danger: #dc2626;
 	--fx: #dc2626;
