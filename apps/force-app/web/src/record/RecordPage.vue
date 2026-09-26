@@ -58,7 +58,17 @@ function loadLayout(): Inst[] {
 const layout = ref<Inst[]>(loadLayout());
 let saveT: any = null;
 watch(layout, (l) => { clearTimeout(saveT); saveT = setTimeout(() => localStorage.setItem(LS_KEY, JSON.stringify(l)), 400); }, { deep: true });
-function resetLayout() { layout.value = DEFAULT_LAYOUT.map((x) => ({ ...x })); }
+// Asks first: the button sits right beside "Add a panel", and a reset throws away every panel's
+// position, size, mode and channel picks at once, with no undo.
+async function resetLayout() {
+	const ok = await confirmAction({
+		title: 'Reset the panel layout?',
+		message: 'Every panel returns to its default position and size, and panels you added or closed go back to the default set, with their modes and channel choices.',
+		detail: 'Recording settings and data are not affected.',
+		confirmLabel: 'Reset layout',
+	});
+	if (ok) layout.value = DEFAULT_LAYOUT.map((x) => ({ ...x }));
+}
 
 // ---- Responsive grid height ----------------------------------------------------------------
 // The grid's own height is `bottomRow * (rowHeight + marginY) + marginY` (grid-layout-plus), so a
