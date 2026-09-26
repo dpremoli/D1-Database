@@ -96,7 +96,7 @@
 								@click="selectOp(op)"
 							>
 								<td>{{ formatDate(op.operation_date) }}</td>
-								<td>{{ op.method_id?.method_name ?? op.operation_type ?? '—' }}</td>
+								<td>{{ op.method_id?.method_name ?? '—' }}</td>
 								<td>{{ op.equipment_id?.equipment_name ?? '—' }}</td>
 								<td>{{ op.insert_edge_id?.edge_code ?? '—' }}</td>
 								<td>{{ op.outcome ?? '—' }}</td>
