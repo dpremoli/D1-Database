@@ -203,8 +203,11 @@ button {
 @keyframes dialog-backdrop-in {
 	from { opacity: 0; }
 }
+/* A rise, not a scale: plot canvases inside a dialog size their pixel buffer from
+   getBoundingClientRect(), which includes transforms, so one mounting mid-scale was drawn 2% short
+   and lost its bottom edge. translateY moves the box without resizing it. */
 @keyframes dialog-in {
-	from { opacity: 0; transform: translateY(8px) scale(0.98); }
+	from { opacity: 0; transform: translateY(8px); }
 }
 .dialog-backdrop-in {
 	animation: dialog-backdrop-in 0.14s ease-out;
