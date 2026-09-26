@@ -61,8 +61,9 @@ The workflow:
 ![The NI-DAQ page](../images/force-app/nidaq.png)
 
 The page draws the chassis (here a **cDAQ-9178**, 8 slots) with each detected C-series module to
-its real connector layout. The strip above it summarises the chassis: modules, AI channels,
-assigned ports and status.
+its real connector layout. The badge beside the page title says whether the hardware is **LIVE**
+or **SIMULATED**, and the strip below it counts the modules, the AI channels and how many
+channels are assigned to a port.
 
 - **Assign a channel.** Click a port, then choose which channel it carries (Fx1…Fz4, Tacho…).
   The coloured tag on each port shows its current assignment.
@@ -77,8 +78,8 @@ the recorder captures. On the Record page, the **Sample rate** tile turns red wh
 higher than the assigned modules can do.
 
 On a PC without NI-DAQmx the backend falls back to a simulated chassis. On the rig, check that the
-page shows the **real** hardware and not the simulation; this is the first item of the
-[hardware checklist](../../force-app-operations.md#hardware-checklist).
+page shows the **real** hardware (the badge reads **LIVE**, not **SIMULATED**); this is the first
+item of the [hardware checklist](../../force-app-operations.md#hardware-checklist).
 
 ### Virtual channels
 

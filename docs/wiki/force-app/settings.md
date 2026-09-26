@@ -67,8 +67,10 @@ also offers this test at the first Start of each session.
 **Connectivity Doctor** checks everything the app depends on and suggests a fix for each
 problem. It runs when the tab opens; press **Run doctor** to repeat it. The checks are: recorder
 backend, internet, Directus, Lab Amp, NI-DAQ runtime, filter service, octree server, backup
-server and disk space. In the screenshot, *NI-DAQ runtime* warns because the demo PC has no
-NI-DAQmx driver, and *Octree server* fails because none was running. Both are expected off the rig.
+server and disk space. Where the app can fix a problem itself, the finding has a **Fix now**
+button. Where a command fixes it, **Copy** puts the command on the clipboard. In the screenshot,
+*NI-DAQ runtime* warns because the demo PC has no NI-DAQmx driver, and *Octree server* fails
+because none was running. Both are expected off the rig.
 
 **Service endpoints** are the URLs the app uses:
 
@@ -79,9 +81,10 @@ NI-DAQmx driver, and *Octree server* fails because none was running. Both are ex
 | Filter service URL | `/filter` | filter previews and spectra on the Plot page |
 | Octree server URL | `/octrees` | *Full* and *Gridded* FRM views, diagnostics |
 
-Changes are stored in this browser profile and take effect at once. **Reset to defaults** undoes
-them. A deployment can also ship a `config.json` next to the app to set them. The order of
-precedence is build defaults, then `config.json`, then these overrides.
+**Save** stores your changes in this browser profile, where they take effect at once, and runs
+the doctor again to check the new addresses. **Reset to defaults** undoes them. A deployment can
+also ship a `config.json` next to the app to set them. The order of precedence is build defaults,
+then `config.json`, then these overrides.
 
 ## Live Backup
 

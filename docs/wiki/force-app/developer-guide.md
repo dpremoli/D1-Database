@@ -114,7 +114,8 @@ pick it up from there (see [force-app-operations.md](../../force-app-operations.
 - **`RecordClient` is a plain class, not a reactive object.** Only its `ref`s (`frameSeq`,
   `fftSeq`, `status`) are reactive, so a `computed` that reads other fields (`fft`, `trace`,
   `frm`) must also read the matching sequence ref, or it caches its first result forever. That
-  is why the live FFT panel stayed blank in v0.1.30 and earlier.
+  is why, in v0.1.30 and earlier, the live FFT panel stayed blank and Spectrogram / Waterfall
+  ignored a change of channel.
 - **Upload order is deliberate**: the operation row first (its id is needed), then the files, then
   the analysis row. See `uploadCutToDatabase()` in `record/workspace.ts`.
 - **Directus can't filter on keys inside JSON fields** (`recorded_metadata.capture_id`). Store

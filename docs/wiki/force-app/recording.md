@@ -41,14 +41,15 @@ on the [Plot dashboard](plot-dashboard.md#correcting-an-operations-metadata).
 
 ## 3. Recording behaviour toggles
 
-Three switches live at the bottom of the panel, next to **Start** (and in more detail in
-[Settings → Recording](settings.md#recording)):
+Three toggles sit at the bottom of the panel, just above **Start**, so they are checked right
+before each cut. They are the same switches as in [Settings → Recording](settings.md#recording),
+which explains them in full and holds the cut-detection threshold:
 
 | Toggle | Effect |
 |---|---|
-| **Detect cut start** | the live FRM map holds at the origin until the tool touches down, so air-cut revolutions don't crowd the fingerprint. An optional absolute threshold (N) overrides the adaptive detection. |
-| **Drift compensation** | applies a linear drift correction (the same one the MATLAB app used) to the **saved outputs** (`.mat` and live cache). The raw capture is never modified, so turning this on or off later loses nothing. |
-| **Converging auto-range** | NI-DAQ only. After each cut, recommends new per-channel Lab Amp ranges from that cut's peaks and applies them to the next cut, so a badly ranged channel converges on the amp's full resolution. On Simulated/Replay it previews the recommendation only. |
+| **Cut start** (detect cut start) | the live FRM map holds at the origin until the tool touches down, so air-cut revolutions don't crowd the fingerprint |
+| **Drift** (drift compensation) | applies a linear drift correction (the same one the MATLAB app used) to the **saved outputs** (`.mat` and live cache). The raw capture is never modified, so turning this on or off later loses nothing. |
+| **Converge** (converging auto-range) | NI-DAQ only. After each cut, recommends new per-channel Lab Amp ranges from that cut's peaks and applies them to the next cut, so a badly ranged channel converges on the amp's full resolution. On Simulated/Replay it previews the recommendation only, and says so under the toggles. |
 
 ## 4. Start
 

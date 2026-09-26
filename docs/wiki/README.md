@@ -24,8 +24,9 @@ User and developer guides for the two applications in this repository, with scre
 ## About the screenshots
 
 All screenshots were taken on 26 September 2026 from a local stack built from this repository:
-Force App v0.1.30 with its simulated signal source and mock Lab Amp, Directus 11 with the D1
-extensions, and a small **demo dataset**. Demo people are `Demo PI`, `Demo Researcher` and `Demo
+the Force App as on `main` (v0.1.30 plus the not yet released interface refresh of PR #73) with
+its simulated signal source and mock Lab Amp, Directus 11 with the D1 extensions, and a small
+**demo dataset**. Demo people are `Demo PI`, `Demo Researcher` and `Demo
 Operator`, all at `example.com`; the project is `DEMO-001`; samples are `101`–`104`. No real lab
 data, people or measurements appear. Where a screenshot needed something the local stack could
 not produce, its caption says what was substituted.

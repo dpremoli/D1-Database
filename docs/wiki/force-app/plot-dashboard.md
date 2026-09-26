@@ -13,7 +13,7 @@ The page has four columns. From left to right:
 1. **Samples** and **Operations.** Pick a sample, then one of its cuts.
 2. **Sample detail** and **Operation detail**, plus the collapsible **Display**,
    **Signal statistics** and **Signal filters** cards.
-3. The **Signals** panel: the per-axis charts.
+3. The **Signals** panel: the per-axis charts. Its title is the current mode, *Force ›* at first.
 4. The **FRM map** panel: the point cloud.
 
 Drag the column edges to resize them. The **‹** buttons hide the first two columns for a wider
@@ -55,7 +55,8 @@ that lists every change as *old → new*, including the regenerated operation co
 ## Signals panel
 
 One chart per axis (**Fx**, **Fy**, **Fz**, toggled with the coloured chips). **RPM** adds the
-spindle-speed trace. The mode switch at the top right picks what the charts show:
+spindle-speed trace. The panel's title is the mode, as on the Record page: point at **Force ›**
+and the other modes slide out beside it (or drop down as a menu in a narrow panel):
 
 | Mode | Shows |
 |---|---|
@@ -167,8 +168,10 @@ the filtered spectrum is drawn dashed over the active axis:
 
 ## Adding panels
 
-**+ Add** in the header adds a panel. The **Signals** and **FRM map** chips show or hide the
-defaults, and ▦ resets the layout:
+**+ Add** in the header adds a panel: another **Signals** or **FRM map** panel, a **Wear trend**
+or the **Metadata doctor**. Each panel's **×** closes it. ▦ returns to the default layout, one
+Signals and one FRM map panel side by side, and removes any others. Unlike the Record page, the
+Plot page resets without asking first.
 
 ![The Add menu](../images/force-app/plot-add-menu.png)
 

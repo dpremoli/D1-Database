@@ -15,7 +15,7 @@ change the recording form, so nothing about the next real recording is affected.
 2. Optionally narrow the list first: pick a **Sample** and/or **Operation type** above, or a
    **Machine** below. The search only offers cuts that match all of them.
 3. Click **Find a cut** and type part of the operation code (e.g. `101-AA-MF`). Pick a cut from
-   the list:
+   the list, with the mouse or with ↑ / ↓ and Enter:
 
 ![Picking a cut to replay](../images/force-app/replay-picker.png)
 

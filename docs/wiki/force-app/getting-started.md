@@ -42,8 +42,9 @@ fails with a permission error, ask a Directus administrator to check your role (
 
 ## Finding your way around
 
-The app has six sections. The navigation is a small three-dot tab on the left edge of the window,
-hidden until you point at it:
+The app has six sections. The navigation is a small three-dot tab on the left edge of the window.
+Point at it to slide it open, or tap it, or reach it with Tab and press Enter. Opened by a tap or
+the keyboard, it stays open until you pick a section, tap elsewhere or press Escape:
 
 ![The navigation sidebar, expanded](../images/force-app/nav-sidebar.png)
 
@@ -81,6 +82,11 @@ other page then shows a blue banner with the elapsed time, sample count and peak
 | **F11** | toggle full screen |
 | **Help → Connectivity Doctor** | jump to the health check ([Troubleshooting](troubleshooting.md)) |
 | **Help → View Logs** | open the backend log viewer |
+| **Tab** to the navigation tab, then **Enter** | open the navigation, with focus on the current section. **Escape** closes it again. |
+| **↑ / ↓** and **Enter** in a search list | move through the matches in the Sample, Machine, Operator and tooling lookups (and the replay cut picker) and pick one |
+| **Escape** in a dialog | cancel and close it. The save dialog after a cut is the exception: it needs **Save** or **Don't save**. |
+
+While a dialog is open, **Tab** moves only between its own controls.
 
 ## Theme
 
