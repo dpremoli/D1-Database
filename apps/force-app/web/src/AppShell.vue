@@ -264,8 +264,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 .navitem.active { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .badge { position: absolute; top: 6px; right: 18px; min-width: 15px; height: 15px; padding: 0 3px; display: inline-flex; align-items: center; justify-content: center; font-size: 9.5px; font-weight: 700; border-radius: 8px; }
 .badge.warn { color: #0b1020; background: #fbbf24; }
-.badge.alarm { color: #fff; background: #ef4444; animation: b 0.8s infinite; }
-@keyframes b { 50% { opacity: 0.35; } }
+.badge.alarm { color: #fff; background: #ef4444; animation: alarmpulse 0.9s ease-in-out infinite; }
 .spacer { flex: 1; }
 .statuswrap { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
 .chip { display: inline-flex; align-items: center; justify-content: center; gap: 3px; width: 100%; padding: 4px 2px; border-radius: 7px; font-size: 9.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-dim); border: 1px solid var(--border); }
@@ -288,7 +287,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
    every time the operator left the Record page. #2563eb is the same informational blue
    .disk-action-banner.backup_started already uses. The pulsing dot still reads as "live". */
 .rec-banner { position: sticky; top: 0; z-index: 150; display: flex; align-items: center; gap: 12px; padding: 8px 16px; font-size: 12.5px; font-weight: 600; color: #fff; background: #2563eb; }
-.rec-banner-dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; flex-shrink: 0; animation: pulse 1.4s infinite; }
+.rec-banner-dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; flex-shrink: 0; --pulse-color: #fff; animation: live-pulse 1.4s infinite; }
 .rec-banner-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rec-banner-stats { display: flex; align-items: center; gap: 14px; font-weight: 500; color: rgba(255,255,255,0.85); font-variant-numeric: tabular-nums; }
 .rec-stat b { font-weight: 700; color: #fff; }
@@ -296,5 +295,4 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 .rec-banner-dismiss { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border-radius: 6px; background: rgba(255,255,255,0.18); border: none; color: #fff; cursor: pointer; }
 .rec-banner-dismiss:hover { background: rgba(255,255,255,0.3); }
 .rec-banner-dismiss .material-symbols-rounded { font-size: 15px; }
-@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,255,255,0.5); } 70% { box-shadow: 0 0 0 6px rgba(255,255,255,0); } 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); } }
 </style>

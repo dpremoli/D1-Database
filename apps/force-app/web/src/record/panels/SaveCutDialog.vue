@@ -348,8 +348,7 @@ function startNew() {
 .scd-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 200px; color: var(--text); }
 .scd-loading b { font-size: 14px; font-weight: 600; }
 .scd-loading-sub { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; text-align: center; margin-top: 4px; }
-.scd-loading .spin { font-size: 28px; color: var(--accent); animation: scd-spin 1s linear infinite; }
-@keyframes scd-spin { to { transform: rotate(360deg); } }
+.scd-loading .spin { font-size: 28px; color: var(--accent); }
 .scd-progress { display: flex; flex-direction: column; gap: 4px; justify-content: center; min-height: 200px; padding: 8px 4px; }
 .scd-stage { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; font-size: 13px; color: var(--text-dim); }
 .scd-stage.active { color: var(--text); background: var(--surface); }
@@ -357,7 +356,6 @@ function startNew() {
 .scd-stage-icon { font-size: 18px; flex-shrink: 0; }
 .scd-stage.done .scd-stage-icon { color: var(--ok); }
 .scd-stage.active .scd-stage-icon { color: var(--accent); }
-.scd-stage-icon.spin { animation: scd-spin 1s linear infinite; }
 .scd-stage-label { flex: 1; }
 .scd-stage-time { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-dim); }
 .scd-opts { display: flex; flex-direction: column; gap: 8px; }

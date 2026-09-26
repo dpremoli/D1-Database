@@ -216,3 +216,48 @@ button {
 [role='alertdialog']:focus {
 	outline: none;
 }
+
+/* ---- Motion ----
+   One spinner for every loading icon: there were eleven private @keyframes copies turning at five
+   different speeds (0.7-1.1 s). Components just add class="spin" (or use these keyframes). */
+@keyframes spin {
+	to { transform: rotate(360deg); }
+}
+.spin {
+	animation: spin 0.9s linear infinite;
+}
+/* "Live" dot: an expanding ring in --pulse-color (red by default). The pop-out window's recording
+   dot blinked instead of pulsing like the Record page's. */
+@keyframes live-pulse {
+	0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pulse-color, #ef4444) 50%, transparent); }
+	70% { box-shadow: 0 0 0 7px transparent; }
+	100% { box-shadow: 0 0 0 0 transparent; }
+}
+/* Hover/active colour changes ease instead of snapping. Colour properties only, never layout, and
+   any component declaring its own transition keeps it (this is the lowest specificity there is). */
+button,
+a,
+input,
+select,
+textarea {
+	transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+/* Reduced motion (an OS setting): no pulsing, blinking, sliding or fading. Nothing here depends on
+   an animation to be understood — the alarm banner stays solid red and keeps its tone. Spinners
+   are the exception: they are state, and a frozen one reads as a hang, so they keep turning slowly. */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+	.spin,
+	.spinner,
+	.v-progress-circular-shim {
+		animation-duration: 2s !important;
+		animation-iteration-count: infinite !important;
+	}
+}

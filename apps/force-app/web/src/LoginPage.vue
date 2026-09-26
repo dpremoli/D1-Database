@@ -199,12 +199,7 @@ async function submit() {
 	border-radius: 50%;
 	border: 2px solid currentColor;
 	border-top-color: transparent;
-	animation: spin 0.7s linear infinite;
-}
-@keyframes spin {
-	to {
-		transform: rotate(360deg);
-	}
+	animation: spin 0.9s linear infinite; /* global keyframes (styles.css) */
 }
 .host {
 	margin: 18px 0 0;

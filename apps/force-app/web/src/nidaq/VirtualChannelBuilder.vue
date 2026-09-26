@@ -158,8 +158,6 @@ function insertFunc(f: (typeof FUNCS)[number]) {
 .formula-input { font-family: var(--mono); font-size: 14px !important; }
 .vcb-status { min-height: 18px; font-size: 11.5px; display: flex; align-items: center; gap: 5px; color: var(--text-dim); }
 .vcb-status .material-symbols-rounded { font-size: 15px; }
-.vcb-status .spin { animation: vcb-spin 1s linear infinite; }
-@keyframes vcb-spin { to { transform: rotate(360deg); } }
 .vcb-status.ok { color: var(--ok); }
 .vcb-status.bad { color: #ef4444; }
 .vcb-palette { display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }

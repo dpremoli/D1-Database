@@ -153,8 +153,6 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .install-overlay .material-symbols-rounded { font-size: 34px; margin-bottom: 6px; }
 .install-overlay p { margin: 0; font-size: 14px; }
 .install-overlay .sub { font-size: 12px; color: rgba(255,255,255,0.7); }
-.spin { animation: spin 1.1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
 
 .changelog-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
 .changelog-head h2 { margin: 0; }

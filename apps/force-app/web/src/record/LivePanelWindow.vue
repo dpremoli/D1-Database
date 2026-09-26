@@ -172,8 +172,7 @@ onBeforeUnmount(() => client.disconnect());
 .live-window { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
 .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; row-gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 90%, transparent); }
 .rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #64748b; flex-shrink: 0; }
-.rec-dot.live { background: #ef4444; animation: pulse 1.4s infinite; }
-@keyframes pulse { 50% { opacity: 0.4; } }
+.rec-dot.live { background: #ef4444; animation: live-pulse 1.4s infinite; }
 .title { font-weight: 600; font-size: 15px; flex-shrink: 0; }
 .state { font-size: 11px; letter-spacing: 0.01em; color: var(--text-dim); flex-shrink: 0; }
 .state.recording { color: var(--warn); } .state.done { color: var(--ok); } .state.error { color: var(--danger); }
@@ -213,8 +212,6 @@ onBeforeUnmount(() => client.disconnect());
 .readouts b.fz { color: var(--fz-ink); }
 .readouts b.cut { color: var(--text); font-size: 13px; }
 .syncing { display: flex; align-items: center; justify-content: center; gap: 8px; height: 100%; color: var(--text-dim); font-size: 13px; }
-.spin { animation: sp 1s linear infinite; }
-@keyframes sp { to { transform: rotate(360deg); } }
 .body { flex: 1; min-height: 0; padding: 12px; overflow: hidden; }
 .body > * { height: 100%; }
 </style>

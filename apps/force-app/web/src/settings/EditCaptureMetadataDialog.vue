@@ -339,8 +339,6 @@ async function confirmClose() {
 .ecm-tag { margin-left: auto; padding: 3px 9px; font-size: 10.5px; font-weight: 600; border-radius: 999px; background: var(--surface); color: var(--text-dim); }
 .ecm-tag.uploaded { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .ecm-loading { display: flex; align-items: center; gap: 8px; padding: 30px 0; justify-content: center; color: var(--text-dim); font-size: 13px; }
-.ecm-loading .spin { animation: ecm-spin 1s linear infinite; }
-@keyframes ecm-spin { to { transform: rotate(360deg); } }
 .ecm-body { display: flex; flex-direction: column; gap: 4px; }
 .field { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px; }
 .field.wide { display: block; }

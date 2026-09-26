@@ -263,8 +263,6 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .linkbtn:hover:not(:disabled) { color: var(--text); }
 .linkbtn:disabled { opacity: 0.5; cursor: not-allowed; }
 .linkbtn .material-symbols-rounded { font-size: 17px; }
-.linkbtn .spin { animation: spin 0.9s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
 .empty { font-size: 12.5px; color: var(--text-dim); }
 .issue-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
 .issue-list li { display: flex; align-items: center; gap: 8px; padding: 7px 9px; font-size: 12.5px; background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }

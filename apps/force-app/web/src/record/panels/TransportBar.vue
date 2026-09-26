@@ -75,6 +75,4 @@ const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
 .err { color: var(--danger); font-size: 12px; margin: 2px 0 0; }
 .hint { font-size: 11.5px; color: var(--text-dim); margin: 2px 0 0; }
 .hint.loading { display: flex; align-items: center; gap: 5px; }
-.spin { animation: transport-spin 1s linear infinite; }
-@keyframes transport-spin { to { transform: rotate(360deg); } }
 </style>

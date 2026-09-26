@@ -596,8 +596,7 @@ onBeforeUnmount(() => {
 .addmenu button .material-symbols-rounded { font-size: 17px; color: var(--text-dim); }
 .addmenu .added { margin-left: auto; font-size: 9.5px; color: var(--text-dim); }
 .rec-dot { width: 9px; height: 9px; border-radius: 50%; background: #64748b; flex-shrink: 0; }
-.rec-dot.live { background: #ef4444; animation: pulse 1.4s infinite; }
-@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); } 70% { box-shadow: 0 0 0 8px rgba(239,68,68,0); } 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); } }
+.rec-dot.live { background: #ef4444; animation: live-pulse 1.4s infinite; }
 /* Recovery banner */
 .recovery-banner { background: color-mix(in srgb, var(--bg-2) 95%, var(--warn) 5%); border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); padding: 14px 18px; flex: none; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
 .rb-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
@@ -618,8 +617,6 @@ onBeforeUnmount(() => {
 .rb-btn.discard:hover:not(:disabled) { color: var(--danger); background: rgba(239,68,68,0.1); }
 .rb-btn.dismiss { color: var(--text-dim); background: transparent; border: 1px solid var(--border); }
 .rb-btn.dismiss:hover:not(:disabled) { color: var(--text); background: var(--surface); }
-.rb-btn .spin { animation: rb-spin 1s linear infinite; }
-@keyframes rb-spin { to { transform: rotate(360deg); } }
 /* Wrapper exists purely so the responsive row-height maths has a real element to measure from
    (a ref on <GridLayout> would hand back the component instance, not a DOM node). */
 .gridwrap { margin: 8px 10px 0; }

@@ -157,8 +157,7 @@ function goToDbPlot() {
 .lcv-title b { font-size: 16px; }
 .lcv-sub { font-size: 12px; color: var(--text-dim); }
 .lcv-loading, .lcv-err { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 60px 0; color: var(--text-dim); }
-.lcv-loading .spin { font-size: 22px; animation: lcv-spin 1s linear infinite; }
-@keyframes lcv-spin { to { transform: rotate(360deg); } }
+.lcv-loading .spin { font-size: 22px; }
 .lcv-err { color: var(--danger); }
 .lcv-btn { padding: 7px 14px; font-size: 12px; font-weight: 600; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; margin-top: 6px; }
 .lcv-btn.primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
