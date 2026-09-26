@@ -80,7 +80,7 @@ const textFields: { key: string; label: string }[] = [
 <style scoped>
 .meta { display: flex; flex-direction: column; }
 .cutid { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 8px 11px; border-radius: 9px;
-	background: rgba(56,189,248,0.09); border: 1px solid rgba(56,189,248,0.35); }
+	background: color-mix(in srgb, var(--accent) 9%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
 .cutid.empty { background: rgba(0,0,0,0.2); border-color: var(--border); }
 .cutid-lab { font-size: 9.5px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-dim); }
 .cutid-val { flex: 1; min-width: 0; font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent);

@@ -73,8 +73,8 @@ const eta = computed(() => {
 /* DESIGN TEST: `cut` is an identifier, not a status, and it was rendered in the Fy green sitting
    three tiles away in this same strip. Plain text -- only State keeps a status hue (a
    traffic light reads as status from context, which an axis identity does not). */
-.ro b.recording { color: #fbbf24; } .ro b.done { color: #4ade80; } .ro b.error { color: var(--danger); }
+.ro b.recording { color: var(--warn); } .ro b.done { color: var(--ok); } .ro b.error { color: var(--danger); }
 .ro b.cut { color: var(--text); }
-.ro b.eta { color: #fbbf24; }
-.ro b.fx { color: #f87171; } .ro b.fy { color: #4ade80; } .ro b.fz { color: #60a5fa; }
+.ro b.eta { color: var(--warn); }
+.ro b.fx { color: var(--fx-ink); } .ro b.fy { color: var(--fy-ink); } .ro b.fz { color: var(--fz-ink); }
 </style>

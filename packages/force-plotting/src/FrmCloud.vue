@@ -900,7 +900,7 @@ function onUp(ev: PointerEvent) {
 .fc-swgl { position: absolute; left: 6px; bottom: 4px; font-size: 10px; font-weight: 700; color: #fbbf24; cursor: help; }
 .fc-pane { position: absolute; left: 6px; top: 4px; font-size: 10px; font-weight: 600; color: var(--text-dim, rgba(255,255,255,0.75)); letter-spacing: 0.01em; }
 
-.fc-rect { position: absolute; border: 1px solid #38bdf8; background: rgba(56,189,248,0.14); pointer-events: none; border-radius: 2px; }
+.fc-rect { position: absolute; border: 1px solid var(--accent, #38bdf8); background: color-mix(in srgb, var(--accent, #38bdf8) 14%, transparent); pointer-events: none; border-radius: 2px; }
 
 .fc-cbar { position: absolute; top: 10px; right: 8px; display: flex; flex-direction: column; align-items: center; gap: 3px; pointer-events: none; }
 .fc-ramp { width: 10px; height: 96px; border-radius: 3px; border: 1px solid var(--border-2, rgba(255,255,255,0.25)); }
@@ -915,6 +915,6 @@ function onUp(ev: PointerEvent) {
 .fc-tbtn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; cursor: pointer;
 	color: var(--text, rgba(255,255,255,0.85)); background: var(--overlay, rgba(15,23,42,0.55)); border: 1px solid var(--border-2, rgba(255,255,255,0.18)); }
 .fc-tbtn:hover { background: var(--surface-2, rgba(15,23,42,0.8)); }
-.fc-tbtn.on { background: #38bdf8; border-color: #38bdf8; color: #0b1020; }
+.fc-tbtn.on { background: var(--accent, #38bdf8); border-color: var(--accent, #38bdf8); color: var(--accent-ink, #0b1020); }
 .fc-tbtn:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

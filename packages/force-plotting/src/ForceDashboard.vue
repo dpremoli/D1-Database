@@ -3079,6 +3079,6 @@ function fmtDateTime(v: string | null | undefined) {
 .changes-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .cd-no, .cd-yes { font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; padding: 6px 14px; border-radius: 8px; border: 1px solid transparent; }
 .cd-no { color: var(--theme--foreground-subdued, #6b7684); background: transparent; border-color: var(--theme--border-color, #d1d9e6); }
-.cd-yes { color: #fff; background: #0ea5e9; }
+.cd-yes { color: var(--fp-accent-ink); background: var(--fp-accent); }
 .cd-yes:disabled, .cd-no:disabled { opacity: 0.6; cursor: default; }
 </style>

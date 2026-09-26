@@ -93,7 +93,7 @@ function delayedBlurClose() { window.setTimeout(() => { open.value = false; }, 1
 .lookup { display: block; position: relative; margin-bottom: 8px; }
 .lbl { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 3px; }
 .box { display: flex; align-items: center; background: var(--bg-3); border: 1px solid var(--border); border-radius: 7px; }
-.box.set { border-color: rgba(56,189,248,0.5); }
+.box.set { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .box .lead { flex: 0 0 auto; font-size: 15px; color: var(--text-dim); margin-left: 9px; }
 .box:has(.lead) input { padding-left: 6px; }
 .box input { flex: 1; min-width: 0; padding: 7px 9px; font-size: 13px; color: var(--text); background: transparent; border: none; outline: none; }

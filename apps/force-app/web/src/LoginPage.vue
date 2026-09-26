@@ -156,7 +156,7 @@ async function submit() {
 }
 .field input:focus {
 	border-color: var(--accent);
-	box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .error {
 	display: flex;

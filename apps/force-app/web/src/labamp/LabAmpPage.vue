@@ -272,9 +272,9 @@ onMounted(refresh);
 .head { display: flex; align-items: center; gap: 14px; padding: 20px 26px 14px; border-bottom: 1px solid var(--border); }
 .head h1 { margin: 0; font-size: 22px; }
 .conn { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text-dim); }
-.conn.ok { color: #4ade80; }
+.conn.ok { color: var(--ok); }
 .conn .material-symbols-rounded { font-size: 18px; }
-.mock { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #fbbf24; background: rgba(251,191,36,0.12); padding: 1px 6px; border-radius: 10px; }
+.mock { font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); padding: 1px 6px; border-radius: 10px; }
 .ic { margin-left: auto; display: inline-flex; width: 34px; height: 34px; align-items: center; justify-content: center; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; color: var(--text); cursor: pointer; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; padding: 22px 26px; max-width: 1100px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
@@ -319,8 +319,8 @@ th { color: var(--text-dim); font-weight: 600; }
 .prev-peaks .hint { flex-basis: 100%; margin: 0; }
 .prev-op-chips { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .prev-op-chips .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 4px 2px 8px; border-radius: 10px; cursor: help; }
-.prev-op-chips .chip.exact { color: #4ade80; background: rgba(74,222,128,0.12); }
-.prev-op-chips .chip.approx { color: #fbbf24; background: rgba(251,191,36,0.12); }
+.prev-op-chips .chip.exact { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.prev-op-chips .chip.approx { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
 .prev-op-chips .chip button { display: inline-flex; padding: 2px; color: inherit; background: transparent; border: none; border-radius: 50%; cursor: pointer; opacity: 0.7; }
 .prev-op-chips .chip button:hover { opacity: 1; background: rgba(0,0,0,0.15); }
 .prev-op-chips .chip .material-symbols-rounded { font-size: 13px; }
@@ -329,10 +329,10 @@ th { color: var(--text-dim); font-weight: 600; }
 .ar-controls input { width: 90px; }
 tr.clip td { background: rgba(239,68,68,0.08); }
 .tag { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 10px; }
-.tag.ok { color: #4ade80; background: rgba(74,222,128,0.12); }
+.tag.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .tag.clip, .tag.or { color: #fca5a5; background: rgba(252,165,165,0.12); }
-.tag.exact { color: #4ade80; background: rgba(74,222,128,0.12); cursor: help; }
-.tag.approx { color: #fbbf24; background: rgba(251,191,36,0.12); cursor: help; }
+.tag.exact { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); cursor: help; }
+.tag.approx { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); cursor: help; }
 .ref { padding: 10px 0; border-bottom: 1px solid var(--border); }
 .ref:last-child { border-bottom: 0; }
 .ref-name { font-size: 13.5px; font-weight: 640; color: var(--text); }
@@ -348,5 +348,5 @@ tr.clip td { background: rgba(239,68,68,0.08); }
 .btn-sm.save { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .btn-sm.edit { padding: 3px 5px; }
 .btn-sm .material-symbols-rounded { font-size: 13px; }
-.edit-row td { background: rgba(56,189,248,.06); }
+.edit-row td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 </style>

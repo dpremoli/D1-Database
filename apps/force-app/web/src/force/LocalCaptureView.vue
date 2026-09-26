@@ -163,8 +163,8 @@ function goToDbPlot() {
 .lcv-btn { padding: 7px 14px; font-size: 12px; font-weight: 600; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; margin-top: 6px; }
 .lcv-btn.primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 .lcv-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.lcv-banner { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.3); border-radius: 10px; font-size: 13px; color: var(--text); }
-.lcv-banner > .material-symbols-rounded { color: #fbbf24; font-size: 20px; }
+.lcv-banner { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: color-mix(in srgb, var(--warn) 8%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: 10px; font-size: 13px; color: var(--text); }
+.lcv-banner > .material-symbols-rounded { color: var(--warn); font-size: 20px; }
 .lcv-spacer { flex: 1; }
 .lcv-retryerr { font-size: 12px; color: var(--danger); margin: -8px 0 0; }
 .lcv-stats { display: flex; gap: 8px; flex-wrap: wrap; }

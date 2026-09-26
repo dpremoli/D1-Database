@@ -27,6 +27,15 @@
 	--fx: #dc2626;
 	--fy: #16a34a;
 	--fz: #2563eb;
+	/* Text/icon colours for statuses and axis readouts. These 400-level hues read well on the dark
+	   ground but wash out on the light theme's near-white, so each theme sets its own. Solid fills
+	   carrying dark ink (badges, meter bars, the Fx/Fy/Fz segment fills) keep their literals, which
+	   read on both. Tints are derived: color-mix(in srgb, var(--ok) 12%, transparent). */
+	--ok: #4ade80;
+	--warn: #fbbf24;
+	--fx-ink: #f87171;
+	--fy-ink: #4ade80;
+	--fz-ink: #60a5fa;
 	--overlay: rgba(0, 0, 0, 0.55);
 	/* Plot canvases (force plots, FRM map, FFT, spectrogram, waterfall) follow the theme rather
 	   than staying permanently dark as a fixed "instrument display" — single toggle point. */
@@ -67,12 +76,21 @@
 	--text: #1e293b;
 	--text-dim: #64748b;
 	--text-faint: #94a3b8;
-	--accent: #0284c7;
+	/* The same amber as the dark theme, for the same reason (the design test above): the old sky
+	   #0284c7 sat next to the Fz blue, so "selected" and "Z axis" looked alike here too. amber-700
+	   rather than the dark theme's #f5a524 so it holds contrast as text on white (4.8:1) and under
+	   white ink as a fill (5.2:1). */
+	--accent: #b45309;
 	--accent-ink: #fff;
 	--danger: #dc2626;
 	--fx: #dc2626;
 	--fy: #16a34a;
 	--fz: #2563eb;
+	--ok: #15803d;
+	--warn: #b45309;
+	--fx-ink: #dc2626;
+	--fy-ink: #15803d;
+	--fz-ink: #1d4ed8;
 	--overlay: rgba(15, 23, 42, 0.4);
 	--plot-bg: #eef1f6;
 	--theme--foreground: var(--text);

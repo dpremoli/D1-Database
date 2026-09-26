@@ -278,18 +278,18 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .head h1 { margin: 0; font-size: 22px; }
 .spacer { flex: 1; }
 .badge { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; padding: 3px 9px; border-radius: 999px; }
-.badge.sim { background: rgba(251,191,36,.16); color: #fbbf24; border: 1px solid rgba(251,191,36,.35); }
-.badge.live { background: rgba(74,222,128,.16); color: #4ade80; border: 1px solid rgba(74,222,128,.35); }
+.badge.sim { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); }
+.badge.live { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent); }
 .err { color: var(--danger); font-size: 12.5px; padding: 8px 24px 0; }
 .hw-summary { display: flex; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .hw-stat { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; }
 .hw-stat .material-symbols-rounded { font-size: 18px; color: var(--text-dim); }
-.hw-stat.ok .material-symbols-rounded { color: #4ade80; }
+.hw-stat.ok .material-symbols-rounded { color: var(--ok); }
 .hw-stat div { display: flex; flex-direction: column; }
 .hw-label { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; }
 .hw-stat b { font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .mod-specs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
-.spec { font-size: 8.5px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: rgba(56,189,248,.1); color: #7dd3fc; border: 1px solid rgba(56,189,248,.2); }
+.spec { font-size: 8.5px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: var(--surface-2); color: var(--text-dim); border: 1px solid var(--border); }
 .layout { display: flex; gap: 20px; padding: 20px 24px; align-items: flex-start; }
 .diagram { flex: 1; min-width: 0; }
 .chassis { background: color-mix(in srgb, var(--bg-2) 80%, transparent); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.3); }
@@ -327,6 +327,9 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .pid { font-size: 9.5px; color: var(--text-dim); }
 .port-row.terminal .pid, .ports.terminal .pid { width: 20px; }
 .chip { margin-left: auto; font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 5px; color: var(--c); background: color-mix(in srgb, var(--c) 16%, transparent); }
+/* --c is a canvas channel colour (ROLE_COLORS), tuned for the dark plot ground; as text on the light
+   theme's near-white it fell to ~1.6:1 (Fy). Darken it there for the label only. */
+[data-theme="light"] .chip { color: color-mix(in srgb, var(--c) 60%, black); }
 .chip.none { color: var(--text-faint); background: transparent; }
 .mod.empty { position: relative; align-items: stretch; justify-content: flex-start; border-style: dashed; color: var(--text-faint); cursor: pointer; }
 .mod.empty:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
@@ -357,7 +360,7 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .btn.ghost:hover:not(:disabled) { background: var(--surface-2); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .btn .material-symbols-rounded { font-size: 17px; }
-.btn.tiny { padding: 4px 8px; font-size: 11px; color: #7dd3fc; background: rgba(56,189,248,.1); border: 1px solid rgba(56,189,248,.3); }
+.btn.tiny { padding: 4px 8px; font-size: 11px; color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
 /* popover */
 /* --surface-2 is a translucent overlay TINT (rgba, ~7% alpha in both themes) meant to sit atop an
    already-opaque parent — not a panel colour on its own. Used here for a position:fixed popover
@@ -370,7 +373,7 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .roleopt { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 7px; border-radius: 6px; font-size: 12px; background: transparent; border: none; color: var(--text); cursor: pointer; text-align: left; }
 .roleopt:hover { background: var(--bg-3); }
 .roleopt em { color: var(--text-dim); font-style: normal; font-size: 10px; }
-.roleopt .cur { margin-left: auto; font-size: 9px; color: #4ade80; }
+.roleopt .cur { margin-left: auto; font-size: 9px; color: var(--ok); }
 .roleopt.add { color: var(--text-dim); }
 .roleopt .material-symbols-rounded { font-size: 15px; }
 .pop-sep { height: 1px; background: var(--border); margin: 5px 0; }
@@ -382,7 +385,7 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .cat-head .rm { background: transparent; border: none; color: var(--text-dim); cursor: pointer; }
 .catgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(158px,1fr)); gap: 10px; }
 .cattile { text-align: left; background: var(--surface); border: 1px solid var(--border-2); border-radius: 9px; padding: 10px; cursor: pointer; color: var(--text); }
-.cattile:hover { border-color: #38bdf8; transform: translateY(-2px); transition: all .12s; }
+.cattile:hover { border-color: var(--accent); transform: translateY(-2px); transition: all .12s; }
 .ctag { float: right; font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 4px; background: var(--bg-3); color: var(--text-dim); border: 1px solid var(--border-2); }
 .cattile .cname { font-size: 12.5px; font-weight: 700; }
 .cattile .cspec { font-size: 9.5px; color: var(--text-dim); margin-top: 2px; }

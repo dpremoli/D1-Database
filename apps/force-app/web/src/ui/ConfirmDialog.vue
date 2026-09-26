@@ -128,7 +128,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true));
 .cd-head b { font-size: 15px; color: var(--text); }
 .cd-icon { font-size: 24px; color: var(--accent); }
 .cd-modal.danger .cd-icon { color: #ef4444; }
-.cd-modal.warning .cd-icon { color: #fbbf24; }
+.cd-modal.warning .cd-icon { color: var(--warn); }
 .cd-message { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--text); }
 .cd-detail { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
 .cd-stats { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; }

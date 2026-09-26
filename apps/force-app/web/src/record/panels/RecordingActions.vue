@@ -63,14 +63,14 @@ const w = useWorkspace();
 .segproc { display: flex; min-width: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .segproc button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 8px; background: rgba(255,255,255,0.03); border: none; border-right: 1px solid var(--border); color: var(--text-dim); font-size: 9.5px; font-weight: 600; letter-spacing: 0.01em; cursor: pointer; }
 .segproc button:last-child { border-right: none; }
-.segproc button.on { color: #7dd3fc; background: rgba(56,189,248,0.14); }
+.segproc button.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .segproc button:disabled { opacity: 0.5; cursor: not-allowed; }
 .segproc .material-symbols-rounded { font-size: 16px; }
 .proc-notes { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
 .hint { font-size: 11.5px; color: var(--text-dim); margin: 0; }
 .sync { display: flex; align-items: center; gap: 5px; font-size: 11.5px; margin: 0; }
 .sync .material-symbols-rounded { font-size: 14px; }
-.sync.ok { color: #4ade80; }
-.sync.warn { color: #fbbf24; }
+.sync.ok { color: var(--ok); }
+.sync.warn { color: var(--warn); }
 .err { color: var(--danger); font-size: 12px; margin: 4px 0 0; }
 </style>

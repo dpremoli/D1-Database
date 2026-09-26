@@ -166,7 +166,7 @@ h2 { margin: 0 0 4px; font-size: 16px; }
    room to see other page content above it on a shorter window. */
 .changelog { display: flex; flex-direction: column; gap: 14px; max-height: 55vh; overflow-y: auto; padding-right: 4px; }
 .entry { padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
-.entry.current { border-color: var(--accent); background: rgba(56,189,248,0.06); }
+.entry.current { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .entry-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .entry-version { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--text); }
 .entry-date { font-size: 11px; color: var(--text-dim); margin-left: auto; }

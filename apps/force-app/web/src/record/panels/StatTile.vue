@@ -42,8 +42,8 @@ const display = computed(() => {
 
 <style scoped>
 .stat-tile { padding: 10px 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 10px; min-width: 0; overflow: hidden; }
-.stat-tile.invalid { border-color: #fbbf24; background: rgba(251,191,36,0.08); }
-.warn-icon { font-size: 15px; color: #fbbf24; margin-left: auto; }
+.stat-tile.invalid { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.warn-icon { font-size: 15px; color: var(--warn); margin-left: auto; }
 .value { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
 .value input, .value-text { font-size: 16px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; min-width: 0; }
 .value-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

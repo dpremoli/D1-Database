@@ -160,7 +160,7 @@ function resetEndpoints() {
 }
 
 const statusIcon: Record<string, string> = { ok: 'check_circle', fail: 'cancel', warn: 'warning', info: 'info' };
-const statusColor: Record<string, string> = { ok: '#4ade80', fail: 'var(--danger)', warn: '#fbbf24', info: 'var(--accent)' };
+const statusColor: Record<string, string> = { ok: 'var(--ok)', fail: 'var(--danger)', warn: 'var(--warn)', info: 'var(--accent)' };
 
 onMounted(() => runDoctor());
 </script>
@@ -303,7 +303,7 @@ h3 { margin: 24px 0 8px; font-size: 14px; }
 .copy-btn .material-symbols-rounded { font-size: 14px; }
 .copy-btn:hover { background: var(--surface-2); }
 
-.all-good { display: flex; align-items: center; gap: 8px; margin-top: 16px; padding: 12px 16px; background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.2); border-radius: 10px; font-size: 14px; font-weight: 700; color: #4ade80; }
+.all-good { display: flex; align-items: center; gap: 8px; margin-top: 16px; padding: 12px 16px; background: color-mix(in srgb, var(--ok) 8%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 20%, transparent); border-radius: 10px; font-size: 14px; font-weight: 700; color: var(--ok); }
 .all-good .material-symbols-rounded { font-size: 22px; }
 
 .disk-section { margin-top: 16px; }
@@ -312,7 +312,7 @@ h3 { margin: 24px 0 8px; font-size: 14px; }
 .disk-stat span { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
 .disk-stat b { font-size: 13px; font-variant-numeric: tabular-nums; }
 .disk-stat b.mono { font-family: var(--mono); font-size: 11.5px; word-break: break-all; }
-.disk-stat b.warn { color: #fbbf24; }
+.disk-stat b.warn { color: var(--warn); }
 .disk-stat b.crit { color: #ef4444; }
 .disk-row { display: flex; gap: 20px; margin-top: 8px; flex-wrap: wrap; }
 .disk-bar-wrap { width: 100%; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; margin-top: 10px; }

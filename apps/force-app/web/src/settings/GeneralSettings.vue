@@ -155,8 +155,8 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .drive-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
 .drive { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--surface); border: 2px solid transparent; border-radius: 10px; cursor: pointer; text-align: left; }
 .drive:hover { border-color: var(--border); background: var(--surface-2); }
-.drive.active { border-color: var(--accent); background: rgba(56,189,248,0.08); }
-.drive.low:not(.active) { border-color: #fbbf24; }
+.drive.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.drive.low:not(.active) { border-color: var(--warn); }
 .drive-icon { font-size: 22px; color: var(--text-dim); }
 .drive.ssd .drive-icon { color: #22c55e; }
 .drive-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -165,8 +165,8 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .badge { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
 .ssd-badge { color: #15803d; background: rgba(34,197,94,0.15); }
 .hdd-badge { color: var(--text-dim); background: var(--surface-2); }
-.caution-badge { color: #b45309; background: rgba(251,191,36,0.16); cursor: help; }
-.drive.caution:not(.active) { border-color: rgba(251,191,36,0.35); }
+.caution-badge { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); cursor: help; }
+.drive.caution:not(.active) { border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
 .drive.caution .drive-icon { color: #b45309; }
 .drive-caution-note { font-size: 10.5px; color: #b45309; line-height: 1.4; margin-top: 1px; }
 .drive-bar-wrap { width: 80px; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
@@ -175,6 +175,6 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .drive-bar.crit { background: #ef4444; }
 .drive-check { font-size: 18px; color: var(--accent); }
 .storage-path { font-family: var(--mono); font-size: 11px; word-break: break-all; }
-.saved-tag { font-size: 10.5px; font-weight: 700; color: #4ade80; margin-left: 6px; }
+.saved-tag { font-size: 10.5px; font-weight: 700; color: var(--ok); margin-left: 6px; }
 
 </style>

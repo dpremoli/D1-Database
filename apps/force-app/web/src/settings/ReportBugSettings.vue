@@ -226,8 +226,8 @@ async function submit() {
 h2 { margin: 0 0 4px; font-size: 16px; }
 .lead { margin: 0 0 18px; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
 .warnbox { display: flex; gap: 10px; padding: 11px 13px; margin-bottom: 14px; font-size: 12.5px;
-	background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.3); border-radius: 9px; }
-.warnbox .material-symbols-rounded { font-size: 20px; color: #fbbf24; }
+	background: color-mix(in srgb, var(--warn) 8%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: 9px; }
+.warnbox .material-symbols-rounded { font-size: 20px; color: var(--warn); }
 .warnbox div { display: flex; flex-direction: column; gap: 2px; }
 .warnbox b { font-size: 13px; }
 .warnbox span { color: var(--text-dim); line-height: 1.45; }
@@ -252,7 +252,7 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .btn.save { background: var(--accent); color: var(--accent-ink); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.ok { display: flex; align-items: center; gap: 5px; color: #4ade80; font-size: 12.5px; margin-top: 10px; }
+.ok { display: flex; align-items: center; gap: 5px; color: var(--ok); font-size: 12.5px; margin-top: 10px; }
 .ok a { color: inherit; text-decoration: underline; }
 .err { display: flex; align-items: center; gap: 5px; color: var(--danger); font-size: 12.5px; margin-top: 10px; }
 
@@ -271,6 +271,6 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .issue-list a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); text-decoration: none; }
 .issue-list a:hover { text-decoration: underline; }
 .badge { flex: 0 0 auto; padding: 2px 8px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; border-radius: 99px; }
-.badge.open { color: #4ade80; background: rgba(74,222,128,0.12); }
+.badge.open { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .badge.closed { color: var(--text-dim); background: rgba(255,255,255,0.06); }
 </style>

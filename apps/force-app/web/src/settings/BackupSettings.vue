@@ -221,10 +221,10 @@ input[type="number"] { max-width: 120px; }
 .mt { margin-top: 28px; }
 
 .server-status { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 9px; margin-bottom: 10px; }
-.server-status.ok { background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.2); }
+.server-status.ok { background: color-mix(in srgb, var(--ok) 8%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 20%, transparent); }
 .server-status.fail { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); }
 .server-status .material-symbols-rounded { font-size: 20px; }
-.server-status.ok .material-symbols-rounded { color: #4ade80; }
+.server-status.ok .material-symbols-rounded { color: var(--ok); }
 .server-status.fail .material-symbols-rounded { color: var(--danger); }
 .ss-info { display: flex; flex-direction: column; }
 .ss-label { font-size: 13px; font-weight: 600; color: var(--text); }
@@ -239,7 +239,7 @@ input[type="number"] { max-width: 120px; }
 .rs-detail.dim { opacity: 0.7; }
 .rs-state { display: inline-block; margin-left: 6px; font-size: 9.5px; font-weight: 700; padding: 1px 5px; border-radius: 4px; text-transform: uppercase; }
 .rs-state.complete { color: #15803d; background: rgba(34,197,94,0.15); }
-.rs-state.streaming { color: #d97706; background: rgba(251,191,36,0.15); }
+.rs-state.streaming { color: #d97706; background: color-mix(in srgb, var(--warn) 15%, transparent); }
 .rb-btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: 12px; font-weight: 600; border: none; border-radius: 7px; cursor: pointer; }
 .rb-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .rb-btn .material-symbols-rounded { font-size: 15px; }

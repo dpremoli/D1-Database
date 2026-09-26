@@ -392,11 +392,11 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .mono { font-family: var(--mono); }
 .tag { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
 	padding: 1px 7px; border-radius: 99px; color: var(--text-dim); background: var(--surface-2); }
-.tag.ok { color: #4ade80; background: rgba(74,222,128,0.12); }
-.tag.warn { color: #fbbf24; background: rgba(251,191,36,0.14); }
+.tag.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.tag.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
 .tag.dim { opacity: 0.7; }
 .ract { display: flex; gap: 7px; flex-shrink: 0; }
-.rmsg { margin: 5px 0 0; font-size: 11.5px; color: #4ade80; }
+.rmsg { margin: 5px 0 0; font-size: 11.5px; color: var(--ok); }
 .rmsg.bad { color: var(--danger); }
 .empty { padding: 26px; text-align: center; color: var(--text-dim); font-size: 12.5px;
 	border: 1px dashed var(--border); border-radius: 10px; margin-top: 10px; }
@@ -404,5 +404,5 @@ h3 { margin: 24px 0 4px; font-size: 14px; display: flex; align-items: center; ga
 .chip { font-size: 10px; font-weight: 700; color: var(--accent-ink); background: var(--accent);
 	padding: 1px 7px; border-radius: 99px; }
 .sub { margin: 0 0 8px; line-height: 1.45; }
-.qrow { border-color: rgba(251,191,36,0.28); }
+.qrow { border-color: color-mix(in srgb, var(--warn) 28%, transparent); }
 </style>

@@ -477,8 +477,8 @@ const revertStepLabel = computed(() => {
 
 .run-step-btn {
 	margin: 7px 0 0 22px; font: inherit; font-size: 10.5px; cursor: pointer; padding: 3px 9px;
-	border-radius: 6px; color: #7dd3fc; background: color-mix(in srgb, #38bdf8 12%, transparent);
-	border: 1px solid color-mix(in srgb, #38bdf8 40%, transparent);
+	border-radius: 6px; color: var(--accent, #7dd3fc); background: color-mix(in srgb, var(--accent, #38bdf8) 12%, transparent);
+	border: 1px solid color-mix(in srgb, var(--accent, #38bdf8) 40%, transparent);
 }
 .run-step-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 

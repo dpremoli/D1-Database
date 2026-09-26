@@ -232,8 +232,8 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .path { margin-top: 8px; font-family: var(--mono); word-break: break-all; }
 .err { color: var(--danger); font-size: 12px; }
 .warnbox { display: flex; gap: 10px; padding: 11px 13px; margin-bottom: 14px; font-size: 12.5px;
-	background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.3); border-radius: 9px; }
-.warnbox .material-symbols-rounded { font-size: 20px; color: #fbbf24; }
+	background: color-mix(in srgb, var(--warn) 8%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: 9px; }
+.warnbox .material-symbols-rounded { font-size: 20px; color: var(--warn); }
 .warnbox div { display: flex; flex-direction: column; gap: 2px; }
 .warnbox b { font-size: 13px; }
 .warnbox span { color: var(--text-dim); line-height: 1.45; }
@@ -251,7 +251,7 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .spacer { flex: 1; }
 .chk { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text); cursor: pointer; }
 .chk input { accent-color: var(--accent); }
-.tally { font-size: 11.5px; font-weight: 600; color: #fbbf24; }
+.tally { font-size: 11.5px; font-weight: 600; color: var(--warn); }
 .tally.err { color: var(--danger); }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 13px; font-size: 12.5px;
 	font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
@@ -271,7 +271,7 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .mod { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
 /* Preserve newlines so a captured traceback stays readable as a block. */
 .msg { color: var(--text); white-space: pre-wrap; word-break: break-word; }
-.row.warning .lvl { color: #fbbf24; }
+.row.warning .lvl { color: var(--warn); }
 .row.error .lvl, .row.critical .lvl { color: var(--danger); }
 .row.error, .row.critical { background: rgba(239,68,68,0.06); }
 .row.debug { opacity: 0.65; }

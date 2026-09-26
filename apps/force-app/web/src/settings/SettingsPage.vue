@@ -76,7 +76,7 @@ const active = ref<SettingsTab>(initialTab);
 .subtab { display: flex; align-items: center; gap: 9px; padding: 10px 12px; font-size: 13.5px; color: var(--text-dim); background: transparent; border: 1px solid transparent; border-radius: 9px; cursor: pointer; text-align: left; }
 .subtab .material-symbols-rounded { font-size: 19px; }
 .subtab:hover { background: var(--surface); color: var(--text); }
-.subtab.on { background: rgba(56,189,248,0.14); color: var(--accent); border-color: rgba(56,189,248,0.28); }
+.subtab.on { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 28%, transparent); }
 .pane { flex: 1; min-width: 0; }
 
 /* Below this, the fixed 190px sidebar left too little room for .pane and every settings tab's

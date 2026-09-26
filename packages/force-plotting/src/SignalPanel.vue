@@ -199,7 +199,7 @@ function onCropEnd(v: number) {
 	padding: 3px 8px; color: var(--text-dim, #94a3b8); background: none;
 	border: 1px solid var(--border, rgba(255,255,255,0.14)); border-radius: 999px; cursor: pointer;
 }
-.sig-allmode.on { color: #7dd3fc; border-color: #38bdf8; background: color-mix(in srgb, #38bdf8 14%, transparent); }
+.sig-allmode.on { color: var(--accent, #7dd3fc); border-color: var(--accent, #38bdf8); background: color-mix(in srgb, var(--accent, #38bdf8) 14%, transparent); }
 .sig-err { margin: 0; font-size: 10.5px; color: var(--danger, #fca5a5); }
 .sig-loading { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-dim, #94a3b8); font-size: 12px; }
 </style>

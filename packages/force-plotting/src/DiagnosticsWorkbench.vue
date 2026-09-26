@@ -639,7 +639,7 @@ onBeforeUnmount(() => {
 .diag-workbench { display: flex; flex-direction: column; min-height: 0; }
 .dw-gridwrap { position: relative; margin: 8px 10px 0; }
 .dw-gridwrap :deep(.vgl-layout) { margin: 0; }
-.dw-gridwrap :deep(.vgl-item--placeholder) { background: rgba(56, 189, 248, 0.18); border-radius: 12px; }
+.dw-gridwrap :deep(.vgl-item--placeholder) { background: color-mix(in srgb, var(--accent, #38bdf8) 18%, transparent); border-radius: 12px; }
 .dw-gridwrap :deep(.vgl-item__resizer) { z-index: 5; }
 .dw-error { padding: 8px 12px; color: var(--danger, #fca5a5); font-size: 12px; }
 .dw-loading { display: flex; align-items: center; justify-content: center; height: 100%; padding: 12px; text-align: center; color: var(--text-dim); font-size: 12px; }

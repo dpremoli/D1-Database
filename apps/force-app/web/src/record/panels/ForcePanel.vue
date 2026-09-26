@@ -126,15 +126,18 @@ function openLive() {
 .chips { display: flex; gap: 5px; }
 .chip { display: inline-flex; align-items: center; gap: 3px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
 .chip.on { color: var(--c); border-color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
+/* --c is a canvas channel colour (CH_COLOR), tuned for the dark plot ground; as text on the light
+   theme's near-white it fell to ~1.6:1 (Fy). Darken it there for the label only. */
+[data-theme="light"] .chip.on { color: color-mix(in srgb, var(--c) 60%, black); }
 .chip .material-symbols-rounded { font-size: 15px; }
 .subwrap { position: relative; }
-.sub-btn.on { --c: #38bdf8; color: #7dd3fc; border-color: #38bdf8; background: rgba(56,189,248,0.12); }
+.sub-btn.on { --c: var(--accent); }
 .subpop { position: absolute; top: 30px; left: 0; z-index: 40; min-width: 118px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 4px; box-shadow: 0 12px 34px rgba(0,0,0,0.3); }
 .subopt { display: flex; align-items: center; gap: 7px; width: 100%; padding: 5px 7px; font-size: 12px; color: var(--text); background: transparent; border: none; border-radius: 6px; cursor: pointer; text-align: left; }
 .subopt:hover { background: var(--surface-2); }
-.subopt.on { color: #fff; }
+.subopt.on { color: var(--text); font-weight: 600; }
 .subopt .dot { width: 9px; height: 9px; border-radius: 50%; }
-.subopt .tick { margin-left: auto; font-size: 14px; color: #4ade80; }
+.subopt .tick { margin-left: auto; font-size: 14px; color: var(--ok); }
 .mono-hint { font-family: var(--mono); font-size: 11px; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px; }
 .tw-row { display: flex; align-items: center; gap: 4px; }
 .tw-row input[type="range"] { width: 80px; accent-color: var(--accent); }

@@ -103,7 +103,7 @@ function delayedBlurClose() { window.setTimeout(() => { open.value = false; }, 1
 .mi { display: block; width: 100%; text-align: left; padding: 7px 10px; font-size: 12.5px; font-family: var(--mono); color: var(--text); background: transparent; border: none; cursor: pointer; }
 .mi:hover { background: var(--surface); }
 .mi.hint { color: var(--text-dim); font-family: inherit; cursor: default; }
-.chosen { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.4); border-radius: 7px; }
+.chosen { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 7px; }
 .chosen-label { font-size: 12.5px; font-family: var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .change { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; padding: 4px 8px; font-size: 11px; color: var(--text-dim); background: transparent; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
 .change:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }

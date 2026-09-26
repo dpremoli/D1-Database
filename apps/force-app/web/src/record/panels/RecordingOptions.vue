@@ -372,7 +372,7 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
    checkbox elsewhere. */
 .new-badge { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-right: 4px; padding: 0; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-faint); cursor: pointer; }
 .new-badge .material-symbols-rounded { font-size: 15px; }
-.new-badge.on { border-color: rgba(56,189,248,0.5); background: rgba(56,189,248,0.14); color: #7dd3fc; }
+.new-badge.on { border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .new-badge:disabled { opacity: 0.5; cursor: not-allowed; }
 .links { display: flex; flex-direction: column; }
 .links :deep(.lookup) { min-width: 0; }

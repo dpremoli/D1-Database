@@ -323,15 +323,15 @@ function startNew() {
 .scd-backdrop { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); backdrop-filter: blur(2px); padding: 24px; }
 .scd-modal { width: min(880px, 100%); max-height: 92vh; overflow: auto; display: flex; flex-direction: column; gap: 14px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: 0 30px 80px rgba(0,0,0,0.45); }
 .scd-head { display: flex; align-items: center; gap: 12px; }
-.scd-head > .material-symbols-rounded { font-size: 26px; color: #4ade80; }
+.scd-head > .material-symbols-rounded { font-size: 26px; color: var(--ok); }
 .scd-title { display: flex; flex-direction: column; }
 .scd-title b { font-size: 15px; }
 .scd-sub { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .scd-plot-hint { margin: 0 0 6px; font-size: 11px; color: var(--text-dim); }
 .scd-plot { height: 280px; }
 .scd-crop-note { display: flex; align-items: center; gap: 7px; margin-top: 8px; padding: 7px 10px; font-size: 11.5px; color: var(--text-dim);
-	background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.25); border-radius: 8px; }
-.scd-crop-note .material-symbols-rounded { font-size: 15px; color: #4ade80; flex-shrink: 0; }
+	background: color-mix(in srgb, var(--ok) 8%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 25%, transparent); border-radius: 8px; }
+.scd-crop-note .material-symbols-rounded { font-size: 15px; color: var(--ok); flex-shrink: 0; }
 .scd-crop-note span:nth-child(2) { flex: 1; font-variant-numeric: tabular-nums; }
 .scd-crop-reset { flex-shrink: 0; padding: 3px 9px; font-size: 11px; font-weight: 700; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
 .scd-crop-reset:hover { background: var(--surface); }
@@ -345,7 +345,7 @@ function startNew() {
 .scd-stage.active { color: var(--text); background: var(--surface); }
 .scd-stage.done { color: var(--text-dim); }
 .scd-stage-icon { font-size: 18px; flex-shrink: 0; }
-.scd-stage.done .scd-stage-icon { color: #4ade80; }
+.scd-stage.done .scd-stage-icon { color: var(--ok); }
 .scd-stage.active .scd-stage-icon { color: var(--accent); }
 .scd-stage-icon.spin { animation: scd-spin 1s linear infinite; }
 .scd-stage-label { flex: 1; }
@@ -364,9 +364,9 @@ function startNew() {
 .scd-btn.primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 .scd-btn.discard { color: var(--danger); }
 .scd-btn.danger { color: #fff; background: #dc2626; border-color: #dc2626; }
-.scd-confirm { display: flex; align-items: flex-start; gap: 10px; padding: 12px; background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.3); border-radius: 9px; font-size: 13px; }
-.scd-confirm.ok { background: rgba(74,222,128,0.08); border-color: rgba(74,222,128,0.3); }
-.scd-confirm .material-symbols-rounded.warn { color: #fbbf24; font-size: 22px; }
-.scd-confirm .material-symbols-rounded.ok { color: #4ade80; font-size: 22px; }
+.scd-confirm { display: flex; align-items: flex-start; gap: 10px; padding: 12px; background: color-mix(in srgb, var(--warn) 8%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: 9px; font-size: 13px; }
+.scd-confirm.ok { background: color-mix(in srgb, var(--ok) 8%, transparent); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+.scd-confirm .material-symbols-rounded.warn { color: var(--warn); font-size: 22px; }
+.scd-confirm .material-symbols-rounded.ok { color: var(--ok); font-size: 22px; }
 .scd-confirm p { margin: 0; color: var(--text); }
 </style>

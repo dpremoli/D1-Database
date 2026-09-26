@@ -157,7 +157,7 @@ function insertFunc(f: (typeof FUNCS)[number]) {
 .vcb-status .material-symbols-rounded { font-size: 15px; }
 .vcb-status .spin { animation: vcb-spin 1s linear infinite; }
 @keyframes vcb-spin { to { transform: rotate(360deg); } }
-.vcb-status.ok { color: #4ade80; }
+.vcb-status.ok { color: var(--ok); }
 .vcb-status.bad { color: #ef4444; }
 .vcb-palette { display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .vcb-group { display: flex; flex-direction: column; gap: 5px; }

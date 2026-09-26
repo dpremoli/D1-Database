@@ -599,9 +599,9 @@ onBeforeUnmount(() => {
 .rec-dot.live { background: #ef4444; animation: pulse 1.4s infinite; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); } 70% { box-shadow: 0 0 0 8px rgba(239,68,68,0); } 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); } }
 /* Recovery banner */
-.recovery-banner { background: color-mix(in srgb, var(--bg-2) 95%, #fbbf24 5%); border-bottom: 1px solid rgba(251,191,36,0.3); padding: 14px 18px; flex: none; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
+.recovery-banner { background: color-mix(in srgb, var(--bg-2) 95%, var(--warn) 5%); border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); padding: 14px 18px; flex: none; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
 .rb-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-.rb-head > .material-symbols-rounded { font-size: 22px; color: #fbbf24; }
+.rb-head > .material-symbols-rounded { font-size: 22px; color: var(--warn); }
 .rb-head b { font-size: 14px; color: var(--text); }
 .rb-hint { font-size: 12px; color: var(--text-dim); }
 .rb-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 6px; }
@@ -624,6 +624,6 @@ onBeforeUnmount(() => {
    (a ref on <GridLayout> would hand back the component instance, not a DOM node). */
 .gridwrap { margin: 8px 10px 0; }
 .vgl-layout { margin: 0; }
-:deep(.vgl-item--placeholder) { background: rgba(56,189,248,0.18); border-radius: 12px; }
+:deep(.vgl-item--placeholder) { background: color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 12px; }
 :deep(.vgl-item__resizer) { z-index: 5; }
 </style>

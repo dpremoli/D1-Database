@@ -480,7 +480,7 @@ function onWheel(ev: WheelEvent) {
 			</g>
 			<!-- rubber-band x-zoom rectangle -->
 			<rect v-if="zoomRect" :x="zoomRect.x" :y="MT_EFF" :width="zoomRect.w" :height="geom.Hh - MB - MT_EFF"
-				fill="#38bdf8" fill-opacity="0.16" stroke="#0ea5e9" stroke-width="0.8" />
+				class="zoom-rect" />
 		</svg>
 		<div v-else class="chart-empty">no data</div>
 		<div v-if="hoverPt" class="chart-tip"><strong>{{ hoverPt.label }}</strong><span>{{ hoverPt.sub }}</span></div>
@@ -513,6 +513,8 @@ function onWheel(ev: WheelEvent) {
 .chart-svg .fc-axis { stroke: var(--border-2, #94a3b8); }
 .chart-svg .fc-zero { stroke: var(--border-2, #cbd5e1); }
 .chart-empty { flex: 1; display: grid; place-items: center; color: var(--theme--foreground-subdued, #98a2b3); font-size: 12px; }
+/* The accent, not a sky blue a shade off the Fz trace it is dragged across. */
+.zoom-rect { fill: var(--accent, #38bdf8); fill-opacity: 0.16; stroke: var(--accent, #0ea5e9); stroke-width: 0.8; }
 .chart-tip {
 	/* below the header row so it never covers the "peak … N" readout in the top-right */
 	position: absolute; top: 30px; right: 12px; display: flex; flex-direction: column; align-items: flex-end;
