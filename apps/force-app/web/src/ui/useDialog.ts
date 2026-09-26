@@ -22,11 +22,19 @@ export function useDialog(panel: Ref<HTMLElement | null>, onEscape?: () => void)
 		if (e.key === 'Escape' && onEscape) { e.preventDefault(); onEscape(); return; }
 		if (e.key !== 'Tab') return;
 		const active = document.activeElement;
-		if (active && active !== document.body && !el.contains(active)) return; // another layer owns focus
 		const items = Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((n) => n.offsetParent !== null);
 		if (!items.length) { e.preventDefault(); return; }
 		const first = items[0];
 		const last = items[items.length - 1];
+		if (!active || !el.contains(active)) {
+			// Inside another dialog stacked on top: that one traps its own Tab.
+			if (active?.closest('[role="dialog"], [role="alertdialog"]')) return;
+			// Otherwise focus has fallen out (e.g. a lookup's Escape blurred its input to <body>):
+			// bring it back in rather than letting Tab walk the page behind the backdrop.
+			e.preventDefault();
+			(e.shiftKey ? last : first).focus();
+			return;
+		}
 		if (e.shiftKey && (active === first || active === el)) { e.preventDefault(); last.focus(); }
 		else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
 	}
