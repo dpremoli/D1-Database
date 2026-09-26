@@ -445,11 +445,11 @@ onBeforeUnmount(() => {
 .reset-view {
 	position: absolute; left: 6px; bottom: 4px;
 	display: inline-flex; align-items: center; gap: 3px;
-	padding: 2px 7px 2px 5px; font-size: 10px; line-height: 1.6;
+	padding: 2px 7px 2px 5px; font-size: var(--fs-xs); line-height: 1.6;
 	color: var(--text); background: var(--bg-2); border: 1px solid var(--border);
 	border-radius: 999px; cursor: pointer; opacity: 0.85;
 }
 .reset-view:hover { opacity: 1; }
-.reset-view .material-symbols-rounded { font-size: 13px; }
-.pts { position: absolute; right: 6px; top: 4px; font-size: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.reset-view .material-symbols-rounded { font-size: var(--icon-xs); }
+.pts { position: absolute; right: 6px; top: 4px; font-size: var(--fs-xs); color: var(--text-dim); font-variant-numeric: tabular-nums; }
 </style>

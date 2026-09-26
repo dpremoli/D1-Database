@@ -5,8 +5,10 @@
 // validation is live (debounced) against the backend, which is the actual source of truth for
 // what's allowed — this never re-implements the whitelist client-side, just calls it.
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
-import { CH_COLOR } from '../record/types';
+import { channelColor } from '../record/types';
+import { theme } from '../theme';
 import { nidaqApi, CORE_REFERENCEABLE, type Channel, type FormulaValidation } from './nidaqApi';
+import { useDialog } from '../ui/useDialog';
 
 const props = defineProps<{
 	/** Existing channels, for the reference palette — only "hardware" ones are referenceable
@@ -31,7 +33,7 @@ const hardwareExtras = computed(() =>
 );
 
 function chipColor(name: string): string {
-	return CH_COLOR[name] ?? props.channels.find((c) => c.name === name)?.color ?? '#94a3b8';
+	return channelColor(name, theme.value) ?? props.channels.find((c) => c.name === name)?.color ?? '#94a3b8';
 }
 
 // Insert at the cursor, not just appended — building a formula by clicking chips in any order
@@ -60,6 +62,8 @@ async function runValidate() {
 	finally { validating.value = false; }
 }
 onBeforeUnmount(() => { if (debounce) clearTimeout(debounce); });
+const panel = ref<HTMLElement | null>(null);
+useDialog(panel, () => emit('cancel'));
 
 const canSave = computed(() => !!name.value.trim() && !!formula.value.trim() && validation.value?.valid === true);
 function save() { if (canSave.value) emit('save', name.value.trim(), formula.value.trim()); }
@@ -84,11 +88,11 @@ function insertFunc(f: (typeof FUNCS)[number]) {
 </script>
 
 <template>
-	<div class="vcb-backdrop" @click.self="emit('cancel')">
-		<div class="vcb-modal">
+	<div class="vcb-backdrop dialog-backdrop-in" @click.self="emit('cancel')">
+		<div ref="panel" class="vcb-modal dialog-in" role="dialog" aria-modal="true" aria-labelledby="vcb-title" tabindex="-1">
 			<header class="vcb-head">
 				<span class="material-symbols-rounded">functions</span>
-				<b>{{ initialName ? 'Edit virtual channel' : 'New virtual channel' }}</b>
+				<b id="vcb-title">{{ initialName ? 'Edit virtual channel' : 'New virtual channel' }}</b>
 			</header>
 			<p class="vcb-lead">Computed live from other channels while recording, and archived in the capture — see Settings for what a virtual channel can and can't reference.</p>
 
@@ -134,9 +138,9 @@ function insertFunc(f: (typeof FUNCS)[number]) {
 			</div>
 
 			<div class="vcb-actions">
-				<button class="vcb-btn" @click="emit('cancel')">Cancel</button>
+				<button class="btn" @click="emit('cancel')">Cancel</button>
 				<div class="vcb-spacer"></div>
-				<button class="vcb-btn primary" :disabled="!canSave" @click="save">Save</button>
+				<button class="btn primary" :disabled="!canSave" @click="save">Save</button>
 			</div>
 		</div>
 	</div>
@@ -146,31 +150,25 @@ function insertFunc(f: (typeof FUNCS)[number]) {
 .vcb-backdrop { position: fixed; inset: 0; z-index: 260; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); backdrop-filter: blur(2px); padding: 24px; }
 .vcb-modal { width: min(560px, 100%); max-height: 90vh; overflow: auto; display: flex; flex-direction: column; gap: 10px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: 0 30px 80px rgba(0,0,0,0.45); }
 .vcb-head { display: flex; align-items: center; gap: 8px; }
-.vcb-head .material-symbols-rounded { font-size: 20px; color: var(--accent); }
-.vcb-head b { font-size: 15px; color: var(--text); }
-.vcb-lead { margin: 0 0 4px; font-size: 12px; color: var(--text-dim); line-height: 1.5; }
-.field { display: block; font-size: 11.5px; color: var(--text-dim); }
-.field input { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; font-size: 13.5px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; outline: none; box-sizing: border-box; }
+.vcb-head .material-symbols-rounded { font-size: var(--icon-lg); color: var(--accent); }
+.vcb-head b { font-size: var(--fs-lg); color: var(--text); }
+.vcb-lead { margin: 0 0 4px; font-size: var(--fs-sm); color: var(--text-dim); line-height: 1.5; }
+.field { display: block; font-size: var(--fs-sm); color: var(--text-dim); }
+.field input { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; font-size: var(--fs-md); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; outline: none; box-sizing: border-box; }
 .field input:focus { border-color: var(--accent); }
-.formula-input { font-family: var(--mono); font-size: 14px !important; }
-.vcb-status { min-height: 18px; font-size: 11.5px; display: flex; align-items: center; gap: 5px; color: var(--text-dim); }
-.vcb-status .material-symbols-rounded { font-size: 15px; }
-.vcb-status .spin { animation: vcb-spin 1s linear infinite; }
-@keyframes vcb-spin { to { transform: rotate(360deg); } }
-.vcb-status.ok { color: #4ade80; }
+.formula-input { font-family: var(--mono); font-size: var(--fs-md) !important; }
+.vcb-status { min-height: 18px; font-size: var(--fs-sm); display: flex; align-items: center; gap: 5px; color: var(--text-dim); }
+.vcb-status .material-symbols-rounded { font-size: var(--icon-sm); }
+.vcb-status.ok { color: var(--ok); }
 .vcb-status.bad { color: #ef4444; }
 .vcb-palette { display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .vcb-group { display: flex; flex-direction: column; gap: 5px; }
-.vcb-group-label { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+.vcb-group-label { font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
 .vcb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { --chip-color: var(--text-dim); padding: 5px 10px; font-size: 12px; font-weight: 600; font-family: var(--mono); color: var(--chip-color); background: color-mix(in srgb, var(--chip-color) 14%, transparent); border: 1px solid color-mix(in srgb, var(--chip-color) 35%, transparent); border-radius: 999px; cursor: pointer; }
+.chip { --chip-color: var(--text-dim); padding: 5px 10px; font-size: var(--fs-sm); font-weight: 600; font-family: var(--mono); color: var(--chip-color); background: color-mix(in srgb, var(--chip-color) 14%, transparent); border: 1px solid color-mix(in srgb, var(--chip-color) 35%, transparent); border-radius: 999px; cursor: pointer; }
 .chip:hover { background: color-mix(in srgb, var(--chip-color) 24%, transparent); }
 .chip.op { --chip-color: var(--accent); font-family: inherit; }
-.chip.op.fn { font-family: var(--mono); font-size: 11px; }
+.chip.op.fn { font-family: var(--mono); font-size: var(--fs-xs); }
 .vcb-actions { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
 .vcb-spacer { flex: 1; }
-.vcb-btn { padding: 9px 16px; font-size: 13px; font-weight: 600; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 9px; cursor: pointer; }
-.vcb-btn:hover:not(:disabled) { background: var(--surface-2); }
-.vcb-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.vcb-btn.primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 </style>
