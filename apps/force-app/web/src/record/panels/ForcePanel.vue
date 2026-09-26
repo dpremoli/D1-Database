@@ -113,25 +113,25 @@ function openLive() {
 .force-panel { display: flex; flex-direction: column; height: 100%; gap: 8px; }
 .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .chips { display: flex; gap: 5px; }
-.chip { display: inline-flex; align-items: center; gap: 3px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
+.chip { display: inline-flex; align-items: center; gap: 3px; padding: 4px 10px; font-size: var(--fs-sm); font-weight: 600; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
 .chip.on { color: var(--c); border-color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
-.chip .material-symbols-rounded { font-size: 15px; }
+.chip .material-symbols-rounded { font-size: var(--icon-sm); }
 .subwrap { position: relative; }
 .sub-btn.on { --c: var(--accent); }
 .subpop { position: absolute; top: 30px; left: 0; z-index: 40; min-width: 118px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 4px; box-shadow: 0 12px 34px rgba(0,0,0,0.3); }
-.subopt { display: flex; align-items: center; gap: 7px; width: 100%; padding: 5px 7px; font-size: 12px; color: var(--text); background: transparent; border: none; border-radius: 6px; cursor: pointer; text-align: left; }
+.subopt { display: flex; align-items: center; gap: 7px; width: 100%; padding: 5px 7px; font-size: var(--fs-sm); color: var(--text); background: transparent; border: none; border-radius: 6px; cursor: pointer; text-align: left; }
 .subopt:hover { background: var(--surface-2); }
 .subopt.on { color: var(--text); font-weight: 600; }
 .subopt .dot { width: 9px; height: 9px; border-radius: 50%; }
-.subopt .tick { margin-left: auto; font-size: 14px; color: var(--ok); }
-.mono-hint { font-family: var(--mono); font-size: 11px; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px; }
+.subopt .tick { margin-left: auto; font-size: var(--icon-xs); color: var(--ok); }
+.mono-hint { font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px; }
 .tw-row { display: flex; align-items: center; gap: 4px; }
 .tw-row input[type="range"] { width: 80px; accent-color: var(--accent); }
-.tw-num { width: 42px !important; text-align: center; padding: 3px 2px !important; font-size: 11px !important; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text); }
-.tw-unit { font-size: 11px; color: var(--text-dim); }
+.tw-num { width: 42px !important; text-align: center; padding: 3px 2px !important; font-size: var(--fs-xs) !important; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text); }
+.tw-unit { font-size: var(--fs-xs); color: var(--text-dim); }
 .popout { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
 .popout:hover { color: var(--accent); background: var(--surface-2); }
-.popout .material-symbols-rounded { font-size: 15px; }
+.popout .material-symbols-rounded { font-size: var(--icon-sm); }
 .plot { flex: 1; min-height: 0; position: relative; }
 .plot > * { position: absolute; inset: 0; }
 </style>

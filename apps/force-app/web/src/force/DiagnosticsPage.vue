@@ -201,21 +201,21 @@ async function build(recipe?: Recipe) {
 <style scoped>
 .diag-page { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .diag-bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.diag-kicker { font-size: 13px; font-weight: 700; letter-spacing: 0.01em; }
+.diag-kicker { font-size: var(--fs-md); font-weight: 700; letter-spacing: 0.01em; }
 .diag-picker {
-	flex: 1; min-width: 220px; max-width: 560px; font: inherit; font-size: 12.5px; padding: 6px 8px;
+	flex: 1; min-width: 220px; max-width: 560px; font: inherit; font-size: var(--fs-md); padding: 6px 8px;
 	background: var(--bg-2); color: var(--text, #e5e7eb); border: 1px solid var(--border); border-radius: 7px;
 }
-.diag-meta { font-size: 11.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.diag-meta { font-size: var(--fs-sm); color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .diag-btn {
-	font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; padding: 6px 13px; border-radius: 7px;
+	font: inherit; font-size: var(--fs-sm); font-weight: 650; cursor: pointer; padding: 6px 13px; border-radius: 7px;
 	color: var(--accent-ink, #0b1020); background: var(--accent, #38bdf8); border: 1px solid var(--accent, #38bdf8);
 }
 .diag-btn.ghost { color: var(--text-dim); background: transparent; border-color: var(--border); }
 .diag-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.diag-note { margin: 0; padding: 7px 14px; font-size: 12px; color: var(--text-dim); font-style: italic; }
+.diag-note { margin: 0; padding: 7px 14px; font-size: var(--fs-sm); color: var(--text-dim); font-style: italic; }
 .diag-note.error, .error { color: var(--danger, #fca5a5); font-style: normal; }
 .diag-body { flex: 1; min-height: 0; display: flex; }
 .diag-body > * { flex: 1; min-width: 0; }
-.diag-empty { display: flex; align-items: center; justify-content: center; color: var(--text-dim); font-size: 13px; }
+.diag-empty { display: flex; align-items: center; justify-content: center; color: var(--text-dim); font-size: var(--fs-md); }
 </style>

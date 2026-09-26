@@ -895,21 +895,21 @@ function onUp(ev: PointerEvent) {
 .frm-cloud canvas:active { cursor: grabbing; }
 .frm-cloud canvas.rect { cursor: crosshair; }
 .fc-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: #94a3b8; }
-.fc-msg.err { color: #fca5a5; font-size: 12px; padding: 12px; text-align: center; }
-.fc-count { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: var(--text-dim, #94a3b8); font-variant-numeric: tabular-nums; }
-.fc-swgl { position: absolute; left: 6px; bottom: 4px; font-size: 10px; font-weight: 700; color: #fbbf24; cursor: help; }
-.fc-pane { position: absolute; left: 6px; top: 4px; font-size: 10px; font-weight: 600; color: var(--text-dim, rgba(255,255,255,0.75)); letter-spacing: 0.01em; }
+.fc-msg.err { color: #fca5a5; font-size: var(--fs-sm, 12px); padding: 12px; text-align: center; }
+.fc-count { position: absolute; right: 6px; bottom: 4px; font-size: var(--fs-xs, 11px); color: var(--text-dim, #94a3b8); font-variant-numeric: tabular-nums; }
+.fc-swgl { position: absolute; left: 6px; bottom: 4px; font-size: var(--fs-xs, 11px); font-weight: 700; color: #fbbf24; cursor: help; }
+.fc-pane { position: absolute; left: 6px; top: 4px; font-size: var(--fs-xs, 11px); font-weight: 600; color: var(--text-dim, rgba(255,255,255,0.75)); letter-spacing: 0.01em; }
 
 .fc-rect { position: absolute; border: 1px solid var(--accent, #38bdf8); background: color-mix(in srgb, var(--accent, #38bdf8) 14%, transparent); pointer-events: none; border-radius: 2px; }
 
 .fc-cbar { position: absolute; top: 10px; right: 8px; display: flex; flex-direction: column; align-items: center; gap: 3px; pointer-events: none; }
 .fc-ramp { width: 10px; height: 96px; border-radius: 3px; border: 1px solid var(--border-2, rgba(255,255,255,0.25)); }
-.fc-cval { font-size: 9px; color: var(--text, rgba(255,255,255,0.82)); font-variant-numeric: tabular-nums; }
-.fc-cunit { font-size: 9px; color: var(--text-dim, rgba(255,255,255,0.6)); margin-top: 1px; }
+.fc-cval { font-size: var(--fs-xs, 11px); color: var(--text, rgba(255,255,255,0.82)); font-variant-numeric: tabular-nums; }
+.fc-cunit { font-size: var(--fs-xs, 11px); color: var(--text-dim, rgba(255,255,255,0.6)); margin-top: 1px; }
 
 .fc-scale { position: absolute; left: 10px; bottom: 8px; display: flex; flex-direction: column; align-items: center; gap: 2px; pointer-events: none; }
 .fc-scale-line { height: 3px; background: var(--text, rgba(255,255,255,0.85)); border-left: 1px solid var(--text, rgba(255,255,255,0.85)); border-right: 1px solid var(--text, rgba(255,255,255,0.85)); box-sizing: border-box; }
-.fc-scale span { font-size: 9.5px; color: var(--text, rgba(255,255,255,0.85)); font-variant-numeric: tabular-nums; }
+.fc-scale span { font-size: var(--fs-xs, 11px); color: var(--text, rgba(255,255,255,0.85)); font-variant-numeric: tabular-nums; }
 
 .fc-tools { position: absolute; top: 8px; left: 8px; display: flex; gap: 5px; }
 .fc-tbtn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; cursor: pointer;

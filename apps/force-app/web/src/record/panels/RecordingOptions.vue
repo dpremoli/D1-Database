@@ -277,20 +277,20 @@ onBeforeUnmount(() => {
    (the Simulated/Replay/NI-DAQ source buttons) being clipped even though the panel was at rest. */
 .opts { display: flex; flex-direction: column; gap: 10px; }
 .seg { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
-.seg button { flex: 1; padding: 8px; font-size: 12.5px; background: transparent; color: var(--text-dim); border: none; cursor: pointer; }
+.seg button { flex: 1; padding: 8px; font-size: var(--fs-md); background: transparent; color: var(--text-dim); border: none; cursor: pointer; }
 .seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .seg button:disabled { opacity: 0.5; cursor: not-allowed; }
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
 .stat-grid.cut-params { margin-top: -2px; }
 .stat-grid .span2 { grid-column: 1 / -1; }
-label { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px; }
+label { display: block; font-size: var(--fs-sm); color: var(--text-dim); margin-bottom: 8px; }
 label.wide { display: block; }
-input:not([type="checkbox"]), textarea, select { display: block; width: 100%; margin-top: 3px; padding: 7px 9px; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; outline: none; font-family: inherit; }
+input:not([type="checkbox"]), textarea, select { display: block; width: 100%; margin-top: 3px; padding: 7px 9px; font-size: var(--fs-md); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; outline: none; font-family: inherit; }
 select option { background: var(--bg); color: var(--text); }
-textarea { font-family: var(--mono); font-size: 12px; resize: vertical; }
+textarea { font-family: var(--mono); font-size: var(--fs-sm); resize: vertical; }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
-.section-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+.section-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
 .section-divider::before, .section-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 /* Folding subpanels (Direction B / "Cards"): Tooling, Coolant & geometry, Post-cut. Body content
    is v-show (not v-if) so folding a card never remounts/resets a LookupField's own search state —
@@ -298,17 +298,17 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 .card { border: 1px solid var(--border); background: rgba(255,255,255,0.02); border-radius: 10px; padding: 10px 11px; }
 .card + .card { margin-top: 2px; }
 .card.collapsed { padding-bottom: 10px; }
-.card-head { display: flex; align-items: center; gap: 6px; width: 100%; margin: -4px -4px 5px; padding: 4px; border-radius: 6px; background: transparent; border: none; outline: none; font-size: 10px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-dim); cursor: pointer; }
+.card-head { display: flex; align-items: center; gap: 6px; width: 100%; margin: -4px -4px 5px; padding: 4px; border-radius: 6px; background: transparent; border: none; outline: none; font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.01em; color: var(--text-dim); cursor: pointer; }
 .card-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card.collapsed .card-head { margin-bottom: -4px; }
-.card-head .material-symbols-rounded { font-size: 14px; color: var(--accent); }
-.card-head .chev { font-size: 16px; color: var(--text-dim); margin-right: -2px; }
+.card-head .material-symbols-rounded { font-size: var(--icon-xs); color: var(--accent); }
+.card-head .chev { font-size: var(--icon-sm); color: var(--text-dim); margin-right: -2px; }
 .card-head:hover { color: var(--text); }
 /* New-edge toggle, inline in the Edge LookupField's own box via its #badge slot — a property of
    this specific edge, not a fact about the insert, so it lives next to Edge, not off in its own
    checkbox elsewhere. */
 .new-badge { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-right: 4px; padding: 0; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-faint); cursor: pointer; }
-.new-badge .material-symbols-rounded { font-size: 15px; }
+.new-badge .material-symbols-rounded { font-size: var(--icon-sm); }
 .new-badge.on { border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .new-badge:disabled { opacity: 0.5; cursor: not-allowed; }
 .links { display: flex; flex-direction: column; }
@@ -317,7 +317,7 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
    is position:relative with its own absolute dropdown, so the grid columns don't clip the menus. */
 .links.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
 .chks { display: flex; gap: 16px; margin-top: 4px; }
-.chk { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text); cursor: pointer; }
+.chk { display: flex; align-items: center; gap: 6px; font-size: var(--fs-md); color: var(--text); cursor: pointer; }
 .chk input { accent-color: var(--accent); }
 
 /* --- Adaptive compression ------------------------------------------------------------------
@@ -338,7 +338,7 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 	label { margin-bottom: 4px; }
 	.stat-grid { gap: 5px; margin-bottom: 4px; }
 	.stat-grid :deep(.stat-tile) { padding: 6px 9px; }
-	.stat-grid :deep(.value-text), .stat-grid :deep(.value input) { font-size: 14px; }
+	.stat-grid :deep(.value-text), .stat-grid :deep(.value input) { font-size: var(--fs-md); }
 	.section-divider { margin: 4px 0 1px; }
 	.card { padding: 7px 9px; }
 	.card + .card { margin-top: 0; }

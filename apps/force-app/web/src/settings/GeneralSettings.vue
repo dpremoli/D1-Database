@@ -127,12 +127,12 @@ onMounted(() => { loadDrives(); });
 		</div>
 
 		<p v-if="currentStorage" class="hint storage-path">
-			<span class="material-symbols-rounded" style="font-size:14px">folder</span>
+			<span class="material-symbols-rounded" style="font-size: var(--icon-xs)">folder</span>
 			{{ currentStorage.captures_root }}
 			<span v-if="storageSaved" class="saved-tag">Saved ✓</span>
 		</p>
 		<p v-if="currentStorage && currentStorage.free_gb < 5" class="err">
-			<span class="material-symbols-rounded" style="font-size:14px">warning</span>
+			<span class="material-symbols-rounded" style="font-size: var(--icon-xs)">warning</span>
 			Low disk space! Only {{ currentStorage.free_gb.toFixed(1) }} GB remaining. Recordings may fail.
 		</p>
 	</div>
@@ -140,16 +140,16 @@ onMounted(() => { loadDrives(); });
 
 <style scoped>
 .general { max-width: 620px; }
-h2 { margin: 0 0 4px; font-size: 16px; }
-.lead { margin: 0 0 18px; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
-.lead code { font-family: var(--mono); font-size: 12px; padding: 1px 5px; background: var(--surface); border-radius: 4px; }
-.hint { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
-.err { display: flex; align-items: center; gap: 5px; color: var(--danger); font-size: 12px; margin: 4px 0 0; }
+h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
+.lead { margin: 0 0 18px; font-size: var(--fs-md); color: var(--text-dim); line-height: 1.5; }
+.lead code { font-family: var(--mono); font-size: var(--fs-sm); padding: 1px 5px; background: var(--surface); border-radius: 4px; }
+.hint { display: flex; align-items: center; gap: 5px; font-size: var(--fs-sm); color: var(--text-dim); margin-top: 4px; }
+.err { display: flex; align-items: center; gap: 5px; color: var(--danger); font-size: var(--fs-sm); margin: 4px 0 0; }
 .mt { margin-top: 32px; }
 .theme-toggle { display: flex; gap: 0; margin-bottom: 20px; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; width: fit-content; max-width: 100%; }
-.theme-toggle button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 13px; font-weight: 600; color: var(--text-dim); background: transparent; border: none; cursor: pointer; }
+.theme-toggle button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: var(--fs-md); font-weight: 600; color: var(--text-dim); background: transparent; border: none; cursor: pointer; }
 .theme-toggle button.on { background: var(--accent); color: var(--accent-ink); }
-.theme-toggle button .material-symbols-rounded { font-size: 17px; }
+.theme-toggle button .material-symbols-rounded { font-size: var(--icon-md); }
 
 /* Storage drives */
 .drive-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
@@ -157,24 +157,24 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .drive:hover { border-color: var(--border); background: var(--surface-2); }
 .drive.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .drive.low:not(.active) { border-color: var(--warn); }
-.drive-icon { font-size: 22px; color: var(--text-dim); }
+.drive-icon { font-size: var(--icon-xl); color: var(--text-dim); }
 .drive.ssd .drive-icon { color: #22c55e; }
 .drive-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.drive-name { font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.drive-detail { font-size: 11.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.badge { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+.drive-name { font-size: var(--fs-md); font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.drive-detail { font-size: var(--fs-sm); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.badge { font-size: var(--fs-xs); font-weight: 700; padding: 1px 5px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
 .ssd-badge { color: #15803d; background: rgba(34,197,94,0.15); }
 .hdd-badge { color: var(--text-dim); background: var(--surface-2); }
 .caution-badge { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); cursor: help; }
 .drive.caution:not(.active) { border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
 .drive.caution .drive-icon { color: #b45309; }
-.drive-caution-note { font-size: 10.5px; color: #b45309; line-height: 1.4; margin-top: 1px; }
+.drive-caution-note { font-size: var(--fs-xs); color: #b45309; line-height: 1.4; margin-top: 1px; }
 .drive-bar-wrap { width: 80px; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
 .drive-bar { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.3s; }
 .drive-bar.warn { background: #fbbf24; }
 .drive-bar.crit { background: #ef4444; }
-.drive-check { font-size: 18px; color: var(--accent); }
-.storage-path { font-family: var(--mono); font-size: 11px; word-break: break-all; }
-.saved-tag { font-size: 10.5px; font-weight: 700; color: var(--ok); margin-left: 6px; }
+.drive-check { font-size: var(--icon-md); color: var(--accent); }
+.storage-path { font-family: var(--mono); font-size: var(--fs-xs); word-break: break-all; }
+.saved-tag { font-size: var(--fs-xs); font-weight: 700; color: var(--ok); margin-left: 6px; }
 
 </style>

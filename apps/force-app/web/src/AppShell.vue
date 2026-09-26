@@ -251,31 +251,31 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 .brand-mark { display: inline-flex; gap: 3px; padding: 6px; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); }
 .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
 .dot.fx { background: var(--fx); } .dot.fy { background: var(--fy); } .dot.fz { background: var(--fz); }
-.brand-name { font-size: 11px; font-weight: 600; letter-spacing: 0.01em; color: var(--text-dim); }
+.brand-name { font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.01em; color: var(--text-dim); }
 .navrow { position: relative; flex-shrink: 0; }
 .popout { position: absolute; top: 4px; right: 4px; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; opacity: 0; transition: opacity 0.14s; }
-.popout .material-symbols-rounded { font-size: 13px; }
+.popout .material-symbols-rounded { font-size: var(--icon-xs); }
 .navrow:hover .popout, .navrow:focus-within .popout { opacity: 1; }
 .popout:hover { color: var(--accent); }
 .navitem { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 4px; border-radius: 10px; color: var(--text-dim); text-decoration: none; transition: background 0.14s, color 0.14s; }
-.navitem .material-symbols-rounded { font-size: 22px; }
-.navitem .lbl { font-size: 10.5px; font-weight: 600; }
+.navitem .material-symbols-rounded { font-size: var(--icon-xl); }
+.navitem .lbl { font-size: var(--fs-xs); font-weight: 600; }
 .navitem:hover { background: var(--surface); color: var(--text); }
 .navitem.active { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
-.badge { position: absolute; top: 6px; right: 18px; min-width: 15px; height: 15px; padding: 0 3px; display: inline-flex; align-items: center; justify-content: center; font-size: 9.5px; font-weight: 700; border-radius: 8px; }
+.badge { position: absolute; top: 6px; right: 18px; min-width: 15px; height: 15px; padding: 0 3px; display: inline-flex; align-items: center; justify-content: center; font-size: var(--fs-xs); font-weight: 700; border-radius: 8px; }
 .badge.warn { color: #0b1020; background: #fbbf24; }
 .badge.alarm { color: #fff; background: #ef4444; animation: alarmpulse 0.9s ease-in-out infinite; }
 .spacer { flex: 1; }
 .statuswrap { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-shrink: 0; }
-.chip { display: inline-flex; align-items: center; justify-content: center; gap: 3px; width: 100%; padding: 4px 2px; border-radius: 7px; font-size: 9.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-dim); border: 1px solid var(--border); }
-.chip .material-symbols-rounded { font-size: 15px; }
+.chip { display: inline-flex; align-items: center; justify-content: center; gap: 3px; width: 100%; padding: 4px 2px; border-radius: 7px; font-size: var(--fs-xs); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-dim); border: 1px solid var(--border); }
+.chip .material-symbols-rounded { font-size: var(--icon-sm); }
 .chip.ok { color: var(--ok); }
 .chip.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
 .chip.crit { color: #ef4444; background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); animation: alarmpulse 0.9s ease-in-out infinite; }
 .chip.err { color: var(--danger); background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); }
 @keyframes alarmpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 .user { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
-.who { font-size: 9.5px; color: var(--text-dim); text-align: center; word-break: break-word; max-width: 82px; }
+.who { font-size: var(--fs-xs); color: var(--text-dim); text-align: center; word-break: break-word; max-width: 82px; }
 .signout { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); color: var(--text); cursor: pointer; }
 .signout:hover { background: var(--surface-2); }
 /* The sidebar is fixed/overlaid — it expands over the page on hover rather than pushing content —
@@ -286,13 +286,13 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
    exact colour the forced-stop and safety-alarm banners use, so a normal run looked like a failure
    every time the operator left the Record page. #2563eb is the same informational blue
    .disk-action-banner.backup_started already uses. The pulsing dot still reads as "live". */
-.rec-banner { position: sticky; top: 0; z-index: 150; display: flex; align-items: center; gap: 12px; padding: 8px 16px; font-size: 12.5px; font-weight: 600; color: #fff; background: #2563eb; }
+.rec-banner { position: sticky; top: 0; z-index: 150; display: flex; align-items: center; gap: 12px; padding: 8px 16px; font-size: var(--fs-md); font-weight: 600; color: #fff; background: #2563eb; }
 .rec-banner-dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; flex-shrink: 0; --pulse-color: #fff; animation: live-pulse 1.4s infinite; }
 .rec-banner-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rec-banner-stats { display: flex; align-items: center; gap: 14px; font-weight: 500; color: rgba(255,255,255,0.85); font-variant-numeric: tabular-nums; }
 .rec-stat b { font-weight: 700; color: #fff; }
-.rec-banner-link { margin-left: auto; padding: 4px 10px; font-size: 11.5px; font-weight: 700; color: #2563eb; background: #fff; border-radius: 6px; text-decoration: none; }
+.rec-banner-link { margin-left: auto; padding: 4px 10px; font-size: var(--fs-sm); font-weight: 700; color: #2563eb; background: #fff; border-radius: 6px; text-decoration: none; }
 .rec-banner-dismiss { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border-radius: 6px; background: rgba(255,255,255,0.18); border: none; color: #fff; cursor: pointer; }
 .rec-banner-dismiss:hover { background: rgba(255,255,255,0.3); }
-.rec-banner-dismiss .material-symbols-rounded { font-size: 15px; }
+.rec-banner-dismiss .material-symbols-rounded { font-size: var(--icon-sm); }
 </style>

@@ -72,12 +72,12 @@ function openLive() {
 .frm-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 8px; }
 .frm-controls { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
 .segmode { display: flex; gap: 4px; margin-right: auto; }
-.segbtn { padding: 5px 10px; font-size: 12px; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
+.segbtn { padding: 5px 10px; font-size: var(--fs-sm); color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
 .segbtn.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; border-color: var(--accent); }
-.cmap { padding: 5px 7px; font-size: 12px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
+.cmap { padding: 5px 7px; font-size: var(--fs-sm); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
 .popout { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
 .popout:hover { color: var(--accent); background: var(--surface-2); }
-.popout .material-symbols-rounded { font-size: 15px; }
+.popout .material-symbols-rounded { font-size: var(--icon-sm); }
 .frm-body { flex: 1; min-height: 0; }
 .frm-body > * { height: 100%; }
 .loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-dim); text-align: center; padding: 12px; }

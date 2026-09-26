@@ -67,14 +67,14 @@ const active = ref<SettingsTab>(initialTab);
 <style scoped>
 .settings { min-height: 100vh; background: radial-gradient(1200px 600px at 50% -10%, var(--bg-2), var(--bg)); }
 .head { padding: 20px 26px 12px; border-bottom: 1px solid var(--border); }
-.head h1 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }
+.head h1 { margin: 0; font-size: var(--fs-2xl); letter-spacing: -0.01em; }
 /* Form-shaped panes read better narrow; the log viewer needs the width, so the cap is
    lifted for that tab only. */
 .body { display: flex; gap: 24px; padding: 22px 26px; max-width: 1000px; }
 .body.wide { max-width: 1500px; }
 .subtabs { display: flex; flex-direction: column; gap: 4px; width: 190px; flex-shrink: 0; }
-.subtab { display: flex; align-items: center; gap: 9px; padding: 10px 12px; font-size: 13.5px; color: var(--text-dim); background: transparent; border: 1px solid transparent; border-radius: 9px; cursor: pointer; text-align: left; }
-.subtab .material-symbols-rounded { font-size: 19px; }
+.subtab { display: flex; align-items: center; gap: 9px; padding: 10px 12px; font-size: var(--fs-md); color: var(--text-dim); background: transparent; border: 1px solid transparent; border-radius: 9px; cursor: pointer; text-align: left; }
+.subtab .material-symbols-rounded { font-size: var(--icon-md); }
 .subtab:hover { background: var(--surface); color: var(--text); }
 .subtab.on { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 28%, transparent); }
 .pane { flex: 1; min-width: 0; }

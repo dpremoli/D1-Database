@@ -181,6 +181,6 @@ const ticks = computed(() => {
 .cbar-ticks { position: relative; height: 22px; margin-top: 2px; }
 .cbar-tick { position: absolute; top: 0; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; }
 .cbar-tick-line { width: 1px; height: 5px; background: var(--fp-border); }
-.cbar-tick-label { font-size: 10px; color: var(--fp-text-dim); white-space: nowrap; margin-top: 1px; }
-.cbar-unit { text-align: center; font-size: 10px; color: var(--fp-text-dim); margin-top: 4px; font-style: italic; }
+.cbar-tick-label { font-size: var(--fs-xs, 11px); color: var(--fp-text-dim); white-space: nowrap; margin-top: 1px; }
+.cbar-unit { text-align: center; font-size: var(--fs-xs, 11px); color: var(--fp-text-dim); margin-top: 4px; font-style: italic; }
 </style>

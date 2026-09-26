@@ -115,7 +115,7 @@ async function submit() {
 }
 .brand h1 {
 	margin: 0;
-	font-size: 22px;
+	font-size: var(--fs-2xl);
 	letter-spacing: -0.01em;
 }
 .brand-mark {
@@ -144,7 +144,7 @@ async function submit() {
 .subtitle {
 	margin: 14px 0 22px;
 	color: var(--text-dim);
-	font-size: 13.5px;
+	font-size: var(--fs-md);
 }
 .field {
 	display: block;
@@ -152,14 +152,14 @@ async function submit() {
 }
 .field span {
 	display: block;
-	font-size: 12px;
+	font-size: var(--fs-sm);
 	color: var(--text-dim);
 	margin-bottom: 6px;
 }
 .field input {
 	width: 100%;
 	padding: 11px 13px;
-	font-size: 14px;
+	font-size: var(--fs-lg);
 	color: var(--text);
 	background: rgba(0, 0, 0, 0.25);
 	border: 1px solid var(--border);
@@ -177,10 +177,10 @@ async function submit() {
 	gap: 6px;
 	margin: 4px 0 12px;
 	color: var(--danger);
-	font-size: 13px;
+	font-size: var(--fs-md);
 }
 .error .material-symbols-rounded {
-	font-size: 18px;
+	font-size: var(--icon-md);
 }
 .submit {
 	width: 100%;
@@ -190,7 +190,7 @@ async function submit() {
 	gap: 9px;
 	margin-top: 6px;
 	padding: 12px;
-	font-size: 14.5px;
+	font-size: var(--fs-lg);
 	font-weight: 600;
 	color: var(--accent-ink);
 	background: var(--accent);
@@ -217,7 +217,7 @@ async function submit() {
 .host {
 	margin: 18px 0 0;
 	text-align: center;
-	font-size: 11px;
+	font-size: var(--fs-xs);
 	color: var(--text-dim);
 	opacity: 0.7;
 	word-break: break-all;

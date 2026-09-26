@@ -61,13 +61,19 @@ const eta = computed(() => {
 .overview { display: flex; height: 100%; container-type: inline-size; }
 .grid { display: flex; gap: 6px; justify-content: center; width: 100%; margin: auto 0; }
 .ro { flex: 1 1 0; max-width: 120px; min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 3px 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
-.ro span { font-size: 9px; color: var(--text-dim); letter-spacing: 0.01em; }
+.ro span { font-size: var(--fs-xs); color: var(--text-dim); letter-spacing: 0.01em; }
 .ro span, .ro b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ro b { font-size: 13px; font-variant-numeric: tabular-nums; }
+.ro b { font-size: var(--fs-md); font-variant-numeric: tabular-nums; }
 @container (max-width: 760px) {
 	.grid { gap: 4px; }
 	.ro { padding: 3px 4px; }
-	.ro b { font-size: 11.5px; }
+	.ro b { font-size: var(--fs-sm); }
+}
+/* Short panel: at the grid's minimum row height (a ~768px-tall screen) the body is ~30px, so the
+   tiles drop their vertical padding and tighten the line height to keep label over value. */
+@container panel-body (max-height: 36px) {
+	.ro { padding-block: 0; }
+	.ro span, .ro b { line-height: 1.15; }
 }
 /* DESIGN TEST: `cut` is an identifier, not a status, and it was rendered in the Fy green sitting
    three tiles away in this same strip. Plain text -- only State keeps a status hue (a

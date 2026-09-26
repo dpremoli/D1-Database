@@ -640,8 +640,8 @@ function currentBounds(): { xmin: number; xmax: number; ymin: number; ymax: numb
 .diag-octree canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .diag-octree canvas:active { cursor: grabbing; }
 .fc-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim, #94a3b8); }
-.fc-msg.err { color: var(--danger, #fca5a5); font-size: 12px; padding: 12px; text-align: center; }
-.fc-count { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: var(--text-dim, rgba(255,255,255,0.6)); font-variant-numeric: tabular-nums; }
+.fc-msg.err { color: var(--danger, #fca5a5); font-size: var(--fs-sm, 12px); padding: 12px; text-align: center; }
+.fc-count { position: absolute; right: 6px; bottom: 4px; font-size: var(--fs-xs, 11px); color: var(--text-dim, rgba(255,255,255,0.6)); font-variant-numeric: tabular-nums; }
 .do-paint { position: absolute; inset: 0; cursor: crosshair; outline: none; }
-.do-paint-hint { position: absolute; left: 8px; top: 6px; font-size: 10px; color: #fcd34d; background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 4px; pointer-events: none; }
+.do-paint-hint { position: absolute; left: 8px; top: 6px; font-size: var(--fs-xs, 11px); color: #fcd34d; background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 4px; pointer-events: none; }
 </style>

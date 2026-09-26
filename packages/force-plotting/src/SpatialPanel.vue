@@ -238,11 +238,11 @@ onBeforeUnmount(() => {
 .spatial-panel > :first-child { flex: 1; min-height: 0; }
 .sp-bar { flex: none; display: flex; align-items: flex-end; gap: 10px; padding: 7px 2px 2px; }
 .sp-field { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.sp-field-label { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim, #94a3b8); }
-.sp-select { width: 100%; font-size: 12px; padding: 4px 6px; background: var(--bg-2, #111a33); color: var(--text, #e5e7eb); border: 1px solid var(--border, rgba(255,255,255,0.14)); border-radius: 6px; }
-.sp-state { flex: none; font-size: 10px; color: var(--text-dim, #94a3b8); font-variant-numeric: tabular-nums; padding-bottom: 5px; }
+.sp-field-label { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs, 11px); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim, #94a3b8); }
+.sp-select { width: 100%; font-size: var(--fs-sm, 12px); padding: 4px 6px; background: var(--bg-2, #111a33); color: var(--text, #e5e7eb); border: 1px solid var(--border, rgba(255,255,255,0.14)); border-radius: 6px; }
+.sp-state { flex: none; font-size: var(--fs-xs, 11px); color: var(--text-dim, #94a3b8); font-variant-numeric: tabular-nums; padding-bottom: 5px; }
 .sp-state .sp-err { color: var(--danger, #fca5a5); }
 .sp-popout { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--bg-2, #111a33); border: 1px solid var(--border, rgba(255,255,255,0.18)); color: var(--text-dim, #94a3b8); cursor: pointer; }
 .sp-popout:hover { color: var(--accent, #38bdf8); }
-.sp-popout .material-symbols-rounded { font-size: 15px; }
+.sp-popout .material-symbols-rounded { font-size: var(--icon-sm, 16px); }
 </style>

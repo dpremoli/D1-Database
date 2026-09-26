@@ -101,22 +101,22 @@ function delayedBlurClose() { window.setTimeout(() => { open.value = false; }, 1
 
 <style scoped>
 .lookup { display: block; position: relative; margin-bottom: 8px; }
-.lbl { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 3px; }
+.lbl { display: block; font-size: var(--fs-sm); color: var(--text-dim); margin-bottom: 3px; }
 .box { display: flex; align-items: center; background: var(--bg-3); border: 1px solid var(--border); border-radius: 7px; }
 .box.set { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 /* The input inside sets outline:none, and nothing replaced it: a keyboard user had no sign of
    which of the Record page's lookups had focus. */
 .box:focus-within { border-color: var(--accent); }
-.box .lead { flex: 0 0 auto; font-size: 15px; color: var(--text-dim); margin-left: 9px; }
+.box .lead { flex: 0 0 auto; font-size: var(--fs-lg); color: var(--text-dim); margin-left: 9px; }
 .box:has(.lead) input { padding-left: 6px; }
-.box input { flex: 1; min-width: 0; padding: 7px 9px; font-size: 13px; color: var(--text); background: transparent; border: none; outline: none; }
+.box input { flex: 1; min-width: 0; padding: 7px 9px; font-size: var(--fs-md); color: var(--text); background: transparent; border: none; outline: none; }
 .box input:disabled { opacity: 0.55; }
 .x { display: inline-flex; align-items: center; padding: 0 6px; background: transparent; border: none; color: var(--text-dim); cursor: pointer; }
-.x .material-symbols-rounded { font-size: 15px; }
+.x .material-symbols-rounded { font-size: var(--icon-sm); }
 .menu { position: absolute; z-index: 30; left: 0; right: 0; top: 100%; margin-top: 2px; max-height: 200px; overflow: auto; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
-.mi { display: block; width: 100%; text-align: left; padding: 7px 10px; font-size: 12.5px; font-family: var(--mono); color: var(--text); background: transparent; border: none; cursor: pointer; }
+.mi { display: block; width: 100%; text-align: left; padding: 7px 10px; font-size: var(--fs-md); font-family: var(--mono); color: var(--text); background: transparent; border: none; cursor: pointer; }
 .mi:hover, .mi.active { background: var(--surface); }
 .mi.hint { color: var(--text-dim); font-family: inherit; cursor: default; }
 .mi-label { display: block; }
-.mi-sub { display: block; margin-top: 1px; font-family: inherit; font-size: 11px; color: var(--text-dim); }
+.mi-sub { display: block; margin-top: 1px; font-family: inherit; font-size: var(--fs-xs); color: var(--text-dim); }
 </style>

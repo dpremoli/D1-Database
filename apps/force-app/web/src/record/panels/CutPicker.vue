@@ -104,20 +104,20 @@ function onArrow(delta: 1 | -1) { open.value = true; move(delta); }
 
 <style scoped>
 .cutpicker { position: relative; margin-bottom: 8px; }
-.lbl { display: block; font-size: 11.5px; color: var(--text-dim); margin-bottom: 3px; }
+.lbl { display: block; font-size: var(--fs-sm); color: var(--text-dim); margin-bottom: 3px; }
 .sub { font-weight: 400; }
 .box { display: flex; align-items: center; background: var(--bg-3); border: 1px solid var(--border); border-radius: 7px; }
-.box input { flex: 1; padding: 7px 9px; font-size: 13px; color: var(--text); background: transparent; border: none; outline: none; }
+.box input { flex: 1; padding: 7px 9px; font-size: var(--fs-md); color: var(--text); background: transparent; border: none; outline: none; }
 .box:focus-within { border-color: var(--accent); } /* the input sets outline:none; see LookupField */
 .box input:disabled { opacity: 0.55; }
 .menu { position: absolute; z-index: 30; left: 0; right: 0; top: 100%; margin-top: 2px; max-height: 200px; overflow: auto; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
-.mi { display: block; width: 100%; text-align: left; padding: 7px 10px; font-size: 12.5px; font-family: var(--mono); color: var(--text); background: transparent; border: none; cursor: pointer; }
+.mi { display: block; width: 100%; text-align: left; padding: 7px 10px; font-size: var(--fs-md); font-family: var(--mono); color: var(--text); background: transparent; border: none; cursor: pointer; }
 .mi:hover, .mi.active { background: var(--surface); }
 .mi.hint { color: var(--text-dim); font-family: inherit; cursor: default; }
 .chosen { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 7px; }
-.chosen-label { font-size: 12.5px; font-family: var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.change { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; padding: 4px 8px; font-size: 11px; color: var(--text-dim); background: transparent; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.chosen-label { font-size: var(--fs-md); font-family: var(--mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.change { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; padding: 4px 8px; font-size: var(--fs-xs); color: var(--text-dim); background: transparent; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
 .change:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
 .change:disabled { opacity: 0.5; cursor: not-allowed; }
-.change .material-symbols-rounded { font-size: 13px; }
+.change .material-symbols-rounded { font-size: var(--icon-xs); }
 </style>

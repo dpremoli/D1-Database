@@ -88,20 +88,20 @@ function openLive() {
 .frm-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 8px; }
 .frm-controls { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
 .segmode { display: flex; gap: 4px; margin-right: auto; }
-.segbtn { padding: 5px 10px; font-size: 12px; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
+.segbtn { padding: 5px 10px; font-size: var(--fs-sm); color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
 .segbtn.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; border-color: var(--accent); }
 .segbtn.fx.on { background: #f87171; border-color: #f87171; color: #2a0808; }
 .segbtn.fy.on { background: #4ade80; border-color: #4ade80; color: #05210f; }
 .segbtn.fz.on { background: #60a5fa; border-color: #60a5fa; color: #05173a; }
-.cmap { padding: 5px 7px; font-size: 12px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
+.cmap { padding: 5px 7px; font-size: var(--fs-sm); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
 .psize { width: 84px; accent-color: var(--accent); }
 .popout { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
 .popout:hover { color: var(--accent); background: var(--surface-2); }
-.popout .material-symbols-rounded { font-size: 15px; }
+.popout .material-symbols-rounded { font-size: var(--icon-sm); }
 .cscale-toggle { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
 .cscale-toggle:hover { color: var(--accent); background: var(--surface-2); }
 .cscale-toggle.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.cscale-toggle .material-symbols-rounded { font-size: 15px; }
+.cscale-toggle .material-symbols-rounded { font-size: var(--icon-sm); }
 .cscale-editor { padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .frm-body { flex: 1; min-height: 0; }
 .frm-body > * { height: 100%; }

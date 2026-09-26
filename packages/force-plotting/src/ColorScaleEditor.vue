@@ -252,17 +252,17 @@ function onStripPointerUp(ev: PointerEvent) {
 	display: flex; flex-direction: column; gap: 10px; min-width: 0;
 }
 .cse-top { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; }
-.cse-cmap { padding: 5px 7px; font-size: 12px; color: var(--fp-text); background: var(--fp-surface); border: 1px solid var(--fp-border); border-radius: 7px; min-width: 0; }
-.cse-steps { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fp-text-dim); white-space: nowrap; }
-.cse-steps input { width: 52px; padding: 4px 6px; font-size: 12px; background: var(--fp-surface); border: 1px solid var(--fp-border); border-radius: 6px; color: var(--fp-text); }
+.cse-cmap { padding: 5px 7px; font-size: var(--fs-sm, 12px); color: var(--fp-text); background: var(--fp-surface); border: 1px solid var(--fp-border); border-radius: 7px; min-width: 0; }
+.cse-steps { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm, 12px); color: var(--fp-text-dim); white-space: nowrap; }
+.cse-steps input { width: 52px; padding: 4px 6px; font-size: var(--fs-sm, 12px); background: var(--fp-surface); border: 1px solid var(--fp-border); border-radius: 6px; color: var(--fp-text); }
 .cse-lock { white-space: nowrap; }
-.chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fp-text-dim); cursor: pointer; }
+.chk { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm, 12px); color: var(--fp-text-dim); cursor: pointer; }
 .chk.wide { grid-column: 1 / -1; }
 .cse-hint { opacity: 0.7; }
 .cse-tabrow { display: flex; gap: 4px; width: 100%; }
 .cse-tab {
 	flex: 1 1 0; min-width: 0; box-sizing: border-box;
-	padding: 6px 8px; font: inherit; font-size: 12px; line-height: 1.2; font-weight: 500;
+	padding: 6px 8px; font: inherit; font-size: var(--fs-sm, 12px); line-height: 1.2; font-weight: 500;
 	text-align: center; white-space: nowrap;
 	color: var(--fp-text-dim); background: var(--fp-surface);
 	border: 1px solid var(--fp-border); border-radius: 7px; cursor: pointer;
@@ -298,7 +298,7 @@ function onStripPointerUp(ev: PointerEvent) {
 /* 2 columns, not 4: a 4-across grid in a narrow sidebar left each number input ~60px wide,
    truncating even a rounded value -- see roundForEdit()'s comment for the other half of this fix. */
 .cse-numgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; align-items: end; margin-top: 2px; }
-.cse-numgrid label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--fp-text-dim); min-width: 0; }
-.cse-numgrid input[type="number"] { padding: 5px 7px; font-size: 12px; background: var(--fp-surface); border: 1px solid var(--fp-border); border-radius: 6px; color: var(--fp-text); width: 100%; min-width: 0; box-sizing: border-box; }
+.cse-numgrid label { display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-xs, 11px); color: var(--fp-text-dim); min-width: 0; }
+.cse-numgrid input[type="number"] { padding: 5px 7px; font-size: var(--fs-sm, 12px); background: var(--fp-surface); border: 1px solid var(--fp-border); border-radius: 6px; color: var(--fp-text); width: 100%; min-width: 0; box-sizing: border-box; }
 .cse-params { display: flex; flex-direction: column; gap: 10px; }
 </style>

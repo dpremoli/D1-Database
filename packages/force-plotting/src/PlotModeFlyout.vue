@@ -88,7 +88,7 @@ function onFocusIn(ev: FocusEvent) { if ((ev.target as Element).matches(':focus-
 }
 /* The options are small pills, a header row tall (no taller than a 20px icon). */
 .pmf-btn {
-	padding: 1px 8px; font: inherit; font-size: 12px; font-weight: 400; letter-spacing: normal;
+	padding: 1px 8px; font: inherit; font-size: var(--fs-sm, 12px); font-weight: 400; letter-spacing: normal;
 	line-height: 1.2; white-space: nowrap;
 	color: var(--fp-text-dim); background: var(--fp-surface);
 	border: 1px solid var(--fp-border); border-radius: 7px; cursor: pointer;
@@ -102,7 +102,7 @@ function onFocusIn(ev: FocusEvent) { if ((ev.target as Element).matches(':focus-
 	color: inherit; background: transparent; border-color: transparent;
 }
 .pmf-active:hover, .pmf.open .pmf-active { color: inherit; background: var(--fp-surface-2); }
-.pmf-caret { font-size: 13px; line-height: 1; color: var(--fp-text-dim); transition: transform 0.24s ease; }
+.pmf-caret { font-size: var(--fs-md, 13px); line-height: 1; color: var(--fp-text-dim); transition: transform 0.24s ease; }
 .pmf.open .pmf-caret { transform: rotate(90deg); }
 
 /* Horizontal (default): max-width carries the slide, so it animates without hardcoding a width. */

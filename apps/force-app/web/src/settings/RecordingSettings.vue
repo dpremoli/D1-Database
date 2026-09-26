@@ -96,21 +96,21 @@ function onThresholdInput(e: Event) {
 
 <style scoped>
 .recset { max-width: 640px; }
-h2 { margin: 0 0 4px; font-size: 16px; }
-.lead { margin: 0 0 18px; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
+h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
+.lead { margin: 0 0 18px; font-size: var(--fs-md); color: var(--text-dim); line-height: 1.5; }
 .card { margin-bottom: 16px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
-.card-head h3 { margin: 0; font-size: 14px; color: var(--text); }
-.desc { margin: 0 0 10px; font-size: 12.5px; line-height: 1.55; color: var(--text); }
-.desc code, .hint code { font-family: var(--mono); font-size: 11.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
-.hint { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--text-dim); }
-.field { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; font-size: 12.5px; color: var(--text); }
+.card-head h3 { margin: 0; font-size: var(--fs-lg); color: var(--text); }
+.desc { margin: 0 0 10px; font-size: var(--fs-md); line-height: 1.55; color: var(--text); }
+.desc code, .hint code { font-family: var(--mono); font-size: var(--fs-sm); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+.hint { margin: 0; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-dim); }
+.field { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; font-size: var(--fs-md); color: var(--text); }
 .field span:first-child { flex-shrink: 0; }
-.field input { width: 160px; padding: 7px 9px; font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 7px; outline: none; }
+.field input { width: 160px; padding: 7px 9px; font-size: var(--fs-md); color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 7px; outline: none; }
 .field input:focus { border-color: var(--accent); }
 .field .unit { color: var(--text-dim); }
-.cfg-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding: 7px 12px; font-size: 12.5px; font-weight: 600; color: var(--accent); background: var(--surface-2); border-radius: 8px; text-decoration: none; }
+.cfg-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding: 7px 12px; font-size: var(--fs-md); font-weight: 600; color: var(--accent); background: var(--surface-2); border-radius: 8px; text-decoration: none; }
 .cfg-link:hover { background: var(--surface); }
-.cfg-link .material-symbols-rounded { font-size: 16px; }
-.cfg-link .arrow { font-size: 14px; }
+.cfg-link .material-symbols-rounded { font-size: var(--icon-sm); }
+.cfg-link .arrow { font-size: var(--icon-xs); }
 </style>

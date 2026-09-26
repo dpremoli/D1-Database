@@ -154,26 +154,26 @@ function goToDbPlot() {
 .lcv-head { display: flex; align-items: center; gap: 12px; }
 .lcv-back { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; background: var(--surface); border: 1px solid var(--border); color: var(--text); cursor: pointer; }
 .lcv-title { display: flex; flex-direction: column; }
-.lcv-title b { font-size: 16px; }
-.lcv-sub { font-size: 12px; color: var(--text-dim); }
+.lcv-title b { font-size: var(--fs-lg); }
+.lcv-sub { font-size: var(--fs-sm); color: var(--text-dim); }
 .lcv-loading, .lcv-err { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 60px 0; color: var(--text-dim); }
-.lcv-loading .spin { font-size: 22px; }
+.lcv-loading .spin { font-size: var(--icon-xl); }
 .lcv-err { color: var(--danger); }
-.lcv-btn { padding: 7px 14px; font-size: 12px; font-weight: 600; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; margin-top: 6px; }
+.lcv-btn { padding: 7px 14px; font-size: var(--fs-sm); font-weight: 600; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; margin-top: 6px; }
 .lcv-btn.primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 .lcv-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.lcv-banner { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: color-mix(in srgb, var(--warn) 8%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: 10px; font-size: 13px; color: var(--text); }
-.lcv-banner > .material-symbols-rounded { color: var(--warn); font-size: 20px; }
+.lcv-banner { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: color-mix(in srgb, var(--warn) 8%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: 10px; font-size: var(--fs-md); color: var(--text); }
+.lcv-banner > .material-symbols-rounded { color: var(--warn); font-size: var(--icon-lg); }
 .lcv-spacer { flex: 1; }
-.lcv-retryerr { font-size: 12px; color: var(--danger); margin: -8px 0 0; }
+.lcv-retryerr { font-size: var(--fs-sm); color: var(--danger); margin: -8px 0 0; }
 .lcv-stats { display: flex; gap: 8px; flex-wrap: wrap; }
 .lcv-stat { display: flex; flex-direction: column; align-items: center; padding: 6px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; min-width: 76px; }
-.lcv-stat span { font-size: 9px; color: var(--text-dim); letter-spacing: 0.01em; }
-.lcv-stat b { font-size: 14px; font-variant-numeric: tabular-nums; }
+.lcv-stat span { font-size: var(--fs-xs); color: var(--text-dim); letter-spacing: 0.01em; }
+.lcv-stat b { font-size: var(--fs-lg); font-variant-numeric: tabular-nums; }
 .lcv-plots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; flex: 1; min-height: 420px; }
 .lcv-plot { display: flex; flex-direction: column; gap: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; min-height: 380px; }
-.lcv-plot-label { font-size: 12px; font-weight: 600; color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
+.lcv-plot-label { font-size: var(--fs-sm); font-weight: 600; color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
 .lcv-axisbtns { display: flex; gap: 4px; margin-left: auto; }
-.lcv-axisbtns button { padding: 3px 8px; font-size: 11px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); cursor: pointer; }
+.lcv-axisbtns button { padding: 3px 8px; font-size: var(--fs-xs); border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); cursor: pointer; }
 .lcv-axisbtns button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 </style>

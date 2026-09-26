@@ -499,20 +499,20 @@ function onWheel(ev: WheelEvent) {
    signal you're looking at on the fingerprint. */
 .chart.active { border-color: var(--accent); box-shadow: inset 3px 0 0 0 var(--accent), 0 0 0 1px var(--accent); }
 .chart-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 2px; gap: 8px; flex: 0 0 auto; }
-.chart-title { font-size: 12.5px; font-weight: 650; color: var(--theme--foreground, #1e293b); }
-.chart-unit { font-size: 10.5px; color: var(--theme--foreground-subdued, #98a2b3); font-weight: 600; }
-.chart-peak { font-size: 10.5px; color: var(--theme--foreground, #1e293b); font-weight: 700; font-variant-numeric: tabular-nums; }
+.chart-title { font-size: var(--fs-md, 13px); font-weight: 650; color: var(--theme--foreground, #1e293b); }
+.chart-unit { font-size: var(--fs-xs, 11px); color: var(--theme--foreground-subdued, #98a2b3); font-weight: 600; }
+.chart-peak { font-size: var(--fs-xs, 11px); color: var(--theme--foreground, #1e293b); font-weight: 700; font-variant-numeric: tabular-nums; }
 .chart-svg { display: block; width: 100%; flex: 1 1 auto; min-height: 0; cursor: crosshair; touch-action: none; }
 .chart-svg.zoomtool { cursor: crosshair; }
-.chart-svg .tick { fill: var(--theme--foreground-subdued, #94a3b8); font-size: 11px; font-variant-numeric: tabular-nums; }
-.chart-svg .axis-label { fill: var(--theme--foreground-subdued, #94a3b8); font-size: 11px; }
+.chart-svg .tick { fill: var(--theme--foreground-subdued, #94a3b8); font-size: var(--fs-xs, 11px); font-variant-numeric: tabular-nums; }
+.chart-svg .axis-label { fill: var(--theme--foreground-subdued, #94a3b8); font-size: var(--fs-xs, 11px); }
 .chart-svg .crop-hit { cursor: ew-resize; }
 /* dimmer than the near-white light-mode defaults so gridlines don't outshine the crop handles
    against a dark background; --border/--border-2 are theme-scoped in apps/force-app's styles.css */
 .chart-svg .fc-grid { stroke: var(--border, #e2e8f0); }
 .chart-svg .fc-axis { stroke: var(--border-2, #94a3b8); }
 .chart-svg .fc-zero { stroke: var(--border-2, #cbd5e1); }
-.chart-empty { flex: 1; display: grid; place-items: center; color: var(--theme--foreground-subdued, #98a2b3); font-size: 12px; }
+.chart-empty { flex: 1; display: grid; place-items: center; color: var(--theme--foreground-subdued, #98a2b3); font-size: var(--fs-sm, 12px); }
 /* The accent, not a sky blue a shade off the Fz trace it is dragged across. */
 .zoom-rect { fill: var(--accent, #38bdf8); fill-opacity: 0.16; stroke: var(--accent, #0ea5e9); stroke-width: 0.8; }
 .chart-tip {
@@ -520,6 +520,6 @@ function onWheel(ev: WheelEvent) {
 	position: absolute; top: 30px; right: 12px; display: flex; flex-direction: column; align-items: flex-end;
 	background: color-mix(in srgb, var(--theme--background, #fff) 85%, transparent); border-radius: 8px; padding: 2px 7px; pointer-events: none;
 }
-.chart-tip strong { font-size: 12px; font-variant-numeric: tabular-nums; }
-.chart-tip span { font-size: 10px; color: var(--theme--foreground-subdued, #98a2b3); }
+.chart-tip strong { font-size: var(--fs-sm, 12px); font-variant-numeric: tabular-nums; }
+.chart-tip span { font-size: var(--fs-xs, 11px); color: var(--theme--foreground-subdued, #98a2b3); }
 </style>

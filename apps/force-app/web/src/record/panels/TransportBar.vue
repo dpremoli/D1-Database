@@ -62,17 +62,17 @@ const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
 .play { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex-shrink: 0;
 	background: #22c55e; color: #05210f; border: none; border-radius: 50%; cursor: pointer; }
 .play:disabled { opacity: 0.5; cursor: not-allowed; }
-.play .material-symbols-rounded { font-size: 21px; }
+.play .material-symbols-rounded { font-size: var(--icon-lg); }
 /* min-width, NOT the usual `min-width: 0`: this control has to stay grabbable. Under the floor
    the row wraps (above) instead of shrinking it away to a zero-width, unclickable element. */
 .scrub { flex: 1 1 90px; min-width: 90px; accent-color: var(--accent); cursor: pointer; }
 .scrub:disabled { opacity: 0.5; cursor: not-allowed; }
-.time { font-size: 11.5px; font-family: var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; flex-shrink: 0; margin-left: auto; }
-.speed { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-dim); margin: 0; }
-.speed select { width: auto; margin: 0; padding: 4px 7px; font-size: 12px; }
-.note { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--text-dim); cursor: help; }
-.note .material-symbols-rounded { font-size: 14px; }
-.err { color: var(--danger); font-size: 12px; margin: 2px 0 0; }
-.hint { font-size: 11.5px; color: var(--text-dim); margin: 2px 0 0; }
+.time { font-size: var(--fs-sm); font-family: var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; flex-shrink: 0; margin-left: auto; }
+.speed { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-dim); margin: 0; }
+.speed select { width: auto; margin: 0; padding: 4px 7px; font-size: var(--fs-sm); }
+.note { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); color: var(--text-dim); cursor: help; }
+.note .material-symbols-rounded { font-size: var(--icon-xs); }
+.err { color: var(--danger); font-size: var(--fs-sm); margin: 2px 0 0; }
+.hint { font-size: var(--fs-sm); color: var(--text-dim); margin: 2px 0 0; }
 .hint.loading { display: flex; align-items: center; gap: 5px; }
 </style>

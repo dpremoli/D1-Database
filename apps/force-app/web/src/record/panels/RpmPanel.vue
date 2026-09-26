@@ -81,13 +81,13 @@ const spark = computed(() => {
    near-white panel, i.e. invisible. */
 .needle { stroke: var(--text); stroke-width: 3; stroke-linecap: round; }
 .needle.over { stroke: #ef4444; }
-.big { fill: var(--text); font-size: 30px; font-weight: 700; text-anchor: middle; font-variant-numeric: tabular-nums; }
+.big { fill: var(--text); font-size: var(--fs-display); font-weight: 700; text-anchor: middle; font-variant-numeric: tabular-nums; }
 .big.over { fill: #f87171; }
-.unit { fill: var(--text-dim); font-size: 11px; text-anchor: middle; letter-spacing: 0.08em; }
+.unit { fill: var(--text-dim); font-size: var(--fs-xs); text-anchor: middle; letter-spacing: 0.08em; }
 .foot { width: 100%; max-width: 260px; text-align: center; }
 /* Neutral, not the warning amber: the target is a reference value, not a state. The sparkline
    takes the gauge's own accent rather than the Fz blue, same reasoning as .value above. */
-.target-lbl { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.target-lbl { font-size: var(--fs-xs); color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .spark { width: 100%; height: 40px; }
 .spark polyline { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 </style>
