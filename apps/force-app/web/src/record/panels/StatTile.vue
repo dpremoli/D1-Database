@@ -41,7 +41,7 @@ const display = computed(() => {
 </template>
 
 <style scoped>
-.stat-tile { padding: 10px 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 10px; min-width: 0; overflow: hidden; }
+.stat-tile { padding: 10px 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 10px; min-width: 0; overflow: hidden; container: stat / inline-size; }
 .stat-tile.invalid { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
 .warn-icon { font-size: 15px; color: var(--warn); margin-left: auto; }
 .value { display: flex; align-items: baseline; gap: 5px; min-width: 0; }
@@ -51,6 +51,12 @@ const display = computed(() => {
 .value input:focus { border-bottom-color: var(--accent); }
 .value input:disabled { opacity: 0.6; }
 .unit { font-size: 11px; font-weight: 600; color: var(--text-dim); flex-shrink: 0; }
+/* A narrow tile (the Recording panel at laptop widths) clipped the number itself — "1200 RPM"
+   showed as "120(". Give the value the whole row and let the unit wrap under it instead. */
+@container stat (max-width: 100px) {
+	.value { flex-wrap: wrap; row-gap: 0; }
+	.value input, .value-text { flex: 1 0 100%; }
+}
 /* Sentence case comes from the global label rule in styles.css; the size/weight here are the
    originals. */
 .label { margin-top: 3px; font-size: 9.5px; font-weight: 700; letter-spacing: 0.07em; color: var(--text-dim); }
