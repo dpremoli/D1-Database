@@ -2897,10 +2897,15 @@ function fmtDateTime(v: string | null | undefined) {
 .right-grid :deep(.vgl-item--placeholder) { background: color-mix(in srgb, var(--theme--primary, #1d4ed8) 18%, transparent); border-radius: 12px; }
 .pg-card { height: 100%; display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
 /* One-line panel bar: drag grip · title · inline tools · close — no separate title row. */
-.pg-bar { display: flex; align-items: center; gap: 6px; padding: 2px 4px 6px; flex: 0 0 auto; flex-wrap: wrap; }
+/* nowrap: the tools group wraps inside itself instead (.toggle already wraps, right-aligned). With
+   the bar itself wrapping, a narrow Signals panel pushed the close button onto a line of its own.
+   Grip, title and close are one tool-row tall and top-aligned, so they stay level with the first
+   row of tools when the rest wrap below. */
+.pg-bar { display: flex; align-items: flex-start; gap: 6px; padding: 2px 4px 6px; flex: 0 0 auto; }
+.pg-bar > .pg-grip, .pg-bar > .pg-title, .pg-bar > .pg-x { min-height: 27px; align-items: center; }
 .pg-title { display: inline-flex; align-items: center; gap: 5px; margin-right: auto; font-size: 11px; font-weight: 700;
 	letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); white-space: nowrap; }
-.pg-tools { flex: 0 1 auto; }
+.pg-tools { flex: 0 1 auto; min-width: 0; }
 .pg-grip { cursor: move; display: inline-flex; color: var(--theme--foreground-subdued, #98a2b3); }
 .pg-grip:hover { color: var(--theme--foreground, #1e293b); }
 .pg-x { margin-left: 4px; display: inline-flex; background: transparent; border: none; cursor: pointer; color: var(--theme--foreground-subdued, #98a2b3); border-radius: 5px; padding: 2px; }

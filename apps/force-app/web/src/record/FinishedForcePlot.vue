@@ -26,7 +26,9 @@ const canvasEl = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
 let ro: ResizeObserver | null = null;
 
-const ML = 48, MR = 10, MT = 10, MB = 22;
+// MB fits the tick labels (4-14px below the plot) AND the axis title under them; at 22 the
+// title was drawn top-aligned 4px above the canvas edge and always clipped to half its height.
+const ML = 48, MR = 10, MT = 10, MB = 32;
 // Updated every draw() so pointer handlers can convert canvas-local px <-> data seconds without
 // redoing the layout math.
 let lastT0 = 0, lastT1 = 0, lastW = 0;
@@ -154,8 +156,8 @@ function draw() {
 	}
 
 	ctx.fillStyle = pal.textFaint; ctx.font = '10px system-ui';
-	ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-	ctx.fillText('Time (s)', ML + W / 2, CH - 4);
+	ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+	ctx.fillText('Time (s)', ML + W / 2, CH - 2);
 	ctx.save(); ctx.translate(10, MT + H / 2); ctx.rotate(-Math.PI / 2);
 	ctx.textBaseline = 'middle'; ctx.fillText('Force (N)', 0, 0); ctx.restore();
 

@@ -9,7 +9,9 @@ const canvasEl = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
 let ro: ResizeObserver | null = null;
 
-const ML = 48, MR = 10, MT = 10, MB = 22;
+// MB fits the tick labels (4-14px below the plot) AND the axis title under them; at 22 the
+// title was drawn top-aligned 4px above the canvas edge and always clipped to half its height.
+const ML = 48, MR = 10, MT = 10, MB = 32;
 
 const chans = computed(() => {
 	// client.fft is a plain (non-reactive) field, so without this the pick was cached from the
@@ -130,13 +132,17 @@ function draw() {
 
 	// Axis labels
 	ctx.fillStyle = pal.textFaint; ctx.font = '10px system-ui';
-	ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-	ctx.fillText('Frequency (Hz)', ML + W / 2, CH - 4);
+	ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+	ctx.fillText('Frequency (Hz)', ML + W / 2, CH - 2);
 	ctx.save(); ctx.translate(10, MT + H / 2); ctx.rotate(-Math.PI / 2);
 	ctx.textBaseline = 'middle'; ctx.fillText(psd ? 'Power (dB)' : 'Amplitude (N)', 0, 0); ctx.restore();
 
-	// Legend
+	// Legend, on a backdrop: amplitudes are normalised to the max, so the traces always reach the
+	// top edge the legend sits on.
 	ctx.font = '11px system-ui'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+	let legendW = 0;
+	for (const ch of drawn) legendW += ctx.measureText(ch).width + 12;
+	ctx.globalAlpha = 0.85; ctx.fillStyle = pal.bg; ctx.fillRect(ML + 1, MT + 1, legendW + 4, 17); ctx.globalAlpha = 1;
 	let lx = ML + 4;
 	for (const ch of drawn) {
 		ctx.fillStyle = CH_COLOR[ch] || '#38bdf8';

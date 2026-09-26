@@ -200,7 +200,7 @@ onMounted(() => runDoctor());
 					</div>
 					<div v-if="f.fix" class="finding-fix">
 						<span class="material-symbols-rounded" style="font-size:13px;flex-shrink:0">build</span>
-						<span>{{ f.fix }}</span>
+						<span class="fix-text">{{ f.fix }}</span>
 						<button v-if="f.fixable" class="fix-btn" :disabled="fixingId === f.service" @click="applyFix(f)">
 							{{ fixingId === f.service ? 'Fixing…' : 'Fix now' }}
 						</button>
@@ -289,7 +289,9 @@ h3 { margin: 24px 0 8px; font-size: 14px; }
 .finding-msg { font-size: 12px; color: var(--text-dim); }
 .finding-diagnosis { display: flex; align-items: flex-start; gap: 5px; margin-top: 5px; font-size: 11.5px; color: var(--text-dim); line-height: 1.45; }
 .finding-fix { display: flex; align-items: flex-start; gap: 5px; margin-top: 4px; font-size: 11.5px; color: var(--accent); line-height: 1.45; }
-.finding-fix span { flex: 1; }
+/* Only the text grows — a bare `span` selector also caught the wrench icon, so the two split the
+   row 50/50 and every fix line started half-way across the card, away from its icon. */
+.finding-fix .fix-text { flex: 1; }
 
 .fix-btn { padding: 3px 10px; font-size: 11px; font-weight: 700; color: #fff; background: #22c55e; border: none; border-radius: 5px; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
 .fix-btn:hover:not(:disabled) { background: #16a34a; }
