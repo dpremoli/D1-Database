@@ -55,10 +55,11 @@ export async function fetchFiltered(cacheFileId: string, chain: FilterChain, tar
 	return { cache: parseCache(await res.arrayBuffer()), skipped, stride };
 }
 
-export async function fetchFilteredFft(cacheFileId: string, chain: FilterChain, axis: string):
+export async function fetchFilteredFft(cacheFileId: string, chain: FilterChain, axis: string, signal?: AbortSignal):
 	Promise<{ f: number[]; amp: number[] }> {
 	const res = await authorizedFetch(`${useForceHost().filterUrl}/fft`, {
 		method: 'POST',
+		signal,
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ cache_file_id: cacheFileId, chain, axis }),
 	});

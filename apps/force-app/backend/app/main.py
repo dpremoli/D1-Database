@@ -18,6 +18,7 @@ import platform as platform_mod
 import re
 import shutil
 import sys
+import threading
 import time
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
@@ -897,8 +898,9 @@ async def health_doctor(request: Request) -> dict:
 
     async def _check_nidaq(findings: list[dict]) -> None:
         # 5. NI-DAQ runtime — checked proactively so a missing driver is visible before the operator
-        # tries to record, not discovered as a 503 from POST /record/start.
-        if nidaq_available():
+        # tries to record, not discovered as a 503 from POST /record/start. The first check imports
+        # the nidaqmx DLL, which can take seconds: off the event loop, so the other probes proceed.
+        if await run_in_threadpool(nidaq_available):
             findings.append(
                 {"service": "NI-DAQ runtime", "status": "ok", "message": "NI-DAQmx driver detected"}
             )
@@ -1728,6 +1730,12 @@ class CaptureMetadataPatch(BaseModel):
     extra_metadata: dict[str, Any] | None = None
 
 
+# Serialises summary.json read-modify-writes: this handler runs in the threadpool, so two PATCHes
+# for one capture (a double-submit, or two quick edits) would otherwise each apply its change to the
+# same stale copy and the later write would drop the earlier edit.
+_summary_patch_lock = threading.Lock()
+
+
 @app.patch("/captures/{cid}/metadata")
 def patch_capture_metadata(cid: str, patch: CaptureMetadataPatch) -> dict:
     """Correct a finalized capture's local record after the fact.
@@ -1740,24 +1748,24 @@ def patch_capture_metadata(cid: str, patch: CaptureMetadataPatch) -> dict:
     record and the database row are corrected together rather than one drifting from the other.
     """
     path = _capture_file(cid, "summary.json")
-    with open(path) as f:
-        summary = json.load(f)
-    cfg = summary.setdefault("config", {})
-
     changed = patch.model_dump(exclude_unset=True)
-    if "sample_name" in changed:
-        # Kept in step deliberately: finalize.py stamps both from the same RecordConfig.sample_name
-        # at record time, and CapturesSettings.vue's list reads the top-level one.
-        summary["sample_name"] = changed["sample_name"]
-        cfg["sample_name"] = changed["sample_name"]
-    for key in ("rpm", "feed", "diam", "sample_rate"):
-        if key in changed:
-            cfg[key] = changed[key]
-    if "extra_metadata" in changed:
-        cfg["extra_metadata"] = changed["extra_metadata"]
-        summary["metadata"] = changed["extra_metadata"]  # finalize.py's own top-level echo of it
-
-    storage.atomic_write_json(path, summary, indent=2)
+    with _summary_patch_lock:
+        with open(path) as f:
+            summary = json.load(f)
+        cfg = summary.setdefault("config", {})
+        if "sample_name" in changed:
+            # Kept in step deliberately: finalize.py stamps both from the same
+            # RecordConfig.sample_name at record time, and CapturesSettings.vue's list reads the
+            # top-level one.
+            summary["sample_name"] = changed["sample_name"]
+            cfg["sample_name"] = changed["sample_name"]
+        for key in ("rpm", "feed", "diam", "sample_rate"):
+            if key in changed:
+                cfg[key] = changed[key]
+        if "extra_metadata" in changed:
+            cfg["extra_metadata"] = changed["extra_metadata"]
+            summary["metadata"] = changed["extra_metadata"]  # finalize.py's top-level echo of it
+        storage.atomic_write_json(path, summary, indent=2)
     log.info("patch_capture_metadata: id=%s fields=%s", cid, sorted(changed.keys()))
     return summary
 

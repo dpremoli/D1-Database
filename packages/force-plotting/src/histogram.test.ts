@@ -27,8 +27,14 @@ describe('histogramFrom', () => {
 	});
 	it('skips NaN/Infinity rather than crashing or corrupting a bin', () => {
 		const h = histogramFrom(series([1, NaN, 2, Infinity, -Infinity, 3]), 6, 0, 10, 10);
-		expect(h.total).toBe(6);   // count reflects how many source samples were scanned
+		expect(h.total).toBe(3);   // only the finite samples count -- same as the accumulator
 		expect(Array.from(h.bins).reduce((a, b) => a + b, 0)).toBe(3);   // only the 3 finite ones landed
+	});
+	it('agrees with the incremental accumulator when the data contains NaN/Infinity', () => {
+		const data = series([1, NaN, 2, Infinity, -Infinity, 3, NaN, 7]);
+		const acc = createAccumulator(0, 10, 10);
+		acc.push(data, 0, data.length);
+		expect(histogramFrom(data, data.length, 0, 10, 10)).toEqual(acc.snapshot());
 	});
 	it('only scans the first `count` elements, ignoring the rest of a larger backing array', () => {
 		const arr = series([1, 1, 1, 9, 9, 9]);   // backing buffer bigger than what's "live"

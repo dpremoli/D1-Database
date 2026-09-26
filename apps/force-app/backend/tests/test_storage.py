@@ -8,7 +8,11 @@ a pure function over the filesystem.
 
 from __future__ import annotations
 
+import json
 import os
+import threading
+
+import pytest
 
 from app import storage
 
@@ -61,3 +65,65 @@ def test_ssd_map_is_cached_between_calls(monkeypatch):
     fake_clock[0] += storage.SSD_CACHE_TTL_SEC + 1
     assert storage._detect_ssd_map_cached() == {"C": True}
     assert calls == 2, "a call past the TTL must refresh — e.g. a newly-attached drive"
+
+
+# ---- atomic_write_json ----
+def test_atomic_write_json_writes_and_leaves_no_temp_files(tmp_path):
+    path = tmp_path / "summary.json"
+    storage.atomic_write_json(str(path), {"a": 1})
+    storage.atomic_write_json(str(path), {"a": 2})
+    assert json.loads(path.read_text()) == {"a": 2}
+    assert [p.name for p in tmp_path.iterdir()] == ["summary.json"]
+
+
+def test_atomic_write_json_concurrent_writers_never_collide(tmp_path):
+    # A shared fixed temp name let one writer's os.replace move another's half-written file into
+    # place (and the loser then failed with FileNotFoundError). Unique temps make every write land.
+    path = str(tmp_path / "summary.json")
+    errors: list[BaseException] = []
+
+    def write(i: int) -> None:
+        try:
+            for _ in range(20):
+                storage.atomic_write_json(path, {"writer": i, "pad": "x" * 2000})
+        except BaseException as e:  # noqa: BLE001 - surfaced by the assert below
+            errors.append(e)
+
+    threads = [threading.Thread(target=write, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    assert json.loads(open(path).read())["writer"] in range(8)
+    assert [p.name for p in tmp_path.iterdir()] == ["summary.json"]
+
+
+def test_atomic_write_json_retries_a_transient_permission_error(tmp_path, monkeypatch):
+    # Windows: os.replace fails while another handle has the target open; the read ends quickly.
+    path = tmp_path / "cfg.json"
+    real_replace = os.replace
+    calls = {"n": 0}
+
+    def flaky_replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError(5, "Access is denied")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(storage.os, "replace", flaky_replace)
+    monkeypatch.setattr(storage, "_REPLACE_BACKOFF_S", 0)
+    storage.atomic_write_json(str(path), {"ok": True})
+    assert json.loads(path.read_text()) == {"ok": True}
+    assert calls["n"] == 3
+
+
+def test_atomic_write_json_cleans_up_its_temp_file_when_it_gives_up(tmp_path, monkeypatch):
+    def always_denied(src, dst):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(storage.os, "replace", always_denied)
+    monkeypatch.setattr(storage, "_REPLACE_BACKOFF_S", 0)
+    with pytest.raises(PermissionError):
+        storage.atomic_write_json(str(tmp_path / "cfg.json"), {"ok": True})
+    assert list(tmp_path.iterdir()) == []

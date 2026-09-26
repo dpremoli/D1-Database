@@ -23,6 +23,8 @@ export {
 	lutKey, colorizeValues, withAutoRange, withOpenDisplay, OPEN_DISP,
 } from './colorScale';
 export { createScaleTexture, syncScaleTexture } from './scaleTexture';
+export { useAutoColorScale } from './autoColorScale';
+export type { AutoRange } from './autoColorScale';
 export type { ColorScale } from './colorScale';
 export { histogramFrom, createAccumulator } from './histogram';
 export type { Histogram, HistogramAccumulator } from './histogram';

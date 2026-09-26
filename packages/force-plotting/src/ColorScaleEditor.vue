@@ -75,9 +75,12 @@ watch(
 function commit(patch: Partial<ColorScale>) {
 	const cur = props.colorScale;
 	const next = applyParams({ ...cur, ...patch }, axisLo.value, axisHi.value);
-	// A manual saturation edit locks the scale; otherwise the host's next auto range (a live
-	// recording reports one many times a second) would immediately overwrite it.
-	if (!props.locked && (next.satMin !== cur.satMin || next.satMax !== cur.satMax)) emit('update:locked', true);
+	// An explicit saturation edit (a Sat field or a saturation handle) locks the scale; otherwise the
+	// host's next auto range (a live recording reports one many times a second) would overwrite it.
+	// Shaping params (symmetrical, always-show-zero) move the range too but don't lock: the host's
+	// auto re-seed applies them to each new range anyway.
+	const editsRange = 'satMin' in patch || 'satMax' in patch;
+	if (!props.locked && editsRange && (next.satMin !== cur.satMin || next.satMax !== cur.satMax)) emit('update:locked', true);
 	emit('update:colorScale', next);
 }
 

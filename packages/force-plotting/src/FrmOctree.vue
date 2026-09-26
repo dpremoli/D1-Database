@@ -87,12 +87,15 @@ function makeMaterial(): THREE.ShaderMaterial {
 			uniform vec2 uRange; uniform float uAxis; uniform float uSize;
 			uniform float uZAxis; uniform vec2 uZRange; uniform float uZScale;
 			uniform float uFill; uniform float uPxPerMm; uniform float uCell;
+			uniform vec2 uDisp;
 			varying float vT;
-			varying float vRaw;
+			varying float vOut;   // 1 = outside the displayed range
 			float pick(float i) { return i < 0.5 ? Fx : (i < 1.5 ? Fy : Fz); }
 			void main() {
 				float v = pick(uAxis);
-				vRaw = v;
+				// Tested here, in the (highp) vertex stage: the mediump fragment stage can be real
+				// fp16, which quantises a force edge to ~1 N and overflows OPEN_DISP to inf.
+				vOut = (v < uDisp.x || v > uDisp.y) ? 1.0 : 0.0;
 				vT = clamp((v - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
 				float z = 0.0;
 				if (uZAxis >= 0.0) {
@@ -104,11 +107,11 @@ function makeMaterial(): THREE.ShaderMaterial {
 			}`,
 		fragmentShader: `
 			precision mediump float;
-			uniform sampler2D uGradient; uniform vec2 uDisp; uniform float uGreyOOR;
-			varying float vT; varying float vRaw;
+			uniform sampler2D uGradient; uniform float uGreyOOR;
+			varying float vT; varying float vOut;
 			void main() {
 				vec2 d = gl_PointCoord - vec2(0.5); if (dot(d, d) > 0.25) discard;
-				if (vRaw < uDisp.x || vRaw > uDisp.y) {
+				if (vOut > 0.5) {
 					if (uGreyOOR > 0.5) { gl_FragColor = vec4(vec3(0.5), 1.0); return; }
 					discard;
 				}

@@ -122,8 +122,9 @@ function makeMaterial(): THREE.ShaderMaterial {
 			uniform vec2 uSelTimeRange;
 			uniform vec2 uSelAttrRange;
 			uniform float uSelAttrChannel;
+			uniform vec2 uDisp;
 			varying float vT;
-			varying float vRaw;
+			varying float vOut;   // 1 = outside the displayed range
 			varying float vSelected;
 			float pick(float i) {
 				if (i < 0.5) return tsa_resid;
@@ -131,7 +132,9 @@ function makeMaterial(): THREE.ShaderMaterial {
 			}
 			void main() {
 				float v = pick(uChannel);
-				vRaw = v;
+				// Tested here, in the (highp) vertex stage: the mediump fragment stage can be real
+				// fp16, which quantises a range edge and overflows OPEN_DISP to inf.
+				vOut = (v < uDisp.x || v > uDisp.y) ? 1.0 : 0.0;
 				vT = clamp((v - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
 				vSelected = 1.0;
 				if (uSelKind > 0.5 && uSelKind < 1.5) {
@@ -145,11 +148,11 @@ function makeMaterial(): THREE.ShaderMaterial {
 			}`,
 		fragmentShader: `
 			precision mediump float;
-			uniform sampler2D uGradient; uniform vec2 uDisp; uniform float uGreyOOR;
-			varying float vT; varying float vRaw; varying float vSelected;
+			uniform sampler2D uGradient; uniform float uGreyOOR;
+			varying float vT; varying float vOut; varying float vSelected;
 			void main() {
 				vec2 d = gl_PointCoord - vec2(0.5); if (dot(d, d) > 0.25) discard;
-				bool outOfDisplay = (vRaw < uDisp.x || vRaw > uDisp.y);
+				bool outOfDisplay = vOut > 0.5;
 				if (outOfDisplay && uGreyOOR < 0.5) discard;
 				vec3 c = outOfDisplay ? vec3(0.5) : texture2D(uGradient, vec2(vT, 0.5)).rgb;
 				// Unselected points stay visible but muted -- an empty or wrong selection must

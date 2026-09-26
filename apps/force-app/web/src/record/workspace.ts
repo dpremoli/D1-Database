@@ -443,12 +443,19 @@ export function createWorkspace() {
 		const id = st.captureId;
 		if (!id) throw new Error('no capture id for this recording');
 		// The local blob reads don't need the logged run, so they start alongside it; the uploads
-		// still wait for it, so a failed insert never leaves orphaned files. Without a capture.mat
-		// (over MAT_MAX_BYTES) the analysis record is still fully usable from the decimated cache;
-		// directus_files_id just goes in as null.
-		const blobs = fetchCaptureBlobs(client.matUrl(id), client.cacheUrl(id), st.summary?.mat_written !== false);
+		// still wait for it, so a failed insert never leaves orphaned files -- and cancels the reads.
+		// Without a capture.mat (over MAT_MAX_BYTES) the analysis record is still fully usable from
+		// the decimated cache; directus_files_id just goes in as null.
+		const blobReads = new AbortController();
+		const blobs = fetchCaptureBlobs(client.matUrl(id), client.cacheUrl(id), st.summary?.mat_written !== false, blobReads.signal);
 		blobs.catch(() => {});   // surfaced by the await below, not as an unhandled rejection
-		const opId = await logRunSync();
+		let opId: string;
+		try {
+			opId = await logRunSync();
+		} catch (e) {
+			blobReads.abort();
+			throw e;
+		}
 		const [matBlob, cacheBlob] = await blobs;
 		const [matFileId, cacheFileId] = await uploadCaptureFiles(id, matBlob, cacheBlob);
 		const peaks = st.summary?.peaks;

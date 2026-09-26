@@ -52,9 +52,11 @@ export async function uploadFile(blob: Blob, filename: string): Promise<string> 
 
 // A capture too large for the MAT5 format (see finalize.py's MAT_MAX_BYTES) never had a capture.mat
 // written at all -- fetching it would 404 and abort the whole upload, so it comes back null instead.
-export function fetchCaptureBlobs(matUrl: string, cacheUrl: string, matWritten: boolean): Promise<[Blob | null, Blob]> {
+// `signal` lets a caller that started this early cancel it (e.g. when the run insert it was
+// racing fails), so a capture of hundreds of MB isn't downloaded for nothing.
+export function fetchCaptureBlobs(matUrl: string, cacheUrl: string, matWritten: boolean, signal?: AbortSignal): Promise<[Blob | null, Blob]> {
 	const get = (url: string, what: string) =>
-		fetch(url).then((r) => { if (!r.ok) throw new Error(`${what} fetch failed`); return r.blob(); });
+		fetch(url, { signal }).then((r) => { if (!r.ok) throw new Error(`${what} fetch failed`); return r.blob(); });
 	return Promise.all([
 		matWritten ? get(matUrl, 'capture.mat') : Promise.resolve(null),
 		get(cacheUrl, 'live_cache.bin'),
@@ -112,17 +114,24 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 	payload.method_id = await resolveMachiningMethodId(extra.op_type).catch(() => null);
 
 	// Local blob reads don't depend on the Directus insert, so run them alongside it; uploads still
-	// wait for it, so a failed insert never leaves orphaned files.
-	const blobs = fetchCaptureBlobs(info.matUrl, info.cacheUrl, info.matWritten !== false);
+	// wait for it, so a failed insert never leaves orphaned files -- and cancels the reads.
+	const blobReads = new AbortController();
+	const blobs = fetchCaptureBlobs(info.matUrl, info.cacheUrl, info.matWritten !== false, blobReads.signal);
 	blobs.catch(() => {});   // surfaced by the await below, not as an unhandled rejection
-	let res;
+	let opId: string;
 	try {
-		res = await api.post('/items/manufacturing_operations', payload);
-	} catch (e: any) {
-		throw new Error(`logging the run failed - ${directusErrorMessage(e)}`);
+		let res;
+		try {
+			res = await api.post('/items/manufacturing_operations', payload);
+		} catch (e: any) {
+			throw new Error(`logging the run failed - ${directusErrorMessage(e)}`);
+		}
+		opId = res.data?.data?.operation_id;
+		if (!opId) throw new Error('run was logged but the server did not return its operation_id - cannot link the capture');
+	} catch (e) {
+		blobReads.abort();
+		throw e;
 	}
-	const opId = res.data?.data?.operation_id;
-	if (!opId) throw new Error('run was logged but the server did not return its operation_id - cannot link the capture');
 
 	const [matBlob, cacheBlob] = await blobs;
 	const [matFileId, cacheFileId] = await uploadCaptureFiles(info.captureId, matBlob, cacheBlob);

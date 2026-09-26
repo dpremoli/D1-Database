@@ -10,6 +10,7 @@ import WearTrend from './WearTrend.vue';
 import type { SpeedMode } from './liveCloud';
 import { axisAutoLimits } from './liveCloud';
 import { defaultScale, withAutoRange, withOpenDisplay, type ColorScale } from './colorScale';
+import { useAutoColorScale } from './autoColorScale';
 import { histogramFrom, type Histogram } from './histogram';
 import ColorScaleEditor from './ColorScaleEditor.vue';
 import PlotModeFlyout from './PlotModeFlyout.vue';
@@ -522,23 +523,33 @@ async function runPreview() {
 	const ac = new AbortController(); previewAbort = ac;
 	filterBusy.value = true; filterErr.value = null;
 	try {
-		// Independent requests to the filter service: run them together rather than back to back.
-		const [{ cache, skipped, stride }, fftOverlay] = await Promise.all([
-			fetchFiltered(d.live_cache_file, chain, 1_500_000, ac.signal),
-			chartMode.value === 'fft' ? fetchFilteredFft(d.live_cache_file, chain, axis.value) : Promise.resolve(undefined),
-		]);
+		// Independent requests to the filter service, so both start now. The FFT overlay is an
+		// optional extra: its failure costs only the overlay, never the filtered cloud.
+		const fftReq = chartMode.value === 'fft' ? fetchFilteredFft(d.live_cache_file, chain, axis.value, ac.signal) : null;
+		fftReq?.catch(() => {});   // awaited (and reported) below; never an unhandled rejection
+		const { cache, skipped, stride } = await fetchFiltered(d.live_cache_file, chain, 1_500_000, ac.signal);
 		if (ac.signal.aborted) return;
 		filteredCache.value = cache; filterSkipped.value = skipped;
 		// Decimate the local full cache by the SAME stride so the raw pane plots the identical
 		// samples (honest side-by-side: same geometry, filtered only changes the colour).
 		const full = cacheGet(d.live_cache_file);
 		rawDecimatedCache.value = full ? decimateCache(full, stride) : null;
-		if (fftOverlay !== undefined) filterFftOverlay.value = fftOverlay;
+		if (fftReq) {
+			try {
+				const overlay = await fftReq;
+				if (!ac.signal.aborted) filterFftOverlay.value = overlay;
+			} catch (e: any) {
+				if (e?.name === 'AbortError' || ac.signal.aborted) return;
+				filterFftOverlay.value = null;
+				filterErr.value = `filtered FFT unavailable — ${e?.message || 'request failed'}`;
+			}
+		}
 	} catch (e: any) {
 		if (e?.name === 'AbortError' || ac.signal.aborted) return;   // superseded — not an error
 		filterErr.value = (e?.message || 'filter service unreachable').includes('Failed to fetch')
 			? 'filter service unreachable — raw only' : e?.message;
 		filteredCache.value = null;
+		ac.abort();   // drop a still-running FFT request for this failed preview
 	} finally { if (previewAbort === ac) filterBusy.value = false; }
 }
 let previewTimer = 0;
@@ -640,17 +651,9 @@ async function clearBake() {
 // colour-scale computeds that read it are safe to evaluate eagerly -- an `immediate` watcher on
 // one of them would otherwise hit this in the temporal dead zone.
 const cacheEpoch = ref(0);
-const colorScale = ref<ColorScale>(defaultScale(0, 1));
-const locked = ref(false);
-const autoClimits = ref<{ cmin: number; cmax: number } | null>(null);
-function seedAuto(lo: number, hi: number) { colorScale.value = withAutoRange(colorScale.value, lo, hi); }
-function onClimits(v: { cmin: number; cmax: number }) {
-	// Bail on a value-identical re-emission: reassigning colorScale would still be an identity
-	// change that every FRM pane on this dashboard re-evaluates.
-	if (autoClimits.value && autoClimits.value.cmin === v.cmin && autoClimits.value.cmax === v.cmax) return;
-	autoClimits.value = v;
-	if (!locked.value) seedAuto(v.cmin, v.cmax);
-}
+// Unlocking re-applies the renderer's range, or the cache-derived one when none has reported.
+const { colorScale, locked, autoClimits, onClimits, seed: seedAuto } =
+	useAutoColorScale({ fallback: () => cacheAutoLimits.value });
 // Histogram of what a mounted FrmCloud actually renders (e.g. the filtered data of a light-applied
 // chain); preferred over re-binning the raw cache.
 const rendererHistogram = ref<Histogram | null>(null);
@@ -661,8 +664,6 @@ watch([() => detail.value?.id, axis], () => {
 	autoClimits.value = null; rendererHistogram.value = null;
 	colorScale.value = withOpenDisplay(colorScale.value);
 });
-// Unlocking hands the scale back to auto: re-apply the current auto range immediately.
-watch(locked, (l) => { const r = currentAuto.value; if (!l && r) seedAuto(r[0], r[1]); });
 // Compare mode's filtered pane scales to its own data (a high-pass shifts the whole range) unless
 // the user locked the scale, in which case both panes share it.
 const filteredAuto = ref<{ cmin: number; cmax: number } | null>(null);
