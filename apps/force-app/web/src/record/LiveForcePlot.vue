@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { RecordClient } from './liveClient';
-import { CH_COLOR } from './types';
+import { channelColor } from './types';
 import { theme } from '../theme';
 
 const props = defineProps<{ client: RecordClient; channels?: string[] }>();
@@ -135,7 +135,7 @@ function draw() {
 
 	// Plot data
 	for (const [key, arr] of series) {
-		const col = CH_COLOR[key] ?? '#94a3b8';
+		const col = channelColor(key, theme.value) ?? '#94a3b8';
 		ctx.beginPath();
 		for (let i = 0; i < n; i++) { const x = xOf(tr.t[i]); const y = yOf(arr[i][1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
 		for (let i = n - 1; i >= 0; i--) ctx.lineTo(xOf(tr.t[i]), yOf(arr[i][0]));
@@ -161,8 +161,8 @@ onBeforeUnmount(() => { cancelAnimationFrame(raf); window.removeEventListener('r
 	<div class="live-force">
 		<canvas ref="canvasEl"></canvas>
 		<div class="legend">
-			<span v-for="k in (channels ?? ['Fx', 'Fy', 'Fz'])" :key="k" class="lg" :style="{ color: CH_COLOR[k] }">
-				<i :style="{ background: CH_COLOR[k] }"></i>{{ k }}
+			<span v-for="k in (channels ?? ['Fx', 'Fy', 'Fz'])" :key="k" class="lg" :style="{ color: channelColor(k, theme) }">
+				<i :style="{ background: channelColor(k, theme) }"></i>{{ k }}
 			</span>
 		</div>
 	</div>
@@ -171,6 +171,6 @@ onBeforeUnmount(() => { cancelAnimationFrame(raf); window.removeEventListener('r
 <style scoped>
 .live-force { position: relative; width: 100%; height: 100%; min-height: 160px; border-radius: 8px; overflow: hidden; background: var(--plot-bg); }
 .live-force canvas { width: 100%; height: 100%; display: block; }
-.legend { position: absolute; top: 6px; right: 8px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 8px; font-size: 11px; font-weight: 600; max-width: 60%; }
+.legend { position: absolute; top: 6px; right: 8px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 8px; font-size: 11px; font-weight: 600; max-width: 60%; padding: 2px 6px; border-radius: 6px; background: color-mix(in srgb, var(--plot-bg) 85%, transparent); }
 .lg i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 3px; vertical-align: middle; }
 </style>

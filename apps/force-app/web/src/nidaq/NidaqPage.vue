@@ -320,6 +320,7 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .virtual-chassis .mod.empty { flex: 0 0 90px; min-height: 68px; }
 .model { font-size: 12px; font-weight: 700; margin: 1px 0 1px; display: flex; align-items: center; gap: 5px; }
 .iepe { font-size: 8px; font-weight: 700; padding: 1px 4px; border-radius: 4px; background: rgba(96,165,250,.16); color: #60a5fa; }
+[data-theme="light"] .iepe { color: #1d4ed8; }
 .conn-note { font-size: 9px; color: var(--text-dim); margin-bottom: 8px; }
 .ports { display: flex; flex-direction: column; gap: 5px; }
 .ports.terminal { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }

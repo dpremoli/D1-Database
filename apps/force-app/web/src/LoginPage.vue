@@ -95,6 +95,19 @@ async function submit() {
 	border-radius: var(--radius);
 	box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
 }
+/* The glass above is hard-coded dark navy, which the dark theme wants. On the light theme the text
+   switches to dark ink and landed on that same dark card — title, labels and fields nearly
+   invisible. Light glass there instead; the dark theme is untouched. */
+[data-theme='light'] .login-card {
+	background: rgba(255, 255, 255, 0.72);
+	box-shadow: 0 30px 80px rgba(15, 23, 42, 0.16);
+}
+[data-theme='light'] .brand-mark {
+	background: rgba(0, 0, 0, 0.04);
+}
+[data-theme='light'] .field input {
+	background: rgba(255, 255, 255, 0.85);
+}
 .brand {
 	display: flex;
 	align-items: center;

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { RecordClient } from './liveClient';
-import { CH_COLOR } from './types';
+import { channelColor } from './types';
 import { theme } from '../theme';
 
 const props = defineProps<{ client: RecordClient; channels?: string[]; scale?: 'amp' | 'psd' }>();
@@ -121,7 +121,7 @@ function draw() {
 	// Plot data
 	for (const ch of drawn) {
 		const s = fft.spectra[ch]; if (!s) continue;
-		ctx.strokeStyle = CH_COLOR[ch] || '#38bdf8'; ctx.lineWidth = 1.2; ctx.beginPath();
+		ctx.strokeStyle = channelColor(ch, theme.value) || '#38bdf8'; ctx.lineWidth = 1.2; ctx.beginPath();
 		for (let i = 0; i < f.length && i < s.length; i++) {
 			const x = xOf(f[i]);
 			const y = yOf(s[i]);
@@ -145,7 +145,7 @@ function draw() {
 	ctx.globalAlpha = 0.85; ctx.fillStyle = pal.bg; ctx.fillRect(ML + 1, MT + 1, legendW + 4, 17); ctx.globalAlpha = 1;
 	let lx = ML + 4;
 	for (const ch of drawn) {
-		ctx.fillStyle = CH_COLOR[ch] || '#38bdf8';
+		ctx.fillStyle = channelColor(ch, theme.value) || '#38bdf8';
 		ctx.fillText(ch, lx, MT + 4); lx += ctx.measureText(ch).width + 12;
 	}
 }

@@ -5,7 +5,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { RecordClient, SUB_NAMES } from './liveClient';
-import { CH_COLOR } from './types';
+import { channelColor } from './types';
+import { theme } from '../theme';
 import LiveForcePlot from './LiveForcePlot.vue';
 import LiveFft from './LiveFft.vue';
 import LiveSpectrogram from './LiveSpectrogram.vue';
@@ -120,7 +121,7 @@ onBeforeUnmount(() => client.disconnect());
 					<button v-for="m in MODES" :key="m.key" class="segbtn" :class="{ on: mode === m.key }" @click="mode = m.key">{{ m.label }}</button>
 				</div>
 				<div class="chips">
-					<button v-for="a in SUMMED" :key="a" class="chip" :style="channels.includes(a) ? { '--c': CH_COLOR[a] } : {}"
+					<button v-for="a in SUMMED" :key="a" class="chip" :style="channels.includes(a) ? { '--c': channelColor(a, theme) } : {}"
 						:class="{ on: channels.includes(a) }" @click="toggleChannel(a)">{{ a }}</button>
 				</div>
 				<div class="subwrap">
@@ -129,7 +130,7 @@ onBeforeUnmount(() => client.disconnect());
 					</button>
 					<div v-if="subsOpen" class="subpop" @click.stop>
 						<button v-for="s in SUB_NAMES" :key="s" class="subopt" :class="{ on: channels.includes(s) }" @click="toggleChannel(s)">
-							<span class="dot" :style="{ background: CH_COLOR[s] }"></span>{{ s }}
+							<span class="dot" :style="{ background: channelColor(s, theme) }"></span>{{ s }}
 							<span v-if="channels.includes(s)" class="material-symbols-rounded tick">check</span>
 						</button>
 					</div>
@@ -186,9 +187,6 @@ onBeforeUnmount(() => client.disconnect());
 .chips { display: flex; gap: 5px; flex-shrink: 0; }
 .chip { display: inline-flex; align-items: center; gap: 3px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
 .chip.on { color: var(--c); border-color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
-/* --c is a canvas channel colour (CH_COLOR), tuned for the dark plot ground; as text on the light
-   theme's near-white it fell to ~1.6:1 (Fy). Darken it there for the label only. */
-[data-theme="light"] .chip.on { color: color-mix(in srgb, var(--c) 60%, black); }
 .chip .material-symbols-rounded { font-size: 15px; }
 .subwrap { position: relative; flex-shrink: 0; }
 .sub-btn.on { --c: var(--accent); }

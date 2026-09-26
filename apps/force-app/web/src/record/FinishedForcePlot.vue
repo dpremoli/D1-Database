@@ -5,7 +5,7 @@
 // SaveCutDialog).
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Cache } from '@d1/force-plotting';
-import { CH_COLOR } from './types';
+import { channelColor } from './types';
 import { theme } from '../theme';
 
 const props = defineProps<{
@@ -173,7 +173,7 @@ function draw() {
 	}
 
 	for (const [key, arr] of series) {
-		const col = CH_COLOR[key] ?? '#94a3b8';
+		const col = channelColor(key, theme.value) ?? '#94a3b8';
 		ctx.globalAlpha = 0.9; ctx.strokeStyle = col; ctx.lineWidth = 1.2;
 		ctx.beginPath();
 		for (let i = 0; i < n; i++) { const x = xOf(cache.t[i]); const y = yOf(arr[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
@@ -205,8 +205,8 @@ onBeforeUnmount(() => { window.removeEventListener('resize', resize); ro?.discon
 	<div class="finished-force" :class="{ editable: cropEditable }">
 		<canvas ref="canvasEl" @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp"></canvas>
 		<div class="legend">
-			<span v-for="k in (channels ?? ['Fx', 'Fy', 'Fz'])" :key="k" class="lg" :style="{ color: CH_COLOR[k] }">
-				<i :style="{ background: CH_COLOR[k] }"></i>{{ k }}
+			<span v-for="k in (channels ?? ['Fx', 'Fy', 'Fz'])" :key="k" class="lg" :style="{ color: channelColor(k, theme) }">
+				<i :style="{ background: channelColor(k, theme) }"></i>{{ k }}
 			</span>
 		</div>
 	</div>
@@ -216,6 +216,6 @@ onBeforeUnmount(() => { window.removeEventListener('resize', resize); ro?.discon
 .finished-force { position: relative; width: 100%; height: 100%; min-height: 160px; border-radius: 8px; overflow: hidden; background: var(--plot-bg); }
 .finished-force canvas { width: 100%; height: 100%; display: block; }
 .finished-force.editable canvas { cursor: ew-resize; }
-.legend { position: absolute; top: 6px; right: 8px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 8px; font-size: 11px; font-weight: 600; max-width: 60%; }
+.legend { position: absolute; top: 6px; right: 8px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 8px; font-size: 11px; font-weight: 600; max-width: 60%; padding: 2px 6px; border-radius: 6px; background: color-mix(in srgb, var(--plot-bg) 85%, transparent); }
 .lg i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 3px; vertical-align: middle; }
 </style>

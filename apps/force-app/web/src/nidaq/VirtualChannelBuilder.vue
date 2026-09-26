@@ -5,7 +5,8 @@
 // validation is live (debounced) against the backend, which is the actual source of truth for
 // what's allowed — this never re-implements the whitelist client-side, just calls it.
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
-import { CH_COLOR } from '../record/types';
+import { channelColor } from '../record/types';
+import { theme } from '../theme';
 import { nidaqApi, CORE_REFERENCEABLE, type Channel, type FormulaValidation } from './nidaqApi';
 import { useDialog } from '../ui/useDialog';
 
@@ -32,7 +33,7 @@ const hardwareExtras = computed(() =>
 );
 
 function chipColor(name: string): string {
-	return CH_COLOR[name] ?? props.channels.find((c) => c.name === name)?.color ?? '#94a3b8';
+	return channelColor(name, theme.value) ?? props.channels.find((c) => c.name === name)?.color ?? '#94a3b8';
 }
 
 // Insert at the cursor, not just appended — building a formula by clicking chips in any order
