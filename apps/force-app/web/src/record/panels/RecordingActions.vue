@@ -31,13 +31,13 @@ const w = useWorkspace();
 				</button>
 			</div>
 			<div class="actions">
-				<button v-if="!w.locked.value" class="btn start" :disabled="w.busy.value || !w.st.connected" @click="w.start()">
+				<button v-if="!w.locked.value" class="btn success start" :disabled="w.busy.value || !w.st.connected" @click="w.start()">
 					<span class="material-symbols-rounded">fiber_manual_record</span> Start
 				</button>
-				<button v-else class="btn stop" :disabled="w.busy.value || w.isFinalizing.value" @click="w.stop()">
+				<button v-else class="btn danger stop" :disabled="w.busy.value || w.isFinalizing.value" @click="w.stop()">
 					<span class="material-symbols-rounded">stop</span> {{ w.isFinalizing.value ? 'Finalizing…' : 'Stop' }}
 				</button>
-				<button v-if="w.isDone.value" class="btn ghost" @click="w.newRun()">New</button>
+				<button v-if="w.isDone.value" class="btn" @click="w.newRun()">New</button>
 			</div>
 		</div>
 		<div v-if="w.mode.value !== 'playback' && w.source.value !== 'replay'" class="proc-notes">
@@ -51,26 +51,25 @@ const w = useWorkspace();
 
 <style scoped>
 .actions-wrap { display: flex; flex-direction: column; gap: 4px; }
-.actions-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.actions { display: flex; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; font-size: 13.5px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
-.btn .material-symbols-rounded { font-size: 18px; }
-.btn.start { background: #22c55e; color: #05210f; }
-.btn.stop { background: #ef4444; color: #2a0808; }
-.btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* One row while the toggles and Start fit side by side. When they don't (the default narrow
+   column), Start wraps onto a full-width row of its own instead of the toggles being squeezed
+   until their labels clip. The 999:1 grow split keeps Start at its natural width while the two
+   share a row; alone on its row it takes the whole width. */
+.actions-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.actions { flex: 1 0 auto; display: flex; justify-content: flex-end; gap: 8px; }
+.actions .btn { flex: 1 0 auto; justify-content: center; }
 /* Acquisition's processing toggles — relocated from a Details card (see RecordingOptions.vue). */
-.segproc { display: flex; min-width: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.segproc button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 8px; background: rgba(255,255,255,0.03); border: none; border-right: 1px solid var(--border); color: var(--text-dim); font-size: 9.5px; font-weight: 600; letter-spacing: 0.01em; cursor: pointer; }
+.segproc { flex: 999 0 auto; display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.segproc button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 4px; background: var(--bg-3); white-space: nowrap; border: none; border-right: 1px solid var(--border); color: var(--text-dim); font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.01em; cursor: pointer; }
 .segproc button:last-child { border-right: none; }
-.segproc button.on { color: #7dd3fc; background: rgba(56,189,248,0.14); }
+.segproc button.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .segproc button:disabled { opacity: 0.5; cursor: not-allowed; }
-.segproc .material-symbols-rounded { font-size: 16px; }
+.segproc .material-symbols-rounded { font-size: var(--icon-sm); }
 .proc-notes { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
-.hint { font-size: 11.5px; color: var(--text-dim); margin: 0; }
-.sync { display: flex; align-items: center; gap: 5px; font-size: 11.5px; margin: 0; }
-.sync .material-symbols-rounded { font-size: 14px; }
-.sync.ok { color: #4ade80; }
-.sync.warn { color: #fbbf24; }
-.err { color: var(--danger); font-size: 12px; margin: 4px 0 0; }
+.hint { font-size: var(--fs-sm); color: var(--text-dim); margin: 0; }
+.sync { display: flex; align-items: center; gap: 5px; font-size: var(--fs-sm); margin: 0; }
+.sync .material-symbols-rounded { font-size: var(--icon-xs); }
+.sync.ok { color: var(--ok); }
+.sync.warn { color: var(--warn); }
+.err { color: var(--danger); font-size: var(--fs-sm); margin: 4px 0 0; }
 </style>

@@ -390,9 +390,9 @@ watch(() => props.paintMode, () => {
 <style scoped>
 .diag-scatter { position: relative; width: 100%; height: 100%; min-height: 160px; background: var(--plot-bg, #0b1020); border-radius: 6px; overflow: hidden; }
 .diag-scatter canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
-.ds-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-dim, #94a3b8); font-size: 12px; }
+.ds-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-dim, #94a3b8); font-size: var(--fs-sm, 12px); }
 .ds-msg.err { color: var(--danger, #fca5a5); }
-.ds-count { position: absolute; right: 8px; bottom: 6px; font-size: 10px; color: var(--text-dim, #94a3b8); background: rgba(0,0,0,0.35); padding: 1px 5px; border-radius: 4px; font-variant-numeric: tabular-nums; }
+.ds-count { position: absolute; right: 8px; bottom: 6px; font-size: var(--fs-xs, 11px); color: var(--text-dim, #94a3b8); background: rgba(0,0,0,0.35); padding: 1px 5px; border-radius: 4px; font-variant-numeric: tabular-nums; }
 .ds-paint { position: absolute; inset: 0; cursor: crosshair; outline: none; }
-.ds-paint-hint { position: absolute; left: 8px; top: 6px; font-size: 10px; color: #fcd34d; background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 4px; pointer-events: none; }
+.ds-paint-hint { position: absolute; left: 8px; top: 6px; font-size: var(--fs-xs, 11px); color: #fcd34d; background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 4px; pointer-events: none; }
 </style>

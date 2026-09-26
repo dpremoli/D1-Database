@@ -257,11 +257,11 @@ onMounted(() => { load(); refreshQueue(); });
 				<span>Free on drive</span><b>{{ disk.free_gb.toFixed(1) }} GB</b>
 			</div>
 			<div class="spacer"></div>
-			<button class="btn ghost" :disabled="loading" @click="load">
+			<button class="btn" :disabled="loading" @click="load">
 				<span class="material-symbols-rounded">{{ loading ? 'hourglass_top' : 'refresh' }}</span>
 				{{ loading ? 'Loading…' : 'Refresh' }}
 			</button>
-			<button v-if="unsynced.length" class="btn save" @click="uploadAllUnsynced">
+			<button v-if="unsynced.length" class="btn primary" @click="uploadAllUnsynced">
 				<span class="material-symbols-rounded">cloud_upload</span>
 				Upload {{ unsynced.length }} unsynced
 			</button>
@@ -294,11 +294,11 @@ onMounted(() => { load(); refreshQueue(); });
 					<p v-if="item.lastError" class="rmsg bad">{{ item.lastError }}</p>
 				</div>
 				<div class="ract">
-					<button class="btn ghost sm" :disabled="queueBusy === item.id" @click="retryOne(item.id)">
+					<button class="btn sm" :disabled="queueBusy === item.id" @click="retryOne(item.id)">
 						<span class="material-symbols-rounded">{{ queueBusy === item.id ? 'hourglass_top' : 'refresh' }}</span>
 						{{ queueBusy === item.id ? 'Retrying…' : 'Retry' }}
 					</button>
-					<button class="btn danger sm" :disabled="queueBusy === item.id" @click="discardOne(item)">
+					<button class="btn sm danger quiet" :disabled="queueBusy === item.id" @click="discardOne(item)">
 						<span class="material-symbols-rounded">delete</span>Discard
 					</button>
 				</div>
@@ -334,14 +334,14 @@ onMounted(() => { load(); refreshQueue(); });
 				<p v-if="rowMsg[c.id]" class="rmsg" :class="{ bad: rowMsg[c.id].includes('failed') }">{{ rowMsg[c.id] }}</p>
 			</div>
 			<div class="ract">
-				<button v-if="c.finalized" class="btn ghost sm" :disabled="!!busy[c.id]" @click="openEdit(c)">
+				<button v-if="c.finalized" class="btn sm" :disabled="!!busy[c.id]" @click="openEdit(c)">
 					<span class="material-symbols-rounded">edit</span>Edit
 				</button>
-				<button v-if="canUpload(c)" class="btn ghost sm" :disabled="!!busy[c.id]" @click="upload(c)">
+				<button v-if="canUpload(c)" class="btn sm" :disabled="!!busy[c.id]" @click="upload(c)">
 					<span class="material-symbols-rounded">{{ busy[c.id] === 'uploading' ? 'hourglass_top' : 'cloud_upload' }}</span>
 					{{ busy[c.id] === 'uploading' ? 'Uploading…' : 'Upload' }}
 				</button>
-				<button class="btn danger sm" :disabled="!!busy[c.id]" @click="remove(c)">
+				<button class="btn sm danger quiet" :disabled="!!busy[c.id]" @click="remove(c)">
 					<span class="material-symbols-rounded">{{ busy[c.id] === 'deleting' ? 'hourglass_top' : 'delete' }}</span>
 					{{ busy[c.id] === 'deleting' ? 'Deleting…' : 'Delete' }}
 				</button>
@@ -360,49 +360,40 @@ onMounted(() => { load(); refreshQueue(); });
 
 <style scoped>
 .caps { max-width: 820px; }
-h2 { margin: 0 0 4px; font-size: 16px; }
-.lead { margin: 0 0 18px; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
-.hint { font-size: 11.5px; color: var(--text-dim); }
+h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
+.lead { margin: 0 0 18px; font-size: var(--fs-md); color: var(--text-dim); line-height: 1.5; }
+.hint { font-size: var(--fs-sm); color: var(--text-dim); }
 .path { margin: 6px 0 14px; font-family: var(--mono); word-break: break-all; }
-.err { color: var(--danger); font-size: 12px; }
+.err { color: var(--danger); font-size: var(--fs-sm); }
 .summary { display: flex; align-items: flex-end; gap: 22px; padding: 12px 14px;
 	background: var(--surface); border: 1px solid var(--border); border-radius: 10px; flex-wrap: wrap; }
 .stat { display: flex; flex-direction: column; gap: 2px; }
-.stat span { font-size: 11px; color: var(--text-dim); }
-.stat b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.stat span { font-size: var(--fs-xs); color: var(--text-dim); }
+.stat b { font-size: var(--fs-lg); font-variant-numeric: tabular-nums; }
 .spacer { flex: 1; }
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; font-size: 12.5px;
-	font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
-.btn.sm { padding: 6px 11px; font-size: 12px; }
-.btn .material-symbols-rounded { font-size: 16px; }
-.btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
-.btn.save { background: var(--accent); color: var(--accent-ink); }
-.btn.danger { background: transparent; color: var(--danger); border: 1px solid var(--border); }
-.btn.danger:hover:not(:disabled) { background: rgba(239,68,68,0.1); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .row { display: flex; align-items: center; gap: 12px; padding: 11px 13px; margin-top: 8px;
 	background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .rmain { flex: 1; min-width: 0; }
 .rtop { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-.rname { font-size: 13.5px; font-weight: 600; }
+.rname { font-size: var(--fs-md); font-weight: 600; }
 .rname.clickable { cursor: pointer; }
 .rname.clickable:hover { color: var(--accent); text-decoration: underline; }
-.rsub { display: flex; gap: 12px; margin-top: 3px; font-size: 11.5px; color: var(--text-dim);
+.rsub { display: flex; gap: 12px; margin-top: 3px; font-size: var(--fs-sm); color: var(--text-dim);
 	flex-wrap: wrap; font-variant-numeric: tabular-nums; }
 .mono { font-family: var(--mono); }
-.tag { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+.tag { font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
 	padding: 1px 7px; border-radius: 99px; color: var(--text-dim); background: var(--surface-2); }
-.tag.ok { color: #4ade80; background: rgba(74,222,128,0.12); }
-.tag.warn { color: #fbbf24; background: rgba(251,191,36,0.14); }
+.tag.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.tag.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
 .tag.dim { opacity: 0.7; }
 .ract { display: flex; gap: 7px; flex-shrink: 0; }
-.rmsg { margin: 5px 0 0; font-size: 11.5px; color: #4ade80; }
+.rmsg { margin: 5px 0 0; font-size: var(--fs-sm); color: var(--ok); }
 .rmsg.bad { color: var(--danger); }
-.empty { padding: 26px; text-align: center; color: var(--text-dim); font-size: 12.5px;
+.empty { padding: 26px; text-align: center; color: var(--text-dim); font-size: var(--fs-md);
 	border: 1px dashed var(--border); border-radius: 10px; margin-top: 10px; }
-h3 { margin: 24px 0 4px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
-.chip { font-size: 10px; font-weight: 700; color: var(--accent-ink); background: var(--accent);
+h3 { margin: 24px 0 4px; font-size: var(--fs-lg); display: flex; align-items: center; gap: 8px; }
+.chip { font-size: var(--fs-xs); font-weight: 700; color: var(--accent-ink); background: var(--accent);
 	padding: 1px 7px; border-radius: 99px; }
 .sub { margin: 0 0 8px; line-height: 1.45; }
-.qrow { border-color: rgba(251,191,36,0.28); }
+.qrow { border-color: color-mix(in srgb, var(--warn) 28%, transparent); }
 </style>

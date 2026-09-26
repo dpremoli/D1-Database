@@ -101,9 +101,9 @@ onBeforeUnmount(() => { sync?.close(); sync = null; });
 <style scoped>
 .dpw { display: flex; flex-direction: column; height: 100vh; background: var(--bg, #0b1020); }
 .dpw-bar { display: flex; align-items: baseline; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
-.dpw-kicker { font-size: 12.5px; font-weight: 700; }
-.dpw-note { font-size: 11px; color: var(--text-dim); }
+.dpw-kicker { font-size: var(--fs-md); font-weight: 700; }
+.dpw-note { font-size: var(--fs-xs); color: var(--text-dim); }
 .dpw-body { flex: 1; min-height: 0; padding: 10px 12px; }
-.dpw-err, .dpw-loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-dim); font-size: 13px; }
+.dpw-err, .dpw-loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-dim); font-size: var(--fs-md); }
 .dpw-err { color: var(--danger, #fca5a5); }
 </style>
