@@ -97,10 +97,10 @@ async function loadFromDirectus(opId: string) {
 		params: {
 			fields: [
 				'sample_id.sample_id', 'sample_id.sample_code', 'sample_id.nickname',
-				'operator_person_id.person_id', 'operator_person_id.first_name', 'operator_person_id.last_name',
-				'equipment_id.equipment_id', 'equipment_id.name',
+				'operator_person_id.person_id', 'operator_person_id.full_name',
+				'equipment_id.equipment_id', 'equipment_id.equipment_name', 'equipment_id.equipment_code',
 				'insert_edge_id.edge_id', 'insert_edge_id.edge_code',
-				'tool_id.tool_id', 'tool_id.name',
+				'tool_id.tool_id', 'tool_id.tool_name', 'tool_id.tool_code',
 				'machining_operation_subtype', 'machining_spindle_speed_rpm', 'machining_feed_mm_per_rev',
 				'machining_workpiece_diameter_mm', 'capture_frequency_khz', 'outcome_notes',
 				'machining_axial_depth_of_cut_mm', 'machining_radial_depth_of_cut_mm', 'machining_cutting_length_mm',
@@ -112,10 +112,10 @@ async function loadFromDirectus(opId: string) {
 	const d = res.data?.data || {};
 	link.sampleId = d.sample_id?.sample_id || ''; link.sampleLabel = d.sample_id?.sample_code || d.sample_id?.nickname || '';
 	link.operatorId = d.operator_person_id?.person_id || '';
-	link.operatorLabel = [d.operator_person_id?.first_name, d.operator_person_id?.last_name].filter(Boolean).join(' ');
-	link.equipmentId = d.equipment_id?.equipment_id || ''; link.equipmentLabel = d.equipment_id?.name || '';
+	link.operatorLabel = d.operator_person_id?.full_name || '';
+	link.equipmentId = d.equipment_id?.equipment_id || ''; link.equipmentLabel = d.equipment_id?.equipment_name || d.equipment_id?.equipment_code || '';
 	link.edgeId = d.insert_edge_id?.edge_id || ''; link.edgeLabel = d.insert_edge_id?.edge_code || '';
-	link.toolId = d.tool_id?.tool_id || ''; link.toolLabel = d.tool_id?.name || '';
+	link.toolId = d.tool_id?.tool_id || ''; link.toolLabel = d.tool_id?.tool_name || d.tool_id?.tool_code || '';
 	meta.sampleName = d.recorded_metadata?.sample_name || link.sampleLabel || '';
 	meta.opType = d.machining_operation_subtype || '';
 	meta.coolant = d.recorded_metadata?.coolant || '';
