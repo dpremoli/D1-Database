@@ -204,7 +204,7 @@ async function submit() {
 			<div class="issues">
 				<div class="issues-head">
 					<h3>Recently reported</h3>
-					<button class="linkbtn" type="button" :disabled="issuesLoading" @click="fetchIssues">
+					<button class="linkbtn" type="button" title="Refresh" aria-label="Refresh" :disabled="issuesLoading" @click="fetchIssues">
 						<span class="material-symbols-rounded" :class="{ spin: issuesLoading }">refresh</span>
 					</button>
 				</div>

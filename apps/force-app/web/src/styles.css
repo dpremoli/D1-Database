@@ -147,6 +147,13 @@ a {
 button {
 	font-family: inherit;
 }
+/* One keyboard-focus ring for every control, in the accent — instead of Chromium's default blue
+   ring on some controls and nothing at all on others. Mouse clicks don't match :focus-visible, so
+   this only shows for keyboard use; fields that style their own focus (border-color) keep it. */
+:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
 
 /* Segmented toggle — carried over from the Directus force-analysis controls (Fx/Fy/Fz, Force/FFT),
    so the recording plot controls read the same. Global (unscoped) so any panel can use it. */

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Persistent app shell: a left vertical-tab sidebar (Record / Plot / Lab Amp / Settings) with the
 // active section rendered in the main area. Replaces the old select page.
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { authStore } from './authStore';
 import { syncStatus } from './record/directusSync';
@@ -99,6 +99,44 @@ async function signOut() { await authStore.logout(); router.replace('/login'); }
 // overlays the page rather than reserving a permanent 96px column, sliding out on hover so it
 // doesn't compete with the recording panels for width.
 const expanded = ref(false);
+// Hover still opens it for the mouse, but the handle is a real button so the keyboard (Tab to it,
+// Enter) and touch (tap) can open it too: the links were display:none until hovered, which left
+// the app's only navigation unreachable without a mouse. Opened that way it is "pinned" — it
+// stays open until focus or a tap leaves it, or Escape.
+const navEl = ref<HTMLElement | null>(null);
+const triggerEl = ref<HTMLButtonElement | null>(null);
+const mainEl = ref<HTMLElement | null>(null);
+let pinned = false;
+function openFromTrigger(e: MouseEvent) {
+	expanded.value = true;
+	pinned = true;
+	// detail 0 = activated from the keyboard: put focus on the current section's link.
+	if (e.detail === 0) {
+		void nextTick(() => (navEl.value?.querySelector<HTMLElement>('.navitem.active') ?? navEl.value?.querySelector<HTMLElement>('.navitem'))?.focus());
+	}
+}
+function collapse(refocusTrigger = false) {
+	expanded.value = false;
+	pinned = false;
+	if (refocusTrigger) void nextTick(() => triggerEl.value?.focus());
+}
+function onMouseLeave() { if (!pinned) expanded.value = false; }
+function onFocusOut(e: FocusEvent) {
+	if (pinned && !navEl.value?.contains(e.relatedTarget as Node | null)) collapse();
+}
+// Touch has no mouseleave: a tap anywhere outside closes it.
+function onDocPointerDown(e: PointerEvent) {
+	if (expanded.value && navEl.value && e.target instanceof Node && !navEl.value.contains(e.target)) collapse();
+}
+onMounted(() => document.addEventListener('pointerdown', onDocPointerDown, true));
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointerDown, true));
+// Navigating from a pinned sidebar closes it and hands focus to the page, rather than leaving it
+// on a link that has just been hidden.
+watch(() => route.path, () => {
+	if (!pinned) return;
+	collapse();
+	void nextTick(() => mainEl.value?.focus({ preventScroll: true }));
+});
 // Multi-monitor: pop a section into its own window (e.g. Plot while recording). Same origin, so the
 // new window shares the login; the recording backend is a single session but plotting is read-only.
 function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,width=1500,height=950'); }
@@ -106,10 +144,12 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 
 <template>
 	<div class="shell">
-		<nav class="sidebar" :class="{ expanded }" @mouseenter="expanded = true" @mouseleave="expanded = false">
-			<div class="trigger" v-show="!expanded">
+		<nav ref="navEl" class="sidebar" :class="{ expanded }" aria-label="Main navigation"
+			@mouseenter="expanded = true" @mouseleave="onMouseLeave" @focusout="onFocusOut" @keydown.esc="collapse(true)">
+			<button ref="triggerEl" v-show="!expanded" type="button" class="trigger" aria-label="Open navigation" title="Navigation"
+				:aria-expanded="expanded" @click="openFromTrigger">
 				<span class="vdot fx"></span><span class="vdot fy"></span><span class="vdot fz"></span>
-			</div>
+			</button>
 			<div class="navwrap" v-show="expanded">
 				<div class="brand">
 					<span class="brand-mark"><i class="dot fx"></i><i class="dot fy"></i><i class="dot fz"></i></span>
@@ -154,7 +194,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 				</div>
 			</div>
 		</nav>
-		<main class="content">
+		<main ref="mainEl" class="content" tabindex="-1">
 			<div v-if="showBanner" class="rec-banner">
 				<span class="rec-banner-dot"></span>
 				<span class="rec-banner-name">Recording — {{ recording!.sampleName }}</span>
@@ -202,6 +242,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 	width: 14px; height: 64px; margin: 0; padding: 8px 2px; overflow: hidden;
 	background: var(--bg-2); border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
 	border-radius: 0 14px 14px 0;
+	border-left: 0; cursor: pointer; color: inherit; font: inherit;
 }
 .vdot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
 .vdot.fx { background: var(--fx); } .vdot.fy { background: var(--fy); } .vdot.fz { background: var(--fz); }
@@ -214,7 +255,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 .navrow { position: relative; flex-shrink: 0; }
 .popout { position: absolute; top: 4px; right: 4px; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; opacity: 0; transition: opacity 0.14s; }
 .popout .material-symbols-rounded { font-size: 13px; }
-.navrow:hover .popout { opacity: 1; }
+.navrow:hover .popout, .navrow:focus-within .popout { opacity: 1; }
 .popout:hover { color: var(--accent); }
 .navitem { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 4px; border-radius: 10px; color: var(--text-dim); text-decoration: none; transition: background 0.14s, color 0.14s; }
 .navitem .material-symbols-rounded { font-size: 22px; }
@@ -241,6 +282,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 /* The sidebar is fixed/overlaid — it expands over the page on hover rather than pushing content —
    so content needs no reserved margin at all; the collapsed left-middle dot handle sits on top of it. */
 .content { flex: 1; min-width: 0; }
+.content:focus { outline: none; } /* a programmatic focus target after navigation, not a control */
 /* Blue, not red. A healthy recording in progress is information, not a fault — #dc2626 here was the
    exact colour the forced-stop and safety-alarm banners use, so a normal run looked like a failure
    every time the operator left the Record page. #2563eb is the same informational blue

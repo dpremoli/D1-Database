@@ -127,7 +127,7 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 			<span v-if="devices" class="badge" :class="devices.simulated ? 'sim' : 'live'">{{ devices.simulated ? 'SIMULATED' : 'LIVE' }}</span>
 			<div class="spacer"></div>
 			<button class="btn ghost" @click="autoassign"><span class="material-symbols-rounded">bolt</span> Auto-assign force</button>
-			<button class="btn ghost" :disabled="loading" @click="load"><span class="material-symbols-rounded">refresh</span></button>
+			<button class="btn ghost" title="Refresh" aria-label="Refresh" :disabled="loading" @click="load"><span class="material-symbols-rounded">refresh</span></button>
 		</header>
 		<p v-if="err" class="err">{{ err }}</p>
 
@@ -229,7 +229,7 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 					<span class="cname" :title="c.name">{{ c.name }}</span>
 					<span class="crole">{{ c.role }}</span>
 					<span class="cbind" :class="{ unbound: !c.physical }">{{ c.physical || (c.source === 'virtual' ? c.formula || 'virtual' : 'unbound') }}</span>
-					<button class="rm" @click.stop="removeChannel(c.name)"><span class="material-symbols-rounded">close</span></button>
+					<button class="rm" title="Remove channel" aria-label="Remove channel" @click.stop="removeChannel(c.name)"><span class="material-symbols-rounded">close</span></button>
 				</div>
 				<p v-if="!channels.length" class="hint">No channels — hit Auto-assign force.</p>
 			</aside>
@@ -250,7 +250,7 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 		<!-- Add-card catalog -->
 		<div v-if="catalogFor != null" class="modal" @click.self="catalogFor = null">
 			<div class="catalog">
-				<div class="cat-head"><b>Add card to Slot {{ catalogFor }}</b><button class="rm" @click="catalogFor = null"><span class="material-symbols-rounded">close</span></button></div>
+				<div class="cat-head"><b>Add card to Slot {{ catalogFor }}</b><button class="rm" title="Close" aria-label="Close" @click="catalogFor = null"><span class="material-symbols-rounded">close</span></button></div>
 				<div class="catgrid">
 					<button v-for="card in cards" :key="card.product_type" class="cattile" @click="addCard(card.product_type)">
 						<span class="ctag">{{ card.connector.toUpperCase() }}<template v-if="card.iepe"> · IEPE</template></span>

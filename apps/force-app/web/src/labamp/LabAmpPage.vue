@@ -186,7 +186,7 @@ onMounted(refresh);
 							</template>
 							<template v-else>
 								<td>{{ s.sensitivity }}</td><td>{{ s.range }}</td>
-								<td><button class="btn-sm edit" @click="startEdit(s)" :disabled="!status?.reachable"><span class="material-symbols-rounded">edit</span></button></td>
+								<td><button class="btn-sm edit" title="Edit calibration" aria-label="Edit calibration" @click="startEdit(s)" :disabled="!status?.reachable"><span class="material-symbols-rounded">edit</span></button></td>
 							</template>
 						</tr>
 					</tbody>
