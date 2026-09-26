@@ -138,9 +138,9 @@ function insertFunc(f: (typeof FUNCS)[number]) {
 			</div>
 
 			<div class="vcb-actions">
-				<button class="vcb-btn" @click="emit('cancel')">Cancel</button>
+				<button class="btn" @click="emit('cancel')">Cancel</button>
 				<div class="vcb-spacer"></div>
-				<button class="vcb-btn primary" :disabled="!canSave" @click="save">Save</button>
+				<button class="btn primary" :disabled="!canSave" @click="save">Save</button>
 			</div>
 		</div>
 	</div>
@@ -171,8 +171,4 @@ function insertFunc(f: (typeof FUNCS)[number]) {
 .chip.op.fn { font-family: var(--mono); font-size: var(--fs-xs); }
 .vcb-actions { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
 .vcb-spacer { flex: 1; }
-.vcb-btn { padding: 9px 16px; font-size: var(--fs-md); font-weight: 600; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 9px; cursor: pointer; }
-.vcb-btn:hover:not(:disabled) { background: var(--surface-2); }
-.vcb-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.vcb-btn.primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 </style>

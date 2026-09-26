@@ -25,7 +25,7 @@ const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
 			 unusable, not merely cramped. The scrub now holds a floor width and the readout drops
 			 to its own line instead. -->
 		<div class="row transport-main">
-			<button class="play" :disabled="!p.loaded || w.replay.downloading" :title="p.playing ? 'Pause' : 'Play'" @click="w.playback.toggle()">
+			<button class="btn icon success play" :disabled="!p.loaded || w.replay.downloading" :title="p.playing ? 'Pause' : 'Play'" @click="w.playback.toggle()">
 				<span class="material-symbols-rounded" :class="{ spin: w.replay.downloading }">
 					{{ w.replay.downloading ? 'progress_activity' : p.playing ? 'pause' : 'play_arrow' }}
 				</span>
@@ -59,9 +59,8 @@ const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
 /* Wrap rather than crush: below the width where all three fit, the time readout moves to its own
    line and the scrub keeps its floor. */
 .transport-main { flex-wrap: wrap; }
-.play { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex-shrink: 0;
-	background: #22c55e; color: #05210f; border: none; border-radius: 50%; cursor: pointer; }
-.play:disabled { opacity: 0.5; cursor: not-allowed; }
+/* The shared Start-green icon button, round like a media control. */
+.play { flex-shrink: 0; border-radius: 50%; }
 .play .material-symbols-rounded { font-size: var(--icon-lg); }
 /* min-width, NOT the usual `min-width: 0`: this control has to stay grabbable. Under the floor
    the row wraps (above) instead of shrinking it away to a zero-width, unclickable element. */

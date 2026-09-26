@@ -67,12 +67,12 @@ onMounted(async () => {
 
 		<template v-if="isElectron">
 			<div class="actions">
-				<button class="btn ghost" :disabled="!packaged || checking || updateStatus.state === 'checking' || updateStatus.state === 'downloading'"
+				<button class="btn" :disabled="!packaged || checking || updateStatus.state === 'checking' || updateStatus.state === 'downloading'"
 					@click="checkForUpdates">
 					<span class="material-symbols-rounded">refresh</span>
 					{{ updateStatus.state === 'checking' ? 'Checking…' : 'Check for updates' }}
 				</button>
-				<button v-if="updateStatus.state === 'downloaded'" class="btn save" :disabled="installing" @click="installNow">
+				<button v-if="updateStatus.state === 'downloaded'" class="btn primary" :disabled="installing" @click="installNow">
 					<span class="material-symbols-rounded">restart_alt</span> Restart and install
 				</button>
 			</div>
@@ -143,10 +143,6 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 .hint { display: flex; align-items: center; gap: 5px; font-size: var(--fs-sm); color: var(--text-dim); margin-top: 4px; }
 .err { display: flex; align-items: center; gap: 5px; color: var(--danger); font-size: var(--fs-sm); margin: 4px 0 0; }
 .actions { display: flex; gap: 10px; margin-top: 6px; }
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; font-size: var(--fs-md); font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
-.btn.save { background: var(--accent); color: var(--accent-ink); }
-.btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .install-overlay { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column;
 	align-items: center; justify-content: center; gap: 6px; background: rgba(0,0,0,0.75); color: #fff; text-align: center; }

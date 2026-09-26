@@ -129,8 +129,8 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 			<h1>NI-DAQ</h1>
 			<span v-if="devices" class="badge" :class="devices.simulated ? 'sim' : 'live'">{{ devices.simulated ? 'SIMULATED' : 'LIVE' }}</span>
 			<div class="spacer"></div>
-			<button class="btn ghost" @click="autoassign"><span class="material-symbols-rounded">bolt</span> Auto-assign force</button>
-			<button class="btn ghost" title="Refresh" aria-label="Refresh" :disabled="loading" @click="load"><span class="material-symbols-rounded">refresh</span></button>
+			<button class="btn" @click="autoassign"><span class="material-symbols-rounded">bolt</span> Auto-assign force</button>
+			<button class="btn icon" title="Refresh" aria-label="Refresh" :disabled="loading" @click="load"><span class="material-symbols-rounded">refresh</span></button>
 		</header>
 		<p v-if="err" class="err">{{ err }}</p>
 
@@ -223,7 +223,7 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 
 			<!-- Channel model list -->
 			<aside class="channels">
-				<div class="ch-head"><b>Channels</b><button class="btn tiny" @click="addVirtual">+ Virtual</button></div>
+				<div class="ch-head"><b>Channels</b><button class="btn sm" @click="addVirtual">+ Virtual</button></div>
 				<div v-for="c in channels" :key="c.name" class="chrow" :class="{ clickable: c.source === 'virtual' }" @click="c.source === 'virtual' && editVirtual(c)">
 					<span class="dot" :style="{ background: c.color }"></span>
 					<span class="cname" :title="c.name">{{ c.name }}</span>
@@ -354,13 +354,6 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .chrow .rm { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; color: var(--text-faint); cursor: pointer; }
 .chrow .rm:hover { color: var(--danger); }
 .chrow .rm .material-symbols-rounded { font-size: var(--icon-xs); }
-/* buttons */
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; font-size: var(--fs-md); font-weight: 600; border-radius: 8px; cursor: pointer; }
-.btn.ghost { color: var(--text); background: var(--surface); border: 1px solid var(--border); }
-.btn.ghost:hover:not(:disabled) { background: var(--surface-2); }
-.btn:disabled { opacity: .5; cursor: not-allowed; }
-.btn .material-symbols-rounded { font-size: var(--icon-md); }
-.btn.tiny { padding: 4px 8px; font-size: var(--fs-xs); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
 /* popover */
 /* --surface-2 is a translucent overlay TINT (rgba, ~7% alpha in both themes) meant to sit atop an
    already-opaque parent — not a panel colour on its own. Used here for a position:fixed popover

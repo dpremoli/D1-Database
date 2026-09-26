@@ -104,9 +104,9 @@ onBeforeUnmount(() => client.disconnect());
 			</template>
 			<template v-if="isFrm">
 				<div class="segmode">
-					<button class="segbtn" :class="{ on: frmAxis === 'Fx' }" @click="frmAxis = 'Fx'">Fx</button>
-					<button class="segbtn" :class="{ on: frmAxis === 'Fy' }" @click="frmAxis = 'Fy'">Fy</button>
-					<button class="segbtn" :class="{ on: frmAxis === 'Fz' }" @click="frmAxis = 'Fz'">Fz</button>
+					<button class="segbtn fx" :class="{ on: frmAxis === 'Fx' }" @click="frmAxis = 'Fx'">Fx</button>
+					<button class="segbtn fy" :class="{ on: frmAxis === 'Fy' }" @click="frmAxis = 'Fy'">Fy</button>
+					<button class="segbtn fz" :class="{ on: frmAxis === 'Fz' }" @click="frmAxis = 'Fz'">Fz</button>
 				</div>
 				<select v-model="colormap" class="cm"><option v-for="m in maps" :key="m" :value="m">{{ colormapLabel(m) }}</option></select>
 			</template>
@@ -121,11 +121,11 @@ onBeforeUnmount(() => client.disconnect());
 			</template>
 			<template v-else>
 				<div class="chips">
-					<button v-for="a in SUMMED" :key="a" class="chip" :style="channels.includes(a) ? { '--c': channelColor(a, theme) } : {}"
+					<button v-for="a in SUMMED" :key="a" class="chip-toggle" :style="channels.includes(a) ? { '--c': channelColor(a, theme) } : {}"
 						:class="{ on: channels.includes(a) }" @click="toggleChannel(a)">{{ a }}</button>
 				</div>
 				<div class="subwrap">
-					<button class="chip sub-btn" :class="{ on: subCount > 0 }" @click.stop="subsOpen = !subsOpen">
+					<button class="chip-toggle sub-btn" :class="{ on: subCount > 0 }" @click.stop="subsOpen = !subsOpen">
 						Sub<span v-if="subCount"> · {{ subCount }}</span> <span class="material-symbols-rounded">expand_more</span>
 					</button>
 					<div v-if="subsOpen" class="subpop" @click.stop>
@@ -180,15 +180,9 @@ onBeforeUnmount(() => client.disconnect());
 .state.recording { color: var(--warn); } .state.done { color: var(--ok); } .state.error { color: var(--danger); }
 .cm { padding: 4px 8px; font-size: var(--fs-sm); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
 
-/* Mode/channel controls — ported from record/panels/ForcePanel.vue's toolbar so behaviour and
-   look stay identical between the embedded panel and its pop-out. */
-.segmode { display: flex; gap: 4px; flex-shrink: 0; }
-.segbtn { padding: 5px 10px; font-size: var(--fs-sm); color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
-.segbtn.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; border-color: var(--accent); }
+/* Channel controls — the same as record/panels/ForcePanel.vue's toolbar, so behaviour and look
+   stay identical between the embedded panel and its pop-out. */
 .chips { display: flex; gap: 5px; flex-shrink: 0; }
-.chip { display: inline-flex; align-items: center; gap: 3px; padding: 4px 10px; font-size: var(--fs-sm); font-weight: 600; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
-.chip.on { color: var(--c); border-color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
-.chip .material-symbols-rounded { font-size: var(--icon-sm); }
 .subwrap { position: relative; flex-shrink: 0; }
 .sub-btn.on { --c: var(--accent); }
 .subpop { position: absolute; top: 30px; left: 0; z-index: 40; min-width: 118px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 4px; box-shadow: 0 12px 34px rgba(0,0,0,0.3); }

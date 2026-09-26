@@ -220,7 +220,7 @@ function startNew() {
 						<span v-if="stageStatus(s.key) !== 'pending'" class="scd-stage-time">{{ stageElapsed(s.key).toFixed(1) }}s</span>
 					</div>
 					<span v-if="w.st.nTotal" class="scd-loading-sub">{{ w.st.nTotal.toLocaleString() }} samples · ~{{ formatMegabytes(estSizeMb) }}</span>
-					<button v-if="showManualRetry" class="scd-btn" @click="w.loadFinished()">Still loading — try again</button>
+					<button v-if="showManualRetry" class="btn" @click="w.loadFinished()">Still loading — try again</button>
 				</div>
 			</template>
 
@@ -231,7 +231,7 @@ function startNew() {
 				</div>
 				<div class="scd-actions">
 					<div class="scd-spacer"></div>
-					<button class="scd-btn primary" @click="startNew">Close</button>
+					<button class="btn primary" @click="startNew">Close</button>
 				</div>
 			</template>
 
@@ -285,15 +285,15 @@ function startNew() {
 				</p>
 
 				<div class="scd-actions">
-					<button class="scd-btn discard" :disabled="stage === 'saving'" @click="askDiscard">Don't save</button>
+					<button class="btn danger quiet" :disabled="stage === 'saving'" @click="askDiscard">Don't save</button>
 					<!-- Not gated on the save/upload choice above — the raw capture, .mat and live_cache are
 						 already finalized on disk the moment this stage is reachable (finalize() writes them
 						 unconditionally; the checkboxes above only add a DB record and/or a Downloads copy),
 						 so jumping straight to the plot view here is always safe. -->
-					<button class="scd-btn" :disabled="stage === 'saving'" @click="goToPlot">Open in Plot</button>
-					<button v-if="errMsg" class="scd-btn" :disabled="stage === 'saving'" @click="startNew">Start new run</button>
+					<button class="btn" :disabled="stage === 'saving'" @click="goToPlot">Open in Plot</button>
+					<button v-if="errMsg" class="btn" :disabled="stage === 'saving'" @click="startNew">Start new run</button>
 					<div class="scd-spacer"></div>
-					<button class="scd-btn primary" :disabled="nothingSelected || stage === 'saving'" @click="confirmSave">
+					<button class="btn primary" :disabled="nothingSelected || stage === 'saving'" @click="confirmSave">
 						{{ stage === 'saving' ? 'Saving…' : errMsg ? 'Retry' : 'Save' }}
 					</button>
 				</div>
@@ -305,9 +305,9 @@ function startNew() {
 					<p>Discard this recording without saving? It will <b>not</b> be uploaded or logged — the raw capture stays on disk locally, but nothing will be recorded in the database and no local copy will be exported.</p>
 				</div>
 				<div class="scd-actions">
-					<button class="scd-btn" @click="cancelDiscard">Cancel</button>
+					<button class="btn" @click="cancelDiscard">Cancel</button>
 					<div class="scd-spacer"></div>
-					<button class="scd-btn danger" @click="confirmDiscard">Yes, discard</button>
+					<button class="btn danger" @click="confirmDiscard">Yes, discard</button>
 				</div>
 			</template>
 
@@ -317,9 +317,9 @@ function startNew() {
 					<p>Saved. {{ savedOpId ? 'Logged to the database.' : 'Saved locally — you can still view and plot it, and upload it to the database later.' }}</p>
 				</div>
 				<div class="scd-actions">
-					<button class="scd-btn" @click="startNew">Start new run</button>
+					<button class="btn" @click="startNew">Start new run</button>
 					<div class="scd-spacer"></div>
-					<button class="scd-btn primary" @click="goToPlot">
+					<button class="btn primary" @click="goToPlot">
 						Open in Plot
 					</button>
 				</div>
@@ -366,12 +366,6 @@ function startNew() {
 .scd-err { font-size: var(--fs-sm); color: var(--danger); background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; padding: 8px 10px; }
 .scd-actions { display: flex; align-items: center; gap: 10px; }
 .scd-spacer { flex: 1; }
-.scd-btn { padding: 9px 16px; font-size: var(--fs-md); font-weight: 600; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 9px; cursor: pointer; }
-.scd-btn:hover:not(:disabled) { background: var(--surface-2); }
-.scd-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.scd-btn.primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
-.scd-btn.discard { color: var(--danger); }
-.scd-btn.danger { color: #fff; background: #dc2626; border-color: #dc2626; }
 .scd-confirm { display: flex; align-items: flex-start; gap: 10px; padding: 12px; background: color-mix(in srgb, var(--warn) 8%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: 9px; font-size: var(--fs-md); }
 .scd-confirm.ok { background: color-mix(in srgb, var(--ok) 8%, transparent); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
 .scd-confirm .material-symbols-rounded.warn { color: var(--warn); font-size: var(--icon-xl); }

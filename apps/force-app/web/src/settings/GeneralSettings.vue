@@ -95,9 +95,9 @@ onMounted(() => { loadDrives(); });
 <template>
 	<div class="general">
 		<h2>Appearance</h2>
-		<div class="theme-toggle">
-			<button :class="{ on: theme === 'dark' }" @click="applyTheme('dark')"><span class="material-symbols-rounded">dark_mode</span> Dark</button>
-			<button :class="{ on: theme === 'light' }" @click="applyTheme('light')"><span class="material-symbols-rounded">light_mode</span> Light</button>
+		<div class="theme-toggle segmode lg">
+			<button class="segbtn" :class="{ on: theme === 'dark' }" @click="applyTheme('dark')"><span class="material-symbols-rounded">dark_mode</span> Dark</button>
+			<button class="segbtn" :class="{ on: theme === 'light' }" @click="applyTheme('light')"><span class="material-symbols-rounded">light_mode</span> Light</button>
 		</div>
 
 		<h2 class="mt">Recording storage</h2>
@@ -146,10 +146,7 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 .hint { display: flex; align-items: center; gap: 5px; font-size: var(--fs-sm); color: var(--text-dim); margin-top: 4px; }
 .err { display: flex; align-items: center; gap: 5px; color: var(--danger); font-size: var(--fs-sm); margin: 4px 0 0; }
 .mt { margin-top: 32px; }
-.theme-toggle { display: flex; gap: 0; margin-bottom: 20px; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; width: fit-content; max-width: 100%; }
-.theme-toggle button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: var(--fs-md); font-weight: 600; color: var(--text-dim); background: transparent; border: none; cursor: pointer; }
-.theme-toggle button.on { background: var(--accent); color: var(--accent-ink); }
-.theme-toggle button .material-symbols-rounded { font-size: var(--icon-md); }
+.theme-toggle { margin-bottom: 20px; max-width: 100%; }
 
 /* Storage drives */
 .drive-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }

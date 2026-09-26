@@ -164,8 +164,8 @@ onMounted(() => { loadConfig(); });
 		<div v-if="error" class="err-msg">{{ error }}</div>
 
 		<div class="actions">
-			<button class="btn save" @click="saveConfig">{{ saved ? 'Saved ✓' : 'Save' }}</button>
-			<button class="btn ghost" @click="testConnection" :disabled="loading || !cfg.server_url">
+			<button class="btn primary" @click="saveConfig">{{ saved ? 'Saved ✓' : 'Save' }}</button>
+			<button class="btn" @click="testConnection" :disabled="loading || !cfg.server_url">
 				{{ loading ? 'Testing…' : 'Test connection' }}
 			</button>
 		</div>
@@ -173,7 +173,7 @@ onMounted(() => { loadConfig(); });
 		<!-- Remote sessions -->
 		<h3 class="mt">Remote backups</h3>
 		<p class="lead">Recordings stored on the backup server. Restore a backup if the local recording was lost.</p>
-		<button class="btn ghost" :disabled="sessionsLoading || !cfg.server_url" @click="loadSessions">
+		<button class="btn" :disabled="sessionsLoading || !cfg.server_url" @click="loadSessions">
 			<span class="material-symbols-rounded" style="font-size: var(--icon-sm)">{{ sessionsLoading ? 'hourglass_top' : 'cloud_download' }}</span>
 			{{ sessionsLoading ? 'Loading…' : 'Fetch remote backups' }}
 		</button>
@@ -190,7 +190,7 @@ onMounted(() => { loadConfig(); });
 					</span>
 					<span v-if="s.started_iso" class="rs-detail dim">{{ s.started_iso }}</span>
 				</div>
-				<button class="rb-btn recover" :disabled="!!restoreBusy[s.id]" @click="restoreSession(s.id)">
+				<button class="btn sm success" :disabled="!!restoreBusy[s.id]" @click="restoreSession(s.id)">
 					<span class="material-symbols-rounded">cloud_download</span>{{ restoreBusy[s.id] ? 'Restoring…' : 'Restore' }}
 				</button>
 			</div>
@@ -214,10 +214,6 @@ input[type="number"] { max-width: 120px; }
 .hint { font-size: var(--fs-sm); color: var(--text-dim); margin-top: 4px; }
 .err-msg { color: var(--danger); font-size: var(--fs-sm); margin: 6px 0; }
 .actions { display: flex; gap: 10px; margin-top: 10px; }
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; font-size: var(--fs-md); font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
-.btn.save { background: var(--accent); color: var(--accent-ink); }
-.btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .mt { margin-top: 28px; }
 
 .server-status { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 9px; margin-bottom: 10px; }
@@ -240,9 +236,4 @@ input[type="number"] { max-width: 120px; }
 .rs-state { display: inline-block; margin-left: 6px; font-size: var(--fs-xs); font-weight: 700; padding: 1px 5px; border-radius: 4px; text-transform: uppercase; }
 .rs-state.complete { color: #15803d; background: rgba(34,197,94,0.15); }
 .rs-state.streaming { color: #d97706; background: color-mix(in srgb, var(--warn) 15%, transparent); }
-.rb-btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; font-size: var(--fs-sm); font-weight: 600; border: none; border-radius: 7px; cursor: pointer; }
-.rb-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.rb-btn .material-symbols-rounded { font-size: var(--icon-sm); }
-.rb-btn.recover { color: #fff; background: #22c55e; }
-.rb-btn.recover:hover:not(:disabled) { background: #16a34a; }
 </style>

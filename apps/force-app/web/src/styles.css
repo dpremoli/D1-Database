@@ -178,48 +178,129 @@ button {
 	outline-offset: 2px;
 }
 
-/* Segmented toggle — carried over from the Directus force-analysis controls (Fx/Fy/Fz, Force/FFT),
-   so the recording plot controls read the same. Global (unscoped) so any panel can use it. */
+/* ---- Controls ----
+   One set for the whole app, instead of a private copy per component (there were ~30 button
+   styles: .scd-btn, .cd-btn, .ecm-btn, .vcb-btn, .lcv-btn, .rb-btn, ... in four paddings and
+   five font sizes). Two heights: 34px, and 26px for toolbars and rows (.sm, segments, chips).
+
+   Buttons: .btn is the everyday (secondary) button; add at most one variant --
+     .primary  the main action of a view or dialog   .danger   destructive, or Stop
+     .success  Start, Recover                         .quiet    no fill until hovered
+   -- and optionally .sm (compact) and/or .icon (square, icon only: give it a title).
+   .danger.quiet is the one combination: a per-row delete. .on is a toggle's pressed state and
+   .inverse sits on a coloured banner. */
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	height: 34px;
+	padding: 0 14px;
+	font: inherit;
+	font-size: var(--fs-md);
+	font-weight: 600;
+	line-height: 1;
+	white-space: nowrap;
+	text-decoration: none;
+	color: var(--text);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	cursor: pointer;
+}
+.btn:hover:not(:disabled) { background: var(--surface-2); border-color: var(--border-2); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn .material-symbols-rounded { font-size: var(--icon-sm); }
+.btn.primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+/* Mixing toward the text colour lightens on the dark theme and darkens on the light one. */
+.btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, var(--text)); border-color: transparent; }
+.btn.danger { color: #fff; background: #dc2626; border-color: #dc2626; }
+.btn.danger:hover:not(:disabled) { background: #b91c1c; border-color: #b91c1c; }
+.btn.success { color: #05210f; background: #22c55e; border-color: #22c55e; }
+.btn.success:hover:not(:disabled) { background: #16a34a; border-color: #16a34a; }
+.btn.quiet { color: var(--text-dim); background: transparent; border-color: transparent; }
+.btn.quiet:hover:not(:disabled) { color: var(--text); background: var(--surface-2); border-color: transparent; }
+/* A delete button repeated on every row of a list: red text rather than a red block per row. */
+.btn.danger.quiet { color: var(--danger); background: transparent; border-color: transparent; }
+.btn.danger.quiet:hover:not(:disabled) { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+/* Pressed state of a toggle button (set aria-pressed too). */
+.btn.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.btn.on:hover:not(:disabled) { color: var(--accent-ink); background: color-mix(in srgb, var(--accent) 85%, var(--text)); border-color: transparent; }
+/* On a coloured banner (recording, disk space, alarm): translucent white. The banner's main action
+   adds .primary: solid white, in the banner's own colour (the banner sets --banner). */
+.btn.inverse { color: #fff; background: rgba(255, 255, 255, 0.18); border-color: transparent; }
+.btn.inverse:hover:not(:disabled) { color: #fff; background: rgba(255, 255, 255, 0.3); border-color: transparent; }
+.btn.inverse.primary { color: var(--banner, #0f172a); background: #fff; }
+.btn.inverse.primary:hover:not(:disabled) { color: var(--banner, #0f172a); background: rgba(255, 255, 255, 0.86); }
+.btn.sm { height: 26px; padding: 0 10px; gap: 5px; font-size: var(--fs-sm); border-radius: 7px; }
+.btn.sm .material-symbols-rounded { font-size: var(--icon-xs); }
+.btn.icon { width: 34px; padding: 0; color: var(--text-dim); }
+.btn.icon.sm { width: 26px; }
+.btn.icon .material-symbols-rounded { font-size: var(--icon-md); }
+.btn.icon.sm .material-symbols-rounded { font-size: var(--icon-sm); }
+.btn.icon:hover:not(:disabled) { color: var(--text); }
+
+/* Segmented control: one choice out of a few, joined. .lg matches .btn's height. Channel choices
+   (.fx/.fy/.fz) light up in the channel's colour instead of the accent. */
 .segmode {
 	display: inline-flex;
+	flex-shrink: 0;
+	border: 1px solid var(--border);
 	border-radius: 8px;
 	overflow: hidden;
-	border: 1px solid var(--border);
 }
 .segbtn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
+	height: 24px;
+	padding: 0 10px;
 	font: inherit;
-	font-size: var(--fs-xs);
-	font-weight: 700;
-	cursor: pointer;
-	border: 0;
-	padding: 5px 12px;
-	background: var(--surface);
+	font-size: var(--fs-sm);
+	font-weight: 600;
+	line-height: 1;
+	white-space: nowrap;
 	color: var(--text-dim);
+	background: var(--surface);
+	border: 0;
 	border-right: 1px solid var(--border);
+	cursor: pointer;
 }
-.segbtn:last-child {
-	border-right: 0;
+.segbtn:last-child { border-right: 0; }
+.segbtn:hover:not(:disabled):not(.on) { color: var(--text); background: var(--surface-2); }
+.segbtn.on { color: var(--accent-ink); background: var(--accent); }
+.segbtn:disabled { opacity: 0.4; cursor: default; }
+.segbtn .material-symbols-rounded { font-size: var(--icon-sm); }
+.segmode.lg .segbtn { height: 32px; padding: 0 14px; font-size: var(--fs-md); }
+.segbtn.fx.on { color: #fff; background: var(--fx); }
+.segbtn.fy.on { color: #fff; background: var(--fy); }
+.segbtn.fz.on { color: #fff; background: var(--fz); }
+
+/* Toggle chip: a pill that lights up in its own colour (--c, e.g. a channel's) when on. */
+.chip-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	height: 26px;
+	padding: 0 10px;
+	font: inherit;
+	font-size: var(--fs-sm);
+	font-weight: 600;
+	line-height: 1;
+	color: var(--text-dim);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	cursor: pointer;
 }
-.segbtn.on {
-	background: var(--accent);
-	color: var(--accent-ink);
+.chip-toggle:hover { color: var(--text); }
+.chip-toggle.on {
+	color: var(--c, var(--accent));
+	border-color: var(--c, var(--accent));
+	background: color-mix(in srgb, var(--c, var(--accent)) 14%, transparent);
 }
-.segbtn:disabled {
-	opacity: 0.4;
-	cursor: default;
-}
-.segbtn.fx.on {
-	background: var(--fx);
-	color: #fff;
-}
-.segbtn.fy.on {
-	background: var(--fy);
-	color: #fff;
-}
-.segbtn.fz.on {
-	background: var(--fz);
-	color: #fff;
-}
+.chip-toggle .material-symbols-rounded { font-size: var(--icon-sm); }
 
 /* Dialogs: every modal opens the same way — the confirm prompt faded in while the others just
    appeared. The panel itself is what ui/useDialog.ts focuses on open, so it shows no ring. */

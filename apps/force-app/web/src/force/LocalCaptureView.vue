@@ -98,7 +98,7 @@ function goToDbPlot() {
 			<span class="material-symbols-rounded">error</span>
 			<div>
 				<p>Couldn't load this capture: {{ errMsg }}</p>
-				<button class="lcv-btn" @click="load">Retry</button>
+				<button class="btn sm lcv-btn" @click="load">Retry</button>
 			</div>
 		</div>
 
@@ -108,10 +108,10 @@ function goToDbPlot() {
 				<span>This recording is saved locally but hasn't been uploaded to the database{{ retryOpId ? ' — it has now been logged.' : '.' }}</span>
 				<div class="lcv-spacer"></div>
 				<template v-if="retryOpId">
-					<button class="lcv-btn primary" @click="goToDbPlot">Open database record</button>
+					<button class="btn sm primary lcv-btn" @click="goToDbPlot">Open database record</button>
 				</template>
 				<template v-else>
-					<button class="lcv-btn primary" :disabled="retrying" @click="retryUpload">{{ retrying ? 'Uploading…' : 'Retry upload' }}</button>
+					<button class="btn sm primary lcv-btn" :disabled="retrying" @click="retryUpload">{{ retrying ? 'Uploading…' : 'Retry upload' }}</button>
 				</template>
 			</div>
 			<p v-if="retryErr" class="lcv-retryerr">{{ retryErr }}</p>
@@ -133,8 +133,8 @@ function goToDbPlot() {
 				<div class="lcv-plot">
 					<div class="lcv-plot-label">
 						FRM
-						<span class="lcv-axisbtns">
-							<button v-for="a in (['Fx','Fy','Fz'] as const)" :key="a" :class="{ on: axis === a }" @click="axis = a">{{ a }}</button>
+						<span class="lcv-axisbtns segmode">
+							<button v-for="a in (['Fx','Fy','Fz'] as const)" :key="a" class="segbtn" :class="[a.toLowerCase(), { on: axis === a }]" @click="axis = a">{{ a }}</button>
 						</span>
 					</div>
 					<FrmCloud v-if="cache && summary" cache-file-id="" :cache-override="cache"
@@ -159,9 +159,7 @@ function goToDbPlot() {
 .lcv-loading, .lcv-err { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 60px 0; color: var(--text-dim); }
 .lcv-loading .spin { font-size: var(--icon-xl); }
 .lcv-err { color: var(--danger); }
-.lcv-btn { padding: 7px 14px; font-size: var(--fs-sm); font-weight: 600; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; margin-top: 6px; }
-.lcv-btn.primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
-.lcv-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.lcv-btn { margin-top: 6px; }
 .lcv-banner { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: color-mix(in srgb, var(--warn) 8%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); border-radius: 10px; font-size: var(--fs-md); color: var(--text); }
 .lcv-banner > .material-symbols-rounded { color: var(--warn); font-size: var(--icon-lg); }
 .lcv-spacer { flex: 1; }
@@ -173,7 +171,5 @@ function goToDbPlot() {
 .lcv-plots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; flex: 1; min-height: 420px; }
 .lcv-plot { display: flex; flex-direction: column; gap: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; min-height: 380px; }
 .lcv-plot-label { font-size: var(--fs-sm); font-weight: 600; color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
-.lcv-axisbtns { display: flex; gap: 4px; margin-left: auto; }
-.lcv-axisbtns button { padding: 3px 8px; font-size: var(--fs-xs); border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim); cursor: pointer; }
-.lcv-axisbtns button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.lcv-axisbtns { margin-left: auto; }
 </style>

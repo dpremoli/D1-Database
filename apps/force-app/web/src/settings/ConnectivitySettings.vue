@@ -170,7 +170,7 @@ onMounted(() => runDoctor());
 		<p class="lead">Diagnoses all connections, hardware, and system health. Identifies problems and suggests fixes.</p>
 
 		<div class="actions">
-			<button class="btn ghost" :disabled="loading" @click="runDoctor">
+			<button class="btn" :disabled="loading" @click="runDoctor">
 				<span class="material-symbols-rounded">{{ loading ? 'hourglass_top' : 'stethoscope' }}</span>
 				{{ loading ? 'Diagnosing…' : 'Run doctor' }}
 			</button>
@@ -200,13 +200,13 @@ onMounted(() => runDoctor());
 					<div v-if="f.fix" class="finding-fix">
 						<span class="material-symbols-rounded" style="font-size: var(--icon-xs);flex-shrink:0">build</span>
 						<span class="fix-text">{{ f.fix }}</span>
-						<button v-if="f.fixable" class="fix-btn" :disabled="fixingId === f.service" @click="applyFix(f)">
+						<button v-if="f.fixable" class="btn sm success" :disabled="fixingId === f.service" @click="applyFix(f)">
 							{{ fixingId === f.service ? 'Fixing…' : 'Fix now' }}
 						</button>
 					</div>
 					<div v-if="f.fix_command" class="cmd-block">
 						<code>{{ f.fix_command }}</code>
-						<button class="copy-btn" @click="copyCommand(f.fix_command!, f.service)">
+						<button class="btn sm" @click="copyCommand(f.fix_command!, f.service)">
 							<span class="material-symbols-rounded">{{ copied === f.service ? 'check' : 'content_copy' }}</span>
 							{{ copied === f.service ? 'Copied' : 'Copy' }}
 						</button>
@@ -228,8 +228,8 @@ onMounted(() => runDoctor());
 			<span class="ep-hint">{{ f.hint }}</span>
 		</label>
 		<div class="actions">
-			<button class="btn save" @click="saveEndpoints">{{ epSaved ? 'Saved ✓' : 'Save' }}</button>
-			<button class="btn ghost" @click="resetEndpoints">Reset to defaults</button>
+			<button class="btn primary" @click="saveEndpoints">{{ epSaved ? 'Saved ✓' : 'Save' }}</button>
+			<button class="btn" @click="resetEndpoints">Reset to defaults</button>
 		</div>
 	</div>
 </template>
@@ -245,13 +245,8 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 .field input { display: block; width: 100%; padding: 9px 11px; font-size: var(--fs-md); font-family: var(--mono); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; outline: none; box-sizing: border-box; }
 .field input:focus { border-color: var(--accent); }
 .ep-hint { display: block; font-size: var(--fs-sm); color: var(--text-dim); margin-top: 3px; }
-.btn.save { background: var(--accent); color: var(--accent-ink); }
 .lead { margin: 0 0 18px; font-size: var(--fs-md); color: var(--text-dim); line-height: 1.5; }
 .actions { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; font-size: var(--fs-md); font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
-.btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn .material-symbols-rounded { font-size: var(--icon-md); }
 .last { font-size: var(--fs-sm); color: var(--text-dim); }
 
 .recorder-alert { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; margin-bottom: 14px; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.25); border-radius: 10px; }
@@ -272,15 +267,9 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
    row 50/50 and every fix line started half-way across the card, away from its icon. */
 .finding-fix .fix-text { flex: 1; }
 
-.fix-btn { padding: 3px 10px; font-size: var(--fs-xs); font-weight: 700; color: #fff; background: #22c55e; border: none; border-radius: 5px; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
-.fix-btn:hover:not(:disabled) { background: #16a34a; }
-.fix-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .cmd-block { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; }
 .cmd-block code { flex: 1; font-family: var(--mono); font-size: var(--fs-sm); color: var(--text); word-break: break-all; user-select: all; }
-.copy-btn { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; font-size: var(--fs-xs); font-weight: 700; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 5px; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
-.copy-btn .material-symbols-rounded { font-size: var(--icon-xs); }
-.copy-btn:hover { background: var(--surface-2); }
 
 .all-good { display: flex; align-items: center; gap: 8px; margin-top: 16px; padding: 12px 16px; background: color-mix(in srgb, var(--ok) 8%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 20%, transparent); border-radius: 10px; font-size: var(--fs-lg); font-weight: 700; color: var(--ok); }
 .all-good .material-symbols-rounded { font-size: var(--icon-xl); }

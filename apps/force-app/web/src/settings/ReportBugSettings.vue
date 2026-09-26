@@ -155,12 +155,12 @@ async function submit() {
 		</div>
 
 		<template v-else>
-			<div class="kindpick" role="radiogroup" aria-label="Report type">
-				<button type="button" class="kindbtn" :class="{ on: kind === 'bug' }" role="radio" :aria-checked="kind === 'bug'"
+			<div class="kindpick segmode lg" role="radiogroup" aria-label="Report type">
+				<button type="button" class="segbtn" :class="{ on: kind === 'bug' }" role="radio" :aria-checked="kind === 'bug'"
 					:disabled="submitting" @click="kind = 'bug'">
 					<span class="material-symbols-rounded">bug_report</span> Bug
 				</button>
-				<button type="button" class="kindbtn" :class="{ on: kind === 'feature' }" role="radio" :aria-checked="kind === 'feature'"
+				<button type="button" class="segbtn" :class="{ on: kind === 'feature' }" role="radio" :aria-checked="kind === 'feature'"
 					:disabled="submitting" @click="kind = 'feature'">
 					<span class="material-symbols-rounded">lightbulb</span> Feature request
 				</button>
@@ -188,7 +188,7 @@ async function submit() {
 				beyond your login email, which is included separately below.
 			</label>
 
-			<button class="btn save" :disabled="!title.trim() || submitting || configured === null" @click="submit">
+			<button class="btn primary" :disabled="!title.trim() || submitting || configured === null" @click="submit">
 				<span class="material-symbols-rounded">{{ submitting ? 'hourglass_top' : (kind === 'bug' ? 'bug_report' : 'lightbulb') }}</span>
 				{{ submitting ? 'Filing…' : (kind === 'bug' ? 'File bug report' : 'File feature request') }}
 			</button>
@@ -204,7 +204,7 @@ async function submit() {
 			<div class="issues">
 				<div class="issues-head">
 					<h3>Recently reported</h3>
-					<button class="linkbtn" type="button" title="Refresh" aria-label="Refresh" :disabled="issuesLoading" @click="fetchIssues">
+					<button class="btn icon sm quiet" type="button" title="Refresh" aria-label="Refresh" :disabled="issuesLoading" @click="fetchIssues">
 						<span class="material-symbols-rounded" :class="{ spin: issuesLoading }">refresh</span>
 					</button>
 				</div>
@@ -232,12 +232,7 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 .warnbox b { font-size: var(--fs-md); }
 .warnbox span { color: var(--text-dim); line-height: 1.45; }
 
-.kindpick { display: flex; gap: 8px; margin-bottom: 16px; }
-.kindbtn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; font-size: var(--fs-md); font-weight: 600;
-	color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
-.kindbtn .material-symbols-rounded { font-size: var(--icon-md); }
-.kindbtn.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
-.kindbtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.kindpick { margin-bottom: 16px; }
 
 .field { display: flex; flex-direction: column; gap: 5px; font-size: var(--fs-md); color: var(--text-dim); margin-bottom: 14px; }
 .field input, .field textarea, .field select { padding: 9px 11px; font: inherit; font-size: var(--fs-md); color: var(--text);
@@ -248,9 +243,6 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 .chk { display: flex; align-items: flex-start; gap: 8px; font-size: var(--fs-md); color: var(--text); cursor: pointer; margin-bottom: 16px; line-height: 1.4; }
 .chk input { accent-color: var(--accent); margin-top: 2px; }
 
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; font-size: var(--fs-md); font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
-.btn.save { background: var(--accent); color: var(--accent-ink); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .ok { display: flex; align-items: center; gap: 5px; color: var(--ok); font-size: var(--fs-md); margin-top: 10px; }
 .ok a { color: inherit; text-decoration: underline; }
@@ -259,10 +251,6 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 .issues { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--border); }
 .issues-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .issues-head h3 { margin: 0; font-size: var(--fs-md); font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
-.linkbtn { display: inline-flex; padding: 3px; color: var(--text-dim); background: transparent; border: none; cursor: pointer; border-radius: 6px; }
-.linkbtn:hover:not(:disabled) { color: var(--text); }
-.linkbtn:disabled { opacity: 0.5; cursor: not-allowed; }
-.linkbtn .material-symbols-rounded { font-size: var(--icon-md); }
 .empty { font-size: var(--fs-md); color: var(--text-dim); }
 .issue-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
 .issue-list li { display: flex; align-items: center; gap: 8px; padding: 7px 9px; font-size: var(--fs-md); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }

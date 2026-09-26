@@ -31,13 +31,13 @@ const w = useWorkspace();
 				</button>
 			</div>
 			<div class="actions">
-				<button v-if="!w.locked.value" class="btn start" :disabled="w.busy.value || !w.st.connected" @click="w.start()">
+				<button v-if="!w.locked.value" class="btn success start" :disabled="w.busy.value || !w.st.connected" @click="w.start()">
 					<span class="material-symbols-rounded">fiber_manual_record</span> Start
 				</button>
-				<button v-else class="btn stop" :disabled="w.busy.value || w.isFinalizing.value" @click="w.stop()">
+				<button v-else class="btn danger stop" :disabled="w.busy.value || w.isFinalizing.value" @click="w.stop()">
 					<span class="material-symbols-rounded">stop</span> {{ w.isFinalizing.value ? 'Finalizing…' : 'Stop' }}
 				</button>
-				<button v-if="w.isDone.value" class="btn ghost" @click="w.newRun()">New</button>
+				<button v-if="w.isDone.value" class="btn" @click="w.newRun()">New</button>
 			</div>
 		</div>
 		<div v-if="w.mode.value !== 'playback' && w.source.value !== 'replay'" class="proc-notes">
@@ -58,12 +58,6 @@ const w = useWorkspace();
 .actions-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
 .actions { flex: 1 0 auto; display: flex; justify-content: flex-end; gap: 8px; }
 .actions .btn { flex: 1 0 auto; justify-content: center; }
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; font-size: var(--fs-md); font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
-.btn .material-symbols-rounded { font-size: var(--icon-md); }
-.btn.start { background: #22c55e; color: #05210f; }
-.btn.stop { background: #ef4444; color: #2a0808; }
-.btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 /* Acquisition's processing toggles — relocated from a Details card (see RecordingOptions.vue). */
 .segproc { flex: 999 0 auto; display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .segproc button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 4px; background: var(--bg-3); white-space: nowrap; border: none; border-right: 1px solid var(--border); color: var(--text-dim); font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.01em; cursor: pointer; }

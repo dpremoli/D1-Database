@@ -67,11 +67,11 @@ function openLive() {
 			 picked in the panel's header. -->
 		<div class="controls">
 			<div class="chips">
-				<button v-for="a in SUMMED" :key="a" class="chip" :style="selected.includes(a) ? { '--c': channelColor(a, theme) } : {}"
+				<button v-for="a in SUMMED" :key="a" class="chip-toggle" :style="selected.includes(a) ? { '--c': channelColor(a, theme) } : {}"
 					:class="{ on: selected.includes(a) }" @click="toggle(a)">{{ a }}</button>
 			</div>
 			<div class="subwrap">
-				<button class="chip sub-btn" :class="{ on: subCount > 0 }" @click.stop="subsOpen = !subsOpen">
+				<button class="chip-toggle sub-btn" :class="{ on: subCount > 0 }" @click.stop="subsOpen = !subsOpen">
 					Sub<span v-if="subCount"> · {{ subCount }}</span> <span class="material-symbols-rounded">expand_more</span>
 				</button>
 				<div v-if="subsOpen" class="subpop" @click.stop>
@@ -90,7 +90,7 @@ function openLive() {
 				<input type="number" min="1" max="300" v-model.number="w.plot.windowSec" class="tw-num" />
 				<span class="tw-unit">s</span>
 			</div>
-			<button class="popout" title="Pop out to a new window (second monitor) — open before Start"
+			<button class="btn icon sm popout" title="Pop out to a new window (second monitor) — open before Start"
 				@click="openLive()">
 				<span class="material-symbols-rounded">open_in_new</span>
 			</button>
@@ -113,9 +113,6 @@ function openLive() {
 .force-panel { display: flex; flex-direction: column; height: 100%; gap: 8px; }
 .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .chips { display: flex; gap: 5px; }
-.chip { display: inline-flex; align-items: center; gap: 3px; padding: 4px 10px; font-size: var(--fs-sm); font-weight: 600; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
-.chip.on { color: var(--c); border-color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
-.chip .material-symbols-rounded { font-size: var(--icon-sm); }
 .subwrap { position: relative; }
 .sub-btn.on { --c: var(--accent); }
 .subpop { position: absolute; top: 30px; left: 0; z-index: 40; min-width: 118px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 4px; box-shadow: 0 12px 34px rgba(0,0,0,0.3); }
@@ -129,9 +126,7 @@ function openLive() {
 .tw-row input[type="range"] { width: 80px; accent-color: var(--accent); }
 .tw-num { width: 42px !important; text-align: center; padding: 3px 2px !important; font-size: var(--fs-xs) !important; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text); }
 .tw-unit { font-size: var(--fs-xs); color: var(--text-dim); }
-.popout { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
-.popout:hover { color: var(--accent); background: var(--surface-2); }
-.popout .material-symbols-rounded { font-size: var(--icon-sm); }
+.popout { margin-left: auto; }
 .plot { flex: 1; min-height: 0; position: relative; }
 .plot > * { position: absolute; inset: 0; }
 </style>

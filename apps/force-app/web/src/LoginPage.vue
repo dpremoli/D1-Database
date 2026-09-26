@@ -53,7 +53,7 @@ async function submit() {
 
 			<p v-if="error" class="error"><span class="material-symbols-rounded">error</span>{{ error }}</p>
 
-			<button class="submit" type="submit" :disabled="busy || !email || !password">
+			<button class="btn primary submit" type="submit" :disabled="busy || !email || !password">
 				<span v-if="busy" class="spinner"></span>
 				<span>{{ busy ? 'Signing in…' : 'Sign in' }}</span>
 			</button>
@@ -182,29 +182,14 @@ async function submit() {
 .error .material-symbols-rounded {
 	font-size: var(--icon-md);
 }
+/* The shared primary button, full width and a size up: the one action on this page. */
 .submit {
 	width: 100%;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
+	height: 42px;
 	gap: 9px;
 	margin-top: 6px;
-	padding: 12px;
 	font-size: var(--fs-lg);
-	font-weight: 600;
-	color: var(--accent-ink);
-	background: var(--accent);
-	border: none;
 	border-radius: 10px;
-	cursor: pointer;
-	transition: filter 0.15s, opacity 0.15s;
-}
-.submit:hover:not(:disabled) {
-	filter: brightness(1.06);
-}
-.submit:disabled {
-	opacity: 0.55;
-	cursor: not-allowed;
 }
 .spinner {
 	width: 15px;

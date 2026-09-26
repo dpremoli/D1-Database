@@ -184,7 +184,7 @@ const problems = computed(() => counts.value.WARNING + counts.value.ERROR + coun
 		</div>
 
 		<div class="toolbar2">
-			<button class="btn ghost" :disabled="loading" @click="load">
+			<button class="btn" :disabled="loading" @click="load">
 				<span class="material-symbols-rounded">{{ loading ? 'hourglass_top' : 'refresh' }}</span>
 				{{ loading ? 'Loading…' : 'Refresh' }}
 			</button>
@@ -195,11 +195,11 @@ const problems = computed(() => counts.value.WARNING + counts.value.ERROR + coun
 				{{ counts.ERROR + counts.CRITICAL }} error<span v-if="counts.ERROR + counts.CRITICAL !== 1">s</span>,
 				{{ counts.WARNING }} warning<span v-if="counts.WARNING !== 1">s</span>
 			</span>
-			<button class="btn ghost" :disabled="!records.length" @click="copyAll">
+			<button class="btn" :disabled="!records.length" @click="copyAll">
 				<span class="material-symbols-rounded">{{ copied ? 'check' : 'content_copy' }}</span>
 				{{ copied ? 'Copied' : 'Copy' }}
 			</button>
-			<button class="btn ghost" :disabled="!available" @click="downloadLog">
+			<button class="btn" :disabled="!available" @click="downloadLog">
 				<span class="material-symbols-rounded">download</span>Download
 			</button>
 		</div>
@@ -253,11 +253,6 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 .chk input { accent-color: var(--accent); }
 .tally { font-size: var(--fs-sm); font-weight: 600; color: var(--warn); }
 .tally.err { color: var(--danger); }
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 13px; font-size: var(--fs-md);
-	font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
-.btn .material-symbols-rounded { font-size: var(--icon-sm); }
-.btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .loglist { height: 52vh; min-height: 260px; overflow: auto; background: var(--bg);
 	border: 1px solid var(--border); border-radius: 9px; padding: 6px 0; }

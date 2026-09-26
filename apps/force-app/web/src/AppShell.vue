@@ -190,7 +190,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 				</div>
 				<div class="user">
 					<span class="who">{{ userName }}</span>
-					<button class="signout" title="Sign out" @click="signOut"><span class="material-symbols-rounded">logout</span></button>
+					<button class="btn icon" title="Sign out" @click="signOut"><span class="material-symbols-rounded">logout</span></button>
 				</div>
 			</div>
 		</nav>
@@ -203,8 +203,8 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 					<span class="rec-stat"><b>{{ fmtSamples(recording!.samples) }}</b> samples</span>
 					<span class="rec-stat"><b>{{ recording!.peakN.toFixed(0) }} N</b> peak</span>
 				</span>
-				<router-link to="/record" class="rec-banner-link">Go to Recording</router-link>
-				<button class="rec-banner-dismiss" title="Dismiss" @click="dismissBanner"><span class="material-symbols-rounded">close</span></button>
+				<router-link to="/record" class="btn sm inverse primary rec-banner-link">Go to Recording</router-link>
+				<button class="btn icon sm inverse" title="Dismiss" @click="dismissBanner"><span class="material-symbols-rounded">close</span></button>
 			</div>
 			<!-- Every other route remounts on each navigation (cheap, and Record relies on its own
 			     unmount to disconnect its websocket). Plot alone is cached: it fetches the full
@@ -276,8 +276,6 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 @keyframes alarmpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 .user { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
 .who { font-size: var(--fs-xs); color: var(--text-dim); text-align: center; word-break: break-word; max-width: 82px; }
-.signout { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); color: var(--text); cursor: pointer; }
-.signout:hover { background: var(--surface-2); }
 /* The sidebar is fixed/overlaid — it expands over the page on hover rather than pushing content —
    so content needs no reserved margin at all; the collapsed left-middle dot handle sits on top of it. */
 .content { flex: 1; min-width: 0; }
@@ -286,13 +284,10 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
    exact colour the forced-stop and safety-alarm banners use, so a normal run looked like a failure
    every time the operator left the Record page. #2563eb is the same informational blue
    .disk-action-banner.backup_started already uses. The pulsing dot still reads as "live". */
-.rec-banner { position: sticky; top: 0; z-index: 150; display: flex; align-items: center; gap: 12px; padding: 8px 16px; font-size: var(--fs-md); font-weight: 600; color: #fff; background: #2563eb; }
+.rec-banner { --banner: #2563eb; position: sticky; top: 0; z-index: 150; display: flex; align-items: center; gap: 12px; padding: 8px 16px; font-size: var(--fs-md); font-weight: 600; color: #fff; background: #2563eb; }
 .rec-banner-dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; flex-shrink: 0; --pulse-color: #fff; animation: live-pulse 1.4s infinite; }
 .rec-banner-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rec-banner-stats { display: flex; align-items: center; gap: 14px; font-weight: 500; color: rgba(255,255,255,0.85); font-variant-numeric: tabular-nums; }
 .rec-stat b { font-weight: 700; color: #fff; }
-.rec-banner-link { margin-left: auto; padding: 4px 10px; font-size: var(--fs-sm); font-weight: 700; color: #2563eb; background: #fff; border-radius: 6px; text-decoration: none; }
-.rec-banner-dismiss { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border-radius: 6px; background: rgba(255,255,255,0.18); border: none; color: #fff; cursor: pointer; }
-.rec-banner-dismiss:hover { background: rgba(255,255,255,0.3); }
-.rec-banner-dismiss .material-symbols-rounded { font-size: var(--icon-sm); }
+.rec-banner-link { margin-left: auto; }
 </style>

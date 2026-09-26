@@ -45,7 +45,7 @@ function openLive() {
 <template>
 	<div class="frm-panel">
 		<div class="frm-controls">
-			<div class="segmode">
+			<div class="segmode axis-seg">
 				<button class="segbtn fx" :class="{ on: w.plot.frmAxis === 'Fx' }" @click="w.plot.frmAxis = 'Fx'">Fx</button>
 				<button class="segbtn fy" :class="{ on: w.plot.frmAxis === 'Fy' }" @click="w.plot.frmAxis = 'Fy'">Fy</button>
 				<button class="segbtn fz" :class="{ on: w.plot.frmAxis === 'Fz' }" @click="w.plot.frmAxis = 'Fz'">Fz</button>
@@ -57,10 +57,10 @@ function openLive() {
 				title="Live map decimation — keep every Nth point. Raise this for long/dense cuts to keep the map responsive and under its point cap.">
 				<option v-for="s in STRIDES" :key="s" :value="s">{{ s === 1 ? 'full res' : `1 / ${s}` }}</option>
 			</select>
-			<button class="cscale-toggle" :class="{ on: editorOpen }" title="Colour scale editor" @click="editorOpen = !editorOpen">
+			<button class="btn icon sm" :class="{ on: editorOpen }" :aria-pressed="editorOpen" title="Colour scale editor" @click="editorOpen = !editorOpen">
 				<span class="material-symbols-rounded">palette</span>
 			</button>
-			<button class="popout" title="Pop out to a new window (second monitor) — open before Start" @click="openLive">
+			<button class="btn icon sm" title="Pop out to a new window (second monitor) — open before Start" @click="openLive">
 				<span class="material-symbols-rounded">open_in_new</span>
 			</button>
 		</div>
@@ -87,21 +87,9 @@ function openLive() {
 <style scoped>
 .frm-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 8px; }
 .frm-controls { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
-.segmode { display: flex; gap: 4px; margin-right: auto; }
-.segbtn { padding: 5px 10px; font-size: var(--fs-sm); color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
-.segbtn.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; border-color: var(--accent); }
-.segbtn.fx.on { background: #f87171; border-color: #f87171; color: #2a0808; }
-.segbtn.fy.on { background: #4ade80; border-color: #4ade80; color: #05210f; }
-.segbtn.fz.on { background: #60a5fa; border-color: #60a5fa; color: #05173a; }
+.axis-seg { margin-right: auto; }
 .cmap { padding: 5px 7px; font-size: var(--fs-sm); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
 .psize { width: 84px; accent-color: var(--accent); }
-.popout { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
-.popout:hover { color: var(--accent); background: var(--surface-2); }
-.popout .material-symbols-rounded { font-size: var(--icon-sm); }
-.cscale-toggle { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
-.cscale-toggle:hover { color: var(--accent); background: var(--surface-2); }
-.cscale-toggle.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.cscale-toggle .material-symbols-rounded { font-size: var(--icon-sm); }
 .cscale-editor { padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .frm-body { flex: 1; min-height: 0; }
 .frm-body > * { height: 100%; }

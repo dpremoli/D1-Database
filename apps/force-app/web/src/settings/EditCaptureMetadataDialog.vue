@@ -319,9 +319,9 @@ async function confirmClose() {
 				<p v-if="errMsg" class="ecm-err">{{ errMsg }}</p>
 
 				<div class="ecm-actions">
-					<button class="ecm-btn" :disabled="saving" @click="confirmClose">Cancel</button>
+					<button class="btn" :disabled="saving" @click="confirmClose">Cancel</button>
 					<div class="ecm-spacer"></div>
-					<button class="ecm-btn primary" :disabled="saving" @click="save">
+					<button class="btn primary" :disabled="saving" @click="save">
 						{{ saving ? 'Saving…' : operationId ? 'Save (local + database)' : 'Save' }}
 					</button>
 				</div>
@@ -357,8 +357,4 @@ async function confirmClose() {
 .ecm-err { font-size: var(--fs-sm); color: var(--danger); background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; padding: 8px 10px; margin: 0; }
 .ecm-actions { display: flex; align-items: center; gap: 10px; }
 .ecm-spacer { flex: 1; }
-.ecm-btn { padding: 9px 16px; font-size: var(--fs-md); font-weight: 600; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 9px; cursor: pointer; }
-.ecm-btn:hover:not(:disabled) { background: var(--surface-2); }
-.ecm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.ecm-btn.primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
 </style>

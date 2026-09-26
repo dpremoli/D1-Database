@@ -138,10 +138,10 @@ onBeforeUnmount(() => {
 <template>
 	<div class="opts" ref="rootEl">
 		<!-- Source selector -->
-		<div class="seg">
-			<button :class="{ on: w.source.value === 'sim' }" :disabled="w.locked.value" @click="w.setSource('sim')">Simulated</button>
-			<button :class="{ on: w.source.value === 'replay' }" :disabled="w.locked.value" @click="w.setSource('replay')">Replay file</button>
-			<button :class="{ on: w.source.value === 'nidaq' }" :disabled="w.locked.value" @click="w.setSource('nidaq')">NI-DAQ</button>
+		<div class="segmode lg source-seg">
+			<button class="segbtn" :class="{ on: w.source.value === 'sim' }" :disabled="w.locked.value" @click="w.setSource('sim')">Simulated</button>
+			<button class="segbtn" :class="{ on: w.source.value === 'replay' }" :disabled="w.locked.value" @click="w.setSource('replay')">Replay file</button>
+			<button class="segbtn" :class="{ on: w.source.value === 'nidaq' }" :disabled="w.locked.value" @click="w.setSource('nidaq')">NI-DAQ</button>
 		</div>
 
 		<!-- ─── Sample — always first: this is "what am I recording/replaying", the identity of the
@@ -276,10 +276,9 @@ onBeforeUnmount(() => {
    positions — the outer at 0 while this one had scrolled itself, which read as the very top row
    (the Simulated/Replay/NI-DAQ source buttons) being clipped even though the panel was at rest. */
 .opts { display: flex; flex-direction: column; gap: 10px; }
-.seg { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
-.seg button { flex: 1; padding: 8px; font-size: var(--fs-md); background: transparent; color: var(--text-dim); border: none; cursor: pointer; }
-.seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.seg button:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Three equal choices across a narrow column: they share its width and may wrap to two lines. */
+.source-seg { display: flex; }
+.source-seg .segbtn { flex: 1; height: auto; min-height: 32px; padding: 4px 6px; white-space: normal; line-height: 1.2; }
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
 .stat-grid.cut-params { margin-top: -2px; }
 .stat-grid .span2 { grid-column: 1 / -1; }

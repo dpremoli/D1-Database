@@ -85,7 +85,7 @@ async function setEnabled(key: ToggleKey, ev: Event) {
 			<label class="chk"><input type="checkbox" :checked="a.config.audioEnabled" @change="setEnabled('audioEnabled', $event)" /> Audible alert (looping tone)</label>
 		</div>
 
-		<button class="btn ghost" @click="a.test()">Test alarm</button>
+		<button class="btn" @click="a.test()">Test alarm</button>
 	</div>
 </template>
 
@@ -100,5 +100,4 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 .thr input { width: 90px; padding: 6px 9px; font-size: var(--fs-md); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; text-align: right; }
 .thr input:disabled { opacity: 0.5; }
 .hint { font-size: var(--fs-sm); color: var(--text-dim); margin: 6px 0 0; line-height: 1.5; }
-.btn.ghost { padding: 9px 16px; font-size: var(--fs-md); font-weight: 600; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
 </style>

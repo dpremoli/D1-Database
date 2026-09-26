@@ -153,7 +153,7 @@ async function build(recipe?: Recipe) {
 			     the top confusion in the field report. -->
 			<button
 				v-if="selected && !ready"
-				class="diag-btn"
+				class="btn sm primary"
 				:disabled="building"
 				:title="selected.diag_status === 'error'
 					? 'The last host run failed. Fix the cause, then run it again.'
@@ -162,7 +162,7 @@ async function build(recipe?: Recipe) {
 			>
 				{{ building ? 'Requesting…' : (selected.diag_status === 'error' ? 'Retry' : 'Build') }}
 			</button>
-			<button class="diag-btn ghost" :disabled="loading || building" title="Reload the operation list from the database" @click="loadRows">Refresh</button>
+			<button class="btn sm" :disabled="loading || building" title="Reload the operation list from the database" @click="loadRows">Refresh</button>
 		</header>
 
 		<p v-if="err" class="diag-note error">{{ err }}</p>
@@ -207,12 +207,6 @@ async function build(recipe?: Recipe) {
 	background: var(--bg-2); color: var(--text, #e5e7eb); border: 1px solid var(--border); border-radius: 7px;
 }
 .diag-meta { font-size: var(--fs-sm); color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.diag-btn {
-	font: inherit; font-size: var(--fs-sm); font-weight: 650; cursor: pointer; padding: 6px 13px; border-radius: 7px;
-	color: var(--accent-ink, #0b1020); background: var(--accent, #38bdf8); border: 1px solid var(--accent, #38bdf8);
-}
-.diag-btn.ghost { color: var(--text-dim); background: transparent; border-color: var(--border); }
-.diag-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .diag-note { margin: 0; padding: 7px 14px; font-size: var(--fs-sm); color: var(--text-dim); font-style: italic; }
 .diag-note.error, .error { color: var(--danger, #fca5a5); font-style: normal; }
 .diag-body { flex: 1; min-height: 0; display: flex; }
