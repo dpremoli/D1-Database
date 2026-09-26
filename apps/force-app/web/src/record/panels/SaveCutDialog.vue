@@ -9,14 +9,24 @@ import { useRouter } from 'vue-router';
 import { useWorkspace } from '../workspace';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS } from '../liveClient';
 import FinishedForcePlot from '../FinishedForcePlot.vue';
+import { useDialog } from '../../ui/useDialog';
 import { formatMegabytes } from '../../format';
 
 const w = useWorkspace();
 const router = useRouter();
 
 const online = ref(navigator.onLine);
-window.addEventListener('online', () => (online.value = true));
-window.addEventListener('offline', () => (online.value = false));
+// Removed on unmount: these used to be added at setup and never removed, one more pair for every
+// recording's dialog for as long as the window stayed open.
+const setOnline = () => { online.value = true; };
+const setOffline = () => { online.value = false; };
+window.addEventListener('online', setOnline);
+window.addEventListener('offline', setOffline);
+onBeforeUnmount(() => { window.removeEventListener('online', setOnline); window.removeEventListener('offline', setOffline); });
+
+// No Escape: this dialog is a decision (save or discard), not something to dismiss by accident.
+const panel = ref<HTMLElement | null>(null);
+useDialog(panel);
 
 // manufacturing_operations.sample_id is NOT NULL, and buildRunPayload sends `sampleId || null`, so
 // uploading without a Sample picked fails on a raw Directus constraint error at the end of the save
@@ -190,12 +200,12 @@ function startNew() {
 </script>
 
 <template>
-	<div class="scd-backdrop">
-		<div class="scd-modal">
+	<div class="scd-backdrop dialog-backdrop-in">
+		<div ref="panel" class="scd-modal dialog-in" role="dialog" aria-modal="true" aria-labelledby="scd-title" tabindex="-1">
 			<header class="scd-head">
 				<span class="material-symbols-rounded">task_alt</span>
 				<div class="scd-title">
-					<b>Recording finished</b>
+					<b id="scd-title">Recording finished</b>
 					<span class="scd-sub">{{ w.meta.sample_name || 'Untitled cut' }} · {{ (w.st.summary?.duration_sec ?? w.st.tSec).toFixed(1) }}s</span>
 				</div>
 			</header>

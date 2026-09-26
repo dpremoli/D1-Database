@@ -59,7 +59,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, true));
 		>
 			<div
 				ref="panel"
-				class="cd-modal"
+				class="cd-modal dialog-in"
 				:class="confirmState.current.tone ?? 'default'"
 				role="alertdialog"
 				aria-modal="true"

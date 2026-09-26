@@ -7,6 +7,7 @@ import { onMounted, ref, computed } from 'vue';
 import { nidaqApi, ROLE_COLORS, type Devices, type Channel, type CatalogCard, type Port, type Module } from './nidaqApi';
 import { promptAction } from '../ui/confirm';
 import VirtualChannelBuilder from './VirtualChannelBuilder.vue';
+import { useDialog } from '../ui/useDialog';
 
 const devices = ref<Devices | null>(null);
 const channels = ref<Channel[]>([]);
@@ -16,6 +17,8 @@ const err = ref<string | null>(null);
 
 const pop = ref<{ physical: string; label: string; x: number; y: number } | null>(null);
 const catalogFor = ref<number | null>(null); // target slot for add-card
+const catalogPanel = ref<HTMLElement | null>(null);
+useDialog(catalogPanel, () => { catalogFor.value = null; });
 
 // Hardware info summary
 const totalAi = computed(() => {
@@ -190,10 +193,10 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 									</button>
 								</div>
 							</div>
-							<div v-else class="mod empty" @click.stop="catalogFor = slot">
+							<button v-else type="button" class="mod empty" :aria-label="`Add a card to slot ${slot}`" @click.stop="catalogFor = slot">
 								<span class="slotno">SLOT {{ slot }}</span>
-								<div class="plus-wrap"><span class="plus">+</span></div>
-							</div>
+								<span class="plus-wrap"><span class="plus">+</span></span>
+							</button>
 						</template>
 					</div>
 				</div>
@@ -204,17 +207,21 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 				<div class="chassis virtual-chassis">
 					<div class="chassis-top"><b>Virtual Channels</b><span class="sub">computed, not acquired</span></div>
 					<div class="slots">
-						<div v-for="c in channels.filter((c) => c.source === 'virtual')" :key="c.name" class="mod virtual-mod" @click.stop="editVirtual(c)">
+						<!-- Not a <button>: it holds its own remove button. role/tabindex/keys give it the same
+							 keyboard reach. -->
+						<div v-for="c in channels.filter((c) => c.source === 'virtual')" :key="c.name" class="mod virtual-mod"
+							role="button" tabindex="0" :aria-label="`Edit virtual channel ${c.name}`"
+							@click.stop="editVirtual(c)" @keydown.enter.self.prevent="editVirtual(c)" @keydown.space.self.prevent="editVirtual(c)">
 							<div class="mod-head">
 								<span class="slotno" :style="{ color: c.color }">{{ c.name }}</span>
-								<button class="rm" title="Remove" @click.stop="removeChannel(c.name)"><span class="material-symbols-rounded">close</span></button>
+								<button class="rm" title="Remove" :aria-label="`Remove ${c.name}`" @click.stop="removeChannel(c.name)"><span class="material-symbols-rounded">close</span></button>
 							</div>
 							<div class="formula-preview">{{ c.formula || '—' }}</div>
 						</div>
-						<div class="mod empty" @click.stop="addVirtual">
+						<button type="button" class="mod empty" aria-label="New virtual channel" @click.stop="addVirtual">
 							<span class="slotno">NEW</span>
-							<div class="plus-wrap"><span class="plus">+</span></div>
-						</div>
+							<span class="plus-wrap"><span class="plus">+</span></span>
+						</button>
 					</div>
 				</div>
 
@@ -248,9 +255,9 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 		</div>
 
 		<!-- Add-card catalog -->
-		<div v-if="catalogFor != null" class="modal" @click.self="catalogFor = null">
-			<div class="catalog">
-				<div class="cat-head"><b>Add card to Slot {{ catalogFor }}</b><button class="rm" title="Close" aria-label="Close" @click="catalogFor = null"><span class="material-symbols-rounded">close</span></button></div>
+		<div v-if="catalogFor != null" class="modal dialog-backdrop-in" @click.self="catalogFor = null">
+			<div ref="catalogPanel" class="catalog dialog-in" role="dialog" aria-modal="true" aria-labelledby="cat-title" tabindex="-1">
+				<div class="cat-head"><b id="cat-title">Add card to Slot {{ catalogFor }}</b><button class="rm" title="Close" aria-label="Close" @click="catalogFor = null"><span class="material-symbols-rounded">close</span></button></div>
 				<div class="catgrid">
 					<button v-for="card in cards" :key="card.product_type" class="cattile" @click="addCard(card.product_type)">
 						<span class="ctag">{{ card.connector.toUpperCase() }}<template v-if="card.iepe"> · IEPE</template></span>
@@ -331,7 +338,7 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
    theme's near-white it fell to ~1.6:1 (Fy). Darken it there for the label only. */
 [data-theme="light"] .chip { color: color-mix(in srgb, var(--c) 60%, black); }
 .chip.none { color: var(--text-faint); background: transparent; }
-.mod.empty { position: relative; align-items: stretch; justify-content: flex-start; border-style: dashed; color: var(--text-faint); cursor: pointer; }
+.mod.empty { position: relative; align-items: stretch; justify-content: flex-start; border-style: dashed; color: var(--text-faint); cursor: pointer; font: inherit; text-align: left; }
 .mod.empty:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .plus-wrap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 .mod.empty .plus { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); border: 1px solid var(--accent); color: var(--accent-ink); font-size: 22px; display: flex; align-items: center; justify-content: center; }

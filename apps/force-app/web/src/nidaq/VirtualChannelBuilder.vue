@@ -7,6 +7,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { CH_COLOR } from '../record/types';
 import { nidaqApi, CORE_REFERENCEABLE, type Channel, type FormulaValidation } from './nidaqApi';
+import { useDialog } from '../ui/useDialog';
 
 const props = defineProps<{
 	/** Existing channels, for the reference palette — only "hardware" ones are referenceable
@@ -60,6 +61,8 @@ async function runValidate() {
 	finally { validating.value = false; }
 }
 onBeforeUnmount(() => { if (debounce) clearTimeout(debounce); });
+const panel = ref<HTMLElement | null>(null);
+useDialog(panel, () => emit('cancel'));
 
 const canSave = computed(() => !!name.value.trim() && !!formula.value.trim() && validation.value?.valid === true);
 function save() { if (canSave.value) emit('save', name.value.trim(), formula.value.trim()); }
@@ -84,11 +87,11 @@ function insertFunc(f: (typeof FUNCS)[number]) {
 </script>
 
 <template>
-	<div class="vcb-backdrop" @click.self="emit('cancel')">
-		<div class="vcb-modal">
+	<div class="vcb-backdrop dialog-backdrop-in" @click.self="emit('cancel')">
+		<div ref="panel" class="vcb-modal dialog-in" role="dialog" aria-modal="true" aria-labelledby="vcb-title" tabindex="-1">
 			<header class="vcb-head">
 				<span class="material-symbols-rounded">functions</span>
-				<b>{{ initialName ? 'Edit virtual channel' : 'New virtual channel' }}</b>
+				<b id="vcb-title">{{ initialName ? 'Edit virtual channel' : 'New virtual channel' }}</b>
 			</header>
 			<p class="vcb-lead">Computed live from other channels while recording, and archived in the capture — see Settings for what a virtual channel can and can't reference.</p>
 

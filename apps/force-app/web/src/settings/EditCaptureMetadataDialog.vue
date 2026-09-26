@@ -18,6 +18,7 @@ import {
 } from '../record/directusLookups';
 import LookupField from '../record/panels/LookupField.vue';
 import { confirmAction } from '../ui/confirm';
+import { useDialog } from '../ui/useDialog';
 
 const props = defineProps<{
 	captureId: string;
@@ -233,6 +234,8 @@ async function save() {
 async function close() {
 	if (!saving.value) emit('close');
 }
+const panel = ref<HTMLElement | null>(null);
+useDialog(panel, close);
 async function confirmClose() {
 	const ok = await confirmAction({
 		title: 'Discard these changes?',
@@ -245,10 +248,10 @@ async function confirmClose() {
 </script>
 
 <template>
-	<div class="ecm-backdrop" @click.self="close">
-		<div class="ecm-modal">
+	<div class="ecm-backdrop dialog-backdrop-in" @click.self="close">
+		<div ref="panel" class="ecm-modal dialog-in" role="dialog" aria-modal="true" aria-labelledby="ecm-title" tabindex="-1">
 			<header class="ecm-head">
-				<b>Edit capture metadata</b>
+				<b id="ecm-title">Edit capture metadata</b>
 				<span class="ecm-sub">{{ captureId }}</span>
 				<span v-if="operationId" class="ecm-tag uploaded">Uploaded — also updates the database</span>
 				<span v-else class="ecm-tag">Not uploaded — local only</span>
