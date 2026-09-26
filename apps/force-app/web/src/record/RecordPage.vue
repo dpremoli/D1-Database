@@ -9,6 +9,8 @@ import { startSync } from './directusSync';
 import { hwStatus } from './hwStatus';
 import { labamp } from './labampApi';
 import PanelFrame from './panels/PanelFrame.vue';
+import { PLOT_MODES, type PlotMode } from './plotModes';
+import { PlotModeFlyout } from '@d1/force-plotting';
 import RecordingOptions from './panels/RecordingOptions.vue';
 import RecordingActions from './panels/RecordingActions.vue';
 import ForcePanel from './panels/ForcePanel.vue';
@@ -37,7 +39,7 @@ const PANEL_TYPES: Record<string, { title: string; icon: string; single?: boolea
 	frm: { title: 'FRM Map', icon: 'fingerprint', w: 4, h: 19 },
 	polar: { title: 'Polar Plot', icon: 'radar', w: 4, h: 16 },
 };
-type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: 'time' | 'fft' | 'psd' | 'spectrogram' | 'waterfall'; channels?: string[] };
+type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: PlotMode; channels?: string[] };
 const DEFAULT_LAYOUT: Inst[] = [
 	{ i: 'options', type: 'options', x: 0, y: 0, w: 2, h: 28 },
 	{ i: 'overview', type: 'overview', x: 2, y: 0, w: 6, h: 3 },
@@ -137,18 +139,6 @@ const displayLayout = computed<Inst[]>({
 
 const addOpen = ref(false);
 const hasType = (t: string) => layout.value.some((p) => p.type === t);
-// #23: 'time' used to read "Force Plot," but this mode isn't always plotting force (Tacho, or a
-// milling recording's Mz/X/Y/Z channels) -- "Time Plot" names the mode (raw time-domain, vs.
-// FFT/Power/Spectrogram/Waterfall), matching ForcePanel.vue's own tab label for it.
-const MODE_LABEL: Record<string, string> = { time: 'Time Plot', fft: 'FFT', psd: 'Power', spectrogram: 'Spectrogram', waterfall: 'Waterfall' };
-function panelTitle(p: Inst) {
-	if (p.type === 'force') {
-		const mode = MODE_LABEL[p.mode || 'time'] || 'Time Plot';
-		const ch = p.channels && p.channels.join() !== 'Fx,Fy,Fz' ? ` · ${p.channels.join(' ')}` : '';
-		return mode + ch;
-	}
-	return PANEL_TYPES[p.type].title;
-}
 function addPanel(type: string) {
 	addOpen.value = false;
 	const meta = PANEL_TYPES[type];
@@ -552,7 +542,13 @@ onBeforeUnmount(() => {
 			:is-draggable="!narrow" :is-resizable="!narrow" :use-css-transforms="true" :vertical-compact="true">
 			<GridItem v-for="item in displayLayout" :key="item.i" :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i"
 				drag-allow-from=".panel-handle" :min-w="narrow ? 1 : 2" :min-h="3">
-				<PanelFrame :title="panelTitle(item)" :icon="PANEL_TYPES[item.type].icon" closable @close="closePanel(item.i)">
+				<PanelFrame :title="PANEL_TYPES[item.type].title" :icon="PANEL_TYPES[item.type].icon" closable @close="closePanel(item.i)">
+					<!-- A plot panel's title is its mode, so the header IS the mode picker: a title
+						 reading "FFT" over a toolbar pill reading "FFT" said it twice. -->
+					<template v-if="item.type === 'force'" #title>
+						<PlotModeFlyout :model-value="item.mode ?? 'time'" :modes="PLOT_MODES"
+							@update:model-value="item.mode = $event as PlotMode" />
+					</template>
 					<RecordingOptions v-if="item.type === 'options'" />
 					<OverviewPanel v-else-if="item.type === 'overview'" />
 					<ForcePanel v-else-if="item.type === 'force'" :inst="item" />

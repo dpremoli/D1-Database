@@ -62,8 +62,8 @@ const detail = ref<any | null>(null);
 const loadingDetail = ref(false);
 
 const chartMode = ref<'force' | 'fft' | 'psd' | 'spectrogram' | 'waterfall'>('force');
-// Same set/order the Record page's ForcePanel offers, so the two toolbars read identically. Its
-// first entry is the time-domain view under each page's own name for it ("Force" here, "Time"
+// Same set/order the Record page's plot panels offer, picked the same way (from the panel's title).
+// Its first entry is the time-domain view under each page's own name for it ("Force" here, "Time"
 // there -- both stay as they were).
 const CHART_MODES = [
 	{ key: 'force', label: 'Force' },
@@ -2327,7 +2327,10 @@ function fmtDateTime(v: string | null | undefined) {
 						<div v-if="item.type === 'signals'" class="card col-charts pg-card">
 							<div class="pg-bar">
 								<span class="pg-grip" title="Drag to move"><v-icon name="drag_indicator" x-small /></span>
-								<span class="pg-title"><v-icon name="insights" x-small /> Signals<span v-if="liveOn" class="live-badge">LIVE</span>
+								<!-- The title is the plot mode and picks it, as in the Record page's panel headers. -->
+								<span class="pg-title"><v-icon name="insights" x-small />
+									<PlotModeFlyout v-model="chartMode" :modes="CHART_MODES" />
+									<span v-if="liveOn" class="live-badge">LIVE</span>
 									<template v-if="liveOn && (cropDirty || cropSavePrompt || cropSavedMsg)">
 										<button v-if="!cropSavePrompt && !cropSavedMsg" class="crop-save" title="Persist this crop as the operation's official crop window" @click.stop="cropSavePrompt = true">Save crop</button>
 										<span v-if="cropSavePrompt" class="crop-confirm" @click.stop>
@@ -2350,8 +2353,6 @@ function fmtDateTime(v: string | null | undefined) {
 										:style="item.rpm ? { background: '#a855f7', borderColor: '#a855f7' } : {}"
 										@click="item.rpm = !item.rpm">RPM</button>
 									<span v-if="effectiveMode === 'force' && radialFetchBusy" class="cmp-hint">loading radial…</span>
-									<!-- Plot mode last, matching the Record page's ForcePanel toolbar order. -->
-									<PlotModeFlyout v-model="chartMode" :modes="CHART_MODES" class="mode-flyout" />
 								</div>
 								<button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button>
 							</div>
@@ -2892,7 +2893,8 @@ function fmtDateTime(v: string | null | undefined) {
    row of tools when the rest wrap below. */
 .pg-bar { display: flex; align-items: flex-start; gap: 6px; padding: 2px 4px 6px; flex: 0 0 auto; }
 .pg-bar > .pg-grip, .pg-bar > .pg-title, .pg-bar > .pg-x { min-height: 27px; align-items: center; }
-.pg-title { display: inline-flex; align-items: center; gap: 5px; margin-right: auto; font-size: 11px; font-weight: 700;
+/* Grows into the bar's free width: the Signals mode picker slides open into it. */
+.pg-title { display: inline-flex; flex: 1 0 auto; align-items: center; gap: 5px; font-size: 11px; font-weight: 700;
 	letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); white-space: nowrap; }
 .pg-tools { flex: 0 1 auto; min-width: 0; }
 .pg-grip { cursor: move; display: inline-flex; color: var(--theme--foreground-subdued, #98a2b3); }

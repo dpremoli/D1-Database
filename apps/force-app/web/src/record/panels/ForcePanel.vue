@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// Force panel: rolling force bands (Force) or a live Welch spectrum (FFT). The `inst` prop carries
-// per-panel state — the selected channels (summed Fx/Fy/Fz and/or individual dyno sub-channels
-// Fx1…Fz4) + the mode — so duplicated panels are independent (e.g. one showing only Fz1 to isolate
-// a single sensor). Falls back to defaults (all summed axes, Force mode) for the detached window.
+// Force panel: rolling force bands (Time) or a live spectrum (FFT/Power/Spectrogram/Waterfall). The
+// `inst` prop carries per-panel state — the selected channels (summed Fx/Fy/Fz and/or individual
+// dyno sub-channels Fx1…Fz4) + the mode — so duplicated panels are independent (e.g. one showing
+// only Fz1 to isolate a single sensor). The mode is picked in the panel's header (RecordPage.vue);
+// without an `inst` this falls back to all summed axes in Time mode.
 import { computed, ref, watch } from 'vue';
 import { useWorkspace } from '../workspace';
 import LiveForcePlot from '../LiveForcePlot.vue';
@@ -13,27 +14,15 @@ import LiveWaterfall from '../LiveWaterfall.vue';
 import { SUB_NAMES } from '../liveClient';
 import { channelColor } from '../types';
 import { theme } from '../../theme';
-import { PlotModeFlyout } from '@d1/force-plotting';
 import { appUrl } from '../../appUrl';
+import type { PlotMode } from '../plotModes';
 
-type PlotMode = 'time' | 'fft' | 'psd' | 'spectrogram' | 'waterfall';
-// #23: this tab was labeled "Force," but the channels actually plotted here aren't always force
-// (e.g. Tacho, or the Mz/X/Y/Z channels a milling recording adds) -- "Time" names what the mode
-// actually is (the raw time-domain view, vs. FFT/Power/Spectrogram/Waterfall), not what's on it.
-const MODES: { key: PlotMode; label: string }[] = [
-	{ key: 'time', label: 'Time' }, { key: 'fft', label: 'FFT' }, { key: 'psd', label: 'Power' },
-	{ key: 'spectrogram', label: 'Spectrogram' }, { key: 'waterfall', label: 'Waterfall' },
-];
 const props = defineProps<{ inst?: { mode?: PlotMode; channels?: string[]; axes?: string[] } }>();
 const w = useWorkspace();
 const SUMMED = ['Fx', 'Fy', 'Fz'];
 const ORDER = [...SUMMED, ...SUB_NAMES];
 
-const localMode = ref<PlotMode>('time');
-const mode = computed<PlotMode>({
-	get: () => props.inst?.mode ?? localMode.value,
-	set: (v) => { if (props.inst) props.inst.mode = v; else localMode.value = v; },
-});
+const mode = computed<PlotMode>(() => props.inst?.mode ?? 'time');
 // Spectrogram/waterfall render a single channel; hint the user which one is shown.
 const singleChannelMode = computed(() => mode.value === 'spectrogram' || mode.value === 'waterfall');
 const localCh = ref<string[]>([...SUMMED]);
@@ -74,7 +63,8 @@ function openLive() {
 <template>
 	<div class="force-panel">
 		<!-- Control order is deliberate and shared with the Plot dashboard's Signals panel:
-			 channels (Fx/Fy/Fz) -> sub-channel dropdown -> time window -> plot mode last. -->
+			 channels (Fx/Fy/Fz) -> sub-channel dropdown -> time window. On both, the plot mode is
+			 picked in the panel's header. -->
 		<div class="controls">
 			<div class="chips">
 				<button v-for="a in SUMMED" :key="a" class="chip" :style="selected.includes(a) ? { '--c': channelColor(a, theme) } : {}"
@@ -100,7 +90,6 @@ function openLive() {
 				<input type="number" min="1" max="300" v-model.number="w.plot.windowSec" class="tw-num" />
 				<span class="tw-unit">s</span>
 			</div>
-			<PlotModeFlyout v-model="mode" :modes="MODES" class="mode-flyout" />
 			<button class="popout" title="Pop out to a new window (second monitor) — open before Start"
 				@click="openLive()">
 				<span class="material-symbols-rounded">open_in_new</span>
@@ -123,7 +112,6 @@ function openLive() {
 <style scoped>
 .force-panel { display: flex; flex-direction: column; height: 100%; gap: 8px; }
 .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.mode-flyout { margin-left: auto; }
 .chips { display: flex; gap: 5px; }
 .chip { display: inline-flex; align-items: center; gap: 3px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
 .chip.on { color: var(--c); border-color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
@@ -141,9 +129,7 @@ function openLive() {
 .tw-row input[type="range"] { width: 80px; accent-color: var(--accent); }
 .tw-num { width: 42px !important; text-align: center; padding: 3px 2px !important; font-size: 11px !important; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text); }
 .tw-unit { font-size: 11px; color: var(--text-dim); }
-/* The flyout carries the margin-left:auto that used to be here, so it and the pop-out button stay
-   together at the right end instead of the free space splitting between them. */
-.popout { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
+.popout { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 7px; background: var(--surface); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
 .popout:hover { color: var(--accent); background: var(--surface-2); }
 .popout .material-symbols-rounded { font-size: 15px; }
 .plot { flex: 1; min-height: 0; position: relative; }

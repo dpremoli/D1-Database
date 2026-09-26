@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// The window/channel/mode controls here mirror ForcePanel.vue's toolbar deliberately — this route
-// used to only read mode/channels/window from the opening URL once and never expose any way to
-// change them afterward, so a pop-out was frozen at whatever was selected the moment it opened.
+// The window/channel controls here mirror ForcePanel.vue's toolbar deliberately, and the mode is
+// picked from the title as in the panel's header — this route used to only read mode/channels/
+// window from the opening URL once and never expose any way to change them afterward, so a
+// pop-out was frozen at whatever was selected the moment it opened.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { RecordClient, SUB_NAMES } from './liveClient';
@@ -12,7 +13,8 @@ import LiveFft from './LiveFft.vue';
 import LiveSpectrogram from './LiveSpectrogram.vue';
 import LiveWaterfall from './LiveWaterfall.vue';
 import LiveFrm from './LiveFrm.vue';
-import { COLORMAPS, colormapLabel, useAutoColorScale, type ColorScale } from '@d1/force-plotting';
+import { COLORMAPS, colormapLabel, PlotModeFlyout, useAutoColorScale, type ColorScale } from '@d1/force-plotting';
+import { PLOT_MODES } from './plotModes';
 
 const route = useRoute();
 const panel = computed(() => String(route.params.panel || 'force'));
@@ -34,18 +36,11 @@ const initStride = ref(Number(q.get('stride')) || 1);
 const polarRadius = ref<'Fz' | 'Fxy' | 'Mz'>((q.get('radius') as 'Fz' | 'Fxy' | 'Mz') || 'Fz');
 const polarAngleSource = ref<'tacho' | 'force_vector'>((q.get('angle') as 'tacho' | 'force_vector') || 'tacho');
 
-// #23: matches ForcePanel.vue/RecordPage.vue's own rename -- "Time" names the mode (raw
-// time-domain, vs. FFT/Power/Spectrogram/Waterfall), not what's plotted on it, which isn't always
-// force (Tacho, or a milling recording's Mz/X/Y/Z channels).
-const MODES: { key: string; label: string }[] = [
-	{ key: 'time', label: 'Time' }, { key: 'fft', label: 'FFT' }, { key: 'psd', label: 'Power' },
-	{ key: 'spectrogram', label: 'Spectrogram' }, { key: 'waterfall', label: 'Waterfall' },
-];
-const MODE_LABEL: Record<string, string> = { time: 'Time Plot', fft: 'FFT', psd: 'Power', spectrogram: 'Spectrogram', waterfall: 'Waterfall' };
+// The OS window title (taskbar/alt-tab); the bar itself shows the mode picker instead.
 const title = computed(() => {
 	if (isFrm.value) return 'Live FRM Fingerprint';
 	if (isPolar.value) return 'Live Polar Plot';
-	return 'Live ' + (MODE_LABEL[mode.value] || 'Time Plot');
+	return `Live ${PLOT_MODES.find((m) => m.key === mode.value)?.label ?? 'Time'} Plot`;
 });
 
 const singleChannelMode = computed(() => mode.value === 'spectrogram' || mode.value === 'waterfall');
@@ -97,8 +92,16 @@ onBeforeUnmount(() => client.disconnect());
 	<div class="live-window">
 		<header class="bar">
 			<span class="rec-dot" :class="{ live: st.state === 'recording' }"></span>
-			<span class="title">{{ title }}</span>
-			<span class="state" :class="st.state">{{ st.state }}</span>
+			<!-- Same picker as the panel header: the title is the mode. flex:1 gives it room to slide
+				 open, which pushes the channel controls to the right-hand end of the bar. -->
+			<div v-if="!isFrm && !isPolar" class="title-slot">
+				<PlotModeFlyout v-model="mode" class="title" :modes="PLOT_MODES" />
+				<span class="state" :class="st.state">{{ st.state }}</span>
+			</div>
+			<template v-else>
+				<span class="title">{{ title }}</span>
+				<span class="state" :class="st.state">{{ st.state }}</span>
+			</template>
 			<template v-if="isFrm">
 				<div class="segmode">
 					<button class="segbtn" :class="{ on: frmAxis === 'Fx' }" @click="frmAxis = 'Fx'">Fx</button>
@@ -117,9 +120,6 @@ onBeforeUnmount(() => client.disconnect());
 				</select>
 			</template>
 			<template v-else>
-				<div class="segmode">
-					<button v-for="m in MODES" :key="m.key" class="segbtn" :class="{ on: mode === m.key }" @click="mode = m.key">{{ m.label }}</button>
-				</div>
 				<div class="chips">
 					<button v-for="a in SUMMED" :key="a" class="chip" :style="channels.includes(a) ? { '--c': channelColor(a, theme) } : {}"
 						:class="{ on: channels.includes(a) }" @click="toggleChannel(a)">{{ a }}</button>
@@ -175,6 +175,7 @@ onBeforeUnmount(() => client.disconnect());
 .rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #64748b; flex-shrink: 0; }
 .rec-dot.live { background: #ef4444; animation: live-pulse 1.4s infinite; }
 .title { font-weight: 600; font-size: 15px; flex-shrink: 0; }
+.title-slot { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px; }
 .state { font-size: 11px; letter-spacing: 0.01em; color: var(--text-dim); flex-shrink: 0; }
 .state.recording { color: var(--warn); } .state.done { color: var(--ok); } .state.error { color: var(--danger); }
 .cm { padding: 4px 8px; font-size: 12px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
