@@ -41,16 +41,17 @@ export function histogramFrom(
 	const bins = new Uint32Array(n);
 	const span = hi > lo ? hi - lo : 1e-9;
 	const c = Math.max(0, Math.min(count, arr.length));
-	let max = 0;
+	let max = 0, total = 0;
 	for (let i = 0; i < c; i++) {
 		const v = arr[i];
 		if (!isBinnable(v)) continue;
+		total++;
 		let idx = Math.floor(((v - lo) / span) * n);
 		if (idx < 0) idx = 0; else if (idx >= n) idx = n - 1;
 		const b = ++bins[idx];
 		if (b > max) max = b;
 	}
-	return { bins, lo, hi, total: c, max };
+	return { bins, lo, hi, total, max };
 }
 
 export interface HistogramAccumulator {

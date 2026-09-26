@@ -21,9 +21,8 @@ import { Potree, type PointCloudOctree } from 'potree-core';
 import { defaultScale, OPEN_DISP, type ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { CLUSTER_PALETTE } from './clusterPalette';
-import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
-import type { Selection } from './selection';
+import { percentileRange, type Selection } from './selection';
 import type { DiagLayer } from './diagLayers';
 import type { ViewportResult } from './diagViewport';
 
@@ -123,8 +122,9 @@ function makeMaterial(): THREE.ShaderMaterial {
 			uniform vec2 uSelTimeRange;
 			uniform vec2 uSelAttrRange;
 			uniform float uSelAttrChannel;
+			uniform vec2 uDisp;
 			varying float vT;
-			varying float vRaw;
+			varying float vOut;   // 1 = outside the displayed range
 			varying float vSelected;
 			float pick(float i) {
 				if (i < 0.5) return tsa_resid;
@@ -132,7 +132,9 @@ function makeMaterial(): THREE.ShaderMaterial {
 			}
 			void main() {
 				float v = pick(uChannel);
-				vRaw = v;
+				// Tested here, in the (highp) vertex stage: the mediump fragment stage can be real
+				// fp16, which quantises a range edge and overflows OPEN_DISP to inf.
+				vOut = (v < uDisp.x || v > uDisp.y) ? 1.0 : 0.0;
 				vT = clamp((v - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
 				vSelected = 1.0;
 				if (uSelKind > 0.5 && uSelKind < 1.5) {
@@ -146,11 +148,11 @@ function makeMaterial(): THREE.ShaderMaterial {
 			}`,
 		fragmentShader: `
 			precision mediump float;
-			uniform sampler2D uGradient; uniform vec2 uDisp; uniform float uGreyOOR;
-			varying float vT; varying float vRaw; varying float vSelected;
+			uniform sampler2D uGradient; uniform float uGreyOOR;
+			varying float vT; varying float vOut; varying float vSelected;
 			void main() {
 				vec2 d = gl_PointCoord - vec2(0.5); if (dot(d, d) > 0.25) discard;
-				bool outOfDisplay = (vRaw < uDisp.x || vRaw > uDisp.y);
+				bool outOfDisplay = vOut > 0.5;
 				if (outOfDisplay && uGreyOOR < 0.5) discard;
 				vec3 c = outOfDisplay ? vec3(0.5) : texture2D(uGradient, vec2(vT, 0.5)).rgb;
 				// Unselected points stay visible but muted -- an empty or wrong selection must
@@ -182,14 +184,10 @@ function disposePco() {
 	pco = null;
 }
 
-// The colour range currently applied (for the figure export) -- mirrors props.colorScale's own
-// satMin/satMax, tracked separately only so exportViewport() need not re-derive it.
-let appliedLo = 0, appliedHi = 1;
 function applyRange() {
 	if (!material) return;
 	const s = props.colorScale;
-	appliedLo = s.satMin; appliedHi = s.satMax > s.satMin ? s.satMax : s.satMin + 1;
-	material.uniforms.uRange.value.set(appliedLo, appliedHi);
+	material.uniforms.uRange.value.set(s.satMin, s.satMax > s.satMin ? s.satMax : s.satMin + 1);
 	material.uniforms.uDisp.value.set(s.dispMin, s.dispMax);
 	material.uniforms.uGreyOOR.value = s.greyOutOfRange ? 1 : 0;
 	invalidate();
@@ -224,14 +222,6 @@ function applySelection() {
 // A separate THREE.Points (not potree-managed) fed by props.analysisResult. Reuses
 // DiagScatter's viridis / cluster-palette shader, minus the selection-dim path.
 let analysisPoints: THREE.Points | null = null;
-
-function percentileRange(a: Float32Array): [number, number] {
-	const s = Float32Array.from(a).filter((v) => Number.isFinite(v)).sort();
-	if (s.length === 0) return [0, 1];
-	const lo = s[Math.floor(0.01 * (s.length - 1))];
-	const hi = s[Math.floor(0.99 * (s.length - 1))];
-	return hi > lo ? [lo, hi] : [lo, lo + 1];
-}
 
 function makeAnalysisMaterial(): THREE.ShaderMaterial {
 	const paletteFlat = new Float32Array(CLUSTER_PALETTE.flat());
@@ -612,7 +602,7 @@ watch(() => props.pointSize, () => { if (material) { material.uniforms.uSize.val
 watch(() => props.selection, applySelection, { deep: true });
 
 // The world rectangle (mm) the orthographic camera currently shows (pan target ± half the
-// zoom-scaled frustum). Meaningful in the flat 2D view; the export is a 2D figure anyway.
+// zoom-scaled frustum). Meaningful in the flat 2D view.
 function currentBounds(): { xmin: number; xmax: number; ymin: number; ymax: number } {
 	if (!camera) return { xmin: -1, xmax: 1, ymin: -1, ymax: 1 };
 	const cx = controls?.target.x ?? camera.position.x;
@@ -621,20 +611,6 @@ function currentBounds(): { xmin: number; xmax: number; ymin: number; ymax: numb
 	const hh = (camera.top - camera.bottom) / 2 / (camera.zoom || 1);
 	return { xmin: cx - hw, xmax: cx + hw, ymin: cy - hh, ymax: cy + hh };
 }
-// Export the current view as a formatted figure (client-side, no host round-trip). The render
-// loop paints every frame + preserveDrawingBuffer is on, so the canvas pixels are live. Not
-// wired to any UI trigger yet in this component (deferred, see plan) -- kept for parity with
-// FrmOctree.vue, whose figure-export button this can be wired to in a later pass.
-function exportViewport(filename: string, subtitle?: string) {
-	const c = canvasEl.value;
-	if (!c) return false;
-	return exportFrmFigure({
-		canvas: c, bounds: currentBounds(),
-		cmin: appliedLo, cmax: appliedHi, colorScale: props.colorScale,
-		axis: props.channel, subtitle, filename,
-	});
-}
-defineExpose({ currentBounds, exportViewport });
 </script>
 
 <template>

@@ -29,7 +29,6 @@ let ro: ResizeObserver | null = null;
 const ML = 48, MR = 10, MT = 10, MB = 22;
 // Updated every draw() so pointer handlers can convert canvas-local px <-> data seconds without
 // redoing the layout math.
-let lastXOf: ((t: number) => number) | null = null;
 let lastT0 = 0, lastT1 = 0, lastW = 0;
 function xToSec(px: number): number {
 	if (lastW <= 0) return lastT0;
@@ -129,7 +128,7 @@ function draw() {
 
 	const xOf = (t: number) => ML + ((t - t0) / span) * W;
 	const yOf = (v: number) => MT + H - ((v - lo) / yr) * H;
-	lastXOf = xOf; lastT0 = t0; lastT1 = t1; lastW = W;
+	lastT0 = t0; lastT1 = t1; lastW = W;
 
 	ctx.font = '10px system-ui'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
 	const yStep = niceStep(yr, Math.max(2, Math.floor(H / 50)));

@@ -15,6 +15,7 @@ import time
 from .config import RecordConfig
 from .d1rw import HEADER_SIZE, read_header
 from .finalize import finalize
+from .storage import atomic_write_json
 
 MANIFEST = "manifest.json"
 
@@ -36,13 +37,7 @@ def write_manifest(
         data["config"] = cfg.model_dump()
     if error is not None:
         data["error"] = error
-    path = os.path.join(capture_dir, MANIFEST)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    atomic_write_json(os.path.join(capture_dir, MANIFEST), data, fsync=True, indent=2)
 
 
 def _raw_info(capture_dir: str) -> dict | None:
@@ -132,9 +127,14 @@ def scan_incomplete(captures_root: str, exclude_id: str | None = None) -> list[d
     return incomplete
 
 
+def is_safe_id(session_id: str) -> bool:
+    """A bare directory name: no separators or parent references that could escape the root."""
+    return not ("/" in session_id or "\\" in session_id or ".." in session_id)
+
+
 def recover_session(captures_root: str, session_id: str) -> dict:
     """Re-run finalize on a crashed session's raw file."""
-    if "/" in session_id or "\\" in session_id or ".." in session_id:
+    if not is_safe_id(session_id):
         raise ValueError("invalid session id")
     capture_dir = os.path.join(captures_root, session_id)
     raw_path = os.path.join(capture_dir, "raw.d1raw")
@@ -169,7 +169,7 @@ def discard_session(captures_root: str, session_id: str) -> None:
     discard finished after the client gave up waiting on it) is treated as success, not an error —
     otherwise a retried/duplicate request would surface a confusing 404 for a discard that actually
     already worked."""
-    if "/" in session_id or "\\" in session_id or ".." in session_id:
+    if not is_safe_id(session_id):
         raise ValueError("invalid session id")
     capture_dir = os.path.join(captures_root, session_id)
     if not os.path.isdir(capture_dir):

@@ -4,12 +4,11 @@
 import { computed, ref, watch } from 'vue';
 import { useWorkspace } from '../workspace';
 import LiveFrm from '../LiveFrm.vue';
-import { FrmCloud, ColorScaleEditor, defaultScale, withAutoRange, withOpenDisplay, type ColorScale, type Histogram } from '@d1/force-plotting';
+import { FrmCloud, ColorScaleEditor, defaultScale, useAutoColorScale, withOpenDisplay, type ColorScale, type Histogram } from '@d1/force-plotting';
 import { appUrl } from '../../appUrl';
 const w = useWorkspace();
 const STRIDES = [1, 2, 5, 10, 25, 50];
 const editorOpen = ref(false);
-const locked = ref(false);
 
 // FrmCloud.vue and LiveFrm.vue both take a ColorScale prop now (Stage 2/3/4 of the colour-scale
 // port); Stage 5 adds the full editor here. `colorScale` is this panel's real source of truth
@@ -22,17 +21,8 @@ const locked = ref(false);
 // briefly washes colour toward the middle of the ramp. Not worth fixing -- resetting autoClimits
 // on the swap would flash [0,1] instead, which is worse -- but real, and invisible only because it
 // self-corrects within a frame or two.
-const autoClimits = ref<{ cmin: number; cmax: number } | null>(null);
-const colorScale = ref<ColorScale>({ ...defaultScale(0, 1), colormap: w.plot.colormap });
-function seedAuto(v: { cmin: number; cmax: number }) { colorScale.value = withAutoRange(colorScale.value, v.cmin, v.cmax); }
-function onClimits(v: { cmin: number; cmax: number }) {
-	// Dedup guard: a value-identical re-emission would still be a fresh colorScale object.
-	if (autoClimits.value && autoClimits.value.cmin === v.cmin && autoClimits.value.cmax === v.cmax) return;
-	autoClimits.value = v;
-	if (!locked.value) seedAuto(v);
-}
-// Unlocking hands the saturation range back to auto straight away.
-watch(locked, (l) => { if (!l && autoClimits.value) seedAuto(autoClimits.value); });
+const { colorScale, locked, autoClimits, onClimits } =
+	useAutoColorScale({ initial: { ...defaultScale(0, 1), colormap: w.plot.colormap } });
 // The displayed range is in absolute units of the channel it was set on; reopen it on a switch.
 watch(() => w.plot.frmAxis, () => { colorScale.value = withOpenDisplay(colorScale.value); });
 // Two-way with the shared workspace colormap (Polar panel's select, pop-out seed).

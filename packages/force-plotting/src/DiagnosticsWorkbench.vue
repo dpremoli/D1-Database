@@ -47,7 +47,6 @@ const props = withDefaults(defineProps<{
 	diagPath: string;
 	analysisId: string;
 	diagMetrics: Record<string, unknown> | null;
-	totalPoints: number;
 	initialRecipe?: Recipe | null;
 	bakedRecipe?: Recipe | null;
 	/** true while the host is running a bake for this cut (owned by the page). */
@@ -572,7 +571,6 @@ onBeforeUnmount(() => {
 							:initial-channel="item.channel"
 							@polygon="onPolygon"
 							@update:channel="(c) => setChannel(item.i, c)"
-							@cluster-select="onClusterSelect"
 							@result="(r) => panelResults[item.i] = r"
 							@busy="(b) => panelBusy[item.i] = b"
 							@popout="onPopout"

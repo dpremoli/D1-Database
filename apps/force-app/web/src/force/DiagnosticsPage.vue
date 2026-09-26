@@ -178,7 +178,6 @@ async function build(recipe?: Recipe) {
 				:diag-path="selected.diag_path as string"
 				:analysis-id="selected.id"
 				:diag-metrics="selected.diag_metrics"
-				:total-points="Number(selected.diag_points) || 0"
 				:initial-recipe="selected.diag_recipe"
 				:baked-recipe="selected.diag_recipe"
 				:baking="building"

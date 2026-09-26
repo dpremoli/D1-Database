@@ -10,6 +10,7 @@ import { uploadCaptureColdStart } from '../record/uploadCapture';
 import { discardQueued, listQueue, retryQueued, syncStatus, type QueuedRun } from '../record/directusSync';
 import { confirmAction } from '../ui/confirm';
 import EditCaptureMetadataDialog from './EditCaptureMetadataDialog.vue';
+import { formatMegabytes } from '../format';
 
 interface Capture {
 	id: string;
@@ -107,7 +108,7 @@ async function remove(c: Capture) {
 		detail: 'This cannot be undone.',
 		stats: [
 			{ label: 'Capture', value: c.sample_name || c.id },
-			{ label: 'Size', value: fmtSize(c.size_mb) },
+			{ label: 'Size', value: formatMegabytes(c.size_mb) },
 			{ label: 'Uploaded to database', value: isUp ? 'yes' : known ? 'no' : 'unknown' },
 		],
 		confirmLabel: 'Delete permanently',
@@ -181,13 +182,6 @@ async function uploadAllUnsynced() {
 	if (!ok) return;
 	for (const c of pending) await upload(c);   // sequential: each is a multi-MB file upload
 }
-
-
-function fmtSize(mb: number): string {
-	if (mb < 1) return `${(mb * 1000).toFixed(0)} KB`;
-	if (mb < 1000) return `${mb.toFixed(1)} MB`;
-	return `${(mb / 1000).toFixed(2)} GB`;
-}
 function fmtDate(mtime: number): string {
 	if (!mtime) return '—';
 	return new Date(mtime * 1000).toLocaleString();
@@ -258,7 +252,7 @@ onMounted(() => { load(); refreshQueue(); });
 
 		<div class="summary">
 			<div class="stat"><span>Captures</span><b>{{ captures.length }}</b></div>
-			<div class="stat"><span>Using</span><b>{{ fmtSize(totalMb) }}</b></div>
+			<div class="stat"><span>Using</span><b>{{ formatMegabytes(totalMb) }}</b></div>
 			<div class="stat" v-if="disk.free_gb != null">
 				<span>Free on drive</span><b>{{ disk.free_gb.toFixed(1) }} GB</b>
 			</div>
@@ -332,7 +326,7 @@ onMounted(() => { load(); refreshQueue(); });
 				</div>
 				<div class="rsub">
 					<span class="mono">{{ c.id }}</span>
-					<span>{{ fmtSize(c.size_mb) }}</span>
+					<span>{{ formatMegabytes(c.size_mb) }}</span>
 					<span v-if="c.duration_sec != null">{{ c.duration_sec.toFixed(1) }}s</span>
 					<span v-if="c.n">{{ c.n.toLocaleString() }} samples</span>
 					<span>{{ fmtDate(c.mtime) }}</span>

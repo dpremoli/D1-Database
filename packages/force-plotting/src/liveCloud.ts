@@ -61,8 +61,7 @@ function computeAutoLimits(c: Cache, channel: CloudChannel): [number, number] {
 	const s = new Float32Array(Math.ceil(a.length / stride));
 	for (let i = 0, k = 0; i < a.length; i += stride, k++) s[k] = a[i];
 	s.sort();
-	const pc = (q: number) => s[Math.min(s.length - 1, Math.max(0, Math.round((q / 100) * (s.length - 1))))];
-	let lo = pc(1), hi = pc(99);
+	let lo = percentile(s, 1), hi = percentile(s, 99);
 	if (!(hi > lo)) { lo = s[0]; hi = s[s.length - 1]; if (!(hi > lo)) hi = lo + 1; }
 	// A channel carrying NaN sorts those to the END, so the fallback above can pick one up and
 	// then `hi = lo + 1` propagates it. Callers feed this straight into shader uniforms and into

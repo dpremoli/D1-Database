@@ -145,14 +145,7 @@ h2 { margin: 0 0 4px; font-size: 16px; }
 .lead code { font-family: var(--mono); font-size: 12px; padding: 1px 5px; background: var(--surface); border-radius: 4px; }
 .hint { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
 .err { display: flex; align-items: center; gap: 5px; color: var(--danger); font-size: 12px; margin: 4px 0 0; }
-.actions { display: flex; gap: 10px; margin-top: 6px; }
-.btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; font-size: 13px; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; }
-.btn.save { background: var(--accent); color: var(--accent-ink); }
-.btn.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .mt { margin-top: 32px; }
-.channels { display: block; width: 100%; padding: 9px 11px; font-size: 12px; font-family: var(--mono); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; outline: none; resize: vertical; }
-.channels:focus { border-color: var(--accent); }
 .theme-toggle { display: flex; gap: 0; margin-bottom: 20px; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; width: fit-content; max-width: 100%; }
 .theme-toggle button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 13px; font-weight: 600; color: var(--text-dim); background: transparent; border: none; cursor: pointer; }
 .theme-toggle button.on { background: var(--accent); color: var(--accent-ink); }

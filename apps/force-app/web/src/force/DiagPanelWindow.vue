@@ -1,7 +1,6 @@
 <script setup lang="ts">
 // A single Diagnostics Workbench panel in its own window — the second-monitor view. Mirrors
-// the Record tab's /live/:panel pop-outs (LivePanelWindow.vue): install the app's ForceHost,
-// read the target from the route, render one panel full-window.
+// the Record tab's /live/:panel pop-outs (LivePanelWindow.vue): read the target from the route, render one panel full-window.
 //
 // This is a VIEWER, not the editor: editing the recipe stays in the main workbench window.
 // A framed region still recomputes its spatial step at full resolution here, because that
@@ -16,28 +15,10 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import {
-	SpatialPanel, DEFAULT_RECIPE, recipeChannels, setForceHost, openDiagSync, describeRequestFailure,
+	SpatialPanel, DEFAULT_RECIPE, recipeChannels, openDiagSync, describeRequestFailure,
 	fetchLayers, type DiagSyncChannel, type DiagLayer, type Recipe,
 } from '@d1/force-plotting';
-import { api, authHeaders } from '../directusClient';
-import { authStore } from '../authStore';
-import { getConfig } from '../config';
-
-setForceHost({
-	api,
-	currentUser: () => authStore.currentUser.value,
-	get filterUrl() { return getConfig().filterUrl; },
-	get diagUrl() { return getConfig().diagUrl; },
-	get octreeUrl() { return getConfig().octreeUrl; },
-	authHeaders,
-	refreshAuth: () => authStore.refresh(),
-	fetchCredentials: 'omit',
-	openRecord: (collection, id) => {
-		window.open(`${getConfig().directusUrl}/admin/content/${collection}/${id}`, '_blank', 'noopener');
-	},
-	downloadAsset: async () => { /* not used by a detached spatial view */ },
-	dense: true,
-});
+import { api } from '../directusClient';
 
 const route = useRoute();
 const analysisId = computed(() => String(route.params.analysisId || ''));

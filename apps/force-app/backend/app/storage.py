@@ -3,11 +3,46 @@ free space, and total capacity. Windows-focused (the acquisition PC runs Windows
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import shutil
 import subprocess
+import tempfile
 import time as _time
+
+# Windows refuses os.replace onto a file another handle has open (WinError 5), e.g. a threadpool
+# endpoint reading summary.json at that moment. Those reads are brief, so retry for up to ~0.5 s.
+_REPLACE_RETRIES = 20
+_REPLACE_BACKOFF_S = 0.025
+
+
+def atomic_write_json(path: str, data, *, fsync: bool = False, **dump_kw) -> None:
+    """Write JSON via a temp file + os.replace, so a reader never sees a half-written file.
+
+    The temp file is unique per call, so concurrent writers to the same path never share one."""
+    d = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=os.path.basename(path) + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, **dump_kw)
+            if fsync:
+                f.flush()
+                os.fsync(f.fileno())
+        for attempt in range(_REPLACE_RETRIES):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt == _REPLACE_RETRIES - 1:
+                    raise
+                _time.sleep(_REPLACE_BACKOFF_S)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _drive_letters() -> list[str]:

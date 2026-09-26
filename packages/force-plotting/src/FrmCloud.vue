@@ -664,17 +664,21 @@ watch(() => props.pointSize, scheduleDraw);
 
 // A host's colorScale is often a fresh object on every recompute, so the deep watch fires on
 // identity alone; skip when nothing either path reads has changed (lutKey covers log scale).
-function colorScaleUnchanged(a: ColorScale, b: ColorScale | undefined): boolean {
+function colorScaleUnchanged(a: ColorScale, b: ColorScale | null): boolean {
 	return !!b && lutKey(a) === lutKey(b) &&
 		a.satMin === b.satMin && a.satMax === b.satMax &&
 		a.dispMin === b.dispMin && a.dispMax === b.dispMax &&
 		a.greyOutOfRange === b.greyOutOfRange;
 }
+// Compared against a copy, not the watcher's `prev`: when a host mutates the scale in place, `prev`
+// IS the new object and every change would look like a no-op.
+let lastScale: ColorScale | null = { ...props.colorScale };
 // Neither path re-runs geometry for a colour change: the GPU path pushes uniforms (and rewrites
 // the LUT texture when lutKey changes); the CPU path repaints its resident colour buffer and
 // leaves the texture to uploadGpuGeometry's resync on the way back to the GPU path.
-watch(() => props.colorScale, (s, prev) => {
-	if (colorScaleUnchanged(s, prev)) return;
+watch(() => props.colorScale, (s) => {
+	if (colorScaleUnchanged(s, lastScale)) return;
+	lastScale = { ...s };
 	if (!usesGpuPath.value) { scheduleRecolor(); return; }
 	if (colormapTex) syncScaleTexture(colormapTex, s);
 	pushGpuColorUniforms(s);

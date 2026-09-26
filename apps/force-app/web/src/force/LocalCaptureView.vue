@@ -9,7 +9,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getConfig } from '../config';
-import { FrmCloud, parseCache, defaultScale, type Cache, type ColorScale } from '@d1/force-plotting';
+import { FrmCloud, parseCache, useAutoColorScale, type Cache } from '@d1/force-plotting';
 import FinishedForcePlot from '../record/FinishedForcePlot.vue';
 import { uploadCaptureColdStart } from '../record/uploadCapture';
 
@@ -24,15 +24,8 @@ const summary = ref<any | null>(null);
 const cache = ref<Cache | null>(null);
 const axis = ref<'Fx' | 'Fy' | 'Fz'>('Fz');
 
-// FrmCloud.vue takes a ColorScale prop (Stage 2/3 of the colour-scale port); this view never had
-// a manual cmin/cmax control, so just track whatever it reports as its own auto range, same
-// pattern as FrmPanel.vue's onClimits.
-const autoClimits = ref<{ cmin: number; cmax: number } | null>(null);
-function onClimits(v: { cmin: number; cmax: number }) {
-	if (autoClimits.value && autoClimits.value.cmin === v.cmin && autoClimits.value.cmax === v.cmax) return;
-	autoClimits.value = v;
-}
-const colorScale = computed<ColorScale>(() => defaultScale(autoClimits.value?.cmin ?? 0, autoClimits.value?.cmax ?? 1));
+// This view has no colour-scale editor, so the scale just follows the cloud's own auto range.
+const { colorScale, onClimits } = useAutoColorScale();
 
 const retrying = ref(false);
 const retryErr = ref<string | null>(null);

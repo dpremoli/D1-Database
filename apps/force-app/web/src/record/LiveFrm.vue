@@ -47,6 +47,10 @@ let cssW = 1, cssH = 1;
 let ro: ResizeObserver | null = null;
 // tracked point bounds (mm) for auto-fit framing — robust for both sim and replayed real cuts
 let bx0 = Infinity, bx1 = -Infinity, by0 = Infinity, by1 = -Infinity;
+// Render on demand: the loop still runs every frame (to pick up new points), but only draws when
+// something visible changed -- a finished or paused spiral of up to 2M points costs nothing idle.
+let needsRender = true;
+function invalidate() { needsRender = true; }
 
 function makeMaterial(): THREE.ShaderMaterial {
 	const s = props.colorScale;
@@ -122,6 +126,7 @@ function sizeCanvas() {
 	const r = c.getBoundingClientRect();
 	cssW = Math.max(1, r.width); cssH = Math.max(1, r.height);
 	renderer.setSize(cssW, cssH, false);
+	invalidate();
 	frameCamera();
 }
 
@@ -141,10 +146,13 @@ function halfExtents() {
 function applyCamera() {
 	if (!camera) return;
 	const { hw, hh } = halfExtents();
+	// Called every frame by frameCamera(); only a real change should cost a redraw.
+	if (camera.left === viewCx - hw && camera.right === viewCx + hw && camera.top === viewCy + hh && camera.bottom === viewCy - hh) return;
 	camera.left = viewCx - hw; camera.right = viewCx + hw;
 	camera.top = viewCy + hh; camera.bottom = viewCy - hh;
 	camera.position.set(viewCx, viewCy, 5);
 	camera.updateProjectionMatrix();
+	invalidate();
 }
 
 // Fit to the actual point bounds (falls back to diam when empty), unless the user owns the view.
@@ -284,6 +292,7 @@ function emitAutoRange() {
 function resetUpload() {
 	uploaded = 0; rendered = 0;
 	geom?.setDrawRange(0, 0);
+	invalidate();
 	bx0 = by0 = Infinity; bx1 = by1 = -Infinity;
 	lastEmittedAutoKey = '';
 	histAcc = null;
@@ -334,6 +343,7 @@ function frame() {
 			posAttr.addUpdateRange(writeStart * 3, (rendered - writeStart) * 3);
 			valAttr.addUpdateRange(writeStart, rendered - writeStart);
 			posAttr.needsUpdate = true; valAttr.needsUpdate = true;
+			invalidate();
 		}
 		geom!.setDrawRange(0, rendered);
 		uploaded = to;
@@ -349,8 +359,8 @@ function loop() {
 	raf = requestAnimationFrame(loop);
 	frame();
 	frameCamera();  // cheap; keeps the view fitted as the spiral grows
-	if (material && material.uniforms.uSize.value !== props.pointSize) material.uniforms.uSize.value = props.pointSize;
-	if (renderer && scene && camera) renderer.render(scene, camera);
+	if (material && material.uniforms.uSize.value !== props.pointSize) { material.uniforms.uSize.value = props.pointSize; invalidate(); }
+	if (needsRender && renderer && scene && camera) { renderer.render(scene, camera); needsRender = false; }
 }
 
 // Reactive point count for the label (client.frm.count is a plain field; frameSeq bumps per frame).
@@ -378,6 +388,7 @@ watch(() => props.colorScale, (s) => {
 	material.uniforms.uRange.value.set(s.satMin, s.satMax);
 	material.uniforms.uDisp.value.set(s.dispMin, s.dispMax);
 	material.uniforms.uGreyOOR.value = s.greyOutOfRange ? 1 : 0;
+	invalidate();
 }, { deep: true });
 onMounted(() => { setup(); window.addEventListener('resize', sizeCanvas); ro = new ResizeObserver(sizeCanvas); if (canvasEl.value) ro.observe(canvasEl.value); nextTick(sizeCanvas); });
 onBeforeUnmount(() => {

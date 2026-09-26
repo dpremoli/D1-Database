@@ -11,7 +11,7 @@ import LiveFft from './LiveFft.vue';
 import LiveSpectrogram from './LiveSpectrogram.vue';
 import LiveWaterfall from './LiveWaterfall.vue';
 import LiveFrm from './LiveFrm.vue';
-import { defaultScale, COLORMAPS, colormapLabel, type ColorScale } from '@d1/force-plotting';
+import { COLORMAPS, colormapLabel, useAutoColorScale, type ColorScale } from '@d1/force-plotting';
 
 const route = useRoute();
 const panel = computed(() => String(route.params.panel || 'force'));
@@ -81,15 +81,8 @@ const maps = Object.keys(COLORMAPS);
 // only by this LiveFrm instance's own climits event, never anything from the opener window; the
 // only thing carried across at all is the initial colormap choice via the querystring, matching
 // every other seed on this page (mode/channels/window/etc.).
-const autoClimits = ref<{ cmin: number; cmax: number } | null>(null);
-function onFrmClimits(v: { cmin: number; cmax: number }) {
-	if (autoClimits.value && autoClimits.value.cmin === v.cmin && autoClimits.value.cmax === v.cmax) return;
-	autoClimits.value = v;
-}
-const frmColorScale = computed<ColorScale>(() => ({
-	...defaultScale(autoClimits.value?.cmin ?? 0, autoClimits.value?.cmax ?? 1),
-	colormap: colormap.value,
-}));
+const { colorScale: autoFrmScale, onClimits: onFrmClimits } = useAutoColorScale();
+const frmColorScale = computed<ColorScale>(() => ({ ...autoFrmScale.value, colormap: colormap.value }));
 
 // Keeps the OS window title (taskbar/alt-tab) in sync with a mode change made after opening —
 // onMounted alone only ever set it once, from the URL the window was opened with.
