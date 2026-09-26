@@ -78,8 +78,8 @@
 	--text-faint: #94a3b8;
 	/* The same amber as the dark theme, for the same reason (the design test above): the old sky
 	   #0284c7 sat next to the Fz blue, so "selected" and "Z axis" looked alike here too. amber-700
-	   rather than the dark theme's #f5a524 so it holds contrast as text on white (4.8:1) and under
-	   white ink as a fill (5.2:1). */
+	   rather than the dark theme's #f5a524, which is ~2:1 on white: this is ~5:1 against white, both
+	   as text on the light panels and as a fill under white ink. */
 	--accent: #b45309;
 	--accent-ink: #fff;
 	--danger: #dc2626;
@@ -88,7 +88,7 @@
 	--fz: #2563eb;
 	--ok: #15803d;
 	--warn: #b45309;
-	--fx-ink: #dc2626;
+	--fx-ink: #b91c1c;
 	--fy-ink: #15803d;
 	--fz-ink: #1d4ed8;
 	--overlay: rgba(15, 23, 42, 0.4);
