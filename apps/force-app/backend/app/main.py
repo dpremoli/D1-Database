@@ -800,7 +800,7 @@ async def health_doctor(request: Request) -> dict:
     async def _check_directus(findings: list[dict]) -> None:
         # 3. Directus / database. The backend process itself never talks to Directus — sample lookup
         # and upload happen entirely in the browser, using the frontend's own resolved config (build-time
-        # VITE_DIRECTUS_URL, /config.json, or a Settings > General override) — so DIRECTUS_URL is normally
+        # VITE_DIRECTUS_URL, /config.json, or a Settings > Connectivity override) — so DIRECTUS_URL is normally
         # unset in this process's environment even on a fully working setup. Prefer the URL the frontend
         # actually uses (passed in the request body, same pattern as filter_url/octree_url below); only
         # fall back to the backend's own env var for setups that still rely on it.
@@ -981,7 +981,7 @@ async def health_doctor(request: Request) -> dict:
                         "status": "fail",
                         "message": str(e.detail),
                         "diagnosis": f"The configured {svc_label} URL is invalid or not allowed.",
-                        "fix": f"Check the {svc_label} URL in Settings > General.",
+                        "fix": f"Check the {svc_label} URL in Settings > Connectivity.",
                     }
                 )
                 continue
@@ -1026,7 +1026,7 @@ async def health_doctor(request: Request) -> dict:
                         "status": "fail",
                         "message": f"DNS lookup failed for {host}",
                         "diagnosis": f"Cannot resolve hostname '{host}'.",
-                        "fix": f"Check the {svc_label} URL in Settings > General.",
+                        "fix": f"Check the {svc_label} URL in Settings > Connectivity.",
                     }
                 )
             else:
@@ -1046,7 +1046,7 @@ async def health_doctor(request: Request) -> dict:
                         ),
                         "fix": "Start the local web server (Caddy) that serves filter and octree endpoints."
                         if is_caddy
-                        else f"Start the {svc_label.lower()} or fix the URL in Settings > General.",
+                        else f"Start the {svc_label.lower()} or fix the URL in Settings > Connectivity.",
                         "fix_command": "caddy run --config Caddyfile" if is_caddy else None,
                     }
                 )
@@ -1188,7 +1188,7 @@ async def health_doctor(request: Request) -> dict:
                 "status": "warn",
                 "message": f"{len(incomplete)} incomplete recording(s) found ({total_mb:.0f} MB)",
                 "diagnosis": "Previous recordings did not finalize — likely from a crash or forced shutdown.",
-                "fix": "Go to the Record page to recover or discard them, or use Settings > General to purge.",
+                "fix": "Go to the Record page to recover or discard them, or press Fix now to discard them all.",
                 "fixable": "purge_incomplete",
             }
         )

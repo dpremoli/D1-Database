@@ -1,7 +1,7 @@
 // Shared plumbing for the typed recorder-backend clients (labampApi, nidaqApi).
 import { getConfig } from './config';
 
-// Read at call time, not captured: Settings > General can retarget the recorder at runtime.
+// Read at call time, not captured: Settings > Connectivity can retarget the recorder at runtime.
 export function recorderBase(): string { return getConfig().recorderUrl; }
 
 export const JSON_HEADERS = { 'Content-Type': 'application/json' };
