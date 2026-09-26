@@ -12,6 +12,10 @@ let ro: ResizeObserver | null = null;
 const ML = 48, MR = 10, MT = 10, MB = 22;
 
 const chans = computed(() => {
+	// client.fft is a plain (non-reactive) field, so without this the pick was cached from the
+	// first render — before any spectrum existed — and the default panel drew an empty grid
+	// until a channel toggle happened to recompute it.
+	void props.client.fftSeq.value;
 	const fft = props.client.fft;
 	const avail = fft ? Object.keys(fft.spectra) : [];
 	const sel = (props.channels && props.channels.length ? props.channels : [fft?.axis || 'Fz']).filter((c) => avail.includes(c));
@@ -142,7 +146,9 @@ function draw() {
 
 watch(() => props.client.fftSeq.value, draw);
 watch(() => props.scale, draw);
-watch(chans, draw, { deep: true });
+// By value: chans now recomputes on every spectrum (it tracks fftSeq), and the fftSeq watcher
+// above already redraws for those — this one only needs to catch a changed selection.
+watch(() => chans.value.join(), draw);
 watch(theme, draw);
 onMounted(() => { resize(); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); });
 onBeforeUnmount(() => ro?.disconnect());
