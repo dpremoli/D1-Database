@@ -9,6 +9,10 @@ import App from './App.vue';
 import VIcon from './shims/VIcon.vue';
 import VProgressCircular from './shims/VProgressCircular.vue';
 import './theme'; // applies the persisted theme attribute before first paint
+// Bundled, not the Google Fonts CDN: the acquisition PC is often offline, and there every icon
+// rendered as its ligature name ("fiber_manual_record", "drag_indicator") and broke the layouts
+// around it. Same file byte-for-byte as the CDN's, so nothing changes visually online.
+import 'material-symbols/rounded.css';
 import './styles.css';
 
 async function bootstrap() {
