@@ -11,10 +11,8 @@ interface Finding {
 	fix_command?: string;
 	fixable?: string;
 }
-interface DiskInfo { path?: string; free_gb: number; total_gb: number; used_pct: number; captures_root?: string; }
 
 const findings = ref<Finding[]>([]);
-const disk = ref<DiskInfo | null>(null);
 const loading = ref(false);
 const lastChecked = ref('');
 const recorderDown = ref(false);
@@ -23,7 +21,6 @@ const fixingId = ref('');
 async function runDoctor() {
 	loading.value = true;
 	findings.value = [];
-	disk.value = null;
 	recorderDown.value = false;
 
 	const cfg = getConfig();
@@ -107,7 +104,6 @@ async function runDoctor() {
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		const data = await res.json();
 		findings.value = data.findings || [];
-		disk.value = data.disk || null;
 	} catch (e: any) {
 		findings.value = [{ service: 'Doctor', status: 'fail', message: `Doctor endpoint failed: ${e?.message}` }];
 	}
@@ -153,6 +149,9 @@ function saveEndpoints() {
 	setConfigOverride({ ...epForm });
 	epSaved.value = true;
 	setTimeout(() => (epSaved.value = false), 2000);
+	// Check the new endpoints straight away (this replaces a separate "Re-check" button that did the
+	// same thing as "Run doctor" at the top of the page).
+	void runDoctor();
 }
 function resetEndpoints() {
 	resetConfigOverride();
@@ -216,21 +215,6 @@ onMounted(() => runDoctor());
 			</div>
 		</div>
 
-		<div v-if="disk" class="disk-section">
-			<h3>Recording storage</h3>
-			<div class="disk-info">
-				<div class="disk-stat"><span>Location</span><b class="mono">{{ disk.captures_root || disk.path }}</b></div>
-				<div class="disk-row">
-					<div class="disk-stat"><span>Free</span><b :class="{ warn: disk.free_gb < 10, crit: disk.free_gb < 5 }">{{ disk.free_gb.toFixed(1) }} GB</b></div>
-					<div class="disk-stat"><span>Total</span><b>{{ disk.total_gb.toFixed(0) }} GB</b></div>
-					<div class="disk-stat"><span>Used</span><b>{{ disk.used_pct.toFixed(1) }}%</b></div>
-				</div>
-				<div class="disk-bar-wrap">
-					<div class="disk-bar" :class="{ warn: disk.used_pct > 85, crit: disk.used_pct > 95 }" :style="{ width: disk.used_pct + '%' }"></div>
-				</div>
-			</div>
-		</div>
-
 		<div v-if="!loading && findings.length && findings.every(f => f.status === 'ok' || f.status === 'info')" class="all-good">
 			<span class="material-symbols-rounded">verified</span>
 			All systems healthy
@@ -246,10 +230,6 @@ onMounted(() => runDoctor());
 		<div class="actions">
 			<button class="btn save" @click="saveEndpoints">{{ epSaved ? 'Saved ✓' : 'Save' }}</button>
 			<button class="btn ghost" @click="resetEndpoints">Reset to defaults</button>
-			<button class="btn ghost" @click="runDoctor">
-				<span class="material-symbols-rounded" style="font-size:15px">stethoscope</span>
-				Re-check
-			</button>
 		</div>
 	</div>
 </template>
@@ -257,7 +237,6 @@ onMounted(() => runDoctor());
 <style scoped>
 .connectivity { max-width: 660px; }
 h2 { margin: 0 0 4px; font-size: 16px; }
-h3 { margin: 24px 0 8px; font-size: 14px; }
 .mt { margin-top: 32px; }
 
 /* Endpoint editor */
@@ -306,17 +285,4 @@ h3 { margin: 24px 0 8px; font-size: 14px; }
 .all-good { display: flex; align-items: center; gap: 8px; margin-top: 16px; padding: 12px 16px; background: color-mix(in srgb, var(--ok) 8%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 20%, transparent); border-radius: 10px; font-size: 14px; font-weight: 700; color: var(--ok); }
 .all-good .material-symbols-rounded { font-size: 22px; }
 
-.disk-section { margin-top: 16px; }
-.disk-info { padding: 12px; background: var(--surface); border-radius: 9px; border: 1px solid var(--border); }
-.disk-stat { display: flex; flex-direction: column; }
-.disk-stat span { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
-.disk-stat b { font-size: 13px; font-variant-numeric: tabular-nums; }
-.disk-stat b.mono { font-family: var(--mono); font-size: 11.5px; word-break: break-all; }
-.disk-stat b.warn { color: var(--warn); }
-.disk-stat b.crit { color: #ef4444; }
-.disk-row { display: flex; gap: 20px; margin-top: 8px; flex-wrap: wrap; }
-.disk-bar-wrap { width: 100%; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; margin-top: 10px; }
-.disk-bar { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.3s; }
-.disk-bar.warn { background: #fbbf24; }
-.disk-bar.crit { background: #ef4444; }
 </style>

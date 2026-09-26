@@ -5,7 +5,6 @@ import LookupField from './LookupField.vue';
 import CutPicker from './CutPicker.vue';
 import StatTile from './StatTile.vue';
 import MachineOperatorPanel from './MachineOperatorPanel.vue';
-import ToggleSwitch from '../../ui/ToggleSwitch.vue';
 
 const w = useWorkspace();
 
@@ -211,10 +210,11 @@ onBeforeUnmount(() => {
 			 Settings"); dropped as pure duplication of the Settings page itself, which is the only
 			 place it's actually editable. -->
 
-		<!-- Acquisition's processing toggles (Cut start / Drift / Converge) used to be their own
-			 card here. Moved to the footer, left of Start, in RecordingActions.vue — they're the one
-			 group of settings worth checking in the moment right before pressing Start, not something
-			 to have folded away in Details. -->
+		<!-- Acquisition's processing toggles (Cut start / Drift / Converge) live only in the footer,
+			 left of Start, in RecordingActions.vue — the one group of settings worth checking in the
+			 moment right before pressing Start. A second "Recording behaviour" block of the same three
+			 switches used to sit here too; their explanations and the cut-detect threshold are in
+			 Settings > Recording. -->
 
 		<div class="card" :class="{ collapsed: !open.tooling }">
 			<button type="button" class="card-head" @click="toggleCard('tooling')">
@@ -244,56 +244,6 @@ onBeforeUnmount(() => {
 						icon="build" :search="w.searchToolsForOp" :disabled="w.locked.value" @select="(i: any) => (w.link.toolLabel = i.label)" />
 				</div>
 			</div>
-		</div>
-
-		<!-- NI-DAQ channel summary (configured in Settings) -->
-		<p v-if="w.source.value === 'nidaq'" class="hint nidaq-hint">
-			<span class="material-symbols-rounded">memory</span>
-			{{ w.nidaqChannels.value.split(/[\n,]+/).filter(Boolean).length }} channels configured
-			<span class="sub">(edit in Settings)</span>
-		</p>
-
-		<!-- Processing options — each materially changes what gets recorded, so each gets a real
-			 label + description, a link to where it's actually configured, and a real switch rather
-			 than a plain checkbox easy to overlook. -->
-		<div v-if="w.source.value !== 'replay'" class="proc">
-			<div class="section-divider"><span>Recording behaviour</span></div>
-
-			<div class="proc-row">
-				<div class="proc-text">
-					<b>Detect cut start</b>
-					<span class="sub">Live FRM begins at the cut, not at t=0</span>
-				</div>
-				<router-link class="proc-cfg" to="/settings?tab=recording" title="Set the detection threshold in Settings">
-					<span class="material-symbols-rounded">tune</span>
-				</router-link>
-				<ToggleSwitch v-model="w.recordingPrefs.frmFromCut" :disabled="w.locked.value" label="Detect cut start" />
-			</div>
-
-			<div class="proc-row">
-				<div class="proc-text">
-					<b>Drift compensation</b>
-					<span class="sub">Saved outputs only — raw stays raw</span>
-				</div>
-				<router-link class="proc-cfg" to="/settings?tab=recording" title="What this does — Settings">
-					<span class="material-symbols-rounded">tune</span>
-				</router-link>
-				<ToggleSwitch v-model="w.recordingPrefs.driftComp" :disabled="w.locked.value" label="Drift compensation" />
-			</div>
-
-			<div class="proc-row">
-				<div class="proc-text">
-					<b>Converging auto-range</b>
-					<span class="sub">Tune per-channel ranges between cuts</span>
-				</div>
-				<router-link class="proc-cfg" to="/labamp" title="Set headroom on the Lab Amp page">
-					<span class="material-symbols-rounded">tune</span>
-				</router-link>
-				<ToggleSwitch v-model="w.recordingPrefs.convergeEnabled" :disabled="w.locked.value" label="Converging auto-range" />
-			</div>
-
-			<p v-if="w.recordingPrefs.convergeEnabled && w.source.value !== 'nidaq'" class="hint">Applies live only with the NI-DAQ source; on sim/replay it just previews the recommendation.</p>
-			<p v-if="w.converge.status" class="sync" :class="w.converge.busy ? 'warn' : 'ok'"><span class="material-symbols-rounded">tune</span>{{ w.converge.status }}</p>
 		</div>
 
 		<div class="card" :class="{ collapsed: !open.postCut }">
@@ -340,19 +290,6 @@ select option { background: var(--bg); color: var(--text); }
 textarea { font-family: var(--mono); font-size: 12px; resize: vertical; }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
-.sub { color: var(--text-dim); font-weight: 400; font-size: 10.5px; }
-.nidaq-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
-.nidaq-hint .material-symbols-rounded { font-size: 16px; color: var(--accent); }
-.proc { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 2px; border-top: 1px solid var(--border); }
-.proc .section-divider { margin: 2px 0 4px; }
-.proc-row { display: flex; align-items: center; gap: 10px; padding: 8px 2px; }
-.proc-row + .proc-row { border-top: 1px solid var(--border); }
-.proc-text { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; margin: 0; }
-.proc-text b { font-size: 12.5px; font-weight: 600; color: var(--text); }
-.proc-text .sub { font-size: 10.5px; color: var(--text-dim); font-weight: 400; }
-.proc-cfg { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 24px; height: 24px; border-radius: 7px; color: var(--text-dim); text-decoration: none; }
-.proc-cfg:hover { background: var(--surface); color: var(--accent); }
-.proc-cfg .material-symbols-rounded { font-size: 16px; }
 .section-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
 .section-divider::before, .section-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 /* Folding subpanels (Direction B / "Cards"): Tooling, Coolant & geometry, Post-cut. Body content
@@ -379,7 +316,6 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 /* Two lookups side by side (Machine|Operator, Insert|Edge) to save vertical space. Each LookupField
    is position:relative with its own absolute dropdown, so the grid columns don't clip the menus. */
 .links.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
-.hint { font-size: 11.5px; color: var(--text-dim); margin: 0; }
 .chks { display: flex; gap: 16px; margin-top: 4px; }
 .chk { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text); cursor: pointer; }
 .chk input { accent-color: var(--accent); }
@@ -387,11 +323,10 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 /* --- Adaptive compression ------------------------------------------------------------------
    PanelFrame's .panel-body declares `container-type:size` under the name "panel-body" (see
    PanelFrame.vue), so this panel can react to the ACTUAL space the grid has given it, not just
-   scroll once content overflows. Two stages, least-important-first: spacing/padding tightens
-   first, then secondary explanatory text (the "(saved outputs only...)"-style asides, the NI-DAQ
-   live-only note) drops — never the field labels themselves, since most fields here have no
-   leading icon to fall back on for identification, unlike a dedicated compact-list redesign would.
-   If that still isn't enough, panel-body's own overflow-y:auto (unchanged) takes over.
+   scroll once content overflows. Spacing/padding tightens first, then the notes box gives up its
+   minimum height — never the field labels themselves, since most fields here have no leading icon
+   to fall back on for identification. If that still isn't enough, panel-body's own
+   overflow-y:auto (unchanged) takes over.
 
    The thresholds below are a first estimate sized off this form's own field count/spacing, not
    measured against the live grid panel (its actual pixel width depends on RecordPage.vue's grid
@@ -410,7 +345,6 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 	.card-head { margin-bottom: 6px; }
 }
 @container panel-body (max-height: 600px) {
-	.sub { display: none; }
 	label.wide textarea { min-height: 0; }
 }
 </style>

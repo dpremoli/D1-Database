@@ -134,12 +134,9 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 		</header>
 		<p v-if="err" class="err">{{ err }}</p>
 
-		<!-- Hardware summary bar -->
+		<!-- Hardware summary bar. No chassis or status chips: each chassis card below is titled with
+			 its model, and the badge beside the heading already says SIMULATED/LIVE. -->
 		<div v-if="devices" class="hw-summary">
-			<div class="hw-stat">
-				<span class="material-symbols-rounded">developer_board</span>
-				<div><span class="hw-label">Chassis</span><b>{{ devices.chassis.map(c => c.product_type).join(', ') || '—' }}</b></div>
-			</div>
 			<div class="hw-stat">
 				<span class="material-symbols-rounded">memory</span>
 				<div><span class="hw-label">Modules</span><b>{{ moduleCount }}</b></div>
@@ -155,10 +152,6 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 			<div class="hw-stat">
 				<span class="material-symbols-rounded">link</span>
 				<div><span class="hw-label">Assigned</span><b>{{ assignedCount }} / {{ channels.length }}</b></div>
-			</div>
-			<div class="hw-stat" :class="{ ok: !devices.simulated }">
-				<span class="material-symbols-rounded">{{ devices.simulated ? 'cloud' : 'sensors' }}</span>
-				<div><span class="hw-label">Status</span><b>{{ devices.simulated ? 'Simulated' : 'Connected' }}</b></div>
 			</div>
 		</div>
 
@@ -291,7 +284,6 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 .hw-summary { display: flex; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .hw-stat { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; }
 .hw-stat .material-symbols-rounded { font-size: 18px; color: var(--text-dim); }
-.hw-stat.ok .material-symbols-rounded { color: var(--ok); }
 .hw-stat div { display: flex; flex-direction: column; }
 .hw-label { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; }
 .hw-stat b { font-size: 12.5px; font-variant-numeric: tabular-nums; }

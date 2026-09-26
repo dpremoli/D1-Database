@@ -44,7 +44,6 @@ const eta = computed(() => {
 			<div class="ro" :title="`Elapsed: ${fmtTime(st.tSec)}`"><span>Elapsed</span><b>{{ fmtTime(st.tSec) }}</b></div>
 			<div class="ro" v-if="eta !== null" :title="`ETA: ${eta}`"><span>ETA</span><b class="eta">{{ eta }}</b></div>
 			<div class="ro" :title="`Cut start: ${st.cutStartSec !== null ? fmtTime(st.cutStartSec) : 'not detected'}`"><span>Cut</span><b :class="{ cut: st.cutStartSec !== null }">{{ st.cutStartSec !== null ? fmtTime(st.cutStartSec) : '—' }}</b></div>
-			<div class="ro" :title="`RPM: ${Math.round(st.rpm)}`"><span>RPM</span><b>{{ Math.round(st.rpm) }}</b></div>
 			<div class="ro" :title="`Samples: ${st.nTotal.toLocaleString()}`"><span>Samples</span><b>{{ st.nTotal.toLocaleString() }}</b></div>
 			<div class="ro" :title="`File size: ${formatMegabytes(estSizeMb)}`"><span>File size</span><b>{{ formatMegabytes(estSizeMb) }}</b></div>
 			<div class="ro" :title="`Bandwidth: ${bandwidth}`"><span>Bandwidth</span><b>{{ bandwidth }}</b></div>

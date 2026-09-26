@@ -897,7 +897,6 @@ const rightRowH = computed(() =>
 	Math.max(16, (availableHeight.value - RIGHT_MARGIN) / rightBottomRow.value - RIGHT_MARGIN),
 );
 const rightAddOpen = ref(false);
-const hasPanel = (t: string) => rightLayout.value.some((p) => p.type === t);
 function addRightPanel(type: RPanelType) {
 	rightAddOpen.value = false;
 	// Place a new panel beside the shortest existing column when there's room on the top row,
@@ -919,10 +918,6 @@ function addRightPanel(type: RPanelType) {
 	});
 }
 function closeRightPanel(i: string) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.i !== i); }
-function toggleRightType(type: RPanelType) {
-	if (hasPanel(type)) { if (rightLayout.value.length > 1) rightLayout.value = rightLayout.value.filter((p) => p.type !== type); }
-	else addRightPanel(type);
-}
 function resetRightLayout() { rightLayout.value = RIGHT_DEFAULT.map((p) => ({ ...p })); }
 
 // -------------------------------------------------------------------- data
@@ -1965,12 +1960,8 @@ function fmtDateTime(v: string | null | undefined) {
 				<div class="hero-spacer"></div>
 				<div class="panel-toggles" @click.stop>
 					<span class="pt-label">Panels</span>
-					<button class="pt-chip" :class="{ on: hasPanel('signals') }" @click="toggleRightType('signals')">
-						<v-icon :name="hasPanel('signals') ? 'visibility' : 'visibility_off'" x-small /> Signals
-					</button>
-					<button class="pt-chip" :class="{ on: hasPanel('frm') }" @click="toggleRightType('frm')">
-						<v-icon :name="hasPanel('frm') ? 'visibility' : 'visibility_off'" x-small /> FRM map
-					</button>
+					<!-- Add + each panel's own close is the whole panel menu (as on the Record page). Eye
+						 toggles for Signals and FRM map used to sit here too, a third way to do the same. -->
 					<div class="pt-add">
 						<button class="pt-chip" title="Add a panel" @click.stop="rightAddOpen = !rightAddOpen"><v-icon name="add" x-small /> Add</button>
 						<div v-if="rightAddOpen" class="pt-menu" @click.stop>
@@ -2626,7 +2617,6 @@ function fmtDateTime(v: string | null | undefined) {
 .hero-spacer { flex: 1 1 auto; }
 .hero .pt-label { color: rgba(255, 255, 255, 0.8); }
 .hero .pt-chip { color: #fff; background: rgba(255, 255, 255, 0.16); border-color: rgba(255, 255, 255, 0.28); }
-.hero .pt-chip.on { color: var(--theme--primary, #1d4ed8); background: #fff; border-color: #fff; }
 .hero .pt-chip:disabled { opacity: 0.5; }
 
 .loading { display: grid; place-items: center; padding: 40px; }
@@ -2886,7 +2876,6 @@ function fmtDateTime(v: string | null | undefined) {
 	background: var(--theme--background-subdued, #f1f5f9); border: 1px solid var(--theme--border-color-subdued, #e7ebf0);
 	transition: all 0.12s ease;
 }
-.pt-chip.on { color: var(--theme--primary, #1d4ed8); background: color-mix(in srgb, var(--theme--primary, #1d4ed8) 10%, transparent); border-color: color-mix(in srgb, var(--theme--primary, #1d4ed8) 30%, transparent); }
 .pt-chip:disabled { opacity: 0.55; cursor: not-allowed; }
 
 /* Flexible plot-panel grid (Signals / FRM as draggable, resizable, closeable panels). Pull the grid
