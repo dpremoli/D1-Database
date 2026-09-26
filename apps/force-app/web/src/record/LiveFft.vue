@@ -12,6 +12,9 @@ let ro: ResizeObserver | null = null;
 const ML = 48, MR = 10, MT = 10, MB = 22;
 
 const chans = computed(() => {
+	// client.fft is a plain field on a non-reactive class, so this computed would otherwise cache
+	// its first (pre-spectrum, empty) result forever -- read the fftSeq ref to track updates.
+	void props.client.fftSeq.value;
 	const fft = props.client.fft;
 	const avail = fft ? Object.keys(fft.spectra) : [];
 	const sel = (props.channels && props.channels.length ? props.channels : [fft?.axis || 'Fz']).filter((c) => avail.includes(c));
