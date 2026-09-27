@@ -1,5 +1,10 @@
 # Diagnostics Workbench — design
 
+**Status:** implemented — phases 1–6 shipped 2026-08-30 → 2026-09-01 (`scripts/diag/`,
+`packages/force-plotting/src/DiagnosticsWorkbench.vue`). The UI and pipeline-structure portions
+are superseded by [`2026-09-01-diagnostics-recipe-workbench-design.md`](./2026-09-01-diagnostics-recipe-workbench-design.md);
+the science here remains authoritative.
+
 ## Motivation
 
 The force app records and plots cuts, but every judgement about a cut is currently made by

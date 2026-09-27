@@ -252,7 +252,7 @@ interface IncompleteSession {
 const recoveryItems = ref<IncompleteSession[]>([]);
 // #27: "dismiss for now" without recovering or discarding -- the crashed capture stays exactly
 // where it is on disk (still visible to the health-doctor's "Crashed recordings" check and
-// Settings > General's purge option), this only stops the Record page banner from nagging about
+// the Connectivity doctor's purge fix), this only stops the Record page banner from nagging about
 // it every visit. Persisted (not just this component's lifetime) since "deal with it later" means
 // "maybe after restarting the app," not just "for the rest of this session."
 const DISMISSED_RECOVERY_LS_KEY = 'force-app.dismissedRecoveryIds';

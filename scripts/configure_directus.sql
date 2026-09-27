@@ -11,16 +11,24 @@
 BEGIN;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 0. SETTINGS — enable the Lab Dashboard module in the nav bar
+-- 0. SETTINGS — the module bar (the icon rail down the left edge)
 -- ─────────────────────────────────────────────────────────────────────────────
+-- Directus only shows a module entry whose "enabled" is true, so every entry needs
+-- it: without it the rail renders empty. The third condition repairs a bar written
+-- by an earlier version of this script (which omitted the flag) without touching a
+-- bar curated in the UI, since the UI always writes the flag.
 UPDATE directus_settings SET module_bar = '[
-  {"type":"module","id":"content"},
-  {"type":"module","id":"users"},
-  {"type":"module","id":"files"},
-  {"type":"module","id":"insights"},
-  {"type":"module","id":"d1-lab-dashboard"},
-  {"type":"module","id":"settings"}
-]' WHERE module_bar IS NULL OR module_bar::text NOT LIKE '%d1-lab-dashboard%';
+  {"type":"module","id":"content","enabled":true},
+  {"type":"module","id":"users","enabled":true},
+  {"type":"module","id":"files","enabled":true},
+  {"type":"module","id":"insights","enabled":true},
+  {"type":"module","id":"d1-lab-dashboard","enabled":true},
+  {"type":"module","id":"d1-force-dashboard","enabled":true},
+  {"type":"module","id":"d1-fast-dashboard","enabled":true},
+  {"type":"module","id":"settings","enabled":true}
+]' WHERE module_bar IS NULL
+      OR module_bar::text NOT LIKE '%d1-lab-dashboard%'
+      OR module_bar::text NOT LIKE '%"enabled"%';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. COLLECTIONS  (icon, display_template, sort_field, sort, color, translations)

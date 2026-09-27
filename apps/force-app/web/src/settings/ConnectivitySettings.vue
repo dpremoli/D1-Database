@@ -49,10 +49,10 @@ async function runDoctor() {
 				message: `Cannot reach ${cfg.recorderUrl}`,
 				diagnosis: isLocal
 					? `The recorder backend is not running on this machine (port ${port}). It needs to be started as a background process before recording.`
-					: `Cannot connect to ${host}:${port}. Check that the recorder backend is running on that host and the URL is correct in Settings > General.`,
+					: `Cannot connect to ${host}:${port}. Check that the recorder backend is running on that host and the Recorder URL under Service endpoints below is correct.`,
 				fix: isLocal
 					? 'Start the backend by running this command in a terminal:'
-					: `Verify the Recorder URL in Settings > General, or start the backend on ${host}.`,
+					: `Verify the Recorder URL under Service endpoints below, or start the backend on ${host}.`,
 				fix_command: isLocal
 					? `cd "${backendPath}"; python -m uvicorn app.main:app --host 0.0.0.0 --port ${port}`
 					: undefined,
@@ -63,7 +63,7 @@ async function runDoctor() {
 				status: 'fail',
 				message: 'Invalid recorder URL',
 				diagnosis: `The configured recorder URL "${cfg.recorderUrl}" is not a valid URL.`,
-				fix: 'Fix the Recorder URL in Settings > General (e.g. http://localhost:8200).',
+				fix: 'Fix the Recorder URL under Service endpoints below (e.g. http://localhost:8200).',
 			});
 		}
 
