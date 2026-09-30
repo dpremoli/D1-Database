@@ -60,7 +60,7 @@ test.describe('Inventory — conditional fields by kind & geometry', () => {
 		expect(await isFieldVisible(page, 'Gauge length')).toBeTruthy();
 		expect(await isFieldVisible(page, 'Gauge width')).toBeTruthy();
 
-		await selectDropdown(page, 'Geometry', 'Bar');
+		await selectDropdown(page, 'Geometry', 'Bar', { exact: true });
 		await page.waitForTimeout(800);
 		expect(await isFieldVisible(page, 'Gauge length')).toBeFalsy();
 		expect(await isFieldVisible(page, 'Ø (mm)')).toBeFalsy();

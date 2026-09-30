@@ -14,6 +14,7 @@ const materials = ref<Opt[]>([]);
 const methods = ref<Opt[]>([]);
 const projects = ref<Opt[]>([]);
 const forms = FORMS;
+const formLabel = computed(() => forms.find((x) => x.value === f.value.form)?.text ?? f.value.form);
 
 const f = ref<Record<string, any>>({
 	material_id: null,
@@ -184,7 +185,7 @@ onMounted(async () => {
 					</div>
 					<div class="geo-live" v-if="geoSvg">
 						<div class="geo-canvas" v-html="geoSvg"></div>
-						<div class="geo-cap">{{ f.form }}<span v-if="geoDimsText"> · {{ geoDimsText }}</span></div>
+						<div class="geo-cap">{{ formLabel }}<span v-if="geoDimsText"> · {{ geoDimsText }}</span></div>
 					</div>
 					<div class="geo-live empty" v-else><span>Pick a form to preview the shape</span></div>
 				</section>

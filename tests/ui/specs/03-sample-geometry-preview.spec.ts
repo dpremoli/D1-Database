@@ -59,8 +59,7 @@ test.describe('Sample — live geometry preview', () => {
 		await selectDropdown(page, 'Item Type', 'Sample');
 		const preview = fieldByLabel(page, 'Shape Preview');
 
-		// "Bar" is listed before "Round bar", so the first match of /Bar/i is the rectangular bar.
-		await selectDropdown(page, 'Geometry', 'Bar');
+		await selectDropdown(page, 'Geometry', 'Bar', { exact: true });
 		await fillInput(page, 'x / Width (mm)', '15');
 		await fillInput(page, 'y / Thickness (mm)', '25');
 		await fillInput(page, 'z / Length (mm)', '100');
