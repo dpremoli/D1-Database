@@ -87,16 +87,33 @@ function fitter(faces: Face[], dims: Dim[], circles: Circle[], pad: Pad = {}) {
 
 const fmt = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
 
-function svgWrap(inner: string) {
+// Marker ids must be unique per SVG: several previews can share a page, and url(#id) resolves
+// to the first match in the document (which fails if that SVG sits in a hidden container).
+const uid = Math.random().toString(36).slice(2, 7);
+let svgSeq = 0;
+
+// `extra` = screen-space points (label boxes, arrow tips) the fitter did not reserve room for;
+// the viewBox grows to include them so nothing is clipped and nothing spills outside the svg.
+function svgWrap(inner: string, extra: P2[] = []) {
+	let x0 = 0, y0 = 0, x1 = VW, y1 = VH;
+	for (const [x, y] of extra) { x0 = Math.min(x0, x - 2); y0 = Math.min(y0, y - 2); x1 = Math.max(x1, x + 2); y1 = Math.max(y1, y + 2); }
+	const id = `${uid}${++svgSeq}`;
 	// auto-start-reverse makes the start arrowhead point outward, like the end one.
-	return `<svg viewBox="0 0 ${VW} ${VH}" xmlns="http://www.w3.org/2000/svg" overflow="visible">`
-		+ `<defs><marker id="ga" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto-start-reverse">`
+	return `<svg viewBox="${x0.toFixed(1)} ${y0.toFixed(1)} ${(x1 - x0).toFixed(1)} ${(y1 - y0).toFixed(1)}" xmlns="http://www.w3.org/2000/svg">`
+		+ `<defs><marker id="ga-${id}" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto-start-reverse">`
 		+ `<path d="M0.5,0.5 L6,3 L0.5,5.5" fill="none" stroke="#475569" stroke-width="1"/></marker>`
-		+ `<marker id="gar" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">`
-		+ `<path d="M0,0 L6,3 L0,6 Z" fill="#b91c1c"/></marker></defs>${inner}</svg>`;
+		+ `<marker id="gar-${id}" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">`
+		+ `<path d="M0,0 L6,3 L0,6 Z" fill="#b91c1c"/></marker></defs>`
+		+ inner.replace(/url\(#(gar?)\)/g, (_m, n) => `url(#${n}-${id})`) + `</svg>`;
 }
 
 const f1 = (v: number) => v.toFixed(1);
+
+// Rough bounding box of a dimension label (8px bold, ~5 units per glyph) for viewBox growth.
+function labelBox(x: number, y: number, text: string, sink?: P2[]) {
+	const w = text.length * 5 + 2;
+	sink?.push([x - w / 2, y - 5], [x + w / 2, y + 5]);
+}
 
 // Extension line from a point on the object towards its dimension line (small gap at the
 // object, small overshoot past the dimension line).
@@ -119,7 +136,7 @@ function dimLine(a: P2, b: P2): string {
 		+ seg([b[0] + ux * tail, b[1] + uy * tail], b, ' marker-end="url(#ga)"');
 }
 
-function drawDims(dims: Dim[], to: (p: P3) => P2): string {
+function drawDims(dims: Dim[], to: (p: P3) => P2, sink?: P2[]): string {
 	const cx = VW / 2, cy = VH / 2;
 	return dims.map((d) => {
 		const a = to(d.a), b = to(d.b);
@@ -131,6 +148,7 @@ function drawDims(dims: Dim[], to: (p: P3) => P2): string {
 		if ((mx - cx) * nx + (my - cy) * ny < 0) { nx = -nx; ny = -ny; }
 		const lx = mx + nx * 11, ly = my + ny * 11;
 		const ext = d.ext ? extLine(to(d.ext[0]), a) + extLine(to(d.ext[1]), b) : '';
+		labelBox(lx, ly, d.label, sink);
 		return ext + dimLine(a, b)
 			+ `<text x="${f1(lx)}" y="${f1(ly)}" class="gdimt" dominant-baseline="middle">${d.label}</text>`;
 	}).join('');
@@ -163,7 +181,8 @@ function boxSvg(W: number, L: number, H: number): string {
 	const off = 0.16 * Math.max(W, L, H);
 	const { faces, dims } = boxFacesDims(W, L, H, off);
 	const { to } = fitter(faces, dims, []);
-	return svgWrap(faces.map((f) => faceSvg(f, to)).join('') + drawDims(dims, to));
+	const sink: P2[] = [];
+	return svgWrap(faces.map((f) => faceSvg(f, to)).join('') + drawDims(dims, to, sink), sink);
 }
 
 // Round solid (cylinder / disc): diameter D, height H along z.
@@ -171,6 +190,7 @@ function cylSvg(D: number, H: number): string {
 	const Rr = D / 2;
 	const circles: Circle[] = [{ cx: Rr, cy: Rr, cz: 0, r: Rr }, { cx: Rr, cy: Rr, cz: H, r: Rr }];
 	// Both markers are drawn in screen space against the silhouette, so reserve room for them.
+	const sink: P2[] = [];
 	const { to, s } = fitter([], [], circles, { l: 26, t: 22 });
 	const topC = to([Rr, Rr, H]), botC = to([Rr, Rr, 0]);
 	const rx = Rr * CA * R2 * s, ry = Rr * SA * R2 * s;
@@ -184,12 +204,14 @@ function cylSvg(D: number, H: number): string {
 	const dimD = extLine([left, topC[1]], [left, dy]) + extLine([right, topC[1]], [right, dy])
 		+ dimLine([left, dy], [right, dy])
 		+ `<text x="${f1(topC[0])}" y="${f1(dy - 4)}" class="gdimt">Ø${fmt(D)}</text>`;
+	labelBox(topC[0], dy - 4, `Ø${fmt(D)}`, sink);
 	// Height: beside the left wall, between the top and bottom ellipse centre-lines.
 	const hx = left - 12;
 	const dimH = extLine([left, topC[1]], [hx, topC[1]]) + extLine([left, botC[1]], [hx, botC[1]])
 		+ dimLine([hx, topC[1]], [hx, botC[1]])
 		+ `<text x="${f1(hx - 8)}" y="${f1((topC[1] + botC[1]) / 2)}" class="gdimt" dominant-baseline="middle">${fmt(H)}</text>`;
-	return svgWrap(body + top + dimD + dimH);
+	labelBox(hx - 8, (topC[1] + botC[1]) / 2, fmt(H), sink);
+	return svgWrap(body + top + dimD + dimH, sink);
 }
 
 // Round bar: a cylinder lying along the length (y) axis. The near end cap (y = L) is an
@@ -206,13 +228,14 @@ function roundBarSvg(D: number, L: number): string {
 	const tx = R * (1 + Math.SQRT1_2), tz = R * (1 - Math.SQRT1_2);
 	const off = 0.16 * Math.max(D, L);
 	const dims: Dim[] = [
-		{ a: [0, L, R], b: [D, L, R], label: `Ø${fmt(D)}` },
+		{ a: [0, L + off, R], b: [D, L + off, R], label: `Ø${fmt(D)}`, ext: [[0, L, R], [D, L, R]] },
 		{ a: [tx + off, 0, tz], b: [tx + off, L, tz], label: `${fmt(L)}`, ext: [[tx, 0, tz], [tx, L, tz]] },
 	];
 	const { to } = fitter([{ cls: 'gl', pts: [...near, ...far] }], dims, []);
 	const hull = convexHull([...near, ...far].map(to));
 	const path = (pts: P2[]) => `M${pts.map((p) => `${f1(p[0])},${f1(p[1])}`).join(' L')} Z`;
-	return svgWrap(`<path d="${path(hull)}" class="gr"/><path d="${path(near.map(to))}" class="gl"/>` + drawDims(dims, to));
+	const sink: P2[] = [];
+	return svgWrap(`<path d="${path(hull)}" class="gr"/><path d="${path(near.map(to))}" class="gl"/>` + drawDims(dims, to, sink), sink);
 }
 
 // Andrew's monotone chain.
@@ -263,7 +286,8 @@ function couponSvg(L: number, W: number, T: number, Lg: number, Wg: number): str
 	const depth = (f: Face) => (f.pts[0][0] + f.pts[0][1] + f.pts[1][0] + f.pts[1][1]) / 2;
 	walls.sort((a, b) => depth(a) - depth(b));
 	const { to } = fitter([top, ...walls], dims, []);
-	return svgWrap(walls.map((w) => faceSvg(w, to)).join('') + faceSvg(top, to) + drawDims(dims, to));
+	const sink: P2[] = [];
+	return svgWrap(walls.map((w) => faceSvg(w, to)).join('') + faceSvg(top, to) + drawDims(dims, to, sink), sink);
 }
 
 // Bend / fatigue bar: a long box with two supports and a central load arrow (3-pt).
@@ -271,6 +295,7 @@ function bendSvg(L: number, W: number, H: number): string {
 	const off = 0.16 * Math.max(L, W, H);
 	const { faces, dims } = boxFacesDims(W, L, H, off);
 	const { to } = fitter(faces, dims, []);
+	const sink: P2[] = [];
 	let markers = '';
 	// supports under the visible long side's bottom edge at 1/6 and 5/6 of the length
 	for (const fy of [1 / 6, 5 / 6]) {
@@ -280,7 +305,8 @@ function bendSvg(L: number, W: number, H: number): string {
 	// central downward load arrow onto the top face
 	const c = to([W / 2, L / 2, H]);
 	markers += `<line x1="${f1(c[0])}" y1="${f1(c[1] - 22)}" x2="${f1(c[0])}" y2="${f1(c[1] - 2)}" class="gload" marker-end="url(#gar)"/>`;
-	return svgWrap(faces.map((f) => faceSvg(f, to)).join('') + drawDims(dims, to) + markers);
+	sink.push([c[0], c[1] - 24]);
+	return svgWrap(faces.map((f) => faceSvg(f, to)).join('') + drawDims(dims, to, sink) + markers, sink);
 }
 
 function powderSvg(): string {
@@ -295,19 +321,25 @@ const num = (v: any, def: number): number => {
 	return typeof x === 'number' && !Number.isNaN(x) && x > 0 ? x : def;
 };
 
+// Shared by the drawing here and the volume estimate in GeometryPreview.vue, so the two never
+// disagree about what counts as a cylinder. Legacy free-text forms ('cylindrical', 'rod', …)
+// are matched loosely; the newer vocabulary values exactly.
+export const isRoundBar = (g: string) => g === 'round_bar';
+export const isUprightCylinder = (g: string) => /cylind|rod/.test(g);
+
 export function buildGeometry(d: Dims): string {
 	const g = (d.form || '').toLowerCase();
 	if (!g || g === 'other') return '';
 	if (g.includes('powder')) return powderSvg();
 	if (g.includes('disc')) return cylSvg(num(d.diameter_mm, 30), num(d.thickness_mm ?? d.length_mm, 8));
-	if (/cylind|rod/.test(g)) return cylSvg(num(d.diameter_mm, 25), num(d.length_mm, 50));
+	if (isRoundBar(g)) return roundBarSvg(num(d.diameter_mm, 20), num(d.length_mm, 100));
+	if (isUprightCylinder(g)) return cylSvg(num(d.diameter_mm, 25), num(d.length_mm, 50));
 	if (g.includes('tensile') || g.includes('coupon')) {
 		const L = num(d.length_mm, 200), W = num(d.width_mm, 20), T = num(d.thickness_mm, 3);
 		const Lg = Math.min(num(d.gauge_length_mm, 50), L * 0.9);
 		const Wg = Math.min(num(d.gauge_width_mm, 12.5), W * 0.95);
 		return couponSvg(L, W, T, Lg, Wg);
 	}
-	if (g.includes('round')) return roundBarSvg(num(d.diameter_mm, 20), num(d.length_mm, 100));
 	if (g.includes('bend')) return bendSvg(num(d.length_mm, 100), num(d.width_mm, 15), num(d.thickness_mm, 10));
 	// block / plate / bar → box
 	return boxSvg(num(d.width_mm, 24), num(d.length_mm, 40), num(d.thickness_mm, g.includes('plate') ? 5 : 20));

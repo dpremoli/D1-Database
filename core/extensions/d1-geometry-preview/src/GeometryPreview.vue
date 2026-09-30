@@ -15,7 +15,7 @@
 <script setup lang="ts">
 import { inject, computed, ref, watch, type Ref } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
-import { buildGeometry, FORM_FIELDS } from './geometry';
+import { buildGeometry, FORM_FIELDS, isRoundBar, isUprightCylinder } from './geometry';
 
 // Directus 11 injects the live form values as a Vue Ref — read `.value`.
 const values = inject<Ref<Record<string, any>>>('values', ref({}));
@@ -49,7 +49,7 @@ const volumeMm3 = computed<number | null>(() => {
 	const d = num(v.value.diameter_mm), L = num(v.value.length_mm), t = num(v.value.thickness_mm), w = num(v.value.width_mm);
 	const g = (v.value.form || '').toLowerCase();
 	if (g.includes('disc')) return d && (t ?? L) ? Math.PI * (d / 2) ** 2 * (t ?? L)! : null;
-	if (/cylind|rod|round/.test(g)) return d && L ? Math.PI * (d / 2) ** 2 * L : null;
+	if (isUprightCylinder(g) || isRoundBar(g)) return d && L ? Math.PI * (d / 2) ** 2 * L : null;
 	if (w && L && t) return w * L * t; // box-like
 	return null;
 });

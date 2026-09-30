@@ -92,6 +92,19 @@ run_eq "every group-detail field carries the 'group' special" \
        AND (special IS NULL OR special NOT LIKE '%group%')" \
     "0"
 
+echo "== Sample geometry: round bar form =="
+run "Geometry dropdown offers round_bar" \
+    "SELECT 1 FROM directus_fields
+     WHERE collection='physical_samples' AND field='form' AND options LIKE '%\"round_bar\"%'"
+run_eq "diameter_mm is shown for round_bar (not in its hide list)" \
+    "SELECT count(*) FROM directus_fields
+     WHERE collection='physical_samples' AND field='diameter_mm' AND conditions LIKE '%\"round_bar\"%'" \
+    "1"
+run_eq "length_mm is shown for round_bar (not in its hide list)" \
+    "SELECT count(*) FROM directus_fields
+     WHERE collection='physical_samples' AND field='length_mm' AND conditions LIKE '%\"round_bar\"%'" \
+    "1"
+
 echo "== Campaigns layer (trials + testing campaigns) =="
 run "campaigns table exists" \
     "SELECT to_regclass('public.campaigns')::TEXT"
