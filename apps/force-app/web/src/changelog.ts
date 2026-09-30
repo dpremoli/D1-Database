@@ -9,6 +9,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.32',
+		date: '2026-09-30',
+		notes: [
+			'Sign in with no connection. An account that has signed in on this PC before can sign in offline with the same password (kept only as a salted hash, for 30 days after its last online sign-in). A banner marks an offline session; "Sign in to sync" upgrades it once you are connected.',
+			'Every recording now carries who recorded it and when. A capture recorded offline and uploaded later, even by someone else, keeps its original owner and recording time; the database also notes who uploaded it.',
+			'Queued run records upload automatically only under the account that recorded them. Another user can upload them deliberately with "Upload as me" in Settings > Local Captures.',
+			'The Sample, Operator, Machine, Tool, Insert and Edge pickers work offline from a copy refreshed while connected (Settings > Connectivity shows its age and has "Refresh now").',
+			'Fixed: a dropped connection while refreshing the session signed you out. Only a refusal from the server does that now.',
+			'Fixed: editing a capture\'s metadata no longer drops who recorded it.',
+		],
+	},
+	{
 		version: '0.1.31',
 		date: '2026-09-27',
 		notes: [

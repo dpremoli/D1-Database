@@ -5,6 +5,8 @@
 // capture locally now, sync the run record when the network returns.
 import { reactive } from 'vue';
 import { api } from '../directusClient';
+import { authStore } from '../authStore';
+import { syncerFields } from '../recorder';
 
 const LS_KEY = 'force-app.sync.queue';
 
@@ -15,21 +17,54 @@ export interface QueuedRun {
 	createdAt: number;
 	attempts: number;
 	lastError?: string;
+	/** Directus user id that recorded this run (from recorded_metadata), when known. */
+	recordedBy?: string;
+	/** Who that is, for display ("waiting for ... to sign in"). */
+	recordedByLabel?: string;
+	/** Set by "Upload as me": another user's record the current user chose to sync anyway. */
+	syncAsMe?: boolean;
 }
 
-export const syncStatus = reactive<{ pending: number; syncing: boolean; lastError: string | null; lastSyncedAt: number | null }>(
-	{ pending: 0, syncing: false, lastError: null, lastSyncedAt: null },
+export const syncStatus = reactive<{
+	pending: number; syncing: boolean; lastError: string | null; lastSyncedAt: number | null;
+	/** Queued, but this session is offline-only (no Directus token): needs a sign-in while connected. */
+	needsSignIn: boolean;
+	/** Queued records recorded by someone else, left for that user's next sign-in. */
+	waitingForOthers: number;
+}>(
+	{ pending: 0, syncing: false, lastError: null, lastSyncedAt: null, needsSignIn: false, waitingForOthers: 0 },
 );
+
+// A record syncs automatically only under the account that recorded it (or one nobody is recorded
+// for, i.e. from before this field existed). Directus stamps audit_logs / user_created with whoever
+// owns the token that performs the write, so letting whoever signs in next push everyone's queued
+// records would silently re-attribute them. Another user can still do it deliberately ("Upload as
+// me", Settings > Local Captures); the recorder then stays in recorded_metadata either way.
+function mayAutoSync(item: QueuedRun): boolean {
+	const me = authStore.state.user?.id;
+	return !item.recordedBy || item.syncAsMe === true || item.recordedBy === me;
+}
+
+function recount(q: QueuedRun[]): void {
+	syncStatus.pending = q.length;
+	syncStatus.waitingForOthers = q.filter((x) => !mayAutoSync(x)).length;
+	syncStatus.needsSignIn = q.length > 0 && authStore.state.offline;
+}
 
 function load(): QueuedRun[] {
 	try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); } catch { return []; }
 }
-function save(q: QueuedRun[]) { localStorage.setItem(LS_KEY, JSON.stringify(q)); syncStatus.pending = q.length; }
+function save(q: QueuedRun[]) { localStorage.setItem(LS_KEY, JSON.stringify(q)); recount(q); }
 
 // Enqueue a run record and attempt to flush immediately.
 export async function logRun(payload: Record<string, any>, collection = 'manufacturing_operations'): Promise<void> {
 	const q = load();
-	q.push({ id: crypto.randomUUID(), collection, payload, createdAt: Date.now(), attempts: 0 });
+	const rm = payload.recorded_metadata ?? {};
+	q.push({
+		id: crypto.randomUUID(), collection, payload, createdAt: Date.now(), attempts: 0,
+		recordedBy: rm.recorded_by_user_id || undefined,
+		recordedByLabel: rm.recorded_by_name || rm.recorded_by_email || undefined,
+	});
 	save(q);
 	await flush();
 }
@@ -38,6 +73,8 @@ let flushing = false;
 export async function flush(): Promise<void> {
 	if (flushing) return;
 	if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+	// An offline session has no token, so every write would 401. Say why and wait for a re-sign-in.
+	if (authStore.state.offline) { recount(load()); return; }
 	flushing = true;
 	syncStatus.syncing = true;
 	try {
@@ -47,10 +84,15 @@ export async function flush(): Promise<void> {
 		// before that would undo their edit, resurrecting an item they had just deleted.
 		for (;;) {
 			const q = load();
-			if (!q.length) break;
-			const item = q[0];
+			recount(q);
+			// First item this sign-in may sync; ones recorded by someone else wait for them.
+			const item = q.find(mayAutoSync);
+			if (!item) break;
 			try {
-				await api.post(`/items/${item.collection}`, item.payload);
+				const payload = item.collection === 'manufacturing_operations'
+					? { ...item.payload, recorded_metadata: { ...item.payload.recorded_metadata, ...syncerFields() } }
+					: item.payload;
+				await api.post(`/items/${item.collection}`, payload);
 				save(load().filter((x) => x.id !== item.id));   // success — drop just this one
 				syncStatus.lastSyncedAt = Date.now();
 				syncStatus.lastError = null;
@@ -87,6 +129,16 @@ export function listQueue(): QueuedRun[] {
 	return load();
 }
 
+/** Sync a record another user recorded, under the current sign-in, instead of waiting for them. */
+export async function uploadQueuedAsMe(id: string): Promise<boolean> {
+	const q = load();
+	const it = q.find((x) => x.id === id);
+	if (!it) return false;
+	it.syncAsMe = true;
+	save(q);
+	return retryQueued(id);
+}
+
 /** Drop one item permanently. Its capture stays on disk; only the pending DB write is abandoned. */
 export function discardQueued(id: string): void {
 	save(load().filter((x) => x.id !== id));
@@ -121,7 +173,7 @@ let started = false;
 export function startSync(): void {
 	if (started) return;
 	started = true;
-	syncStatus.pending = load().length;
+	recount(load());
 	window.addEventListener('online', () => { void flush(); });
 	setInterval(() => { if (syncStatus.pending > 0) void flush(); }, 15000);
 	void flush();

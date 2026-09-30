@@ -11,6 +11,7 @@ import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS } from '../liveClient';
 import FinishedForcePlot from '../FinishedForcePlot.vue';
 import { useDialog } from '../../ui/useDialog';
 import { formatMegabytes } from '../../format';
+import { authStore } from '../../authStore';
 
 const w = useWorkspace();
 const router = useRouter();
@@ -32,7 +33,10 @@ useDialog(panel);
 // uploading without a Sample picked fails on a raw Directus constraint error at the end of the save
 // — after the user has already committed to it. Gate the option on having one instead.
 const hasSample = computed(() => !!w.link.sampleId);
-const canUpload = computed(() => online.value && hasSample.value);
+// An offline session (signed in with no connection) has no token to upload with, even if the
+// network has since returned -- the banner at the top is the way back to a real session.
+const offlineSession = computed(() => authStore.state.offline);
+const canUpload = computed(() => online.value && !offlineSession.value && hasSample.value);
 
 const uploadDb = ref(canUpload.value);
 const saveMat = ref(false);
@@ -261,7 +265,8 @@ function startNew() {
 						<input type="checkbox" v-model="uploadDb" :disabled="!canUpload || stage === 'saving'" />
 						<div>
 							<span>Upload to database</span>
-							<small v-if="!online">offline — will only save locally until you reconnect</small>
+							<small v-if="!online">offline — the capture stays on this PC; upload it later from Settings → Local Captures (recorded under your name)</small>
+							<small v-else-if="offlineSession">signed in offline — use "Sign in to sync" at the top, then upload from Settings → Local Captures</small>
 							<small v-else-if="!hasSample">pick a Sample in Metadata to enable database logging</small>
 							<small v-else>logs this run and links the capture into machining_force_analysis</small>
 						</div>

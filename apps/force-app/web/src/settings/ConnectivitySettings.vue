@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { getConfig, getConfigDefaults, setConfigOverride, resetConfigOverride } from '../config';
+import OfflineModeCard from './OfflineModeCard.vue';
 
 interface Finding {
 	service: string;
@@ -168,6 +169,8 @@ onMounted(() => runDoctor());
 	<div class="connectivity">
 		<h2>Connectivity Doctor</h2>
 		<p class="lead">Diagnoses all connections, hardware, and system health. Identifies problems and suggests fixes.</p>
+
+		<OfflineModeCard />
 
 		<div class="actions">
 			<button class="btn" :disabled="loading" @click="runDoctor">

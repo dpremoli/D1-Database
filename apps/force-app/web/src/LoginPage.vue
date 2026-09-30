@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onBeforeUnmount, ref } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { authStore } from './authStore';
 import { getConfig } from './config';
@@ -11,6 +11,14 @@ const email = ref('');
 const password = ref('');
 const busy = ref(false);
 const error = ref<string | null>(null);
+
+// Hint only: whether the OS thinks we're online. The real test is whether Directus answers.
+const online = ref(navigator.onLine);
+const setOn = () => { online.value = true; };
+const setOff = () => { online.value = false; };
+window.addEventListener('online', setOn);
+window.addEventListener('offline', setOff);
+onBeforeUnmount(() => { window.removeEventListener('online', setOn); window.removeEventListener('offline', setOff); });
 
 async function submit() {
 	if (busy.value) return;
@@ -57,6 +65,12 @@ async function submit() {
 				<span v-if="busy" class="spinner"></span>
 				<span>{{ busy ? 'Signing in…' : 'Sign in' }}</span>
 			</button>
+
+			<p class="offline-hint" :class="{ active: !online }">
+				<span class="material-symbols-rounded">{{ online ? 'cloud_done' : 'cloud_off' }}</span>
+				<span v-if="online">Accounts that have signed in on this PC can also sign in with no connection.</span>
+				<span v-else>No connection: you can sign in with an account that has signed in on this PC before. Uploads wait until you reconnect.</span>
+			</p>
 
 			<p class="host">{{ getConfig().directusUrl || 'same-origin' }}</p>
 		</form>
@@ -199,6 +213,12 @@ async function submit() {
 	border-top-color: transparent;
 	animation: spin 0.9s linear infinite; /* global keyframes (styles.css) */
 }
+.offline-hint {
+	display: flex; gap: 8px; align-items: flex-start; margin: 14px 0 0;
+	font-size: var(--fs-sm); color: var(--text-dim);
+}
+.offline-hint.active { color: var(--warn); }
+.offline-hint .material-symbols-rounded { font-size: var(--icon-md); flex-shrink: 0; }
 .host {
 	margin: 18px 0 0;
 	text-align: center;

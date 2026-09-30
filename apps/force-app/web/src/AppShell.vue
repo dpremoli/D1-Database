@@ -10,6 +10,7 @@ import { alarmController } from './record/alarms';
 import { appUrl } from './appUrl';
 import { getConfig } from './config';
 import { formatDuration } from './format';
+import OfflineSessionBanner from './OfflineSessionBanner.vue';
 
 const router = useRouter();
 const route = useRoute();
@@ -169,7 +170,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 				<div class="spacer"></div>
 				<div class="statuswrap">
 					<div v-if="syncStatus.pending > 0 || syncStatus.lastError" class="chip" :class="syncStatus.pending > 0 ? 'warn' : 'err'"
-						:title="syncStatus.lastError || `${syncStatus.pending} run record(s) queued offline`">
+						:title="syncStatus.lastError || (syncStatus.needsSignIn ? `${syncStatus.pending} run record(s) queued — sign in while connected to upload` : syncStatus.waitingForOthers > 0 ? `${syncStatus.pending} run record(s) queued (${syncStatus.waitingForOthers} recorded by someone else: they upload when they sign in)` : `${syncStatus.pending} run record(s) queued offline`)">
 						<span class="material-symbols-rounded">{{ syncStatus.pending > 0 ? 'cloud_queue' : 'error' }}</span>
 						<span v-if="syncStatus.pending > 0" class="chip-lbl">{{ syncStatus.pending }}</span>
 					</div>
@@ -195,6 +196,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 			</div>
 		</nav>
 		<main ref="mainEl" class="content" tabindex="-1">
+			<OfflineSessionBanner />
 			<div v-if="showBanner" class="rec-banner">
 				<span class="rec-banner-dot"></span>
 				<span class="rec-banner-name">Recording — {{ recording!.sampleName }}</span>

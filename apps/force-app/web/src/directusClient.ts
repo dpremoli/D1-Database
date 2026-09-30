@@ -47,7 +47,9 @@ api.interceptors.response.use(
 		}
 		// Only a 401 means "this session is over". A 403 that survived the retry above is a
 		// permissions answer about one resource, and must not sign the analyst out.
-		if (status === 401) {
+		// An offline session has no token to lose: its 401s are just the server asking for one, and
+		// bouncing to /login would throw away a recording in progress.
+		if (status === 401 && !authStore.state.offline) {
 			authStore.clear();
 			onUnauthorized?.();
 		}

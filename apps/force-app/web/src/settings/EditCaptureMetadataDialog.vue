@@ -19,6 +19,7 @@ import {
 import LookupField from '../record/panels/LookupField.vue';
 import { confirmAction } from '../ui/confirm';
 import { useDialog } from '../ui/useDialog';
+import { preservedRecorderKeys } from '../recorder';
 
 const props = defineProps<{
 	captureId: string;
@@ -59,6 +60,13 @@ const MACHINING_SUBTYPES = [
 	{ value: 'other', text: 'Other' },
 ] as const;
 
+// Who recorded this cut (recorded_by_*, recorded_at, ...). Not editable here, but this dialog
+// rewrites extra_metadata / recorded_metadata wholesale, so it must be carried through or a typo
+// fix would erase the recorder -- and with it the owner a later upload assigns.
+let recorderKeys: Record<string, any> = {};
+// Database-only provenance on an uploaded row (who synced it, when); same reason to keep it.
+let syncedKeys: Record<string, any> = {};
+
 function searchEdgesForInsert(q: string) { return searchEdges(q, link.insertId || undefined); }
 
 async function loadFromLocal() {
@@ -67,6 +75,7 @@ async function loadFromLocal() {
 	const s = await res.json();
 	const cfg = s.config || {};
 	const extra = cfg.extra_metadata || s.metadata || {};
+	recorderKeys = preservedRecorderKeys(extra);
 	applyExtra(extra);
 	meta.sampleName = s.sample_name || extra.sample_name || '';
 	rec.rpm = Number(cfg.rpm) || 0; rec.feed = Number(cfg.feed) || 0;
@@ -111,6 +120,8 @@ async function loadFromDirectus(opId: string) {
 		},
 	});
 	const d = res.data?.data || {};
+	recorderKeys = preservedRecorderKeys(d.recorded_metadata);
+	syncedKeys = Object.fromEntries(Object.entries(d.recorded_metadata ?? {}).filter(([k]) => k.startsWith('synced_')));
 	link.sampleId = d.sample_id?.sample_id || ''; link.sampleLabel = d.sample_id?.sample_code || d.sample_id?.nickname || '';
 	link.operatorId = d.operator_person_id?.person_id || '';
 	link.operatorLabel = d.operator_person_id?.full_name || '';
@@ -142,7 +153,7 @@ onMounted(async () => {
 });
 
 function buildExtraMetadata(): Record<string, any> {
-	const o: Record<string, any> = {};
+	const o: Record<string, any> = { ...recorderKeys };
 	if (meta.sampleName) o.sample_name = meta.sampleName;
 	if (meta.sampleCode) o.sample_code = meta.sampleCode;
 	if (meta.opType) o.op_type = meta.opType;
@@ -220,7 +231,7 @@ async function save() {
 				machining_chips_collected: machining.chipsCollected,
 				machining_chips_ref_code: machining.chipsRef || null,
 				method_id: await resolveMachiningMethodId(meta.opType).catch(() => null),
-				recorded_metadata: { ...extra, capture_id: props.captureId },
+				recorded_metadata: { ...extra, ...syncedKeys, capture_id: props.captureId },
 			});
 		}
 		emit('saved');

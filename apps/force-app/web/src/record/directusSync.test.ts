@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // `api.post` is controllable per-test, which is what lets the concurrency test hold a write open.
 const post = vi.fn();
 vi.mock('../directusClient', () => ({ api: { post: (...a: unknown[]) => post(...a) } }));
+// Who is signed in decides which queued records may sync (see mayAutoSync).
+const auth = vi.hoisted(() => ({ state: { user: { id: 'u-me' } as { id: string } | null, offline: false } }));
+vi.mock('../authStore', () => ({ authStore: auth }));
 
 const store = new Map<string, string>();
 vi.stubGlobal('localStorage', {
@@ -14,7 +17,7 @@ vi.stubGlobal('localStorage', {
 
 const LS_KEY = 'force-app.sync.queue';
 
-import { discardQueued, flush, listQueue, logRun, retryQueued } from './directusSync';
+import { discardQueued, flush, listQueue, logRun, retryQueued, syncStatus, uploadQueuedAsMe } from './directusSync';
 
 function seed(items: Array<{ id: string; sample: string }>) {
   store.set(LS_KEY, JSON.stringify(items.map((i) => ({
@@ -30,6 +33,8 @@ const idsInQueue = () => listQueue().map((q) => q.id);
 beforeEach(() => {
   store.clear();
   post.mockReset();
+  auth.state.user = { id: 'u-me' };
+  auth.state.offline = false;
 });
 
 describe('flush', () => {
@@ -186,5 +191,62 @@ describe('queue management', () => {
     await retryQueued('nope');
     expect(post).not.toHaveBeenCalled();
     expect(idsInQueue()).toEqual(['a']);
+  });
+});
+
+
+describe('who a queued record syncs under', () => {
+  const seedOwned = (items: Array<{ id: string; by?: string }>) => {
+    store.set(LS_KEY, JSON.stringify(items.map((i) => ({
+      id: i.id, collection: 'manufacturing_operations', createdAt: Date.now(), attempts: 0,
+      payload: { recorded_metadata: { recorded_by_user_id: i.by } }, recordedBy: i.by,
+    }))));
+  };
+
+  it('logRun remembers the recorder from the payload', async () => {
+    post.mockRejectedValue({ message: 'Network Error' }); // stays queued
+    await logRun({ recorded_metadata: { recorded_by_user_id: 'u-me', recorded_by_name: 'Me' } });
+    expect(listQueue()[0]).toMatchObject({ recordedBy: 'u-me', recordedByLabel: 'Me' });
+  });
+
+  it("only syncs the signed-in user's own records; others wait for their recorder", async () => {
+    seedOwned([{ id: 'theirs', by: 'u-other' }, { id: 'mine', by: 'u-me' }, { id: 'legacy' }]);
+    post.mockResolvedValue({ data: { data: {} } });
+
+    await flush();
+
+    expect(post).toHaveBeenCalledTimes(2); // mine + legacy (no recorder known); never "theirs"
+    expect(listQueue().map((q) => q.id)).toEqual(['theirs']);
+    expect(syncStatus.waitingForOthers).toBe(1);
+  });
+
+  it("a blocked record doesn't hold up this user's later ones", async () => {
+    seedOwned([{ id: 'theirs', by: 'u-other' }, { id: 'mine', by: 'u-me' }]);
+    post.mockResolvedValue({ data: { data: {} } });
+    await flush();
+    expect(listQueue().map((q) => q.id)).toEqual(['theirs']);
+  });
+
+  it('uploadQueuedAsMe is the explicit override, and keeps the recorder in the payload', async () => {
+    seedOwned([{ id: 'theirs', by: 'u-other' }]);
+    post.mockResolvedValue({ data: { data: {} } });
+
+    await uploadQueuedAsMe('theirs');
+
+    expect(listQueue()).toEqual([]);
+    const sent = post.mock.calls[0][1];
+    expect(sent.recorded_metadata.recorded_by_user_id).toBe('u-other'); // recorder preserved
+    expect(sent.recorded_metadata.synced_by_user_id).toBe('u-me');      // uploader recorded beside it
+  });
+
+  it('an offline session never tries the network, and says it needs a sign-in', async () => {
+    seedOwned([{ id: 'mine', by: 'u-me' }]);
+    auth.state.offline = true;
+
+    await flush();
+
+    expect(post).not.toHaveBeenCalled();
+    expect(syncStatus.needsSignIn).toBe(true);
+    expect(listQueue().map((q) => q.id)).toEqual(['mine']);
   });
 });
