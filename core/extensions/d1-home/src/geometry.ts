@@ -27,7 +27,6 @@ export const FORM_FIELDS: Record<string, string[]> = {
 	disc: ['diameter_mm', 'thickness_mm'],
 	cylinder: ['diameter_mm', 'length_mm'],
 	bar: ['width_mm', 'thickness_mm', 'length_mm'],
-	square_bar: ['width_mm', 'length_mm'],
 	round_bar: ['diameter_mm', 'length_mm'],
 	block: ['width_mm', 'length_mm', 'thickness_mm'],
 	plate: ['width_mm', 'length_mm', 'thickness_mm'],
@@ -48,8 +47,7 @@ export const FORMS = [
 	{ text: 'Cylinder', value: 'cylinder' },
 	{ text: 'Block', value: 'block' },
 	{ text: 'Plate', value: 'plate' },
-	{ text: 'Rectangular bar', value: 'bar' },
-	{ text: 'Square bar', value: 'square_bar' },
+	{ text: 'Bar', value: 'bar' },
 	{ text: 'Round bar', value: 'round_bar' },
 	{ text: 'Tensile coupon (ASTM E8)', value: 'tensile_coupon' },
 	{ text: 'Bend / fatigue bar', value: 'bend_bar' },
@@ -194,17 +192,6 @@ function cylSvg(D: number, H: number): string {
 	return svgWrap(body + top + dimD + dimH);
 }
 
-// Square bar: a long box with a square cross-section, so a single side length (width_mm)
-// describes it. The side is dimensioned once with a □ prefix; length runs along the bar.
-function squareBarSvg(S: number, L: number): string {
-	const off = 0.16 * Math.max(S, L);
-	const { faces, dims } = boxFacesDims(S, L, S, off);
-	const sq = dims.slice(0, 2);
-	sq[0].label = `□${fmt(S)}`;
-	const { to } = fitter(faces, sq, []);
-	return svgWrap(faces.map((f) => faceSvg(f, to)).join('') + drawDims(sq, to));
-}
-
 // Round bar: a cylinder lying along the length (y) axis. The near end cap (y = L) is an
 // ellipse in the x-z plane; the body is the convex hull of both end caps, which is the
 // silhouette a cylinder has in any projection.
@@ -321,7 +308,6 @@ export function buildGeometry(d: Dims): string {
 		return couponSvg(L, W, T, Lg, Wg);
 	}
 	if (g.includes('round')) return roundBarSvg(num(d.diameter_mm, 20), num(d.length_mm, 100));
-	if (g.includes('square')) return squareBarSvg(num(d.width_mm, 20), num(d.length_mm, 100));
 	if (g.includes('bend')) return bendSvg(num(d.length_mm, 100), num(d.width_mm, 15), num(d.thickness_mm, 10));
 	// block / plate / bar → box
 	return boxSvg(num(d.width_mm, 24), num(d.length_mm, 40), num(d.thickness_mm, g.includes('plate') ? 5 : 20));

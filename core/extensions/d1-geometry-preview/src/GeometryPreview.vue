@@ -50,7 +50,6 @@ const volumeMm3 = computed<number | null>(() => {
 	const g = (v.value.form || '').toLowerCase();
 	if (g.includes('disc')) return d && (t ?? L) ? Math.PI * (d / 2) ** 2 * (t ?? L)! : null;
 	if (/cylind|rod|round/.test(g)) return d && L ? Math.PI * (d / 2) ** 2 * L : null;
-	if (g.includes('square')) return w && L ? w * w * L : null;
 	if (w && L && t) return w * L * t; // box-like
 	return null;
 });
