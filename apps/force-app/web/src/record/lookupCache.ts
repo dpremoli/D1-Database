@@ -119,36 +119,53 @@ async function fetchAll(spec: Spec): Promise<any[]> {
 }
 
 let inFlight: Promise<void> | null = null;
+// Entities whose last refresh failed. They are retried on their own (not the whole download) until
+// they succeed, and the snapshot only counts as fresh once none are left.
+let failedEntities: Entity[] = [];
 
 /**
- * Re-download every entity. All-or-nothing per entity: a failed fetch keeps that entity's previous
- * snapshot, so a flaky connection can never shrink what the picker can find offline.
+ * Re-download `only` (default: every entity). All-or-nothing per entity: a failed fetch keeps that
+ * entity's previous snapshot, so a flaky connection can never shrink what the picker can find
+ * offline. `syncedAt` is stamped only when nothing is left failing.
  */
-export function syncLookups(): Promise<void> {
+export function syncLookups(only: Entity[] = ENTITIES): Promise<void> {
 	if (inFlight) return inFlight;
 	if (!hasServerSession()) return Promise.resolve();
 	inFlight = (async () => {
 		lookupStatus.syncing = true;
 		lookupStatus.error = null;
-		const failed: string[] = [];
-		for (const e of ENTITIES) {
+		const failed: Entity[] = [];
+		const why: string[] = [];
+		for (const e of only) {
 			try {
 				await storeRows(e, await fetchAll(SPECS[e]));
 			} catch (err: any) {
-				failed.push(`${SPECS[e].collection}${err?.response?.status ? ` (${err.response.status})` : ''}`);
+				failed.push(e);
+				why.push(`${SPECS[e].collection}${err?.response?.status ? ` (${err.response.status})` : ''}`);
 			}
 		}
-		if (failed.length < ENTITIES.length) {
+		// Entities outside `only` keep whatever failed state they already had.
+		failedEntities = [...failedEntities.filter((e) => !only.includes(e)), ...failed];
+		if (!failedEntities.length) {
 			lookupStatus.syncedAt = Date.now();
 			try { await kv().set('meta', { syncedAt: lookupStatus.syncedAt, counts: { ...lookupStatus.counts } }); } catch { /* ignore */ }
 		}
-		lookupStatus.error = failed.length ? `could not refresh: ${failed.join(', ')}` : null;
+		lookupStatus.error = failedEntities.length
+			? `could not refresh: ${why.length ? why.join(', ') : failedEntities.map((e) => SPECS[e].collection).join(', ')}`
+			: null;
 	})().finally(() => { lookupStatus.syncing = false; inFlight = null; });
 	return inFlight;
 }
 
 const STALE_AFTER_MS = 6 * 60 * 60 * 1000;
 const isStale = () => !lookupStatus.syncedAt || Date.now() - lookupStatus.syncedAt > STALE_AFTER_MS;
+
+// One tick of the background refresh: retry just what failed, else refresh everything once stale.
+function refreshIfNeeded(): void {
+	if (!hasServerSession()) return;
+	if (failedEntities.length) void syncLookups(failedEntities.slice());
+	else if (isStale()) void syncLookups();
+}
 
 /**
  * Keep the snapshot fresh: once shortly after a server session appears (app start, sign-in, or an
@@ -158,10 +175,9 @@ let started = false;
 export function startLookupSync(): void {
 	if (started) return;
 	started = true;
-	void loadLookupStatus().then(() => { if (hasServerSession() && isStale()) void syncLookups(); });
-	const maybe = () => { if (hasServerSession() && isStale()) void syncLookups(); };
-	window.addEventListener('online', maybe);
-	setInterval(maybe, 30 * 60 * 1000);
+	void loadLookupStatus().then(refreshIfNeeded);
+	window.addEventListener('online', refreshIfNeeded);
+	setInterval(refreshIfNeeded, 30 * 60 * 1000);
 	// A fresh sign-in (or an offline session upgraded by re-signing in) creates a server session after
 	// this ran: refresh as soon as one appears.
 	watch(() => hasServerSession(), (now) => { if (now) void syncLookups(); });

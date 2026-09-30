@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
+const apiGet = vi.hoisted(() => vi.fn());
 const state = vi.hoisted(() => ({ user: null as any, offline: false, accessToken: null as string | null, refreshToken: null as string | null }));
 vi.mock('./authStore', () => ({ authStore: { state } }));
+vi.mock('./directusClient', () => ({ api: { get: (...a: unknown[]) => apiGet(...a) } }));
 
 import {
-  currentRecorder, hasServerSession, ownerPersonId, preservedRecorderKeys, recorderFields, recorderFromExtra, syncerFields,
+  currentRecorder, hasServerSession, ownerPersonId, resolveOwnerPersonId, preservedRecorderKeys, recorderFields, recorderFromExtra, syncerFields,
 } from './recorder';
 
 describe('recorder stamp', () => {
@@ -52,5 +54,37 @@ describe('recorder stamp', () => {
     expect(hasServerSession()).toBe(false);
     state.offline = false; state.refreshToken = 'r';
     expect(hasServerSession()).toBe(true);
+  });
+
+  describe('resolveOwnerPersonId', () => {
+    it('uses the stamped person without asking the server', async () => {
+      state.user = { id: 'u2' };
+      expect(await resolveOwnerPersonId({ recorded_by_user_id: 'u1', recorded_by_person_id: 'p1' })).toBe('p1');
+      expect(apiGet).not.toHaveBeenCalled();
+    });
+
+    it("looks the recorder's person up by user id when the stamp has none", async () => {
+      state.user = { id: 'u2' };
+      apiGet.mockResolvedValueOnce({ data: { data: [{ person_id: 'p1' }] } });
+      expect(await resolveOwnerPersonId({ recorded_by_user_id: 'u1' })).toBe('p1');
+      expect(apiGet.mock.calls[0][1].params.filter).toEqual({ user_id: { _eq: 'u1' } });
+    });
+
+    it('null when the recorder has no person, is the uploader, or nobody is stamped', async () => {
+      state.user = { id: 'u2' };
+      apiGet.mockResolvedValueOnce({ data: { data: [] } });
+      expect(await resolveOwnerPersonId({ recorded_by_user_id: 'u1' })).toBeNull();
+      apiGet.mockClear();
+      state.user = { id: 'u1' };
+      expect(await resolveOwnerPersonId({ recorded_by_user_id: 'u1' })).toBeNull();
+      expect(await resolveOwnerPersonId({})).toBeNull();
+      expect(apiGet).not.toHaveBeenCalled();
+    });
+
+    it('throws if the lookup fails, so the upload cannot silently go to the uploader', async () => {
+      state.user = { id: 'u2' };
+      apiGet.mockRejectedValueOnce(new Error('Network Error'));
+      await expect(resolveOwnerPersonId({ recorded_by_user_id: 'u1' })).rejects.toThrow('Network Error');
+    });
   });
 });

@@ -9,9 +9,10 @@ import axios from 'axios';
 import { reactive, computed } from 'vue';
 import { getConfig } from './config';
 import {
-	OFFLINE_MAX_AGE_MS, enrollOfflineLogin, matchesStoredPassword, revokeOfflineLogin,
-	updateOfflineProfile, verifyOfflineLogin,
+	enrollOfflineLogin, getOfflineProfile, matchesStoredPassword, offlineEntryValid, revokeOfflineLogin,
+	touchOfflineVerified, updateOfflineProfile, verifyOfflineLogin,
 } from './offlineAuth';
+import { isUnreachable } from './netErrors';
 
 export interface DirectusUser {
 	id: string;
@@ -50,8 +51,9 @@ function loadPersisted(): Partial<AuthState> {
 
 const persisted = loadPersisted();
 // An offline session outlives a reload (the operator must not be signed out by restarting the
-// app mid-shift with no network), but not its verifier's age limit.
-const offlineStillValid = !!persisted.offline && Date.now() - (persisted.offlineVerifiedAt ?? 0) <= OFFLINE_MAX_AGE_MS;
+// app mid-shift with no network), but only while the account's verifier entry still exists and is
+// in date: forgetting or revoking the account must end its session too, not just block new ones.
+const offlineStillValid = !!persisted.offline && offlineEntryValid(persisted.user?.email);
 const state = reactive<AuthState>({
 	accessToken: persisted.accessToken ?? null,
 	refreshToken: persisted.refreshToken ?? null,
@@ -77,11 +79,12 @@ function persist() {
 	);
 }
 
-// "The server could not be reached", as opposed to "the server said no". Only the first may fall
-// back to the offline verifier or keep a session alive; a 401 must never be treated as offline.
-export function isUnreachable(e: any): boolean {
-	const status = e?.response?.status;
-	return !e?.response || status === 502 || status === 503 || status === 504;
+/** Signed in, but who you are could not be read. The session is dropped rather than left user-less. */
+export class ProfileLoadError extends Error {
+	constructor() {
+		super("Signed in, but your profile could not be loaded from the server. Try again.");
+		this.name = 'ProfileLoadError';
+	}
 }
 
 export class OfflineLoginError extends Error {
@@ -119,6 +122,7 @@ export const authStore = {
 			await onlineLogin(email, password);
 			return { offline: false };
 		} catch (e: any) {
+			if (e instanceof ProfileLoadError) throw e;
 			if (isUnreachable(e)) return loginOffline(email, password);
 			// The server refused a password this PC's verifier still accepts: it was changed, or the
 			// account was disabled. Stop honouring it offline right away rather than at expiry.
@@ -157,6 +161,8 @@ export const authStore = {
 				state.refreshToken = data.refresh_token ?? state.refreshToken;
 				state.expiresAt = Date.now() + (Number(data.expires) || 0);
 				persist();
+				// The server just vouched for this account: restart its offline window.
+				if (state.user?.email) touchOfflineVerified(state.user.email);
 				return !!state.accessToken;
 			} catch (e: any) {
 				// Only a refusal means the session is over. An unreachable server (or a proxy 5xx)
@@ -187,13 +193,17 @@ export const authStore = {
 			// The person row this account is linked to (people.user_id). Recorded with every cut so the
 			// database owner is the person who recorded it, whoever syncs it later. Best effort: keep
 			// the previous value for the same user if this one lookup fails.
+			// A FAILED lookup (as opposed to "no person row") must not erase a known link: keep the last
+			// one from this session or, failing that, from the stored profile. Anything still missing is
+			// resolved from the user id at upload time (recorder.ts::resolvePersonForUser).
 			let person_id: string | null = state.user?.id === me.id ? (state.user?.person_id ?? null) : null;
+			if (!person_id && me.email) person_id = getOfflineProfile(me.email)?.person_id ?? null;
 			try {
 				const pr = await authClient().get('/items/people', {
 					params: { filter: { user_id: { _eq: me.id } }, fields: ['person_id'], limit: 1 },
 					headers: { Authorization: `Bearer ${state.accessToken}` },
 				});
-				person_id = pr.data?.data?.[0]?.person_id ?? person_id;
+				person_id = pr.data?.data?.[0]?.person_id ?? null;
 			} catch {
 				/* keep what we had */
 			}
@@ -225,6 +235,12 @@ export const authStore = {
 		}
 	},
 
+	// Called on navigation: an offline session whose account was forgotten, revoked or has aged out
+	// ends here. (Not mid-page: bouncing the operator to /login during a cut would lose it.)
+	checkOfflineSession(): void {
+		if (state.offline && !offlineEntryValid(state.user?.email)) this.clear();
+	},
+
 	clear(): void {
 		state.accessToken = null;
 		state.refreshToken = null;
@@ -251,13 +267,17 @@ async function onlineLogin(email: string, password: string): Promise<void> {
 	if (state.user?.email?.trim().toLowerCase() !== email.trim().toLowerCase()) state.user = null;
 	persist();
 	await authStore.fetchCurrentUser();
+	// A session with no user is worse than none: currentRecorder() is null, so recordings would be
+	// saved unattributed and any user could sync them. Drop it and let the operator retry.
+	if (!state.user) {
+		authStore.clear();
+		throw new ProfileLoadError();
+	}
 	// Remember this account for offline sign-in. Never let a failure here undo a good login.
-	if (state.user) {
-		try {
-			await enrollOfflineLogin(email, password, state.user);
-		} catch (e) {
-			console.warn('offline sign-in could not be enabled for this account', e);
-		}
+	try {
+		await enrollOfflineLogin(email, password, state.user);
+	} catch (e) {
+		console.warn('offline sign-in could not be enabled for this account', e);
 	}
 }
 

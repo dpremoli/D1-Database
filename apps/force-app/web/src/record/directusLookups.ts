@@ -3,6 +3,7 @@
 import { api } from '../directusClient';
 import { labamp } from './labampApi';
 import { SPECS, cachedRows, preferCache, storeRows, type Entity } from './lookupCache';
+import { isUnreachable } from '../netErrors';
 
 export interface LookupItem { id: string; label: string; sublabel?: string; extra?: Record<string, any>; }
 
@@ -19,8 +20,7 @@ async function viaCache<T>(entity: Entity, online: () => Promise<T>, offline: (r
 	try {
 		return await online();
 	} catch (e: any) {
-		const status = e?.response?.status;
-		if (e?.response && !(status === 502 || status === 503 || status === 504)) throw e;   // the server answered: a real error
+		if (!isUnreachable(e)) throw e;   // the server answered: a real error
 		return fromCache(e);
 	}
 }
@@ -82,17 +82,21 @@ const toMethodItem = (r: any): LookupItem => ({
 	extra: { method_code: r.method_code || '' },
 });
 export async function getMethods(): Promise<LookupItem[]> {
-	if (!methodsCache) {
-		// Also persisted for offline use: after a restart with no network the in-memory copy is gone,
-		// and without a method_id the run record cannot be built at all.
-		methodsCache = await viaCache('methods', async () => {
-			const res = await api.get('/items/manufacturing_methods', { params: { limit: 100, fields: SPECS.methods.fields } });
-			const rows: any[] = res.data?.data ?? [];
-			void storeRows('methods', rows).catch(() => {});
-			return rows.map(toMethodItem);
-		}, (rows) => rows.map(toMethodItem));
-	}
-	return methodsCache ?? [];
+	if (methodsCache) return methodsCache;
+	// Also persisted for offline use: after a restart with no network the in-memory copy is gone,
+	// and without a method_id the run record cannot be built at all. Only a list that came from the
+	// server is memoized for the page's life: a snapshot served while offline (possibly old, possibly
+	// empty) must not stop the real fetch once the network is back.
+	let fromServer = false;
+	const items = await viaCache('methods', async () => {
+		const res = await api.get('/items/manufacturing_methods', { params: { limit: 100, fields: SPECS.methods.fields } });
+		const rows: any[] = res.data?.data ?? [];
+		void storeRows('methods', rows).catch(() => {});
+		fromServer = true;
+		return rows.map(toMethodItem);
+	}, (rows) => rows.map(toMethodItem));
+	if (fromServer && items.length) methodsCache = items;
+	return items;
 }
 export async function resolveMachiningMethodId(hint?: string): Promise<string | null> {
 	const ms = await getMethods();

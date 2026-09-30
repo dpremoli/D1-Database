@@ -24,8 +24,10 @@ against that hash.
 
 - Only accounts that have signed in **on this PC** can sign in offline. There is no list of
   everyone's logins on the PC.
-- It lasts **30 days** from that account's last online sign-in. After that, sign in once while
-  connected to renew it.
+- It lasts **30 days** from the last time the server vouched for the account: an online sign-in, or
+  the app renewing its session in the background. After that, sign in once while connected to renew it.
+- Forgetting or revoking an account also ends an offline session already open for it, at the next
+  page change (never mid-page, so a cut in progress is not interrupted).
 - If an online sign-in is refused for a password that was still accepted locally (it was changed, or
   the account disabled), the offline entry is deleted straight away.
 - After 5 wrong offline attempts each further attempt waits twice as long (up to 5 minutes).
@@ -43,7 +45,9 @@ linked person (`people.person_id`), whether you were signed in offline, and the 
 into the capture's `summary.json` and from there into the database record, however much later it is
 uploaded:
 
-- the operation's **owner** is the person who recorded it, not whoever uploads it;
+- the operation's **owner** is the person who recorded it, not whoever uploads it. If the person link
+  wasn't known when you recorded (the lookup can fail), it is looked up from your account at upload
+  time; if that lookup fails the upload waits rather than crediting the uploader;
 - the **operation date** is when it was recorded, not when it was uploaded;
 - `recorded_metadata` holds `recorded_by_*` and `recorded_offline`, and `synced_by_*` / `synced_at`
   for whoever performed the upload. (`audit_logs.actor_identity` still names the account that made

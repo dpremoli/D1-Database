@@ -7,6 +7,7 @@ vi.mock('../authStore', () => ({ authStore: auth }));
 vi.mock('./labampApi', () => ({ labamp: {} }));
 
 import { setLookupStore, syncLookups, lookupStatus, cachedRows, type KvStore } from './lookupCache';
+import { resolveMachiningMethodId } from './directusLookups';
 import { searchSamples, searchOperators, searchEquipment, searchTools, searchEdges, searchInserts, getMethods } from './directusLookups';
 
 const mem = () => {
@@ -94,6 +95,26 @@ describe('syncLookups', () => {
 		expect(lookupStatus.error).toMatch(/physical_samples/);
 	});
 
+	it('a partly failed sync is not stamped fresh, and only the failed entity is retried', async () => {
+		const ok = async (url: string) => ({ data: { data: ROWS[url.replace('/items/', '')] ?? [] } });
+		get.mockImplementation(async (url: string) => {
+			if (url === '/items/tools') throw Object.assign(new Error('x'), { response: { status: 500 } });
+			return ok(url);
+		});
+		await syncLookups();
+		expect(lookupStatus.syncedAt).toBeNull();            // NOT fresh: a retry is still owed
+		expect(lookupStatus.error).toMatch(/tools/);
+		expect(lookupStatus.counts.samples).toBe(3);         // the rest did land
+
+		get.mockReset();
+		get.mockImplementation(ok);
+		await syncLookups(['tools']);                        // what the background timer does
+		expect(get.mock.calls.every(([url]) => url === '/items/tools')).toBe(true);
+		expect(lookupStatus.syncedAt).not.toBeNull();        // now nothing is failing
+		expect(lookupStatus.error).toBeNull();
+		expect(lookupStatus.counts.tools).toBe(2);
+	});
+
 	it('does nothing without a server session', async () => {
 		auth.state.offline = true; auth.state.accessToken = null; auth.state.refreshToken = null;
 		await syncLookups();
@@ -156,5 +177,24 @@ describe('when there is nothing to fall back on', () => {
 		get.mockClear();
 		expect((await searchOperators('')).length).toBe(1);
 		expect(get).not.toHaveBeenCalled();
+	});
+});
+
+describe('methods list', () => {
+	it('an offline (possibly empty or stale) answer is not memoized over the real one', async () => {
+		vi.resetModules();
+		const m = await import('./directusLookups');
+		const c = await import('./lookupCache');
+		c.setLookupStore(mem().s);                         // no snapshot: an empty list offline...
+		auth.state.offline = true;
+		expect(await m.getMethods().catch(() => [])).toEqual([]);
+
+		auth.state.offline = false;                        // ...then the network returns
+		get.mockReset();
+		get.mockResolvedValue({ data: { data: ROWS.manufacturing_methods } });
+		expect((await m.getMethods()).map((x) => x.id)).toEqual(['m1']);   // fetched, not stuck on []
+		get.mockClear();
+		await m.getMethods();
+		expect(get).not.toHaveBeenCalled();                // a real answer IS memoized
 	});
 });

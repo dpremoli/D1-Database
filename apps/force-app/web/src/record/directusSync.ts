@@ -3,10 +3,10 @@
 // retried on the `online` event + a periodic timer. A 4xx (validation/permission) surfaces the
 // error but keeps the item for manual retry. This gives the recording flow offline resilience:
 // capture locally now, sync the run record when the network returns.
-import { reactive } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import { api } from '../directusClient';
 import { authStore } from '../authStore';
-import { syncerFields } from '../recorder';
+import { resolveOwnerPersonId, syncerFields } from '../recorder';
 
 const LS_KEY = 'force-app.sync.queue';
 
@@ -25,15 +25,8 @@ export interface QueuedRun {
 	syncAsMe?: boolean;
 }
 
-export const syncStatus = reactive<{
-	pending: number; syncing: boolean; lastError: string | null; lastSyncedAt: number | null;
-	/** Queued, but this session is offline-only (no Directus token): needs a sign-in while connected. */
-	needsSignIn: boolean;
-	/** Queued records recorded by someone else, left for that user's next sign-in. */
-	waitingForOthers: number;
-}>(
-	{ pending: 0, syncing: false, lastError: null, lastSyncedAt: null, needsSignIn: false, waitingForOthers: 0 },
-);
+// Mirror of what is in localStorage, so the counts below are reactive.
+const queued = ref<QueuedRun[]>([]);
 
 // A record syncs automatically only under the account that recorded it (or one nobody is recorded
 // for, i.e. from before this field existed). Directus stamps audit_logs / user_created with whoever
@@ -45,10 +38,22 @@ function mayAutoSync(item: QueuedRun): boolean {
 	return !item.recordedBy || item.syncAsMe === true || item.recordedBy === me;
 }
 
+export const syncStatus = reactive({
+	pending: 0,
+	syncing: false,
+	lastError: null as string | null,
+	lastSyncedAt: null as number | null,
+	// Derived, not cached: they depend on who is signed in and whether the session is offline, both
+	// of which change without the queue itself being touched.
+	/** Queued, but this session is offline-only (no Directus token): needs a sign-in while connected. */
+	needsSignIn: computed(() => queued.value.length > 0 && authStore.state.offline),
+	/** Queued records recorded by someone else, left for that user's next sign-in. */
+	waitingForOthers: computed(() => queued.value.filter((x) => !mayAutoSync(x)).length),
+});
+
 function recount(q: QueuedRun[]): void {
+	queued.value = q;
 	syncStatus.pending = q.length;
-	syncStatus.waitingForOthers = q.filter((x) => !mayAutoSync(x)).length;
-	syncStatus.needsSignIn = q.length > 0 && authStore.state.offline;
 }
 
 function load(): QueuedRun[] {
@@ -89,9 +94,13 @@ export async function flush(): Promise<void> {
 			const item = q.find(mayAutoSync);
 			if (!item) break;
 			try {
-				const payload = item.collection === 'manufacturing_operations'
-					? { ...item.payload, recorded_metadata: { ...item.payload.recorded_metadata, ...syncerFields() } }
-					: item.payload;
+				let payload = item.payload;
+				if (item.collection === 'manufacturing_operations') {
+					payload = { ...payload, recorded_metadata: { ...payload.recorded_metadata, ...syncerFields() } };
+					// No person link was stamped at record time: resolve the recorder's now. A failed lookup
+					// throws into the handler below and leaves the record queued (never owned by the uploader).
+					if (payload.owner_person_id == null) payload.owner_person_id = await resolveOwnerPersonId(payload.recorded_metadata);
+				}
 				await api.post(`/items/${item.collection}`, payload);
 				save(load().filter((x) => x.id !== item.id));   // success — drop just this one
 				syncStatus.lastSyncedAt = Date.now();

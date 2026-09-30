@@ -9,7 +9,7 @@ import { api } from '../directusClient';
 import { uploadCaptureColdStart } from '../record/uploadCapture';
 import { discardQueued, listQueue, retryQueued, syncStatus, uploadQueuedAsMe, type QueuedRun } from '../record/directusSync';
 import { authStore } from '../authStore';
-import { recorderFromExtra } from '../recorder';
+import { OFFLINE_SESSION_UPLOAD_MESSAGE, hasServerSession, recorderFromExtra } from '../recorder';
 import { confirmAction } from '../ui/confirm';
 import EditCaptureMetadataDialog from './EditCaptureMetadataDialog.vue';
 import { matchUploaded, uploadedRowsSince } from './captureUploadState';
@@ -148,6 +148,9 @@ async function onMetadataSaved() {
 }
 
 async function upload(c: Capture) {
+	// Before any prompt: an offline session can't upload, so don't ask the user to confirm something
+	// that cannot run.
+	if (!hasServerSession()) { rowMsg.value[c.id] = OFFLINE_SESSION_UPLOAD_MESSAGE; return; }
 	busy.value[c.id] = 'uploading';
 	rowMsg.value[c.id] = '';
 	try {
@@ -188,6 +191,7 @@ async function upload(c: Capture) {
 async function uploadAllUnsynced() {
 	const pending = unsynced.value.slice();
 	if (!pending.length) return;
+	if (!hasServerSession()) { error.value = OFFLINE_SESSION_UPLOAD_MESSAGE; return; }
 	const ok = await confirmAction({
 		title: `Upload ${pending.length} capture${pending.length === 1 ? '' : 's'}?`,
 		message: 'Each is sent to the database in turn. Large captures can take a while.',
@@ -240,6 +244,7 @@ async function retryOne(id: string) {
 const waitingForOther = (item: QueuedRun) =>
 	!!item.recordedBy && item.recordedBy !== authStore.state.user?.id && !item.syncAsMe;
 async function uploadAsMe(item: QueuedRun) {
+	if (!hasServerSession()) { rowMsg.value[item.id] = OFFLINE_SESSION_UPLOAD_MESSAGE; return; }
 	const ok = await confirmAction({
 		title: 'Upload someone else\'s record?',
 		message: `"${queueLabel(item)}" was recorded by ${item.recordedByLabel || 'another user'}.`,

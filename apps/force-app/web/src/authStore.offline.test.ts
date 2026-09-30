@@ -15,6 +15,8 @@ const server = vi.hoisted(() => ({
   reachable: true,
   password: 'pw-1',
   refreshStatus: 200 as number | 'network',
+  meFails: false,
+  peopleFails: false,
   calls: [] as string[],
 }));
 vi.mock('axios', () => {
@@ -39,9 +41,13 @@ vi.mock('axios', () => {
       server.calls.push(`GET ${path}`);
       if (!server.reachable) throw netErr();
       if (path === '/users/me') {
+        if (server.meFails) throw netErr();
         return { data: { data: { id: 'u-1', role: 'r', first_name: 'Ada', last_name: 'L', email: 'ada@lab.org', policies: [] } } };
       }
-      if (path === '/items/people') return { data: { data: [{ person_id: 'p-1' }] } };
+      if (path === '/items/people') {
+        if (server.peopleFails) throw httpErr(500);
+        return { data: { data: [{ person_id: 'p-1' }] } };
+      }
       return { data: {} };
     },
   };
@@ -49,7 +55,8 @@ vi.mock('axios', () => {
 });
 vi.mock('./config', () => ({ getConfig: () => ({ directusUrl: 'http://directus' }) }));
 
-import { authStore, OfflineLoginError } from './authStore';
+import { authStore, OfflineLoginError, ProfileLoadError } from './authStore';
+import { revokeOfflineLogin, verifyOfflineLogin, enrollOfflineLogin } from './offlineAuth';
 
 beforeEach(() => {
   authStore.clear();
@@ -57,6 +64,8 @@ beforeEach(() => {
   server.reachable = true;
   server.password = 'pw-1';
   server.refreshStatus = 200;
+  server.meFails = false;
+  server.peopleFails = false;
   server.calls = [];
 });
 
@@ -144,5 +153,70 @@ describe('refresh', () => {
     server.refreshStatus = 401;
     expect(await authStore.refresh()).toBe(false);
     expect(authStore.state.refreshToken).toBeNull();
+  });
+});
+
+describe('profile and person link', () => {
+  it('a login whose profile cannot be read is rolled back, not left as a user-less session', async () => {
+    server.meFails = true;
+    await expect(authStore.login('ada@lab.org', 'pw-1')).rejects.toBeInstanceOf(ProfileLoadError);
+    expect(authStore.isAuthenticated.value).toBe(false);
+    expect(authStore.state.accessToken).toBeNull();
+    // ...and it is NOT mistaken for "offline" and answered from the verifier.
+    expect(authStore.state.offline).toBe(false);
+  });
+
+  it('a failed people lookup keeps the person link from the stored profile instead of nulling it', async () => {
+    await authStore.login('ada@lab.org', 'pw-1');           // enrols with person_id p-1
+    await authStore.logout();
+    server.peopleFails = true;
+    await authStore.login('ada@lab.org', 'pw-1');
+    expect(authStore.state.user?.person_id).toBe('p-1');
+  });
+});
+
+describe('offline session lifetime', () => {
+  async function openOfflineSession() {
+    await authStore.login('ada@lab.org', 'pw-1');
+    await authStore.logout();
+    server.reachable = false;
+    await authStore.login('ada@lab.org', 'pw-1');
+  }
+
+  it('ends when the account is forgotten, at the next navigation check', async () => {
+    await openOfflineSession();
+    authStore.checkOfflineSession();
+    expect(authStore.state.offline).toBe(true);            // still in the vault: stays
+
+    revokeOfflineLogin('ada@lab.org');                      // e.g. "Forget" in another window
+    authStore.checkOfflineSession();
+    expect(authStore.state.offline).toBe(false);
+    expect(authStore.isAuthenticated.value).toBe(false);
+  });
+
+  it('is not restored on the next launch if the account was revoked meanwhile', async () => {
+    await openOfflineSession();
+    const saved = store.get('force-app.auth')!;
+    revokeOfflineLogin('ada@lab.org');
+
+    vi.resetModules();
+    store.set('force-app.auth', saved);
+    const fresh = (await import('./authStore')).authStore;
+    expect(fresh.state.offline).toBe(false);
+    expect(fresh.isAuthenticated.value).toBe(false);
+  });
+
+  it('a successful token refresh renews the offline window', async () => {
+    await authStore.login('ada@lab.org', 'pw-1');
+    const key = 'force-app.auth.vault';
+    const vault = JSON.parse(store.get(key)!);
+    vault['ada@lab.org'].verifiedAt = Date.now() - 29 * 86_400_000;   // nearly expired
+    store.set(key, JSON.stringify(vault));
+
+    await authStore.refresh();
+
+    const after = JSON.parse(store.get(key)!)['ada@lab.org'].verifiedAt;
+    expect(Date.now() - after).toBeLessThan(5000);
+    expect((await verifyOfflineLogin('ada@lab.org', 'pw-1')).ok).toBe(true);
   });
 });

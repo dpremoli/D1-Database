@@ -12,7 +12,7 @@ import { recordingPrefs } from './recordingPrefs';
 import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
-import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, syncerFields } from '../recorder';
+import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
 import { confirmAction } from '../ui/confirm';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
@@ -346,7 +346,8 @@ export function createWorkspace() {
 		if (!(await checkDiskBeforeStart())) return;
 		busy.value = true; errMsg.value = null; finishedCache.value = null;
 		alarms.reset();
-		recordedStamp.value = recorderFields(currentRecorder(), new Date().toISOString());
+		// Replay is played, not recorded (it throws below): it keeps stamping lazily in metaObj().
+		if (source.value !== 'replay') recordedStamp.value = recorderFields(currentRecorder(), new Date().toISOString());
 		try {
 			if (source.value === 'replay') {
 				// Playback is driven by the transport bar, not by start(). Reaching here means a
@@ -433,6 +434,7 @@ export function createWorkspace() {
 		const payload = buildRunPayload();
 		payload.method_id = await resolveMachiningMethodId(meta.op_type).catch(() => null);
 		payload.recorded_metadata = { ...payload.recorded_metadata, ...syncerFields() };
+		if (payload.owner_person_id == null) payload.owner_person_id = await resolveOwnerPersonId(payload.recorded_metadata);
 		let res;
 		try {
 			res = await api.post('/items/manufacturing_operations', payload);

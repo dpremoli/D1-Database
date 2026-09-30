@@ -3,10 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // The offline queue persists to localStorage and posts over the network, so both are stubbed.
 // `api.post` is controllable per-test, which is what lets the concurrency test hold a write open.
 const post = vi.fn();
-vi.mock('../directusClient', () => ({ api: { post: (...a: unknown[]) => post(...a) } }));
+const get = vi.fn();
+vi.mock('../directusClient', () => ({ api: { post: (...a: unknown[]) => post(...a), get: (...a: unknown[]) => get(...a) } }));
 // Who is signed in decides which queued records may sync (see mayAutoSync).
-const auth = vi.hoisted(() => ({ state: { user: { id: 'u-me' } as { id: string } | null, offline: false } }));
-vi.mock('../authStore', () => ({ authStore: auth }));
+// A reactive state: syncStatus's derived counts are computeds over it, as in the real store.
+vi.mock('../authStore', async () => {
+  const { reactive } = await import('vue');
+  return { authStore: { state: reactive({ user: { id: 'u-me' } as { id: string } | null, offline: false }) } };
+});
+import { authStore } from '../authStore';
+const auth = authStore as unknown as { state: { user: { id: string } | null; offline: boolean } };
 
 const store = new Map<string, string>();
 vi.stubGlobal('localStorage', {
@@ -33,6 +39,7 @@ const idsInQueue = () => listQueue().map((q) => q.id);
 beforeEach(() => {
   store.clear();
   post.mockReset();
+  get.mockReset();
   auth.state.user = { id: 'u-me' };
   auth.state.offline = false;
 });
@@ -230,6 +237,7 @@ describe('who a queued record syncs under', () => {
   it('uploadQueuedAsMe is the explicit override, and keeps the recorder in the payload', async () => {
     seedOwned([{ id: 'theirs', by: 'u-other' }]);
     post.mockResolvedValue({ data: { data: {} } });
+    get.mockResolvedValue({ data: { data: [{ person_id: 'person-other' }] } });
 
     await uploadQueuedAsMe('theirs');
 
@@ -248,5 +256,51 @@ describe('who a queued record syncs under', () => {
     expect(post).not.toHaveBeenCalled();
     expect(syncStatus.needsSignIn).toBe(true);
     expect(listQueue().map((q) => q.id)).toEqual(['mine']);
+  });
+
+  it('the derived counts follow the signed-in user without any flush', async () => {
+    seedOwned([{ id: 'theirs', by: 'u-other' }]);
+    post.mockRejectedValue({ message: 'Network Error' });
+    await logRun({ recorded_metadata: { recorded_by_user_id: 'u-me' } });   // loads the queue into the status
+
+    expect(syncStatus.waitingForOthers).toBe(1);                             // 'theirs' waits for u-other
+    auth.state.user = { id: 'u-other' };                                     // the recorder signs in:
+    expect(syncStatus.waitingForOthers).toBe(1);                             // 'mine' (u-me's) now waits instead
+    auth.state.user = { id: 'u-third' };
+    expect(syncStatus.waitingForOthers).toBe(2);
+    auth.state.user = { id: 'u-me' };
+    auth.state.offline = true;                                               // ...but as an offline session
+    expect(syncStatus.needsSignIn).toBe(true);
+    auth.state.offline = false;
+    expect(syncStatus.needsSignIn).toBe(false);
+  });
+
+  it("resolves the recorder's person when the stamp has none, and owns the record by them, not the uploader", async () => {
+    seedOwned([{ id: 'theirs', by: 'u-other' }]);
+    get.mockResolvedValue({ data: { data: [{ person_id: 'person-other' }] } });
+    post.mockResolvedValue({ data: { data: {} } });
+
+    await uploadQueuedAsMe('theirs');
+
+    expect(get.mock.calls[0][1].params.filter).toEqual({ user_id: { _eq: 'u-other' } });
+    expect(post.mock.calls[0][1].owner_person_id).toBe('person-other');
+  });
+
+  it('a failed person lookup leaves the record queued rather than letting the uploader own it', async () => {
+    seedOwned([{ id: 'theirs', by: 'u-other' }]);
+    get.mockRejectedValue({ message: 'Network Error' });
+
+    await uploadQueuedAsMe('theirs');
+
+    expect(post).not.toHaveBeenCalled();
+    expect(listQueue().map((q) => q.id)).toEqual(['theirs']);
+  });
+
+  it("doesn't look anything up for the recorder's own record", async () => {
+    seedOwned([{ id: 'mine', by: 'u-me' }]);
+    post.mockResolvedValue({ data: { data: {} } });
+    await flush();
+    expect(get).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledTimes(1);
   });
 });

@@ -8,6 +8,7 @@
 // (audit_logs.actor_identity still names the account that performed the write -- that is the
 // truthful "who uploaded" -- and recorded_metadata.synced_by_* repeats it beside the recorder.)
 import { authStore } from './authStore';
+import { api } from './directusClient';
 
 export interface Recorder {
 	userId: string;
@@ -89,3 +90,19 @@ export function hasServerSession(): boolean {
 
 export const OFFLINE_SESSION_UPLOAD_MESSAGE =
 	'You are signed in offline, so nothing can be uploaded yet. Sign in again while connected (banner at the top) to upload.';
+
+/**
+ * The owner for an upload, resolved when the stamp has no person link (the lookup at sign-in can
+ * fail, or the account was linked to a person later). `null` = the recorder has no person row, or
+ * is the one uploading (the server default is then already right). THROWS if the lookup itself
+ * fails: carrying on would hand ownership to whoever uploads, which is exactly what this stamp
+ * exists to prevent, so the upload must wait instead.
+ */
+export async function resolveOwnerPersonId(extra: Record<string, any> | null | undefined): Promise<string | null> {
+	const r = recorderFromExtra(extra);
+	if (!r) return null;
+	if (r.personId) return r.personId;
+	if (r.userId === authStore.state.user?.id) return null;
+	const res = await api.get('/items/people', { params: { filter: { user_id: { _eq: r.userId } }, fields: ['person_id'], limit: 1 } });
+	return res.data?.data?.[0]?.person_id ?? null;
+}

@@ -11,7 +11,7 @@
 import { api } from '../directusClient';
 import { resolveMachiningMethodId } from './directusLookups';
 import { buildSeriesEnvelope, parseCache, type Cache } from '@d1/force-plotting';
-import { OFFLINE_SESSION_UPLOAD_MESSAGE, hasServerSession, ownerPersonId, syncerFields } from '../recorder';
+import { OFFLINE_SESSION_UPLOAD_MESSAGE, hasServerSession, resolveOwnerPersonId, syncerFields } from '../recorder';
 
 export interface ColdUploadInfo {
 	captureId: string;
@@ -92,7 +92,7 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 		// this path runs when a capture that sat on disk (often recorded offline) is uploaded later,
 		// possibly by someone else. Captures from before this existed carry neither and fall back to
 		// the old behaviour (upload time; the server defaults the owner to the uploader).
-		owner_person_id: ownerPersonId(extra) ?? null,
+		owner_person_id: await resolveOwnerPersonId(extra),
 		operation_date: String(extra.recorded_at || new Date().toISOString()),
 		process_category: 'machining',
 		machining_operation_subtype: extra.op_type || null,

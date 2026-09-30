@@ -147,6 +147,35 @@ export function listOfflineAccounts(now: number = Date.now()): { email: string; 
 		.sort((a, b) => b.verifiedAt - a.verifiedAt);
 }
 
+/** The stored profile for an account, if it has an entry (used to keep fields a failed lookup could not refresh). */
+export function getOfflineProfile(email: string): DirectusUser | null {
+	return readVault()[normaliseEmail(email)]?.user ?? null;
+}
+
+/**
+ * Is this account still allowed to hold an offline session? False once its entry is gone
+ * (forgotten, revoked on a server 401) or past the age limit. Checked on restore and on navigation,
+ * so revoking an account also ends a session that is already open.
+ */
+export function offlineEntryValid(email: string | null | undefined, now: number = Date.now()): boolean {
+	if (!email) return false;
+	const e = readVault()[normaliseEmail(email)];
+	return !!e && now - e.verifiedAt <= OFFLINE_MAX_AGE_MS;
+}
+
+/**
+ * The server has just vouched for this account again (a token refresh succeeded, so it still
+ * exists and isn't suspended). Restart its offline window without touching the hash: someone who
+ * stays signed in for weeks on a refresh token must not lose offline sign-in for it.
+ */
+export function touchOfflineVerified(email: string, now: number = Date.now()): void {
+	const vault = readVault();
+	const e = vault[normaliseEmail(email)];
+	if (!e) return;
+	e.verifiedAt = now;
+	writeVault(vault);
+}
+
 /** Refresh the stored profile snapshot (role, person link) without re-deriving the password hash. */
 export function updateOfflineProfile(email: string, user: DirectusUser): void {
 	const vault = readVault();
