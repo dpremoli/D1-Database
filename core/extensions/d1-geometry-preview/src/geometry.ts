@@ -60,21 +60,25 @@ type P2 = [number, number];
 const iso = (x: number, y: number, z: number): P2 => [(x - y) * CA, (x + y) * SA - z];
 
 interface Face { pts: P3[]; cls: string }
-interface Dim { a: P3; b: P3; label: string }
+// `ext` = the two points on the object the dimension measures; extension lines run from them to a/b.
+interface Dim { a: P3; b: P3; label: string; ext?: [P3, P3] }
+interface Pad { l?: number; r?: number; t?: number; b?: number }
 interface Circle { cx: number; cy: number; cz: number; r: number }
 
 const VW = 260, VH = 210, PAD = 24;
 
-function fitter(faces: Face[], dims: Dim[], circles: Circle[]) {
+// `pad` reserves extra screen-space room (viewBox units) for annotations drawn after fitting.
+function fitter(faces: Face[], dims: Dim[], circles: Circle[], pad: Pad = {}) {
 	const pts: P2[] = [];
 	faces.forEach((f) => f.pts.forEach((p) => pts.push(iso(...p))));
 	dims.forEach((d) => { pts.push(iso(...d.a), iso(...d.b)); });
-	circles.forEach((c) => { for (let t = 0; t < 12; t++) { const th = (t / 12) * 2 * Math.PI; pts.push(iso(c.cx + c.r * Math.cos(th), c.cy + c.r * Math.sin(th), c.cz)); } });
+	circles.forEach((c) => { for (let t = 0; t < 24; t++) { const th = (t / 24) * 2 * Math.PI; pts.push(iso(c.cx + c.r * Math.cos(th), c.cy + c.r * Math.sin(th), c.cz)); } });
 	const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
 	const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-	const s = Math.min((VW - 2 * PAD) / ((maxX - minX) || 1), (VH - 2 * PAD) / ((maxY - minY) || 1));
-	const ox = PAD - minX * s + (VW - 2 * PAD - (maxX - minX) * s) / 2;
-	const oy = PAD - minY * s + (VH - 2 * PAD - (maxY - minY) * s) / 2;
+	const aw = VW - 2 * PAD - (pad.l || 0) - (pad.r || 0), ah = VH - 2 * PAD - (pad.t || 0) - (pad.b || 0);
+	const s = Math.min(aw / ((maxX - minX) || 1), ah / ((maxY - minY) || 1));
+	const ox = PAD + (pad.l || 0) - minX * s + (aw - (maxX - minX) * s) / 2;
+	const oy = PAD + (pad.t || 0) - minY * s + (ah - (maxY - minY) * s) / 2;
 	const to = (p: P3): P2 => { const q = iso(...p); return [q[0] * s + ox, q[1] * s + oy]; };
 	return { to, s };
 }
@@ -82,9 +86,35 @@ function fitter(faces: Face[], dims: Dim[], circles: Circle[]) {
 const fmt = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
 
 function svgWrap(inner: string) {
-	return `<svg viewBox="0 0 ${VW} ${VH}" xmlns="http://www.w3.org/2000/svg">`
-		+ `<defs><marker id="ga" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">`
-		+ `<path d="M0.5,0.5 L6,3 L0.5,5.5" fill="none" stroke="#475569" stroke-width="1"/></marker></defs>${inner}</svg>`;
+	// auto-start-reverse makes the start arrowhead point outward, like the end one.
+	return `<svg viewBox="0 0 ${VW} ${VH}" xmlns="http://www.w3.org/2000/svg" overflow="visible">`
+		+ `<defs><marker id="ga" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto-start-reverse">`
+		+ `<path d="M0.5,0.5 L6,3 L0.5,5.5" fill="none" stroke="#475569" stroke-width="1"/></marker>`
+		+ `<marker id="gar" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">`
+		+ `<path d="M0,0 L6,3 L0,6 Z" fill="#b91c1c"/></marker></defs>${inner}</svg>`;
+}
+
+const f1 = (v: number) => v.toFixed(1);
+
+// Extension line from a point on the object towards its dimension line (small gap at the
+// object, small overshoot past the dimension line).
+function extLine(p0: P2, p1: P2): string {
+	const dx = p1[0] - p0[0], dy = p1[1] - p0[1], len = Math.hypot(dx, dy);
+	if (len < 1) return '';
+	const ux = dx / len, uy = dy / len;
+	return `<line x1="${f1(p0[0] + ux * 2)}" y1="${f1(p0[1] + uy * 2)}" x2="${f1(p1[0] + ux * 2.5)}" y2="${f1(p1[1] + uy * 2.5)}" class="gext"/>`;
+}
+
+// Dimension line with arrowheads. When it is too short to hold two arrowheads, the heads
+// go outside pointing in (classic drafting style) instead of overlapping.
+function dimLine(a: P2, b: P2): string {
+	const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
+	const seg = (p: P2, q: P2, m = '') => `<line x1="${f1(p[0])}" y1="${f1(p[1])}" x2="${f1(q[0])}" y2="${f1(q[1])}" class="gdim"${m}/>`;
+	if (len >= 16) return seg(a, b, ' marker-start="url(#ga)" marker-end="url(#ga)"');
+	const ux = dx / (len || 1), uy = dy / (len || 1), tail = 9;
+	return seg(a, b)
+		+ seg([a[0] - ux * tail, a[1] - uy * tail], a, ' marker-end="url(#ga)"')
+		+ seg([b[0] + ux * tail, b[1] + uy * tail], b, ' marker-end="url(#ga)"');
 }
 
 function drawDims(dims: Dim[], to: (p: P3) => P2): string {
@@ -98,8 +128,9 @@ function drawDims(dims: Dim[], to: (p: P3) => P2): string {
 		const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
 		if ((mx - cx) * nx + (my - cy) * ny < 0) { nx = -nx; ny = -ny; }
 		const lx = mx + nx * 11, ly = my + ny * 11;
-		return `<line x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}" class="gdim" marker-start="url(#ga)" marker-end="url(#ga)"/>`
-			+ `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" class="gdimt" dominant-baseline="middle">${d.label}</text>`;
+		const ext = d.ext ? extLine(to(d.ext[0]), a) + extLine(to(d.ext[1]), b) : '';
+		return ext + dimLine(a, b)
+			+ `<text x="${f1(lx)}" y="${f1(ly)}" class="gdimt" dominant-baseline="middle">${d.label}</text>`;
 	}).join('');
 }
 
@@ -115,10 +146,13 @@ function boxFacesDims(W: number, L: number, H: number, off: number) {
 		{ cls: 'gl', pts: [[0, L, 0], [W, L, 0], [W, L, H], [0, L, H]] }, // front-left (y=L)
 		{ cls: 'gr', pts: [[W, 0, 0], [W, L, 0], [W, L, H], [W, 0, H]] }, // front-right (x=W)
 	];
+	// Three dimension lines fan out from three different directions so none of them share an
+	// endpoint: width off the end face (+y), length off the long side (+x), height off the
+	// left vertical edge (-x).
 	const dims: Dim[] = [
-		{ a: [0, L + off, 0], b: [W, L + off, 0], label: `${fmt(W)}` }, // width along the front-left base
-		{ a: [W + off, 0, 0], b: [W + off, L, 0], label: `${fmt(L)}` }, // length along the right base
-		{ a: [W + off, L, 0], b: [W + off, L, H], label: `${fmt(H)}` }, // height at the near edge
+		{ a: [0, L + off, 0], b: [W, L + off, 0], label: `${fmt(W)}`, ext: [[0, L, 0], [W, L, 0]] },
+		{ a: [W + off, 0, 0], b: [W + off, L, 0], label: `${fmt(L)}`, ext: [[W, 0, 0], [W, L, 0]] },
+		{ a: [-off, L, 0], b: [-off, L, H], label: `${fmt(H)}`, ext: [[0, L, 0], [0, L, H]] },
 	];
 	return { faces, dims };
 }
@@ -134,21 +168,26 @@ function boxSvg(W: number, L: number, H: number): string {
 function cylSvg(D: number, H: number): string {
 	const Rr = D / 2;
 	const circles: Circle[] = [{ cx: Rr, cy: Rr, cz: 0, r: Rr }, { cx: Rr, cy: Rr, cz: H, r: Rr }];
-	const off = 0.18 * Math.max(D, H);
-	const dims: Dim[] = [
-		{ a: [-off, Rr, 0], b: [-off, Rr, H], label: `${fmt(H)}` },
-	];
-	const { to, s } = fitter([], dims, circles);
+	// Both markers are drawn in screen space against the silhouette, so reserve room for them.
+	const { to, s } = fitter([], [], circles, { l: 26, t: 22 });
 	const topC = to([Rr, Rr, H]), botC = to([Rr, Rr, 0]);
 	const rx = Rr * CA * R2 * s, ry = Rr * SA * R2 * s;
-	const body = `<path d="M${(topC[0] - rx).toFixed(1)} ${topC[1].toFixed(1)} L${(botC[0] - rx).toFixed(1)} ${botC[1].toFixed(1)} `
-		+ `A${rx.toFixed(1)} ${ry.toFixed(1)} 0 0 0 ${(botC[0] + rx).toFixed(1)} ${botC[1].toFixed(1)} `
-		+ `L${(topC[0] + rx).toFixed(1)} ${topC[1].toFixed(1)} Z" class="gl"/>`;
-	const top = `<ellipse cx="${topC[0].toFixed(1)}" cy="${topC[1].toFixed(1)}" rx="${rx.toFixed(1)}" ry="${ry.toFixed(1)}" class="gt"/>`;
-	// diameter marker across the top ellipse
-	const dimD = `<line x1="${(topC[0] - rx).toFixed(1)}" y1="${(topC[1] - ry - 8).toFixed(1)}" x2="${(topC[0] + rx).toFixed(1)}" y2="${(topC[1] - ry - 8).toFixed(1)}" class="gdim" marker-start="url(#ga)" marker-end="url(#ga)"/>`
-		+ `<text x="${topC[0].toFixed(1)}" y="${(topC[1] - ry - 11).toFixed(1)}" class="gdimt">Ø${fmt(D)}</text>`;
-	return svgWrap(body + top + dimD + drawDims(dims, to));
+	const left = topC[0] - rx, right = topC[0] + rx;
+	const body = `<path d="M${f1(left)} ${f1(topC[1])} L${f1(left)} ${f1(botC[1])} `
+		+ `A${f1(rx)} ${f1(ry)} 0 0 0 ${f1(right)} ${f1(botC[1])} `
+		+ `L${f1(right)} ${f1(topC[1])} Z" class="gl"/>`;
+	const top = `<ellipse cx="${f1(topC[0])}" cy="${f1(topC[1])}" rx="${f1(rx)}" ry="${f1(ry)}" class="gt"/>`;
+	// Diameter: across the top, above the ellipse, with vertical extension lines off its extremes.
+	const dy = topC[1] - ry - 10;
+	const dimD = extLine([left, topC[1]], [left, dy]) + extLine([right, topC[1]], [right, dy])
+		+ dimLine([left, dy], [right, dy])
+		+ `<text x="${f1(topC[0])}" y="${f1(dy - 4)}" class="gdimt">Ø${fmt(D)}</text>`;
+	// Height: beside the left wall, between the top and bottom ellipse centre-lines.
+	const hx = left - 12;
+	const dimH = extLine([left, topC[1]], [hx, topC[1]]) + extLine([left, botC[1]], [hx, botC[1]])
+		+ dimLine([hx, topC[1]], [hx, botC[1]])
+		+ `<text x="${f1(hx - 8)}" y="${f1((topC[1] + botC[1]) / 2)}" class="gdimt" dominant-baseline="middle">${fmt(H)}</text>`;
+	return svgWrap(body + top + dimD + dimH);
 }
 
 // Flat tensile dogbone: overall L(y) × grip W(x) × thickness T(z), reduced to gauge
@@ -161,23 +200,29 @@ function couponSvg(L: number, W: number, T: number, Lg: number, Wg: number): str
 	const right: P2[] = [
 		[cx + wh, 0], [cx + wh, y1 - fil], [cx + gh, y1], [cx + gh, y2], [cx + wh, y2 + fil], [cx + wh, L],
 	];
+	// counter-clockwise in plan view (x right, y up), so an edge (dx,dy) has outward normal (dy,-dx)
 	const outline: P2[] = [...right, ...right.map((p) => [W - p[0], p[1]] as P2).reverse()];
 	const off = 0.14 * L;
+	// All dimensions sit in the top plane (z = T) so they hang off visible edges.
 	const dims: Dim[] = [
-		{ a: [-off, 0, 0], b: [-off, L, 0], label: `${fmt(L)}` },                 // overall length
-		{ a: [cx - gh, (L / 2) - off * 0.4, 0], b: [cx + gh, (L / 2) - off * 0.4, 0], label: `${fmt(Wg)}` }, // gauge width
-		{ a: [W + off, y1, 0], b: [W + off, y2, 0], label: `G ${fmt(Lg)}` },       // gauge length
+		{ a: [-off, 0, T], b: [-off, L, T], label: `${fmt(L)}`, ext: [[0, 0, T], [0, L, T]] },                        // overall length
+		{ a: [cx - gh, L / 2, T], b: [cx + gh, L / 2, T], label: `${fmt(Wg)}` },                                        // gauge width, across the top face
+		{ a: [W + off, y1, T], b: [W + off, y2, T], label: `G ${fmt(Lg)}`, ext: [[cx + gh, y1, T], [cx + gh, y2, T]] }, // gauge length
 	];
 	const top: Face = { cls: 'gt', pts: outline.map((p) => [p[0], p[1], T]) };
-	const bot: Face = { cls: 'gl', pts: outline.map((p) => [p[0], p[1], 0]) };
-	// extrude walls
+	// Extruded walls: drop the back-facing ones (the camera looks from +x,+y) and paint the
+	// rest far-to-near, shading x-facing walls darker than y-facing ones like the box faces.
 	const walls: Face[] = [];
 	for (let i = 0; i < outline.length; i++) {
 		const p = outline[i], q = outline[(i + 1) % outline.length];
-		walls.push({ cls: 'gr', pts: [[p[0], p[1], 0], [q[0], q[1], 0], [q[0], q[1], T], [p[0], p[1], T]] });
+		const nx = q[1] - p[1], ny = -(q[0] - p[0]);
+		if (nx + ny <= 1e-9) continue;
+		walls.push({ cls: Math.abs(nx) >= Math.abs(ny) ? 'gr' : 'gl', pts: [[p[0], p[1], 0], [q[0], q[1], 0], [q[0], q[1], T], [p[0], p[1], T]] });
 	}
-	const { to } = fitter([top, bot, ...walls], dims, []);
-	return svgWrap(faceSvg(bot, to) + walls.map((w) => faceSvg(w, to)).join('') + faceSvg(top, to) + drawDims(dims, to));
+	const depth = (f: Face) => (f.pts[0][0] + f.pts[0][1] + f.pts[1][0] + f.pts[1][1]) / 2;
+	walls.sort((a, b) => depth(a) - depth(b));
+	const { to } = fitter([top, ...walls], dims, []);
+	return svgWrap(walls.map((w) => faceSvg(w, to)).join('') + faceSvg(top, to) + drawDims(dims, to));
 }
 
 // Bend / fatigue bar: a long box with two supports and a central load arrow (3-pt).
@@ -186,14 +231,14 @@ function bendSvg(L: number, W: number, H: number): string {
 	const { faces, dims } = boxFacesDims(W, L, H, off);
 	const { to } = fitter(faces, dims, []);
 	let markers = '';
-	// supports under the front-bottom edge at 1/6 and 5/6 of length
+	// supports under the visible long side's bottom edge at 1/6 and 5/6 of the length
 	for (const fy of [1 / 6, 5 / 6]) {
-		const b = to([W / 2, fy * L, 0]);
-		markers += `<path d="M${(b[0] - 5).toFixed(1)} ${(b[1] + 12).toFixed(1)} L${b[0].toFixed(1)} ${(b[1] + 2).toFixed(1)} L${(b[0] + 5).toFixed(1)} ${(b[1] + 12).toFixed(1)} Z" class="gsupport"/>`;
+		const b = to([W, fy * L, 0]);
+		markers += `<path d="M${f1(b[0])} ${f1(b[1] + 1)} L${f1(b[0] - 5)} ${f1(b[1] + 10)} L${f1(b[0] + 5)} ${f1(b[1] + 10)} Z" class="gsupport"/>`;
 	}
-	// central downward load arrow on top
+	// central downward load arrow onto the top face
 	const c = to([W / 2, L / 2, H]);
-	markers += `<line x1="${c[0].toFixed(1)}" y1="${(c[1] - 20).toFixed(1)}" x2="${c[0].toFixed(1)}" y2="${(c[1] - 3).toFixed(1)}" class="gload" marker-end="url(#ga)"/>`;
+	markers += `<line x1="${f1(c[0])}" y1="${f1(c[1] - 22)}" x2="${f1(c[0])}" y2="${f1(c[1] - 2)}" class="gload" marker-end="url(#gar)"/>`;
 	return svgWrap(faces.map((f) => faceSvg(f, to)).join('') + drawDims(dims, to) + markers);
 }
 

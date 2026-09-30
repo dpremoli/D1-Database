@@ -72,6 +72,7 @@ const massLabel = computed<string | null>(() => {
 .geo-canvas :deep(.gr) { fill: #93c5fd; stroke: #1d4ed8; stroke-width: 1.3; stroke-linejoin: round; }
 .geo-canvas :deep(.gh) { fill: #fff; stroke: #1d4ed8; stroke-width: 1.2; }
 .geo-canvas :deep(.gdim) { stroke: #475569; stroke-width: 0.8; }
+.geo-canvas :deep(.gext) { stroke: #94a3b8; stroke-width: 0.5; }
 .geo-canvas :deep(.gdimt) { fill: #334155; font-size: 8px; font-weight: 700; text-anchor: middle;
 	paint-order: stroke; stroke: #fff; stroke-width: 2.5px; }
 .geo-canvas :deep(.gsupport) { fill: #94a3b8; stroke: #475569; stroke-width: 0.6; }
