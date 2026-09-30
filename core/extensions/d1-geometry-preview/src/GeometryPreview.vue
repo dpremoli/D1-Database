@@ -49,7 +49,8 @@ const volumeMm3 = computed<number | null>(() => {
 	const d = num(v.value.diameter_mm), L = num(v.value.length_mm), t = num(v.value.thickness_mm), w = num(v.value.width_mm);
 	const g = (v.value.form || '').toLowerCase();
 	if (g.includes('disc')) return d && (t ?? L) ? Math.PI * (d / 2) ** 2 * (t ?? L)! : null;
-	if (/cylind|rod/.test(g)) return d && L ? Math.PI * (d / 2) ** 2 * L : null;
+	if (/cylind|rod|round/.test(g)) return d && L ? Math.PI * (d / 2) ** 2 * L : null;
+	if (g.includes('square')) return w && L ? w * w * L : null;
 	if (w && L && t) return w * L * t; // box-like
 	return null;
 });

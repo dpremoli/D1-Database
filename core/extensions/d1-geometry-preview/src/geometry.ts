@@ -27,6 +27,8 @@ export const FORM_FIELDS: Record<string, string[]> = {
 	disc: ['diameter_mm', 'thickness_mm'],
 	cylinder: ['diameter_mm', 'length_mm'],
 	bar: ['width_mm', 'thickness_mm', 'length_mm'],
+	square_bar: ['width_mm', 'length_mm'],
+	round_bar: ['diameter_mm', 'length_mm'],
 	block: ['width_mm', 'length_mm', 'thickness_mm'],
 	plate: ['width_mm', 'length_mm', 'thickness_mm'],
 	tensile_coupon: ['length_mm', 'width_mm', 'thickness_mm', 'gauge_length_mm', 'gauge_width_mm'],
@@ -46,7 +48,9 @@ export const FORMS = [
 	{ text: 'Cylinder', value: 'cylinder' },
 	{ text: 'Block', value: 'block' },
 	{ text: 'Plate', value: 'plate' },
-	{ text: 'Bar', value: 'bar' },
+	{ text: 'Rectangular bar', value: 'bar' },
+	{ text: 'Square bar', value: 'square_bar' },
+	{ text: 'Round bar', value: 'round_bar' },
 	{ text: 'Tensile coupon (ASTM E8)', value: 'tensile_coupon' },
 	{ text: 'Bend / fatigue bar', value: 'bend_bar' },
 	{ text: 'Powder / compact', value: 'powder' },
@@ -190,6 +194,56 @@ function cylSvg(D: number, H: number): string {
 	return svgWrap(body + top + dimD + dimH);
 }
 
+// Square bar: a long box with a square cross-section, so a single side length (width_mm)
+// describes it. The side is dimensioned once with a □ prefix; length runs along the bar.
+function squareBarSvg(S: number, L: number): string {
+	const off = 0.16 * Math.max(S, L);
+	const { faces, dims } = boxFacesDims(S, L, S, off);
+	const sq = dims.slice(0, 2);
+	sq[0].label = `□${fmt(S)}`;
+	const { to } = fitter(faces, sq, []);
+	return svgWrap(faces.map((f) => faceSvg(f, to)).join('') + drawDims(sq, to));
+}
+
+// Round bar: a cylinder lying along the length (y) axis. The near end cap (y = L) is an
+// ellipse in the x-z plane; the body is the convex hull of both end caps, which is the
+// silhouette a cylinder has in any projection.
+function roundBarSvg(D: number, L: number): string {
+	const R = D / 2, N = 96;
+	const cap = (y: number): P3[] => Array.from({ length: N }, (_, i) => {
+		const th = (i / N) * 2 * Math.PI;
+		return [R + R * Math.cos(th), y, R + R * Math.sin(th)] as P3;
+	});
+	const near = cap(L), far = cap(0);
+	// Tangent point of the lower-right silhouette (the side facing the length dimension).
+	const tx = R * (1 + Math.SQRT1_2), tz = R * (1 - Math.SQRT1_2);
+	const off = 0.16 * Math.max(D, L);
+	const dims: Dim[] = [
+		{ a: [0, L, R], b: [D, L, R], label: `Ø${fmt(D)}` },
+		{ a: [tx + off, 0, tz], b: [tx + off, L, tz], label: `${fmt(L)}`, ext: [[tx, 0, tz], [tx, L, tz]] },
+	];
+	const { to } = fitter([{ cls: 'gl', pts: [...near, ...far] }], dims, []);
+	const hull = convexHull([...near, ...far].map(to));
+	const path = (pts: P2[]) => `M${pts.map((p) => `${f1(p[0])},${f1(p[1])}`).join(' L')} Z`;
+	return svgWrap(`<path d="${path(hull)}" class="gr"/><path d="${path(near.map(to))}" class="gl"/>` + drawDims(dims, to));
+}
+
+// Andrew's monotone chain.
+function convexHull(pts: P2[]): P2[] {
+	const p = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+	const cross = (o: P2, a: P2, b: P2) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+	const half = (seq: P2[]) => {
+		const h: P2[] = [];
+		for (const q of seq) {
+			while (h.length >= 2 && cross(h[h.length - 2], h[h.length - 1], q) <= 0) h.pop();
+			h.push(q);
+		}
+		h.pop();
+		return h;
+	};
+	return [...half(p), ...half([...p].reverse())];
+}
+
 // Flat tensile dogbone: overall L(y) × grip W(x) × thickness T(z), reduced to gauge
 // width Wg over gauge length Lg with straight fillet tapers. Extruded for thickness.
 function couponSvg(L: number, W: number, T: number, Lg: number, Wg: number): string {
@@ -266,6 +320,8 @@ export function buildGeometry(d: Dims): string {
 		const Wg = Math.min(num(d.gauge_width_mm, 12.5), W * 0.95);
 		return couponSvg(L, W, T, Lg, Wg);
 	}
+	if (g.includes('round')) return roundBarSvg(num(d.diameter_mm, 20), num(d.length_mm, 100));
+	if (g.includes('square')) return squareBarSvg(num(d.width_mm, 20), num(d.length_mm, 100));
 	if (g.includes('bend')) return bendSvg(num(d.length_mm, 100), num(d.width_mm, 15), num(d.thickness_mm, 10));
 	// block / plate / bar → box
 	return boxSvg(num(d.width_mm, 24), num(d.length_mm, 40), num(d.thickness_mm, g.includes('plate') ? 5 : 20));

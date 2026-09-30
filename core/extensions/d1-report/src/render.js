@@ -419,6 +419,7 @@ export function renderSampleReport(d) {
 	.gr { fill:#93c5fd; stroke:var(--accent); stroke-width:1.3; stroke-linejoin:round; }
 	.gh { fill:#fff; stroke:var(--accent); stroke-width:1.1; }
 	.gdim { stroke:#64748b; stroke-width:0.8; }
+	.gext { stroke:#94a3b8; stroke-width:0.5; }
 	.gdimt { fill:#334155; font-size:8px; font-weight:700; text-anchor:middle; paint-order:stroke; stroke:#fff; stroke-width:2.5px; }
 	.gsupport { fill:#94a3b8; stroke:#475569; stroke-width:0.6; }
 	.gload { stroke:var(--danger); stroke-width:1.4; }
