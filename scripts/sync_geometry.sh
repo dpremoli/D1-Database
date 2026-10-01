@@ -16,7 +16,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 EXT=core/extensions
 SRC=$EXT/d1-geometry-preview/src/geometry.ts
 COPIES=("$EXT/d1-home/src/geometry.ts" "$EXT/d1-report/src/geometry.ts")
-# Files whose CSS styles the generated SVG, and the classes geometry.ts emits.
+# Files whose CSS styles the generated SVG, and the classes geometry.ts emits. A class counts
+# as styled only if it heads a rule (`.cls {`, `.cls,` or `:deep(.cls) {`), not merely appears.
 STYLES=("$EXT/d1-geometry-preview/src/GeometryPreview.vue" "$EXT/d1-home/src/register-sample.vue" "$EXT/d1-report/src/render.js")
 CLASSES=(gt gl gr gh gdim gext gdimt gsupport gload)
 
@@ -31,7 +32,7 @@ for c in "${COPIES[@]}"; do
 done
 for f in "${STYLES[@]}"; do
     for cls in "${CLASSES[@]}"; do
-        grep -Eq "\.${cls}([^a-z]|$)" "$f" || { echo "MISSING CSS: .$cls in $f" >&2; rc=1; }
+        grep -Eq "\.${cls}\)?[[:space:]]*[{,]" "$f" || { echo "MISSING CSS: .$cls in $f" >&2; rc=1; }
     done
 done
 [[ $rc -eq 0 ]] && echo "geometry copies in sync"

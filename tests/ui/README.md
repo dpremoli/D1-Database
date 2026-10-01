@@ -11,11 +11,11 @@ of bug that schema-level checks miss — e.g. a conditional panel that is wired 
 |------|---------|
 | `01-mfg-op-conditional-params` | Manufacturing Operation form: picking a **Process Category** reveals only that type's typed parameter **fields inline** (Machining / Sintering / Additive). |
 | `02-test-session-conditional-params` | Test Session form: picking a **Test Type** reveals only that type's typed parameter **fields inline** (Tensile / Hardness). |
-| `03-sample-geometry-preview` | Physical Sample form: the custom **Shape Preview** interface draws a live SVG from Geometry + dimensions. |
+| `03-sample-geometry-preview` | Physical Sample form: the custom **Shape Preview** interface draws a live SVG from Geometry + dimensions, including the cylinder, round bar (Ø + length) and bar shapes. |
 | `04-project-investigators` | Project form: the **Secondary Investigators** M2M field and its access-notice are present. |
 | `05-detail-pages-load` | Regression: opening an **existing** record (samples/projects/operations/sessions) returns the form, not a 500 / "Page Not Found". Catches alias fields missing `no-data` and M2M junctions whose tables don't exist. |
 | `06-machine-filter` | Machine picker (`d1-machine-picker`): an operation or test offers only equipment capable of its process/test category, tiered by facility. |
-| `07-inventory-conditional` | Inventory form: sample-only fields and per-geometry dimensions show or hide by item type and geometry; the Shape Preview renders. |
+| `07-inventory-conditional` | Inventory form: sample-only fields and per-geometry dimensions (incl. round bar and tensile-coupon gauge fields) show or hide by item type and geometry; the Shape Preview renders. |
 | `08-operation-code-autogen` | Manufacturing Operation: the operation code composes live from sample, sub-type, pass and cutting parameters, and a manual edit is kept. |
 | `09-campaign-inheritance` | Campaigns: a new operation inherits project, owner and equipment from its campaign (the `campaign-inherit` hook), and the form fills the project live. |
 | `10-ask-db-chat` | **Ask the Database** module: a stubbed proxy response renders the SQL block, result table, and Plotly chart; the `/d1-ask/chat` endpoint rejects unauthenticated requests (401) and passes the auth gate for a logged-in session. A live end-to-end smoke runs only with `D1_LLM_LIVE=1`. |

@@ -124,6 +124,25 @@ rb_check "up_dim_fields:2" "up: diameter_mm and length_mm are shown for round_ba
 rb_check "down_fields:0" "down: round_bar removed from dropdown and conditions"
 rb_check "down_form:cylinder" "down: round_bar samples are mapped to cylinder"
 
+echo "== Sample geometry: legacy forms are back-filled =="
+# Seed old-vocabulary samples, apply the back-fill's up SQL, assert, then ROLLBACK.
+BACKFILL=db/migrations/20260930000115_backfill_legacy_geometry_forms.sql
+bf_up=$(awk '/-- migrate:up/{f=1;next}/-- migrate:down/{f=0}f' "$BACKFILL")
+bf_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO physical_samples (sample_code, form) VALUES
+  ('TEST-LG-001','cylindrical'), ('TEST-LG-002','Rectangular'), ('TEST-LG-003','disc'), ('TEST-LG-004','round_bar');
+$bf_up
+SELECT 'lg:' || sample_code || '=' || form FROM physical_samples WHERE sample_code LIKE 'TEST-LG-%' ORDER BY sample_code;
+ROLLBACK;
+SQL
+)
+bf_check() { grep -qx "$1" <<<"$bf_out" && ok "$2" || bad "$2 (psql output: $bf_out)"; }
+bf_check "lg:TEST-LG-001=cylinder" "cylindrical -> cylinder"
+bf_check "lg:TEST-LG-002=block" "Rectangular -> block (case-insensitive)"
+bf_check "lg:TEST-LG-003=disc" "current values are left alone (disc)"
+bf_check "lg:TEST-LG-004=round_bar" "current values are left alone (round_bar)"
+
 echo "== Campaigns layer (trials + testing campaigns) =="
 run "campaigns table exists" \
     "SELECT to_regclass('public.campaigns')::TEXT"

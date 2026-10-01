@@ -69,6 +69,14 @@ interface Circle { cx: number; cy: number; cz: number; r: number }
 
 const VW = 260, VH = 210, PAD = 24;
 
+// Dimension-label font size in viewBox units. The default suits the ~240px-wide form preview;
+// a caller that shrinks the drawing (the printed report) passes a larger `labelSize` so the
+// labels stay legible. Read synchronously by the draw helpers, set per buildGeometry call.
+const DEFAULT_LABEL = 8;
+let labelPx = DEFAULT_LABEL;
+const lk = () => labelPx / DEFAULT_LABEL; // scale for label offsets and boxes
+
+
 // `pad` reserves extra screen-space room (viewBox units) for annotations drawn after fitting.
 function fitter(faces: Face[], dims: Dim[], circles: Circle[], pad: Pad = {}) {
 	const pts: P2[] = [];
@@ -97,9 +105,15 @@ let svgSeq = 0;
 function svgWrap(inner: string, extra: P2[] = []) {
 	let x0 = 0, y0 = 0, x1 = VW, y1 = VH;
 	for (const [x, y] of extra) { x0 = Math.min(x0, x - 2); y0 = Math.min(y0, y - 2); x1 = Math.max(x1, x + 2); y1 = Math.max(y1, y + 2); }
+	// Keep the viewBox at the canvas aspect ratio so the rendered height never changes as the
+	// content grows (the form below would otherwise reflow while typing); extra room just
+	// scales the drawing down a little.
+	const aspect = VW / VH;
+	let w = x1 - x0, h = y1 - y0;
+	if (w / h > aspect) { const nh = w / aspect; y0 -= (nh - h) / 2; h = nh; } else { const nw = h * aspect; x0 -= (nw - w) / 2; w = nw; }
 	const id = `${uid}${++svgSeq}`;
 	// auto-start-reverse makes the start arrowhead point outward, like the end one.
-	return `<svg viewBox="${x0.toFixed(1)} ${y0.toFixed(1)} ${(x1 - x0).toFixed(1)} ${(y1 - y0).toFixed(1)}" xmlns="http://www.w3.org/2000/svg">`
+	return `<svg viewBox="${x0.toFixed(1)} ${y0.toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)}" xmlns="http://www.w3.org/2000/svg">`
 		+ `<defs><marker id="ga-${id}" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto-start-reverse">`
 		+ `<path d="M0.5,0.5 L6,3 L0.5,5.5" fill="none" stroke="#475569" stroke-width="1"/></marker>`
 		+ `<marker id="gar-${id}" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">`
@@ -109,11 +123,15 @@ function svgWrap(inner: string, extra: P2[] = []) {
 
 const f1 = (v: number) => v.toFixed(1);
 
-// Rough bounding box of a dimension label (8px bold, ~5 units per glyph) for viewBox growth.
+// Rough bounding box of a dimension label (bold, ~0.625 em per glyph) for viewBox growth.
 function labelBox(x: number, y: number, text: string, sink?: P2[]) {
-	const w = text.length * 5 + 2;
-	sink?.push([x - w / 2, y - 5], [x + w / 2, y + 5]);
+	const w = text.length * 0.625 * labelPx + 2, hh = 0.625 * labelPx;
+	sink?.push([x - w / 2, y - hh], [x + w / 2, y + hh]);
 }
+
+// A dimension label; the size is only inlined when it differs from the stylesheet default.
+const dimText = (x: number, y: number, text: string, extra = '') =>
+	`<text x="${f1(x)}" y="${f1(y)}" class="gdimt"${extra}${labelPx === DEFAULT_LABEL ? '' : ` style="font-size:${labelPx}px"`}>${text}</text>`;
 
 // Extension line from a point on the object towards its dimension line (small gap at the
 // object, small overshoot past the dimension line).
@@ -146,11 +164,11 @@ function drawDims(dims: Dim[], to: (p: P3) => P2, sink?: P2[]): string {
 		let nx = -(b[1] - a[1]), ny = b[0] - a[0];
 		const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
 		if ((mx - cx) * nx + (my - cy) * ny < 0) { nx = -nx; ny = -ny; }
-		const lx = mx + nx * 11, ly = my + ny * 11;
+		const lx = mx + nx * 11 * lk(), ly = my + ny * 11 * lk();
 		const ext = d.ext ? extLine(to(d.ext[0]), a) + extLine(to(d.ext[1]), b) : '';
 		labelBox(lx, ly, d.label, sink);
 		return ext + dimLine(a, b)
-			+ `<text x="${f1(lx)}" y="${f1(ly)}" class="gdimt" dominant-baseline="middle">${d.label}</text>`;
+			+ dimText(lx, ly, d.label, ' dominant-baseline="middle"');
 	}).join('');
 }
 
@@ -191,7 +209,7 @@ function cylSvg(D: number, H: number): string {
 	const circles: Circle[] = [{ cx: Rr, cy: Rr, cz: 0, r: Rr }, { cx: Rr, cy: Rr, cz: H, r: Rr }];
 	// Both markers are drawn in screen space against the silhouette, so reserve room for them.
 	const sink: P2[] = [];
-	const { to, s } = fitter([], [], circles, { l: 26, t: 22 });
+	const { to, s } = fitter([], [], circles, { l: 26 * lk(), t: 22 * lk() });
 	const topC = to([Rr, Rr, H]), botC = to([Rr, Rr, 0]);
 	const rx = Rr * CA * R2 * s, ry = Rr * SA * R2 * s;
 	const left = topC[0] - rx, right = topC[0] + rx;
@@ -200,17 +218,17 @@ function cylSvg(D: number, H: number): string {
 		+ `L${f1(right)} ${f1(topC[1])} Z" class="gl"/>`;
 	const top = `<ellipse cx="${f1(topC[0])}" cy="${f1(topC[1])}" rx="${f1(rx)}" ry="${f1(ry)}" class="gt"/>`;
 	// Diameter: across the top, above the ellipse, with vertical extension lines off its extremes.
-	const dy = topC[1] - ry - 10;
+	const dy = topC[1] - ry - 10 * lk();
 	const dimD = extLine([left, topC[1]], [left, dy]) + extLine([right, topC[1]], [right, dy])
 		+ dimLine([left, dy], [right, dy])
-		+ `<text x="${f1(topC[0])}" y="${f1(dy - 4)}" class="gdimt">Ø${fmt(D)}</text>`;
-	labelBox(topC[0], dy - 4, `Ø${fmt(D)}`, sink);
+		+ dimText(topC[0], dy - 4 * lk(), `Ø${fmt(D)}`);
+	labelBox(topC[0], dy - 4 * lk(), `Ø${fmt(D)}`, sink);
 	// Height: beside the left wall, between the top and bottom ellipse centre-lines.
-	const hx = left - 12;
+	const hx = left - 12 * lk();
 	const dimH = extLine([left, topC[1]], [hx, topC[1]]) + extLine([left, botC[1]], [hx, botC[1]])
 		+ dimLine([hx, topC[1]], [hx, botC[1]])
-		+ `<text x="${f1(hx - 8)}" y="${f1((topC[1] + botC[1]) / 2)}" class="gdimt" dominant-baseline="middle">${fmt(H)}</text>`;
-	labelBox(hx - 8, (topC[1] + botC[1]) / 2, fmt(H), sink);
+		+ dimText(hx - 8 * lk(), (topC[1] + botC[1]) / 2, fmt(H), ' dominant-baseline="middle"');
+	labelBox(hx - 8 * lk(), (topC[1] + botC[1]) / 2, fmt(H), sink);
 	return svgWrap(body + top + dimD + dimH, sink);
 }
 
@@ -266,11 +284,11 @@ function couponSvg(L: number, W: number, T: number, Lg: number, Wg: number): str
 	];
 	// counter-clockwise in plan view (x right, y up), so an edge (dx,dy) has outward normal (dy,-dx)
 	const outline: P2[] = [...right, ...right.map((p) => [W - p[0], p[1]] as P2).reverse()];
-	const off = 0.14 * L;
+	const off = 0.14 * L, lift = 0.09 * L;
 	// All dimensions sit in the top plane (z = T) so they hang off visible edges.
 	const dims: Dim[] = [
 		{ a: [-off, 0, T], b: [-off, L, T], label: `${fmt(L)}`, ext: [[0, 0, T], [0, L, T]] },                        // overall length
-		{ a: [cx - gh, L / 2, T], b: [cx + gh, L / 2, T], label: `${fmt(Wg)}` },                                        // gauge width, across the top face
+		{ a: [cx - gh, L / 2, T + lift], b: [cx + gh, L / 2, T + lift], label: `${fmt(Wg)}`, ext: [[cx - gh, L / 2, T], [cx + gh, L / 2, T]] }, // gauge width, lifted clear of the face
 		{ a: [W + off, y1, T], b: [W + off, y2, T], label: `G ${fmt(Lg)}`, ext: [[cx + gh, y1, T], [cx + gh, y2, T]] }, // gauge length
 	];
 	const top: Face = { cls: 'gt', pts: outline.map((p) => [p[0], p[1], T]) };
@@ -312,7 +330,7 @@ function bendSvg(L: number, W: number, H: number): string {
 function powderSvg(): string {
 	const dots = ['33,62', '45,64', '57,63', '69,64', '39,56', '51,54', '63,57', '50,48']
 		.map((p) => { const [x, y] = p.split(','); return `<circle cx="${x}" cy="${y}" r="2.4" class="gh"/>`; }).join('');
-	return `<svg viewBox="0 0 100 92" xmlns="http://www.w3.org/2000/svg">`
+	return `<svg viewBox="-7 0 114 92" xmlns="http://www.w3.org/2000/svg">`
 		+ `<ellipse cx="50" cy="70" rx="34" ry="13" class="gl"/><path d="M18 70 Q50 30 82 70 Z" class="gt"/>${dots}</svg>`;
 }
 
@@ -327,7 +345,12 @@ const num = (v: any, def: number): number => {
 export const isRoundBar = (g: string) => g === 'round_bar';
 export const isUprightCylinder = (g: string) => /cylind|rod/.test(g);
 
-export function buildGeometry(d: Dims): string {
+export function buildGeometry(d: Dims, opts: { labelSize?: number } = {}): string {
+	labelPx = opts.labelSize && opts.labelSize > 0 ? opts.labelSize : DEFAULT_LABEL;
+	try { return drawGeometry(d); } finally { labelPx = DEFAULT_LABEL; }
+}
+
+function drawGeometry(d: Dims): string {
 	const g = (d.form || '').toLowerCase();
 	if (!g || g === 'other') return '';
 	if (g.includes('powder')) return powderSvg();

@@ -12,7 +12,9 @@ const DIMS = [
 	{},                                                                                                              // all defaults
 ];
 const FORMS = Object.keys(FORM_FIELDS).filter((f) => f !== 'other');
-const svgs = FORMS.flatMap((form) => DIMS.map((d) => ({ form, svg: buildGeometry({ form, ...d }) })));
+// Default label size (form preview) and the larger one the printed report asks for.
+const SIZES = [8, 11];
+const svgs = SIZES.flatMap((px) => FORMS.flatMap((form) => DIMS.map((d) => ({ form, px, svg: buildGeometry({ form, ...d }, px === 8 ? {} : { labelSize: px }) }))));
 
 test('every form × dimension set draws a finite, non-empty SVG', () => {
 	for (const { form, svg } of svgs) {
@@ -21,16 +23,32 @@ test('every form × dimension set draws a finite, non-empty SVG', () => {
 	}
 });
 
-// Same width estimate the engine uses to grow the viewBox: ~5 units per glyph.
+// Same width estimate the engine uses to grow the viewBox: ~0.625 em per glyph.
 test('every label box lies inside the viewBox (nothing clipped)', () => {
-	for (const { form, svg } of svgs) {
+	for (const { form, px, svg } of svgs) {
 		const [x0, y0, w, h] = svg.match(/viewBox="([^"]+)"/)![1].split(' ').map(Number);
 		for (const m of svg.matchAll(/<text x="([-\d.]+)" y="([-\d.]+)"[^>]*>([^<]*)</g)) {
-			const x = +m[1], y = +m[2], half = (m[3].length * 5 + 2) / 2;
-			assert.ok(x - half >= x0 && x + half <= x0 + w && y - 5 >= y0 && y + 5 <= y0 + h,
+			const x = +m[1], y = +m[2], half = (m[3].length * 0.625 * px + 2) / 2, hh = 0.625 * px;
+			assert.ok(x - half >= x0 && x + half <= x0 + w && y - hh >= y0 && y + hh <= y0 + h,
 				`${form}: label "${m[3]}" at ${x},${y} outside ${x0} ${y0} ${w} ${h}`);
 		}
 	}
+});
+
+test('viewBox keeps the canvas aspect ratio, so the preview height never changes', () => {
+	for (const { form, svg } of svgs) {
+		const [, , w, h] = svg.match(/viewBox="([^"]+)"/)![1].split(' ').map(Number);
+		assert.ok(Math.abs(w / h - 260 / 210) < 0.01, `${form}: viewBox ${w}x${h}`);
+	}
+});
+
+test('labelSize is applied inline only when it differs from the default', () => {
+	const big = buildGeometry({ form: 'cylinder', diameter_mm: 25, length_mm: 50 }, { labelSize: 11 });
+	const small = buildGeometry({ form: 'cylinder', diameter_mm: 25, length_mm: 50 });
+	assert.match(big, /style="font-size:11px"/);
+	assert.doesNotMatch(small, /font-size/);
+	// a later default call is unaffected by an earlier sized one
+	assert.doesNotMatch(buildGeometry({ form: 'disc', diameter_mm: 30, thickness_mm: 8 }), /font-size/);
 });
 
 test('marker references resolve within their own SVG and ids never repeat across SVGs', () => {
@@ -58,9 +76,10 @@ test('round bar is matched exactly, not by substring', () => {
 	assert.ok(isUprightCylinder('cylinder') && isUprightCylinder('Cylindrical'.toLowerCase()));
 });
 
-test('tensile coupon: back-facing walls are culled (top + 6 visible walls)', () => {
+test('tensile coupon: back-facing walls are culled (top + 6 visible walls); all three dims have extension lines', () => {
 	const svg = buildGeometry({ form: 'tensile_coupon', length_mm: 200, width_mm: 20, thickness_mm: 3, gauge_length_mm: 50, gauge_width_mm: 12.5 });
 	assert.equal((svg.match(/<polygon/g) || []).length, 7);
+	assert.equal((svg.match(/class="gext"/g) || []).length, 6);
 });
 
 test('bend bar draws two supports and a red load arrow', () => {
