@@ -4,6 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // api.get isn't used by this path. The .mat/live_cache fetches go through global fetch.
 const post = vi.fn();
 vi.mock('../directusClient', () => ({ api: { post: (...a: unknown[]) => post(...a) } }));
+// Uploading needs a real (non-offline) session; `user` is whoever is signed in at upload time.
+const auth = vi.hoisted(() => ({
+	state: { user: { id: 'u-uploader', email: 'up@lab.org' } as any, offline: false, accessToken: 'at' as string | null, refreshToken: 'rt' as string | null },
+}));
+vi.mock('../authStore', () => ({ authStore: auth }));
 vi.mock('./directusLookups', () => ({ resolveMachiningMethodId: vi.fn().mockResolvedValue('method-1') }));
 vi.mock('@d1/force-plotting', () => ({
 	parseCache: vi.fn(() => ({})),
@@ -17,6 +22,8 @@ function mockFetchOk() {
 }
 
 beforeEach(() => {
+	auth.state.offline = false;
+	auth.state.user = { id: 'u-uploader', email: 'up@lab.org' };
 	post.mockReset();
 	mockFetchOk();
 	// operation insert -> file uploads (x2) -> analysis record insert
@@ -96,5 +103,37 @@ describe('uploadCaptureColdStart', () => {
 	it('returns the created operation_id', async () => {
 		const opId = await uploadCaptureColdStart({ ...BASE_INFO, cfg: { source: 'nidaq', extra_metadata: {} } });
 		expect(opId).toBe('op-123');
+	});
+
+	describe('a capture recorded earlier, possibly offline, by someone else', () => {
+		const recordedBy = {
+			recorded_by_user_id: 'u-recorder', recorded_by_email: 'rec@lab.org', recorded_by_name: 'Rita Recorder',
+			recorded_by_person_id: 'person-rita', recorded_offline: true, recorded_at: '2026-09-28T09:15:00.000Z',
+		};
+
+		it('keeps the recorder as owner and the recording time, not the uploader and upload time', async () => {
+			await uploadCaptureColdStart({ ...BASE_INFO, cfg: { source: 'nidaq', extra_metadata: { ...recordedBy } } });
+			const payload = post.mock.calls.find(([url]) => url === '/items/manufacturing_operations')![1];
+			expect(payload.owner_person_id).toBe('person-rita');
+			expect(payload.operation_date).toBe('2026-09-28T09:15:00.000Z');
+			expect(payload.recorded_metadata).toMatchObject({
+				recorded_by_user_id: 'u-recorder', recorded_by_name: 'Rita Recorder', recorded_offline: true,
+				synced_by_user_id: 'u-uploader', synced_by_email: 'up@lab.org',
+			});
+		});
+
+		it('a capture from before recorder stamping falls back to server defaults', async () => {
+			await uploadCaptureColdStart({ ...BASE_INFO, cfg: { source: 'nidaq', extra_metadata: {} } });
+			const payload = post.mock.calls.find(([url]) => url === '/items/manufacturing_operations')![1];
+			expect(payload.owner_person_id).toBeNull(); // null -> d1-default-owner fills it
+			expect(Date.parse(payload.operation_date)).toBeGreaterThan(Date.parse('2026-09-29T00:00:00Z'));
+		});
+
+		it('refuses from an offline session, without calling the server', async () => {
+			auth.state.offline = true; auth.state.accessToken = null; auth.state.refreshToken = null;
+			await expect(uploadCaptureColdStart({ ...BASE_INFO, cfg: { source: 'nidaq', extra_metadata: {} } }))
+				.rejects.toThrow(/signed in offline/i);
+			expect(post).not.toHaveBeenCalled();
+		});
 	});
 });

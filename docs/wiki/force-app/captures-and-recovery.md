@@ -73,7 +73,8 @@ The banner offers **Retry upload**, and once the capture is uploaded, **Open dat
 ### The offline queue
 
 If the database is unreachable when a run is logged, the record is kept on this PC and retried
-automatically when the connection returns. Stuck items appear under **Pending database records**
+automatically when the connection returns. It uploads under the account that recorded it (see
+[Working offline](working-offline.md#who-a-recording-belongs-to)). Stuck items appear under **Pending database records**
 at the top of Local Captures. An item with an error blocks the ones behind it until you **Retry**
 or **Discard** it. The sidebar's cloud chip shows how many records are queued.
 

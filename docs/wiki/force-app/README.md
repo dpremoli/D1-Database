@@ -23,6 +23,7 @@ takes over.
 | [Diagnostics Workbench](diagnostics.md) | run deeper analysis on the full-resolution spiral |
 | [Lab Amp and NI-DAQ](hardware.md) | configure the charge amplifier, the DAQ channels and virtual channels |
 | [Settings](settings.md) | change a setting (each tab explained) |
+| [Working offline](working-offline.md) | sign in, record and upload with no connection, and who a late upload is credited to |
 | [Captures, backup and recovery](captures-and-recovery.md) | know where your data is, and get it back after a crash |
 | [Troubleshooting](troubleshooting.md) | fix something that isn't working, read logs, report a bug |
 | [Developer guide](developer-guide.md) | run the app from source, test it, release it |

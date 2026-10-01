@@ -11,6 +11,7 @@
 import { api } from '../directusClient';
 import { resolveMachiningMethodId } from './directusLookups';
 import { buildSeriesEnvelope, parseCache, type Cache } from '@d1/force-plotting';
+import { OFFLINE_SESSION_UPLOAD_MESSAGE, hasServerSession, resolveOwnerPersonId, syncerFields } from '../recorder';
 
 export interface ColdUploadInfo {
 	captureId: string;
@@ -71,6 +72,7 @@ export function uploadCaptureFiles(captureId: string, matBlob: Blob | null, cach
 }
 
 export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<string> {
+	if (!hasServerSession()) throw new Error(OFFLINE_SESSION_UPLOAD_MESSAGE);
 	const cfg = info.cfg || {};
 	const extra: Record<string, any> = cfg.extra_metadata || {};
 	const surface = Math.PI * (Number(cfg.diam) || 0) * (Number(cfg.rpm) || 0) / 1000;
@@ -86,7 +88,12 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 		equipment_id: extra.link_equipment_id || null,
 		insert_edge_id: extra.link_edge_id || null,
 		tool_id: extra.link_tool_id || null,
-		operation_date: new Date().toISOString(),
+		// Recorded-at and recorded-by come from the capture itself, NOT from now / whoever is signed in:
+		// this path runs when a capture that sat on disk (often recorded offline) is uploaded later,
+		// possibly by someone else. Captures from before this existed carry neither and fall back to
+		// the old behaviour (upload time; the server defaults the owner to the uploader).
+		owner_person_id: await resolveOwnerPersonId(extra),
+		operation_date: String(extra.recorded_at || new Date().toISOString()),
 		process_category: 'machining',
 		machining_operation_subtype: extra.op_type || null,
 		machining_spindle_speed_rpm: cfg.rpm ?? null,
@@ -109,7 +116,7 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 		machining_new_edge: !!extra.new_edge,
 		machining_chips_collected: !!extra.chips_collected,
 		machining_chips_ref_code: extra.chips_ref || null,
-		recorded_metadata: { ...extra, capture_id: info.captureId, peaks: info.peaks, source: cfg.source, uploaded_via: 'local-capture-retry' },
+		recorded_metadata: { ...extra, ...syncerFields(), capture_id: info.captureId, peaks: info.peaks, source: cfg.source, uploaded_via: 'local-capture-retry' },
 	};
 	payload.method_id = await resolveMachiningMethodId(extra.op_type).catch(() => null);
 

@@ -12,6 +12,7 @@ import { recordingPrefs } from './recordingPrefs';
 import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
+import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
 import { confirmAction } from '../ui/confirm';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
@@ -225,6 +226,11 @@ export function createWorkspace() {
 	// against `meta.insert`/`meta.edge_id`, which are older free-text fields with a different
 	// meaning. Found and fixed while building the capture metadata editor, which needs these to
 	// pre-fill a correction with real lookups instead of starting from a blank search every time.
+	// Who recorded this cut and when, fixed at Start (not at upload time -- the upload may happen
+	// days later, offline first, under a different sign-in; see recorder.ts). Replay has no Start,
+	// so it stamps lazily from whoever is signed in when the record is built.
+	const recordedStamp = ref<Record<string, string | boolean> | null>(null);
+
 	function metaObj(): Record<string, string | boolean> {
 		const o: Record<string, string | boolean> = {};
 		for (const [k, v] of Object.entries(meta)) if (v && v.trim()) o[k] = v.trim();
@@ -243,6 +249,7 @@ export function createWorkspace() {
 		}
 		o.new_edge = machining.new_edge;
 		o.chips_collected = machining.chips_collected;
+		Object.assign(o, recordedStamp.value ?? recorderFields(currentRecorder(), new Date().toISOString()));
 		return o;
 	}
 
@@ -339,6 +346,8 @@ export function createWorkspace() {
 		if (!(await checkDiskBeforeStart())) return;
 		busy.value = true; errMsg.value = null; finishedCache.value = null;
 		alarms.reset();
+		// Replay is played, not recorded (it throws below): it keeps stamping lazily in metaObj().
+		if (source.value !== 'replay') recordedStamp.value = recorderFields(currentRecorder(), new Date().toISOString());
 		try {
 			if (source.value === 'replay') {
 				// Playback is driven by the transport bar, not by start(). Reaching here means a
@@ -411,6 +420,7 @@ export function createWorkspace() {
 
 	function newRun() {
 		client.reset(); finishedCache.value = null; errMsg.value = null; logged.value = false; saveOpen.value = false;
+		recordedStamp.value = null;
 		editCutStartSec.value = null; editCutEndSec.value = null;
 	}
 
@@ -420,8 +430,11 @@ export function createWorkspace() {
 	// machining_force_analysis row. Throws on failure (offline, validation, etc) so the save dialog
 	// can surface the error and let the user retry or fall back to a local-only save.
 	async function logRunSync(): Promise<string> {
+		if (!hasServerSession()) throw new Error(OFFLINE_SESSION_UPLOAD_MESSAGE);
 		const payload = buildRunPayload();
 		payload.method_id = await resolveMachiningMethodId(meta.op_type).catch(() => null);
+		payload.recorded_metadata = { ...payload.recorded_metadata, ...syncerFields() };
+		if (payload.owner_person_id == null) payload.owner_person_id = await resolveOwnerPersonId(payload.recorded_metadata);
 		let res;
 		try {
 			res = await api.post('/items/manufacturing_operations', payload);
@@ -504,13 +517,16 @@ export function createWorkspace() {
 	// Build + enqueue the manufacturing_operations run record (offline-queued in directusSync).
 	function buildRunPayload(): Record<string, any> {
 		const surface = Math.PI * cfg.diam * cfg.rpm / 1000;
+		const extra = metaObj();
 		return {
+			// The recorder's person, not whoever's token performs the write (see recorder.ts).
+			owner_person_id: ownerPersonId(extra) ?? null,
 			sample_id: link.sampleId || null,
 			operator_person_id: link.operatorId || null,
 			equipment_id: link.equipmentId || null,
 			insert_edge_id: link.edgeId || null,
 			tool_id: link.toolId || null,
-			operation_date: new Date().toISOString(),
+			operation_date: String(extra.recorded_at || new Date().toISOString()),
 			process_category: 'machining',
 			machining_operation_subtype: meta.op_type || null,
 			machining_spindle_speed_rpm: cfg.rpm,
@@ -533,7 +549,7 @@ export function createWorkspace() {
 			machining_chips_collected: machining.chips_collected,
 			machining_chips_ref_code: machining.chips_ref || null,
 			recorded_metadata: {
-				...metaObj(), capture_id: st.captureId, peaks: st.summary?.peaks,
+				...extra, capture_id: st.captureId, peaks: st.summary?.peaks,
 				source: source.value, replay_of: source.value === 'replay' ? replay.label : undefined,
 			},
 		};

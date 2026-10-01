@@ -7,7 +7,9 @@ import { computed, onMounted, ref } from 'vue';
 import { getConfig } from '../config';
 import { api } from '../directusClient';
 import { uploadCaptureColdStart } from '../record/uploadCapture';
-import { discardQueued, listQueue, retryQueued, syncStatus, type QueuedRun } from '../record/directusSync';
+import { discardQueued, listQueue, retryQueued, syncStatus, uploadQueuedAsMe, type QueuedRun } from '../record/directusSync';
+import { authStore } from '../authStore';
+import { OFFLINE_SESSION_UPLOAD_MESSAGE, hasServerSession, recorderFromExtra } from '../recorder';
 import { confirmAction } from '../ui/confirm';
 import EditCaptureMetadataDialog from './EditCaptureMetadataDialog.vue';
 import { matchUploaded, uploadedRowsSince } from './captureUploadState';
@@ -146,6 +148,9 @@ async function onMetadataSaved() {
 }
 
 async function upload(c: Capture) {
+	// Before any prompt: an offline session can't upload, so don't ask the user to confirm something
+	// that cannot run.
+	if (!hasServerSession()) { rowMsg.value[c.id] = OFFLINE_SESSION_UPLOAD_MESSAGE; return; }
 	busy.value[c.id] = 'uploading';
 	rowMsg.value[c.id] = '';
 	try {
@@ -153,6 +158,19 @@ async function upload(c: Capture) {
 			if (!r.ok) throw new Error(`summary: HTTP ${r.status}`);
 			return r.json();
 		});
+		// A capture records who recorded it. If that isn't who is signed in now, make the upload a
+		// deliberate choice rather than a quiet re-attribution (the recorder is kept either way).
+		const rec = recorderFromExtra(sum.config?.extra_metadata || sum.metadata);
+		const me = authStore.state.user?.id;
+		if (rec && me && rec.userId !== me) {
+			const ok = await confirmAction({
+				title: 'Upload someone else\'s capture?',
+				message: `"${sum.sample_name || c.id}" was recorded by ${rec.name || rec.email || 'another user'}.`,
+				detail: 'It is uploaded with them as its recorder and owner, and logged as uploaded by you.',
+				confirmLabel: 'Upload',
+			});
+			if (!ok) return;
+		}
 		await uploadCaptureColdStart({
 			captureId: c.id,
 			matUrl: `${base()}/captures/${c.id}/capture.mat`,
@@ -173,6 +191,7 @@ async function upload(c: Capture) {
 async function uploadAllUnsynced() {
 	const pending = unsynced.value.slice();
 	if (!pending.length) return;
+	if (!hasServerSession()) { error.value = OFFLINE_SESSION_UPLOAD_MESSAGE; return; }
 	const ok = await confirmAction({
 		title: `Upload ${pending.length} capture${pending.length === 1 ? '' : 's'}?`,
 		message: 'Each is sent to the database in turn. Large captures can take a while.',
@@ -218,6 +237,23 @@ async function retryOne(id: string) {
 		const attempted = await retryQueued(id);
 		if (!attempted) rowMsg.value[id] = 'a sync is already running — this run is next in line';
 	} finally { queueBusy.value = null; refreshQueue(); }
+}
+// A queued record recorded by someone else only uploads automatically when THEY sign in. This is
+// the deliberate override: it still carries the recorder's name and owner, and is logged as
+// synced by whoever is signed in now.
+const waitingForOther = (item: QueuedRun) =>
+	!!item.recordedBy && item.recordedBy !== authStore.state.user?.id && !item.syncAsMe;
+async function uploadAsMe(item: QueuedRun) {
+	if (!hasServerSession()) { rowMsg.value[item.id] = OFFLINE_SESSION_UPLOAD_MESSAGE; return; }
+	const ok = await confirmAction({
+		title: 'Upload someone else\'s record?',
+		message: `"${queueLabel(item)}" was recorded by ${item.recordedByLabel || 'another user'}.`,
+		detail: 'It is uploaded with them as its recorder and owner, and logged as uploaded by you.',
+		confirmLabel: 'Upload as me',
+	});
+	if (!ok) return;
+	queueBusy.value = item.id;
+	try { await uploadQueuedAsMe(item.id); } finally { queueBusy.value = null; refreshQueue(); }
 }
 async function discardOne(item: QueuedRun) {
 	const name = item.payload?.recorded_metadata?.sample_name || item.payload?.recorded_metadata?.capture_id || item.id;
@@ -282,10 +318,12 @@ onMounted(() => { load(); refreshQueue(); });
 					<div class="rtop">
 						<span class="rname">{{ queueLabel(item) }}</span>
 						<span v-if="item.lastError" class="tag warn">error</span>
+						<span v-else-if="waitingForOther(item)" class="tag warn">waiting for {{ item.recordedByLabel || 'recorder' }}</span>
 						<span v-else class="tag">queued</span>
 					</div>
 					<div class="rsub">
 						<span>{{ item.collection }}</span>
+						<span v-if="item.recordedByLabel">recorded by {{ item.recordedByLabel }}</span>
 						<span v-if="item.attempts">{{ item.attempts }} attempt<span v-if="item.attempts !== 1">s</span></span>
 						<span>{{ new Date(item.createdAt).toLocaleString() }}</span>
 					</div>
@@ -293,7 +331,10 @@ onMounted(() => { load(); refreshQueue(); });
 					<p v-if="item.lastError" class="rmsg bad">{{ item.lastError }}</p>
 				</div>
 				<div class="ract">
-					<button class="btn sm" :disabled="queueBusy === item.id" @click="retryOne(item.id)">
+					<button v-if="waitingForOther(item)" class="btn sm" :disabled="queueBusy === item.id" title="Recorded by another user: uploads by itself when they sign in" @click="uploadAsMe(item)">
+						<span class="material-symbols-rounded">cloud_upload</span>Upload as me
+					</button>
+					<button v-else class="btn sm" :disabled="queueBusy === item.id" @click="retryOne(item.id)">
 						<span class="material-symbols-rounded">{{ queueBusy === item.id ? 'hourglass_top' : 'refresh' }}</span>
 						{{ queueBusy === item.id ? 'Retrying…' : 'Retry' }}
 					</button>

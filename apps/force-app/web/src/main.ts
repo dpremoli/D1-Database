@@ -4,6 +4,8 @@ import { loadRuntimeConfig, getConfig } from './config';
 import { router } from './router';
 import { api, authHeaders, setUnauthorizedHandler } from './directusClient';
 import { authStore } from './authStore';
+import { startLookupSync } from './record/lookupCache';
+import { startSync } from './record/directusSync';
 import { installGlobalErrorReporting, reportClientError } from './clientLog';
 import App from './App.vue';
 import VIcon from './shims/VIcon.vue';
@@ -78,6 +80,11 @@ async function bootstrap() {
 	});
 
 	app.mount('#app');
+
+	// Background work that has to run whichever page is open: push queued run records when the
+	// network returns, and keep the offline copy of the picker data fresh while connected.
+	startSync();
+	startLookupSync();
 }
 
 bootstrap();
