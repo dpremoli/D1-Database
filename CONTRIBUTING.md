@@ -64,7 +64,7 @@ hygiene hooks; CI enforces the same set.
 
 [`.claude/skills/`](./.claude/skills/) holds project skills that encode the conventions
 above. Claude Code loads them on its own when a task matches, or you can type
-`/<name>`:
+`/<name>`. Skills marked *manual* only run when you type them.
 
 | Skill | Use it for |
 |---|---|
@@ -73,8 +73,22 @@ above. Claude Code loads them on its own when a task matches, or you can type
 | `new-plugin` | Scaffolding a plugin from `plugins/plugin-template` and wiring compose, `.env.example`, Makefile and CI |
 | `adr` | Writing an ADR or a design spec and updating its index |
 | `ci-local` | Running the CI checks the changed files touch, before committing |
+| `force-app-conventions` | Background knowledge Claude loads when touching force-app files: invariants, architecture, formats |
+| `force-scaffold` | Adding a panel, endpoint, channel, format change or diagnostics step across every file it needs |
+| `force-app-verify` | Running the force app hardware-free (sim backend + real UI in headless Chromium) to prove a change works |
+| `force-debug-capture` | Investigating a bad recording from a bug report, capture folder or log, ending in a report |
+| `triage-bug-reports` | Triaging the open in-app bug reports into a P0–P3 batch plan and fixing them |
+| `force-app-release` | *Manual.* Bump, changelog, local preflight of the release job; you push the tag |
+| `careful` | *Manual.* Hook that blocks destructive commands (DB drops, volume/MinIO deletes, force-push, release tags) for the session |
+| `freeze` | *Manual.* Hook that limits edits to the directories you name, for the session |
 
-The rest of `.claude/` (local settings, memory, plans) stays gitignored.
+[`.claude/agents/force-app-reviewer.md`](./.claude/agents/force-app-reviewer.md) is a read-only
+review subagent with `force-app-conventions` preloaded. It keeps shared notes in
+`.claude/agent-memory/force-app-reviewer/`. [`.claude/settings.json`](./.claude/settings.json)
+logs each skill use to the gitignored `.claude/skill-usage.log`
+(`cut -f2 .claude/skill-usage.log | sort | uniq -c`), so unused skills can be pruned. The rest of
+`.claude/` (local settings, memory, plans) stays gitignored, and so does any skill's
+per-machine `config.json`.
 
 ## Security
 

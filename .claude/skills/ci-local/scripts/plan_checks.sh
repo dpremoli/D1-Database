@@ -38,10 +38,19 @@ for p in $(grep -oE '^plugins/[^/]+/' <<<"$files" | sort -u | cut -d/ -f2); do
 done
 
 has '^scripts/.*\.py$|^tests/scripts/' && echo "python -m pytest tests/scripts -q   # not in CI; *_golden_exactly may differ by machine"
-has '^(packages/|apps/force-app/(web|desktop)/|core/extensions/d1-force-dashboard/|package(-lock)?\.json$)' && {
-  echo "npm test   # not in ci.yml; force-app suites run on release"
-  echo "npm run typecheck"
-}
-has '^apps/force-app/(backend|backup-server|bug-report-relay)/' && \
-  echo "# apps/force-app python services: run pytest from the changed service's folder"
+# Force app: nothing below runs in ci.yml; the release job runs only backend/backup-server/desktop.
+has '^packages/force-plotting/' && echo "npm test -w @d1/force-plotting && npm run typecheck -w @d1/force-plotting   # not in CI"
+has '^(apps/force-app/web/|packages/force-plotting/)' && \
+  echo "npm test -w force-app-web && npm run typecheck -w force-app-web && npm run lint:theme -w force-app-web   # not in CI"
+has '^apps/force-app/desktop/' && \
+  echo "npm test -w force-app-desktop   # off Windows, sidecar 'stop() terminates' fails (needs taskkill): ignore that one"
+has '^core/extensions/d1-force-dashboard/' && echo "npm run build:extension   # not in CI"
+has '^apps/force-app/backend/' && echo "(cd apps/force-app/backend && python -m pytest -q)   # release job only"
+for s in backup-server bug-report-relay; do
+  has "^apps/force-app/$s/" && echo "(cd apps/force-app/$s && python -m pytest -q)   # not in ci.yml"
+done
+has '^(apps/force-app/(backend|web)/|packages/force-plotting/)' && \
+  echo "# then the force-app-verify skill: sim recording over HTTP + through the UI"
+has '^apps/force-app/desktop/package\.json$|^apps/force-app/web/src/changelog\.ts$' && \
+  echo "bash .claude/skills/force-app-release/scripts/preflight.sh --fast   # version/changelog/lockfile agree"
 exit 0
