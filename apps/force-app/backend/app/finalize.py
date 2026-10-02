@@ -54,6 +54,22 @@ BLOCK_ROWS = 1_000_000
 CUT_FRAC = 0.2  # the cut window is where |Fz| exceeds this fraction of its peak
 
 
+def time_column_is_off(col: np.ndarray, expected: np.ndarray, fs: float) -> bool:
+    """Whether a float32 Time column departs from `expected` (float64 start + index / fs) by more
+    than rounding can explain, i.e. it carries real non-uniform timing.
+
+    Allowed: half a sample, the stored value's own float32 rounding (spacing), and the float32
+    rounding of the header rate, which the sources' float64 stamps don't share: for a rate float32
+    can't hold exactly (10000.1 Hz) the formula drifts from the stamps by up to ~t * 2**-24, which
+    passes the spacing term on its own past ~75M rows. 2**-23 * |t| covers that; the total
+    tolerance stays within a few float32 ulps of t, so anything the column can resolve as a real
+    step (a dropped chunk, a pause) is still caught.
+    """
+    col = np.abs(col)
+    tol = 0.5 / fs + np.spacing(col).astype(np.float64) + 2.0**-23 * col.astype(np.float64)
+    return bool(np.any(np.abs(col.astype(np.float64) - expected) > tol))
+
+
 class _Blocks:
     """The raw body as consecutive BLOCK_ROWS blocks, keeping the last two read. The final pass
     reads each block twice in quick succession — once to find tacho edges a little ahead of the
@@ -122,9 +138,10 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     # column: that column is float32, whose spacing passes a 25 kHz sample period at ~336 s, so a
     # 12430 s capture's stamps were quantised to ~1 ms (25 samples sharing one value). Every source
     # writes uniform index / rate stamps (sim, nidaq, and replay of a uniformly-decimated cache), so
-    # this loses nothing — but the column is checked against it as it streams past, and if it ever
-    # disagrees by more than its own float32 rounding plus half a sample the capture is assumed to
-    # carry real non-uniform timing, and the column is used as before.
+    # for those the only thing lost is the column's float32 rounding. The column is checked against
+    # the formula as it streams past (time_column_is_off), and if it ever disagrees by more than
+    # that rounding plus half a sample the capture is assumed to carry real non-uniform timing, and
+    # the column is used as before.
     t0 = float(blocks.get(0)[0, 0])
     time_from_index = True
     chan_peaks = np.zeros(8)
@@ -136,8 +153,7 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         block = blocks.get(k)
         if time_from_index:
             col = block[:, 0]
-            err = np.abs(col.astype(np.float64) - (t0 + np.arange(a, b) / fs))
-            if np.any(err > 0.5 / fs + np.spacing(np.abs(col)).astype(np.float64)):
+            if time_column_is_off(col, t0 + np.arange(a, b) / fs, fs):
                 time_from_index = False
                 log.warning(
                     "finalize: %s has non-uniform Time stamps (block %d); using the stored column",

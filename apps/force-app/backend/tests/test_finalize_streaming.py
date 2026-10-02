@@ -36,7 +36,7 @@ from app.dsp import (
     order_spectrum_quick,
     rpm_from_tacho,
 )
-from app.finalize import finalize
+from app.finalize import finalize, time_column_is_off
 
 F32_REL = float(np.finfo(np.float32).eps)  # one float32 ulp, relative
 
@@ -213,6 +213,30 @@ def test_a_non_uniform_time_column_is_kept(tmp_path):
     time = loadmat(os.path.join(d, "capture.mat"))["DATA"][:, 0]
     np.testing.assert_array_equal(time, t.astype(np.float32).astype(np.float64))
     assert summary["duration_sec"] == pytest.approx(t[-1] - t[0], abs=1e-6)
+
+
+def test_uniform_stamps_at_an_inexact_rate_are_not_mistaken_for_non_uniform_timing():
+    """The sources stamp t = idx / rate in float64 but the header holds the rate as float32, so for
+    a rate float32 can't represent (10000.1 Hz) the formula drifts from the stamps by up to
+    ~t * 2**-24. Written out, that is a 300M-row capture; the check only sees (stamps, formula)
+    pairs, so a window of rows at that offset stands in for it. At this window the pre-fix
+    tolerance (half a sample + the stored value's float32 spacing) flagged it falsely and finalize
+    silently fell back to the float32 column."""
+    fs_true = 10_000.1
+    fs = float(np.float32(fs_true))
+    assert fs != fs_true
+    idx = np.arange(300_000_000, 300_200_000)  # t ~ 30000 s
+    col = (idx / fs_true).astype(np.float32)
+    expected = idx / fs
+
+    old_tol = 0.5 / fs + np.spacing(np.abs(col)).astype(np.float64)
+    assert np.any(np.abs(col.astype(np.float64) - expected) > old_tol)  # the old check misfired
+    assert not time_column_is_off(col, expected, fs)
+
+    # ...while real non-uniform timing at that offset still is: a 0.5 s gap, or a 10 s pause.
+    for gap in (0.5, 10.0):
+        gapped = (idx / fs_true + np.where(idx >= idx[100_000], gap, 0.0)).astype(np.float32)
+        assert time_column_is_off(gapped, expected, fs)
 
 
 def test_an_empty_raw_file_is_refused(tmp_path):
