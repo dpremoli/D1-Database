@@ -4,6 +4,7 @@ import { ConfigStore } from './config';
 import { buildMenu } from './menu';
 import { findAvailablePort } from './port';
 import { registerAppScheme, handleAppProtocol } from './protocol';
+import { watchRenderer } from './rendererWatch';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
 import { initAutoUpdater } from './updater';
@@ -149,13 +150,38 @@ function backendCommand(port: number): {
   const backendDir = path.join(__dirname, '..', '..', 'backend');
   return {
     exePath: path.join(backendDir, '.venv', 'Scripts', 'python.exe'),
-    args: ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(port)],
+    // --no-access-log: the same per-request stdout flood run_frozen.py turns off (#106).
+    args: ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(port), '--no-access-log'],
     cwd: backendDir,
     env: recorderEnv(),
   };
 }
 
+/** Records a desktop-shell event in the backend's log file (via POST /logs/client), so it lands in
+ * Settings > Logs and in a bug report's log tail — this process has no log of its own that an
+ * operator can see. Best effort: when the backend is the thing that is down, console is all. */
+function logToBackend(level: 'ERROR' | 'WARNING' | 'INFO', message: string): void {
+  console.error(`[desktop] ${message}`);
+  if (recorderPort == null) return;
+  void fetch(`http://127.0.0.1:${recorderPort}/logs/client`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ level, source: 'desktop', message }),
+    signal: AbortSignal.timeout(2000),
+  }).catch(() => {});
+}
+
+const rendererWatchDeps = {
+  showMessageBox: (win: BrowserWindow, opts: Electron.MessageBoxOptions) => dialog.showMessageBox(win, opts),
+  log: logToBackend,
+};
+
+// Why the backend last restarted. It is down while 'restarting' is reported, so the log line
+// waits for the 'ready' that follows.
+let restartCause: string | undefined;
+
 function onSidecarStateChange(state: SidecarState, detail?: string): void {
+  if (state === 'restarting') restartCause = detail;
   if (state === 'crashed') {
     dialog.showErrorBox('Recorder backend stopped responding', detail ?? 'See logs for details.');
   }
@@ -163,6 +189,7 @@ function onSidecarStateChange(state: SidecarState, detail?: string): void {
   // operator back to Record, where the existing recovery banner (RecordPage.vue) picks up any
   // incomplete session via GET /recovery/check on mount.
   if (state === 'ready' && supervisor && supervisor.getRestartCount() > 0) {
+    logToBackend('WARNING', `recorder backend restarted (${restartCause ?? 'unknown cause'})`);
     mainWindow?.webContents.send('navigate', '/record');
   }
 }
@@ -209,6 +236,7 @@ async function createWindow(): Promise<void> {
   });
   if (savedMain?.maximized) mainWindow.maximize();
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  watchRenderer(mainWindow, 'main', rendererWatchDeps);
   // #35: F11 fullscreen, the conventional browser/desktop-app shortcut -- Electron doesn't wire
   // this up on its own. before-input-event (not a Menu accelerator) keeps it working even though
   // this app runs frameless-menu-less; scoped to just the main window, not a global shortcut, so
@@ -247,6 +275,7 @@ async function createWindow(): Promise<void> {
   // is the hook that actually gets one, so a pop-out's size/position can be saved when it closes.
   mainWindow.webContents.on('did-create-window', (win, details) => {
     const key = popoutKey(details.url);
+    watchRenderer(win, 'pop-out', rendererWatchDeps);
     win.on('close', () => windowState.save(key, win.isMinimized() || win.isMaximized() ? win.getNormalBounds() : win.getBounds()));
   });
 
