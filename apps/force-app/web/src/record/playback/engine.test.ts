@@ -170,6 +170,16 @@ describe('playback engine', () => {
 		});
 	});
 
+	it('computes timeline markers at load and clears them on a failed load (#104)', () => {
+		const h = harness();
+		h.engine.load(makeDenseCache(), { ppr: 1, stride: 1, cropStartSec: 2 });
+		const kinds = h.engine.state.markers.map((m) => m.kind);
+		expect(kinds).toContain('crop');
+		expect(h.engine.state.markers.find((m) => m.axis === 'Fx')!.t).toBeCloseTo(1.234, 3);
+		h.engine.load({ ...makeCache(1), N: 1 } as Cache, { ppr: 1, stride: 1 });
+		expect(h.engine.state.markers).toEqual([]);
+	});
+
 	it('stops at the end and reports not playing', () => {
 		const h = harness();
 		h.engine.load(makeCache(), { ppr: 1, stride: 1 });

@@ -14,6 +14,7 @@ import { reactive } from 'vue';
 import { axisAutoLimits, idxOfTime as firstIdxAtOrAfter, type Axis, type Cache } from '@d1/force-plotting';
 import { SUB_NAMES, type RecordClient } from '../liveClient';
 import { createSpectrumClient, type SpectrumClient } from './spectrum';
+import { computeMarkers, type TimelineMarker } from './markers';
 
 export interface PlaybackOpts {
 	baseUrl: string;
@@ -33,6 +34,8 @@ export interface PlaybackState {
 	t0: number;
 	/** LENGTH of the cut (t[N-1] - t0), not its end time — "Cut time" readouts show this as is. */
 	duration: number;
+	/** Timeline points of interest for the loaded cut (#104), in cache time. */
+	markers: TimelineMarker[];
 }
 export interface PlaybackEngine {
 	load(cache: Cache, o: { ppr: number; innerDiam?: number; stride: number; axis?: Axis; cropStartSec?: number }): void;
@@ -64,7 +67,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 	const cancel = opts.cancel ?? ((h: number) => cancelAnimationFrame(h));
 
 	const state = reactive<PlaybackState>({
-		loaded: false, playing: false, tSec: 0, t0: 0, duration: 0, speed: 1, error: null,
+		loaded: false, playing: false, tSec: 0, t0: 0, duration: 0, speed: 1, error: null, markers: [],
 	});
 	// The playhead's last valid position (cache time): t[N-1] itself, kept apart rather than
 	// recomputed as t0 + duration, which can round a hair short and never draw the last sample.
@@ -146,6 +149,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		state.t0 = c.t[0];
 		endSec = c.t[c.N - 1];
 		state.duration = endSec - state.t0;
+		state.markers = computeMarkers(c, { cropStartSec: o.cropStartSec });
 		state.tSec = state.t0;
 		renderTo(state.t0, false);
 	}
@@ -154,7 +158,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		pause();
 		client.reset();
 		frmCursor = 0; traceCursor = 0;
-		state.tSec = 0; state.t0 = 0; state.duration = 0; endSec = 0; state.loaded = false; state.error = null;
+		state.tSec = 0; state.t0 = 0; state.duration = 0; endSec = 0; state.markers = []; state.loaded = false; state.error = null;
 		cache = null;
 	}
 

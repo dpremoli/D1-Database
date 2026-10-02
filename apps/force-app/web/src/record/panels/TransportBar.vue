@@ -5,6 +5,9 @@
 import { computed, onBeforeUnmount } from 'vue';
 import { useWorkspace } from '../workspace';
 import { formatDuration as fmt } from '../../format';
+import { channelColor } from '../types';
+import { theme } from '../../theme';
+import { markerFraction, type TimelineMarker } from '../playback/markers';
 
 const w = useWorkspace();
 const p = computed(() => w.playback.state);
@@ -41,6 +44,17 @@ function onScrubEnd(e: Event) {
 onBeforeUnmount(() => { if (seekFrame) cancelAnimationFrame(seekFrame); });
 
 const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
+
+// #104: cut start/end, a saved crop, and each axis's |F| peak, on a lane under the scrub bar (not
+// on it, so they never get in the way of grabbing the thumb). Click one to jump there.
+function markerStyle(m: TimelineMarker) {
+	const f = markerFraction(m.t, p.value.t0, p.value.duration);
+	// The range input's track is inset by half its thumb (~8px) at each end; match it so a marker
+	// sits under the thumb when the playhead is on it.
+	const color = m.kind === 'peak' && m.axis ? channelColor(m.axis, theme.value) : undefined;
+	return { left: `calc(8px + (100% - 16px) * ${f})`, ...(color ? { '--mc': color } : {}) };
+}
+function seekTo(m: TimelineMarker) { w.playback.seek(m.t, { commit: true }); }
 </script>
 
 <template>
@@ -56,8 +70,15 @@ const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
 					{{ w.replay.downloading ? 'progress_activity' : p.playing ? 'pause' : 'play_arrow' }}
 				</span>
 			</button>
-			<input class="scrub" type="range" :min="p.t0" :max="tEnd" step="0.01"
-				:value="p.tSec" :disabled="!p.loaded || w.replay.downloading" @input="onScrub" @change="onScrubEnd" />
+			<div class="scrub-wrap">
+				<input class="scrub" type="range" :min="p.t0" :max="tEnd" step="0.01"
+					:value="p.tSec" :disabled="!p.loaded || w.replay.downloading" @input="onScrub" @change="onScrubEnd" />
+				<div v-if="p.loaded && p.markers.length" class="marks">
+					<button v-for="m in p.markers" :key="`${m.kind}-${m.axis ?? ''}-${m.t}`" type="button"
+						class="mark" :class="m.kind" :style="markerStyle(m)" :title="m.label" :aria-label="`Jump to ${m.label}`"
+						@click="seekTo(m)"></button>
+				</div>
+			</div>
 			<span class="time" :title="timeTitle">{{ fmt(elapsed) }} / {{ fmt(p.duration) }}</span>
 		</div>
 		<div class="row sub">
@@ -90,7 +111,15 @@ const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
 .play .material-symbols-rounded { font-size: var(--icon-lg); }
 /* min-width, NOT the usual `min-width: 0`: this control has to stay grabbable. Under the floor
    the row wraps (above) instead of shrinking it away to a zero-width, unclickable element. */
-.scrub { flex: 1 1 90px; min-width: 90px; accent-color: var(--accent); cursor: pointer; }
+.scrub-wrap { flex: 1 1 90px; min-width: 90px; display: flex; flex-direction: column; }
+.scrub { width: 100%; margin: 0; accent-color: var(--accent); cursor: pointer; }
+/* Marker lane under the track. Peaks take their axis colour (--mc); the cut window and crop are
+   neutral ticks, so they read as boundaries rather than as a fourth channel. */
+.marks { position: relative; height: 10px; }
+.mark { position: absolute; top: 1px; width: 8px; height: 8px; margin-left: -4px; padding: 0; border: none; border-radius: 50%; background: var(--mc, var(--text-dim)); cursor: pointer; opacity: 0.9; }
+.mark:hover, .mark:focus-visible { opacity: 1; transform: scale(1.35); }
+.mark.cut-start, .mark.cut-end { width: 3px; height: 10px; top: 0; margin-left: -1.5px; border-radius: 1px; background: var(--text-dim); }
+.mark.crop { width: 3px; height: 10px; top: 0; margin-left: -1.5px; border-radius: 1px; background: var(--accent); }
 .scrub:disabled { opacity: 0.5; cursor: not-allowed; }
 .time { font-size: var(--fs-sm); font-family: var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; flex-shrink: 0; margin-left: auto; }
 .speed { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-dim); margin: 0; }
