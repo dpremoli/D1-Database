@@ -5,6 +5,12 @@ import { reactive, ref } from 'vue';
 import { getConfig } from '../config';
 import { authHeaders } from '../directusClient';
 import type { RecordConfig } from './types';
+import { firstAtOrAfter, WINDOW_MAX_SEC, WINDOW_SLIDER_MAX_SEC } from './plotWindow';
+import { RELAY_HEARTBEAT_MS, RelayPeers } from './relayPeers';
+import { createEmitThrottle } from './emitThrottle';
+
+// Playback relays to pop-outs at most this often (see relayTick).
+const RELAY_TICK_MS = 200;
 
 const MAGIC = 0x46_4c_31_44; // 'D1LF' bytes D,1,L,F read little-endian as a u32
 // The 8 dyno sub-channels the frame streams (min/max envelope), in raw-file column order.
@@ -58,9 +64,30 @@ export class RecordClient {
 	fftHistCap = 220;
 	fftSeq = ref(0);
 
-	// rolling trace envelope (min/max per axis + per dyno sub-channel), capped to windowSec.
+	// rolling trace envelope (min/max per axis + per dyno sub-channel), capped to retainSec.
 	trace = emptyTrace();
-	windowSec = 12;
+	// How much trace history to keep. This used to be the plot's window itself (windowSec), so the
+	// window only took effect as data arrived, widening it could never bring back what had been
+	// dropped, and every panel shared one window (#105/#76/#34). Now each plot slices its own
+	// window (plotWindow.ts) out of a history at least as long as the slider's maximum; a view
+	// that wants more (a typed-in window, up to WINDOW_MAX_SEC) registers a demand for it.
+	retainFloorSec = WINDOW_SLIDER_MAX_SEC;
+	private windowDemand = new Map<unknown, number>();
+	// Called when retainSec grows, so playback can rebuild the trace history it has already
+	// trimmed (engine.ts). The live path has nothing to rebuild from: it just keeps more from now on.
+	onRetentionGrow: (() => void) | null = null;
+	get retainSec(): number {
+		let m = this.retainFloorSec;
+		for (const v of this.windowDemand.values()) if (v > m) m = v;
+		return Math.min(WINDOW_MAX_SEC, m);
+	}
+	/** A view asks for `sec` of trace history under `key` (any stable identity); null withdraws it. */
+	setWindowDemand(key: unknown, sec: number | null) {
+		const before = this.retainSec;
+		if (sec == null || !Number.isFinite(sec)) this.windowDemand.delete(key);
+		else this.windowDemand.set(key, sec);
+		if (this.retainSec > before) this.onRetentionGrow?.();
+	}
 
 	// FRM points, preallocated; filled incrementally. count = live points; cCap for colour scaling.
 	// cx/cy/cz carry ALL three axis forces per point (not just whichever axis was selected when the
@@ -84,11 +111,29 @@ export class RecordClient {
 	// buffer's real size up front so it can pick a stride that can never overflow it.
 	get frmCapacity() { return this.cap; }
 	private relay: BroadcastChannel | null = null;
-	// Whether a pop-out window has ever announced itself on the channel. Until one does, relaying
-	// every decoded frame is pure overhead on the acquisition PC (a structured clone per frame, at
-	// full frame rate, that nothing receives) — and the common case is that no pop-out is open.
-	private hasRelayPeer = false;
-	private lastRelayAt = 0;
+	// Pop-out windows listening right now (#107). With none, relaying every decoded frame is pure
+	// overhead on the acquisition PC (a structured clone per frame, at full frame rate, that nothing
+	// receives) — and the common case is that no pop-out is open. This used to be a flag latched by
+	// the first sync-request and never cleared, so closing a pop-out did not stop the relaying.
+	// A pop-out that vanished without a 'bye' (crashed, killed) also stops asking for trace history
+	// once it expires; its retainSec demand would otherwise stay registered for good.
+	private peers = new RelayPeers(undefined, () => this.setWindowDemand(this.peers, this.peers.maxRetainSec(performance.now())));
+	private get hasRelayPeer() { return this.peers.alive(performance.now()); }
+	private relayThrottle = createEmitThrottle(RELAY_TICK_MS);
+	private relayTrailing: ReturnType<typeof setTimeout> | null = null;
+	// Snapshots after the first are DELTAS (#107): only the FRM points, trace bins and spectra added
+	// since the last one. A full snapshot (every point, up to 2M of them, structured-cloned 5x a
+	// second) is sent only when a peer asks to sync or the buffers changed other than by appending
+	// — which is what relayEpoch counts (see markDiscontinuity).
+	relayEpoch = 0;
+	private fftTotal = 0;   // spectra pushed since construction; deltas send the new ones
+	private sent = { epoch: -1, frm: 0, traceT: -Infinity, fftTotal: 0 };
+	// Pop-out side: this window's id, the epoch of the data it holds, and its heartbeat.
+	private peerId = '';
+	private heldEpoch = -1;
+	private heartbeat: ReturnType<typeof setInterval> | null = null;
+	private lastSyncRequestAt = -Infinity;
+	private onPageHide: (() => void) | null = null;
 
 	// Build the absolute ws(s):// stream URL. `base` may be an absolute http(s) URL (dev, e.g.
 	// http://localhost:8200) or a same-origin relative path (deploy, /recorder proxied by Caddy).
@@ -119,16 +164,28 @@ export class RecordClient {
 		// leaks the old BroadcastChannel, which stays subscribed and keeps its handler alive.
 		this.relay?.close();
 		this.relay = new BroadcastChannel('force-app-live');
-		this.relay.onmessage = (ev) => {
-			if (ev.data?.type === 'sync-request') {
-				// A pop-out exists: send it the backlog, and start relaying live frames from here on.
-				this.hasRelayPeer = true;
-				this.sendSnapshot();
-			}
-		};
+		this.relay.onmessage = (ev) => this.onPeerMessage(ev.data);
 		// Pop-outs that opened before this source did (reopened at app start, #108, while the main
-		// window is not yet on Record) sent their one sync-request to nobody. Ask them to send again.
+		// window is not yet on Record) sent their sync-request to nobody. Ask them to send again.
 		this.relay.postMessage({ type: 'source-ready' });
+	}
+
+	// Opener side: a pop-out spoke. Public for tests; the relay is its only real caller.
+	onPeerMessage(d: any) {
+		if (d?.type === 'sync-request' || d?.type === 'heartbeat') {
+			const isNew = this.peers.seen(String(d.id ?? 'anon'), performance.now(), Number(d.retainSec) || 0);
+			// A pop-out wider than our own history needs more of it kept here, or the snapshots
+			// it is sent could never cover its window.
+			this.setWindowDemand(this.peers, this.peers.maxRetainSec(performance.now()));
+			// A pop-out exists: send it the backlog, and start relaying live frames from here on.
+			// A heartbeat from a peer we had dropped (it expired while throttled, said bye and came
+			// back from the bfcache, or this window reloaded) means it holds stale buffers: resync
+			// it too, or the deltas that follow would be applied onto the wrong data.
+			if (d.type === 'sync-request' || isNew) this.sendSnapshot(true);
+		} else if (d?.type === 'bye') {
+			this.peers.bye(String(d.id ?? 'anon'));
+			this.setWindowDemand(this.peers, this.peers.maxRetainSec(performance.now()));
+		}
 	}
 
 	snapshotReady = ref(false);
@@ -144,10 +201,22 @@ export class RecordClient {
 				this.applySnapshot(d);
 				this.snapshotReady.value = true;
 			}
-			else if (d?.type === 'source-ready') this.relay?.postMessage({ type: 'sync-request' });
+			// A new source has never heard from us, so a request we made moments ago does not count.
+			else if (d?.type === 'source-ready') this.requestSync(true);
 		};
 		this.status.connected = true;
-		this.relay.postMessage({ type: 'sync-request' });
+		this.peerId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+		this.relay.postMessage({ type: 'sync-request', id: this.peerId, retainSec: this.retainSec });
+		// Liveness for the opener (#107): it stops relaying a few seconds after the last heartbeat,
+		// and at once on 'bye'. pagehide covers closing the window, which never unmounts the app.
+		if (this.heartbeat) clearInterval(this.heartbeat);
+		this.heartbeat = setInterval(() => {
+			this.relay?.postMessage({ type: 'heartbeat', id: this.peerId, retainSec: this.retainSec });
+		}, RELAY_HEARTBEAT_MS);
+		if (typeof window !== 'undefined' && !this.onPageHide) {
+			this.onPageHide = () => this.relay?.postMessage({ type: 'bye', id: this.peerId });
+			window.addEventListener('pagehide', this.onPageHide);
+		}
 		// The parent might not exist/respond (e.g. this window was opened standalone, or the parent
 		// tab closed) — don't leave the pop-out stuck on "Syncing…" forever if no snapshot ever comes.
 		setTimeout(() => { this.snapshotReady.value = true; }, 2000);
@@ -170,57 +239,127 @@ export class RecordClient {
 	// itself — so the ws.onmessage raw-frame relay above, which only fires on real WebSocket
 	// traffic, never runs during a replay. That left a pop-out/cloned window frozen on whatever
 	// frame it had when playback started. Called from the playback tick loop instead, throttled
-	// so a full snapshot (structured-clone of the growing typed arrays) goes out at most 5x/sec —
-	// plenty for a viewer window, and far cheaper than snapshotting every animation frame.
+	// to at most 5x/sec — plenty for a viewer window. Each one is a delta (see buildSnapshot).
 	relayTick() {
 		if (!this.hasRelayPeer) return;
-		const now = performance.now();
-		if (now - this.lastRelayAt < 200) return;
-		this.lastRelayAt = now;
-		this.sendSnapshot();
+		if (this.relayThrottle.mark(performance.now())) { this.sendSnapshot(false); return; }
+		// Throttled: this may be the LAST tick (a scrub released, the cut ended, playback paused),
+		// after which nothing would ever send the state it left, and the pop-out would stay stale.
+		// A trailing send delivers it once the interval has passed.
+		if (this.relayTrailing === null) this.scheduleRelayTrailing(RELAY_TICK_MS);
+	}
+	private scheduleRelayTrailing(ms: number) {
+		this.relayTrailing = setTimeout(() => {
+			this.relayTrailing = null;
+			if (!this.relayThrottle.pending) return;           // a later tick already sent it
+			if (!this.hasRelayPeer) return;
+			if (this.relayThrottle.flush(performance.now())) this.sendSnapshot(false);
+			else this.scheduleRelayTrailing(10);               // the timer fired a hair early
+		}, ms);
 	}
 
-	private sendSnapshot() {
+	/**
+	 * The buffers changed other than by appending (a reset, a backward seek, a trace rebuild, the
+	 * spectrum history filtered): the next snapshot must be a full one. Anything that replaces or
+	 * truncates trace/frm/fftHistory has to call this, or pop-outs would apply a delta onto data
+	 * that no longer matches.
+	 */
+	markDiscontinuity() { this.relayEpoch++; }
+
+	/** Drop trace bins older than tMin (the front of the rolling history). */
+	trimTrace(tMin: number) {
+		const t = this.trace.t;
+		let drop = 0;
+		while (drop < t.length && t[drop] < tMin) drop++;
+		if (drop <= 0) return;
+		t.splice(0, drop); this.trace.fx.splice(0, drop);
+		this.trace.fy.splice(0, drop); this.trace.fz.splice(0, drop);
+		for (const n of SUB_NAMES) this.trace.sub[n]?.splice(0, drop);
+	}
+
+	/**
+	 * The next relay message. Full on request, after a discontinuity, or when frm shrank; otherwise
+	 * only what was appended since the previous one: FRM points [sent, count), trace bins newer than
+	 * the last one sent, spectra pushed since. Public for tests; the relay is its only real caller.
+	 */
+	buildSnapshot(forceFull: boolean) {
+		const fm = this.frm;
+		const n = fm.count;
+		const full = forceFull || this.sent.epoch !== this.relayEpoch || n < this.sent.frm;
+		const from = full ? 0 : this.sent.frm;
+		const tr = this.trace;
+		const ti = full ? 0 : firstAtOrAfter(tr.t, this.sent.traceT + 1e-9);
+		const sliceEnv = (a: [number, number][]) => (ti === 0 ? a.slice() : a.slice(ti));
+		const newFft = full ? this.fftHistory.length : Math.min(this.fftHistory.length, this.fftTotal - this.sent.fftTotal);
+		const snap = {
+			type: 'snapshot' as const,
+			full,
+			epoch: this.relayEpoch,
+			status: this.plainStatus(),
+			frm: {
+				from, count: n,
+				xy: fm.xy.slice(from * 2, n * 2), cx: fm.cx.slice(from, n), cy: fm.cy.slice(from, n), cz: fm.cz.slice(from, n),
+				cAbsMaxByAxis: { ...fm.cAbsMaxByAxis }, cLo: fm.cLo, cHi: fm.cHi,
+			},
+			trace: { t: tr.t.slice(ti), fx: sliceEnv(tr.fx), fy: sliceEnv(tr.fy), fz: sliceEnv(tr.fz),
+				sub: Object.fromEntries(Object.entries(tr.sub).map(([k, v]) => [k, sliceEnv(v)])) },
+			fft: full || newFft > 0 ? (this.fft ? { ...this.fft } : null) : undefined,
+			fftHistory: newFft > 0 ? this.fftHistory.slice(this.fftHistory.length - newFft) : [],
+		};
+		this.sent = { epoch: this.relayEpoch, frm: n, traceT: tr.t.length ? tr.t[tr.t.length - 1] : this.sent.traceT, fftTotal: this.fftTotal };
+		if (full && !tr.t.length) this.sent.traceT = -Infinity;
+		return snap;
+	}
+
+	private sendSnapshot(forceFull: boolean) {
 		try {
-			const fm = this.frm;
-			const n = fm.count;
-			const snap = {
-				type: 'snapshot',
-				status: this.plainStatus(),
-				frm: {
-					xy: fm.xy.slice(0, n * 2), cx: fm.cx.slice(0, n), cy: fm.cy.slice(0, n), cz: fm.cz.slice(0, n),
-					count: n, cAbsMaxByAxis: { ...fm.cAbsMaxByAxis }, cLo: fm.cLo, cHi: fm.cHi,
-				},
-				trace: { t: this.trace.t.slice(), fx: this.trace.fx.slice(), fy: this.trace.fy.slice(), fz: this.trace.fz.slice(),
-					sub: Object.fromEntries(Object.entries(this.trace.sub).map(([k, v]) => [k, v.slice()])) },
-				fft: this.fft ? { ...this.fft } : null,
-				fftHistory: this.fftHistory.slice(),
-			};
-			this.relay?.postMessage(snap);
+			this.relay?.postMessage(this.buildSnapshot(forceFull));
 		} catch (e) {
 			console.warn('[force-app] snapshot sync to pop-out window failed:', e);
-			this.relay?.postMessage({ type: 'snapshot', status: this.plainStatus(), frm: { xy: new Float32Array(0), cx: new Float32Array(0), cy: new Float32Array(0), cz: new Float32Array(0), count: 0, cAbsMaxByAxis: { Fx: 1, Fy: 1, Fz: 1 } }, trace: null, fft: null, fftHistory: [] });
+			this.sent.epoch = -1;   // whatever was half-built, the next one must be full
+			this.relay?.postMessage({ type: 'snapshot', full: true, epoch: -1, status: this.plainStatus(), frm: { from: 0, xy: new Float32Array(0), cx: new Float32Array(0), cy: new Float32Array(0), cz: new Float32Array(0), count: 0, cAbsMaxByAxis: { Fx: 1, Fy: 1, Fz: 1 } }, trace: null, fft: null, fftHistory: [] });
 		}
 	}
 
-	private applySnapshot(snap: any) {
+	// Pop-out side: ask the opener for a full snapshot, at most twice a second.
+	private requestSync(force = false) {
+		const now = performance.now();
+		if (!force && now - this.lastSyncRequestAt < 500) return;
+		this.lastSyncRequestAt = now;
+		this.relay?.postMessage({ type: 'sync-request', id: this.peerId, retainSec: this.retainSec });
+	}
+
+	/** Apply a relay message (full or delta). Public for tests; the relay is its only real caller. */
+	applySnapshot(snap: any) {
 		if (snap.status) { Object.assign(this.status, snap.status); }
+		if (snap.full === false) {
+			// A delta only makes sense on top of exactly the data it was cut from. Anything else (a
+			// missed message, or joining mid-stream before our own sync was answered): ask again.
+			if (snap.epoch !== this.heldEpoch || !snap.frm || snap.frm.from !== this.frm.count) {
+				this.requestSync();
+				this.frameSeq.value++;
+				return;
+			}
+			this.applyDelta(snap);
+			this.frameSeq.value++;
+			return;
+		}
+		this.heldEpoch = snap.epoch ?? -1;
 		if (snap.frm) {
 			const n = snap.frm.count || 0;
-			if (n > 0) {
-				const xy = snap.frm.xy instanceof Float32Array ? snap.frm.xy : Float32Array.from(snap.frm.xy);
-				const cx = snap.frm.cx instanceof Float32Array ? snap.frm.cx : Float32Array.from(snap.frm.cx ?? []);
-				const cy = snap.frm.cy instanceof Float32Array ? snap.frm.cy : Float32Array.from(snap.frm.cy ?? []);
-				const cz = snap.frm.cz instanceof Float32Array ? snap.frm.cz : Float32Array.from(snap.frm.cz ?? []);
-				if (xy.length >= n * 2 && cx.length >= n && cy.length >= n && cz.length >= n) {
-					this.frm.xy.set(xy, 0);
-					this.frm.cx.set(cx, 0); this.frm.cy.set(cy, 0); this.frm.cz.set(cz, 0);
-					this.frm.count = n;
-					this.frm.cAbsMaxByAxis = snap.frm.cAbsMaxByAxis ?? { Fx: 1, Fy: 1, Fz: 1 };
-					this.frm.cLo = snap.frm.cLo; this.frm.cHi = snap.frm.cHi;
-				} else {
-					console.warn('[force-app] snapshot frm data too small: need xy[', n * 2, '], cx/cy/cz[', n, ']');
-				}
+			const xy = snap.frm.xy instanceof Float32Array ? snap.frm.xy : Float32Array.from(snap.frm.xy ?? []);
+			const cx = snap.frm.cx instanceof Float32Array ? snap.frm.cx : Float32Array.from(snap.frm.cx ?? []);
+			const cy = snap.frm.cy instanceof Float32Array ? snap.frm.cy : Float32Array.from(snap.frm.cy ?? []);
+			const cz = snap.frm.cz instanceof Float32Array ? snap.frm.cz : Float32Array.from(snap.frm.cz ?? []);
+			if (xy.length >= n * 2 && cx.length >= n && cy.length >= n && cz.length >= n) {
+				this.frm.xy.set(xy.subarray(0, n * 2), 0);
+				this.frm.cx.set(cx.subarray(0, n), 0); this.frm.cy.set(cy.subarray(0, n), 0); this.frm.cz.set(cz.subarray(0, n), 0);
+				// Set even when n is 0: a full snapshot after a reset must clear the old spiral here too.
+				this.frm.count = n;
+				this.frm.cAbsMaxByAxis = snap.frm.cAbsMaxByAxis ?? { Fx: 1, Fy: 1, Fz: 1 };
+				this.frm.cLo = snap.frm.cLo; this.frm.cHi = snap.frm.cHi;
+			} else {
+				console.warn('[force-app] snapshot frm data too small: need xy[', n * 2, '], cx/cy/cz[', n, ']');
 			}
 		}
 		if (snap.trace) {
@@ -228,9 +367,41 @@ export class RecordClient {
 			this.trace.fy = snap.trace.fy; this.trace.fz = snap.trace.fz;
 			this.trace.sub = snap.trace.sub;
 		}
-		if (snap.fft) this.fft = snap.fft;
-		if (snap.fftHistory?.length) { this.fftHistory = snap.fftHistory; this.fftSeq.value++; }
+		if (snap.fft !== undefined) this.fft = snap.fft;
+		if (snap.fftHistory) { this.fftHistory = snap.fftHistory; this.fftSeq.value++; }
 		this.frameSeq.value++;
+	}
+
+	private applyDelta(snap: any) {
+		const f = snap.frm;
+		const n = Math.min(this.cap, f.count || 0);
+		const k = n - f.from;
+		if (k > 0) {
+			this.frm.xy.set(f.xy.subarray(0, k * 2), f.from * 2);
+			this.frm.cx.set(f.cx.subarray(0, k), f.from); this.frm.cy.set(f.cy.subarray(0, k), f.from); this.frm.cz.set(f.cz.subarray(0, k), f.from);
+		}
+		this.frm.count = n;
+		this.frm.cAbsMaxByAxis = f.cAbsMaxByAxis ?? this.frm.cAbsMaxByAxis;
+		this.frm.cLo = f.cLo; this.frm.cHi = f.cHi;
+		const tr = snap.trace;
+		if (tr?.t?.length) {
+			for (let i = 0; i < tr.t.length; i++) {
+				this.trace.t.push(tr.t[i]);
+				this.trace.fx.push(tr.fx[i]); this.trace.fy.push(tr.fy[i]); this.trace.fz.push(tr.fz[i]);
+			}
+			for (const name of SUB_NAMES) {
+				const add = tr.sub?.[name];
+				if (!add) continue;
+				(this.trace.sub[name] ??= []).push(...add);
+			}
+			this.trimTrace(this.trace.t[this.trace.t.length - 1] - this.retainSec);
+		}
+		if (snap.fft !== undefined) this.fft = snap.fft;
+		if (snap.fftHistory?.length) {
+			this.fftHistory.push(...snap.fftHistory);
+			if (this.fftHistory.length > this.fftHistCap) this.fftHistory.splice(0, this.fftHistory.length - this.fftHistCap);
+			this.fftSeq.value++;
+		}
 	}
 
 	// Latest spectra frame + the rolling history the spectrogram/waterfall draw from. Shared by the
@@ -239,10 +410,18 @@ export class RecordClient {
 		this.fft = { axis, f, fs, spectra };
 		this.fftHistory.push({ t, spectra });
 		if (this.fftHistory.length > this.fftHistCap) this.fftHistory.shift();
+		this.fftTotal++;
 		this.fftSeq.value++;
 	}
 
-	disconnect() { this.ws?.close(); this.ws = null; this.relay?.close(); this.relay = null; this.hasRelayPeer = false; }
+	disconnect() {
+		// A pop-out says goodbye so the opener stops relaying at once rather than on expiry.
+		if (this.peerId) this.relay?.postMessage({ type: 'bye', id: this.peerId });
+		if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; }
+		if (this.onPageHide) { window.removeEventListener('pagehide', this.onPageHide); this.onPageHide = null; }
+		this.ws?.close(); this.ws = null; this.relay?.close(); this.relay = null; this.peers.clear();
+		if (this.relayTrailing !== null) { clearTimeout(this.relayTrailing); this.relayTrailing = null; }
+	}
 
 	private onControl(msg: any) {
 		if (msg.type === 'done') {
@@ -301,15 +480,8 @@ export class RecordClient {
 				for (let j = 0; j < nSubUse; j++) this.trace.sub[SUB_NAMES[j]].push([sub[sb + j * 2], sub[sb + j * 2 + 1]]);
 			}
 		}
-		// drop points older than the window
-		const tMin = tSec - this.windowSec;
-		let drop = 0;
-		while (drop < this.trace.t.length && this.trace.t[drop] < tMin) drop++;
-		if (drop > 0) {
-			this.trace.t.splice(0, drop); this.trace.fx.splice(0, drop);
-			this.trace.fy.splice(0, drop); this.trace.fz.splice(0, drop);
-			for (const n of SUB_NAMES) this.trace.sub[n].splice(0, drop);
-		}
+		// drop points older than the retained history (each plot slices its own, shorter, window)
+		this.trimTrace(tSec - this.retainSec);
 
 		const start = this.frm.count;
 		const room = this.cap - start;
@@ -363,6 +535,7 @@ export class RecordClient {
 	}
 
 	reset() {
+		this.markDiscontinuity();
 		this.trace = emptyTrace();
 		// Keep the preallocated FRM buffers (~40 MB): `count` alone bounds what anything reads.
 		const fm = this.frm;

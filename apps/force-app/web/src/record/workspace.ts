@@ -11,6 +11,7 @@ import { alarmController } from './alarms';
 import { recordingPrefs } from './recordingPrefs';
 import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
+import { createDebouncedSaver, loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
 import { confirmAction } from '../ui/confirm';
@@ -88,14 +89,17 @@ export function createWorkspace() {
 	const machining = reactive<{ axial_doc: string; radial_doc: string; cutting_length: string; coolant_pressure: string; operation_sequence: string; chips_ref: string; new_edge: boolean; chips_collected: boolean }>(
 		{ axial_doc: '', radial_doc: '', cutting_length: '', coolant_pressure: '', operation_sequence: '', chips_ref: '', new_edge: false, chips_collected: false },
 	);
-	const plot = reactive<{
-		forceMode: 'time' | 'fft'; frmAxis: Axis; colormap: string; pointSize: number; windowSec: number; liveFrmStride: number;
-		polarRadius: 'Mz' | 'Fz' | 'Fxy'; polarAngleSource: 'tacho' | 'force_vector'; polarBins: number;
-	}>({
-		forceMode: 'time', frmAxis: 'Fz', colormap: 'viridis', pointSize: 1.8, windowSec: 12, liveFrmStride: 1,
-		polarRadius: 'Fz', polarAngleSource: 'tacho', polarBins: 36,
-	});
-	watch(() => plot.windowSec, (v) => { client.windowSec = Math.max(1, v); });
+	// Remembered across launches (#108), parsed defensively field by field (plotPrefs.ts).
+	const plot = reactive<PlotPrefs>(loadPlotPrefs());
+	// Written 250 ms after the last change, not on every slider tick; flushed when the page goes away.
+	const plotSaver = createDebouncedSaver<PlotPrefs>(savePlotPrefs);
+	watch(plot, () => plotSaver.schedule(() => ({ ...plot })), { deep: true });
+	if (typeof window !== 'undefined') {
+		window.addEventListener('pagehide', plotSaver.flush);
+		window.addEventListener('beforeunload', plotSaver.flush);
+	}
+	// plot.windowSec is only the DEFAULT view window for force panels that have not set their own
+	// (#34); it no longer limits the client's trace history (#105, see liveClient's retainSec).
 	// `rpm`/`feed`/`diam` here describe the CUT BEING PLAYED. They deliberately do not live on
 	// `cfg`: that is the config for the next real recording and is also serialised into the
 	// Directus write-back by buildRunPayload(), so letting a replay overwrite it would silently

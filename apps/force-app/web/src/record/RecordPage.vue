@@ -39,12 +39,17 @@ const PANEL_TYPES: Record<string, { title: string; icon: string; single?: boolea
 	frm: { title: 'FRM Map', icon: 'fingerprint', w: 4, h: 19 },
 	polar: { title: 'Polar Plot', icon: 'radar', w: 4, h: 16 },
 };
-type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: PlotMode; channels?: string[] };
+// windowSec: a Force panel's own time window (#34), persisted with the layout. Absent = follow the
+// workspace default (w.plot.windowSec).
+type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: PlotMode; channels?: string[]; windowSec?: number };
 const DEFAULT_LAYOUT: Inst[] = [
 	{ i: 'options', type: 'options', x: 0, y: 0, w: 2, h: 28 },
 	{ i: 'overview', type: 'overview', x: 2, y: 0, w: 6, h: 3 },
 	{ i: 'force', type: 'force', x: 2, y: 3, w: 6, h: 12, mode: 'time', channels: ['Fx', 'Fy', 'Fz'] },
-	{ i: 'fft', type: 'force', x: 2, y: 15, w: 6, h: 13, mode: 'fft', channels: ['Fx', 'Fy', 'Fz'] },
+	// #108: the bottom plot defaults to the Tacho signal over time (was an Fx/Fy/Fz spectrum). Only new
+	// layouts and "Reset layout" pick this up: LS_KEY is deliberately NOT bumped, which would wipe
+	// every user's saved arrangement just to change one default.
+	{ i: 'tacho', type: 'force', x: 2, y: 15, w: 6, h: 13, mode: 'time', channels: ['Tacho'] },
 	{ i: 'frm', type: 'frm', x: 8, y: 0, w: 4, h: 20 },
 	{ i: 'rpm', type: 'rpm', x: 8, y: 20, w: 4, h: 8 },
 ];
