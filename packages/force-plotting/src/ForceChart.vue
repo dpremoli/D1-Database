@@ -58,16 +58,22 @@ const peakNum = computed(() => {
 });
 
 const svgEl = ref<SVGSVGElement | null>(null);
+// The chart body is always rendered (the svg inside it comes and goes with the data), so it is what
+// the size is read from. Observing the svg itself, once, at mount, left the chart at the 360x150
+// default forever when it mounted without data -- or watching a detached node after the svg was
+// re-created -- and the viewBox then stretched onto the real box with preserveAspectRatio="none",
+// scaling everything unevenly (#94).
+const bodyEl = ref<HTMLElement | null>(null);
 const w = ref(360);
 const h = ref(150);
 let ro: ResizeObserver | undefined;
 onMounted(() => {
 	ro = new ResizeObserver((entries) => {
-		const r = entries[0].contentRect;
+		const r = entries[entries.length - 1].contentRect;
 		if (r.width > 0) w.value = Math.round(r.width);
 		if (r.height > 0) h.value = Math.round(r.height);
 	});
-	if (svgEl.value) ro.observe(svgEl.value);
+	if (bodyEl.value) ro.observe(bodyEl.value);
 });
 onBeforeUnmount(() => { ro?.disconnect(); if (rafId) cancelAnimationFrame(rafId); });
 
@@ -422,6 +428,7 @@ function onWheel(ev: WheelEvent) {
 			<span v-if="peakNum != null" class="chart-peak">peak {{ peakNum.toFixed(2) }} {{ yUnit }}<template v-if="hasSecondX && secondXLabel"> · {{ secondXLabel }}</template></span>
 			<span v-else-if="geom" class="chart-unit">{{ logY ? 'log ' : '' }}{{ yUnit || (kind === 'line' ? 'amp' : '') }}<template v-if="hasSecondX && secondXLabel"> · {{ secondXLabel }}</template></span>
 		</div>
+		<div ref="bodyEl" class="chart-body">
 		<svg
 			ref="svgEl" v-if="geom" :viewBox="`0 0 ${geom.W} ${geom.Hh}`" class="chart-svg" :class="{ zoomtool: zoomTool }"
 			preserveAspectRatio="none" @mousemove="onMove" @mouseleave="onLeave" @wheel="onWheel"
@@ -483,6 +490,7 @@ function onWheel(ev: WheelEvent) {
 				class="zoom-rect" />
 		</svg>
 		<div v-else class="chart-empty">no data</div>
+		</div>
 		<div v-if="hoverPt" class="chart-tip"><strong>{{ hoverPt.label }}</strong><span>{{ hoverPt.sub }}</span></div>
 	</div>
 </template>
@@ -502,6 +510,7 @@ function onWheel(ev: WheelEvent) {
 .chart-title { font-size: var(--fs-md, 13px); font-weight: 650; color: var(--theme--foreground, #1e293b); }
 .chart-unit { font-size: var(--fs-xs, 11px); color: var(--theme--foreground-subdued, #98a2b3); font-weight: 600; }
 .chart-peak { font-size: var(--fs-xs, 11px); color: var(--theme--foreground, #1e293b); font-weight: 700; font-variant-numeric: tabular-nums; }
+.chart-body { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .chart-svg { display: block; width: 100%; flex: 1 1 auto; min-height: 0; cursor: crosshair; touch-action: none; }
 .chart-svg.zoomtool { cursor: crosshair; }
 .chart-svg .tick { fill: var(--theme--foreground-subdued, #94a3b8); font-size: var(--fs-xs, 11px); font-variant-numeric: tabular-nums; }

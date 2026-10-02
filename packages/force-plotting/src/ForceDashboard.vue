@@ -3,6 +3,7 @@ import { computed, nextTick, onActivated, onDeactivated, onMounted, onBeforeUnmo
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import { useRoute } from 'vue-router';
 import ForceChart from './ForceChart.vue';
+import { pickMode, type FrmMode } from './frmMode';
 import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
@@ -111,7 +112,11 @@ function fastConnection(): boolean {
 	if (typeof c.downlink === 'number') return c.downlink >= 5;   // Mbps
 	return true;
 }
-const frmMode = ref<'figure' | 'lite' | 'full'>(fastConnection() ? 'lite' : 'figure');
+const frmMode = ref<FrmMode>(fastConnection() ? 'lite' : 'figure');
+// What the USER last asked for, kept apart from the mode actually shown: an op without a live cache
+// (or no selected op at all) forces 'figure' for as long as it is on screen, and that must not
+// become the choice the next op starts from (#94). Only chooseMode() writes it.
+const preferredMode = ref<FrmMode>(frmMode.value);
 // Editable geometry (seeded from the cache on load; user edits drive the cloud).
 const cropStartSec = ref(0);
 const cropEndSec = ref(0);
@@ -234,7 +239,7 @@ async function buildOctree() {
 			const row = res.data?.data;
 			if (row?.octree_status === 'done' && row.octree_path) {
 				detail.value = { ...detail.value, octree_status: 'done', octree_path: row.octree_path, octree_points: row.octree_points };
-				octreeMsg.value = null; frmMode.value = 'full'; return;
+				octreeMsg.value = null; chooseMode('full'); return;
 			}
 			if (row?.octree_status === 'error') { octreeMsg.value = `Build failed: ${row.octree_error || 'unknown'}`; return; }
 		}
@@ -317,20 +322,17 @@ function fmtPts(n: number | null): string {
 // that needs the daemon and takes minutes, and its progress message was leaking over the
 // live cloud. Building is an explicit action (the Full-res button). Smaller maps, or large
 // ones without an octree yet, stay on the Live/PNG path.
-function pickDefaultMode(): 'figure' | 'lite' | 'full' {
-	// Adjust the CURRENT mode for the new op rather than recomputing from scratch —
-	// recomputing stomped an explicit user click that landed while the detail was still
-	// loading (click "Figure" -> detail arrives -> watch flips back to Lite). Auto-route
-	// UP to Full for big maps (documented behaviour); otherwise only downgrade when the
-	// current mode isn't available for this op.
-	const m = frmMode.value;
-	const f = fullResPoints.value;
-	if (octreeAvailable.value && f && f > octreeThreshold.value) return 'full';
-	if (m === 'lite') return liveAvailable.value ? 'lite' : 'figure';
-	if (m === 'full') return octreeAvailable.value ? 'full' : (liveAvailable.value && fastConnection() ? 'lite' : 'figure');
-	return 'figure';
+function pickDefaultMode(): FrmMode {
+	return pickMode({
+		preferred: preferredMode.value, octreeAvailable: octreeAvailable.value, liveAvailable: liveAvailable.value,
+		fullResPoints: fullResPoints.value, octreeThreshold: octreeThreshold.value, fast: fastConnection(),
+	});
 }
-watch(() => detail.value?.id, () => {
+watch(() => detail.value?.id, (id) => {
+	// No op on screen (a different sample was clicked): there is nothing to adapt the mode to, and
+	// re-picking now would drop Lite to Figure for want of a live cache -- then the next op arrives
+	// and the layout reflows twice (#94). Wait for the next op.
+	if (!id) return;
 	displayedPoints.value = 0;
 	octreeMsg.value = null;   // clear any stale build message from the previous op
 	// Reset the Live crop handles to the new op's crop immediately (else the previous op's crop
@@ -425,7 +427,7 @@ watch(() => detail.value?.id, () => { sigStats.value = null; statsErr.value = nu
 function onCropEdit(which: 'start' | 'end', v: number) {
 	if (which === 'start') cropStartSec.value = v; else cropEndSec.value = v;
 	cropTouched.value = true;
-	if (frmMode.value !== 'lite' && liveAvailable.value) frmMode.value = 'lite';
+	if (frmMode.value !== 'lite' && liveAvailable.value) chooseMode('lite');
 }
 watch(statsOpen, (open) => {
 	// auto-compute on first open when the cache is already local (e.g. Lite was on)
@@ -747,7 +749,7 @@ const dragging = ref(false);
 		if (typeof v.colB === 'number') colB.value = v.colB;
 		if (typeof v.colStackHidden === 'boolean') colStackHidden.value = v.colStackHidden;
 		if (typeof v.detailHidden === 'boolean') detailHidden.value = v.detailHidden;
-		if (v.frmMode === 'figure' || v.frmMode === 'lite' || v.frmMode === 'full') frmMode.value = v.frmMode;
+		if (v.frmMode === 'figure' || v.frmMode === 'lite' || v.frmMode === 'full') chooseMode(v.frmMode);
 	} catch { /* ignore malformed/absent saved layout */ }
 })();
 watch([colA, colB, colStackHidden, detailHidden, frmMode], () => {
@@ -1174,6 +1176,7 @@ function selectSample(s: any) {
 }
 
 const LAST_OP_KEY = 'd1-force-dashboard-lastop';
+let selectSeq = 0;
 async function selectOp(row: any) {
 	selectedRowId.value = row.id;
 	selectedSampleId.value = sampleOf(row)?.sample_id ?? null;
@@ -1192,9 +1195,11 @@ async function selectOp(row: any) {
 	});
 	// Remember the selection so navigating away and back restores it.
 	try { const opId = row.operation_id?.operation_id; if (opId) localStorage.setItem(LAST_OP_KEY, opId); } catch { /* ignore */ }
+	// The previous op stays on screen, under a veil, until this one arrives: clearing it here
+	// unmounted every chart and the cloud, so each switch flashed blank and reflowed (#94). A
+	// newer click supersedes this one, so a slow response can't land on top of it.
+	const seq = ++selectSeq;
 	loadingDetail.value = true;
-	detail.value = null;
-	frmUrl.value = null;
 	try {
 		const res = await api.get(`/items/machining_force_analysis/${row.id}`, {
 			params: {
@@ -1226,11 +1231,16 @@ async function selectOp(row: any) {
 					'grid_fidelity', 'grid_arm_ratio', 'grid_cell_mm'],
 			},
 		});
+		if (seq !== selectSeq) return;
 		detail.value = res.data.data;
 		editPpr.value = Number(detail.value?.pulses_per_rev) || 1;
 		await loadFrm();
+	} catch (e) {
+		// Nothing to show for the selected row: don't leave the previous op displayed as if it were it.
+		if (seq === selectSeq) { detail.value = null; frmUrl.value = null; }
+		throw e;
 	} finally {
-		loadingDetail.value = false;
+		if (seq === selectSeq) loadingDetail.value = false;
 	}
 }
 
@@ -1391,7 +1401,7 @@ function applyFix(f: Finding) {
 // No auto-fix for a bad crop: the right window is a human judgement. Put the crop handles in front
 // of the user instead — Lite is the only mode that recomputes the crop live (see onCropEdit).
 function startCropFix() {
-	if (liveAvailable.value) frmMode.value = 'lite';
+	if (liveAvailable.value) chooseMode('lite');
 	document.querySelector('.charts-col')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -1495,9 +1505,16 @@ const captureInfo = computed(() => {
 // Accordion state for the reworked op panel (persist nothing; sensible defaults).
 const captureOpen = ref(false);
 
-// Entering Live collapses the sample detail + the op's date/coolant rows to free
-// vertical space for the crop plots, cloud, and plotting-settings panel.
-watch(frmMode, (m) => { sampleDetailOpen.value = m !== 'lite'; if (m === 'lite') chartMode.value = 'force'; });
+// The user picking a view type. Choosing Lite collapses the sample detail + the op's date/coolant
+// rows to free vertical space for the crop plots, cloud, and plotting-settings panel. Only a
+// deliberate choice does that: this used to be a watcher on frmMode, so the automatic re-pick when
+// a different file loaded reflowed the whole layout (#94).
+function chooseMode(m: FrmMode) {
+	preferredMode.value = m;
+	frmMode.value = m;
+	sampleDetailOpen.value = m !== 'lite';
+	if (m === 'lite') chartMode.value = 'force';
+}
 
 // The window that actually feeds the FRM map (cut_start_idx..cut_end_idx into
 // the raw signal); converted to seconds so ForceChart can shade it in vs. the
@@ -2386,7 +2403,7 @@ function fmtDateTime(v: string | null | undefined) {
 								<SpectrumView v-for="a in axesFor(item)" :key="a" :cache-file-id="detail.live_cache_file"
 									:chain="specChain" :axis="a" :mode="(chartMode as 'psd' | 'spectrogram' | 'waterfall')" :color="AXIS_COLOR[a]" />
 							</div>
-							<div v-else class="charts-col">
+							<div v-else class="charts-col" :class="{ switching: loadingDetail }" :aria-busy="loadingDetail">
 								<ForceChart v-for="c in chartsFor(item)" v-bind="c" :key="c.key" :hover-index="hoverIndex" @hover="hoverIndex = $event"
 									:crop-editable="c.kind === 'env'" :active="c.key === axis"
 									:overlay="(chartMode === 'fft' && filtersOpen && c.kind === 'line' && c.key === axis) ? filterFftOverlay : null"
@@ -2510,9 +2527,9 @@ function fmtDateTime(v: string | null | undefined) {
 								<span v-else-if="filteredSoloOn" class="frm-fid" :title="`Lite live-filtered: ${chainSummary(savedChain)} — Full & FRM PNG still raw until baked`">filtered · Lite</span>
 								<div class="toggle">
 									<div class="segmode">
-										<button class="segbtn" :class="{ on: frmMode==='figure' }" @click="frmMode='figure'" title="Prerendered figure (instant)">Figure</button>
-										<button class="segbtn" :class="{ on: frmMode==='lite' }" :disabled="!liveAvailable" @click="liveAvailable && (frmMode='lite')" :title="liveAvailable ? 'Lite interactive cloud (reacts to crop/feed)' : 'No live cache — reprocess to enable'">Lite</button>
-										<button class="segbtn" :class="{ on: frmMode==='full' }" :disabled="buildingOctree" @click="octreeAvailable ? (frmMode='full') : buildOctree()" :title="octreeAvailable ? 'Full-resolution octree (LOD-streamed)' : 'Build the full-resolution octree on the host'"><v-icon v-if="buildingOctree" name="hourglass_top" x-small /> Full</button>
+										<button class="segbtn" :class="{ on: frmMode==='figure' }" @click="chooseMode('figure')" title="Prerendered figure (instant)">Figure</button>
+										<button class="segbtn" :class="{ on: frmMode==='lite' }" :disabled="!liveAvailable" @click="liveAvailable && chooseMode('lite')" :title="liveAvailable ? 'Lite interactive cloud (reacts to crop/feed)' : 'No live cache — reprocess to enable'">Lite</button>
+										<button class="segbtn" :class="{ on: frmMode==='full' }" :disabled="buildingOctree" @click="octreeAvailable ? chooseMode('full') : buildOctree()" :title="octreeAvailable ? 'Full-resolution octree (LOD-streamed)' : 'Build the full-resolution octree on the host'"><v-icon v-if="buildingOctree" name="hourglass_top" x-small /> Full</button>
 									</div>
 									<button v-if="frmMode==='full'" class="tbtn" :class="{ on: gridFull }" :disabled="buildingOctree"
 										:title="gridAvailable ? 'Interpolated-grid octree (filled surface)' : 'Build the interpolated grid on the host'"
@@ -2536,7 +2553,7 @@ function fmtDateTime(v: string | null | undefined) {
 								</div>
 								<button class="pg-x" title="Close panel" @click="closeRightPanel(item.i)"><v-icon name="close" x-small /></button>
 							</div>
-							<div class="frm-img">
+							<div class="frm-img" :class="{ switching: loadingDetail }" :aria-busy="loadingDetail">
 								<div v-if="!detail" class="empty">Select an operation</div>
 								<FrmOctree v-else-if="octreeOn" ref="frmOctreeRef"
 									:octree-path="gridActive ? detail.grid_octree_path : detail.octree_path" :axis="axis"
@@ -2924,6 +2941,7 @@ function fmtDateTime(v: string | null | undefined) {
 .tbtn.icobtn { padding: 5px 9px; display: inline-flex; align-items: center; }
 /* Signals plots scroll INSIDE the panel (min-height:0 + overflow) instead of overflowing the card
    and pushing past the page bottom when a panel is short or several charts stack. */
+.charts-col.switching, .frm-img.switching { opacity: 0.45; pointer-events: none; transition: opacity 0.12s; }
 .charts-col { display: flex; flex-direction: column; gap: 13px; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 
 .col-frm { display: flex; flex-direction: column; gap: 11px; min-height: 0; }
