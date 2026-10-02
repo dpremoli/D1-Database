@@ -66,6 +66,14 @@ const windowSec = computed<number>({
 		if (props.inst) props.inst.windowSec = c; else w.plot.windowSec = c;
 	},
 });
+// The number box commits on change (Enter, blur, the spinner), not per keystroke, and then shows
+// the EFFECTIVE value: a typed 500, 0, a negative or an empty box is clamped or ignored by the
+// setter above, which leaves nothing for Vue to re-render, so the box would keep the typed text.
+function commitWindow(e: Event) {
+	const el = e.target as HTMLInputElement;
+	windowSec.value = el.valueAsNumber;
+	el.value = String(windowSec.value);
+}
 // The client keeps at least the slider's maximum of trace history; a wider typed-in window asks
 // for more. Only the Time view reads the trace (the spectrogram/waterfall use fftHistory).
 const demandKey = {};
@@ -104,7 +112,7 @@ function openLive() {
 				 than shown-but-inert. -->
 			<div v-if="mode !== 'fft' && mode !== 'psd'" class="tw-row">
 				<input type="range" min="2" :max="WINDOW_SLIDER_MAX_SEC" step="1" v-model.number="windowSec" />
-				<input type="number" :min="WINDOW_MIN_SEC" :max="WINDOW_MAX_SEC" v-model.number="windowSec" class="tw-num" />
+				<input type="number" :min="WINDOW_MIN_SEC" :max="WINDOW_MAX_SEC" :value="windowSec" @change="commitWindow" class="tw-num" />
 				<span class="tw-unit">s</span>
 			</div>
 			<button class="btn icon sm popout" title="Pop out to a new window (second monitor) — open before Start"
