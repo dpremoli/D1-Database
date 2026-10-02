@@ -238,7 +238,7 @@ onMounted(() => { void labampState.revalidate(); });
 						 rather than replacing the last one. :key remounts the field after each pick so
 						 its "chosen" state resets to a blank search box for the next selection. -->
 					<LookupField :key="pickerKey" v-model="prevOpId" label="Previous recording(s)" placeholder="search sample code or pass code…"
-						:search="searchPastOperations" @select="onPickPastOp" />
+						:search="searchPastOperations" :selected-ids="prevOps.map((o) => o.id)" hide-selected @select="onPickPastOp" />
 					<div v-if="prevOps.length" class="prev-op-chips">
 						<span v-for="o in prevOps" :key="o.id" class="chip" :class="o.exact ? 'exact' : 'approx'"
 							:title="o.exact ? 'Exact per-channel peaks from this recorder\'s own capture history.' : 'The database only stores summed-axis peaks (Fx/Fy/Fz), not per-channel — these are estimated by splitting each axis peak evenly across its sub-channels.'">
