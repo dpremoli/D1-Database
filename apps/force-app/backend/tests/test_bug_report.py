@@ -66,6 +66,26 @@ def test_backticks_in_attached_text_cannot_break_out_of_the_fence():
     assert body.count("```") == 4
 
 
+def test_windows_account_names_are_redacted_from_every_attached_section():
+    """captures_root defaults under the operator's profile, and log/console lines quote paths too
+    (tracebacks, config loads), so the account name must not reach the issue from any of them."""
+    leaks = [
+        r"captures_root: C:\Users\jsmith\AppData\Local\force-app\captures",
+        r'File "D:\Users\Jane Smith\force-app\main.py", line 3',
+        "C:/Users/jsmith/AppData/Local/force-app",
+        r'{"path": "C:\\Users\\jsmith\\AppData"}',
+    ]
+    for leak in leaks:
+        body = build_body(
+            **{**BASE, "diagnostics": leak, "log_tail": leak, "console_tail": leak},
+        )
+        assert "jsmith" not in body and "Jane" not in body and "Smith" not in body, leak
+        assert body.count("<redacted>") == 3, leak
+    # A path that names no account is left alone, so the triage value of the paths survives.
+    body = build_body(**{**BASE, "diagnostics": r"captures_root: J:\My Drive\force-app-captures"})
+    assert r"J:\My Drive\force-app-captures" in body
+
+
 def test_long_tails_are_truncated_from_the_front():
     """GitHub caps issue bodies, and the END of a log is the part that matters."""
     body = build_body(**{**BASE, "log_tail": "X" * 50_000 + "TAIL_MARKER"})

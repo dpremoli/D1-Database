@@ -41,14 +41,16 @@ def _fence(text: str, limit: int) -> list[str]:
     return ["```", text.strip()[-limit:].replace("```", "`​`​`"), "```"]
 
 
-# Diagnostics embed filesystem paths (captures_root) that aren't typed by the reporter, so unlike
-# the description text they can leak an identifying Windows account name into a GitHub issue body
-# no one meant to put there.
-_WINDOWS_USER_PATH = re.compile(r"(?i)(C:\\Users\\)([^\\]+)(\\)")
+# Diagnostics and the auto-attached log/console tails embed filesystem paths (captures_root, a
+# traceback's file paths) that aren't typed by the reporter, so unlike the description text they can
+# leak an identifying Windows account name into a GitHub issue body no one meant to put there. Any
+# drive letter, either slash direction, the JSON-escaped double backslash and account names with
+# spaces in them are all covered.
+_WINDOWS_USER_PATH = re.compile(r"(?i)([A-Z]:(?:\\{1,2}|/)Users(?:\\{1,2}|/))([^\\/\r\n\"']+)")
 
 
 def _redact_paths(text: str) -> str:
-    return _WINDOWS_USER_PATH.sub(r"\1<redacted>\3", text)
+    return _WINDOWS_USER_PATH.sub(r"\1<redacted>", text)
 
 
 KIND_LABELS = {"bug": "bug", "feature": "enhancement"}
@@ -85,8 +87,9 @@ def build_body(
     ]
     # Machine state first: it is short, and it answers the questions that otherwise cost a
     # round-trip with the operator ("is the amp in real or mock mode?", "which DAQ is attached?",
-    # "was it actually recording?"). Not collapsed, unlike the two long tails below. Paths within
-    # it are redacted (see _redact_paths) since they can carry the operator's Windows account name.
+    # "was it actually recording?"). Not collapsed, unlike the two long tails below. Paths in it and
+    # in both tails are redacted (see _redact_paths) since they can carry the operator's Windows
+    # account name.
     if diagnostics.strip():
         parts += [
             "",
@@ -99,7 +102,7 @@ def build_body(
             "",
             "<details><summary>Renderer console (auto-attached)</summary>",
             "",
-            *_fence(console_tail, 8000),
+            *_fence(_redact_paths(console_tail), 8000),
             "</details>",
         ]
     if log_tail.strip():
@@ -110,7 +113,7 @@ def build_body(
             "",
             "<details><summary>Recent backend log (auto-attached)</summary>",
             "",
-            *_fence(log_tail, 20000),
+            *_fence(_redact_paths(log_tail), 20000),
             "</details>",
         ]
     return "\n".join(parts)
