@@ -47,7 +47,8 @@ done
 echo "== Views exist =="
 for view in \
     v_complete_sample_history v_tooling_hierarchy v_sample_genealogy_flat \
-    v_manufacturing_operations_full v_stock_provenance v_test_sessions_full
+    v_manufacturing_operations_full v_stock_provenance v_test_sessions_full \
+    v_project_rollup
 do
     run "$view exists" \
         "SELECT to_regclass('public.$view')::TEXT"
@@ -142,6 +143,76 @@ bf_check "lg:TEST-LG-001=cylinder" "cylindrical -> cylinder"
 bf_check "lg:TEST-LG-002=block" "Rectangular -> block (case-insensitive)"
 bf_check "lg:TEST-LG-003=disc" "current values are left alone (disc)"
 bf_check "lg:TEST-LG-004=round_bar" "current values are left alone (round_bar)"
+
+echo "== Natural ordering of ID codes (#115) =="
+# The code columns use the ICU numeric collation natural_sort, so ORDER BY (and a Directus
+# column-header sort) puts 9 < 10 < 151 < 1000 and ...-F9 < ...-F10. Test rows live in a
+# rolled-back transaction; the migration's down + up are replayed in it too.
+NAT=db/migrations/20261002000116_natural_code_collation.sql
+nat_up=$(awk '/-- migrate:up/{f=1;next}/-- migrate:down/{f=0}f' "$NAT")
+nat_down=$(awk '/-- migrate:down/{f=1;next}f' "$NAT")
+run_eq "natural_sort is an ICU collation" \
+    "SELECT count(*) FROM pg_collation WHERE collname = 'natural_sort' AND collprovider = 'i'" \
+    "1"
+run_eq "the 8 code columns use natural_sort" \
+    "SELECT count(*) FROM information_schema.columns
+     WHERE table_schema = 'public' AND collation_name = 'natural_sort'
+       AND (table_name, column_name) IN (
+           ('physical_samples','sample_code'), ('manufacturing_operations','pass_code'),
+           ('tools','tool_code'), ('cutting_inserts','insert_code'),
+           ('tool_boxes','tool_box_code'), ('insert_edges','edge_code'),
+           ('raw_stock_lots','lot_code'), ('projects','project_code'))" \
+    "8"
+run_eq "code_sort is still generated, in the default collation" \
+    "SELECT count(*) FROM information_schema.columns
+     WHERE table_schema = 'public' AND column_name = 'code_sort' AND is_generated = 'ALWAYS'
+       AND collation_name IS NULL AND table_name IN ('physical_samples','manufacturing_operations')" \
+    "2"
+run_eq "recreated views keep the text-to-SQL read grant" \
+    "SELECT count(*) FROM unnest(ARRAY['v_project_rollup','v_complete_sample_history',
+        'v_manufacturing_operations_full','v_sample_genealogy_flat','v_stock_provenance',
+        'v_test_sessions_full','v_tooling_hierarchy']) AS v(name)
+     WHERE has_table_privilege('d1_llm_readonly', v.name, 'SELECT')
+       AND obj_description(v.name::regclass, 'pg_class') IS NOT NULL" \
+    "7"
+nat_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO physical_samples (sample_code) VALUES
+  ('1000-TESTNAT-MF-2026-10-1'), ('151-TESTNAT-MF-2026-10-1'), ('99-TESTNAT-MF-2026-10-1'),
+  ('10-TESTNAT-MF-2026-10-1'), ('9-TESTNAT-MF-2026-10-1'),
+  ('9-TESTNAT-MR-2023-03-23-F10'), ('9-TESTNAT-MR-2023-03-23-F9');
+SELECT 'order:' || string_agg(split_part(sample_code, '-', 1), '<' ORDER BY sample_code)
+  FROM physical_samples WHERE sample_code LIKE '%-TESTNAT-MF-%';
+SELECT 'suffix:' || string_agg(substring(sample_code FROM 'F[0-9]+$'), '<' ORDER BY sample_code)
+  FROM physical_samples WHERE sample_code LIKE '%-TESTNAT-MR-%';
+SELECT 'view:' || string_agg(split_part(sample_code, '-', 1), '<' ORDER BY sample_code)
+  FROM v_complete_sample_history WHERE sample_code LIKE '%-TESTNAT-MF-%';
+SELECT 'code_sort:' || code_sort FROM physical_samples WHERE sample_code = '9-TESTNAT-MF-2026-10-1';
+SELECT 'unique:' || count(*) FROM physical_samples WHERE sample_code = '10-TESTNAT-MF-2026-10-1';
+$nat_down
+SELECT 'down_columns:' || count(*) FROM information_schema.columns
+  WHERE table_schema = 'public' AND collation_name = 'natural_sort';
+SELECT 'down_collation:' || count(*) FROM pg_collation WHERE collname = 'natural_sort';
+$nat_up
+SELECT 'reup_order:' || string_agg(split_part(sample_code, '-', 1), '<' ORDER BY sample_code)
+  FROM physical_samples WHERE sample_code LIKE '%-TESTNAT-MF-%';
+SELECT 'reup_views:' || count(*) FROM pg_views
+  WHERE schemaname = 'public' AND viewname IN ('v_project_rollup','v_complete_sample_history',
+    'v_manufacturing_operations_full','v_sample_genealogy_flat','v_stock_provenance',
+    'v_test_sessions_full','v_tooling_hierarchy');
+ROLLBACK;
+SQL
+)
+nat_check() { grep -qx "$1" <<<"$nat_out" && ok "$2" || bad "$2 (psql output: $nat_out)"; }
+nat_check "order:9<10<99<151<1000" "sample_code sorts by number: 9 < 10 < 99 < 151 < 1000"
+nat_check "suffix:F9<F10" "later digit runs too: ...-F9 < ...-F10"
+nat_check "view:9<10<99<151<1000" "views inherit the ordering (v_complete_sample_history)"
+nat_check "code_sort:00000009-TESTNAT-MF-2026-10-1" "code_sort keeps its zero-padded value"
+nat_check "unique:1" "equality is unchanged"
+nat_check "down_columns:0" "down: code columns back on the default collation"
+nat_check "down_collation:0" "down: collation dropped"
+nat_check "reup_order:9<10<99<151<1000" "up again: natural ordering restored"
+nat_check "reup_views:7" "up again: all 7 dependent views recreated"
 
 echo "== Campaigns layer (trials + testing campaigns) =="
 run "campaigns table exists" \
