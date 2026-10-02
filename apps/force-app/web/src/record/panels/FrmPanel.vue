@@ -6,8 +6,9 @@ import { useWorkspace } from '../workspace';
 import LiveFrm from '../LiveFrm.vue';
 import { FrmCloud, ColorScaleEditor, defaultScale, useAutoColorScale, withOpenDisplay, type ColorScale, type Histogram } from '@d1/force-plotting';
 import { appUrl } from '../../appUrl';
+import { FRM_STRIDES } from '../plotPrefs';
 const w = useWorkspace();
-const STRIDES = [1, 2, 5, 10, 25, 50];
+const STRIDES = FRM_STRIDES;
 const editorOpen = ref(false);
 
 // FrmCloud.vue and LiveFrm.vue both take a ColorScale prop now (Stage 2/3/4 of the colour-scale
