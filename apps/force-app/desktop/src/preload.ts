@@ -17,4 +17,6 @@ contextBridge.exposeInMainWorld('forceApp', {
   onUpdateStatus: (callback: (status: UpdateStatus) => void) => {
     ipcRenderer.on('update:status', (_event, status: UpdateStatus) => callback(status));
   },
+  /** Native folder picker; resolves to the chosen folder, or null if cancelled. */
+  pickFolder: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog:pickFolder', defaultPath),
 });

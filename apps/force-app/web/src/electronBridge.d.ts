@@ -22,6 +22,8 @@ declare global {
       checkForUpdates: () => Promise<{ ok: boolean; reason?: string }>;
       installUpdate: () => Promise<{ ok: boolean; reason?: string }>;
       onUpdateStatus: (callback: (status: UpdateStatus) => void) => void;
+      /** Native folder picker (#101); the chosen folder, or null if cancelled. */
+      pickFolder: (defaultPath?: string) => Promise<string | null>;
     };
   }
 }

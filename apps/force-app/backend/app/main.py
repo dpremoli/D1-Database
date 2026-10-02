@@ -618,10 +618,27 @@ async def storage_set_config(body: dict) -> dict:
         raise HTTPException(400, "captures_root required")
     if ".." in path:
         raise HTTPException(400, "path traversal not allowed")
+    # A relative path would resolve against wherever the backend happens to run from (inside the
+    # install directory for a packaged build), which no operator means to choose.
+    if not os.path.isabs(path):
+        raise HTTPException(400, f"choose a full folder path, not {path!r}")
+    # #101: the in-flight session writes raw.d1raw and finalizes into CAPTURES_ROOT/<id>, and the
+    # renderer then reads that capture back by id through the same root — moving the root under
+    # it splits a recording across two folders and 404s the end-of-cut fetch of live_cache.bin.
+    if _busy():
+        raise HTTPException(
+            409,
+            "a recording is in progress or still being saved — change the folder once it finishes",
+        )
     try:
         os.makedirs(path, exist_ok=True)
     except OSError as e:
         raise HTTPException(400, f"cannot create directory: {e}")
+    # makedirs succeeds on a folder that already exists however read-only it is, so the first sign
+    # of a bad choice used to be a recording that failed to start. Find out now instead.
+    problem = await run_in_threadpool(storage.writable_error, path)
+    if problem:
+        raise HTTPException(400, f"cannot write to {path}: {problem}")
     CAPTURES_ROOT = path
     # Persisting is what makes the choice survive a restart, so a failure here must be reported.
     # It used to be swallowed: the drive change applied to the running process, the UI showed

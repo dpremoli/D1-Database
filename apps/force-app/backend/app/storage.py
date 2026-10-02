@@ -45,6 +45,32 @@ def atomic_write_json(path: str, data, *, fsync: bool = False, **dump_kw) -> Non
         raise
 
 
+def writable_error(path: str) -> str | None:
+    """Why recordings cannot be written to `path`, or None if they can.
+
+    Creates, writes and removes a real file rather than trusting os.access: on Windows that ignores
+    ACLs, and it says nothing about a read-only share, a full disk, or a removable drive that has
+    been write-protected, all of which only show up on an actual write.
+    """
+    try:
+        fd, tmp = tempfile.mkstemp(dir=path, prefix=".force-app-write-test-", suffix=".tmp")
+    except OSError as e:
+        return str(e)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(b"ok")
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError as e:
+        return str(e)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    return None
+
+
 def _drive_letters() -> list[str]:
     """Return mounted drive letters on Windows (e.g. ['C', 'D', 'E'])."""
     if platform.system() != "Windows":

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, Menu, screen } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { ConfigStore } from './config';
 import { buildMenu } from './menu';
@@ -8,7 +8,7 @@ import { watchRenderer } from './rendererWatch';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
 import { initAutoUpdater } from './updater';
-import { classifyWindowOpen, popoutKey } from './windowOpen';
+import { classifyWindowOpen, isAppUrl, popoutKey } from './windowOpen';
 import { WindowStateStore, isOnSomeDisplay } from './windowState';
 
 const PREFERRED_PORT = 8200;
@@ -194,6 +194,29 @@ function onSidecarStateChange(state: SidecarState, detail?: string): void {
   }
 }
 
+/** Only the app's own pages may use the file-system IPC below — never a page some navigation or
+ * window.open() slip let into a window. */
+function fromApp(event: IpcMainInvokeEvent): boolean {
+  return isAppUrl(event.senderFrame?.url ?? '');
+}
+
+function registerShellIpc(): void {
+  // #101: Settings > General's "Choose folder…". The browser build has no such dialog and types
+  // the path instead; either way the backend validates the choice (POST /storage/config).
+  ipcMain.handle('dialog:pickFolder', async (event, defaultPath: unknown) => {
+    if (!fromApp(event)) return null;
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const opts: Electron.OpenDialogOptions = {
+      title: 'Choose where recordings are saved',
+      buttonLabel: 'Use this folder',
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: typeof defaultPath === 'string' && defaultPath ? defaultPath : undefined,
+    };
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return res.canceled ? null : (res.filePaths[0] ?? null);
+  });
+}
+
 /** Work areas of every connected screen (excludes taskbars/docks). Wrapped because `screen` is
  * only usable after the app is ready, and a failure here should degrade to "place it yourself"
  * rather than take the window down. */
@@ -326,6 +349,7 @@ if (process.env.FORCE_APP_TEST_HOOKS === '1') {
 // app.quit() above and must not register any of this.
 if (gotLock) {
   app.whenReady().then(() => {
+    registerShellIpc();
     void createWindow();
   });
 
