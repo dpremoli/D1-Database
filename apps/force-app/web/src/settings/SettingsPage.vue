@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // App settings with sub-tabs for things that don't need surfacing on the working pages.
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import GeneralSettings from './GeneralSettings.vue';
 import RecordingSettings from './RecordingSettings.vue';
@@ -32,6 +32,11 @@ const initialTab: SettingsTab = VALID_TABS.includes(requestedTab as SettingsTab)
 	? (requestedTab as SettingsTab)
 	: 'general';
 const active = ref<SettingsTab>(initialTab);
+// A link to another tab (e.g. the Connectivity doctor's "Open Local Captures") navigates to this
+// same page with a new ?tab=, which doesn't remount it — follow the query.
+watch(() => route.query.tab, (t) => {
+	if (VALID_TABS.includes(t as SettingsTab)) active.value = t as SettingsTab;
+});
 </script>
 
 <template>
