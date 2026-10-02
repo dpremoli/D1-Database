@@ -17,6 +17,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as THREE from 'three';
 import type { RecordClient } from './liveClient';
 import { queueUpload } from './frmUpload';
+import { createEmitThrottle } from './emitThrottle';
 import { createAccumulator, createScaleTexture, syncScaleTexture, ColorBar, type Axis, type ColorScale, type Histogram, type HistogramAccumulator } from '@d1/force-plotting';
 
 const props = withDefaults(defineProps<{ client: RecordClient; diam: number; colorScale: ColorScale; pointSize?: number; pointStride?: number; axis?: Axis }>(), {
@@ -247,9 +248,11 @@ let lastEmittedAutoKey = '';
 // emitAutoRange() key, same trigger as a climits re-seed) rebins from the resident client.frm.cx/
 // cy/cz buffer, which holds every point up to fm.count (capped at 2M) -- bounded, no re-fetch.
 let histAcc: HistogramAccumulator | null = null;
-let lastHistEmitMs = 0;
 const HIST_BINS = 64;
 const HIST_EMIT_MS = 100;   // ~10Hz throttle, per histogram.ts's own doc guidance
+// Leading + trailing (#103): loop() flushes the last throttled change, so the strip never stays on
+// a stale or empty snapshot once updates stop (paused, or a scrub that has settled).
+const histThrottle = createEmitThrottle(HIST_EMIT_MS);
 // Mirrored into refs for this component's OWN colorbar overlay (below). This surface renders both
 // live recording and all of replay -- replay never reaches FrmCloud -- so until now the most-used
 // FRM view showed a colour-coded cloud with no legend at all, which is the complaint the whole
@@ -257,16 +260,19 @@ const HIST_EMIT_MS = 100;   // ~10Hz throttle, per histogram.ts's own doc guidan
 const autoLo = ref(0);
 const autoHi = ref(1);
 const liveHistogram = ref<Histogram | null>(null);
-function emitHistogram(force: boolean) {
+function publishHistogram() {
 	if (!histAcc) return;
-	const now = performance.now();
-	if (!force && now - lastHistEmitMs < HIST_EMIT_MS) return;
-	lastHistEmitMs = now;
 	const snap = histAcc.snapshot();
 	liveHistogram.value = snap;
 	emit('histogram', snap);
 }
-function emitAutoRange() {
+function emitHistogram(force: boolean) {
+	if (histAcc && histThrottle.mark(performance.now(), force)) publishHistogram();
+}
+// Returns true when it re-seeded the range (and so rebinned the histogram), which frame() then
+// publishes AFTER its own push: publishing here, before the push, is what made a backward scrub
+// (a reset) flash an empty strip and then throttle away the refill that followed it (#103).
+function emitAutoRange(): boolean {
 	const fm = props.client.frm;
 	// Prefer the percentile-based cLo/cHi playback sets at load time (matches the finished-cut
 	// view's own colour scale exactly, computed once over the whole cut). A true live recording
@@ -283,7 +289,7 @@ function emitAutoRange() {
 	const key = `${props.axis}:${haveRange ? 'r' : 'm'}`;
 	if (key === lastEmittedAutoKey) {
 		const tol = (autoHi.value - autoLo.value) * 0.02;
-		if (Math.abs(lo - autoLo.value) <= tol && Math.abs(hi - autoHi.value) <= tol) return;
+		if (Math.abs(lo - autoLo.value) <= tol && Math.abs(hi - autoHi.value) <= tol) return false;
 	}
 	lastEmittedAutoKey = key;
 	autoLo.value = lo; autoHi.value = hi;
@@ -295,7 +301,7 @@ function emitAutoRange() {
 	if (!histAcc) histAcc = createAccumulator(lo, hi, HIST_BINS);
 	else histAcc.rebin(lo, hi);
 	if (uploaded > 0) histAcc.push(cArr, 0, uploaded);
-	emitHistogram(true);
+	return true;
 }
 
 function resetUpload() {
@@ -317,7 +323,7 @@ function frame() {
 	// tick up on a frame that appends no new points (or while paused, if a future editor lets the
 	// user drag a handle mid-pause), and the reported range must never go stale just because
 	// appends stalled.
-	emitAutoRange();
+	const reseeded = emitAutoRange();
 	const preUploaded = uploaded;
 	const from = uploaded, to = fm.count;
 	if (to > from && posAttr && valAttr) {
@@ -358,13 +364,16 @@ function frame() {
 		// independent of pointStride (the distribution is over the full resident data, not just the
 		// decimated live-map subset) and never overlapping emitAutoRange()'s own backfill above.
 		histAcc?.push(cArr, preUploaded, to);
-		emitHistogram(false);
+		emitHistogram(reseeded);
+	} else if (reseeded) {
+		emitHistogram(true);
 	}
 }
 
 function loop() {
 	raf = requestAnimationFrame(loop);
 	frame();
+	if (histThrottle.pending && histThrottle.flush(performance.now())) publishHistogram();
 	frameCamera();  // cheap; keeps the view fitted as the spiral grows
 	if (material && material.uniforms.uSize.value !== props.pointSize) { material.uniforms.uSize.value = props.pointSize; invalidate(); }
 	if (needsRender && renderer && scene && camera) { renderer.render(scene, camera); needsRender = false; }
