@@ -7,6 +7,17 @@ export function popoutKey(url: string): string {
   return new URL(url).pathname;
 }
 
+/** Is this one of the app's own pages (app://force/...)? Used to vet window.open() targets, which
+ * renderer an IPC request came from, and which saved pop-out URLs may be reopened at startup. */
+export function isAppUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'app:' && url.hostname === 'force';
+  } catch {
+    return false;
+  }
+}
+
 export function classifyWindowOpen(
   details: Electron.HandlerDetails,
   windowState?: WindowStateStore,
@@ -17,7 +28,7 @@ export function classifyWindowOpen(
   } catch {
     return { action: 'deny' };
   }
-  if (url.protocol === 'app:' && url.hostname === 'force') {
+  if (isAppUrl(details.url)) {
     const saved = windowState?.get(popoutKey(details.url));
     return {
       action: 'allow',

@@ -126,6 +126,9 @@ export class RecordClient {
 				this.sendSnapshot();
 			}
 		};
+		// Pop-outs that opened before this source did (reopened at app start, #108, while the main
+		// window is not yet on Record) sent their one sync-request to nobody. Ask them to send again.
+		this.relay.postMessage({ type: 'source-ready' });
 	}
 
 	snapshotReady = ref(false);
@@ -141,6 +144,7 @@ export class RecordClient {
 				this.applySnapshot(d);
 				this.snapshotReady.value = true;
 			}
+			else if (d?.type === 'source-ready') this.relay?.postMessage({ type: 'sync-request' });
 		};
 		this.status.connected = true;
 		this.relay.postMessage({ type: 'sync-request' });

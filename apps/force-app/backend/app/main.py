@@ -618,10 +618,30 @@ async def storage_set_config(body: dict) -> dict:
         raise HTTPException(400, "captures_root required")
     if ".." in path:
         raise HTTPException(400, "path traversal not allowed")
-    try:
-        os.makedirs(path, exist_ok=True)
-    except OSError as e:
-        raise HTTPException(400, f"cannot create directory: {e}")
+    # A relative path would resolve against wherever the backend happens to run from (inside the
+    # install directory for a packaged build), which no operator means to choose.
+    if not os.path.isabs(path):
+        raise HTTPException(400, f"choose a full folder path, not {path!r}")
+    # #101: the in-flight session writes raw.d1raw and finalizes into CAPTURES_ROOT/<id>, and the
+    # renderer then reads that capture back by id through the same root — moving the root under
+    # it splits a recording across two folders and 404s the end-of-cut fetch of live_cache.bin.
+    if _busy():
+        raise HTTPException(
+            409,
+            "a recording is in progress or still being saved — change the folder once it finishes",
+        )
+    # makedirs succeeds on a folder that already exists however read-only it is, so the first sign
+    # of a bad choice used to be a recording that failed to start. Find out now instead. Both steps
+    # can block for a long time on a dead network path, so they run off the event loop.
+    problem = await run_in_threadpool(storage.prepare_folder, path)
+    if problem:
+        raise HTTPException(400, problem)
+    # A recording may have started while the folder was being checked.
+    if _busy():
+        raise HTTPException(
+            409,
+            "a recording is in progress or still being saved — change the folder once it finishes",
+        )
     CAPTURES_ROOT = path
     # Persisting is what makes the choice survive a restart, so a failure here must be reported.
     # It used to be swallowed: the drive change applied to the running process, the UI showed
@@ -1635,7 +1655,14 @@ async def browse_captures(limit: int = 200) -> dict:
         ids = _capture_ids()
         for cid in ids[: max(1, min(limit, 1000))]:
             d = os.path.join(CAPTURES_ROOT, cid)
-            entry: dict = {"id": cid, "size_mb": 0.0, "finalized": False, "files": {}}
+            # #96: where the files are, for the "Show in folder" / copy-path controls.
+            entry: dict = {
+                "id": cid,
+                "dir": os.path.abspath(d),
+                "size_mb": 0.0,
+                "finalized": False,
+                "files": {},
+            }
             total = 0
             for fname in ("raw.d1raw", "capture.mat", "live_cache.bin", "summary.json"):
                 fpath = os.path.join(d, fname)

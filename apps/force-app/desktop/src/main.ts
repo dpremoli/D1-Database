@@ -1,13 +1,16 @@
-import { app, BrowserWindow, dialog, Menu, screen } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { ConfigStore } from './config';
 import { buildMenu } from './menu';
 import { findAvailablePort } from './port';
 import { registerAppScheme, handleAppProtocol } from './protocol';
+import { checkRevealTarget } from './reveal';
+import { watchRenderer } from './rendererWatch';
+import { PopoutTracker } from './popouts';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
 import { initAutoUpdater } from './updater';
-import { classifyWindowOpen, popoutKey } from './windowOpen';
+import { classifyWindowOpen, isAppUrl, popoutKey } from './windowOpen';
 import { WindowStateStore, isOnSomeDisplay } from './windowState';
 
 const PREFERRED_PORT = 8200;
@@ -32,6 +35,8 @@ if (!gotLock) {
 registerAppScheme();
 
 let mainWindow: BrowserWindow | null = null;
+// #108: which pop-outs are open, so the ones open at quit come back on the next start.
+let popouts: PopoutTracker | null = null;
 let supervisor: SidecarSupervisor | null = null;
 let recorderPort: number | null = null;
 // Set once the operator has confirmed quitting mid-recording (or once there was nothing to confirm).
@@ -149,13 +154,38 @@ function backendCommand(port: number): {
   const backendDir = path.join(__dirname, '..', '..', 'backend');
   return {
     exePath: path.join(backendDir, '.venv', 'Scripts', 'python.exe'),
-    args: ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(port)],
+    // --no-access-log: the same per-request stdout flood run_frozen.py turns off (#106).
+    args: ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(port), '--no-access-log'],
     cwd: backendDir,
     env: recorderEnv(),
   };
 }
 
+/** Records a desktop-shell event in the backend's log file (via POST /logs/client), so it lands in
+ * Settings > Logs and in a bug report's log tail — this process has no log of its own that an
+ * operator can see. Best effort: when the backend is the thing that is down, console is all. */
+function logToBackend(level: 'ERROR' | 'WARNING' | 'INFO', message: string): void {
+  console.error(`[desktop] ${message}`);
+  if (recorderPort == null) return;
+  void fetch(`http://127.0.0.1:${recorderPort}/logs/client`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ level, source: 'desktop', message }),
+    signal: AbortSignal.timeout(2000),
+  }).catch(() => {});
+}
+
+const rendererWatchDeps = {
+  showMessageBox: (win: BrowserWindow, opts: Electron.MessageBoxOptions) => dialog.showMessageBox(win, opts),
+  log: logToBackend,
+};
+
+// Why the backend last restarted. It is down while 'restarting' is reported, so the log line
+// waits for the 'ready' that follows.
+let restartCause: string | undefined;
+
 function onSidecarStateChange(state: SidecarState, detail?: string): void {
+  if (state === 'restarting') restartCause = detail;
   if (state === 'crashed') {
     dialog.showErrorBox('Recorder backend stopped responding', detail ?? 'See logs for details.');
   }
@@ -163,7 +193,61 @@ function onSidecarStateChange(state: SidecarState, detail?: string): void {
   // operator back to Record, where the existing recovery banner (RecordPage.vue) picks up any
   // incomplete session via GET /recovery/check on mount.
   if (state === 'ready' && supervisor && supervisor.getRestartCount() > 0) {
+    logToBackend('WARNING', `recorder backend restarted (${restartCause ?? 'unknown cause'})`);
     mainWindow?.webContents.send('navigate', '/record');
+  }
+}
+
+/** Only the app's own pages may use the file-system IPC below — never a page some navigation or
+ * window.open() slip let into a window. */
+function fromApp(event: IpcMainInvokeEvent): boolean {
+  return isAppUrl(event.senderFrame?.url ?? '');
+}
+
+function registerShellIpc(): void {
+  // #101: Settings > General's "Choose folder…". The browser build has no such dialog and types
+  // the path instead; either way the backend validates the choice (POST /storage/config).
+  ipcMain.handle('dialog:pickFolder', async (event, defaultPath: unknown) => {
+    if (!fromApp(event)) return null;
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const opts: Electron.OpenDialogOptions = {
+      title: 'Choose where recordings are saved',
+      buttonLabel: 'Use this folder',
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: typeof defaultPath === 'string' && defaultPath ? defaultPath : undefined,
+    };
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return res.canceled ? null : (res.filePaths[0] ?? null);
+  });
+
+  // #96: "Show in folder" for a local capture. The allowed area is asked of this app's own
+  // backend each time rather than taken from the renderer, since the root can change at runtime.
+  ipcMain.handle('shell:reveal', async (event, requested: unknown) => {
+    if (!fromApp(event)) return { ok: false, reason: 'not allowed from this page' };
+    const root = await currentCapturesRoot();
+    if (!root) return { ok: false, reason: "can't reach the recording backend" };
+    const check = checkRevealTarget(requested, root);
+    if (!check.ok) return check;
+    if (check.isDir) {
+      // Opens the folder itself, showing its files. openPath only for directories: on a file it
+      // would launch whatever program the file type is associated with.
+      const err = await shell.openPath(check.path);
+      return err ? { ok: false, reason: err } : { ok: true };
+    }
+    shell.showItemInFolder(check.path);
+    return { ok: true };
+  });
+}
+
+async function currentCapturesRoot(): Promise<string | null> {
+  if (recorderPort == null) return null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${recorderPort}/storage/config`, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { captures_root?: unknown };
+    return typeof body.captures_root === 'string' && body.captures_root ? body.captures_root : null;
+  } catch {
+    return null;
   }
 }
 
@@ -182,6 +266,7 @@ async function createWindow(): Promise<void> {
   const configStore = new ConfigStore(app.getPath('userData'));
   configStore.seedIfMissing();
   const windowState = new WindowStateStore(app.getPath('userData'));
+  popouts = new PopoutTracker(windowState);
 
   const mainKey = 'main';
   const savedMain = windowState.get(mainKey);
@@ -209,6 +294,7 @@ async function createWindow(): Promise<void> {
   });
   if (savedMain?.maximized) mainWindow.maximize();
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  watchRenderer(mainWindow, 'main', rendererWatchDeps);
   // #35: F11 fullscreen, the conventional browser/desktop-app shortcut -- Electron doesn't wire
   // this up on its own. before-input-event (not a Menu accelerator) keeps it working even though
   // this app runs frameless-menu-less; scoped to just the main window, not a global shortcut, so
@@ -234,6 +320,9 @@ async function createWindow(): Promise<void> {
       });
       return;
     }
+    // The app is going: the pop-outs open now are the ones to bring back next time, and the
+    // closes that follow are the quit's, not the operator's.
+    popouts?.beginQuit();
     const maximized = mainWindow.isMaximized();
     // getNormalBounds() for minimized too, not just maximized: Windows reports x/y ≈ -32000 for a
     // minimized window, so closing while minimized would persist an off-screen position and the
@@ -242,11 +331,20 @@ async function createWindow(): Promise<void> {
     const bounds = restoring ? mainWindow.getNormalBounds() : mainWindow.getBounds();
     windowState.save(mainKey, { ...bounds, maximized });
   });
+  // Closing the main window quits the app, pop-outs included. They are fed by this window (the
+  // live relay in liveClient.ts) and go blank without it, and the quit prompt above has just told
+  // the operator that acquisition stops — which only happens if the app really does quit.
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    app.quit();
+  });
   mainWindow.webContents.setWindowOpenHandler((details) => classifyWindowOpen(details, windowState));
   // setWindowOpenHandler only returns creation OPTIONS, not a handle to the window itself — this
   // is the hook that actually gets one, so a pop-out's size/position can be saved when it closes.
   mainWindow.webContents.on('did-create-window', (win, details) => {
     const key = popoutKey(details.url);
+    watchRenderer(win, 'pop-out', rendererWatchDeps);
+    popouts?.track(win, details.url);
     win.on('close', () => windowState.save(key, win.isMinimized() || win.isMaximized() ? win.getNormalBounds() : win.getBounds()));
   });
 
@@ -278,8 +376,24 @@ async function createWindow(): Promise<void> {
   }
 
   await mainWindow.loadURL('app://force/');
+  reopenPopouts();
   void offerScheduledTaskCleanup();
   initAutoUpdater(() => mainWindow, async () => (await activeRecording()) != null);
+}
+
+/** #108: reopens the pop-outs that were open at the last quit. Opened from the main window's own
+ * page, exactly as its buttons open them, so each goes through the same window-open handler
+ * (remembered size and position) and gets tracked again; it then resyncs over the live relay.
+ * Only app://force URLs reach here (PopoutTracker vets the saved list), and JSON.stringify keeps
+ * each one a plain string literal in the script. Skipped for the e2e suite, which expects a
+ * single window. */
+function reopenPopouts(): void {
+  if (process.env.FORCE_APP_TEST_HOOKS === '1' || !mainWindow || !popouts) return;
+  for (const url of popouts.toRestore()) {
+    mainWindow.webContents
+      .executeJavaScript(`void window.open(${JSON.stringify(url)}, '_blank', 'noopener,width=1400,height=900')`, true)
+      .catch((err) => console.error('reopening a pop-out failed', err));
+  }
 }
 
 export function getSupervisor(): SidecarSupervisor | null {
@@ -297,6 +411,7 @@ if (process.env.FORCE_APP_TEST_HOOKS === '1') {
 // app.quit() above and must not register any of this.
 if (gotLock) {
   app.whenReady().then(() => {
+    registerShellIpc();
     void createWindow();
   });
 
@@ -325,6 +440,7 @@ if (gotLock) {
       });
       return;
     }
+    popouts?.beginQuit();
     if (!supervisor || supervisor.getState() === 'stopped') return;
     event.preventDefault();
     void supervisor.stop().then(() => app.quit());
