@@ -32,6 +32,7 @@ line-length = 100
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["slow: takes tens of seconds (deselect with -m \"not slow\")"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
