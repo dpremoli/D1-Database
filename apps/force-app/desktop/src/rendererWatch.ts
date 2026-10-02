@@ -39,10 +39,12 @@ export function watchRenderer(win: BrowserWindow, label: string, deps: RendererW
     }
     if (crashPrompt || win.isDestroyed()) return;
     crashPrompt = true;
+    // Closing the main window quits the app (the pop-outs depend on it), so say that.
+    const closeLabel = label === 'main' ? 'Quit app' : 'Close window';
     void deps
       .showMessageBox(win, {
         type: 'error',
-        buttons: ['Reload', 'Close window'],
+        buttons: ['Reload', closeLabel],
         defaultId: 0,
         cancelId: 0,
         title: 'This window stopped working',

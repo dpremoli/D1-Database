@@ -53,6 +53,20 @@ describe('watchRenderer', () => {
     expect(contents.reload).not.toHaveBeenCalled();
   });
 
+  it("labels the crash dialog's exit button 'Quit app' for the main window only", async () => {
+    const labels: Record<string, string[]> = {};
+    for (const label of ['main', 'pop-out']) {
+      const { contents, asWindow } = fakeWindow();
+      const d = deps(0);
+      watchRenderer(asWindow, label, d);
+      contents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 3 });
+      await flush();
+      labels[label] = d.showMessageBox.mock.calls[0][1].buttons as string[];
+    }
+    expect(labels.main).toEqual(['Reload', 'Quit app']);
+    expect(labels['pop-out']).toEqual(['Reload', 'Close window']);
+  });
+
   it('ignores a clean renderer exit', async () => {
     const { contents, asWindow } = fakeWindow();
     const d = deps(0);
