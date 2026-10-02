@@ -689,8 +689,10 @@ const cacheAutoLimits = computed<[number, number] | null>(() => {
 // Short-circuits, so the cache scan only runs when no renderer has reported.
 const currentAuto = computed<[number, number] | null>(() =>
 	autoClimits.value ? [autoClimits.value.cmin, autoClimits.value.cmax] : cacheAutoLimits.value);
-const colorDomainLo = computed(() => currentAuto.value?.[0] ?? colorScale.value.satMin);
-const colorDomainHi = computed(() => currentAuto.value?.[1] ?? colorScale.value.satMax);
+// Never the scale's own range as a fallback: that moves as a handle is dragged and the editor's
+// axis re-zoomed under it after each release (#78). 0..1 is defaultScale's own range.
+const colorDomainLo = computed(() => currentAuto.value?.[0] ?? 0);
+const colorDomainHi = computed(() => currentAuto.value?.[1] ?? 1);
 // Binned over the AUTO range, not the edited one, so dragging a handle never triggers an O(N)
 // re-bin (and the curve stays put under the moving handles).
 // Seed the scale from the cache whenever no renderer has reported climits -- Figure mode, a

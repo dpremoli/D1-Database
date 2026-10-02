@@ -94,14 +94,40 @@ describe('pickHandle', () => {
 	});
 });
 
+describe('pickHandle: coincident ends can always be pulled apart (#78)', () => {
+	// An open displayed range pinned to the same edge, or a collapsed one, puts both circles on one x.
+	const circles: HandleGeom[] = [
+		{ key: 'dispMin', style: 'circle', pct: 50 },
+		{ key: 'dispMax', style: 'circle', pct: 50 },
+	];
+	it('splits coincident displayed-range circles by pointer side', () => {
+		expect(pickHandle(circles, 204, H / 2, W, H)).toBe('dispMax');
+		expect(pickHandle(circles, 196, H / 2, W, H)).toBe('dispMin');
+	});
+	it('on an exact tie keeps the end last dragged, else the max end', () => {
+		expect(pickHandle(circles, 200, H / 2, W, H, 'dispMin')).toBe('dispMin');
+		expect(pickHandle(circles, 200, H / 2, W, H)).toBe('dispMax');
+	});
+	it('still splits flags when circles are co-located too', () => {
+		const all: HandleGeom[] = [
+			{ key: 'satMin', style: 'flag', pct: 50, dotY: H - 3 }, { key: 'satMax', style: 'flag', pct: 50, dotY: H - 3 },
+			...circles,
+		];
+		expect(pickHandle(all, 204, 2, W, H)).toBe('satMax');
+		expect(pickHandle(all, 196, 2, W, H)).toBe('satMin');
+		expect(pickHandle(all, 196, H / 2, W, H)).toBe('dispMin');
+	});
+});
+
 describe('handleDragPatch', () => {
 	const EPS = 1e-6;
 	const linear = { ...defaultScale(25, 35), satMin: 25, satMax: 35 };
 	const symmetric = applyParams({ ...linear, symmetrical: true }, 25, 35);
 
 	it('moves only the dragged end when not symmetrical', () => {
-		expect(handleDragPatch(linear, 'satMax', 30, EPS)).toEqual({ satMax: 30 });
-		expect(handleDragPatch(linear, 'satMin', 27, EPS)).toEqual({ satMin: 27 });
+		// (the base range moves with it -- see ColorScale.baseMin)
+		expect(handleDragPatch(linear, 'satMax', 30, EPS)).toEqual({ satMax: 30, baseMax: 30 });
+		expect(handleDragPatch(linear, 'satMin', 27, EPS)).toEqual({ satMin: 27, baseMin: 27 });
 	});
 
 	it('keeps the dragged end on its own side of the other', () => {
@@ -114,9 +140,24 @@ describe('handleDragPatch', () => {
 	it('mirrors both saturation ends under symmetrical', () => {
 		expect(symmetric.satMin).toBe(-35);
 		expect(symmetric.satMax).toBe(35);
-		expect(handleDragPatch(symmetric, 'satMax', 30, EPS)).toEqual({ satMin: -30, satMax: 30 });
+		expect(handleDragPatch(symmetric, 'satMax', 30, EPS)).toMatchObject({ satMin: -30, satMax: 30 });
 		// Dragging the NEGATIVE end works off its magnitude, so it is equally effective.
-		expect(handleDragPatch(symmetric, 'satMin', -20, EPS)).toEqual({ satMin: -20, satMax: 20 });
+		expect(handleDragPatch(symmetric, 'satMin', -20, EPS)).toMatchObject({ satMin: -20, satMax: 20 });
+	});
+
+	it('drags edit the base range, so unticking symmetrical keeps the drag', () => {
+		// Data 25..35, symmetrical on (-35..35), satMax dragged to 30.
+		const dragged = applyParams({ ...symmetric, ...handleDragPatch(symmetric, 'satMax', 30, EPS) }, 25, 35);
+		expect([dragged.satMin, dragged.satMax]).toEqual([-30, 30]);
+		const off = applyParams({ ...dragged, symmetrical: false }, 25, 35);
+		expect([off.satMin, off.satMax]).toEqual([25, 30]);
+	});
+
+	it('a drag that crosses the base range re-bases on the mirrored range', () => {
+		const dragged = applyParams({ ...symmetric, ...handleDragPatch(symmetric, 'satMax', 20, EPS) }, 25, 35);
+		expect([dragged.satMin, dragged.satMax]).toEqual([-20, 20]);
+		const off = applyParams({ ...dragged, symmetrical: false }, 25, 35);
+		expect([off.satMin, off.satMax]).toEqual([-20, 20]);
 	});
 
 	it('survives applyParams under symmetrical instead of snapping back', () => {
