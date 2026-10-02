@@ -16,10 +16,13 @@ ON CONFLICT (collection) DO UPDATE SET
   translations=COALESCE(EXCLUDED.translations, directus_collections.translations);
 
 -- No sort_field on etchants / prep_recipes: it is Directus's drag-to-reorder column and
--- would overwrite the names (#115). An existing text sort_field is cleared by the safety
--- net in configure_directus.sql, which runs first. The default order, by name, is the
--- global preset (bookmark/user/role NULL); an existing one keeps its columns and filter,
--- only its sort is set.
+-- would overwrite the names (#115). Clear the old 'name' value here too, so this script is
+-- correct when run on its own and not only after the safety net in configure_directus.sql.
+UPDATE directus_collections SET sort_field = NULL
+WHERE collection IN ('etchants', 'prep_recipes') AND sort_field IS NOT NULL;
+
+-- The default order, by name, is the global preset (bookmark/user/role NULL); an existing
+-- one keeps its columns and filter, only its sort is set.
 UPDATE directus_presets AS p
 SET layout = coalesce(p.layout, 'tabular'),
     layout_query = (
