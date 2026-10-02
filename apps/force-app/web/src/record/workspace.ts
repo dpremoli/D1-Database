@@ -14,6 +14,8 @@ import { createPlaybackEngine } from './playback/engine';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
 import { confirmAction } from '../ui/confirm';
+import { spotlight } from '../ui/spotlight';
+import { FIELD_FOCUS, StartRequestError } from './recordingErrors';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 
@@ -372,6 +374,10 @@ export function createWorkspace() {
 			errMsg.value = /failed to fetch|load failed|networkerror/i.test(m)
 				? `${m} — can't reach the recording backend. Is it running on this machine?`
 				: m;
+			// #84: the backend named the field it refused (e.g. a sample rate above the hardware's
+			// maximum) — point at it rather than leaving the operator to find it.
+			const focusId = e instanceof StartRequestError && e.detail.field ? FIELD_FOCUS[e.detail.field] : undefined;
+			if (focusId) spotlight(focusId);
 		} finally {
 			busy.value = false;
 		}

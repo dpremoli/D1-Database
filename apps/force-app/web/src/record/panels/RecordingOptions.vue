@@ -5,6 +5,8 @@ import LookupField from './LookupField.vue';
 import CutPicker from './CutPicker.vue';
 import StatTile from './StatTile.vue';
 import MachineOperatorPanel from './MachineOperatorPanel.vue';
+import { checkMaxSampleRate, checkNidaqPresence, nidaqHardware, nidaqUnavailableReason } from '../nidaqHardware';
+import { sampleRateIssue } from '../recordingErrors';
 
 const w = useWorkspace();
 
@@ -13,20 +15,33 @@ const w = useWorkspace();
 // tile before the operator ever presses Start instead. Re-checked whenever the channel assignment
 // changes (moving to a different module can change the achievable rate); null means "no real
 // limit to check" (simulated hardware, or DAQmx isn't available here), not "unlimited by measurement".
-const maxSampleRateHz = ref<number | null>(null);
-async function checkMaxSampleRate() {
-	if (w.source.value !== 'nidaq') { maxSampleRateHz.value = null; return; }
+// The answer lives in nidaqHardware (shared): the footer's Start button is blocked on it too (#84).
+watch([() => w.source.value, () => w.nidaqChannels.value], () => {
+	if (w.source.value !== 'nidaq') { nidaqHardware.maxRateHz = null; return; }
 	const chans = w.nidaqChannels.value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
-	if (!chans.length) { maxSampleRateHz.value = null; return; }
-	try {
-		const res = await fetch(`${w.client.baseUrl}/nidaq/max_rate?channels=${encodeURIComponent(chans.join(','))}`);
-		maxSampleRateHz.value = res.ok ? (await res.json()).max_rate_hz : null;
-	} catch { maxSampleRateHz.value = null; }
-}
-watch([() => w.source.value, () => w.nidaqChannels.value], checkMaxSampleRate, { immediate: true });
-const sampleRateInvalid = computed(() =>
-	maxSampleRateHz.value !== null && w.cfg.sample_rate > maxSampleRateHz.value,
-);
+	void checkMaxSampleRate(w.client.baseUrl, chans);
+}, { immediate: true });
+const maxSampleRateHz = computed(() => nidaqHardware.maxRateHz);
+const sampleRateInvalid = computed(() => w.source.value === 'nidaq' && !!sampleRateIssue(w.cfg.sample_rate, maxSampleRateHz.value));
+
+// #86: NI-DAQ is only a choice when DAQmx reports a device — the button used to be enabled on a
+// machine with no driver or nothing plugged in, and Start then failed with a driver error. A
+// source remembered as NI-DAQ from an earlier session falls back to Simulated FOR NOW: assigned to
+// the ref directly, not via setSource(), so the stored choice is kept and NI-DAQ comes back by
+// itself the next time the hardware is there.
+const nidaqDisabledReason = computed(() => (nidaqHardware.checked
+	? nidaqUnavailableReason({ hardware_present: nidaqHardware.hardwarePresent, runtime_available: nidaqHardware.runtimeAvailable })
+	: null));
+const fellBackFromNidaq = ref(false);
+watch([nidaqDisabledReason, () => w.source.value], ([reason, src]) => {
+	if (reason && src === 'nidaq' && !w.locked.value) {
+		w.source.value = 'sim';
+		fellBackFromNidaq.value = true;
+	} else if (src !== 'sim') {
+		fellBackFromNidaq.value = false;
+	}
+}, { immediate: true });
+onMounted(() => { void checkNidaqPresence(w.client.baseUrl); });
 // Surface speed (m/min) = pi * diam(mm) * rpm / 1000 — the same formula buildRunPayload() already
 // logs to Directus as machining_cutting_speed_m_per_min, just surfaced here too.
 const replaySurfaceSpeed = computed(() => (Math.PI * w.replay.diam * w.replay.rpm) / 1000);
@@ -149,8 +164,17 @@ onBeforeUnmount(() => {
 		<div class="segmode lg source-seg">
 			<button class="segbtn" :class="{ on: w.source.value === 'sim' }" :disabled="w.locked.value" @click="w.setSource('sim')">Simulated</button>
 			<button class="segbtn" :class="{ on: w.source.value === 'replay' }" :disabled="w.locked.value" @click="w.setSource('replay')">Replay file</button>
-			<button class="segbtn" :class="{ on: w.source.value === 'nidaq' }" :disabled="w.locked.value" @click="w.setSource('nidaq')">NI-DAQ</button>
+			<button class="segbtn" :class="{ on: w.source.value === 'nidaq' }" :disabled="w.locked.value || !!nidaqDisabledReason"
+				:title="nidaqDisabledReason || ''" @click="w.setSource('nidaq')">NI-DAQ</button>
 		</div>
+		<p v-if="fellBackFromNidaq && w.source.value === 'sim'" class="src-note">
+			<span class="material-symbols-rounded">info</span>
+			No NI-DAQ hardware found — using Simulated for now. NI-DAQ comes back once a device is connected.
+		</p>
+		<p v-else-if="w.source.value === 'nidaq' && nidaqHardware.nimaxSimulated" class="src-note">
+			<span class="material-symbols-rounded">info</span>
+			Recording from an NI MAX simulated device — the data is synthetic.
+		</p>
 
 		<!-- ─── Sample — always first: this is "what am I recording/replaying", the identity of the
 			 cut. Machine/Operator/Operation type (also identity-ish, but set-once-per-session facts
@@ -176,8 +200,8 @@ onBeforeUnmount(() => {
 					<StatTile editable label="Inner Ø" unit="mm" v-model="w.cfg.inner_diam" :disabled="w.locked.value" />
 				</template>
 				<StatTile editable label="Sample rate" unit="Hz" v-model="w.cfg.sample_rate" :disabled="w.locked.value"
-					:invalid="sampleRateInvalid"
-					:title="sampleRateInvalid ? `Exceeds the assigned hardware's maximum of ${maxSampleRateHz?.toFixed(0)} Hz for this channel selection — recording would fail to start.` : ''" />
+					data-focus="sample-rate" :invalid="sampleRateInvalid"
+					:title="sampleRateInvalid ? `${sampleRateIssue(w.cfg.sample_rate, maxSampleRateHz)} Recording would fail to start.` : ''" />
 				<!-- Duration removed from view — but w.cfg.duration_sec is still real state: it drives
 					 checkDiskBeforeStart()/estimatedRecordingGb() in workspace.ts, the pre-Start
 					 disk-space warning. With no field left to change it, that warning now always
