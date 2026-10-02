@@ -630,15 +630,18 @@ async def storage_set_config(body: dict) -> dict:
             409,
             "a recording is in progress or still being saved — change the folder once it finishes",
         )
-    try:
-        os.makedirs(path, exist_ok=True)
-    except OSError as e:
-        raise HTTPException(400, f"cannot create directory: {e}")
     # makedirs succeeds on a folder that already exists however read-only it is, so the first sign
-    # of a bad choice used to be a recording that failed to start. Find out now instead.
-    problem = await run_in_threadpool(storage.writable_error, path)
+    # of a bad choice used to be a recording that failed to start. Find out now instead. Both steps
+    # can block for a long time on a dead network path, so they run off the event loop.
+    problem = await run_in_threadpool(storage.prepare_folder, path)
     if problem:
-        raise HTTPException(400, f"cannot write to {path}: {problem}")
+        raise HTTPException(400, problem)
+    # A recording may have started while the folder was being checked.
+    if _busy():
+        raise HTTPException(
+            409,
+            "a recording is in progress or still being saved — change the folder once it finishes",
+        )
     CAPTURES_ROOT = path
     # Persisting is what makes the choice survive a restart, so a failure here must be reported.
     # It used to be swallowed: the drive change applied to the running process, the UI showed

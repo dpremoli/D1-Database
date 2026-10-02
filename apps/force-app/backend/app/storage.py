@@ -71,6 +71,38 @@ def writable_error(path: str) -> str | None:
     return None
 
 
+def prepare_folder(path: str) -> str | None:
+    """Create `path` if needed and prove it can be written, or say why not (None means ready).
+
+    Blocking: meant for a worker thread, since a dead network path can stall makedirs for a long
+    time. When the check fails, the folders this call itself created are removed again (only while
+    empty), so a refused choice leaves nothing behind.
+    """
+    created: list[str] = []
+    probe = os.path.abspath(path)
+    while probe and not os.path.exists(probe):
+        created.append(probe)
+        parent = os.path.dirname(probe)
+        if parent == probe:
+            break
+        probe = parent
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as e:
+        problem: str | None = f"cannot create directory: {e}"
+    else:
+        problem = writable_error(path)
+        if problem:
+            problem = f"cannot write to {path}: {problem}"
+    if problem:
+        for d in created:  # deepest first
+            try:
+                os.rmdir(d)
+            except OSError:
+                break
+    return problem
+
+
 def _drive_letters() -> list[str]:
     """Return mounted drive letters on Windows (e.g. ['C', 'D', 'E'])."""
     if platform.system() != "Windows":
