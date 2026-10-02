@@ -5,6 +5,8 @@ import { useRoute } from 'vue-router';
 import ForceChart from './ForceChart.vue';
 import { pickMode, type FrmMode } from './frmMode';
 import { perKeyComputed } from './perKeyComputed';
+import LoadingOverlay from './LoadingOverlay.vue';
+import { stageInfo, type LoadStage, type StageInfo } from './loadStage';
 import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
@@ -731,6 +733,14 @@ const colStackHidden = ref(false);               // hide the Samples/Operations 
 const detailHidden = ref(false);                 // hide the Sample/Operation detail column
 const frmUrl = ref<string | null>(null);
 const frmLoading = ref(false);
+// What the active view type (Figure / Lite / Full) is busy with, for the busy mark on its segment
+// button (#102). Lite/Full report through @stage; the Figure download is tracked here.
+const frmStage = ref<StageInfo | null>(null);
+const figStage = ref<LoadStage | null>(null);
+const frmBusy = computed(() => !!frmStage.value || frmLoading.value);
+// A renderer that unmounts mid-load (the view type changed) never reports idle: reset on a switch;
+// the one that replaces it reports its own stage.
+watch([frmMode, liveOn, octreeOn, compareOn, filteredSoloOn], () => { frmStage.value = null; });
 const frmCache = new Map<string, string>();
 
 // ---------------------------------------------------------------- layout state
@@ -1252,8 +1262,12 @@ async function loadFrm() {
 	if (!fileId) { frmUrl.value = null; return; }
 	if (frmCache.has(fileId)) { frmUrl.value = frmCache.get(fileId)!; return; }
 	frmLoading.value = true;
+	figStage.value = { kind: 'download', loaded: 0, total: null, what: 'figure' };
 	try {
-		const res = await api.get(`/assets/${fileId}`, { responseType: 'blob' });
+		const res = await api.get(`/assets/${fileId}`, {
+			responseType: 'blob',
+			onDownloadProgress: (e) => { figStage.value = { kind: 'download', loaded: e.loaded, total: e.total ?? null, what: 'figure' }; },
+		});
 		const url = URL.createObjectURL(res.data);
 		frmCache.set(fileId, url);
 		frmUrl.value = url;
@@ -2532,9 +2546,9 @@ function fmtDateTime(v: string | null | undefined) {
 								<span v-else-if="filteredSoloOn" class="frm-fid" :title="`Lite live-filtered: ${chainSummary(savedChain)} — Full & FRM PNG still raw until baked`">filtered · Lite</span>
 								<div class="toggle">
 									<div class="segmode">
-										<button class="segbtn" :class="{ on: frmMode==='figure' }" @click="chooseMode('figure')" title="Prerendered figure (instant)">Figure</button>
-										<button class="segbtn" :class="{ on: frmMode==='lite' }" :disabled="!liveAvailable" @click="liveAvailable && chooseMode('lite')" :title="liveAvailable ? 'Lite interactive cloud (reacts to crop/feed)' : 'No live cache — reprocess to enable'">Lite</button>
-										<button class="segbtn" :class="{ on: frmMode==='full' }" :disabled="buildingOctree" @click="octreeAvailable ? chooseMode('full') : buildOctree()" :title="octreeAvailable ? 'Full-resolution octree (LOD-streamed)' : 'Build the full-resolution octree on the host'"><v-icon v-if="buildingOctree" name="hourglass_top" x-small /> Full</button>
+										<button class="segbtn" :class="{ on: frmMode==='figure', busy: frmBusy && frmMode==='figure' }" :aria-busy="frmBusy && frmMode==='figure'" @click="chooseMode('figure')" title="Prerendered figure (instant)">Figure</button>
+										<button class="segbtn" :class="{ on: frmMode==='lite', busy: frmBusy && frmMode==='lite' }" :aria-busy="frmBusy && frmMode==='lite'" :disabled="!liveAvailable" @click="liveAvailable && chooseMode('lite')" :title="liveAvailable ? 'Lite interactive cloud (reacts to crop/feed)' : 'No live cache — reprocess to enable'">Lite</button>
+										<button class="segbtn" :class="{ on: frmMode==='full', busy: frmBusy && frmMode==='full' }" :aria-busy="frmBusy && frmMode==='full'" :disabled="buildingOctree" @click="octreeAvailable ? chooseMode('full') : buildOctree()" :title="octreeAvailable ? 'Full-resolution octree (LOD-streamed)' : 'Build the full-resolution octree on the host'"><v-icon v-if="buildingOctree" name="hourglass_top" x-small /> Full</button>
 									</div>
 									<button v-if="frmMode==='full'" class="tbtn" :class="{ on: gridFull }" :disabled="buildingOctree"
 										:title="gridAvailable ? 'Interpolated-grid octree (filled surface)' : 'Build the interpolated grid on the host'"
@@ -2567,12 +2581,12 @@ function fmtDateTime(v: string | null | undefined) {
 									:total-points="gridActive ? Number(detail.grid_octree_points) : (fullResPoints ?? undefined)"
 									:fill="gridActive" :cell-size="Number(detail.grid_cell_mm) || 1"
 									:min-node-px="octreeMinNodePx" :budget-cap="octreeBudgetCap"
-									@climits="onClimits" @points="displayedPoints = $event" @zscale="zScale = $event" />
+									@climits="onClimits" @points="displayedPoints = $event" @zscale="zScale = $event" @stage="frmStage = $event" />
 								<!-- Compare mode: raw | filtered, sharing one view (linked pan/zoom) + colour scale. -->
 								<div v-else-if="compareOn" class="frm-compare" :class="{ stacked }">
 									<FrmCloud ref="frmCloudRef" v-bind="cloudProps" :cache-override="rawDecimatedCache" :color-scale="colorScale"
 										:shared-view="compareView" pane-label="raw"
-										@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event" />
+										@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event" @stage="frmStage = $event" />
 									<FrmCloud v-bind="cloudProps" :cache-override="filteredCache" :color-scale="filteredColorScale"
 										:shared-view="compareView" pane-label="filtered"
 										@climits="filteredAuto = $event" />
@@ -2584,8 +2598,8 @@ function fmtDateTime(v: string | null | undefined) {
 									<FrmCloud v-else-if="liveOn" ref="frmCloudRef" v-bind="cloudProps" :color-scale="colorScale"
 									:z-series="zSeries" :z-scale="zScale"
 									@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event"
-									@zscale="zScale = $event" />
-								<div v-else-if="frmLoading" class="loading"><v-progress-circular indeterminate /></div>
+									@zscale="zScale = $event" @stage="frmStage = $event" />
+								<div v-else-if="frmLoading" class="fig-loading"><LoadingOverlay :stage="figStage" /></div>
 								<img v-else-if="frmUrl" :src="frmUrl" :alt="`FRM ${axis}`" />
 								<div v-else class="empty">No {{ axis }} fingerprint</div>
 								<div v-if="octreeMsg && !liveOn" class="render-msg frm-render-msg">{{ octreeMsg }}</div>
@@ -2962,6 +2976,12 @@ function fmtDateTime(v: string | null | undefined) {
 .segbtn:last-child { border-right: 0; }
 .segbtn.on { background: var(--fp-accent); color: var(--fp-accent-ink); }
 .segbtn:disabled { opacity: 0.4; cursor: default; }
+/* The active view type is still loading (#102): a bar sweeping along the button's foot. Under
+   reduced motion the global rule stops the sweep and the bar stays as a static underline. */
+.segbtn.busy { position: relative; }
+.segbtn.busy::after { content: ''; position: absolute; left: 6px; right: 6px; bottom: 2px; height: 2px; border-radius: 2px; background: currentColor; opacity: 0.8; transform-origin: left; animation: seg-busy 1.1s ease-in-out infinite; }
+@keyframes seg-busy { 0%, 100% { transform: scaleX(0.15); } 50% { transform: scaleX(1); } }
+.fig-loading { position: relative; align-self: stretch; width: 100%; min-height: 160px; }
 .zslider { width: 70px; accent-color: var(--fp-accent); vertical-align: middle; cursor: pointer; }
 .stats-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm, 12px); margin: 6px 0 4px; }
 .stats-table th { text-align: right; font-size: var(--fs-xs, 11px); letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); padding: 2px 6px; }

@@ -17,6 +17,8 @@ import type { ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
+import LoadingOverlay from './LoadingOverlay.vue';
+import { sameStage, stageInfo, streamStage, type LoadStage, type StageInfo } from './loadStage';
 
 const props = defineProps<{
 	octreePath: string;                       // served subdir: /octrees/<octreePath>/
@@ -35,10 +37,20 @@ const emit = defineEmits<{
 	(e: 'climits', v: { cmin: number; cmax: number }): void;
 	(e: 'points', n: number): void;   // LOD-visible point count (for the resolution readout)
 	(e: 'zscale', v: number): void;   // 3-finger vertical swipe adjusts the Z exaggeration
+	(e: 'stage', v: StageInfo | null): void;   // what the view is busy with (null = idle), for the host's busy mark (#102)
 }>();
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 const loading = ref(true);
+// 'open' while the metadata and root node load, then 'stream' while LOD nodes arrive: `loading`
+// used to clear as soon as the root was in, so the rest of the full-res streaming looked finished
+// (#102).
+const stage = ref<LoadStage | null>({ kind: 'open' });
+watch(stage, (s) => emit('stage', stageInfo(s)));
+// Only the initial fill counts: after it, a pan or zoom re-streams a few nodes and a pill flashing
+// on every gesture would be noise.
+let lastChangeAt = performance.now();
+let streamDone = false;
 const error = ref<string | null>(null);
 const pointCount = ref(0);
 
@@ -187,6 +199,8 @@ async function loadMeta(base: string) {
 
 async function load() {
 	loading.value = true; error.value = null;
+	stage.value = { kind: 'open' };
+	streamDone = false;
 	// The octree host is configured, not assumed to be the SPA origin: the standalone app is
 	// served from a different origin than the octree server, while the Directus module is
 	// same-origin. The host supplies whichever applies.
@@ -217,9 +231,12 @@ async function load() {
 		frameCamera();
 		applyZ();
 		loading.value = false;
+		lastChangeAt = performance.now();
+		stage.value = streamStage(0, props.totalPoints, 0);
 	} catch (e: any) {
 		error.value = e?.message || 'failed to load octree';
 		loading.value = false;
+		stage.value = null;
 	}
 }
 
@@ -261,7 +278,12 @@ function setupGL() {
 		if (pco && potree && renderer && camera) {
 			const r = potree.updatePointClouds([pco], camera, renderer);
 			const n = (r as any)?.numVisiblePoints ?? pointCount.value;
-			if (n !== lastVisibleN) { lastVisibleN = n; needsRender = true; }   // nodes streamed in/out
+			if (n !== lastVisibleN) { lastVisibleN = n; needsRender = true; lastChangeAt = performance.now(); }   // nodes streamed in/out
+			if (!loading.value && !streamDone) {
+				const next = streamStage(n, props.totalPoints, performance.now() - lastChangeAt);
+				if (!next) streamDone = true;
+				if (!sameStage(stage.value, next)) stage.value = next;
+			}
 			if (Math.abs(n - pointCount.value) > pointCount.value * 0.02 + 1) { pointCount.value = n; emit('points', n); }
 			if (!needsRender) return;
 			needsRender = false;
@@ -377,8 +399,8 @@ defineExpose({ currentBounds, exportViewport });
 
 <template>
 	<div class="frm-octree">
-		<div v-if="loading" class="fc-msg"><v-progress-circular indeterminate small /> streaming full-res…</div>
-		<div v-else-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
+		<LoadingOverlay v-if="stage" :stage="stage" />
+		<div v-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
 		<canvas v-show="!error" ref="canvasEl"></canvas>
 		<span v-if="!loading && !error" class="fc-count">{{ pointCount.toLocaleString() }} pts (LOD)</span>
 	</div>
