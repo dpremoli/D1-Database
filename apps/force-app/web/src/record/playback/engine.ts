@@ -231,7 +231,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 	}
 
 	function trimWindow(tSec: number) {
-		const tMin = tSec - client.windowSec;
+		const tMin = tSec - client.retainSec;
 		let drop = 0;
 		const t = client.trace.t;
 		while (drop < t.length && t[drop] < tMin) drop++;
@@ -242,6 +242,21 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		client.trace.fz.splice(0, drop);
 		for (const n of SUB_NAMES) client.trace.sub[n].splice(0, drop);
 	}
+
+	// A view asked for more history than is retained (a wider window than the slider's maximum).
+	// Unlike the live path, playback can recover it: rebuild the trace from the first whole bin
+	// that can survive the new trim up to traceCursor. The bins sit on the same fixed boundaries as
+	// ever, so the result is exactly what playing through with the wider retention would have
+	// built — the seek-equals-play invariant holds across window changes too.
+	function rebuildTrace() {
+		if (!cache) return;
+		client.trace = emptyTrace();
+		const from = Math.floor(idxOfTime(state.tSec - client.retainSec) / binSize) * binSize;
+		appendTraceBins(from, traceCursor);
+		trimWindow(state.tSec);
+		client.frameSeq.value++;
+	}
+	client.onRetentionGrow = rebuildTrace;
 
 	// Bring the buffers to exactly represent playhead `tSec`. Forward is an append; backward
 	// rebuilds from scratch, which is cheap because it is a straight pass over typed arrays.
@@ -266,6 +281,11 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		}
 		// Trace advances only to a whole-bin boundary; FRM advances to the playhead itself.
 		const binEnd = Math.floor(target / binSize) * binSize;
+		// Bins wholly before the retained history would only be built to be trimmed again below, so
+		// a long forward seek (or the rebuild after a backward one) starts at the first bin that can
+		// survive the trim. Same fixed bin boundaries, so nothing about the result changes.
+		const keepFrom = Math.floor(idxOfTime(tSec - client.retainSec) / binSize) * binSize;
+		if (traceCursor < keepFrom) traceCursor = Math.min(keepFrom, binEnd);
 		appendTraceBins(traceCursor, Math.max(traceCursor, binEnd));
 		traceCursor = Math.max(traceCursor, binEnd);
 		appendFrmPoints(frmCursor, target);

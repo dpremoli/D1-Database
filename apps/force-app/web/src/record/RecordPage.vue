@@ -39,7 +39,9 @@ const PANEL_TYPES: Record<string, { title: string; icon: string; single?: boolea
 	frm: { title: 'FRM Map', icon: 'fingerprint', w: 4, h: 19 },
 	polar: { title: 'Polar Plot', icon: 'radar', w: 4, h: 16 },
 };
-type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: PlotMode; channels?: string[] };
+// windowSec: a Force panel's own time window (#34), persisted with the layout. Absent = follow the
+// workspace default (w.plot.windowSec).
+type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: PlotMode; channels?: string[]; windowSec?: number };
 const DEFAULT_LAYOUT: Inst[] = [
 	{ i: 'options', type: 'options', x: 0, y: 0, w: 2, h: 28 },
 	{ i: 'overview', type: 'overview', x: 2, y: 0, w: 6, h: 3 },

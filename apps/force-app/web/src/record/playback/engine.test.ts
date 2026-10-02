@@ -179,13 +179,76 @@ describe('playback engine', () => {
 		expect(h.engine.state.tSec).toBeCloseTo(h.engine.state.duration, 5);
 	});
 
-	it('trims the trace to windowSec, like the live path', () => {
+	it('trims the trace to the retained history, like the live path', () => {
 		const h = harness();
-		h.client.windowSec = 2;
+		h.client.retainFloorSec = 2;
 		h.engine.load(makeCache(), { ppr: 1, stride: 1 });
 		h.engine.seek(9);
 		const t = h.client.trace.t;
 		expect(t[0]).toBeGreaterThanOrEqual(9 - 2 - 0.5);
+	});
+
+	describe('window changes (#105/#76)', () => {
+		it('rebuilds already-trimmed history when a view asks for a wider window', () => {
+			const h = harness();
+			h.client.retainFloorSec = 2;
+			h.engine.load(makeDenseCache(), { ppr: 1, stride: 1 });
+			h.engine.seek(9);
+			expect(h.client.trace.t[0]).toBeGreaterThan(6.5);
+			// No playback and no seek: the wider window must apply while paused.
+			h.client.setWindowDemand('panel', 6);
+			expect(h.client.trace.t[0]).toBeLessThan(3.1);
+			expect(h.client.trace.t[0]).toBeGreaterThanOrEqual(3 - 0.01);
+		});
+
+		it('a rebuilt trace equals one played through with that window all along', () => {
+			const played = harness();
+			played.client.retainFloorSec = 6;
+			played.engine.load(makeDenseCache(), { ppr: 1, stride: 1 });
+			played.engine.play();
+			for (let i = 0; i < 25; i++) played.tick(333);
+			played.engine.pause();
+
+			const widened = harness();
+			widened.client.retainFloorSec = 2;
+			widened.engine.load(makeDenseCache(), { ppr: 1, stride: 1 });
+			widened.engine.play();
+			for (let i = 0; i < 25; i++) widened.tick(333);
+			widened.engine.pause();
+			widened.client.setWindowDemand('panel', 6);
+
+			expect(widened.client.trace.t).toEqual(played.client.trace.t);
+			expect(widened.client.trace.fz).toEqual(played.client.trace.fz);
+			expect(widened.client.trace.sub.Fx1).toEqual(played.client.trace.sub.Fx1);
+		});
+
+		it('a long forward seek builds the same trace as playing there', () => {
+			const played = harness();
+			played.client.retainFloorSec = 2;
+			played.engine.load(makeDenseCache(), { ppr: 1, stride: 1 });
+			played.engine.play();
+			for (let i = 0; i < 25; i++) played.tick(333);
+			played.engine.pause();
+
+			const sought = harness();
+			sought.client.retainFloorSec = 2;
+			sought.engine.load(makeDenseCache(), { ppr: 1, stride: 1 });
+			sought.engine.seek(1);
+			sought.engine.seek(played.engine.state.tSec);
+			expect(sought.client.trace.t).toEqual(played.client.trace.t);
+			expect(sought.client.trace.fx).toEqual(played.client.trace.fx);
+		});
+
+		it('withdrawing a demand does not throw away history needed by the floor', () => {
+			const h = harness();
+			h.client.retainFloorSec = 2;
+			h.engine.load(makeDenseCache(), { ppr: 1, stride: 1 });
+			h.client.setWindowDemand('panel', 5);
+			h.engine.seek(9);
+			expect(h.client.retainSec).toBe(5);
+			h.client.setWindowDemand('panel', null);
+			expect(h.client.retainSec).toBe(2);
+		});
 	});
 
 	it('reports running peaks and rpm from the cache, not re-derived', () => {

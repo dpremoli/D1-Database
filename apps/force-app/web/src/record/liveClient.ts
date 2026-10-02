@@ -5,6 +5,7 @@ import { reactive, ref } from 'vue';
 import { getConfig } from '../config';
 import { authHeaders } from '../directusClient';
 import type { RecordConfig } from './types';
+import { WINDOW_MAX_SEC, WINDOW_SLIDER_MAX_SEC } from './plotWindow';
 
 const MAGIC = 0x46_4c_31_44; // 'D1LF' bytes D,1,L,F read little-endian as a u32
 // The 8 dyno sub-channels the frame streams (min/max envelope), in raw-file column order.
@@ -58,9 +59,30 @@ export class RecordClient {
 	fftHistCap = 220;
 	fftSeq = ref(0);
 
-	// rolling trace envelope (min/max per axis + per dyno sub-channel), capped to windowSec.
+	// rolling trace envelope (min/max per axis + per dyno sub-channel), capped to retainSec.
 	trace = emptyTrace();
-	windowSec = 12;
+	// How much trace history to keep. This used to be the plot's window itself (windowSec), so the
+	// window only took effect as data arrived, widening it could never bring back what had been
+	// dropped, and every panel shared one window (#105/#76/#34). Now each plot slices its own
+	// window (plotWindow.ts) out of a history at least as long as the slider's maximum; a view
+	// that wants more (a typed-in window, up to WINDOW_MAX_SEC) registers a demand for it.
+	retainFloorSec = WINDOW_SLIDER_MAX_SEC;
+	private windowDemand = new Map<unknown, number>();
+	// Called when retainSec grows, so playback can rebuild the trace history it has already
+	// trimmed (engine.ts). The live path has nothing to rebuild from: it just keeps more from now on.
+	onRetentionGrow: (() => void) | null = null;
+	get retainSec(): number {
+		let m = this.retainFloorSec;
+		for (const v of this.windowDemand.values()) if (v > m) m = v;
+		return Math.min(WINDOW_MAX_SEC, m);
+	}
+	/** A view asks for `sec` of trace history under `key` (any stable identity); null withdraws it. */
+	setWindowDemand(key: unknown, sec: number | null) {
+		const before = this.retainSec;
+		if (sec == null || !Number.isFinite(sec)) this.windowDemand.delete(key);
+		else this.windowDemand.set(key, sec);
+		if (this.retainSec > before) this.onRetentionGrow?.();
+	}
 
 	// FRM points, preallocated; filled incrementally. count = live points; cCap for colour scaling.
 	// cx/cy/cz carry ALL three axis forces per point (not just whichever axis was selected when the
@@ -297,8 +319,8 @@ export class RecordClient {
 				for (let j = 0; j < nSubUse; j++) this.trace.sub[SUB_NAMES[j]].push([sub[sb + j * 2], sub[sb + j * 2 + 1]]);
 			}
 		}
-		// drop points older than the window
-		const tMin = tSec - this.windowSec;
+		// drop points older than the retained history (each plot slices its own, shorter, window)
+		const tMin = tSec - this.retainSec;
 		let drop = 0;
 		while (drop < this.trace.t.length && this.trace.t[drop] < tMin) drop++;
 		if (drop > 0) {

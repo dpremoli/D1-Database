@@ -95,7 +95,8 @@ export function createWorkspace() {
 		forceMode: 'time', frmAxis: 'Fz', colormap: 'viridis', pointSize: 1.8, windowSec: 12, liveFrmStride: 1,
 		polarRadius: 'Fz', polarAngleSource: 'tacho', polarBins: 36,
 	});
-	watch(() => plot.windowSec, (v) => { client.windowSec = Math.max(1, v); });
+	// plot.windowSec is only the DEFAULT view window for force panels that have not set their own
+	// (#34); it no longer limits the client's trace history (#105, see liveClient's retainSec).
 	// `rpm`/`feed`/`diam` here describe the CUT BEING PLAYED. They deliberately do not live on
 	// `cfg`: that is the config for the next real recording and is also serialised into the
 	// Directus write-back by buildRunPayload(), so letting a replay overwrite it would silently
