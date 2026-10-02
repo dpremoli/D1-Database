@@ -2,7 +2,7 @@
 // Video-style transport for replaying an archived cut: play/pause, a scrub bar, an elapsed /
 // total readout and a speed picker. Playback writes nothing — this drives a playhead over a cut
 // already in the database, so there is no Stop and no Save.
-import { computed } from 'vue';
+import { computed, onBeforeUnmount } from 'vue';
 import { useWorkspace } from '../workspace';
 import { formatDuration as fmt } from '../../format';
 
@@ -20,8 +20,25 @@ const timeTitle = computed(() => (p.value.t0 > 0
 
 // Scrubbing fires continuously while dragging; only the settled value forces a spectrum request
 // (the FFT / spectrogram views are the expensive part). `input` = dragging, `change` = released.
-function onScrub(e: Event) { w.playback.seek(Number((e.target as HTMLInputElement).value), { commit: false }); }
-function onScrubEnd(e: Event) { w.playback.seek(Number((e.target as HTMLInputElement).value), { commit: true }); }
+// A drag can fire `input` several times per frame, and each seek is a buffer rebuild plus a relay
+// to any pop-out, so they are coalesced to the latest value once per animation frame (#107).
+let pendingSeek: number | null = null;
+let seekFrame = 0;
+function onScrub(e: Event) {
+	pendingSeek = Number((e.target as HTMLInputElement).value);
+	if (seekFrame) return;
+	seekFrame = requestAnimationFrame(() => {
+		seekFrame = 0;
+		if (pendingSeek !== null) w.playback.seek(pendingSeek, { commit: false });
+		pendingSeek = null;
+	});
+}
+function onScrubEnd(e: Event) {
+	if (seekFrame) { cancelAnimationFrame(seekFrame); seekFrame = 0; }
+	pendingSeek = null;
+	w.playback.seek(Number((e.target as HTMLInputElement).value), { commit: true });
+}
+onBeforeUnmount(() => { if (seekFrame) cancelAnimationFrame(seekFrame); });
 
 const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
 </script>

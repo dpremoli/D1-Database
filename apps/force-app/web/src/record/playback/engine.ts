@@ -231,16 +231,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 	}
 
 	function trimWindow(tSec: number) {
-		const tMin = tSec - client.retainSec;
-		let drop = 0;
-		const t = client.trace.t;
-		while (drop < t.length && t[drop] < tMin) drop++;
-		if (drop <= 0) return;
-		client.trace.t.splice(0, drop);
-		client.trace.fx.splice(0, drop);
-		client.trace.fy.splice(0, drop);
-		client.trace.fz.splice(0, drop);
-		for (const n of SUB_NAMES) client.trace.sub[n].splice(0, drop);
+		client.trimTrace(tSec - client.retainSec);
 	}
 
 	// A view asked for more history than is retained (a wider window than the slider's maximum).
@@ -250,6 +241,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 	// built — the seek-equals-play invariant holds across window changes too.
 	function rebuildTrace() {
 		if (!cache) return;
+		client.markDiscontinuity();   // bins were added at the FRONT: pop-outs need a full snapshot
 		client.trace = emptyTrace();
 		const from = Math.floor(idxOfTime(state.tSec - client.retainSec) / binSize) * binSize;
 		appendTraceBins(from, traceCursor);
@@ -264,6 +256,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		if (!cache) return;
 		const target = idxOfTime(tSec);
 		if (target < frmCursor) {
+			client.markDiscontinuity();
 			client.trace = emptyTrace();
 			client.frm.count = 0; client.frm.cAbsMaxByAxis = { Fx: 1, Fy: 1, Fz: 1 };
 			client.status.peaks = { Fx: 0, Fy: 0, Fz: 0 };
@@ -276,6 +269,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		// steady playback the guard is false and this costs nothing.
 		const hist = client.fftHistory;
 		if (hist.length && hist[hist.length - 1].t > tSec) {
+			client.markDiscontinuity();
 			client.fftHistory = hist.filter((e) => e.t <= tSec);
 			client.fftSeq.value++;
 		}

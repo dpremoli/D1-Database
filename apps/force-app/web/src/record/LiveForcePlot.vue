@@ -34,11 +34,15 @@ function resize() {
 	lastN = -1;   // force the next draw() past the unchanged-data skip so the resized canvas repaints
 }
 
-// Resolved once per draw (cheap relative to path-building below) rather than cached across theme
-// changes, since getComputedStyle already reflects the DOM's current [data-theme] attribute.
-function palette() {
+// Cached (#107): getComputedStyle forces a style recalculation, and this ran on every redraw of
+// every force plot — during replay, once per animation frame each. The colours only change with
+// the theme, and the theme watcher below drops the cache.
+type Palette = { bg: string; grid: string; axisLine: string; text: string; textFaint: string };
+let palCache: Palette | null = null;
+function palette(): Palette {
+	if (palCache) return palCache;
 	const s = getComputedStyle(document.documentElement);
-	return {
+	return palCache = {
 		bg: s.getPropertyValue('--plot-bg').trim() || '#0b1020',
 		grid: s.getPropertyValue('--border').trim() || 'rgba(255,255,255,0.06)',
 		axisLine: s.getPropertyValue('--border-2').trim() || 'rgba(255,255,255,0.2)',
@@ -163,7 +167,8 @@ function draw() {
 
 // Theme toggle changes the resolved palette but not n/t/channels, so the unchanged-data skip in
 // draw() would otherwise leave the canvas on the old theme's colours until the next real update.
-watch(theme, () => { lastN = -1; });
+// applyTheme() sets the ref before the [data-theme] attribute, but this watcher runs after both.
+watch(theme, () => { lastN = -1; palCache = null; });
 
 onMounted(() => { resize(); window.addEventListener('resize', resize); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); draw(); nextTick(resize); });
 onBeforeUnmount(() => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize); ro?.disconnect(); });
