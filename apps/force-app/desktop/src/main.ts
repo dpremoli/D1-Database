@@ -6,6 +6,7 @@ import { findAvailablePort } from './port';
 import { registerAppScheme, handleAppProtocol } from './protocol';
 import { checkRevealTarget } from './reveal';
 import { watchRenderer } from './rendererWatch';
+import { PopoutTracker } from './popouts';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
 import { initAutoUpdater } from './updater';
@@ -34,6 +35,8 @@ if (!gotLock) {
 registerAppScheme();
 
 let mainWindow: BrowserWindow | null = null;
+// #108: which pop-outs are open, so the ones open at quit come back on the next start.
+let popouts: PopoutTracker | null = null;
 let supervisor: SidecarSupervisor | null = null;
 let recorderPort: number | null = null;
 // Set once the operator has confirmed quitting mid-recording (or once there was nothing to confirm).
@@ -263,6 +266,7 @@ async function createWindow(): Promise<void> {
   const configStore = new ConfigStore(app.getPath('userData'));
   configStore.seedIfMissing();
   const windowState = new WindowStateStore(app.getPath('userData'));
+  popouts = new PopoutTracker(windowState);
 
   const mainKey = 'main';
   const savedMain = windowState.get(mainKey);
@@ -316,6 +320,9 @@ async function createWindow(): Promise<void> {
       });
       return;
     }
+    // The app is going: the pop-outs open now are the ones to bring back next time, and the
+    // closes that follow are the quit's, not the operator's.
+    popouts?.beginQuit();
     const maximized = mainWindow.isMaximized();
     // getNormalBounds() for minimized too, not just maximized: Windows reports x/y ≈ -32000 for a
     // minimized window, so closing while minimized would persist an off-screen position and the
@@ -324,12 +331,20 @@ async function createWindow(): Promise<void> {
     const bounds = restoring ? mainWindow.getNormalBounds() : mainWindow.getBounds();
     windowState.save(mainKey, { ...bounds, maximized });
   });
+  // Closing the main window quits the app, pop-outs included. They are fed by this window (the
+  // live relay in liveClient.ts) and go blank without it, and the quit prompt above has just told
+  // the operator that acquisition stops — which only happens if the app really does quit.
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    app.quit();
+  });
   mainWindow.webContents.setWindowOpenHandler((details) => classifyWindowOpen(details, windowState));
   // setWindowOpenHandler only returns creation OPTIONS, not a handle to the window itself — this
   // is the hook that actually gets one, so a pop-out's size/position can be saved when it closes.
   mainWindow.webContents.on('did-create-window', (win, details) => {
     const key = popoutKey(details.url);
     watchRenderer(win, 'pop-out', rendererWatchDeps);
+    popouts?.track(win, details.url);
     win.on('close', () => windowState.save(key, win.isMinimized() || win.isMaximized() ? win.getNormalBounds() : win.getBounds()));
   });
 
@@ -361,8 +376,24 @@ async function createWindow(): Promise<void> {
   }
 
   await mainWindow.loadURL('app://force/');
+  reopenPopouts();
   void offerScheduledTaskCleanup();
   initAutoUpdater(() => mainWindow, async () => (await activeRecording()) != null);
+}
+
+/** #108: reopens the pop-outs that were open at the last quit. Opened from the main window's own
+ * page, exactly as its buttons open them, so each goes through the same window-open handler
+ * (remembered size and position) and gets tracked again; it then resyncs over the live relay.
+ * Only app://force URLs reach here (PopoutTracker vets the saved list), and JSON.stringify keeps
+ * each one a plain string literal in the script. Skipped for the e2e suite, which expects a
+ * single window. */
+function reopenPopouts(): void {
+  if (process.env.FORCE_APP_TEST_HOOKS === '1' || !mainWindow || !popouts) return;
+  for (const url of popouts.toRestore()) {
+    mainWindow.webContents
+      .executeJavaScript(`void window.open(${JSON.stringify(url)}, '_blank', 'noopener,width=1400,height=900')`, true)
+      .catch((err) => console.error('reopening a pop-out failed', err));
+  }
 }
 
 export function getSupervisor(): SidecarSupervisor | null {
@@ -409,6 +440,7 @@ if (gotLock) {
       });
       return;
     }
+    popouts?.beginQuit();
     if (!supervisor || supervisor.getState() === 'stopped') return;
     event.preventDefault();
     void supervisor.stop().then(() => app.quit());
