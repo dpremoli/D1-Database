@@ -99,7 +99,7 @@ jobs:
 
       - name: Roll back all migrations (down — verifies reversibility)
         run: |
-          for _ in $(seq 1 120); do
+          for _ in $(seq 1 200); do
             dbmate --no-dump-schema down || break
           done
 
