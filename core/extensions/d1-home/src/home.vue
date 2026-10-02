@@ -17,10 +17,32 @@ const today = computed(() =>
 	new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }),
 );
 
-// Bookmark 71 = the "Samples" saved view (filter/layout) on physical_samples,
-// set up in Directus itself — link here rather than the bare collection so
-// users land on the same curated view as the sidebar bookmark.
-const SAMPLES_BOOKMARK = '/content/physical_samples?bookmark=71';
+// The "Samples" bookmark on physical_samples (defined in scripts/configure_directus.sql):
+// link to it rather than the bare collection, so users land on the same curated view as
+// the sidebar bookmark. It is found by name, since its id differs between installs; until
+// it is found (or if there is none) the link opens the collection's default view.
+const SAMPLES_LIST = '/content/physical_samples';
+const SAMPLES_BOOKMARK_NAME = 'Samples';
+const samplesLink = ref(SAMPLES_LIST);
+
+async function samplesBookmarkLink(): Promise<string> {
+	try {
+		const res = await api.get('/presets', {
+			params: {
+				filter: { bookmark: { _eq: SAMPLES_BOOKMARK_NAME }, collection: { _eq: 'physical_samples' } },
+				fields: ['id', 'user', 'role'],
+				sort: ['id'],
+				limit: -1,
+			},
+		});
+		const rows: { id: number; user: string | null; role: string | null }[] = res.data.data ?? [];
+		// Prefer the global bookmark, then a role's, then the user's own.
+		const pick = rows.find((r) => !r.user && !r.role) ?? rows.find((r) => !r.user) ?? rows[0];
+		return pick ? `${SAMPLES_LIST}?bookmark=${pick.id}` : SAMPLES_LIST;
+	} catch {
+		return SAMPLES_LIST;
+	}
+}
 
 interface Action { label: string; sub: string; icon: string; color: string; to: string; }
 const actions: Action[] = [
@@ -35,7 +57,7 @@ const actions: Action[] = [
 ];
 
 const stats = ref([
-	{ label: 'Samples', value: '—', icon: 'science', to: SAMPLES_BOOKMARK },
+	{ label: 'Samples', value: '—', icon: 'science', to: SAMPLES_LIST },
 	{ label: 'Machining', value: '—', icon: 'build', to: '/content/manufacturing_operations' },
 	{ label: 'FAST', value: '—', icon: 'whatshot', to: '/d1-fast-dashboard' },
 	{ label: 'Tests', value: '—', icon: 'biotech', to: '/content/test_sessions' },
@@ -71,6 +93,7 @@ async function count(collection: string, filter?: any): Promise<string> {
 }
 
 onMounted(async () => {
+	samplesBookmarkLink().then((to) => { samplesLink.value = to; stats.value[0].to = to; });
 	// Split manufacturing_operations into machining vs FAST (sintering) counts.
 	const [s, mach, fast, t, c] = await Promise.all([
 		count('physical_samples'),
@@ -158,7 +181,7 @@ onMounted(async () => {
 			<section class="recent">
 				<div class="section-head">
 					<h2>Recent activity</h2>
-					<button class="link" @click="go(SAMPLES_BOOKMARK)">View samples →</button>
+					<button class="link" @click="go(samplesLink)">View samples →</button>
 				</div>
 				<div v-if="recent.length" class="grid recent-grid">
 					<button v-for="r in recent" :key="`${r.kind}-${r.id}`" class="card rcard" @click="go(r.to)">
