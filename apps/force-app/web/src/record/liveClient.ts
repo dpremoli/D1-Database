@@ -111,7 +111,9 @@ export class RecordClient {
 	// overhead on the acquisition PC (a structured clone per frame, at full frame rate, that nothing
 	// receives) — and the common case is that no pop-out is open. This used to be a flag latched by
 	// the first sync-request and never cleared, so closing a pop-out did not stop the relaying.
-	private peers = new RelayPeers();
+	// A pop-out that vanished without a 'bye' (crashed, killed) also stops asking for trace history
+	// once it expires; its retainSec demand would otherwise stay registered for good.
+	private peers = new RelayPeers(undefined, () => this.setWindowDemand(this.peers, this.peers.maxRetainSec(performance.now())));
 	private get hasRelayPeer() { return this.peers.alive(performance.now()); }
 	private lastRelayAt = 0;
 	// Snapshots after the first are DELTAS (#107): only the FRM points, trace bins and spectra added

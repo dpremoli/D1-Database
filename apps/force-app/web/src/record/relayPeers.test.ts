@@ -52,4 +52,16 @@ describe('RelayPeers (#107)', () => {
 		expect(p.seen('b', 2000)).toBe(true);
 		expect(p.seen('a', 2500)).toBe(false);
 	});
+
+	it('tells the owner when a quiet peer expires, so it can drop that peer\'s demands', () => {
+		let n = 0;
+		const p = new RelayPeers(1000, () => n++);
+		p.seen('a', 0, 120);
+		expect(p.maxRetainSec(500)).toBe(120);
+		expect(n).toBe(0);
+		expect(p.maxRetainSec(2000)).toBeNull();
+		expect(n).toBe(1);
+		p.alive(3000);
+		expect(n).toBe(1);      // nothing further to expire
+	});
 });

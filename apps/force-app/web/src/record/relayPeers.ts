@@ -11,7 +11,8 @@ export const RELAY_PEER_TTL_MS = 3500;
 
 export class RelayPeers {
 	private peers = new Map<string, { seen: number; retainSec: number }>();
-	constructor(private ttlMs = RELAY_PEER_TTL_MS) {}
+	/** onExpire: called after a quiet peer is dropped (not for bye/clear, whose callers know). */
+	constructor(private ttlMs = RELAY_PEER_TTL_MS, private onExpire?: () => void) {}
 
 	/**
 	 * A peer spoke (sync-request or heartbeat). retainSec: how much trace history it wants.
@@ -29,7 +30,9 @@ export class RelayPeers {
 	clear() { this.peers.clear(); }
 
 	private prune(now: number) {
-		for (const [id, p] of this.peers) if (now - p.seen > this.ttlMs) this.peers.delete(id);
+		let expired = false;
+		for (const [id, p] of this.peers) if (now - p.seen > this.ttlMs) { this.peers.delete(id); expired = true; }
+		if (expired) this.onExpire?.();
 	}
 	/** Whether anyone is still listening. */
 	alive(now: number): boolean {

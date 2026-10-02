@@ -141,3 +141,18 @@ describe('opener handling of pop-out messages (#107)', () => {
 		expect(snaps().map((s) => s.full)).toEqual([true, true]);
 	});
 });
+
+describe('pop-out history demand (#107)', () => {
+	it('drops the demand of a pop-out that expired without saying bye', () => {
+		vi.useFakeTimers();
+		try {
+			const { parent } = setup();
+			parent.retainFloorSec = 1;
+			parent.onPeerMessage({ type: 'heartbeat', id: 'a', retainSec: 200 });
+			expect(parent.retainSec).toBe(200);
+			vi.advanceTimersByTime(10_000);
+			void (parent as any).hasRelayPeer;                   // the opener's next frame or tick checks liveness
+			expect(parent.retainSec).toBe(1);
+		} finally { vi.useRealTimers(); }
+	});
+});
