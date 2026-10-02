@@ -18,6 +18,8 @@ export interface SidecarOptions {
   livenessTimeoutMs?: number;
   /** Failed checks in a row before the backend is treated as hung and restarted. */
   livenessFailures?: number;
+  /** How long a backend must stay ready before earlier restarts stop counting against `maxRestarts`. */
+  stableAfterMs?: number;
   onStateChange?: (state: SidecarState, detail?: string) => void;
 }
 
@@ -31,6 +33,9 @@ const BACKOFF_BASE_MS = 1000;
 const DEFAULT_LIVENESS_INTERVAL_MS = 10_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 8_000;
 const DEFAULT_LIVENESS_FAILURES = 4;
+// A backend that has stayed up this long has recovered: hangs spread over a day must not add up
+// to the give-up state.
+const DEFAULT_STABLE_AFTER_MS = 60_000;
 // How long a POSIX child gets to exit on SIGTERM before it is SIGKILLed.
 const TERM_GRACE_MS = 3_000;
 
@@ -69,12 +74,13 @@ function killTree(pid: number): Promise<void> {
   });
 }
 
-/** Ends the child and resolves once it has exited. taskkill on Windows; elsewhere (dev on
+/** Ends the child and resolves true once it has exited, or false if no exit was reported in time.
+ * taskkill on Windows; elsewhere (dev on
  * Linux/macOS, and the unit tests) there is no taskkill, so SIGTERM, then SIGKILL if the process
  * is too wedged to act on it — a backend stuck in a blocking write may never get to its handler. */
-function terminate(proc: ChildProcess): Promise<void> {
-  if (proc.pid == null || proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve();
-  const exited = new Promise<void>((resolve) => proc.once('exit', () => resolve()));
+function terminate(proc: ChildProcess): Promise<boolean> {
+  if (proc.pid == null || proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve(true);
+  const exited = new Promise<boolean>((resolve) => proc.once('exit', () => resolve(true)));
   if (process.platform === 'win32') {
     void killTree(proc.pid);
   } else {
@@ -83,7 +89,11 @@ function terminate(proc: ChildProcess): Promise<void> {
     void exited.then(() => clearTimeout(escalate));
   }
   // Never wait forever: a quit must not hang on a child that refuses to report its exit.
-  return Promise.race([exited, sleep(TERM_GRACE_MS + 2_000)]);
+  let giveUp: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<boolean>((resolve) => {
+    giveUp = setTimeout(() => resolve(false), TERM_GRACE_MS + 2_000);
+  });
+  return Promise.race([exited, timedOut]).finally(() => clearTimeout(giveUp));
 }
 
 /** Spawns the recorder backend, polls it healthy, and restarts it with capped exponential
@@ -100,6 +110,10 @@ export class SidecarSupervisor {
   // Why the current process was killed by the liveness probe, if it was — reported in place of
   // the bare exit code, which for a killed process says nothing useful.
   private hungReason: string | null = null;
+  // A process the liveness probe gave up waiting on. Its restart is already under way, so a late
+  // 'exit' event from it must not start a second one.
+  private abandoned = new WeakSet<ChildProcess>();
+  private stableTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opts: SidecarOptions) {
     this.opts = {
@@ -108,6 +122,7 @@ export class SidecarSupervisor {
       livenessIntervalMs: DEFAULT_LIVENESS_INTERVAL_MS,
       livenessTimeoutMs: DEFAULT_LIVENESS_TIMEOUT_MS,
       livenessFailures: DEFAULT_LIVENESS_FAILURES,
+      stableAfterMs: DEFAULT_STABLE_AFTER_MS,
       ...opts,
     };
   }
@@ -162,6 +177,7 @@ export class SidecarSupervisor {
     proc.stderr?.on('data', keepTail);
     proc.on('exit', (code, signal) => {
       this.stopLiveness();
+      if (this.abandoned.has(proc)) return;
       if (this.stopping) {
         this.setState('stopped');
         return;
@@ -174,6 +190,7 @@ export class SidecarSupervisor {
       );
     });
     proc.on('error', (err) => {
+      if (this.abandoned.has(proc)) return;
       if (this.stopping) {
         this.setState('stopped');
         return;
@@ -208,6 +225,11 @@ export class SidecarSupervisor {
     if (ready) {
       this.setState('ready');
       this.startLiveness(this.proc);
+      this.stableTimer = setTimeout(() => {
+        this.stableTimer = null;
+        this.restarts = 0;
+      }, this.opts.stableAfterMs);
+      this.stableTimer.unref?.();
     } else if (!this.stopping) {
       this.setState('crashed', `did not become healthy within ${this.opts.readyTimeoutMs}ms`);
     }
@@ -230,7 +252,14 @@ export class SidecarSupervisor {
       if (failures >= this.opts.livenessFailures) {
         this.hungReason = `stopped answering ${this.opts.healthUrl} (${failures} checks in a row); restarted it`;
         console.error(`sidecar: ${this.hungReason}`);
-        await terminate(proc);
+        const exited = await terminate(proc);
+        if (!exited && !this.stopping && this.proc === proc) {
+          // No exit event even after the kill: the process is gone for our purposes. Without this
+          // the state would stay 'ready' for good, with nothing left watching it.
+          this.abandoned.add(proc);
+          this.stopLiveness();
+          await this.handleUnexpectedExit(`${this.hungReason}; it did not report exiting`);
+        }
         return;
       }
       this.scheduleLiveness(tick);
@@ -248,6 +277,8 @@ export class SidecarSupervisor {
   private stopLiveness(): void {
     if (this.livenessTimer) clearTimeout(this.livenessTimer);
     this.livenessTimer = null;
+    if (this.stableTimer) clearTimeout(this.stableTimer);
+    this.stableTimer = null;
   }
 
   async stop(): Promise<void> {

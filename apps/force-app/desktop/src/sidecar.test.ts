@@ -159,4 +159,27 @@ describe('SidecarSupervisor', () => {
     expect(sup.getState()).toBe('ready');
     expect(sup.getRestartCount()).toBe(0);
   });
+
+  it('forgives restarts once the backend has stayed up for the stable window', async () => {
+    const port = freePort();
+    const states: SidecarState[] = [];
+    sup = new SidecarSupervisor({
+      exePath: process.execPath,
+      // Hangs 1.5 s into every life. With maxRestarts 1 a second hang would be the give-up state
+      // unless the first restart had been forgiven in between.
+      args: [FIXTURE, String(port), '--hang-after=1500'],
+      port,
+      healthUrl: `http://127.0.0.1:${port}/health`,
+      readyTimeoutMs: 5000,
+      maxRestarts: 1,
+      livenessIntervalMs: 100,
+      livenessTimeoutMs: 100,
+      livenessFailures: 2,
+      stableAfterMs: 300,
+      onStateChange: (s) => states.push(s),
+    });
+    await sup.start();
+    await waitFor(() => states.filter((s) => s === 'restarting').length >= 2, 15000);
+    expect(states).not.toContain('crashed');
+  }, 20000);
 });
