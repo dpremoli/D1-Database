@@ -54,7 +54,7 @@ function markerStyle(m: TimelineMarker) {
 	const color = m.kind === 'peak' && m.axis ? channelColor(m.axis, theme.value) : undefined;
 	return { left: `calc(8px + (100% - 16px) * ${f})`, ...(color ? { '--mc': color } : {}) };
 }
-function seekTo(m: TimelineMarker) { w.playback.seek(m.t, { commit: true }); }
+function seekTo(m: TimelineMarker) { w.playback.seek(m.seekT ?? m.t, { commit: true }); }
 </script>
 
 <template>

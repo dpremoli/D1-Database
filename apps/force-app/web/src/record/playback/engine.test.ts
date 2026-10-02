@@ -180,6 +180,19 @@ describe('playback engine', () => {
 		expect(h.engine.state.markers).toEqual([]);
 	});
 
+	it('seeking to a peak marker includes the peak sample, so the shown peak is the real one (#104)', () => {
+		const h = harness();
+		h.engine.load(makeDenseCache(), { ppr: 1, stride: 1 });
+		for (const [axis, want] of [['Fx', 9999], ['Fz', 8888]] as const) {
+			const m = h.engine.state.markers.find((x) => x.axis === axis)!;
+			h.engine.seek(m.seekT ?? m.t);
+			expect(h.client.status.peaks[axis]).toBeCloseTo(want, 0);
+			h.engine.seek(0);
+			h.engine.seek(m.t);                 // the peak sample's own time stops one sample short
+			expect(h.client.status.peaks[axis]).toBeLessThan(want - 1);
+		}
+	});
+
 	it('stops at the end and reports not playing', () => {
 		const h = harness();
 		h.engine.load(makeCache(), { ppr: 1, stride: 1 });

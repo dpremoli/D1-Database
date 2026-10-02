@@ -28,6 +28,16 @@ describe('computeMarkers (#104)', () => {
 		expect(m.find((x) => x.axis === 'Fy')!.label).toContain('-900');
 	});
 
+	it('gives a peak a seek time one sample later, clamped at the last sample', () => {
+		const c = cache();
+		const fx = computeMarkers(c).find((x) => x.axis === 'Fx')!;
+		expect(fx.seekT).toBeCloseTo(fx.t + 0.01, 4);
+		c.Fz[c.N - 1] = 1e6;
+		const fz = computeMarkers(c).find((x) => x.axis === 'Fz')!;
+		expect(fz.seekT).toBe(fz.t);
+		expect(computeMarkers(c).find((x) => x.kind === 'cut-start')!.seekT).toBeUndefined();
+	});
+
 	it('adds a saved crop start when it differs from the detected start', () => {
 		const m = computeMarkers(cache(), { cropStartSec: 4.5 });
 		expect(m.find((x) => x.kind === 'crop')?.t).toBeCloseTo(4.5, 5);

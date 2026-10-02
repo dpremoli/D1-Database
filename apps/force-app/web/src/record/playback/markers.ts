@@ -10,6 +10,12 @@ export interface TimelineMarker {
 	kind: MarkerKind;
 	/** The force axis, for a peak marker. */
 	axis?: 'Fx' | 'Fy' | 'Fz';
+	/**
+	 * Where a click should seek, when that is not `t`. A render at time T covers samples [0, T), so
+	 * seeking to a peak sample's own time would leave that sample out and show a lower peak; this
+	 * is the next sample's time, which includes it (or `t` itself for the last sample).
+	 */
+	seekT?: number;
 	/** Tooltip text. */
 	label: string;
 }
@@ -43,7 +49,7 @@ export function computeMarkers(c: Cache, o: { cropStartSec?: number | null } = {
 			if (v > bestAbs) { bestAbs = v; best = i; }
 		}
 		if (best < 0 || !Number.isFinite(bestAbs)) continue;
-		out.push({ t: c.t[best], kind: 'peak', axis, label: `${axis} peak · ${a[best].toFixed(0)} N at ${c.t[best].toFixed(2)} s` });
+		out.push({ t: c.t[best], seekT: best + 1 < c.N ? c.t[best + 1] : c.t[best], kind: 'peak', axis, label: `${axis} peak · ${a[best].toFixed(0)} N at ${c.t[best].toFixed(2)} s` });
 	}
 	return out.sort((x, y) => x.t - y.t);
 }
