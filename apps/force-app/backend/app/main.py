@@ -1652,7 +1652,14 @@ async def browse_captures(limit: int = 200) -> dict:
         ids = _capture_ids()
         for cid in ids[: max(1, min(limit, 1000))]:
             d = os.path.join(CAPTURES_ROOT, cid)
-            entry: dict = {"id": cid, "size_mb": 0.0, "finalized": False, "files": {}}
+            # #96: where the files are, for the "Show in folder" / copy-path controls.
+            entry: dict = {
+                "id": cid,
+                "dir": os.path.abspath(d),
+                "size_mb": 0.0,
+                "finalized": False,
+                "files": {},
+            }
             total = 0
             for fname in ("raw.d1raw", "capture.mat", "live_cache.bin", "summary.json"):
                 fpath = os.path.join(d, fname)

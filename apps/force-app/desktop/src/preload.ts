@@ -19,4 +19,7 @@ contextBridge.exposeInMainWorld('forceApp', {
   },
   /** Native folder picker; resolves to the chosen folder, or null if cancelled. */
   pickFolder: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog:pickFolder', defaultPath),
+  /** Opens a local capture's folder in the file browser. Main only allows paths inside the
+   * backend's captures folder. */
+  revealPath: (target: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke('shell:reveal', target),
 });

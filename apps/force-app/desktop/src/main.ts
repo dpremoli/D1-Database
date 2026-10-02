@@ -1,9 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, screen, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { ConfigStore } from './config';
 import { buildMenu } from './menu';
 import { findAvailablePort } from './port';
 import { registerAppScheme, handleAppProtocol } from './protocol';
+import { checkRevealTarget } from './reveal';
 import { watchRenderer } from './rendererWatch';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
@@ -215,6 +216,36 @@ function registerShellIpc(): void {
     const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
     return res.canceled ? null : (res.filePaths[0] ?? null);
   });
+
+  // #96: "Show in folder" for a local capture. The allowed area is asked of this app's own
+  // backend each time rather than taken from the renderer, since the root can change at runtime.
+  ipcMain.handle('shell:reveal', async (event, requested: unknown) => {
+    if (!fromApp(event)) return { ok: false, reason: 'not allowed from this page' };
+    const root = await currentCapturesRoot();
+    if (!root) return { ok: false, reason: "can't reach the recording backend" };
+    const check = checkRevealTarget(requested, root);
+    if (!check.ok) return check;
+    if (check.isDir) {
+      // Opens the folder itself, showing its files. openPath only for directories: on a file it
+      // would launch whatever program the file type is associated with.
+      const err = await shell.openPath(check.path);
+      return err ? { ok: false, reason: err } : { ok: true };
+    }
+    shell.showItemInFolder(check.path);
+    return { ok: true };
+  });
+}
+
+async function currentCapturesRoot(): Promise<string | null> {
+  if (recorderPort == null) return null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${recorderPort}/storage/config`, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { captures_root?: unknown };
+    return typeof body.captures_root === 'string' && body.captures_root ? body.captures_root : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Work areas of every connected screen (excludes taskbars/docks). Wrapped because `screen` is

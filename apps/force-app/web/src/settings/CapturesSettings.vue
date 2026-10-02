@@ -14,9 +14,12 @@ import { confirmAction } from '../ui/confirm';
 import EditCaptureMetadataDialog from './EditCaptureMetadataDialog.vue';
 import { matchUploaded, uploadedRowsSince } from './captureUploadState';
 import { formatMegabytes } from '../format';
+import { canRevealPaths, copyText, revealPath } from '../localPaths';
 
 interface Capture {
 	id: string;
+	/** Absolute folder on the recorder's disk (#96). */
+	dir?: string;
 	size_mb: number;
 	finalized: boolean;
 	files: Record<string, number>;
@@ -200,6 +203,22 @@ async function uploadAllUnsynced() {
 	if (!ok) return;
 	for (const c of pending) await upload(c);   // sequential: each is a multi-MB file upload
 }
+// #96: where a capture's files are. "Show in folder" needs the desktop app and a local recorder;
+// copying the path works everywhere.
+const canReveal = canRevealPaths();
+const rootMsg = ref('');
+async function copyPath(p: string, rowId?: string) {
+	const msg = (await copyText(p)) ? 'path copied' : 'copy failed: the clipboard is not available here';
+	if (rowId) rowMsg.value[rowId] = msg;
+	else rootMsg.value = msg;
+}
+async function showInFolder(p: string, rowId?: string) {
+	const err = await revealPath(p);
+	const msg = err ? `show in folder failed: ${err}` : '';
+	if (rowId) rowMsg.value[rowId] = msg;
+	else rootMsg.value = msg;
+}
+
 function fmtDate(mtime: number): string {
 	if (!mtime) return '—';
 	return new Date(mtime * 1000).toLocaleString();
@@ -301,7 +320,16 @@ onMounted(() => { load(); refreshQueue(); });
 				Upload {{ unsynced.length }} unsynced
 			</button>
 		</div>
-		<p class="hint path" v-if="capturesRoot">{{ capturesRoot }}</p>
+		<div class="hint path" v-if="capturesRoot">
+			<span>{{ capturesRoot }}</span>
+			<button class="iconbtn" title="Copy path" aria-label="Copy path" @click="copyPath(capturesRoot)">
+				<span class="material-symbols-rounded">content_copy</span>
+			</button>
+			<button v-if="canReveal" class="iconbtn" title="Show in folder" aria-label="Show in folder" @click="showInFolder(capturesRoot)">
+				<span class="material-symbols-rounded">folder_open</span>
+			</button>
+			<span v-if="rootMsg" class="pathmsg" :class="{ bad: rootMsg.includes('failed') }">{{ rootMsg }}</span>
+		</div>
 
 		<p v-if="error" class="err">{{ error }}</p>
 
@@ -371,6 +399,15 @@ onMounted(() => { load(); refreshQueue(); });
 					<span v-if="c.n">{{ c.n.toLocaleString() }} samples</span>
 					<span>{{ fmtDate(c.mtime) }}</span>
 				</div>
+				<div v-if="c.dir" class="rpath">
+					<span class="mono" :title="c.dir">{{ c.dir }}</span>
+					<button class="iconbtn" title="Copy path" aria-label="Copy path" @click="copyPath(c.dir, c.id)">
+						<span class="material-symbols-rounded">content_copy</span>
+					</button>
+					<button v-if="canReveal" class="iconbtn" title="Show in folder" aria-label="Show in folder" @click="showInFolder(c.dir, c.id)">
+						<span class="material-symbols-rounded">folder_open</span>
+					</button>
+				</div>
 				<p v-if="rowMsg[c.id]" class="rmsg" :class="{ bad: rowMsg[c.id].includes('failed') }">{{ rowMsg[c.id] }}</p>
 			</div>
 			<div class="ract">
@@ -403,7 +440,15 @@ onMounted(() => { load(); refreshQueue(); });
 h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 .lead { margin: 0 0 18px; font-size: var(--fs-md); color: var(--text-dim); line-height: 1.5; }
 .hint { font-size: var(--fs-sm); color: var(--text-dim); }
-.path { margin: 6px 0 14px; font-family: var(--mono); word-break: break-all; }
+.path { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin: 6px 0 14px; font-family: var(--mono); word-break: break-all; }
+.pathmsg { font-family: var(--font); color: var(--ok); margin-left: 4px; }
+.pathmsg.bad { color: var(--danger); }
+.rpath { display: flex; align-items: center; gap: 2px; margin-top: 3px; min-width: 0; font-size: var(--fs-xs); color: var(--text-dim); }
+.rpath .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.iconbtn { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 24px; height: 24px; padding: 0;
+	color: var(--text-dim); background: none; border: 0; border-radius: 6px; cursor: pointer; }
+.iconbtn:hover { color: var(--text); background: var(--surface-2); }
+.iconbtn .material-symbols-rounded { font-size: var(--icon-xs); }
 .err { color: var(--danger); font-size: var(--fs-sm); }
 .summary { display: flex; align-items: flex-end; gap: 22px; padding: 12px 14px;
 	background: var(--surface); border: 1px solid var(--border); border-radius: 10px; flex-wrap: wrap; }
