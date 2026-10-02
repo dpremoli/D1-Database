@@ -4,6 +4,7 @@ import { GridLayout, GridItem } from 'grid-layout-plus';
 import { useRoute } from 'vue-router';
 import ForceChart from './ForceChart.vue';
 import { pickMode, type FrmMode } from './frmMode';
+import { perKeyComputed } from './perKeyComputed';
 import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
@@ -1668,7 +1669,7 @@ const compactMeta = computed(() => (liveOn.value ? opMeta.value.filter((m) => !H
 const PEAK_FIELD: Record<string, string> = { Fx: 'peak_fx', Fy: 'peak_fy', Fz: 'peak_fz' };
 // Charts for one Signals panel instance — its own selected channels + RPM toggle (Force/FFT mode
 // stays shared, since it's tied to the filter preview + FRM). At least one axis is kept on.
-function chartsFor(item: RPanel) {
+function buildChartsFor(item: RPanel) {
 	const d = detail.value;
 	const sel = (item.channels && item.channels.length ? item.channels : AXES) as readonly Axis[];
 	const secondXLabel = 'radial (mm)';
@@ -1687,6 +1688,10 @@ function chartsFor(item: RPanel) {
 	}
 	return base;
 }
+// Cached per panel: the page re-renders on every hover move (hoverIndex), and rebuilding these
+// inputs each time handed every ForceChart fresh compare/radial arrays, so each recomputed its
+// O(N) geometry per mouse move (#100). Now they only change when their real inputs do.
+const chartsFor = perKeyComputed((item: RPanel) => item.i, buildChartsFor);
 // ---- Multi-cut comparison -----------------------------------------------------------------
 // Overlay other operations' force envelopes on the current one, so successive passes on a single
 // insert edge can be read against each other (tool wear shows as the force envelope growing pass
