@@ -16,6 +16,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import type { RecordClient } from './liveClient';
+import { queueUpload } from './frmUpload';
 import { createAccumulator, createScaleTexture, syncScaleTexture, ColorBar, type Axis, type ColorScale, type Histogram, type HistogramAccumulator } from '@d1/force-plotting';
 
 const props = withDefaults(defineProps<{ client: RecordClient; diam: number; colorScale: ColorScale; pointSize?: number; pointStride?: number; axis?: Axis }>(), {
@@ -116,7 +117,15 @@ function setup() {
 	geom.setDrawRange(0, 0);
 	material = makeMaterial();
 	material.uniforms.uPixelRatio.value = renderer.getPixelRatio();
-	scene.add(new THREE.Points(geom, material));
+	const points = new THREE.Points(geom, material);
+	// #87, same fix as FrmCloud's #14: three computes the bounding sphere ONCE, on first render,
+	// from whatever the buffer held then — here the all-zero preallocated buffer, a zero-radius
+	// sphere at the origin. Zoomed in on a part of the spiral away from the origin, the camera
+	// frustum no longer contains that sphere, the object is culled, and a culled object also skips
+	// its attribute upload, so slices appended meanwhile never reached the GPU. The cloud always
+	// fills the view it is framed for, so culling it buys nothing anyway.
+	points.frustumCulled = false;
+	scene.add(points);
 	sizeCanvas(); frame();
 	loop();
 }
@@ -338,11 +347,9 @@ function frame() {
 		// upload to [writeStart, rendered) so transfer cost stays proportional to new points only.
 		// NOTE the offsets differ per attribute: pos is stride-3, val is stride-1 (was colAttr,
 		// also stride-3) -- the one place this conversion changes the update-range arithmetic.
+		// #87: queued as the union of everything not yet uploaded, not just this slice (frmUpload.ts).
 		if (rendered > writeStart) {
-			posAttr.clearUpdateRanges(); valAttr.clearUpdateRanges();
-			posAttr.addUpdateRange(writeStart * 3, (rendered - writeStart) * 3);
-			valAttr.addUpdateRange(writeStart, rendered - writeStart);
-			posAttr.needsUpdate = true; valAttr.needsUpdate = true;
+			queueUpload(posAttr, valAttr, writeStart, rendered);
 			invalidate();
 		}
 		geom!.setDrawRange(0, rendered);
