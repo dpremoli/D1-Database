@@ -11,7 +11,7 @@ import { alarmController } from './alarms';
 import { recordingPrefs } from './recordingPrefs';
 import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
-import { loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
+import { createDebouncedSaver, loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
 import { confirmAction } from '../ui/confirm';
@@ -91,7 +91,13 @@ export function createWorkspace() {
 	);
 	// Remembered across launches (#108), parsed defensively field by field (plotPrefs.ts).
 	const plot = reactive<PlotPrefs>(loadPlotPrefs());
-	watch(plot, () => savePlotPrefs({ ...plot }), { deep: true });
+	// Written 250 ms after the last change, not on every slider tick; flushed when the page goes away.
+	const plotSaver = createDebouncedSaver<PlotPrefs>(savePlotPrefs);
+	watch(plot, () => plotSaver.schedule(() => ({ ...plot })), { deep: true });
+	if (typeof window !== 'undefined') {
+		window.addEventListener('pagehide', plotSaver.flush);
+		window.addEventListener('beforeunload', plotSaver.flush);
+	}
 	// plot.windowSec is only the DEFAULT view window for force panels that have not set their own
 	// (#34); it no longer limits the client's trace history (#105, see liveClient's retainSec).
 	// `rpm`/`feed`/`diam` here describe the CUT BEING PLAYED. They deliberately do not live on
