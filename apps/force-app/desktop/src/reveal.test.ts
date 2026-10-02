@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { checkRevealTarget } from './reveal';
 
 let base: string;
@@ -34,6 +34,20 @@ describe('checkRevealTarget', () => {
     expect(checkRevealTarget(base, root).ok).toBe(false);
     expect(checkRevealTarget(path.join(base, 'captures-evil'), root).ok).toBe(false);
     expect(checkRevealTarget(path.join(root, '..', 'captures-evil'), root).ok).toBe(false);
+  });
+
+  it('refuses a path outside the root before touching the filesystem', () => {
+    const real = vi.spyOn(fs, 'realpathSync');
+    try {
+      // A UNC share is only "absolute" on Windows; elsewhere it is refused even earlier.
+      for (const outside of ['\\\\attacker\\share\\x', path.join(base, 'captures-evil')]) {
+        expect(checkRevealTarget(outside, root).ok).toBe(false);
+      }
+      expect(checkRevealTarget(path.join(root, '..', '..', 'etc'), root).ok).toBe(false);
+      expect(real).not.toHaveBeenCalled();
+    } finally {
+      real.mockRestore();
+    }
   });
 
   it('refuses a link inside the root that points outside it', () => {

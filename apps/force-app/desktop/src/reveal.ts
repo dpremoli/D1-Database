@@ -13,6 +13,12 @@ export type RevealCheck = { ok: true; path: string; isDir: boolean } | { ok: fal
 export function checkRevealTarget(requested: unknown, capturesRoot: string): RevealCheck {
   if (typeof requested !== 'string' || !requested) return { ok: false, reason: 'no path given' };
   if (!path.isAbsolute(requested)) return { ok: false, reason: 'not an absolute path' };
+  // Lexical prefilter before any filesystem call: realpath on a UNC path reaches out to that SMB
+  // host, so a path outside the root must be refused without the main process ever touching it.
+  const lexical = path.relative(path.resolve(capturesRoot), path.resolve(requested));
+  if (lexical === '..' || lexical.startsWith(`..${path.sep}`) || path.isAbsolute(lexical)) {
+    return { ok: false, reason: 'only folders inside the recording folder can be opened' };
+  }
   let target: string;
   let root: string;
   try {
