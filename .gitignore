@@ -78,9 +78,13 @@ infra/octrees
 infra/force-app-updates
 
 # ---- Local / not-for-repo ----
-# local Claude config, memory, plans — but project skills are shared
+# local Claude config, memory, plans — but project skills, agents, hooks and the
+# shared settings.json are checked in (settings.local.json, logs and state stay local)
 .claude/*
 !.claude/skills/
+!.claude/agents/
+!.claude/hooks/
+!.claude/settings.json
 # local dev override (temporary SMB-mount workaround)
 docker-compose.override.yml
 # TLS certs (e.g. the Tailscale serve cert)
