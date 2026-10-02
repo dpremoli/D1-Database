@@ -56,7 +56,7 @@ Each stream works in its own worktree under `.claude/worktrees/` on branch
 
 | Stream | Worktree / branch id | State |
 |---|---|---|
-| A | `agent-ac87f3fd4cc2d8fcb` | in progress (restarted on Sonnet after the 15:33 session limit) |
+| A | `agent-ac87f3fd4cc2d8fcb` | done (`6449223`, `63b014c`); in review |
 | B | `agent-a868c600a24febd73` | in progress (restarted on Sonnet) |
 | C | `agent-a00fe5a7493b655ca` | reviewed (no blockers); fixing nits |
 | D | `agent-a16dd8a730e68dddf` | reviewed (no blockers); fixing nits |
