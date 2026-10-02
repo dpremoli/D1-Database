@@ -13,6 +13,7 @@ Endpoints:
   GET  /sessions              — list stored backup sessions
   GET  /sessions/{id}/raw     — download the raw D1RW file
   GET  /sessions/{id}/info    — session metadata (size, duration, state)
+  POST /sessions/{id}/mark-deleted — the recorder deleted its local copy; expire on retention
   DELETE /sessions/{id}       — delete a backup session
   GET  /health                — server health + storage info
 """
@@ -82,9 +83,26 @@ def _session_info(sid: str) -> dict | None:
     except (OSError, struct.error):
         pass
     info["raw_size_mb"] = round(info["raw_size_bytes"] / 1e6, 2)
-    state = info.get("meta", {}).get("state", "unknown")
+    meta = info.get("meta", {})
+    state = meta.get("state", "unknown")
     info["state"] = state
+    # When the purge sweep will remove this session — the same updated_at it measures from (or
+    # the directory mtime when meta has none), so a client can say "expires in Xh" without
+    # re-deriving the server's retention rule.
+    updated = meta.get("updated_at") or _mtime(d)
+    if updated:
+        info["updated_at"] = updated
+        info["expires_at"] = updated + RETENTION_HOURS * 3600
+    if meta.get("deleted_at"):
+        info["deleted_at"] = meta["deleted_at"]
     return info
+
+
+def _mtime(path: str) -> float:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
 
 
 # ---- Purge daemon ----
@@ -255,7 +273,9 @@ async def ingest_finish(request: Request) -> dict:
     try:
         with open(meta_path) as f:
             meta = json.load(f)
-        meta["state"] = "complete"
+        # A late finish must not resurrect a tombstone into a healthy-looking "complete".
+        if meta.get("state") != "deleted":
+            meta["state"] = "complete"
         meta["finished_at"] = time.time()
         meta["updated_at"] = time.time()
         with open(meta_path, "w") as f:
@@ -297,6 +317,37 @@ async def session_raw(sid: str) -> FileResponse:
     return FileResponse(
         raw, media_type="application/octet-stream", filename=f"{sid}.d1raw"
     )
+
+
+@app.post("/sessions/{sid}/mark-deleted")
+async def session_mark_deleted(sid: str) -> dict:
+    """The recorder deleted (or discarded) its local copy of this session.
+
+    The backup is deliberately NOT removed here: a local delete is exactly the kind of mistake this
+    server exists to undo. It becomes a tombstone instead — state "deleted" plus deleted_at — and
+    updated_at is reset so the ordinary purge sweep removes it one full retention period from now.
+    Clients use the state to stop labelling a deleted capture as a healthy "complete" backup.
+    """
+    d = _session_dir(sid)
+    meta_path = os.path.join(d, "meta.json")
+    if not os.path.isdir(d):
+        raise HTTPException(404, "session not found")
+    meta: dict = {"session_id": sid}
+    try:
+        with open(meta_path) as f:
+            meta = json.load(f)
+    except (OSError, ValueError):
+        pass
+    now = time.time()
+    # Keep what the stream reached, so a restore can still say whether the copy was complete.
+    if meta.get("state") != "deleted":
+        meta["state_before_delete"] = meta.get("state", "unknown")
+    meta["state"] = "deleted"
+    meta["deleted_at"] = now
+    meta["updated_at"] = now
+    with open(meta_path, "w") as f:
+        json.dump(meta, f)
+    return {"ok": True, "session_id": sid, "expires_at": now + RETENTION_HOURS * 3600}
 
 
 @app.delete("/sessions/{sid}")

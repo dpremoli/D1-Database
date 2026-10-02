@@ -254,7 +254,8 @@ def test_backup_config_save_and_load(tmp_path, monkeypatch):
         cfg = r.json()
         assert cfg["enabled"] is True
         assert cfg["server_url"] == "http://backuphost:8210"
-        assert cfg["retention_hours"] == 24
+        # An older UI may still send retention_hours: accepted, ignored (#93).
+        assert "retention_hours" not in cfg
 
         # Verify persisted
         r2 = client.get("/backup/config")

@@ -16,6 +16,7 @@ import os
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from .config import RecordConfig
@@ -48,8 +49,15 @@ def _config_path(captures_root: str) -> str:
     return BACKUP_CONFIG_PATH or os.path.join(captures_root, "backup_config.json")
 
 
+# Keys this client used to store but no longer owns. `retention_hours` was an editable field in
+# Settings that was saved here and never sent anywhere: retention is the backup SERVER's
+# BACKUP_RETENTION_HOURS, so the field changed nothing (#93). Dropped on load so an old config file
+# still loads cleanly, and the UI shows the server's own value instead.
+_OBSOLETE_KEYS = ("retention_hours",)
+
+
 def load_config(captures_root: str) -> dict:
-    cfg = {"enabled": False, "server_url": "", "retention_hours": 12}
+    cfg = {"enabled": False, "server_url": ""}
     # Fall back through the pre-move locations so an existing install doesn't silently lose its
     # backup settings — and therefore silently stop backing up — the first time it starts on the
     # new path. Only the first (current) path is ever written to; a save migrates the settings.
@@ -70,13 +78,15 @@ def load_config(captures_root: str) -> dict:
             # streaming a recording to the wrong host is worse than the safe defaults.
             log.warning("backup config at %s is unreadable — using defaults", path)
         break
+    for k in _OBSOLETE_KEYS:
+        cfg.pop(k, None)
     return cfg
 
 
 def save_config(captures_root: str, cfg: dict) -> dict:
     path = _config_path(captures_root)
     merged = load_config(captures_root)
-    merged.update(cfg)
+    merged.update({k: v for k, v in cfg.items() if k not in _OBSOLETE_KEYS})
     os.makedirs(os.path.dirname(path), exist_ok=True)
     atomic_write_json(path, merged, indent=2)
     return merged
@@ -92,14 +102,53 @@ def probe_server(server_url: str, timeout: float = 4.0) -> dict:
         return {"reachable": False, "error": str(e)}
 
 
-def list_remote_sessions(server_url: str, timeout: float = 8.0) -> list[dict]:
+class RemoteBackupError(Exception):
+    """The backup server could not be queried (unreachable, HTTP error, unparseable reply)."""
+
+
+def fetch_remote_sessions(server_url: str, timeout: float = 8.0) -> dict:
+    """The server's /sessions reply ({"sessions": [...], "retention_hours": ...}).
+
+    Raises RemoteBackupError rather than returning an empty list: an unreachable server and a
+    server with no backups are different answers, and showing "No remote backups found" for the
+    first is exactly the false reassurance #92 reported.
+    """
     try:
         req = urllib.request.Request(f"{server_url.rstrip('/')}/sessions", method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.loads(r.read())
-            return data.get("sessions", [])
-    except Exception:
+    except Exception as e:
+        raise RemoteBackupError(str(e)) from e
+    if not isinstance(data, dict) or not isinstance(data.get("sessions", []), list):
+        raise RemoteBackupError("unexpected reply from the backup server")
+    return data
+
+
+def list_remote_sessions(server_url: str, timeout: float = 8.0) -> list[dict]:
+    """Best-effort session list: [] when the server can't be reached. For callers that only need
+    "which ids are known to exist remotely"; a list shown to the user should use
+    fetch_remote_sessions and report the failure instead."""
+    try:
+        return fetch_remote_sessions(server_url, timeout).get("sessions", [])
+    except RemoteBackupError:
         return []
+
+
+def mark_remote_deleted(server_url: str, session_id: str, timeout: float = 4.0) -> bool:
+    """Tell the backup server the local copy of `session_id` is gone, so its copy is labelled as a
+    deleted capture and expires on the server's normal retention instead of reading as a healthy
+    "complete" backup (#91). Best-effort and never raises: a local delete must not fail because
+    the backup server is down. False when the server has no such session or can't be reached."""
+    if not server_url or not session_id:
+        return False
+    try:
+        url = f"{server_url.rstrip('/')}/sessions/{urllib.parse.quote(session_id)}/mark-deleted"
+        req = urllib.request.Request(url, data=b"", method="POST")
+        with urllib.request.urlopen(req, timeout=timeout):
+            return True
+    except Exception as e:
+        log.info("could not mark remote backup %s deleted: %s", session_id, e)
+        return False
 
 
 def fetch_remote_session_config(server_url: str, session_id: str, timeout: float = 8.0) -> dict:

@@ -1180,6 +1180,13 @@ async def health_doctor(request: Request) -> dict:
 
     # 9. Incomplete recordings
     incomplete = recovery.scan_incomplete(CAPTURES_ROOT, exclude_id=_active_session_id())
+    # Where recovery actually lives: Settings > Local Captures lists every incomplete capture with
+    # Recover and Delete. The old text sent people to "the Record page" in plain prose, whose
+    # banner can be hidden per-capture ("Ignore for now") while this check still flags it (#83).
+    captures_link = {
+        "to": "/settings?tab=captures&focus=incomplete-captures",
+        "label": "Open Local Captures",
+    }
     if incomplete:
         total_mb = sum(s.get("raw", {}).get("raw_size_mb", 0) for s in incomplete)
         findings.append(
@@ -1187,9 +1194,43 @@ async def health_doctor(request: Request) -> dict:
                 "service": "Crashed recordings",
                 "status": "warn",
                 "message": f"{len(incomplete)} incomplete recording(s) found ({total_mb:.0f} MB)",
-                "diagnosis": "Previous recordings did not finalize — likely from a crash or forced shutdown.",
-                "fix": "Go to the Record page to recover or discard them, or press Fix now to discard them all.",
+                "diagnosis": "Previous recordings did not finalize — likely from a crash or forced "
+                "shutdown. An interrupted recording usually still holds usable data.",
+                "fix": "Recover or delete them one at a time in Settings > Local Captures, or "
+                "discard them all (asks first, listing each one).",
                 "fixable": "purge_incomplete",
+                "fix_label": "Discard all…",
+                "link": captures_link,
+                # Listed so the confirmation can name exactly what is about to be deleted.
+                "items": [
+                    {
+                        "id": s["id"],
+                        "sample_name": ((s.get("manifest") or {}).get("config") or {}).get(
+                            "sample_name"
+                        ),
+                        "raw_size_mb": s["raw"]["raw_size_mb"],
+                        "duration_sec": s["raw"]["duration_sec"],
+                        "started_iso": s.get("started_iso"),
+                    }
+                    for s in incomplete
+                ],
+            }
+        )
+    # A discard deletes in the background and scan_incomplete hides those ids at once, so right
+    # after "Discard all" the check above already reads clean while multi-GB files are still being
+    # removed — and the doctor used to declare "All systems healthy" mid-delete (#83). Report the
+    # in-flight deletes as their own not-yet-healthy finding until they finish.
+    discarding = sorted(recovery._discarding)
+    if discarding:
+        findings.append(
+            {
+                "service": "Discarding recordings",
+                "status": "warn",
+                "message": f"Still deleting {len(discarding)} discarded recording(s)…",
+                "diagnosis": "Large raw files take a while to delete. Keep the app open until "
+                "this finishes.",
+                "pending": True,
+                "link": captures_link,
             }
         )
 
@@ -1259,6 +1300,7 @@ async def recovery_discard(session_id: str) -> dict:
         recovery._discarding.add(session_id)
         try:
             await run_in_threadpool(recovery.discard_session, CAPTURES_ROOT, session_id)
+            await _mark_remote_deleted(session_id)
         except Exception:
             log.exception("recovery_discard: background delete failed for id=%s", session_id)
         finally:
@@ -1282,7 +1324,9 @@ async def backup_get_config() -> dict:
 
 @app.post("/backup/config")
 async def backup_set_config(body: dict) -> dict:
-    updates = {k: body[k] for k in ("enabled", "server_url", "retention_hours") if k in body}
+    # retention_hours is no longer a client setting (#93) — an older UI may still send it, and it
+    # is ignored rather than rejected. The server's own value comes back in server_status.
+    updates = {k: body[k] for k in ("enabled", "server_url") if k in body}
     if updates.get("server_url"):
         updates["server_url"] = _validate_outbound_url(
             str(updates["server_url"]), "backup server URL"
@@ -1302,14 +1346,88 @@ async def backup_status() -> dict:
     return result
 
 
+def _local_capture_status(cid: str) -> str:
+    """What this machine holds for a capture id: finalized | incomplete | recording | missing."""
+    if not recovery.is_safe_id(cid):
+        return "missing"
+    d = os.path.join(CAPTURES_ROOT, cid)
+    if not os.path.isdir(d):
+        return "missing"
+    if os.path.isfile(os.path.join(d, "summary.json")):
+        return "finalized"
+    return "recording" if cid == _active_session_id() else "incomplete"
+
+
+def _annotate_remote_session(s: dict, retention_hours: float | None) -> dict:
+    """Cross-reference one remote backup against the local captures (#91, and the cross-link half
+    of #31).
+
+    The server's raw `state` only says how far the STREAM got ("complete" = /ingest/finish was
+    received), which read as "this recording is fine" even for a capture deleted locally long ago.
+    `backup_state` says what the copy is, and `local_status` what this machine still has, so the UI
+    can say "Fully backed up" / "Backup interrupted (partial)" / "Deleted locally — expires in Xh"
+    and refuse a restore that would overwrite a finalized local capture.
+    """
+    meta = s.get("meta") or {}
+    cfg = meta.get("config") or {}
+    sid = str(s.get("id", ""))
+    raw_state = s.get("state") or meta.get("state") or "unknown"
+    local = _local_capture_status(sid)
+    if raw_state == "deleted":
+        backup_state = "deleted"
+    elif raw_state == "complete":
+        backup_state = "complete"
+    elif raw_state == "streaming":
+        # Still "streaming" with no live local recording behind it = the stream was cut off (crash,
+        # network loss, app closed) and never finished: a partial copy.
+        backup_state = "streaming" if local == "recording" else "interrupted"
+    else:
+        backup_state = "unknown"
+    if local == "missing" and backup_state == "deleted":
+        local = "deleted"
+    name = cfg.get("sample_name") if isinstance(cfg, dict) else None
+    if not name and local == "finalized":
+        summary = _read_json(os.path.join(CAPTURES_ROOT, sid, "summary.json")) or {}
+        name = summary.get("sample_name")
+    expires_at = s.get("expires_at")
+    if expires_at is None and retention_hours and meta.get("updated_at"):
+        # Older servers don't report it; same rule their purge sweep applies.
+        expires_at = float(meta["updated_at"]) + float(retention_hours) * 3600
+    return {
+        **s,
+        "name": name or None,
+        "backup_state": backup_state,
+        "local_status": local,
+        "expires_at": expires_at,
+    }
+
+
 @app.get("/backup/remote-sessions")
 async def backup_remote_sessions() -> dict:
     cfg = backup_mod.load_config(CAPTURES_ROOT)
     url = cfg.get("server_url", "")
     if not url:
-        return {"sessions": [], "error": "no backup server configured"}
-    sessions = await run_in_threadpool(backup_mod.list_remote_sessions, url)
-    return {"sessions": sessions}
+        return {"configured": False, "sessions": [], "error": "no backup server configured"}
+    try:
+        data = await run_in_threadpool(backup_mod.fetch_remote_sessions, url)
+    except backup_mod.RemoteBackupError as e:
+        # An error, not an empty list: "No remote backups found" for a server that simply could
+        # not be asked is a false all-clear (#92).
+        raise HTTPException(502, f"could not reach the backup server: {e}")
+    retention = data.get("retention_hours")
+    sessions = await run_in_threadpool(
+        lambda: [_annotate_remote_session(s, retention) for s in data.get("sessions", [])]
+    )
+    return {"configured": True, "sessions": sessions, "retention_hours": retention}
+
+
+async def _mark_remote_deleted(cid: str) -> bool | None:
+    """Best-effort tombstone of a capture's remote backup after its local copy was deleted (#91).
+    None when no backup server is configured at all; never raises."""
+    url = backup_mod.load_config(CAPTURES_ROOT).get("server_url", "")
+    if not url:
+        return None
+    return await run_in_threadpool(backup_mod.mark_remote_deleted, url, cid)
 
 
 @app.post("/backup/restore/{session_id}")
@@ -1334,12 +1452,25 @@ async def backup_restore(session_id: str) -> dict:
             "local raw file. Delete or move the local capture first if you really want the remote "
             "copy (Settings > Local Captures).",
         )
+    # A failed restore used to leave its half-built directory behind: a raw file with no summary,
+    # which then showed up as an unnamed "incomplete" capture and in the recovery banner — and
+    # recovering THAT (no manifest) finalizes with default gains, i.e. volts labelled as newtons
+    # (#82). The backup is still on the server, so nothing is lost by removing it. Only a directory
+    # this request created is removed; one that already existed (an incomplete local copy) is left
+    # for the user to decide about.
+    created_dir = not os.path.isdir(capture_dir)
+
+    def _fail(status: int, detail: str) -> HTTPException:
+        if created_dir:
+            shutil.rmtree(capture_dir, ignore_errors=True)
+        return HTTPException(status, detail)
+
     os.makedirs(capture_dir, exist_ok=True)
     raw_path = os.path.join(capture_dir, "raw.d1raw")
     try:
         nbytes = await run_in_threadpool(backup_mod.download_remote_raw, url, session_id, raw_path)
     except Exception as e:
-        raise HTTPException(502, f"download failed: {e}")
+        raise _fail(502, f"download failed: {e}")
 
     # Recover the ORIGINAL config too, not just the bytes. recover_session reads the per-channel
     # dyno_gains out of manifest.json; with no manifest it builds a default RecordConfig whose
@@ -1354,24 +1485,26 @@ async def backup_restore(session_id: str) -> dict:
             restored_cfg = RecordConfig(**{k: v for k, v in remote_cfg.items() if v is not None})
             await run_in_threadpool(recovery.write_manifest, capture_dir, "restored", restored_cfg)
         except Exception as e:
-            raise HTTPException(
+            raise _fail(
                 500,
-                f"restored raw bytes but could not apply the original recording config ({e}); "
-                "finalizing now would silently produce volts instead of newtons",
+                f"downloaded the backup but could not apply the original recording config ({e}); "
+                "finalizing now would silently produce volts instead of newtons. Nothing was "
+                "kept on this machine — the backup is still on the server.",
             )
     else:
-        raise HTTPException(
+        raise _fail(
             502,
             "the backup server has no recording config for this session, so the per-channel "
             "gains needed to convert volts to newtons are unknown — refusing to finalize with "
-            "incorrect scaling. The raw file has been downloaded and is safe.",
+            "incorrect scaling. Nothing was kept on this machine — the backup is still on the "
+            "server.",
         )
 
     # Finalize the downloaded raw file
     try:
         summary = await run_in_threadpool(recovery.recover_session, CAPTURES_ROOT, session_id)
     except Exception as e:
-        raise HTTPException(500, f"finalize failed after download: {e}")
+        raise _fail(500, f"finalize failed after download: {e}")
     return {"restored": True, "session_id": session_id, "bytes": nbytes, "summary": summary}
 
 
@@ -1660,6 +1793,23 @@ async def browse_captures(limit: int = 200) -> dict:
                     entry["source"] = (s.get("config") or {}).get("source")
                 except (OSError, ValueError):
                     pass
+            else:
+                # No summary — the recording crashed or its finalize failed. manifest.json is
+                # written at record start with the full config, so the sample name is still known;
+                # without this the row could only show the timestamp id (#82).
+                cfg = (_read_json(os.path.join(d, recovery.MANIFEST)) or {}).get("config") or {}
+                if isinstance(cfg, dict):
+                    for key in ("sample_name", "source"):
+                        if cfg.get(key):
+                            entry[key] = cfg[key]
+                info = recovery._raw_info(d)
+                if info:
+                    entry["duration_sec"] = info["duration_sec"]
+                    entry["n"] = info["n_rows"]
+                # What Recover needs: a raw file with at least one row (scan_incomplete's rule).
+                entry["recoverable"] = bool(info and info["n_rows"] > 0)
+                entry["recording"] = cid == _active_session_id()
+                entry["discarding"] = cid in recovery._discarding
             rows.append(entry)
         return rows, storage.disk_usage_for(CAPTURES_ROOT)
 
@@ -1704,7 +1854,15 @@ async def delete_capture(cid: str) -> dict:
     log.info(
         "delete_capture: id=%s freed=%.1fMB in %.2fs", cid, freed / 1e6, time.perf_counter() - t0
     )
-    return {"deleted": True, "id": cid, "freed_mb": round(freed / 1e6, 2)}
+    # After the local delete has succeeded, never before: the remote copy is the undo for exactly
+    # this action, so it is only relabelled (and left to expire), not removed.
+    remote = await _mark_remote_deleted(cid)
+    return {
+        "deleted": True,
+        "id": cid,
+        "freed_mb": round(freed / 1e6, 2),
+        "remote_marked_deleted": remote,
+    }
 
 
 @app.get("/captures/{cid}/summary")
