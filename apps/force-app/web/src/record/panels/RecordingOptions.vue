@@ -73,15 +73,23 @@ function mergeDiam() { w.cfg.inner_diam = 0; diamSplit.value = false; }
 // `touched` records a card the OPERATOR has manually toggled, so a later resize (dragging the grid
 // panel, moving the window to a different monitor) never fights a deliberate choice — auto-fold
 // only ever adjusts a card the operator hasn't already decided about themselves.
-const open = reactive({ tooling: true, postCut: false });
-const touched = reactive({ tooling: false, postCut: false });
+const open = reactive({ machine: true, tooling: true, postCut: false });
+const touched = reactive({ machine: false, tooling: false, postCut: false });
 function toggleCard(card: keyof typeof open) {
 	touched[card] = true;
 	open[card] = !open[card];
 }
 
-// Least-essential-first: the order auto-fold closes cards in when content overflows.
-const CLOSE_ORDER: (keyof typeof open)[] = ['postCut'];
+// Least-essential-first: the order auto-fold closes cards in when content overflows. Machine
+// (#85) folds after Post-cut but before Tooling: it is set once per session and then mostly left
+// alone, and folded it still shows what is set (machineSummary) in its header.
+const CLOSE_ORDER: (keyof typeof open)[] = ['postCut', 'machine'];
+
+// The folded Machine card's one-line summary, so collapsing it never hides WHICH machine/operator
+// the cut will be logged against.
+const machineSummary = computed(() =>
+	[w.link.equipmentLabel, w.link.operatorLabel, w.meta.op_type].filter(Boolean).join(' · '),
+);
 
 // Measures instead of guessing: a fixed BASE/STEP pixel model can't know the real rendered height
 // of this form (it's never been seen rendered from here), and the first version of this shipped
@@ -204,7 +212,18 @@ onBeforeUnmount(() => {
 		<!-- ─── Everything else ─── -->
 		<div class="section-divider"><span>Details</span></div>
 
-		<MachineOperatorPanel />
+		<!-- Machine / Operator / Operation type (#85): a folding card like Tooling and Post-cut, open
+			 by default. Folded, its header still names what is set. -->
+		<div class="card" :class="{ collapsed: !open.machine }">
+			<button type="button" class="card-head" @click="toggleCard('machine')">
+				<span class="material-symbols-rounded chev">{{ open.machine ? 'expand_more' : 'chevron_right' }}</span>
+				<span class="material-symbols-rounded">precision_manufacturing</span>Machine
+				<span v-if="!open.machine && machineSummary" class="card-summary" :title="machineSummary">{{ machineSummary }}</span>
+			</button>
+			<div v-show="open.machine" class="card-body">
+				<MachineOperatorPanel />
+			</div>
+		</div>
 
 		<!-- NI-DAQ channel count used to be echoed here too ("N channels configured — edit in
 			 Settings"); dropped as pure duplication of the Settings page itself, which is the only
@@ -291,7 +310,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 .section-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 2px; font-size: var(--fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
 .section-divider::before, .section-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-/* Folding subpanels (Direction B / "Cards"): Tooling, Coolant & geometry, Post-cut. Body content
+/* Folding subpanels (Direction B / "Cards"): Machine, Tooling, Post-cut. Body content
    is v-show (not v-if) so folding a card never remounts/resets a LookupField's own search state —
    it just hides. */
 .card { border: 1px solid var(--border); background: rgba(255,255,255,0.02); border-radius: 10px; padding: 10px 11px; }
@@ -303,6 +322,12 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 .card-head .material-symbols-rounded { font-size: var(--icon-xs); color: var(--accent); }
 .card-head .chev { font-size: var(--icon-sm); color: var(--text-dim); margin-right: -2px; }
 .card-head:hover { color: var(--text); }
+/* Folded Machine card: what is set, as a chip after the title (#85). */
+.card-summary { flex: 0 1 auto; min-width: 0; margin-left: auto; padding: 1px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	font-weight: 600; color: var(--text); background: var(--surface-2); border-radius: 99px; }
+/* NI-DAQ fallback / NI MAX simulated note under the source selector (#86). */
+.src-note { display: flex; align-items: flex-start; gap: 5px; margin: -4px 0 0; font-size: var(--fs-xs); color: var(--text-dim); line-height: 1.35; }
+.src-note .material-symbols-rounded { font-size: var(--icon-xs); color: var(--accent); }
 /* New-edge toggle, inline in the Edge LookupField's own box via its #badge slot — a property of
    this specific edge, not a fact about the insert, so it lives next to Edge, not off in its own
    checkbox elsewhere. */
