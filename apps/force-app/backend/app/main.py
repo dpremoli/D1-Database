@@ -1521,6 +1521,34 @@ def _active_session_id() -> str | None:
     return _session.id if _busy() and _session else None
 
 
+def sample_rate_problem(rate: float, limits: dict) -> dict | None:
+    """A structured 400 detail when `rate` is outside the hardware's {"min", "max"}, else None.
+
+    Structured (not a bare string) so the UI can point at the field itself — `field` names the
+    RecordConfig key, and the numbers let it say what to change it to without parsing prose.
+    """
+    hi, lo = limits.get("max"), limits.get("min")
+    if hi is not None and rate > hi:
+        return {
+            "field": "sample_rate",
+            "value": rate,
+            "max": hi,
+            "min": lo,
+            "message": f"Sample rate {rate:,.0f} Hz is above the {hi:,.0f} Hz maximum of the "
+            "NI-DAQ modules these channels are on. Lower it and start again.",
+        }
+    if lo is not None and rate < lo:
+        return {
+            "field": "sample_rate",
+            "value": rate,
+            "max": hi,
+            "min": lo,
+            "message": f"Sample rate {rate:,.0f} Hz is below the {lo:,.0f} Hz minimum of the "
+            "NI-DAQ modules these channels are on. Raise it and start again.",
+        }
+    return None
+
+
 @app.post("/record/start")
 async def record_start(cfg: RecordConfig) -> dict:
     global _session
@@ -1560,6 +1588,14 @@ async def record_start(cfg: RecordConfig) -> dict:
             g = chan.dyno_gains(cc, kind=dyno_kind)
             if g:
                 cfg.dyno_gains = g
+        # #84: check the rate against what the assigned modules can actually do BEFORE creating
+        # a session. Otherwise DAQmx rejects it (-200077) inside the acquisition thread, after a
+        # capture directory exists, and the operator gets a raw driver message in a dialog that
+        # talks about finalizing and recovering a recording that never captured a sample.
+        limits = await run_in_threadpool(nidaq_enum.sample_rate_limits, cfg.nidaq_channels)
+        problem = sample_rate_problem(cfg.sample_rate, limits)
+        if problem:
+            raise HTTPException(400, problem)
         try:
             source = NidaqSource(
                 cfg, physical_channels=cfg.nidaq_channels or None, extra_channels=cfg.extra_channels
@@ -1680,6 +1716,7 @@ async def record_stop() -> dict:
         "id": _session.id,
         "state": _session.state,
         "error": _session.error,
+        "error_kind": _session.error_kind,
         "summary": _session.summary,
     }
 
@@ -2205,7 +2242,10 @@ def _channel_config() -> list[dict]:
 
 @app.get("/nidaq/devices")
 async def nidaq_devices() -> dict:
-    return _devices()
+    # Also reports runtime_available / hardware_present, which the Record page uses to grey out
+    # the NI-DAQ source when there is nothing to record from (#86). Threadpooled: DAQmx device
+    # enumeration is a driver call that can take a moment.
+    return await run_in_threadpool(nidaq_enum.describe_devices, _sim_layout())
 
 
 @app.get("/nidaq/catalog")

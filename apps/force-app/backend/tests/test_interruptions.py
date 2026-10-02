@@ -323,12 +323,16 @@ class TestStartFailure:
         assert sess.summary is None
         assert not os.path.isfile(os.path.join(sess.dir, "summary.json"))
 
-    def test_manifest_shows_error(self, tmp_path):
+    def test_failed_start_removes_the_empty_capture_dir(self, tmp_path):
+        """#84: 0 rows captured = nothing to finalize or recover, so nothing is left on disk, and
+        the failure is reported as a failed START, not a failed finalize."""
         sess = RecordingSession(_cfg(), str(tmp_path), StartFailureSource())
         sess.start()
         _wait(sess)
-        m = _manifest(sess)
-        assert m["state"] == "error"
+        assert sess.error_kind == "start"
+        assert sess.error.startswith("could not start acquisition:")
+        assert sess.status()["error_kind"] == "start"
+        assert not os.path.exists(sess.dir)
 
     def test_not_in_incomplete_scan(self, tmp_path):
         """Empty raw files should not appear in recovery scan."""
