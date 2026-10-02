@@ -7,6 +7,10 @@ import { authHeaders } from '../directusClient';
 import type { RecordConfig } from './types';
 import { firstAtOrAfter, WINDOW_MAX_SEC, WINDOW_SLIDER_MAX_SEC } from './plotWindow';
 import { RELAY_HEARTBEAT_MS, RelayPeers } from './relayPeers';
+import { createEmitThrottle } from './emitThrottle';
+
+// Playback relays to pop-outs at most this often (see relayTick).
+const RELAY_TICK_MS = 200;
 
 const MAGIC = 0x46_4c_31_44; // 'D1LF' bytes D,1,L,F read little-endian as a u32
 // The 8 dyno sub-channels the frame streams (min/max envelope), in raw-file column order.
@@ -115,7 +119,8 @@ export class RecordClient {
 	// once it expires; its retainSec demand would otherwise stay registered for good.
 	private peers = new RelayPeers(undefined, () => this.setWindowDemand(this.peers, this.peers.maxRetainSec(performance.now())));
 	private get hasRelayPeer() { return this.peers.alive(performance.now()); }
-	private lastRelayAt = 0;
+	private relayThrottle = createEmitThrottle(RELAY_TICK_MS);
+	private relayTrailing: ReturnType<typeof setTimeout> | null = null;
 	// Snapshots after the first are DELTAS (#107): only the FRM points, trace bins and spectra added
 	// since the last one. A full snapshot (every point, up to 2M of them, structured-cloned 5x a
 	// second) is sent only when a peer asks to sync or the buffers changed other than by appending
@@ -232,10 +237,20 @@ export class RecordClient {
 	// to at most 5x/sec — plenty for a viewer window. Each one is a delta (see buildSnapshot).
 	relayTick() {
 		if (!this.hasRelayPeer) return;
-		const now = performance.now();
-		if (now - this.lastRelayAt < 200) return;
-		this.lastRelayAt = now;
-		this.sendSnapshot(false);
+		if (this.relayThrottle.mark(performance.now())) { this.sendSnapshot(false); return; }
+		// Throttled: this may be the LAST tick (a scrub released, the cut ended, playback paused),
+		// after which nothing would ever send the state it left, and the pop-out would stay stale.
+		// A trailing send delivers it once the interval has passed.
+		if (this.relayTrailing === null) this.scheduleRelayTrailing(RELAY_TICK_MS);
+	}
+	private scheduleRelayTrailing(ms: number) {
+		this.relayTrailing = setTimeout(() => {
+			this.relayTrailing = null;
+			if (!this.relayThrottle.pending) return;           // a later tick already sent it
+			if (!this.hasRelayPeer) return;
+			if (this.relayThrottle.flush(performance.now())) this.sendSnapshot(false);
+			else this.scheduleRelayTrailing(10);               // the timer fired a hair early
+		}, ms);
 	}
 
 	/**
@@ -400,6 +415,7 @@ export class RecordClient {
 		if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; }
 		if (this.onPageHide) { window.removeEventListener('pagehide', this.onPageHide); this.onPageHide = null; }
 		this.ws?.close(); this.ws = null; this.relay?.close(); this.relay = null; this.peers.clear();
+		if (this.relayTrailing !== null) { clearTimeout(this.relayTrailing); this.relayTrailing = null; }
 	}
 
 	private onControl(msg: any) {

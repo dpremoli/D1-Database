@@ -156,3 +156,45 @@ describe('pop-out history demand (#107)', () => {
 		} finally { vi.useRealTimers(); }
 	});
 });
+
+describe('relayTick throttle (#107)', () => {
+	it('sends at most one snapshot per interval, and a trailing one so the last state is not lost', () => {
+		vi.useFakeTimers();
+		try {
+			const { parent, engine } = setup();
+			const posted: any[] = [];
+			(parent as any).relay = { postMessage: (m: any) => posted.push(m), close() {} };
+			parent.onPeerMessage({ type: 'sync-request', id: 'a' });
+			posted.length = 0;
+			vi.advanceTimersByTime(1000);
+			parent.onPeerMessage({ type: 'heartbeat', id: 'a' });
+			engine.seek(2);                       // leading: sent now
+			expect(posted).toHaveLength(1);
+			engine.seek(4);                       // inside the interval: held back
+			expect(posted).toHaveLength(1);
+			parent.onPeerMessage({ type: 'heartbeat', id: 'a' });
+			vi.advanceTimersByTime(250);
+			expect(posted).toHaveLength(2);       // trailing: the state the scrub ended on
+			expect(posted[1].frm.count).toBe(parent.frm.count);
+			vi.advanceTimersByTime(1000);
+			expect(posted).toHaveLength(2);       // nothing pending, nothing more sent
+		} finally { vi.useRealTimers(); }
+	});
+
+	it('does not send a trailing snapshot after the pop-out is gone', () => {
+		vi.useFakeTimers();
+		try {
+			const { parent, engine } = setup();
+			const posted: any[] = [];
+			(parent as any).relay = { postMessage: (m: any) => posted.push(m), close() {} };
+			parent.onPeerMessage({ type: 'sync-request', id: 'a' });
+			posted.length = 0;
+			vi.advanceTimersByTime(1000);
+			parent.onPeerMessage({ type: 'heartbeat', id: 'a' });
+			engine.seek(2); engine.seek(4);
+			parent.onPeerMessage({ type: 'bye', id: 'a' });
+			vi.advanceTimersByTime(500);
+			expect(posted).toHaveLength(1);
+		} finally { vi.useRealTimers(); }
+	});
+});
