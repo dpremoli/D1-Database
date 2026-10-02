@@ -85,6 +85,8 @@ infra/force-app-updates
 !.claude/agents/
 !.claude/hooks/
 !.claude/settings.json
+# per-machine skill setup (see each skill's config.example.json)
+.claude/skills/*/config.json
 # local dev override (temporary SMB-mount workaround)
 docker-compose.override.yml
 # TLS certs (e.g. the Tailscale serve cert)
