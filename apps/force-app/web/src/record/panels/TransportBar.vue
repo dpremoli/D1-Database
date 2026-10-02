@@ -8,6 +8,15 @@ import { formatDuration as fmt } from '../../format';
 
 const w = useWorkspace();
 const p = computed(() => w.playback.state);
+// The scrub runs over the cache's own time base, [t0, t0 + duration] (#110): a MATLAB cache holds
+// only the cut window, so its first sample sits seconds into the original signal. The readout
+// shows time ELAPSED into the cut against its length; the tooltip keeps the signal time, which
+// is what the force plot's x-axis is labelled in.
+const tEnd = computed(() => p.value.t0 + p.value.duration);
+const elapsed = computed(() => Math.max(0, p.value.tSec - p.value.t0));
+const timeTitle = computed(() => (p.value.t0 > 0
+	? `Signal time ${p.value.tSec.toFixed(2)} s — this file starts ${p.value.t0.toFixed(2)} s into the recording`
+	: `Signal time ${p.value.tSec.toFixed(2)} s`));
 
 // Scrubbing fires continuously while dragging; only the settled value forces a spectrum request
 // (the FFT / spectrogram views are the expensive part). `input` = dragging, `change` = released.
@@ -30,9 +39,9 @@ const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
 					{{ w.replay.downloading ? 'progress_activity' : p.playing ? 'pause' : 'play_arrow' }}
 				</span>
 			</button>
-			<input class="scrub" type="range" min="0" :max="p.duration || 0" step="0.01"
+			<input class="scrub" type="range" :min="p.t0" :max="tEnd" step="0.01"
 				:value="p.tSec" :disabled="!p.loaded || w.replay.downloading" @input="onScrub" @change="onScrubEnd" />
-			<span class="time">{{ fmt(p.tSec) }} / {{ fmt(p.duration) }}</span>
+			<span class="time" :title="timeTitle">{{ fmt(elapsed) }} / {{ fmt(p.duration) }}</span>
 		</div>
 		<div class="row sub">
 			<label class="speed">Speed

@@ -22,7 +22,17 @@ export interface PlaybackOpts {
 	cancel?: (h: number) => void;
 }
 export interface PlaybackState {
-	loaded: boolean; playing: boolean; tSec: number; duration: number; speed: number; error: string | null;
+	loaded: boolean; playing: boolean; speed: number; error: string | null;
+	/**
+	 * Playhead, in the cache's own time base. A MATLAB-ingested cache holds only the cut window, so
+	 * its t[0] is an absolute offset into the original signal (often 10-20 s), while a force-app
+	 * cache starts at 0 (#110). tSec therefore runs over [t0, t0 + duration], never [0, duration].
+	 */
+	tSec: number;
+	/** The cache's first timestamp: where the playhead starts and where a reset returns it. */
+	t0: number;
+	/** LENGTH of the cut (t[N-1] - t0), not its end time — "Cut time" readouts show this as is. */
+	duration: number;
 }
 export interface PlaybackEngine {
 	load(cache: Cache, o: { ppr: number; innerDiam?: number; stride: number; axis?: Axis; cropStartSec?: number }): void;
@@ -54,8 +64,12 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 	const cancel = opts.cancel ?? ((h: number) => cancelAnimationFrame(h));
 
 	const state = reactive<PlaybackState>({
-		loaded: false, playing: false, tSec: 0, duration: 0, speed: 1, error: null,
+		loaded: false, playing: false, tSec: 0, t0: 0, duration: 0, speed: 1, error: null,
 	});
+	// The playhead's last valid position (cache time): t[N-1] itself, kept apart rather than
+	// recomputed as t0 + duration, which can round a hair short and never draw the last sample.
+	let endSec = 0;
+	const tEnd = () => endSec;
 
 	let cache: Cache | null = null;
 	let ppr = 1, stride = 1, innerR = 0;
@@ -127,16 +141,20 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		client.frm.cLo = lo; client.frm.cHi = hi;
 		state.loaded = true;
 		state.error = null;
-		state.duration = c.t[c.N - 1];
-		state.tSec = 0;
-		renderTo(0, false);
+		// Start at the cache's own first sample, not at 0: before t[0] there is nothing to draw, so a
+		// playhead at 0 sat on an empty plot for the first t[0] seconds of every MATLAB cut (#110).
+		state.t0 = c.t[0];
+		endSec = c.t[c.N - 1];
+		state.duration = endSec - state.t0;
+		state.tSec = state.t0;
+		renderTo(state.t0, false);
 	}
 
 	function reset() {
 		pause();
 		client.reset();
 		frmCursor = 0; traceCursor = 0;
-		state.tSec = 0; state.duration = 0; state.loaded = false; state.error = null;
+		state.tSec = 0; state.t0 = 0; state.duration = 0; endSec = 0; state.loaded = false; state.error = null;
 		cache = null;
 	}
 
@@ -289,9 +307,9 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		const dt = (t - lastTick) / 1000;
 		lastTick = t;
 		const next = state.tSec + dt * state.speed;
-		if (next >= state.duration) {
-			state.tSec = state.duration;
-			renderTo(state.duration, true, true);
+		if (next >= tEnd()) {
+			state.tSec = tEnd();
+			renderTo(state.tSec, true, true);
 			client.relayTick();
 			pause();
 			return;
@@ -304,7 +322,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 
 	function play() {
 		if (!state.loaded || state.playing) return;
-		if (state.tSec >= state.duration) { state.tSec = 0; renderTo(0, false); }
+		if (state.tSec >= tEnd()) { state.tSec = state.t0; renderTo(state.t0, false); }
 		state.playing = true;
 		// Panels gate live accumulation on state === 'recording' (see RpmPanel); playback is live
 		// data as far as they are concerned. Pausing drops back to 'idle', which is also why the
@@ -328,7 +346,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 		toggle() { state.playing ? pause() : play(); },
 		seek(tSec, o) {
 			if (!state.loaded) return;
-			const t = Math.max(0, Math.min(state.duration, tSec));
+			const t = Math.max(state.t0, Math.min(tEnd(), tSec));
 			state.tSec = t;
 			renderTo(t, true, o?.commit !== false);
 			client.relayTick();

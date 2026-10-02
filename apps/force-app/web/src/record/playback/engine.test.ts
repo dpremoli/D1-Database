@@ -32,6 +32,14 @@ function makeDenseCache(n = 10000, fs = 1000): Cache {
 	return { N: n, Fs: fs, feed: 0.1, diam: 80, csSec: 0, ceSec: (n - 1) / fs, t, Fx, Fy, Fz, rpm, revs };
 }
 
+// A MATLAB-ingested cache: only the cut window is stored, so t[0] is an absolute offset into the
+// original signal (process_force.m caches `cutstart:cutend`). 5 s at 100 Hz starting at t=15 s.
+function makeOffsetCache(t0 = 15, n = 500, fs = 100): Cache {
+	const c = makeCache(n, fs);
+	for (let i = 0; i < n; i++) c.t[i] = t0 + i / fs;
+	return { ...c, csSec: t0, ceSec: t0 + (n - 1) / fs };
+}
+
 // Deterministic clock + manual frame pump, so no rAF and no wall-clock flake.
 function harness() {
 	let clock = 0;
@@ -116,6 +124,50 @@ describe('playback engine', () => {
 		expect(h.engine.state.tSec).toBe(0);
 		h.engine.seek(9999);
 		expect(h.engine.state.tSec).toBeCloseTo(h.engine.state.duration, 5);
+	});
+
+	describe('a cache that does not start at t=0 (#110)', () => {
+		it('starts the playhead at the first sample and reports the cut length', () => {
+			const h = harness();
+			h.engine.load(makeOffsetCache(), { ppr: 1, stride: 1 });
+			expect(h.engine.state.t0).toBeCloseTo(15, 5);
+			expect(h.engine.state.tSec).toBeCloseTo(15, 5);
+			expect(h.engine.state.duration).toBeCloseTo(4.99, 2);
+		});
+
+		it('plots from the very first second of playback', () => {
+			// Regression: the playhead started at 0, and idxOfTime() maps every t < t[0] to index 0, so
+			// the first 15 s of "playback" appended nothing at all.
+			const h = harness();
+			h.engine.load(makeOffsetCache(), { ppr: 1, stride: 1 });
+			h.engine.play();
+			h.tick(1000);
+			expect(h.engine.state.tSec).toBeCloseTo(16, 2);
+			expect(h.client.trace.t.length).toBeGreaterThan(50);
+			expect(h.client.frm.count).toBeGreaterThan(50);
+		});
+
+		it('clamps seeks to [t0, end] and replays from t0 after the end', () => {
+			const h = harness();
+			h.engine.load(makeOffsetCache(), { ppr: 1, stride: 1 });
+			h.engine.seek(3);
+			expect(h.engine.state.tSec).toBeCloseTo(15, 5);
+			h.engine.seek(999);
+			expect(h.engine.state.tSec).toBeCloseTo(19.99, 2);
+			// At the end, Play restarts from the first sample, not from 0.
+			h.engine.play();
+			expect(h.engine.state.tSec).toBeCloseTo(15, 5);
+			expect(h.engine.state.playing).toBe(true);
+		});
+
+		it('draws every sample once played to the end', () => {
+			const h = harness();
+			h.engine.load(makeOffsetCache(), { ppr: 1, stride: 1 });
+			h.engine.play();
+			for (let i = 0; i < 10; i++) h.tick(1000);
+			expect(h.engine.state.playing).toBe(false);
+			expect(h.client.status.nTotal).toBe(500);
+		});
 	});
 
 	it('stops at the end and reports not playing', () => {
