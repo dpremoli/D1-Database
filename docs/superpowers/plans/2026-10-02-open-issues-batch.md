@@ -58,7 +58,7 @@ Each stream works in its own worktree under `.claude/worktrees/` on branch
 |---|---|---|
 | A | `agent-ac87f3fd4cc2d8fcb` | in progress (restarted on Sonnet after the 15:33 session limit) |
 | B | `agent-a868c600a24febd73` | in progress (restarted on Sonnet) |
-| C | `agent-a00fe5a7493b655ca` | in progress (restarted on Sonnet; 4 commits so far) |
+| C | `agent-a00fe5a7493b655ca` | done (8 commits, `7591749`..`61d19a4`); in review, not merged |
 | D | `agent-a16dd8a730e68dddf` | in progress (restarted on Sonnet; 1 commit so far) |
 | E | `agent-a9c22f1bdfa0cadc3` | in progress (restarted on Sonnet) |
 | F | `agent-a091876a6e38fc188` | done (`6c4e63a`, `a567ea4`); in review, not merged |
