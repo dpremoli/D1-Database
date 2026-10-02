@@ -129,7 +129,7 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 			<h1>NI-DAQ</h1>
 			<span v-if="devices" class="badge" :class="devices.simulated ? 'sim' : 'live'">{{ devices.simulated ? 'SIMULATED' : 'LIVE' }}</span>
 			<div class="spacer"></div>
-			<button class="btn" @click="autoassign"><span class="material-symbols-rounded">bolt</span> Auto-assign force</button>
+			<button class="btn" data-focus="nidaq-autoassign" @click="autoassign"><span class="material-symbols-rounded">bolt</span> Auto-assign force</button>
 			<button class="btn icon" title="Refresh" aria-label="Refresh" :disabled="loading" @click="load"><span class="material-symbols-rounded">refresh</span></button>
 		</header>
 		<p v-if="err" class="err">{{ err }}</p>
@@ -157,7 +157,7 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 
 		<div class="layout">
 			<!-- Chassis diagram(s) -->
-			<div class="diagram">
+			<div class="diagram" data-focus="nidaq-chassis">
 				<div v-for="ch in devices?.chassis || []" :key="ch.name" class="chassis">
 					<div class="chassis-top"><b>{{ ch.product_type }}</b><span class="sub">{{ ch.name }} · {{ ch.slots }}-slot</span></div>
 					<div class="slots">
@@ -222,7 +222,7 @@ async function removeCard(slot: number) { try { devices.value = await nidaqApi.r
 			</div>
 
 			<!-- Channel model list -->
-			<aside class="channels">
+			<aside class="channels" data-focus="nidaq-channels">
 				<div class="ch-head"><b>Channels</b><button class="btn sm" @click="addVirtual">+ Virtual</button></div>
 				<div v-for="c in channels" :key="c.name" class="chrow" :class="{ clickable: c.source === 'virtual' }" @click="c.source === 'virtual' && editVirtual(c)">
 					<span class="dot" :style="{ background: c.color }"></span>
