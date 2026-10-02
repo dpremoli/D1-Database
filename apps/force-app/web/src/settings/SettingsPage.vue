@@ -27,15 +27,18 @@ const VALID_TABS = ['general', 'recording', 'alarms', 'connectivity', 'backup', 
 type SettingsTab = (typeof VALID_TABS)[number];
 
 const route = useRoute();
+const requestedTab = route.query.tab as string | undefined;
+const initialTab: SettingsTab = VALID_TABS.includes(requestedTab as SettingsTab)
+	? (requestedTab as SettingsTab)
+	: 'general';
+const active = ref<SettingsTab>(initialTab);
+// A link to another tab (e.g. the Connectivity doctor's "Open Local Captures") navigates to this
+// same page with a new ?tab=, which doesn't remount it — follow the query.
+watch(() => route.query.tab, (t) => {
+	if (VALID_TABS.includes(t as SettingsTab)) active.value = t as SettingsTab;
+});
+// A tab click writes ?tab= back so the URL (and a later ?focus= link) names the tab on screen.
 const router = useRouter();
-function tabFrom(q: unknown): SettingsTab | null {
-	return VALID_TABS.includes(q as SettingsTab) ? (q as SettingsTab) : null;
-}
-const active = ref<SettingsTab>(tabFrom(route.query.tab) ?? 'general');
-// Follow ?tab= for as long as the page is open, not only at mount: a /settings?tab=…&focus=… link
-// (#98) followed while Settings is already showing another tab has to switch tabs, or the focus
-// target never renders.
-watch(() => route.query.tab, (q) => { const t = tabFrom(q); if (t) active.value = t; });
 function selectTab(t: SettingsTab) {
 	active.value = t;
 	if (route.query.tab !== t) void router.replace({ query: { ...route.query, tab: t } });
