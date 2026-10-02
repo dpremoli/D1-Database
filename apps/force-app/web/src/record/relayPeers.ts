@@ -13,9 +13,17 @@ export class RelayPeers {
 	private peers = new Map<string, { seen: number; retainSec: number }>();
 	constructor(private ttlMs = RELAY_PEER_TTL_MS) {}
 
-	/** A peer spoke (sync-request or heartbeat). retainSec: how much trace history it wants. */
-	seen(id: string, now: number, retainSec = 0) {
+	/**
+	 * A peer spoke (sync-request or heartbeat). retainSec: how much trace history it wants.
+	 * Returns true when this peer was not listening before: new, said bye, or expired (a throttled
+	 * minimised window, a bfcache restore) — it holds data from before the gap, so the caller
+	 * must resync it rather than send it deltas.
+	 */
+	seen(id: string, now: number, retainSec = 0): boolean {
+		const prev = this.peers.get(id);
+		const isNew = !prev || now - prev.seen > this.ttlMs;
 		this.peers.set(id, { seen: now, retainSec: Number.isFinite(retainSec) ? retainSec : 0 });
+		return isNew;
 	}
 	bye(id: string) { this.peers.delete(id); }
 	clear() { this.peers.clear(); }

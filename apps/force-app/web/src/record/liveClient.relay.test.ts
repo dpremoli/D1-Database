@@ -114,3 +114,30 @@ describe('relay snapshots (#107)', () => {
 		expect(child.frm.count).toBe(0);       // ignored (and a resync requested) rather than misplaced
 	});
 });
+
+describe('opener handling of pop-out messages (#107)', () => {
+	function opener() {
+		const { parent, engine } = setup();
+		const posted: any[] = [];
+		(parent as any).relay = { postMessage: (m: any) => posted.push(m), close() {} };
+		const snaps = () => posted.filter((m) => m.type === 'snapshot');
+		return { parent, engine, posted, snaps };
+	}
+
+	it('answers a sync-request with a full snapshot', () => {
+		const { parent, snaps } = opener();
+		parent.onPeerMessage({ type: 'sync-request', id: 'a' });
+		expect(snaps().map((s) => s.full)).toEqual([true]);
+	});
+
+	it('resyncs a heartbeat from a peer it does not know, but not from one it does', () => {
+		const { parent, snaps } = opener();
+		parent.onPeerMessage({ type: 'heartbeat', id: 'a' });          // opener reloaded / peer expired
+		expect(snaps().map((s) => s.full)).toEqual([true]);
+		parent.onPeerMessage({ type: 'heartbeat', id: 'a' });
+		expect(snaps()).toHaveLength(1);
+		parent.onPeerMessage({ type: 'bye', id: 'a' });
+		parent.onPeerMessage({ type: 'heartbeat', id: 'a' });          // bfcache restore after a bye
+		expect(snaps().map((s) => s.full)).toEqual([true, true]);
+	});
+});

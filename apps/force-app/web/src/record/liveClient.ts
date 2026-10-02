@@ -157,20 +157,25 @@ export class RecordClient {
 		// leaks the old BroadcastChannel, which stays subscribed and keeps its handler alive.
 		this.relay?.close();
 		this.relay = new BroadcastChannel('force-app-live');
-		this.relay.onmessage = (ev) => {
-			const d = ev.data;
-			if (d?.type === 'sync-request' || d?.type === 'heartbeat') {
-				this.peers.seen(String(d.id ?? 'anon'), performance.now(), Number(d.retainSec) || 0);
-				// A pop-out wider than our own history needs more of it kept here, or the snapshots
-				// it is sent could never cover its window.
-				this.setWindowDemand(this.peers, this.peers.maxRetainSec(performance.now()));
-				// A pop-out exists: send it the backlog, and start relaying live frames from here on.
-				if (d.type === 'sync-request') this.sendSnapshot(true);
-			} else if (d?.type === 'bye') {
-				this.peers.bye(String(d.id ?? 'anon'));
-				this.setWindowDemand(this.peers, this.peers.maxRetainSec(performance.now()));
-			}
-		};
+		this.relay.onmessage = (ev) => this.onPeerMessage(ev.data);
+	}
+
+	// Opener side: a pop-out spoke. Public for tests; the relay is its only real caller.
+	onPeerMessage(d: any) {
+		if (d?.type === 'sync-request' || d?.type === 'heartbeat') {
+			const isNew = this.peers.seen(String(d.id ?? 'anon'), performance.now(), Number(d.retainSec) || 0);
+			// A pop-out wider than our own history needs more of it kept here, or the snapshots
+			// it is sent could never cover its window.
+			this.setWindowDemand(this.peers, this.peers.maxRetainSec(performance.now()));
+			// A pop-out exists: send it the backlog, and start relaying live frames from here on.
+			// A heartbeat from a peer we had dropped (it expired while throttled, said bye and came
+			// back from the bfcache, or this window reloaded) means it holds stale buffers: resync
+			// it too, or the deltas that follow would be applied onto the wrong data.
+			if (d.type === 'sync-request' || isNew) this.sendSnapshot(true);
+		} else if (d?.type === 'bye') {
+			this.peers.bye(String(d.id ?? 'anon'));
+			this.setWindowDemand(this.peers, this.peers.maxRetainSec(performance.now()));
+		}
 	}
 
 	snapshotReady = ref(false);

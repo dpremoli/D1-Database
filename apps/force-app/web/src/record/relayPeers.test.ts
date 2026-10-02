@@ -41,4 +41,15 @@ describe('RelayPeers (#107)', () => {
 		expect(p.maxRetainSec(700)).toBe(60);
 		expect(p.maxRetainSec(2000)).toBeNull();
 	});
+
+	it('seen() says whether the peer was new, so the opener can resync it', () => {
+		const p = new RelayPeers(1000);
+		expect(p.seen('a', 0)).toBe(true);
+		expect(p.seen('a', 500)).toBe(false);
+		p.bye('a');
+		expect(p.seen('a', 600)).toBe(true);        // back after a bye (bfcache restore)
+		expect(p.seen('a', 2000)).toBe(true);       // back after expiring, even if not yet pruned
+		expect(p.seen('b', 2000)).toBe(true);
+		expect(p.seen('a', 2500)).toBe(false);
+	});
 });
