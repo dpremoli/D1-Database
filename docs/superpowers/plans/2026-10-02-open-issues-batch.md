@@ -50,6 +50,19 @@ Code changes for these can be written and unit-tested here; the item in the righ
 
 Each stream has its own files, so the streams can run in parallel.
 
+**Status** (update when a stream changes state; see "Resuming interrupted work" in `CLAUDE.md`).
+Each stream works in its own worktree under `.claude/worktrees/` on branch
+`worktree-agent-<id>`, based on `73a8547`.
+
+| Stream | Worktree / branch id | State |
+|---|---|---|
+| A | `agent-ac87f3fd4cc2d8fcb` | in progress (restarted on Sonnet after the 15:33 session limit) |
+| B | `agent-a868c600a24febd73` | in progress (restarted on Sonnet) |
+| C | `agent-a00fe5a7493b655ca` | in progress (restarted on Sonnet; 4 commits so far) |
+| D | `agent-a16dd8a730e68dddf` | in progress (restarted on Sonnet; 1 commit so far) |
+| E | `agent-a9c22f1bdfa0cadc3` | in progress (restarted on Sonnet) |
+| F | `agent-a091876a6e38fc188` | done (`6c4e63a`, `a567ea4`); in review, not merged |
+
 ### A. Finalize at constant memory — #79
 - `finalize.py`/`dsp.py`: stream the memmap in blocks (gains, peaks, clipping, axis sums,
   least-squares detrend sums, tacho edges with carry-over, RPM and cumulative revs, cut window,
