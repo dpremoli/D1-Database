@@ -560,7 +560,9 @@ async def report_bug(
     include_logs: bool = Form(True),
     console_tail: str = Form(""),
     kind: str = Form("bug"),
-    area: str = Form("general"),
+    # Repeated form field, one per area (#95). A single value — what older clients send — parses
+    # as a one-item list; bug_report.normalize_areas filters, de-duplicates and caps it.
+    area: list[str] = Form(["general"]),
 ) -> dict:
     log_tail = ""
     diagnostics = ""
