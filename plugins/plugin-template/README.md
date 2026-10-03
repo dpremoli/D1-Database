@@ -227,7 +227,7 @@ are read at runtime from the container environment; none may be hard-coded.
 | `WORKER_DIRECTUS_TOKEN` | yes | — | Static Bearer token for the plugin's machine user. Never commit this value. |
 | `WORKER_HTTP_PORT` | no | `8080` | Port gunicorn binds to inside the container. Must match the Dockerfile `EXPOSE` and the `healthcheck` URL. |
 | `WORKER_MEMORY_LIMIT_MB` | no | `256` | Soft memory ceiling for streaming reads. Job code should respect this when sizing read buffers. |
-| `WORKER_WEBHOOK_SECRET` | no | — | Shared secret required in the `X-Worker-Secret` header on webhook POSTs. If unset, auth is disabled (dev only). The Directus Flow must send the same value. |
+| `WORKER_WEBHOOK_SECRET` | yes | — | Shared secret required in the `X-Worker-Secret` header on webhook POSTs. **Fails closed:** if unset or empty, every request except `GET /health` is rejected with 503. The Directus Flow must send the same value. |
 | `QUEUE_NAME` | no | `plugin` | rq queue name for this plugin's job stream. Set to a value unique across the stack. |
 
 Set all required variables in your `.env` file (copied from `.env.example`)
