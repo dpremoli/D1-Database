@@ -94,12 +94,17 @@ def fetch_dictionary_all() -> list[dict]:
 
     Used to build the LLM prompt across all readable tables and views (the
     caller filters out denied/system objects). Ordered for stable grouping.
+
+    Only objects this role can actually SELECT are returned, so the prompt never
+    advertises a table the explicit grant list (migration
+    20261003000117_llm_readonly_allow_list.sql) leaves out.
     """
     return run_select(
         """
         SELECT object_name, object_comment, column_name, data_type,
                column_comment, column_position
         FROM v_schema_dictionary
+        WHERE has_table_privilege(format('public.%I', object_name), 'SELECT')
         ORDER BY object_name, column_position
         """
     )
