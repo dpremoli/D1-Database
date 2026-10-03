@@ -558,6 +558,47 @@ occ_check() { grep -qx "$1" <<<"$occ_out" && ok "$2" || bad "$2 (psql output: $o
 occ_check "stale_rows:0" "tool_setup: an update on a stale version matches no row"
 occ_check "version:2 notes:writer one" "tool_setup: version is bumped once and the stale write did not land"
 
+echo "== Box intake: owners propagate and codes survive a delete (review 4.8) =="
+# expand_tool_box_intake() is called directly so the test does not depend on how it is triggered:
+# the box is inserted with no package_quantity, then given one, then expanded.
+bi_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO directus_users (id) VALUES ('c0000000-0000-4000-8000-0000000000f5');
+INSERT INTO people (person_id, full_name) VALUES ('c0000000-0000-4000-8000-0000000000f6', 'Intake Owner');
+INSERT INTO insert_types (insert_type_id, type_code, short_code, inserts_per_box, edge_count)
+VALUES ('c0000000-0000-4000-8000-0000000000f7', 'TEST-INTAKE-TYPE', 'TST4', 2, 2);
+INSERT INTO tool_boxes (tool_box_id, insert_type_id, owner, owner_person_id)
+VALUES ('c0000000-0000-4000-8000-0000000000f8', 'c0000000-0000-4000-8000-0000000000f7',
+        'c0000000-0000-4000-8000-0000000000f5', 'c0000000-0000-4000-8000-0000000000f6');
+UPDATE tool_boxes SET package_quantity = 3 WHERE tool_box_id = 'c0000000-0000-4000-8000-0000000000f8';
+SELECT expand_tool_box_intake('c0000000-0000-4000-8000-0000000000f8');
+SELECT 'boxes:' || string_agg(tool_box_code, ',' ORDER BY tool_box_code) FROM tool_boxes WHERE insert_type_id = 'c0000000-0000-4000-8000-0000000000f7';
+SELECT 'inserts:' || count(*) FROM cutting_inserts WHERE insert_type_id = 'c0000000-0000-4000-8000-0000000000f7';
+SELECT 'edges:' || count(*) FROM insert_edges e JOIN cutting_inserts i USING (insert_id) WHERE i.insert_type_id = 'c0000000-0000-4000-8000-0000000000f7';
+SELECT 'owned_boxes:' || count(*) FROM tool_boxes WHERE insert_type_id = 'c0000000-0000-4000-8000-0000000000f7'
+  AND owner_person_id = 'c0000000-0000-4000-8000-0000000000f6' AND owner = 'c0000000-0000-4000-8000-0000000000f5';
+SELECT 'owned_inserts:' || count(*) FROM cutting_inserts WHERE insert_type_id = 'c0000000-0000-4000-8000-0000000000f7'
+  AND owner_person_id = 'c0000000-0000-4000-8000-0000000000f6' AND owner = 'c0000000-0000-4000-8000-0000000000f5';
+SELECT 'owned_edges:' || count(*) FROM insert_edges e JOIN cutting_inserts i USING (insert_id) WHERE i.insert_type_id = 'c0000000-0000-4000-8000-0000000000f7'
+  AND e.owner_person_id = 'c0000000-0000-4000-8000-0000000000f6' AND e.owner = 'c0000000-0000-4000-8000-0000000000f5';
+-- Delete the middle box, then take in a second delivery of the same type.
+DELETE FROM tool_boxes WHERE tool_box_code = 'TST4-2';
+INSERT INTO tool_boxes (tool_box_id, insert_type_id) VALUES ('c0000000-0000-4000-8000-0000000000f9', 'c0000000-0000-4000-8000-0000000000f7');
+UPDATE tool_boxes SET package_quantity = 2 WHERE tool_box_id = 'c0000000-0000-4000-8000-0000000000f9';
+SELECT expand_tool_box_intake('c0000000-0000-4000-8000-0000000000f9');
+SELECT 'boxes_after:' || string_agg(tool_box_code, ',' ORDER BY tool_box_code) FROM tool_boxes WHERE insert_type_id = 'c0000000-0000-4000-8000-0000000000f7';
+ROLLBACK;
+SQL
+)
+bi_check() { grep -qx "$1" <<<"$bi_out" && ok "$2" || bad "$2 (psql output: $bi_out)"; }
+bi_check "boxes:TST4-1,TST4-2,TST4-3" "intake of 3 creates TST4-1..3"
+bi_check "inserts:6" "2 inserts per box x 3 boxes"
+bi_check "edges:12" "2 edges per insert x 6 inserts"
+bi_check "owned_boxes:3" "owner_person_id and owner are copied onto every box (clones included)"
+bi_check "owned_inserts:6" "owner_person_id and owner are copied onto every insert"
+bi_check "owned_edges:12" "owner_person_id and owner are copied onto every edge"
+bi_check "boxes_after:TST4-1,TST4-3,TST4-4,TST4-5" "intake after a box delete continues from the highest code (no collision)"
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy
