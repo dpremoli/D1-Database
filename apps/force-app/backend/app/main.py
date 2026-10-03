@@ -2200,6 +2200,20 @@ _LABAMP_BUSY_MSG = (
 )
 
 
+_NIDAQ_BUSY_MSG = (
+    "a recording is in progress -- changing the NI-DAQ configuration or the tacho generator "
+    "would corrupt it"
+)
+
+
+def _refuse_nidaq_change_if_busy() -> None:
+    """Invariant 3: nothing that touches NI-DAQ state may change mid-recording. The tacho generator
+    drives PFI0, the tacho input of the channel being sampled; the channel list and simulated
+    chassis are what the next start (and the live source's layout) are built from."""
+    if _busy():
+        raise HTTPException(409, _NIDAQ_BUSY_MSG)
+
+
 @app.post("/labamp/mode")
 async def labamp_set_mode(body: dict) -> dict:
     # #33: the amp's analog outputs feed straight into the NI-DAQ channels a live recording is
@@ -2441,6 +2455,7 @@ async def nidaq_catalog_list() -> dict:
 @app.post("/nidaq/sim/card")
 async def nidaq_add_card(body: dict) -> dict:
     """Add a card to a simulated slot (the '+' on an empty slot → card catalog)."""
+    _refuse_nidaq_change_if_busy()
     layout = _sim_layout()
     slot = int(body.get("slot", 0))
     product_type = str(body.get("product_type", "")).strip()
@@ -2455,6 +2470,7 @@ async def nidaq_add_card(body: dict) -> dict:
 
 @app.delete("/nidaq/sim/card")
 async def nidaq_remove_card(slot: int) -> dict:
+    _refuse_nidaq_change_if_busy()
     layout = _sim_layout()
     layout["cards"] = [c for c in layout.get("cards", []) if int(c["slot"]) != int(slot)]
     _save_json(NIDAQ_SIM_PATH, layout)
@@ -2468,6 +2484,7 @@ async def nidaq_get_channels() -> dict:
 
 @app.put("/nidaq/channels")
 async def nidaq_put_channels(body: dict) -> dict:
+    _refuse_nidaq_change_if_busy()
     channels = body.get("channels")
     if not isinstance(channels, list):
         raise HTTPException(400, "channels list required")
@@ -2502,6 +2519,7 @@ async def nidaq_validate_formula(body: dict) -> dict:
 
 @app.post("/nidaq/channels/autoassign")
 async def nidaq_autoassign() -> dict:
+    _refuse_nidaq_change_if_busy()
     channels = chan.autoassign(_devices())
     _save_json(NIDAQ_CHANNELS_PATH, {"channels": channels})
     return {"channels": channels}
@@ -2526,6 +2544,7 @@ _tacho_gen_task = None  # nidaqmx.Task or None
 @app.post("/nidaq/tacho/start")
 async def nidaq_tacho_start(body: dict = {}) -> dict:
     global _tacho_gen_task
+    _refuse_nidaq_change_if_busy()
     if _tacho_gen_task is not None:
         raise HTTPException(409, "tacho generator already running")
     freq = float(body.get("freq_hz", 20.0))
@@ -2557,6 +2576,7 @@ async def nidaq_tacho_start(body: dict = {}) -> dict:
 @app.post("/nidaq/tacho/stop")
 async def nidaq_tacho_stop() -> dict:
     global _tacho_gen_task
+    _refuse_nidaq_change_if_busy()
     if _tacho_gen_task is None:
         return {"running": False}
     try:
