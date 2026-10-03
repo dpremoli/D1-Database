@@ -32,8 +32,12 @@ const fixingId = ref('');
 // A finding marked `pending` (discards still deleting in the background) means the answer isn't
 // final yet, so the doctor asks again by itself instead of settling on a half-true result (#83).
 let repollTimer: ReturnType<typeof setTimeout> | null = null;
-onBeforeUnmount(() => { if (repollTimer) clearTimeout(repollTimer); });
+// A re-poll still in flight when the tab unmounts would otherwise re-arm the timer after the
+// cleanup below has already run, and keep polling forever.
+let unmounted = false;
+onBeforeUnmount(() => { unmounted = true; if (repollTimer) clearTimeout(repollTimer); });
 function scheduleRepoll() {
+	if (unmounted) return;
 	if (repollTimer) clearTimeout(repollTimer);
 	repollTimer = findings.value.some((f) => f.pending) ? setTimeout(() => { void runDoctor(true); }, 2500) : null;
 }
@@ -161,16 +165,16 @@ async function applyFix(f: Finding) {
 			title: `Discard ${items.length} incomplete recording${items.length === 1 ? '' : 's'}?`,
 			message: 'These recordings were interrupted and never finalized. Discarding deletes their captured data from this machine — recovering them instead (Settings > Local Captures) keeps it.',
 			detail: remote.known
-				? 'A remote copy marked below stays on the backup server until it expires there; the rest cannot be undone.'
+				? 'A full remote copy stays on the backup server until it expires there; a partial one holds only what was streamed before the backup was interrupted. Recordings with no remote copy cannot be recovered once discarded.'
 				: 'The backup server could not be checked, so any of these may be the only copy. This cannot be undone.',
-			stats: items.slice(0, 12).map((s) => ({
+			stats: items.map((s) => ({
 				label: s.sample_name || s.id,
 				value: [
 					s.raw_size_mb != null ? formatMegabytes(s.raw_size_mb) : '',
 					s.duration_sec != null ? `${s.duration_sec.toFixed(0)}s` : '',
-					remote.known ? (remote.ids.has(s.id) ? 'remote copy exists' : 'no remote copy') : '',
+					remote.known ? (remote.ids.has(s.id) ? (remote.ids.get(s.id) === 'complete' ? 'remote copy exists' : 'partial remote copy') : 'no remote copy') : '',
 				].filter(Boolean).join(' · '),
-			})).concat(items.length > 12 ? [{ label: `…and ${items.length - 12} more`, value: '' }] : []),
+			})),
 			confirmLabel: 'Discard all',
 			tone: 'danger',
 		});
@@ -185,14 +189,14 @@ async function applyFix(f: Finding) {
 	}
 }
 
-async function remoteBackupIds(base: string): Promise<{ known: boolean; ids: Set<string> }> {
+async function remoteBackupIds(base: string): Promise<{ known: boolean; ids: Map<string, string> }> {
 	try {
 		const r = await fetch(`${base}/backup/remote-sessions`);
-		if (!r.ok) return { known: false, ids: new Set() };
+		if (!r.ok) return { known: false, ids: new Map() };
 		const d = await r.json();
-		if (!d.configured) return { known: true, ids: new Set() };
-		return { known: true, ids: new Set<string>((d.sessions || []).filter((s: any) => s.backup_state !== 'deleted').map((s: any) => s.id)) };
-	} catch { return { known: false, ids: new Set() }; }
+		if (!d.configured) return { known: true, ids: new Map() };
+		return { known: true, ids: new Map<string, string>((d.sessions || []).filter((s: any) => s.backup_state !== 'deleted').map((s: any) => [s.id, s.backup_state || 'unknown'])) };
+	} catch { return { known: false, ids: new Map() }; }
 }
 
 const copied = ref('');
