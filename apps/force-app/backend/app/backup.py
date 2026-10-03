@@ -126,16 +126,6 @@ def fetch_remote_sessions(server_url: str, timeout: float = 8.0) -> dict:
     return data
 
 
-def list_remote_sessions(server_url: str, timeout: float = 8.0) -> list[dict]:
-    """Best-effort session list: [] when the server can't be reached. For callers that only need
-    "which ids are known to exist remotely"; a list shown to the user should use
-    fetch_remote_sessions and report the failure instead."""
-    try:
-        return fetch_remote_sessions(server_url, timeout).get("sessions", [])
-    except RemoteBackupError:
-        return []
-
-
 def mark_remote_deleted(server_url: str, session_id: str, timeout: float = 4.0) -> bool:
     """Tell the backup server the local copy of `session_id` is gone, so its copy is labelled as a
     deleted capture and expires on the server's normal retention instead of reading as a healthy
