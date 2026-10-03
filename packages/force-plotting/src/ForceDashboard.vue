@@ -737,7 +737,8 @@ const frmLoading = ref(false);
 // button (#102). Lite/Full report through @stage; the Figure download is tracked here.
 const frmStage = ref<StageInfo | null>(null);
 const figStage = ref<LoadStage | null>(null);
-const frmBusy = computed(() => !!frmStage.value || frmLoading.value);
+// The figure download only counts in Figure mode: Lite/Full report through frmStage.
+const frmBusy = computed(() => !!frmStage.value || (frmMode.value === 'figure' && frmLoading.value));
 // A renderer that unmounts mid-load (the view type changed) never reports idle: reset on a switch;
 // the one that replaces it reports its own stage.
 watch([frmMode, liveOn, octreeOn, compareOn, filteredSoloOn], () => { frmStage.value = null; });
@@ -1245,33 +1246,41 @@ async function selectOp(row: any) {
 		if (seq !== selectSeq) return;
 		detail.value = res.data.data;
 		editPpr.value = Number(detail.value?.pulses_per_rev) || 1;
-		await loadFrm();
+		// Not awaited: the figure is only shown in Figure mode, and waiting for it would hold the
+		// veil (and its pointer block) over Lite/Full, where it is never displayed. Figure mode shows
+		// its own download overlay while frmLoading.
+		void loadFrm();
 	} catch (e) {
 		// Nothing to show for the selected row: don't leave the previous op displayed as if it were it.
-		if (seq === selectSeq) { detail.value = null; frmUrl.value = null; }
+		if (seq === selectSeq) { detail.value = null; frmUrl.value = null; frmSeq++; frmLoading.value = false; }
 		throw e;
 	} finally {
 		if (seq === selectSeq) loadingDetail.value = false;
 	}
 }
 
+// Latest loadFrm() wins: an older figure download finishing late must not land on the newer op, or
+// clear frmLoading while the newer one is still downloading.
+let frmSeq = 0;
 async function loadFrm() {
+	const mine = ++frmSeq;
 	const d = detail.value;
-	if (!d) { frmUrl.value = null; return; }
+	if (!d) { frmUrl.value = null; frmLoading.value = false; return; }
 	const fileId = d[`frm_${axis.value.toLowerCase()}`];
-	if (!fileId) { frmUrl.value = null; return; }
-	if (frmCache.has(fileId)) { frmUrl.value = frmCache.get(fileId)!; return; }
+	if (!fileId) { frmUrl.value = null; frmLoading.value = false; return; }
+	if (frmCache.has(fileId)) { frmUrl.value = frmCache.get(fileId)!; frmLoading.value = false; return; }
 	frmLoading.value = true;
 	figStage.value = { kind: 'download', loaded: 0, total: null, what: 'figure' };
 	try {
 		const res = await api.get(`/assets/${fileId}`, {
 			responseType: 'blob',
-			onDownloadProgress: (e) => { figStage.value = { kind: 'download', loaded: e.loaded, total: e.total ?? null, what: 'figure' }; },
+			onDownloadProgress: (e) => { if (mine === frmSeq) figStage.value = { kind: 'download', loaded: e.loaded, total: e.total ?? null, what: 'figure' }; },
 		});
 		const url = URL.createObjectURL(res.data);
-		frmCache.set(fileId, url);
+		frmCache.set(fileId, url);   // cached even when superseded: it is the right figure for that file
+		if (mine !== frmSeq) return;
 		frmUrl.value = url;
-	} catch { frmUrl.value = null; } finally { frmLoading.value = false; }
+	} catch { if (mine === frmSeq) frmUrl.value = null; } finally { if (mine === frmSeq) frmLoading.value = false; }
 }
 function setAxis(a: Axis) { axis.value = a; loadFrm(); }
 
@@ -1585,8 +1594,11 @@ async function saveCropAsOfficial() {
 	try {
 		await api.patch(`/items/machining_force_analysis/${d.id}`, { crop_start_idx_override: startIdx, crop_end_idx_override: endIdx, ...invalidate });
 		d.crop_start_idx_override = startIdx; d.crop_end_idx_override = endIdx;   // so cropDirty/savedCropSec update
-		if (invalidate.octree_status) { d.octree_status = 'pending'; if (frmMode.value === 'full' && !gridFull.value) frmMode.value = 'lite'; }
-		if (invalidate.grid_octree_status) { d.grid_octree_status = 'pending'; if (frmMode.value === 'full' && gridFull.value) frmMode.value = 'lite'; }
+		// The octree being rebuilt is not the user choosing another view: re-pick from their preference
+		// (Full -> Lite/Figure while it is pending) so preferredMode stays 'full' and the view returns
+		// to it when the build lands, with no layout side effects.
+		if (invalidate.octree_status) { d.octree_status = 'pending'; if (frmMode.value === 'full' && !gridFull.value) frmMode.value = pickDefaultMode(); }
+		if (invalidate.grid_octree_status) { d.grid_octree_status = 'pending'; if (frmMode.value === 'full' && gridFull.value) frmMode.value = pickDefaultMode(); }
 		cropTouched.value = false;
 		cropSavedMsg.value = backToAuto ? 'Reverted to auto crop' : 'Saved as official crop';
 		window.setTimeout(() => { cropSavedMsg.value = ''; }, 2500);
@@ -2072,7 +2084,7 @@ function fmtDateTime(v: string | null | undefined) {
 				<div v-if="!stacked && !colStackHidden" class="resizer" @pointerdown="startColAResize" title="Drag to resize"></div>
 
 				<!-- COL 2: sample detail + operation detail (foldable away to the left) -->
-				<div v-if="stacked || !detailHidden" class="col-stack">
+				<div v-if="stacked || !detailHidden" class="col-stack" :class="{ switching: loadingDetail }" :aria-busy="loadingDetail" :inert="loadingDetail">
 					<div class="card info" :class="{ collapsed: !sampleDetailOpen }">
 						<div class="info-head">
 							<span>
@@ -2960,7 +2972,7 @@ function fmtDateTime(v: string | null | undefined) {
 .tbtn.icobtn { padding: 5px 9px; display: inline-flex; align-items: center; }
 /* Signals plots scroll INSIDE the panel (min-height:0 + overflow) instead of overflowing the card
    and pushing past the page bottom when a panel is short or several charts stack. */
-.charts-col.switching, .frm-img.switching { opacity: 0.45; pointer-events: none; transition: opacity 0.12s; }
+.charts-col.switching, .frm-img.switching, .col-stack.switching { opacity: 0.45; pointer-events: none; transition: opacity 0.12s; }
 .charts-col { display: flex; flex-direction: column; gap: 13px; flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 
 .col-frm { display: flex; flex-direction: column; gap: 11px; min-height: 0; }
