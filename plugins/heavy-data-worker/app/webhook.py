@@ -15,6 +15,7 @@ from rq import Queue
 
 from app.jobs.process_session import process_session
 from app.lib import minio_client
+from app.lib.job_config import job_timeout_seconds
 from app.lib.redis_conn import get_redis
 from app.lib.security import (
     MAX_UPLOAD_BYTES,
@@ -110,5 +111,7 @@ def webhook_session():
     if not valid_object_key(object_key):
         return jsonify({"error": "invalid object_key"}), 400
 
-    job = _queue.enqueue(process_session, session_id, object_key)
+    job = _queue.enqueue(
+        process_session, session_id, object_key, job_timeout=job_timeout_seconds()
+    )
     return jsonify({"job_id": job.id}), 202

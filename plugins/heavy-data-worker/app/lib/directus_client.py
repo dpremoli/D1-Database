@@ -107,3 +107,23 @@ def update_session(
                 time.sleep(random.uniform(0.05, 0.25) * attempt)
     msg = f"session {session_id}: gave up after {attempts} version conflicts"
     raise VersionConflictError(msg)
+
+
+def list_stale_sessions(
+    statuses: list[str] | tuple[str, ...], older_than_iso: str
+) -> list:
+    """Sessions whose ``status`` is in *statuses* and ``updated_at`` < *older_than_iso*.
+
+    Used by the reaper to find rows stranded by a killed or timed-out job.
+    """
+    url = f"{DIRECTUS_URL}/items/test_sessions"
+    params = {
+        "filter[status][_in]": ",".join(statuses),
+        "filter[updated_at][_lt]": older_than_iso,
+        "fields": SESSION_FIELDS,
+        "limit": "100",
+    }
+    resp = requests.get(url, params=params, headers=_headers(), timeout=30)
+    resp.raise_for_status()
+    data = resp.json().get("data")
+    return data if isinstance(data, list) else []

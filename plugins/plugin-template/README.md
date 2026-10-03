@@ -67,7 +67,7 @@ template updates.
 Starts gunicorn bound to `0.0.0.0:${WORKER_HTTP_PORT:-8080}` and an rq
 worker pointing at `${REDIS_URL:-redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}}`. Both
 processes run in the background; a `trap` catches `TERM` and `INT` and kills
-both before the container exits. The only line you must change is the rq queue
+both before the container exits. The script then does `wait -n`: if either process dies the other is stopped and the container exits non-zero (so a crashed rq worker cannot leave `/health` green). The only line you must change is the rq queue
 name (see step 3 below).
 
 **`app/webhook.py`**
@@ -230,6 +230,7 @@ are read at runtime from the container environment; none may be hard-coded.
 | `WORKER_MEMORY_LIMIT_MB` | no | `256` | Soft memory ceiling for streaming reads. Job code should respect this when sizing read buffers. |
 | `WORKER_WEBHOOK_SECRET` | yes | — | Shared secret required in the `X-Worker-Secret` header on webhook POSTs. **Fails closed:** if unset or empty, every request except `GET /health` is rejected with 503. The Directus Flow must send the same value. |
 | `QUEUE_NAME` | no | `plugin` | rq queue name for this plugin's job stream. Set to a value unique across the stack. |
+| `JOB_TIMEOUT_SECONDS` | no | `21600` | rq `job_timeout` passed to `enqueue` (default 6 h; rq's own default of 180 s would kill real jobs). Rows left in a non-terminal status by a killed job must be marked `failed` (contract section 9); see the reaper in `plugins/heavy-data-worker/app/reaper.py` for a reference implementation. |
 
 Set all required variables in your `.env` file (copied from `.env.example`)
 or in the Docker Compose `environment:` block. The `WORKER_DIRECTUS_TOKEN`
