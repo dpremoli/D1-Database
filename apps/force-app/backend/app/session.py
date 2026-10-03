@@ -218,7 +218,8 @@ class RecordingSession:
                 if chunk is None:
                     break
                 if not self.ring.put(chunk[0], chunk[1], timeout=5.0):
-                    self.error = "consumer overrun"
+                    # A closed ring means the consumer already died and recorded why: keep that.
+                    self.error = self.error or "consumer overrun"
                     break
         except Exception as e:
             self.error = (
@@ -330,6 +331,25 @@ class RecordingSession:
         )
 
     def _consume(self) -> None:
+        """Consumer thread. Any failure here (a disk error on the raw append, a bad frame...) must
+        end the run cleanly: record why, stop the source, and let `_run` reach raw.close(), backup
+        stop and finalize, instead of leaving the producer wedged on a full ring while the session
+        reads "recording" forever."""
+        try:
+            self._consume_loop()
+        except Exception as e:
+            log.exception("session consumer thread failed; stopping the recording")
+            self.error = self.error or f"consumer error: {e}"
+            self._stop.set()
+            self.ring.close()  # producer's next put() returns False instead of waiting
+            try:
+                self.source.stop()
+            except Exception:
+                log.exception("source.stop() failed after a consumer error")
+            # Free slots so a producer already blocked in put() wakes up now, not after its timeout.
+            self.ring.drain()
+
+    def _consume_loop(self) -> None:
         seq = 0
         while True:
             item = self.ring.get()
