@@ -20,7 +20,8 @@ import shutil
 import sys
 import threading
 import time
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
+from contextlib import asynccontextmanager, contextmanager
 from logging.handlers import RotatingFileHandler
 from typing import Any
 from urllib.parse import urlparse
@@ -684,6 +685,23 @@ def _refuse_if_capture_busy(capture_id: str) -> None:
         )
 
 
+@contextmanager
+def _claim_capture(capture_id: str) -> Iterator[None]:
+    """`recovery.recovering` as an HTTP 409 when another job already owns the id.
+
+    Enter it before the first `await` after the busy check: the check and the claim must be one
+    synchronous step, or two requests for the same capture both pass it."""
+    try:
+        with recovery.recovering(capture_id):
+            yield
+    except recovery.CaptureBusyError:
+        raise HTTPException(
+            409,
+            f"{capture_id} is being recovered, restored or discarded right now — "
+            "wait for it to finish",
+        ) from None
+
+
 @app.post("/storage/config")
 async def storage_set_config(body: dict) -> dict:
     global CAPTURES_ROOT
@@ -1342,11 +1360,14 @@ async def recovery_recover(session_id: str) -> dict:
         raise HTTPException(
             400, f"session {session_id} is still recording — nothing to recover yet"
         )
-    _refuse_if_capture_busy(session_id)
     root = CAPTURES_ROOT  # one root for the whole request, however long it takes
     try:
-        with recovery.recovering(session_id):
+        # The claim refuses (409) a second recover, a restore or a discard of this id, and there is
+        # no await between that check and the claim.
+        with _claim_capture(session_id):
             summary = await run_in_threadpool(recovery.recover_session, root, session_id)
+    except HTTPException:
+        raise
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
@@ -1389,14 +1410,17 @@ async def recovery_discard(session_id: str) -> dict:
     async def _run() -> None:
         t0 = time.perf_counter()
         try:
-            with recovery.discarding(session_id):
-                await run_in_threadpool(recovery.discard_session, root, session_id)
-                await _mark_remote_deleted(session_id)
+            await run_in_threadpool(recovery.discard_session, root, session_id)
+            await _mark_remote_deleted(session_id)
         except Exception:
             log.exception("recovery_discard: background delete failed for id=%s", session_id)
         finally:
+            recovery.release_discard(session_id)
             log.info("recovery_discard: id=%s took %.2fs", session_id, time.perf_counter() - t0)
 
+    # Claimed here, not in the task: the task only starts after this handler returns, and a recover
+    # or restore arriving in that gap would otherwise pass its own busy check.
+    recovery.claim_discard(session_id)
     asyncio.create_task(_run())
     return {"discarded": True, "session_id": session_id}
 
@@ -1545,7 +1569,15 @@ async def backup_restore(session_id: str) -> dict:
         raise HTTPException(400, "no backup server configured")
     if session_id == _active_session_id():
         raise HTTPException(409, f"{session_id} is still being recorded — it can't be restored")
-    _refuse_if_capture_busy(session_id)
+    # Claim the id before the first await: checking busy and claiming must be one synchronous step,
+    # or a double-click (or a recover/discard racing this) gets past the check twice, both write the
+    # same raw.d1raw.part, and the loser's cleanup deletes what the winner just finalized.
+    with _claim_capture(session_id):
+        return await _restore_claimed(session_id, root, url)
+
+
+async def _restore_claimed(session_id: str, root: str, url: str) -> dict:
+    """The body of backup_restore, run while `session_id` is claimed in recovery._recovering."""
     capture_dir = os.path.join(root, session_id)
     raw_path = os.path.join(capture_dir, "raw.d1raw")
     part_path = raw_path + ".part"
@@ -1577,88 +1609,81 @@ async def backup_restore(session_id: str) -> dict:
         _cleanup()
         return HTTPException(status, detail)
 
-    with recovery.recovering(session_id):
-        os.makedirs(capture_dir, exist_ok=True)
+    os.makedirs(capture_dir, exist_ok=True)
 
-        # Recover the ORIGINAL config too, not just the bytes. recover_session reads the
-        # per-channel dyno_gains out of manifest.json; with no manifest it builds a default
-        # RecordConfig whose dyno_gains are empty, so finalize applies the scalar gain=1.0 and the
-        # restored .mat/live_cache hold raw amplifier volts mislabelled as newtons — wrong by a
-        # per-channel factor, and not obviously wrong when you look at it. Fetched before the
-        # download so a missing config doesn't cost a multi-GB transfer first.
-        remote_cfg = await run_in_threadpool(
-            backup_mod.fetch_remote_session_config, url, session_id
+    # Recover the ORIGINAL config too, not just the bytes. recover_session reads the
+    # per-channel dyno_gains out of manifest.json; with no manifest it builds a default
+    # RecordConfig whose dyno_gains are empty, so finalize applies the scalar gain=1.0 and the
+    # restored .mat/live_cache hold raw amplifier volts mislabelled as newtons — wrong by a
+    # per-channel factor, and not obviously wrong when you look at it. Fetched before the
+    # download so a missing config doesn't cost a multi-GB transfer first.
+    remote_cfg = await run_in_threadpool(backup_mod.fetch_remote_session_config, url, session_id)
+    if not remote_cfg:
+        raise _fail(
+            502,
+            "the backup server has no recording config for this session, so the per-channel "
+            "gains needed to convert volts to newtons are unknown — refusing to finalize "
+            f"with incorrect scaling.{kept} The backup is still on the server.",
         )
-        if not remote_cfg:
+    try:
+        # Same None-filtering recover_session uses — a null in the stored config would
+        # otherwise fail validation against a non-optional field.
+        restored_cfg = RecordConfig(**{k: v for k, v in remote_cfg.items() if v is not None})
+    except Exception as e:
+        raise _fail(
+            500,
+            f"could not apply the original recording config from the backup ({e}); "
+            f"finalizing would silently produce volts instead of newtons.{kept} The "
+            "backup is still on the server.",
+        )
+
+    try:
+        nbytes = await run_in_threadpool(backup_mod.download_remote_raw, url, session_id, part_path)
+    except Exception as e:
+        raise _fail(502, f"download failed: {e}.{kept} The backup is still on the server.")
+
+    if local_rows:
+        local_size = os.path.getsize(raw_path)
+        if nbytes <= local_size:
             raise _fail(
-                502,
-                "the backup server has no recording config for this session, so the per-channel "
-                "gains needed to convert volts to newtons are unknown — refusing to finalize "
-                f"with incorrect scaling.{kept} The backup is still on the server.",
-            )
-        try:
-            # Same None-filtering recover_session uses — a null in the stored config would
-            # otherwise fail validation against a non-optional field.
-            restored_cfg = RecordConfig(**{k: v for k, v in remote_cfg.items() if v is not None})
-        except Exception as e:
-            raise _fail(
-                500,
-                f"could not apply the original recording config from the backup ({e}); "
-                f"finalizing would silently produce volts instead of newtons.{kept} The "
-                "backup is still on the server.",
+                409,
+                f"{session_id} already has a local recording with data "
+                f"({local_info['n_rows']:,} samples) that is at least as long as the backup "
+                "— it was not changed. Recover it from Settings > Local Captures instead.",
             )
 
-        try:
-            nbytes = await run_in_threadpool(
-                backup_mod.download_remote_raw, url, session_id, part_path
-            )
-        except Exception as e:
-            raise _fail(502, f"download failed: {e}.{kept} The backup is still on the server.")
+    aside: str | None = None
 
+    def _restore_aside() -> None:
+        """Put the set-aside local raw back so nothing about the local capture has changed."""
+        if aside and os.path.exists(aside):
+            try:
+                os.replace(aside, raw_path)
+            except OSError:
+                pass
+
+    # Swap in the download. The local raw (only possible here when the remote is larger) is
+    # renamed, never deleted.
+    try:
         if local_rows:
-            local_size = os.path.getsize(raw_path)
-            if nbytes <= local_size:
-                raise _fail(
-                    409,
-                    f"{session_id} already has a local recording with data "
-                    f"({local_info['n_rows']:,} samples) that is at least as long as the backup "
-                    "— it was not changed. Recover it from Settings > Local Captures instead.",
-                )
+            aside = f"{raw_path}.local-{int(time.time())}"
+            os.replace(raw_path, aside)
+        os.replace(part_path, raw_path)
+        # A local recording's own manifest (written at record start) is kept as it is; the
+        # remote config only fills in when there is none to keep.
+        local_manifest = _read_json(os.path.join(capture_dir, recovery.MANIFEST)) or {}
+        if not (local_rows and local_manifest.get("config")):
+            await run_in_threadpool(recovery.write_manifest, capture_dir, "restored", restored_cfg)
+    except Exception as e:
+        _restore_aside()
+        raise _fail(500, f"could not put the downloaded backup in place ({e}).{kept}")
 
-        aside: str | None = None
-
-        def _restore_aside() -> None:
-            """Put the set-aside local raw back so nothing about the local capture has changed."""
-            if aside and os.path.exists(aside):
-                try:
-                    os.replace(aside, raw_path)
-                except OSError:
-                    pass
-
-        # Swap in the download. The local raw (only possible here when the remote is larger) is
-        # renamed, never deleted.
-        try:
-            if local_rows:
-                aside = f"{raw_path}.local-{int(time.time())}"
-                os.replace(raw_path, aside)
-            os.replace(part_path, raw_path)
-            # A local recording's own manifest (written at record start) is kept as it is; the
-            # remote config only fills in when there is none to keep.
-            local_manifest = _read_json(os.path.join(capture_dir, recovery.MANIFEST)) or {}
-            if not (local_rows and local_manifest.get("config")):
-                await run_in_threadpool(
-                    recovery.write_manifest, capture_dir, "restored", restored_cfg
-                )
-        except Exception as e:
-            _restore_aside()
-            raise _fail(500, f"could not put the downloaded backup in place ({e}).{kept}")
-
-        # Finalize the downloaded raw file
-        try:
-            summary = await run_in_threadpool(recovery.recover_session, root, session_id)
-        except Exception as e:
-            _restore_aside()
-            raise _fail(500, f"finalize failed after download: {e}.{kept}")
+    # Finalize the downloaded raw file
+    try:
+        summary = await run_in_threadpool(recovery.recover_session, root, session_id)
+    except Exception as e:
+        _restore_aside()
+        raise _fail(500, f"finalize failed after download: {e}.{kept}")
     result = {"restored": True, "session_id": session_id, "bytes": nbytes, "summary": summary}
     if aside:
         result["local_copy_kept_as"] = os.path.basename(aside)

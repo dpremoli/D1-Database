@@ -53,9 +53,25 @@ def discarding_ids() -> list[str]:
     return sorted(_discarding)
 
 
+class CaptureBusyError(Exception):
+    """Another recover, restore or discard already owns this capture id."""
+
+    def __init__(self, session_id: str, kind: str):
+        super().__init__(f"{session_id} is already being {kind}")
+        self.session_id = session_id
+        self.kind = kind
+
+
 @contextmanager
 def recovering(session_id: str) -> Iterator[None]:
-    """Mark `session_id` as being recovered for the duration of the block."""
+    """Claim `session_id` as being recovered (or restored) for the duration of the block.
+
+    The check and the claim are one synchronous step, so callers must enter this before their first
+    `await`: two requests for one id can then never both get in. Raises CaptureBusyError when a recover,
+    restore or discard already owns the id, and never touches the existing claim in that case."""
+    busy = in_flight(session_id)
+    if busy:
+        raise CaptureBusyError(session_id, busy)
     _recovering.add(session_id)
     try:
         yield
@@ -63,14 +79,20 @@ def recovering(session_id: str) -> Iterator[None]:
         _recovering.discard(session_id)
 
 
-@contextmanager
-def discarding(session_id: str) -> Iterator[None]:
-    """Mark `session_id` as being discarded for the duration of the block."""
+def claim_discard(session_id: str) -> None:
+    """Claim `session_id` for a background discard; pair with release_discard in the task.
+
+    A discard runs in a task that starts after the request handler returns, so the claim has to be
+    taken by the handler itself, synchronously, or a recover could slip in between. Raises
+    CaptureBusyError when the id is already in flight."""
+    busy = in_flight(session_id)
+    if busy:
+        raise CaptureBusyError(session_id, busy)
     _discarding.add(session_id)
-    try:
-        yield
-    finally:
-        _discarding.discard(session_id)
+
+
+def release_discard(session_id: str) -> None:
+    _discarding.discard(session_id)
 
 
 def write_manifest(
