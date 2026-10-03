@@ -1800,6 +1800,11 @@ async def record_start(cfg: RecordConfig) -> dict:
                 pass  # amp unreachable — fall back to the scalar gain
     else:
         source = SimSource(cfg, realtime=True)
+    # The NI-DAQ branch above awaits (thread pool, amp round-trip): a second POST can pass the
+    # first _busy() check while this one is parked there. Re-check with NO await between here and
+    # the assignment, so exactly one of two overlapping starts wins and none is orphaned.
+    if _busy():
+        raise HTTPException(409, "a recording is already in progress")
     _session = RecordingSession(cfg, CAPTURES_ROOT, source, broadcaster=_broadcaster)
     _session.start()
     return _session.status()
@@ -1839,6 +1844,9 @@ async def record_start_replay(
         extra_metadata=meta,
     )
     source = ReplaySource(cache_bytes, ppr=cfg.ppr, realtime=True, speed=speed)
+    # `await file.read()` above yielded to the loop; re-check with no await before assigning.
+    if _busy():
+        raise HTTPException(409, "a recording is already in progress")
     _session = RecordingSession(cfg, CAPTURES_ROOT, source, broadcaster=_broadcaster)
     _session.start()
     return _session.status()
