@@ -75,7 +75,9 @@ describe('SidecarSupervisor', () => {
     expect(sup.getState()).toBe('crashed');
   }, 15000);
 
-  it('stop() terminates the process so a later health request fails', async () => {
+  // stop() kills the tree with Windows `taskkill` (killTree), so this only means anything on
+  // Windows. It runs in force-app-release.yml (windows-latest); the Linux CI job skips it.
+  it.skipIf(process.platform !== 'win32')('stop() terminates the process so a later health request fails', async () => {
     const port = freePort();
     sup = new SidecarSupervisor({
       exePath: process.execPath,
