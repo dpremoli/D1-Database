@@ -77,6 +77,10 @@ export function localStatusLabel(s: RemoteSession): string | null {
 export function restoreBlockedReason(s: RemoteSession): string | null {
 	if (s.local_status === 'finalized') return 'This recording is already saved on this machine. Delete the local copy first (Settings > Local Captures) to restore the backup.';
 	if (s.local_status === 'recording' || s.backup_state === 'streaming') return 'This recording is still in progress.';
+	// The backup is usually the SHORTER copy of a crashed recording, so restoring it over local
+	// data risks trading minutes of recording for fewer. Recover the local one instead (the backend
+	// refuses too, and only replaces a local raw when the backup is strictly larger).
+	if (s.local_status === 'incomplete') return 'An incomplete copy of this recording is on this machine. Recover it from Settings > Local Captures — restoring the backup could replace it with a shorter one.';
 	return null;
 }
 

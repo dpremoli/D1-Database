@@ -33,6 +33,7 @@ describe('restore gating and local status', () => {
 		expect(restoreBlockedReason({ ...base, local_status: 'missing', backup_state: 'complete' })).toBeNull();
 		expect(restoreBlockedReason({ ...base, local_status: 'deleted', backup_state: 'deleted' })).toBeNull();
 		expect(restoreBlockedReason({ ...base, backup_state: 'streaming' })).toMatch(/in progress/);
+		expect(restoreBlockedReason({ ...base, local_status: 'incomplete', backup_state: 'interrupted' })).toMatch(/Recover it/);
 	});
 	it('describes the local copy', () => {
 		expect(localStatusLabel({ ...base, local_status: 'finalized' })).toMatch(/saved on this machine/);
