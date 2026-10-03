@@ -195,7 +195,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 				</div>
 			</div>
 		</nav>
-		<main ref="mainEl" class="content" tabindex="-1">
+		<main ref="mainEl" class="content" :class="{ fill: route.meta.fillViewport }" tabindex="-1">
 			<OfflineSessionBanner />
 			<div v-if="showBanner" class="rec-banner">
 				<span class="rec-banner-dot"></span>
@@ -280,7 +280,13 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 .who { font-size: var(--fs-xs); color: var(--text-dim); text-align: center; word-break: break-word; max-width: 82px; }
 /* The sidebar is fixed/overlaid — it expands over the page on hover rather than pushing content —
    so content needs no reserved margin at all; the collapsed left-middle dot handle sits on top of it. */
+/* A page that owns its scrolling (route meta.fillViewport -- Settings, #30) gets exactly the
+   viewport, banners included, as a flex column: nothing can overflow the document and the page's
+   own pane scrolls. Every other page is laid out exactly as before (plain block content that
+   scrolls the document); only `.fill` changes anything. */
 .content { flex: 1; min-width: 0; }
+.content.fill { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.content.fill > .rec-banner, .content.fill > :deep(.off-banner) { flex-shrink: 0; }
 .content:focus { outline: none; } /* a programmatic focus target after navigation, not a control */
 /* Blue, not red. A healthy recording in progress is information, not a fault — #dc2626 here was the
    exact colour the forced-stop and safety-alarm banners use, so a normal run looked like a failure

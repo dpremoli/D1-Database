@@ -298,7 +298,7 @@ onMounted(() => runDoctor());
 
 		<h2 class="mt">Service endpoints</h2>
 		<p class="lead">Where the app connects to Directus and local services. Changes are saved to this browser and take effect immediately.</p>
-		<label v-for="f in epFields" :key="f.key" class="field">
+		<label v-for="f in epFields" :key="f.key" class="field" :data-focus="`endpoint-${f.key}`">
 			<span class="lbl">{{ f.label }}</span>
 			<input v-model="epForm[f.key]" spellcheck="false" />
 			<span class="ep-hint">{{ f.hint }}</span>

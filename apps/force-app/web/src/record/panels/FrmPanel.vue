@@ -34,8 +34,11 @@ function onColorScaleUpdate(v: ColorScale) {
 	colorScale.value = v;
 	w.plot.colormap = v.colormap;
 }
-const colorDomainLo = computed(() => autoClimits.value?.cmin ?? colorScale.value.satMin);
-const colorDomainHi = computed(() => autoClimits.value?.cmax ?? colorScale.value.satMax);
+// The editor strip's axis is the DATA range. Before any is known it is a fixed 0..1, never the
+// scale's own range: that moves as a handle is dragged, so the axis re-zoomed under the handle
+// after each release (#78). The editor still widens it to contain the saturation range.
+const colorDomainLo = computed(() => autoClimits.value?.cmin ?? 0);
+const colorDomainHi = computed(() => autoClimits.value?.cmax ?? 1);
 const colorHistogram = ref<Histogram | null>(null);
 function openLive() {
 	const q = new URLSearchParams({ colormap: w.plot.colormap, pointSize: String(w.plot.pointSize), frmAxis: w.plot.frmAxis, stride: String(w.plot.liveFrmStride) });

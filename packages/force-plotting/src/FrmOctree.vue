@@ -17,6 +17,9 @@ import type { ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
+import LoadingOverlay from './LoadingOverlay.vue';
+import { createLoadToken } from './loadToken';
+import { sameStage, stageInfo, streamStage, type LoadStage, type StageInfo } from './loadStage';
 
 const props = defineProps<{
 	octreePath: string;                       // served subdir: /octrees/<octreePath>/
@@ -35,10 +38,20 @@ const emit = defineEmits<{
 	(e: 'climits', v: { cmin: number; cmax: number }): void;
 	(e: 'points', n: number): void;   // LOD-visible point count (for the resolution readout)
 	(e: 'zscale', v: number): void;   // 3-finger vertical swipe adjusts the Z exaggeration
+	(e: 'stage', v: StageInfo | null): void;   // what the view is busy with (null = idle), for the host's busy mark (#102)
 }>();
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 const loading = ref(true);
+// 'open' while the metadata and root node load, then 'stream' while LOD nodes arrive: `loading`
+// used to clear as soon as the root was in, so the rest of the full-res streaming looked finished
+// (#102).
+const stage = ref<LoadStage | null>({ kind: 'open' });
+watch(stage, (s) => emit('stage', stageInfo(s)));
+// Only the initial fill counts: after it, a pan or zoom re-streams a few nodes and a pill flashing
+// on every gesture would be noise.
+let lastChangeAt = performance.now();
+let streamDone = false;
 const error = ref<string | null>(null);
 const pointCount = ref(0);
 
@@ -171,7 +184,10 @@ function applyZ() {
 	invalidate();
 }
 
-async function loadMeta(base: string) {
+// Returns the metadata's per-axis ranges (empty on failure -> defaults); the caller applies them
+// only if its load is still current, so a superseded load can't overwrite the ranges.
+async function loadMeta(base: string): Promise<Record<string, [number, number]>> {
+	const found: Record<string, [number, number]> = {};
 	try {
 		// no-store: this metadata drives the colour limits; never risk a stale cached copy
 		// (a pre-repatch metadata.json would show the wrong, un-clipped colour range).
@@ -179,37 +195,65 @@ async function loadMeta(base: string) {
 		const meta = await res.json();
 		for (const a of meta.attributes || []) {
 			if (a.name in ranges && Array.isArray(a.min) && Array.isArray(a.max)) {
-				ranges[a.name] = [Number(a.min[0]), Number(a.max[0])];
+				found[a.name] = [Number(a.min[0]), Number(a.max[0])];
 			}
 		}
 	} catch { /* fall back to defaults */ }
+	return found;
 }
 
+// Free the current octree: its node geometries, material and gradient texture. Reloading used to
+// just drop the reference (only unmount disposed), which leaked GPU memory on every op switch once
+// the component stayed mounted across them.
+function disposeCloud() {
+	if (pco) {
+		scene?.remove(pco);
+		try { pco.dispose(); } catch { /* already disposed */ }
+		pco = null;
+	}
+	(material?.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
+	material?.dispose();
+	material = null;
+}
+
+// Each load() takes a token and re-checks it after every await; a superseded load disposes what
+// it created and touches nothing else (two overlapping loads both reached scene.add before).
+const loadToken = createLoadToken();
+
 async function load() {
+	const mine = loadToken.next();
+	disposeCloud();
 	loading.value = true; error.value = null;
+	stage.value = { kind: 'open' };
+	streamDone = false;
 	// The octree host is configured, not assumed to be the SPA origin: the standalone app is
 	// served from a different origin than the octree server, while the Directus module is
 	// same-origin. The host supplies whichever applies.
 	const base = `${useForceHost().octreeUrl}/${props.octreePath}/`;
+	let pt: Potree | null = null, loaded: PointCloudOctree | null = null;
 	try {
-		await loadMeta(base);
-		potree = new Potree();
-		potree.maxNumNodesLoading = 12;   // parallelise node fetches so full-res streams in faster
+		const found = await loadMeta(base);
+		if (!loadToken.isCurrent(mine)) return;
+		Object.assign(ranges, found);
+		pt = new Potree();
+		pt.maxNumNodesLoading = 12;   // parallelise node fetches so full-res streams in faster
 		// "Full-res" must mean full res: budget the LOD to cover the whole octree (a small
 		// headroom factor so the top level isn't shaved off), not a fixed 3M cap that left
 		// large maps showing ~49%. Capped for GPU safety on the biggest maps.
-		potree.pointBudget = props.totalPoints && props.totalPoints > 0
+		pt.pointBudget = props.totalPoints && props.totalPoints > 0
 			? Math.min(Math.ceil(props.totalPoints * 1.05), props.budgetCap || 25_000_000)
 			: 15_000_000;
-		pco = await potree.loadPointCloud('metadata.json', base);
+		loaded = await pt.loadPointCloud('metadata.json', base);
+		if (!loadToken.isCurrent(mine)) { loaded.dispose(); return; }
 		// potree culls any octree node projecting smaller than minNodePixelSize (default
 		// 50px) BEFORE the point budget is even considered — so at fit-view every deep
 		// leaf is sub-50px and dropped, leaving only coarse levels (~8-50%). "Full-res"
 		// must actually be full res, so drop the cutoff to ~1px; the budget above then
 		// bounds the total. (Sub-pixel nodes contribute nothing visible anyway.)
-		(pco as any).minNodePixelSize = props.minNodePx || 1;
+		(loaded as any).minNodePixelSize = props.minNodePx || 1;
 		material = makeMaterial();
-		(pco as any).material = material;
+		(loaded as any).material = material;
+		potree = pt; pco = loaded;
 		emitAutoRange();
 		applyRange();
 		scene!.add(pco);
@@ -217,9 +261,13 @@ async function load() {
 		frameCamera();
 		applyZ();
 		loading.value = false;
+		lastChangeAt = performance.now();
+		stage.value = streamStage(0, props.totalPoints, 0);
 	} catch (e: any) {
+		if (!loadToken.isCurrent(mine)) { try { loaded?.dispose(); } catch { /* ignore */ } return; }
 		error.value = e?.message || 'failed to load octree';
 		loading.value = false;
+		stage.value = null;
 	}
 }
 
@@ -261,7 +309,12 @@ function setupGL() {
 		if (pco && potree && renderer && camera) {
 			const r = potree.updatePointClouds([pco], camera, renderer);
 			const n = (r as any)?.numVisiblePoints ?? pointCount.value;
-			if (n !== lastVisibleN) { lastVisibleN = n; needsRender = true; }   // nodes streamed in/out
+			if (n !== lastVisibleN) { lastVisibleN = n; needsRender = true; lastChangeAt = performance.now(); }   // nodes streamed in/out
+			if (!loading.value && !streamDone) {
+				const next = streamStage(n, props.totalPoints, performance.now() - lastChangeAt);
+				if (!next) streamDone = true;
+				if (!sameStage(stage.value, next)) stage.value = next;
+			}
 			if (Math.abs(n - pointCount.value) > pointCount.value * 0.02 + 1) { pointCount.value = n; emit('points', n); }
 			if (!needsRender) return;
 			needsRender = false;
@@ -318,6 +371,9 @@ onMounted(() => {
 	nextTick(() => { setupGL(); if (canvasEl.value) ro!.observe(canvasEl.value); load(); });
 });
 onBeforeUnmount(() => {
+	loadToken.cancel();
+	// The stage watcher is already stopped by now: say "idle" directly so the host's busy bar clears.
+	if (stage.value) emit('stage', null);
 	if (raf) cancelAnimationFrame(raf);
 	const c = canvasEl.value;
 	if (c) {
@@ -327,13 +383,12 @@ onBeforeUnmount(() => {
 		c.removeEventListener('pointercancel', onPtrUp);
 	}
 	ro?.disconnect(); controls?.dispose();
-	(material?.uniforms.uGradient.value as THREE.Texture | undefined)?.dispose();
-	material?.dispose();
+	disposeCloud();
 	try { renderer?.forceContextLoss(); } catch { /* ignore */ }   // release the GL context (not freed by dispose())
 	renderer?.dispose();
 });
 
-watch(() => props.octreePath, () => { if (pco) { scene?.remove(pco); pco = null; } load(); });
+watch(() => props.octreePath, () => { load(); });
 watch(() => props.axis, () => { if (material) { material.uniforms.uAxis.value = AXIS_IDX[props.axis] ?? 2; emitAutoRange(); } });
 // LUT bytes resync only when lutKey changes; saturation/displayed-range/grey-vs-hide are uniforms.
 watch(() => props.colorScale, (s) => {
@@ -377,8 +432,8 @@ defineExpose({ currentBounds, exportViewport });
 
 <template>
 	<div class="frm-octree">
-		<div v-if="loading" class="fc-msg"><v-progress-circular indeterminate small /> streaming full-res…</div>
-		<div v-else-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
+		<LoadingOverlay v-if="stage" :stage="stage" />
+		<div v-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
 		<canvas v-show="!error" ref="canvasEl"></canvas>
 		<span v-if="!loading && !error" class="fc-count">{{ pointCount.toLocaleString() }} pts (LOD)</span>
 	</div>
