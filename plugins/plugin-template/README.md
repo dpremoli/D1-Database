@@ -65,9 +65,9 @@ template updates.
 
 **`entrypoint.sh`**
 Starts gunicorn bound to `0.0.0.0:${WORKER_HTTP_PORT:-8080}` and an rq
-worker pointing at `redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}`. Both
+worker pointing at `${REDIS_URL:-redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}}`. Both
 processes run in the background; a `trap` catches `TERM` and `INT` and kills
-both before the container exits. The only line you must change is the rq queue
+both before the container exits. The script then does `wait -n`: if either process dies the other is stopped and the container exits non-zero (so a crashed rq worker cannot leave `/health` green). The only line you must change is the rq queue
 name (see step 3 below).
 
 **`app/webhook.py`**
@@ -217,8 +217,9 @@ are read at runtime from the container environment; none may be hard-coded.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `REDIS_HOST` | yes | `redis` | Hostname of the Redis service inside the Docker network. |
-| `REDIS_PORT` | yes | `6379` | Redis TCP port. |
+| `REDIS_URL` | no | — | Full Redis URL including the password (`redis://:<pw>@redis:6379/0`). Preferred by the webhook and by `rq worker --url` when set. |
+| `REDIS_HOST` | yes | `redis` | Fallback when `REDIS_URL` is unset: hostname of the Redis service inside the Docker network. |
+| `REDIS_PORT` | yes | `6379` | Fallback when `REDIS_URL` is unset: Redis TCP port. |
 | `MINIO_ENDPOINT` | yes | `http://minio:9000` | Full URL of the MinIO service. |
 | `MINIO_ROOT_USER` | yes | — | MinIO access key (S3 `aws_access_key_id`). |
 | `MINIO_ROOT_PASSWORD` | yes | — | MinIO secret key (S3 `aws_secret_access_key`). |
@@ -227,8 +228,9 @@ are read at runtime from the container environment; none may be hard-coded.
 | `WORKER_DIRECTUS_TOKEN` | yes | — | Static Bearer token for the plugin's machine user. Never commit this value. |
 | `WORKER_HTTP_PORT` | no | `8080` | Port gunicorn binds to inside the container. Must match the Dockerfile `EXPOSE` and the `healthcheck` URL. |
 | `WORKER_MEMORY_LIMIT_MB` | no | `256` | Soft memory ceiling for streaming reads. Job code should respect this when sizing read buffers. |
-| `WORKER_WEBHOOK_SECRET` | no | — | Shared secret required in the `X-Worker-Secret` header on webhook POSTs. If unset, auth is disabled (dev only). The Directus Flow must send the same value. |
+| `WORKER_WEBHOOK_SECRET` | yes | — | Shared secret required in the `X-Worker-Secret` header on webhook POSTs. **Fails closed:** if unset or empty, every request except `GET /health` is rejected with 503. The Directus Flow must send the same value. |
 | `QUEUE_NAME` | no | `plugin` | rq queue name for this plugin's job stream. Set to a value unique across the stack. |
+| `JOB_TIMEOUT_SECONDS` | no | `21600` | rq `job_timeout` passed to `enqueue` (default 6 h; rq's own default of 180 s would kill real jobs). Rows left in a non-terminal status by a killed job must be marked `failed` (contract section 9); see the reaper in `plugins/heavy-data-worker/app/reaper.py` for a reference implementation. |
 
 Set all required variables in your `.env` file (copied from `.env.example`)
 or in the Docker Compose `environment:` block. The `WORKER_DIRECTUS_TOKEN`
@@ -275,6 +277,7 @@ the `image` tag and host port as needed.
       minio:
         condition: service_healthy
     environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       REDIS_HOST: redis
       REDIS_PORT: 6379
       MINIO_ENDPOINT: http://minio:9000
@@ -285,6 +288,7 @@ the `image` tag and host port as needed.
       WORKER_DIRECTUS_TOKEN: ${YOUR_PLUGIN_DIRECTUS_TOKEN:-}
       WORKER_MEMORY_LIMIT_MB: ${WORKER_MEMORY_LIMIT_MB:-256}
       WORKER_HTTP_PORT: "8080"
+      WORKER_WEBHOOK_SECRET: ${WORKER_WEBHOOK_SECRET:?set WORKER_WEBHOOK_SECRET}
     ports:
       - "${YOUR_PLUGIN_HTTP_PORT:-8081}:8080"
     healthcheck:

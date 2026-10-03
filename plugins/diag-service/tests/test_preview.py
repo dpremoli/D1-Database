@@ -447,9 +447,9 @@ def test_preview_reflects_a_param_change(client):
     )
     assert a.status_code == b.status_code == 200
     ga, gb = _read_bytes(a.content), _read_bytes(b.content)
-    assert not np.array_equal(
-        ga["gi_star"], gb["gi_star"]
-    ), "k=30 vs k=50 must move gi_star"
+    assert not np.array_equal(ga["gi_star"], gb["gi_star"]), (
+        "k=30 vs k=50 must move gi_star"
+    )
     assert a.headers["x-diag-cache"] == "miss"
 
 
