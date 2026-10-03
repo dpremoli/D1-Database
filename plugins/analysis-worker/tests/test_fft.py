@@ -168,14 +168,15 @@ def _run_job(monkeypatch, path):
         job.minio_client, "download_file", lambda key, dst: shutil.copy(path, dst)
     )
     monkeypatch.setattr(job.minio_client, "put_object", MagicMock())
-    monkeypatch.setattr(job.directus_client, "get_item", lambda c, i: {})
+    row = {"status": "registered", "summary_stats": {}, "plot_uris": [], "version": 1}
+    monkeypatch.setattr(job.directus_client, "get_test_session", lambda i: dict(row))
     monkeypatch.setattr(
         job.directus_client,
-        "patch_item",
-        lambda c, i, payload, **kw: patched.append(payload),
+        "patch_test_session",
+        lambda i, payload, version=None: patched.append(payload),
     )
     job.analyse_session("sess", "a/b.d1f")
-    final = patched[-1]
+    final = next(p for p in reversed(patched) if "summary_stats" in p)
     return final["summary_stats"]["fft_analysis"]
 
 

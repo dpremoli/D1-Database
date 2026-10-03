@@ -19,7 +19,12 @@ from app.lib.fft_analysis import (
     plan_blocks,
     plot_spectrum_from,
 )
-from app.lib.statuses import STATUS_ANALYSED, STATUS_ANALYSING, STATUS_FAILED
+from app.lib.statuses import (
+    STATUS_ANALYSED,
+    STATUS_ANALYSING,
+    STATUS_FAILED,
+    resolve_status,
+)
 
 log = logging.getLogger(__name__)
 
@@ -93,19 +98,12 @@ def analyse_session(session_id: str, object_key: str) -> None:
             **metrics,
         }
 
-        # Read-merge-write: namespace under "fft_analysis" and append our plot
-        # so we don't clobber the heavy-data worker's "basic" stats.
-        merged_stats, merged_plots = _merge_outputs(
-            session_id, "fft_analysis", analysis_result, plot_uri
-        )
-        directus_client.patch_item(
-            COLLECTION,
-            session_id,
-            {
-                "status": STATUS_ANALYSED,
-                "summary_stats": merged_stats,
-                "plot_uris": merged_plots,
-            },
+        # Read-merge-write under OCC: namespace our stats under "fft_analysis"
+        # and append our plot so we don't clobber the heavy-data worker's
+        # "basic" stats; the status moves to 'analysed' only if the transition
+        # rules allow it (see statuses.resolve_status).
+        _merge_outputs(
+            session_id, "fft_analysis", analysis_result, plot_uri, STATUS_ANALYSED
         )
         log.info(
             "done analysis session=%s dominant_freq=%.1f Hz",
@@ -126,36 +124,54 @@ def analyse_session(session_id: str, object_key: str) -> None:
 
 
 def _merge_outputs(
-    session_id: str, stats_key: str, stats: dict, plot_uri: str
-) -> tuple[dict, list]:
-    """Merge this worker's outputs into the existing JSONB columns.
+    session_id: str,
+    stats_key: str,
+    stats: dict,
+    plot_uri: str,
+    target_status: str | None = None,
+) -> dict | None:
+    """Merge this worker's outputs into the session row, guarded by OCC.
 
-    Returns (summary_stats, plot_uris) with our contribution namespaced under
-    *stats_key* and our plot appended (deduped). Falls back to a fresh object
-    if the current item can't be read.
+    Reads the row (including ``version``), namespaces our contribution under
+    *stats_key*, appends our plot (deduped) and PATCHes with
+    ``filter[version][_eq]``; on a conflict it re-reads and re-merges, a bounded
+    number of times. If the row can't be read the write is aborted (the
+    exception propagates and the job is marked failed) rather than overwriting
+    ``summary_stats`` with a fresh object.
     """
-    try:
-        current = directus_client.get_item(COLLECTION, session_id)
-    except Exception:
-        log.warning("could not read current session=%s; writing fresh", session_id)
-        current = {}
 
-    summary_stats = current.get("summary_stats") or {}
-    if not isinstance(summary_stats, dict):
-        summary_stats = {}
-    summary_stats[stats_key] = stats
+    def compute(current: dict) -> dict:
+        summary_stats = current.get("summary_stats") or {}
+        if not isinstance(summary_stats, dict):
+            summary_stats = {}
+        summary_stats[stats_key] = stats
 
-    plot_uris = current.get("plot_uris") or []
-    if not isinstance(plot_uris, list):
-        plot_uris = []
-    if plot_uri not in plot_uris:
-        plot_uris.append(plot_uri)
+        plot_uris = current.get("plot_uris") or []
+        if not isinstance(plot_uris, list):
+            plot_uris = []
+        if plot_uri not in plot_uris:
+            plot_uris.append(plot_uri)
 
-    return summary_stats, plot_uris
+        payload: dict = {"summary_stats": summary_stats, "plot_uris": plot_uris}
+        if target_status:
+            status = resolve_status(current.get("status"), target_status)
+            if status:
+                payload["status"] = status
+        return payload
+
+    return directus_client.update_session(session_id, compute)
 
 
 def _mark(session_id: str, status: str) -> None:
+    """Set *status* if the transition rules allow it; never raises."""
     try:
-        directus_client.patch_item(COLLECTION, session_id, {"status": status})
+        directus_client.update_session(
+            session_id,
+            lambda current: (
+                {"status": new}
+                if (new := resolve_status(current.get("status"), status))
+                else None
+            ),
+        )
     except Exception:
         log.warning("could not set status=%s for session=%s", status, session_id)
