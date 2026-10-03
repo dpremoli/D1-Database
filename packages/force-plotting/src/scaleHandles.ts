@@ -95,12 +95,17 @@ export function handleDragPatch(
 			if (!(hi > lo)) { lo = -m; hi = m; }
 			return { satMin: -m, satMax: m, baseMin: lo, baseMax: hi };
 		}
+		// Clamp against the SHAPED range (satMin/satMax), not the base: with always-show-zero on and a
+		// base of [25, 35] the shaped range is [0, 35], so satMax may be dragged down to ~0 even
+		// though that is below the base's own minimum. When the dragged end passes the opposite BASE
+		// end, the base slides along at its own width rather than the handle sticking at that end.
+		const width = bMax - bMin;
 		if (key === 'satMin') {
-			const v = Math.min(value, bMax - eps);
-			return { satMin: v, baseMin: v };
+			const v = Math.min(value, s.satMax - eps);
+			return bMax < v + eps ? { satMin: v, baseMin: v, baseMax: v + width } : { satMin: v, baseMin: v };
 		}
-		const v = Math.max(value, bMin + eps);
-		return { satMax: v, baseMax: v };
+		const v = Math.max(value, s.satMin + eps);
+		return bMin > v - eps ? { satMax: v, baseMax: v, baseMin: v - width } : { satMax: v, baseMax: v };
 	}
 	return key === 'dispMin'
 		? { dispMin: Math.min(value, s.dispMax - eps) }

@@ -119,6 +119,36 @@ describe('pickHandle: coincident ends can always be pulled apart (#78)', () => {
 	});
 });
 
+describe('handleDragPatch: shaped range clamps (always-show-zero)', () => {
+	const EPS = 1e-6;
+	// Data 25..35; always-show-zero shapes it to 0..35.
+	const zero = applyParams({ ...defaultScale(25, 35), alwaysShowZero: true }, 25, 35);
+
+	it('lets satMax go below the base minimum, anywhere the shaped range allows', () => {
+		expect([zero.satMin, zero.satMax]).toEqual([0, 35]);
+		const dragged = applyParams({ ...zero, ...handleDragPatch(zero, 'satMax', 10, EPS) }, 25, 35);
+		expect(dragged.satMax).toBe(10);   // used to stick at 25, the base minimum
+		expect(dragged.satMin).toBe(0);
+	});
+	it('still keeps satMax above the shaped minimum', () => {
+		const p = handleDragPatch(zero, 'satMax', -5, EPS);
+		expect(p.satMax).toBeCloseTo(0 + EPS, 9);
+	});
+	it('unticking afterwards keeps a valid range around the dragged end', () => {
+		const dragged = applyParams({ ...zero, ...handleDragPatch(zero, 'satMax', 10, EPS) }, 25, 35);
+		const off = applyParams({ ...dragged, alwaysShowZero: false }, 25, 35);
+		expect(off.satMax).toBe(10);
+		expect(off.satMax).toBeGreaterThan(off.satMin);
+	});
+	it('satMin dragged above the base maximum slides the base the same way', () => {
+		const neg = applyParams({ ...defaultScale(-35, -25), alwaysShowZero: true }, -35, -25);
+		expect([neg.satMin, neg.satMax]).toEqual([-35, 0]);
+		const dragged = applyParams({ ...neg, ...handleDragPatch(neg, 'satMin', -10, EPS) }, -35, -25);
+		expect(dragged.satMin).toBe(-10);
+		expect(dragged.satMax).toBe(0);
+	});
+});
+
 describe('handleDragPatch', () => {
 	const EPS = 1e-6;
 	const linear = { ...defaultScale(25, 35), satMin: 25, satMax: 35 };
