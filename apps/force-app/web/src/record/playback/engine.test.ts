@@ -283,6 +283,53 @@ describe('playback engine', () => {
 		expect(h.client.status.tSec).toBeCloseTo(5, 5);
 	});
 
+	describe('Tacho channel in replay (#108)', () => {
+		it('fills Tacho with the cache rpm envelope, not a flat zero line', () => {
+			const h = harness();
+			const c = makeDenseCache();
+			for (let i = 0; i < c.N; i++) c.rpm[i] = 600 + (i % 50);   // varies inside each 5-sample bin
+			h.engine.load(c, { ppr: 1, stride: 1 });
+			h.engine.seek(3);
+			const tacho = h.client.trace.sub.Tacho;
+			expect(h.client.status.tachoKind).toBe('rpm');
+			expect(tacho.length).toBe(h.client.trace.t.length);
+			expect(tacho.length).toBeGreaterThan(0);
+			for (const [lo, hi] of tacho) { expect(lo).toBeGreaterThanOrEqual(600); expect(hi).toBeLessThanOrEqual(649); expect(hi).toBeGreaterThanOrEqual(lo); }
+			expect(tacho.some(([lo, hi]) => hi > lo)).toBe(true);   // the bin spread is kept
+		});
+		it('leaves Tacho EMPTY, and says none, when the cache has no measured rpm', () => {
+			const h = harness();
+			const c = makeCache();
+			c.rpm.fill(0);
+			h.engine.load(c, { ppr: 1, stride: 1 });
+			h.engine.seek(5);
+			expect(h.client.status.tachoKind).toBe('none');
+			expect(h.client.trace.t.length).toBeGreaterThan(0);
+			expect(h.client.trace.sub.Tacho).toEqual([]);
+		});
+		it('SEEK INVARIANT holds for the Tacho bins too', () => {
+			const a = harness(), b = harness();
+			const c = makeDenseCache();
+			for (let i = 0; i < c.N; i++) c.rpm[i] = 600 + (i % 37);
+			a.engine.load(c, { ppr: 1, stride: 1 });
+			b.engine.load(c, { ppr: 1, stride: 1 });
+			a.engine.seek(4.2);
+			b.engine.play();
+			for (let k = 0; k < 42; k++) b.tick(100);
+			b.engine.seek(4.2);
+			expect(b.client.trace.sub.Tacho).toEqual(a.client.trace.sub.Tacho);
+		});
+		it('returns the client to the live default once the replay is reset', () => {
+			const h = harness();
+			const c = makeCache();
+			c.rpm.fill(0);
+			h.engine.load(c, { ppr: 1, stride: 1 });
+			expect(h.client.status.tachoKind).toBe('none');
+			h.client.reset();
+			expect(h.client.status.tachoKind).toBe('signal');
+		});
+	});
+
 	it('rejects a degenerate cache instead of dividing by zero', () => {
 		const h = harness();
 		const bad = { ...makeCache(1), N: 1 } as Cache;

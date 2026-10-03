@@ -4,6 +4,7 @@ import type { RecordClient } from './liveClient';
 import { channelColor } from './types';
 import { theme } from '../theme';
 import { DEFAULT_WINDOW_SEC, windowView } from './plotWindow';
+import { axisLabel, channelLabel, tachoMissingNote } from './tachoSignal';
 
 // windowSec is this plot's OWN view window (#105/#34): it slices that much out of the client's
 // retained trace history rather than drawing whatever happens to be retained.
@@ -13,6 +14,9 @@ function envOf(key: string): Env {
 	const tr = props.client.trace;
 	return key === 'Fx' ? tr.fx : key === 'Fy' ? tr.fy : key === 'Fz' ? tr.fz : (tr.sub[key] ?? []);
 }
+// What the Tacho channel holds right now (live pulse train / replayed RPM / nothing): it changes
+// the axis title and the empty-plot message, so it is part of what draw() redraws on.
+const tachoKind = () => props.client.status.tachoKind;
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 let raf = 0;
 let ctx: CanvasRenderingContext2D | null = null;
@@ -75,7 +79,7 @@ function draw() {
 	const tr = props.client.trace;
 	const n = tr.t.length;
 	const sel = props.channels ?? ['Fx', 'Fy', 'Fz'];
-	const selKey = sel.join(',');
+	const selKey = `${sel.join(',')}|${tachoKind()}|${props.client.status.tachoOk}`;
 	const lastPt = n ? tr.t[n - 1] : NaN;
 	// The window is part of the key: changing it re-slices data that has not changed.
 	if (n === lastN && lastPt === lastT && selKey === lastSel && props.windowSec === lastW) return;
@@ -99,6 +103,14 @@ function draw() {
 	const { i0, x0: t0, x1: t1 } = view;
 	const span = Math.max(1e-3, t1 - t0);
 	const series = sel.map((k) => [k, envOf(k)] as const).filter(([, arr]) => arr.length > 0);
+	const note = tachoMissingNote(sel, tachoKind(), props.client.status.tachoOk);
+	if (series.length === 0) {
+		// Nothing to draw for the selection (a replayed cut with no tacho, typically): say so rather
+		// than show empty axes under a legend entry.
+		ctx.fillStyle = pal.text; ctx.font = '12px system-ui'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+		ctx.fillText(note ?? 'no data for the selected channels', ML + 8, MT + H / 2);
+		return;
+	}
 	let lo = Infinity, hi = -Infinity;
 	for (const [, arr] of series) for (let i = i0; i < arr.length; i++) { const [mn, mx] = arr[i]; if (mn < lo) lo = mn; if (mx > hi) hi = mx; }
 	if (!isFinite(lo) || !isFinite(hi)) { lo = -1; hi = 1; }
@@ -139,7 +151,8 @@ function draw() {
 	ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
 	ctx.fillText('Time (s)', ML + W / 2, CH - 2);
 	ctx.save(); ctx.translate(10, MT + H / 2); ctx.rotate(-Math.PI / 2);
-	ctx.textBaseline = 'middle'; ctx.fillText('Force (N)', 0, 0); ctx.restore();
+	ctx.textBaseline = 'middle'; ctx.fillText(axisLabel(sel, tachoKind()), 0, 0); ctx.restore();
+	if (note) { ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(note, ML + 8, MT + 4); }
 
 	// Zero line
 	if (lo < 0 && hi > 0) { ctx.strokeStyle = pal.axisLine; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(ML, yOf(0)); ctx.lineTo(ML + W, yOf(0)); ctx.stroke(); }
@@ -179,7 +192,7 @@ onBeforeUnmount(() => { cancelAnimationFrame(raf); window.removeEventListener('r
 		<canvas ref="canvasEl"></canvas>
 		<div class="legend">
 			<span v-for="k in (channels ?? ['Fx', 'Fy', 'Fz'])" :key="k" class="lg" :style="{ color: channelColor(k, theme) }">
-				<i :style="{ background: channelColor(k, theme) }"></i>{{ k }}
+				<i :style="{ background: channelColor(k, theme) }"></i>{{ channelLabel(k, client.status.tachoKind) }}
 			</span>
 		</div>
 	</div>

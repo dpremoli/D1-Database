@@ -72,6 +72,46 @@ describe('SidecarSupervisor when a hung backend will not report its exit', () =>
     await stopping;
   });
 
+  it("keeps the replacement's liveness probe running when the abandoned process finally exits", async () => {
+    const sup = new SidecarSupervisor({
+      exePath: 'backend',
+      args: [],
+      port: 1,
+      healthUrl: 'http://127.0.0.1:1/health',
+      readyTimeoutMs: 5000,
+      livenessIntervalMs: 1000,
+      livenessTimeoutMs: 500,
+      livenessFailures: 2,
+      stableAfterMs: 60_000,
+    });
+    await sup.start();
+    healthy = false;
+    // Two failed checks, then terminate()'s grace + give-up window: the first process is abandoned.
+    await vi.advanceTimersByTimeAsync(2000 + 5000 + 1);
+    // The replacement comes up healthy after the restart backoff.
+    healthy = true;
+    await vi.advanceTimersByTimeAsync(1000 + 100);
+    expect(spawned).toHaveLength(2);
+    expect(sup.getState()).toBe('ready');
+    expect(sup.getRestartCount()).toBe(1);
+
+    // The abandoned process finally reports its exit. It must not touch the replacement's timers.
+    spawned[0].emit('exit', null, 'SIGKILL');
+
+    // The restart count still resets once the replacement has been stable...
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sup.getRestartCount()).toBe(0);
+
+    // ...and the replacement is still health-checked: when it hangs it is terminated in turn.
+    healthy = false;
+    await vi.advanceTimersByTimeAsync(2000 + 100);
+    expect(spawned[1].kill).toHaveBeenCalledWith('SIGTERM');
+
+    const stopping = sup.stop();
+    spawned[1].emit('exit', null, 'SIGTERM');
+    await stopping;
+  });
+
   it('leaves no timer behind once terminate() resolves', async () => {
     const sup = new SidecarSupervisor({
       exePath: 'backend',

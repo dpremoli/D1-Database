@@ -23,6 +23,7 @@ export const CHANGELOG: ChangelogEntry[] = [
 			'A sample rate the NI-DAQ hardware cannot do is caught before recording starts, and the setting is highlighted. A failure to start is reported separately from a failure to save. NI-DAQ is greyed out when no hardware is connected.',
 			'Replay starts at the first sample of the cut, and the timeline shows cut and force-peak markers you can click to jump to.',
 			'Each force plot panel has its own time window, saved with the layout. Record plot options are remembered, and the bottom panel defaults to Tacho.',
+			'Fixed: the Tacho panel was empty once a cut finished and a flat line in replay. It now draws the cut\'s RPM in both, and says "No tacho signal in this recording" when the file has none.',
 			'Fixed: the live FRM map lost points after zooming or scrubbing, and the colour-scale histogram disappeared after scrubbing backwards. Pop-out windows no longer slow replay down.',
 			'The RPM gauge keeps a stable scale instead of jumping with every reading.',
 			'Plot page: switching force files no longer flashes or distorts the charts or shows the previous file\'s point cloud, switching Figure, Lite or Full shows loading progress, and dragging the crop handles on the end-of-cut plot is smooth.',

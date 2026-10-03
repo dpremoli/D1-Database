@@ -170,9 +170,13 @@ export class SidecarSupervisor {
     };
     proc.stdout?.on('data', keepTail);
     proc.stderr?.on('data', keepTail);
+    // Everything below is per-process state: only the current process may act on it. A late event
+    // from an abandoned (or otherwise replaced) process must not cancel the replacement's liveness
+    // and stable timers, flip the state, or start another restart.
+    const isStale = () => this.abandoned.has(proc) || this.proc !== proc;
     proc.on('exit', (code, signal) => {
+      if (isStale()) return;
       this.stopLiveness();
-      if (this.abandoned.has(proc)) return;
       if (this.stopping) {
         this.setState('stopped');
         return;
@@ -185,7 +189,7 @@ export class SidecarSupervisor {
       );
     });
     proc.on('error', (err) => {
-      if (this.abandoned.has(proc)) return;
+      if (isStale()) return;
       if (this.stopping) {
         this.setState('stopped');
         return;

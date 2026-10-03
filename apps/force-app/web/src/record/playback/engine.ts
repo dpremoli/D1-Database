@@ -15,6 +15,7 @@ import { axisAutoLimits, idxOfTime as firstIdxAtOrAfter, type Axis, type Cache }
 import { SUB_NAMES, type RecordClient } from '../liveClient';
 import { createSpectrumClient, type SpectrumClient } from './spectrum';
 import { computeMarkers, type TimelineMarker } from './markers';
+import { cacheTachoKind } from '../tachoSignal';
 
 export interface PlaybackOpts {
 	baseUrl: string;
@@ -77,6 +78,7 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 	let cache: Cache | null = null;
 	let ppr = 1, stride = 1, innerR = 0;
 	let colorAxis: Axis = 'Fz';
+	let tachoKind: 'rpm' | 'none' = 'none';
 	let csIdx = 0, revsCs = 0;         // FRM spiral origin (cache's own detected cut start)
 	let binSize = 1;                   // samples per envelope bin
 	// Two cursors, because the two buffers advance in different units. FRM points are per-sample,
@@ -112,6 +114,10 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 			return;
 		}
 		cache = c;
+		// What the Tacho channel shows for this cut: its stored RPM, or nothing when the cache has
+		// none. Set after reset() above, which puts it back to the live default.
+		tachoKind = cacheTachoKind(c);
+		client.status.tachoKind = tachoKind;
 		ppr = o.ppr > 0 ? o.ppr : 1;
 		innerR = Math.max(0, (o.innerDiam || 0) / 2);
 		stride = Math.max(1, Math.round(o.stride) || 1);
@@ -172,7 +178,10 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 			const s = b0, e = Math.min(b0 + binSize, i1);
 			if (e <= s) continue;
 			let fxlo = Infinity, fxhi = -Infinity, fylo = Infinity, fyhi = -Infinity, fzlo = Infinity, fzhi = -Infinity;
+			let rlo = Infinity, rhi = -Infinity;
 			for (let i = s; i < e; i++) {
+				const r = c.rpm[i];
+				if (r < rlo) rlo = r; if (r > rhi) rhi = r;
 				const x = c.Fx[i], y = c.Fy[i], z = c.Fz[i];
 				if (x < fxlo) fxlo = x; if (x > fxhi) fxhi = x;
 				if (y < fylo) fylo = y; if (y > fyhi) fyhi = y;
@@ -183,13 +192,14 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 			client.trace.fy.push([fylo, fyhi]);
 			client.trace.fz.push([fzlo, fzhi]);
 			// The cache carries summed axes only. Sub-channels are the same synthetic split
-			// ReplaySource applies server-side (Fx/2, Fy/2, Fz/4); Tacho has no counterpart at all
-			// and stays flat — TransportBar labels this so it is never mistaken for real data.
+			// ReplaySource applies server-side (Fx/2, Fy/2, Fz/4). The raw tacho is not stored: Tacho
+			// is the cache's RPM series (status.tachoKind === 'rpm'), and when the cache has none
+			// the Tacho trace stays EMPTY rather than a flat zero, so the plot can say "no tacho".
 			const sub = client.trace.sub;
 			sub.Fx1.push([fxlo / 2, fxhi / 2]); sub.Fx2.push([fxlo / 2, fxhi / 2]);
 			sub.Fy1.push([fylo / 2, fyhi / 2]); sub.Fy2.push([fylo / 2, fyhi / 2]);
 			for (const k of ['Fz1', 'Fz2', 'Fz3', 'Fz4']) sub[k].push([fzlo / 4, fzhi / 4]);
-			sub.Tacho.push([0, 0]);
+			if (tachoKind === 'rpm') sub.Tacho.push([rlo, rhi]);
 		}
 	}
 
