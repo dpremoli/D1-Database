@@ -9,8 +9,9 @@ Everything needed to bring the stack up from a clean machine and keep it safe.
 - `caddy/Caddyfile` — the Caddy reverse proxy: plain HTTP on `:80` (TLS is
   terminated in front of it by Tailscale serve on `d1-server`). Directus is the
   default route; the other routes are below.
-- `backup/backup.sh` — compressed `pg_dump` + MinIO upload.
-- `backup/restore.sh` — download from MinIO + `psql` restore.
+- `backup/backup.sh` — verified (`gzip -t`) compressed `pg_dump` + roles dump + MinIO upload.
+- `backup/restore.sh` — download from MinIO, verify, then a single-transaction `psql`
+  restore that asks you to type the database name (`--yes` to skip).
 
 | Caddy route | Serves |
 |---|---|
