@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 from collections import OrderedDict
 
@@ -24,6 +25,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from scipy import signal as ssig
+from starlette.concurrency import run_in_threadpool
 
 from .d1lc import Cache, parse, serialise
 from .filters import ChainError, apply_chain
@@ -50,6 +52,29 @@ if _cors_origins:
     )
 
 _lru: OrderedDict[str, Cache] = OrderedDict()
+# The filter maths runs in the threadpool (a multi-second chain must not freeze the event loop
+# and /health), so the LRU is touched from more than one thread: guard every mutation.
+_lru_lock = threading.RLock()
+# Heavy computes allowed at once; each holds several float64 copies of a multi-million-sample cache.
+_compute_slots = threading.BoundedSemaphore(
+    max(1, int(os.environ.get("FILTER_MAX_CONCURRENCY", "2")))
+)
+
+
+def _lru_get(file_id: str) -> Cache | None:
+    with _lru_lock:
+        c = _lru.get(file_id)
+        if c is not None:
+            _lru.move_to_end(file_id)
+        return c
+
+
+def _lru_put(file_id: str, c: Cache) -> None:
+    with _lru_lock:
+        _lru[file_id] = c
+        _lru.move_to_end(file_id)
+        while len(_lru) > LRU_CAP:
+            _lru.popitem(last=False)
 
 
 def _auth_headers(req: Request) -> dict:
@@ -82,12 +107,11 @@ async def _authorize(file_id: str, req: Request) -> None:
 
 
 async def _get_cache(file_id: str, req: Request) -> Cache:
-    c = _lru.get(file_id)
+    c = _lru_get(file_id)
     if c is not None:
         await _authorize(
             file_id, req
         )  # per-request authz on the shared LRU (IDOR guard)
-        _lru.move_to_end(file_id)
         return c
     async with httpx.AsyncClient(timeout=120) as cl:
         r = await cl.get(f"{DIRECTUS_URL}/assets/{file_id}", headers=_auth_headers(req))
@@ -97,9 +121,7 @@ async def _get_cache(file_id: str, req: Request) -> Cache:
         c = parse(r.content)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
-    _lru[file_id] = c
-    while len(_lru) > LRU_CAP:
-        _lru.popitem(last=False)
+    _lru_put(file_id, c)
     return c
 
 
@@ -146,13 +168,21 @@ async def filter_cache(req: Request):
     if not file_id:
         raise HTTPException(422, "cache_file_id required")
     c = await _get_cache(str(file_id), req)
+    return await run_in_threadpool(_run_compute, c, chain, target)
+
+
+def _run_compute(c: Cache, chain: dict, target: int) -> Response:
+    """CPU-bound half of /run. Plain `def`, run in the threadpool."""
     t0 = time.perf_counter()
     try:
-        fc, skipped = _filtered(c, chain)
+        with _compute_slots:
+            fc, skipped = _filtered(c, chain)
+            stride = max(
+                1, -(-c.n // max(1, target))
+            )  # ceil-div: decimate AFTER filtering
+            buf = serialise(fc, stride)
     except ChainError as e:
         raise HTTPException(422, str(e)) from e
-    stride = max(1, -(-c.n // max(1, target)))  # ceil-div: decimate AFTER filtering
-    buf = serialise(fc, stride)
     return Response(
         content=buf,
         media_type="application/octet-stream",
@@ -177,14 +207,19 @@ async def filter_fft(req: Request):
     if axis not in ("Fx", "Fy", "Fz"):
         raise HTTPException(422, "axis must be Fx|Fy|Fz")
     c = await _get_cache(str(file_id), req)
+    return await run_in_threadpool(_fft_compute, c, chain, axis)
+
+
+def _fft_compute(c: Cache, chain: dict, axis: str) -> dict:
     try:
-        fc, _ = _filtered(c, chain)
+        with _compute_slots:
+            fc, _ = _filtered(c, chain)
+            fs = _effective_fs(c)
+            y = {"Fx": fc.fx, "Fy": fc.fy, "Fz": fc.fz}[axis].astype(np.float64)
+            nper = min(y.size, 1 << 14)
+            f, p = ssig.welch(y, fs=fs, nperseg=nper)
     except ChainError as e:
         raise HTTPException(422, str(e)) from e
-    fs = _effective_fs(c)
-    y = {"Fx": fc.fx, "Fy": fc.fy, "Fz": fc.fz}[axis].astype(np.float64)
-    nper = min(y.size, 1 << 14)
-    f, p = ssig.welch(y, fs=fs, nperseg=nper)
     amp = np.sqrt(p)
     step = max(1, f.size // 3000)  # ~3k points, full Nyquist span
     return {"f": f[::step].tolist(), "amp": amp[::step].tolist()}
@@ -207,19 +242,24 @@ async def filter_spectrogram(req: Request):
     if axis not in ("Fx", "Fy", "Fz"):
         raise HTTPException(422, "axis must be Fx|Fy|Fz")
     c = await _get_cache(str(file_id), req)
+    return await run_in_threadpool(_spectrogram_compute, c, chain, axis)
+
+
+def _spectrogram_compute(c: Cache, chain: dict, axis: str) -> dict:
     try:
-        fc, _ = _filtered(c, chain)
+        with _compute_slots:
+            fc, _ = _filtered(c, chain)
+            fs = _effective_fs(c)
+            y = {"Fx": fc.fx, "Fy": fc.fy, "Fz": fc.fz}[axis].astype(np.float64)
+            if y.size < 128:
+                return {"f": [], "t": [], "S": [], "fmax": 0.0}
+            nper = int(min(2048, max(128, 1 << int(np.log2(max(128, y.size // 200))))))
+            noverlap = nper // 2
+            f, t, sxx = ssig.spectrogram(
+                y, fs=fs, nperseg=nper, noverlap=noverlap, mode="magnitude"
+            )
     except ChainError as e:
         raise HTTPException(422, str(e)) from e
-    fs = _effective_fs(c)
-    y = {"Fx": fc.fx, "Fy": fc.fy, "Fz": fc.fz}[axis].astype(np.float64)
-    if y.size < 128:
-        return {"f": [], "t": [], "S": [], "fmax": 0.0}
-    nper = int(min(2048, max(128, 1 << int(np.log2(max(128, y.size // 200))))))
-    noverlap = nper // 2
-    f, t, sxx = ssig.spectrogram(
-        y, fs=fs, nperseg=nper, noverlap=noverlap, mode="magnitude"
-    )
     fstep = max(1, f.size // 180)  # ~180 frequency bins
     tstep = max(1, t.size // 260)  # ~260 time columns
     f_o, t_o, s_o = f[::fstep], t[::tstep], sxx[::fstep, ::tstep]
