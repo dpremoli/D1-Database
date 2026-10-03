@@ -33,21 +33,21 @@ done
 has '^plugins/llm-text-to-sql/' && echo "docker run --rm d1-llm-text-to-sql python eval/run_eval.py"
 for p in $(grep -oE '^plugins/[^/]+/' <<<"$files" | sort -u | cut -d/ -f2); do
   case "$p" in heavy-data-worker|analysis-worker|llm-text-to-sql) ;; *)
-    [[ -d "plugins/$p/tests" ]] && echo "(cd plugins/$p && python -m pytest tests/ -q)   # not in CI" ;;
+    [[ -d "plugins/$p/tests" ]] && echo "(cd plugins/$p && python -m pytest tests/ -q)" ;;
   esac
 done
 
 has '^scripts/.*\.py$|^tests/scripts/' && echo "python -m pytest tests/scripts -q   # not in CI; *_golden_exactly may differ by machine"
-# Force app: nothing below runs in ci.yml; the release job runs only backend/backup-server/desktop.
-has '^packages/force-plotting/' && echo "npm test -w @d1/force-plotting && npm run typecheck -w @d1/force-plotting   # not in CI"
+# Force app: ci.yml force-app-js / force-app-python run these on PRs; run them before pushing.
+has '^packages/force-plotting/' && echo "npm test -w @d1/force-plotting && npm run typecheck -w @d1/force-plotting   # CI: force-app-js"
 has '^(apps/force-app/web/|packages/force-plotting/)' && \
-  echo "npm test -w force-app-web && npm run typecheck -w force-app-web && npm run lint:theme -w force-app-web   # not in CI"
+  echo "npm test -w force-app-web && npm run typecheck -w force-app-web && npm run lint:theme -w force-app-web   # CI: force-app-js"
 has '^apps/force-app/desktop/' && \
-  echo "npm test -w force-app-desktop   # off Windows, sidecar 'stop() terminates' fails (needs taskkill): ignore that one"
-has '^core/extensions/d1-force-dashboard/' && echo "npm run build:extension   # not in CI"
-has '^apps/force-app/backend/' && echo "(cd apps/force-app/backend && python -m pytest -q)   # release job only"
+  echo "npm test -w force-app-desktop && npm run typecheck -w force-app-desktop   # CI: force-app-js"
+has '^core/extensions/d1-force-dashboard/' && echo "npm run build:extension   # CI: force-app-js"
+has '^apps/force-app/backend/' && echo "(cd apps/force-app/backend && python -m pytest -q)   # CI: force-app-python"
 for s in backup-server bug-report-relay; do
-  has "^apps/force-app/$s/" && echo "(cd apps/force-app/$s && python -m pytest -q)   # not in ci.yml"
+  has "^apps/force-app/$s/" && echo "(cd apps/force-app/$s && python -m pytest -q)   # CI: force-app-python"
 done
 has '^(apps/force-app/(backend|web)/|packages/force-plotting/)' && \
   echo "# then the force-app-verify skill: sim recording over HTTP + through the UI"

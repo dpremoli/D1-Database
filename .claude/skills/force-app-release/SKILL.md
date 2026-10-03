@@ -33,8 +33,8 @@ Commits touching the app since the last tag:
    - Leave out internal-only changes (refactors, tests, CI, docs).
 3. **Preflight.** `bash .claude/skills/force-app-release/scripts/preflight.sh` (~2.5 min). It checks
    that the version, lockfile, changelog, free tag and `electronVersion` agree, and runs every
-   Linux-runnable step of `force-app-release.yml`. It also runs web/plotting tests and typechecks,
-   which neither workflow runs. Fix everything red before going on.
+   Linux-runnable step of `force-app-release.yml`, plus the web/plotting suites that `ci.yml`'s
+   `force-app-js` job runs. Fix everything red before going on.
 4. **Commit** as `chore(force-app-desktop): bump version to X.Y.Z` (the repo's convention), on a
    branch, and get it to `main` the usual way (PR).
 5. **Tag: the user's call.** The tag push publishes to every rig within about five minutes. Give the

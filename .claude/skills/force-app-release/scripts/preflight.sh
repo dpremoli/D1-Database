@@ -38,9 +38,9 @@ run "build:web:desktop"            .                              npm run build:
 run "backend pytest"               apps/force-app/backend         "$py" -m pytest -q
 run "backup-server pytest"         apps/force-app/backup-server   "$py" -m pytest -q
 run "desktop build (tsc)"          apps/force-app/desktop         npm run build
-# sidecar "stop() terminates" needs Windows taskkill; deselect it here, the release runner runs it.
-run "desktop vitest (minus Windows-only)" apps/force-app/desktop  "npx vitest run -t '^(?!.*stop\\(\\) terminates)'"
-# Not in the release job, and not in ci.yml: run them anyway, or regressions ship unseen.
+# The sidecar stop() test is skipped off Windows (it needs taskkill); the release runner runs it.
+run "desktop vitest + typecheck"   apps/force-app/desktop         "npm test && npm run typecheck"
+# Not in the release job (ci.yml's force-app-js runs them on PRs): check them here too.
 run "web vitest + typecheck + theme lint" . "npm test -w force-app-web && npm run typecheck -w force-app-web && npm run lint:theme -w force-app-web"
 run "force-plotting vitest + typecheck"   . "npm test -w @d1/force-plotting && npm run typecheck -w @d1/force-plotting"
 

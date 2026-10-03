@@ -48,9 +48,9 @@ process).
 
 ## Gotchas
 
-- **Two failures you can ignore off-Windows**: `desktop/tests/sidecar.test.ts` "stop() terminates…"
-  needs `taskkill`, and `scheduledTask.test.ts` needs the Electron binary (missing after
-  `npm ci --ignore-scripts`). Anything else red is real.
+- **Desktop unit tests on Linux**: the sidecar `stop()` test is skipped off Windows (it needs
+  `taskkill`). `scheduledTask.test.ts` needs the Electron binary, so don't install with
+  `--ignore-scripts`. Anything else red is real.
 - **Four backend tests fail on the real rig** (`test_autorange.py` ×2, `test_labamp.py`,
   `test_nidaq_config.py`) because they expect the sim fallback. Here they must pass.
 - **The NI-DAQ path can't run here.** `source: "nidaq"` returns 503 without the DAQmx runtime, and

@@ -61,18 +61,21 @@ human version.
 
 ## Where the tests are
 
-| Area | Command | In CI? |
+| Area | Command | In CI |
 |---|---|---|
-| backend | `cd apps/force-app/backend && python -m pytest` | release only |
-| backup-server / bug-report-relay | `pytest` in their folders | release / no |
-| web | `npm test -w force-app-web`, `npm run typecheck -w force-app-web`, `npm run lint:theme -w force-app-web` | **no** |
-| plotting | `npm test -w @d1/force-plotting`, `npm run typecheck -w @d1/force-plotting` | **no** |
-| desktop | `npm test -w force-app-desktop`; `npm run test:e2e -w force-app-desktop` (built app) | release only |
-| filter / diag services | `pytest` in `plugins/filter-service`, `plugins/diag-service` | no |
-| `scripts/diag` | `python -m pytest tests/scripts` | no |
+| backend | `cd apps/force-app/backend && python -m pytest` | `force-app-python` + release |
+| backup-server / bug-report-relay | `python -m pytest` in their folders | `force-app-python` (+ release for backup-server) |
+| web | `npm test -w force-app-web`, `npm run typecheck -w force-app-web`, `npm run lint:theme -w force-app-web` | `force-app-js` |
+| plotting | `npm test -w @d1/force-plotting`, `npm run typecheck -w @d1/force-plotting` | `force-app-js` |
+| desktop | `npm test -w force-app-desktop`, `npm run typecheck -w force-app-desktop`; `npm run test:e2e -w force-app-desktop` (packaged app) | unit: `force-app-js` + release; e2e: release only (Windows) |
+| Directus dashboard | `npm run build:extension` | `force-app-js` |
+| filter / diag services | `python -m pytest` in `plugins/filter-service`, `plugins/diag-service` | `force-app-python` |
+| `scripts/diag` | `python -m pytest tests/scripts` | no (golden tests are machine-sensitive) |
 
-Nothing force-related runs on a PR in `ci.yml`, so **run them yourself**. A red test first shows up
-at release time on the Windows runner otherwise. The `force-app-verify` skill runs the app itself.
+`ci.yml`'s `force-app-js` and `force-app-python` jobs run all of this on every PR. Run the suites
+for what you touched **before** pushing anyway (`ci-local`), and use `force-app-verify` for
+anything a unit test can't show. The packaged-app e2e suite still runs only on the Windows
+release runner.
 
 ## Gotchas
 
