@@ -71,7 +71,7 @@ function clear() { emit('update:modelValue', ''); text.value = ''; items.value =
 // The current value is marked (check + aria-selected); already-picked ids are hidden or disabled.
 const rows = computed(() => pickRows(items.value, (it) => it.id,
 	{ currentId: props.modelValue, selectedIds: props.selectedIds, hideSelected: props.hideSelected }));
-const { active, move, pickActive, reset: resetNav } = useListNav(() => rows.value, (r) => pick(r.item), menuEl, (r) => r.disabled);
+const { active, move, pickActive, reset: resetNav } = useListNav(() => rows.value, (r) => pick(r.item), menuEl, (r) => r.picked);
 function onArrow(delta: 1 | -1) { open.value = true; move(delta); }
 // A bare `setTimeout` inside an inline template handler resolves against the component instance
 // (_ctx.setTimeout), not window — Vue templates don't fall through to globals for function calls.
@@ -99,9 +99,9 @@ function delayedBlurClose() { window.setTimeout(() => { open.value = false; }, 1
 			<div v-if="loading" class="mi hint">searching…</div>
 			<button v-for="(r, i) in rows" :id="`${menuId}-${i}`" :key="r.item.id" type="button" class="mi"
 				:class="{ active: i === active, current: r.current, picked: r.picked }" :data-active="i === active"
-				role="option" :aria-selected="r.current || r.picked" :aria-disabled="r.disabled || undefined" tabindex="-1"
+				role="option" :aria-selected="r.current || r.picked" :aria-disabled="r.picked || undefined" tabindex="-1"
 				:title="r.picked ? 'Already added' : r.current ? 'Current value' : undefined"
-				@mousedown.prevent="!r.disabled && pick(r.item)" @mouseenter="!r.disabled && (active = i)">
+				@mousedown.prevent="!r.picked && pick(r.item)" @mouseenter="!r.picked && (active = i)">
 				<span class="mi-label">{{ r.item.label }}</span>
 				<span v-if="r.item.sublabel" class="mi-sub">{{ r.item.sublabel }}</span>
 				<span v-if="r.current || r.picked" class="material-symbols-rounded mi-check" aria-hidden="true">check</span>
