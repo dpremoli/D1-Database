@@ -166,15 +166,17 @@ Files: `core/extensions/` except those owned by B and C; migrations `…000126`�
 
 Update when a stream changes state (see "Resuming interrupted work" in `CLAUDE.md`). Workers run
 on Sonnet, three or four at a time, each in `.claude/worktrees/agent-<id>` on branch
-`worktree-agent-<id>`, based on the commit that adds this plan. The coordinator reviews and merges
+`worktree-agent-<id>` (stream A: `.claude/worktrees/stream-a`, branch `worktree-stream-a`), based on
+`80e52bd`. The harness created the wave-1 worktrees on a stale base (`73a8547`); they were
+moved to `80e52bd` before any work. Check each worktree's base before launching later waves. The coordinator reviews and merges
 each stream into `ccr-c5556a5a-jxwm8s`.
 
 | Stream | Wave | Worktree / branch id | State |
 |---|---|---|---|
-| A | 1 | — | pending |
-| B | 1 | — | pending |
-| D | 1 | — | pending |
-| H | 1 | — | pending |
+| A | 1 | `stream-a` (branch `worktree-stream-a`) | in progress |
+| B | 1 | `agent-a87e02935fb18bd77` | in progress |
+| D | 1 | `agent-a919838a2c96882aa` | in progress |
+| H | 1 | `agent-a9501193950e18778` | in progress |
 | C | 2 | — | pending |
 | E | 2 | — | pending |
 | F | 2 | — | pending |
