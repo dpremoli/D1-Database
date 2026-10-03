@@ -23,6 +23,10 @@ MANIFEST = "manifest.json"
 # raw.d1raw can take a while to unlink — scan_incomplete excludes these so a still-deleting session
 # doesn't reappear in the recovery list and invite a second, overlapping discard of the same dir.
 _discarding: set[str] = set()
+# Session ids a recover (or a backup restore, which finalizes) is working on right now. A discard of
+# the same id would rmtree the raw out from under finalize, and two recovers of one id would finalize
+# the same directory twice; both are refused while an id is in here.
+_recovering: set[str] = set()
 
 
 def write_manifest(
@@ -129,7 +133,10 @@ def scan_incomplete(captures_root: str, exclude_id: str | None = None) -> list[d
 
 def is_safe_id(session_id: str) -> bool:
     """A bare directory name: no separators or parent references that could escape the root."""
-    return not ("/" in session_id or "\\" in session_id or ".." in session_id)
+    # "" and "." are not escapes but name the root itself, which a delete would then target.
+    return bool(session_id) and session_id != "." and not (
+        "/" in session_id or "\\" in session_id or ".." in session_id
+    )
 
 
 def recover_session(captures_root: str, session_id: str) -> dict:

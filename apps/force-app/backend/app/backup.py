@@ -119,8 +119,10 @@ def fetch_remote_sessions(server_url: str, timeout: float = 8.0) -> dict:
             data = json.loads(r.read())
     except Exception as e:
         raise RemoteBackupError(str(e)) from e
-    if not isinstance(data, dict) or not isinstance(data.get("sessions", []), list):
-        raise RemoteBackupError("unexpected reply from the backup server")
+    # "sessions" must be present: a 200 from some other service (a proxy's landing page, the wrong
+    # URL) is not a backup server with no backups.
+    if not isinstance(data, dict) or not isinstance(data.get("sessions"), list):
+        raise RemoteBackupError("unexpected reply — is this URL a backup server?")
     return data
 
 
@@ -174,18 +176,34 @@ def fetch_remote_session_config(server_url: str, session_id: str, timeout: float
 def download_remote_raw(
     server_url: str, session_id: str, dest_path: str, timeout: float = 120.0
 ) -> int:
-    """Download a raw backup file from the remote server. Returns bytes written."""
-    url = f"{server_url.rstrip('/')}/sessions/{session_id}/raw"
+    """Download a raw backup file from the remote server. Returns bytes written.
+
+    Writes to `dest_path` as given — callers pass a temporary name, never a capture's live
+    raw.d1raw. A download that fails part-way removes what it wrote, so a partial file is never
+    left behind to be mistaken for a backup."""
+    url = f"{server_url.rstrip('/')}/sessions/{urllib.parse.quote(session_id)}/raw"
     req = urllib.request.Request(url, method="GET")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        with open(dest_path, "wb") as f:
-            total = 0
-            while True:
-                buf = r.read(1024 * 1024)
-                if not buf:
-                    break
-                f.write(buf)
-                total += len(buf)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            with open(dest_path, "wb") as f:
+                total = 0
+                while True:
+                    buf = r.read(1024 * 1024)
+                    if not buf:
+                        break
+                    f.write(buf)
+                    total += len(buf)
+            # read(amt) on a connection that drops mid-body just returns what arrived, so a cut-off
+            # download looks like a short, complete one. The declared length is the only evidence.
+            expected = r.headers.get("Content-Length")
+            if expected is not None and expected.isdigit() and total != int(expected):
+                raise OSError(f"download cut off after {total} of {expected} bytes")
+    except BaseException:
+        try:
+            os.remove(dest_path)
+        except OSError:
+            pass
+        raise
     return total
 
 
