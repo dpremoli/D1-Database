@@ -101,8 +101,12 @@ to the worker webhook. Configure it once after Directus first starts.
    - **URL:** `http://heavy-data-worker:8080/api/webhook/session`
    - **Request Body:** Enable "Include Payload" (this sends the full item
      payload, including `file_storage_pointer`, in the POST body).
-   - Leave headers at defaults (Content-Type: application/json is set
-     automatically).
+   - **Headers:** add `X-Worker-Secret` with the value
+     `{{$env.WORKER_WEBHOOK_SECRET}}`. The worker rejects every request without it
+     (401, or 503 if the worker itself has no secret), and Directus only resolves
+     `$env.WORKER_WEBHOOK_SECRET` because compose sets
+     `FLOWS_ENV_ALLOW_LIST=WORKER_WEBHOOK_SECRET`. Content-Type: application/json
+     is set automatically.
 
 5. Click **Save** on the operation, then **Save** the flow.
 

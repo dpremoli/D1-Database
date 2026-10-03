@@ -115,6 +115,9 @@ services:
       # requests to the guarded text-to-SQL plugin over the internal d1net.
       LLM_PLUGIN_URL: ${LLM_PLUGIN_URL:-http://llm-text-to-sql:8080}
       WORKER_WEBHOOK_SECRET: ${WORKER_WEBHOOK_SECRET:?Set WORKER_WEBHOOK_SECRET in .env (openssl rand -hex 32)}
+      # Lets the worker-webhook Flows send `X-Worker-Secret: {{$env.WORKER_WEBHOOK_SECRET}}`; the
+      # workers reject every request without it (docs/runbooks/heavy-data-pipeline.md §3).
+      FLOWS_ENV_ALLOW_LIST: WORKER_WEBHOOK_SECRET
     # Path A (built-in AI Chat) and any server-side extension that calls the host
     # can reach the host's Ollama here. Auto-resolved on Windows/Mac Docker
     # Desktop; the host-gateway mapping makes it work on Linux too.

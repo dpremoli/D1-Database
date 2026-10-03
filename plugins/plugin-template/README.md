@@ -251,6 +251,8 @@ The Flow parameters specific to your plugin are:
 - **Operation:** Webhook/Request
   - URL: `http://<your-plugin-name>:8080/api/webhook/session`
   - Method: POST
+  - Header: `X-Worker-Secret: {{$env.WORKER_WEBHOOK_SECRET}}` (required; the
+    worker answers 401/503 without it)
   - Body: Include Payload (full body)
 
 Replace `<your-plugin-name>` with the Docker Compose service name you chose in

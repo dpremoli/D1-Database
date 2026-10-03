@@ -443,7 +443,8 @@ To register a new plugin against the D1-Database core:
    Trigger: Event Hook → Collection: `test_sessions` → Action: Create →
    Operation: Webhook/Request → URL:
    `http://<plugin-container-name>:8080/api/webhook/session` → Method: POST →
-   Body: Include Payload. See `docs/runbooks/heavy-data-pipeline.md` §3 for the
+   Header `X-Worker-Secret: {{$env.WORKER_WEBHOOK_SECRET}}` → Body: Include
+   Payload. See `docs/runbooks/heavy-data-pipeline.md` §3 for the
    step-by-step walkthrough.
 
 4. **Expose a `/health` endpoint.** The plugin must respond to
