@@ -43,7 +43,15 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from . import backup as backup_mod
-from . import bug_report, nidaq_catalog, nidaq_enum, recovery, storage, virtual_channels
+from . import (
+    bug_report,
+    nidaq_catalog,
+    nidaq_enum,
+    origin_guard,
+    recovery,
+    storage,
+    virtual_channels,
+)
 from . import channels as chan
 from .config import DEFAULT_NIDAQ_CHANNELS, RecordConfig
 from .d1lc import read_d1lc_header
@@ -332,6 +340,15 @@ if _cors:
     app.add_middleware(
         CORSMiddleware, allow_origins=_cors, allow_methods=["*"], allow_headers=["*"]
     )
+
+# The API has no auth; loopback binding is its only protection, and a web page the operator visits
+# can still reach it from their browser (no-cors POSTs, the WebSocket handshake, DNS rebinding).
+# Added AFTER CORS so it is the outermost layer and runs first. See origin_guard.py.
+_origin_guard = origin_guard.OriginGuardSettings(
+    origins=_cors,
+    extra_hosts=os.environ.get("RECORDER_ALLOWED_HOSTS", "").split(","),
+)
+app.add_middleware(origin_guard.OriginGuard, settings=_origin_guard)
 
 
 @app.exception_handler(LabAmpError)
