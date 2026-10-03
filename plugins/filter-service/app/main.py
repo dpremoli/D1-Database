@@ -164,6 +164,7 @@ def _filtered(c: Cache, chain: dict) -> tuple[Cache, list[str]]:
         axes["Fz"].astype(np.float32),
         c.rpm,
         c.revs,
+        c.extras,
     )
     return fc, skipped
 
