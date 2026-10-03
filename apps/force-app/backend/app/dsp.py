@@ -6,6 +6,8 @@ can move to abfp_core later without changing these signatures.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import numpy as np
 from scipy import signal as ssig
 
@@ -65,6 +67,32 @@ def tacho_rising_edges(
     return edges, bool(above[-1])
 
 
+def tacho_threshold(lo: float, hi: float) -> float:
+    """The mid-level rising edges are found on, from a whole capture's tacho min and max."""
+    return lo + 0.5 * (hi - lo)
+
+
+class UniformChunk(NamedTuple):
+    """A tacho chunk known to sit entirely above (`above=True`) or entirely at or below the
+    threshold, standing in for its samples where TachoRpm's chunk iterator would otherwise have to
+    read them. It can hold no edge of its own and at most one on its first sample, both of which
+    TachoRpm works out without the data."""
+
+    size: int
+    above: bool
+
+
+def uniform_chunk(size: int, lo: float, hi: float, thr: float) -> UniformChunk | None:
+    """UniformChunk for a chunk of `size` samples whose min/max are `lo`/`hi`, if it is one.
+
+    A NaN anywhere makes lo/hi NaN, every comparison False, and so None: the caller reads it."""
+    if lo > thr:
+        return UniformChunk(size, True)
+    if hi <= thr:
+        return UniformChunk(size, False)
+    return None
+
+
 def rpm_from_tacho(tacho: np.ndarray, fs: float, ppr: int) -> tuple[np.ndarray, bool]:
     """Per-sample RPM from a tacho pulse train, by timing rising edges (a simplified tachorpm).
 
@@ -103,6 +131,11 @@ class TachoRpm:
     nodes depends on nothing but those two, so a subset that brackets the range gives the same
     numbers. The iterator is read ahead just far enough to find the first edge at or past the
     range's end, so held memory is a chunk's worth of edges however long the capture is.
+
+    That read-ahead runs to the end of the capture once the pulses stop, since only reaching it
+    shows there is no later edge. `chunks` may therefore yield a UniformChunk, which costs no read,
+    for any chunk whose samples are all on one side of the threshold (see uniform_chunk): a spindle
+    that has stopped leaves a tacho sitting at one level, so a long tail scans for free.
     """
 
     def __init__(self, chunks, n: int, fs: float, ppr: int, lo: float, hi: float) -> None:
@@ -113,7 +146,7 @@ class TachoRpm:
         self._scanned = 0
         self._prev_above: bool | None = None
         self._done = n == 0 or hi - lo < 1e-9  # flat tacho: no transition, so nothing to time
-        self._thr = lo + 0.5 * (hi - lo)
+        self._thr = tacho_threshold(lo, hi)
         while not self._done and self._edges.size < 2:
             self._scan()
         self.measured = self._edges.size >= 2
@@ -123,7 +156,13 @@ class TachoRpm:
         if chunk is None:
             self._done = True
             return
-        edges, self._prev_above = tacho_rising_edges(chunk, self._prev_above, self._thr)
+        if isinstance(chunk, UniformChunk):
+            # An all-below chunk has no rising edge and an all-above one only on its first sample,
+            # rising out of a below level carried over the seam.
+            edges = np.zeros(1 if chunk.above and self._prev_above is False else 0, dtype=np.int64)
+            self._prev_above = chunk.above
+        else:
+            edges, self._prev_above = tacho_rising_edges(chunk, self._prev_above, self._thr)
         if edges.size:
             self._edges = np.concatenate((self._edges, edges + self._scanned))
         self._scanned += chunk.size

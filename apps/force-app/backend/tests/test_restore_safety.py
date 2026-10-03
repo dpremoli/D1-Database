@@ -40,10 +40,18 @@ class _Remote:
         outer = self
         self.raw, self.config, self.cut_after = raw, config, cut_after
         self.on_raw = on_raw  # called (in the server thread) when the raw download is requested
+        self.posts: list[str] = []  # paths POSTed to (the unmark-deleted call)
+        self.post_status = 200
 
         class H(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
                 pass
+
+            def do_POST(self):  # noqa: N802
+                outer.posts.append(self.path)
+                self.send_response(outer.post_status)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
 
             def do_GET(self):  # noqa: N802 (http.server dispatches on this name)
                 if self.path.endswith("/raw"):
@@ -185,6 +193,42 @@ def test_clean_restore_into_a_new_dir_still_works(env):
     assert not os.path.exists(os.path.join(str(root), SID, "raw.d1raw.part"))
 
 
+def test_a_successful_restore_clears_the_remote_deleted_mark(env):
+    client, root, make = env
+    remote = make(_write_raw(str(root / "remote.d1raw"), 3000))
+    r = client.post(f"/backup/restore/{SID}")
+    assert r.status_code == 200, r.text
+    assert remote.posts == [f"/sessions/{SID}/unmark-deleted"]
+    assert r.json()["remote_unmarked"] is True
+
+
+def test_a_failing_unmark_never_fails_the_restore(env):
+    client, root, make = env
+    remote = make(_write_raw(str(root / "remote.d1raw"), 3000))
+    remote.post_status = 500  # or an older server with no such endpoint
+    r = client.post(f"/backup/restore/{SID}")
+    assert r.status_code == 200, r.text
+    assert remote.posts == [f"/sessions/{SID}/unmark-deleted"]
+    assert r.json()["remote_unmarked"] is False
+    assert os.path.isfile(os.path.join(str(root), SID, "summary.json"))
+
+
+def test_a_failed_or_refused_restore_leaves_the_remote_mark_alone(env):
+    client, root, make = env
+    remote_raw = _write_raw(str(root / "remote.d1raw"), 3000)
+    remote = make(remote_raw, cut_after=100)
+    assert client.post(f"/backup/restore/{SID}").status_code == 502  # download cut off
+    d, _ = _local_incomplete(root, rows=4000)
+    remote.cut_after = None
+    assert client.post(f"/backup/restore/{SID}").status_code == 409  # local copy is longer
+    assert remote.posts == []
+
+
+def test_unmark_remote_deleted_never_raises():
+    assert backup_mod.unmark_remote_deleted("http://127.0.0.1:9", "x", timeout=1.0) is False
+    assert backup_mod.unmark_remote_deleted("", "x") is False
+
+
 def test_restore_of_the_active_session_is_refused(env, monkeypatch):
     client, root, make = env
     make(_write_raw(str(root / "remote.d1raw"), 100))
@@ -226,6 +270,119 @@ def test_recover_refuses_a_discard_in_flight(env):
         assert client.post(f"/recovery/recover/{SID}").status_code == 409
     finally:
         recovery._discarding.discard(SID)
+
+
+# ---- two requests for one id: the busy check and the claim are one step ----------------------
+
+
+def _pause_first_restore(monkeypatch):
+    """Park the first restore at its first await (the local raw_info probe), where the busy check
+    has passed but, before the fix, the id was not yet claimed. Later calls go straight through."""
+    started, release = threading.Event(), threading.Event()
+    calls: list[int] = []
+    real = recovery.raw_info
+
+    def raw_info(d):
+        calls.append(1)
+        if len(calls) == 1:
+            started.set()
+            assert release.wait(30)
+        return real(d)
+
+    monkeypatch.setattr(recovery, "raw_info", raw_info)
+    return started, release
+
+
+def _post_in_thread(client, path: str) -> tuple[threading.Thread, list]:
+    out: list = []
+    t = threading.Thread(target=lambda: out.append(client.post(path)))
+    t.start()
+    return t, out
+
+
+def test_two_concurrent_restores_of_one_id_one_wins_and_the_capture_survives(env, monkeypatch):
+    client, root, make = env
+    remote_raw = _write_raw(str(root / "remote.d1raw"), 3000)
+    make(remote_raw)
+    started, release = _pause_first_restore(monkeypatch)
+    first, first_out = _post_in_thread(client, f"/backup/restore/{SID}")
+    try:
+        assert started.wait(30)  # the first restore is parked at its first await
+        second = client.post(f"/backup/restore/{SID}")
+        assert second.status_code == 409  # refused outright, not run alongside the first
+        assert SID in recovery._recovering  # ...and its refusal did not release the first's claim
+    finally:
+        release.set()
+        first.join(30)
+    assert first_out[0].status_code == 200, first_out[0].text
+    d = os.path.join(str(root), SID)
+    assert json.load(open(os.path.join(d, "summary.json")))["n"] == 3000
+    assert _snapshot(d)["raw.d1raw"] == remote_raw
+    assert SID not in recovery._recovering
+
+
+def test_a_recover_racing_a_restore_is_refused_and_leaves_the_restore_alone(env, monkeypatch):
+    client, root, make = env
+    remote_raw = _write_raw(str(root / "remote.d1raw"), 3000)
+    make(remote_raw)
+    started, release = _pause_first_restore(monkeypatch)
+    first, first_out = _post_in_thread(client, f"/backup/restore/{SID}")
+    try:
+        assert started.wait(30)
+        assert client.post(f"/recovery/recover/{SID}").status_code == 409
+        assert client.post(f"/recovery/discard/{SID}").status_code == 409
+    finally:
+        release.set()
+        first.join(30)
+    assert first_out[0].status_code == 200, first_out[0].text
+    assert os.path.isfile(os.path.join(str(root), SID, "summary.json"))
+
+
+def test_recovering_refuses_an_id_already_in_flight_without_releasing_it():
+    recovery._recovering.add(SID)
+    try:
+        with pytest.raises(recovery.CaptureBusyError):
+            with recovery.recovering(SID):
+                pytest.fail("entered a claimed id")
+        assert SID in recovery._recovering  # the owner's claim survives the refused attempt
+    finally:
+        recovery._recovering.discard(SID)
+    recovery._discarding.add(SID)
+    try:
+        with pytest.raises(recovery.CaptureBusyError):
+            with recovery.recovering(SID):
+                pytest.fail("entered a claimed id")
+    finally:
+        recovery._discarding.discard(SID)
+
+
+def test_discard_claims_the_id_before_its_task_runs(env):
+    """The handler returns before the background task starts; a recover in that gap must lose."""
+    client, root, _ = env
+    d, _raw = _local_incomplete(root, rows=100)
+    gate = threading.Event()
+    real = recovery.discard_session
+
+    def slow(*a):
+        assert gate.wait(30)
+        return real(*a)
+
+    recovery.discard_session = slow
+    try:
+        assert client.post(f"/recovery/discard/{SID}").status_code == 200
+        assert SID in recovery._discarding
+        assert client.post(f"/recovery/recover/{SID}").status_code == 409
+        assert client.post(f"/backup/restore/{SID}").status_code in (400, 409)
+    finally:
+        recovery.discard_session = real
+        gate.set()
+    import time
+
+    deadline = time.time() + 10
+    while SID in recovery._discarding and time.time() < deadline:
+        time.sleep(0.05)
+    assert SID not in recovery._discarding
+    assert not os.path.exists(d)
 
 
 # ---- #7 + id hardening -------------------------------------------------------------------------

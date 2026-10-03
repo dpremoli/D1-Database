@@ -143,6 +143,23 @@ def mark_remote_deleted(server_url: str, session_id: str, timeout: float = 4.0) 
         return False
 
 
+def unmark_remote_deleted(server_url: str, session_id: str, timeout: float = 4.0) -> bool:
+    """Tell the backup server `session_id` was restored locally, undoing mark_remote_deleted's
+    tombstone so the copy stops reading as a deleted capture. Best-effort and never raises: a
+    restore that has already succeeded must not fail because of this. False when the server can't
+    be reached or refuses (including an older server that has no such endpoint)."""
+    if not server_url or not session_id:
+        return False
+    try:
+        url = f"{server_url.rstrip('/')}/sessions/{urllib.parse.quote(session_id)}/unmark-deleted"
+        req = urllib.request.Request(url, data=b"", method="POST")
+        with urllib.request.urlopen(req, timeout=timeout):
+            return True
+    except Exception as e:
+        log.info("could not clear the deleted mark on remote backup %s: %s", session_id, e)
+        return False
+
+
 def fetch_remote_session_config(server_url: str, session_id: str, timeout: float = 8.0) -> dict:
     """Return the RecordConfig dict the recorder sent to /ingest/start for this session.
 
