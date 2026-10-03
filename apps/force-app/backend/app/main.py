@@ -1550,6 +1550,12 @@ async def _mark_remote_deleted(cid: str) -> bool | None:
     return await run_in_threadpool(backup_mod.mark_remote_deleted, url, cid)
 
 
+async def _unmark_remote_deleted(cid: str, url: str) -> bool:
+    """Best-effort: after a successful restore, clear the remote backup's deleted tombstone so the
+    list stops mislabelling it and the server stops counting down to purging it. Never raises."""
+    return await run_in_threadpool(backup_mod.unmark_remote_deleted, url, cid)
+
+
 @app.post("/backup/restore/{session_id}")
 async def backup_restore(session_id: str) -> dict:
     """Download a raw backup from the remote server and finalize it locally.
@@ -1685,6 +1691,7 @@ async def _restore_claimed(session_id: str, root: str, url: str) -> dict:
         _restore_aside()
         raise _fail(500, f"finalize failed after download: {e}.{kept}")
     result = {"restored": True, "session_id": session_id, "bytes": nbytes, "summary": summary}
+    result["remote_unmarked"] = await _unmark_remote_deleted(session_id, url)
     if aside:
         result["local_copy_kept_as"] = os.path.basename(aside)
     return result

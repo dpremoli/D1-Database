@@ -40,10 +40,18 @@ class _Remote:
         outer = self
         self.raw, self.config, self.cut_after = raw, config, cut_after
         self.on_raw = on_raw  # called (in the server thread) when the raw download is requested
+        self.posts: list[str] = []  # paths POSTed to (the unmark-deleted call)
+        self.post_status = 200
 
         class H(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
                 pass
+
+            def do_POST(self):  # noqa: N802
+                outer.posts.append(self.path)
+                self.send_response(outer.post_status)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
 
             def do_GET(self):  # noqa: N802 (http.server dispatches on this name)
                 if self.path.endswith("/raw"):
@@ -183,6 +191,42 @@ def test_clean_restore_into_a_new_dir_still_works(env):
     assert r.status_code == 200, r.text
     assert r.json()["summary"]["n"] == 3000
     assert not os.path.exists(os.path.join(str(root), SID, "raw.d1raw.part"))
+
+
+def test_a_successful_restore_clears_the_remote_deleted_mark(env):
+    client, root, make = env
+    remote = make(_write_raw(str(root / "remote.d1raw"), 3000))
+    r = client.post(f"/backup/restore/{SID}")
+    assert r.status_code == 200, r.text
+    assert remote.posts == [f"/sessions/{SID}/unmark-deleted"]
+    assert r.json()["remote_unmarked"] is True
+
+
+def test_a_failing_unmark_never_fails_the_restore(env):
+    client, root, make = env
+    remote = make(_write_raw(str(root / "remote.d1raw"), 3000))
+    remote.post_status = 500  # or an older server with no such endpoint
+    r = client.post(f"/backup/restore/{SID}")
+    assert r.status_code == 200, r.text
+    assert remote.posts == [f"/sessions/{SID}/unmark-deleted"]
+    assert r.json()["remote_unmarked"] is False
+    assert os.path.isfile(os.path.join(str(root), SID, "summary.json"))
+
+
+def test_a_failed_or_refused_restore_leaves_the_remote_mark_alone(env):
+    client, root, make = env
+    remote_raw = _write_raw(str(root / "remote.d1raw"), 3000)
+    remote = make(remote_raw, cut_after=100)
+    assert client.post(f"/backup/restore/{SID}").status_code == 502  # download cut off
+    d, _ = _local_incomplete(root, rows=4000)
+    remote.cut_after = None
+    assert client.post(f"/backup/restore/{SID}").status_code == 409  # local copy is longer
+    assert remote.posts == []
+
+
+def test_unmark_remote_deleted_never_raises():
+    assert backup_mod.unmark_remote_deleted("http://127.0.0.1:9", "x", timeout=1.0) is False
+    assert backup_mod.unmark_remote_deleted("", "x") is False
 
 
 def test_restore_of_the_active_session_is_refused(env, monkeypatch):

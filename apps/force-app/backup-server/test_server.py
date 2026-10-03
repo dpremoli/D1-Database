@@ -474,3 +474,80 @@ def test_mark_deleted_writes_meta_atomically(client, tmp_path, monkeypatch):
     with open(meta_path, "rb") as f:
         assert f.read() == before
     assert not os.path.exists(meta_path + ".tmp")
+
+
+def _meta(tmp_path, sid):
+    with open(os.path.join(str(tmp_path), sid, "meta.json")) as f:
+        return json.load(f)
+
+
+def test_unmark_deleted_restores_the_state_and_drops_the_markers(client, tmp_path):
+    _begin(client, "back")
+    client.post("/ingest/finish", json={"session_id": "back"})
+    client.post("/sessions/back/mark-deleted")
+    tomb = _meta(tmp_path, "back")
+    assert tomb["state"] == "deleted"
+
+    r = client.post("/sessions/back/unmark-deleted")
+    assert r.status_code == 200 and r.json()["unmarked"] is True
+    meta = _meta(tmp_path, "back")
+    assert meta["state"] == "complete"  # what the stream had reached
+    assert "deleted_at" not in meta and "state_before_delete" not in meta
+    # The stored config is intact, and the retention clock was not touched or reset.
+    assert meta["config"] == tomb["config"]
+    assert meta["updated_at"] == tomb["updated_at"]
+    info = client.get("/sessions/back/info").json()
+    assert info["state"] == "complete" and "deleted_at" not in info
+    assert info["expires_at"] == pytest.approx(tomb["updated_at"] + 12 * 3600)
+    assert client.get("/sessions/back/raw").status_code == 200
+
+    # A late /ingest/finish now behaves as for any live session.
+    client.post("/ingest/finish", json={"session_id": "back"})
+    assert client.get("/sessions/back/info").json()["state"] == "complete"
+
+
+def test_unmark_deleted_restores_an_interrupted_copy_as_streaming(client, tmp_path):
+    _begin(client, "cut")  # never finished: state "streaming"
+    client.post("/sessions/cut/mark-deleted")
+    client.post("/sessions/cut/unmark-deleted")
+    assert _meta(tmp_path, "cut")["state"] == "streaming"
+
+
+def test_unmark_deleted_is_idempotent_and_leaves_live_sessions_alone(client, tmp_path):
+    _begin(client, "live")
+    before = _meta(tmp_path, "live")
+    r = client.post("/sessions/live/unmark-deleted")  # never tombstoned
+    assert r.status_code == 200 and r.json()["unmarked"] is False
+    assert _meta(tmp_path, "live") == before
+
+    client.post("/sessions/live/mark-deleted")
+    assert client.post("/sessions/live/unmark-deleted").json()["unmarked"] is True
+    once = _meta(tmp_path, "live")
+    assert client.post("/sessions/live/unmark-deleted").json()["unmarked"] is False
+    assert _meta(tmp_path, "live") == once
+
+
+def test_unmark_then_mark_again_tombstones_afresh(client, tmp_path):
+    _begin(client, "again")
+    client.post("/ingest/finish", json={"session_id": "again"})
+    client.post("/sessions/again/mark-deleted")
+    client.post("/sessions/again/unmark-deleted")
+    client.post("/sessions/again/mark-deleted")
+    meta = _meta(tmp_path, "again")
+    assert meta["state"] == "deleted" and meta["state_before_delete"] == "complete"
+
+
+def test_unmark_deleted_validates_the_id_and_the_session(client, tmp_path):
+    assert client.post("/sessions/ghost/unmark-deleted").status_code == 404
+    assert client.post("/sessions/a%5Cb/unmark-deleted").status_code == 400
+    assert client.post("/sessions/%2E/unmark-deleted").status_code == 400
+
+
+def test_unmark_deleted_does_not_overwrite_an_unreadable_meta(client, tmp_path):
+    _begin(client, "bad")
+    meta_path = os.path.join(str(tmp_path), "bad", "meta.json")
+    with open(meta_path, "wb") as f:
+        f.write(b"{oops")
+    assert client.post("/sessions/bad/unmark-deleted").status_code == 409
+    with open(meta_path, "rb") as f:
+        assert f.read() == b"{oops"
