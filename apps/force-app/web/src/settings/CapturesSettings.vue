@@ -55,7 +55,7 @@ const editing = ref<Capture | null>(null);
 // Ids that also exist on the remote backup server (a deleted-locally tombstone doesn't count: it
 // is only kept to undo the delete). null = couldn't tell (no server configured, or unreachable),
 // which must not read as "no remote copy" (#31 cross-link).
-const remoteIds = ref<Set<string> | null>(null);
+const remoteIds = ref<Map<string, string> | null>(null);
 async function loadRemoteIds() {
 	try {
 		const res = await fetch(`${base()}/backup/remote-sessions`);
@@ -63,10 +63,12 @@ async function loadRemoteIds() {
 		const d = await res.json();
 		remoteIds.value = d.configured === false
 			? null
-			: new Set((d.sessions || []).filter((r: any) => r.backup_state !== 'deleted').map((r: any) => r.id));
+			: new Map<string, string>((d.sessions || []).filter((r: any) => r.backup_state !== 'deleted').map((r: any) => [r.id, r.backup_state || 'unknown']));
 	} catch { remoteIds.value = null; }
 }
 const hasRemote = (id: string) => !!remoteIds.value?.has(id);
+// 'complete' = the whole recording; anything else (interrupted, unknown) is only a partial copy.
+const remoteState = (id: string): string | null => remoteIds.value?.get(id) ?? null;
 
 async function load() {
 	loading.value = true;
@@ -122,7 +124,7 @@ async function remove(c: Capture) {
 	const isUp = !!uploaded.value[c.id];
 	const warning = isUp
 		? 'It has been uploaded to the database, so the analysis record will remain.'
-		: hasRemote(c.id)
+		: remoteState(c.id) === 'complete'
 			? 'It has NOT been uploaded, but a copy is on the remote backup server — it stays there until the server\'s retention expires, and can be restored from Settings > Live Backup until then.'
 		: known
 			? 'It has NOT been uploaded — this is the only copy and it cannot be recovered.'
@@ -135,7 +137,7 @@ async function remove(c: Capture) {
 			{ label: 'Capture', value: c.sample_name || c.id },
 			{ label: 'Size', value: formatMegabytes(c.size_mb) },
 			{ label: 'Uploaded to database', value: isUp ? 'yes' : known ? 'no' : 'unknown' },
-			...(remoteIds.value ? [{ label: 'Remote backup copy', value: hasRemote(c.id) ? 'yes' : 'no' }] : []),
+			...(remoteIds.value ? [{ label: 'Remote backup copy', value: remoteState(c.id) === 'complete' ? 'yes' : hasRemote(c.id) ? 'partial only' : 'no' }] : []),
 		],
 		confirmLabel: 'Delete permanently',
 		tone: 'danger',
@@ -410,12 +412,14 @@ onMounted(async () => {
 						@click="c.finalized && openEdit(c)"
 					>{{ c.sample_name || c.id }}</span>
 					<span v-if="!c.finalized" class="tag warn" title="No summary.json — this recording was never finalized. Recover it to keep the data.">incomplete</span>
-					<span v-if="c.recording" class="tag">recording now</span>
-					<span v-if="hasRemote(c.id)" class="tag ok" title="A copy of this recording is on the remote backup server">also backed up remotely</span>
 					<span v-else-if="!uploadedKnown" class="tag">upload state unknown</span>
 					<span v-else-if="uploaded[c.id]" class="tag ok">uploaded</span>
 					<span v-else-if="queuedCaptureIds.has(c.id)" class="tag">upload queued</span>
 					<span v-else class="tag warn">not uploaded</span>
+					<!-- Not part of the chain above: these say something else about the row. -->
+					<span v-if="c.recording" class="tag">recording now</span>
+					<span v-if="remoteState(c.id)" class="tag" :class="remoteState(c.id) === 'complete' ? 'ok' : 'warn'"
+						:title="remoteState(c.id) === 'complete' ? 'A full copy of this recording is on the remote backup server' : 'Only the part of this recording that was streamed before the backup was interrupted is on the remote backup server'">{{ remoteState(c.id) === 'complete' ? 'also backed up remotely' : 'partial remote copy' }}</span>
 					<span v-if="c.source" class="tag dim">{{ c.source }}</span>
 				</div>
 				<div class="rsub">
