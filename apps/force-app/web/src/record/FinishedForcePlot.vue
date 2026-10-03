@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Static full-resolution force trace for a completed cut — draws every sample of the finished
-// live-cache (Fx/Fy/Fz vs t) once, unlike LiveForcePlot which streams a rolling window. Used
+// live-cache (Fx/Fy/Fz vs t, plus Tacho drawn as the cache's RPM) once, unlike LiveForcePlot which streams a rolling window. Used
 // wherever a finished recording's full time series needs to be shown (ForcePanel post-stop,
 // SaveCutDialog).
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -8,6 +8,7 @@ import type { Cache } from '@d1/force-plotting';
 import { channelColor } from './types';
 import { theme } from '../theme';
 import { decimateMinMax, seriesRange, shouldDecimate } from './traceDecimate';
+import { cacheTachoKind, channelLabel, finishedPlotModel, TACHO, type FinishedPlotModel } from './tachoSignal';
 
 const props = defineProps<{
 	cache: Cache;
@@ -94,11 +95,6 @@ function niceStep(range: number, ticks: number): number {
 	return (r <= 1.5 ? 1 : r <= 3 ? 2 : r <= 7 ? 5 : 10) * mag;
 }
 
-function seriesOf(key: string): Float32Array | undefined {
-	const c = props.cache;
-	return key === 'Fx' ? c.Fx : key === 'Fy' ? c.Fy : key === 'Fz' ? c.Fz : undefined;
-}
-
 // Everything that does not move while a crop handle is dragged -- background, grid, axes, labels
 // and the (decimated) traces -- is painted once onto an offscreen canvas and only blitted per
 // frame. It is rebuilt when the cache, the channel set, the canvas size or the theme changes.
@@ -111,22 +107,38 @@ interface Layer {
 }
 let layer: Layer | null = null;
 // Min/max over the whole cache depends only on the cache and channel set, not on the size.
-let rangeCache: { cache: Cache; sel: string; range: [number, number] | null } | null = null;
+let rangeCache: { cache: Cache; ranges: Map<string, [number, number] | null> } | null = null;
 
-function dataRange(sel: string[], series: readonly (readonly [string, Float32Array])[]): [number, number] | null {
-	const sk = sel.join(',');
-	if (rangeCache && rangeCache.cache === props.cache && rangeCache.sel === sk) return rangeCache.range;
+function dataRange(id: string, series: readonly (readonly [string, Float32Array])[]): [number, number] | null {
+	if (!rangeCache || rangeCache.cache !== props.cache) rangeCache = { cache: props.cache, ranges: new Map() };
+	const k = `${id}|${series.map(([key]) => key).join(',')}`;
+	if (rangeCache.ranges.has(k)) return rangeCache.ranges.get(k)!;
 	const range = seriesRange(series.map(([, a]) => a));
-	rangeCache = { cache: props.cache, sel: sk, range };
+	rangeCache.ranges.set(k, range);
 	return range;
 }
+
+// One y axis per quantity: summed force (N) on the left, and the Tacho channel -- the cache's RPM
+// series, since live_cache.bin has no raw tacho -- on the right when both are selected (or on the
+// left when it is alone). See tachoSignal.ts for what each mode can show.
+interface Group { id: string; label: string; right: boolean; series: readonly (readonly [string, Float32Array])[] }
+const MR_RIGHT_AXIS = 52;
+function groupsOf(model: FinishedPlotModel): Group[] {
+	const groups: Group[] = [];
+	if (model.force.length) groups.push({ id: 'force', label: 'Force (N)', right: false, series: model.force });
+	if (model.rpm) groups.push({ id: 'rpm', label: 'RPM', right: groups.length > 0, series: [[TACHO, model.rpm]] });
+	return groups;
+}
+const plotModel = () => finishedPlotModel(props.cache, props.channels ?? ['Fx', 'Fy', 'Fz']);
 
 function buildLayer(CW: number, CH: number, dpr: number): Layer | null {
 	const cache = props.cache;
 	const n = cache.t.length;
-	const sel = (props.channels ?? ['Fx', 'Fy', 'Fz']).filter((k) => k === 'Fx' || k === 'Fy' || k === 'Fz');
+	const model = plotModel();
+	const groups = groupsOf(model);
 	const pal = palette();
-	const W = CW - ML - MR, H = CH - MT - MB;
+	const mr = groups.some((g) => g.right) ? MR_RIGHT_AXIS : MR;
+	const W = CW - ML - mr, H = CH - MT - MB;
 	const off = document.createElement('canvas');
 	off.width = Math.max(1, Math.floor(CW * dpr)); off.height = Math.max(1, Math.floor(CH * dpr));
 	const g = off.getContext('2d');
@@ -142,32 +154,72 @@ function buildLayer(CW: number, CH: number, dpr: number): Layer | null {
 		g.fillText('no data', ML + 8, MT + H / 2);
 		return base;
 	}
-
-	const span = Math.max(1e-3, t1 - t0);
-	const series = sel.map((k) => [k, seriesOf(k)!] as const).filter(([, a]) => a && a.length > 0);
-	let [lo, hi] = dataRange(sel, series) ?? [-1, 1];
-	const pad = 0.1 * (hi - lo || 1);
-	lo -= pad; hi += pad;
-	const yr = hi - lo || 1;
-
-	const xOf = (t: number) => ML + ((t - t0) / span) * W;
-	const yOf = (v: number) => MT + H - ((v - lo) / yr) * H;
-
-	g.font = '10px system-ui'; g.textAlign = 'right'; g.textBaseline = 'middle';
-	const yStep = niceStep(yr, Math.max(2, Math.floor(H / 50)));
-	const yStart = Math.ceil(lo / yStep) * yStep;
-	g.strokeStyle = pal.grid; g.lineWidth = 1;
-	for (let v = yStart; v <= hi; v += yStep) {
-		const y = yOf(v);
-		if (y < MT || y > MT + H) continue;
-		g.beginPath(); g.moveTo(ML, y); g.lineTo(ML + W, y); g.stroke();
-		g.fillStyle = pal.text;
-		g.fillText(Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + 'k' : Number.isInteger(v) ? String(v) : v.toFixed(1), ML - 5, y);
+	if (groups.length === 0) {
+		// Nothing selected can be drawn (a cache with no tacho, with only Tacho ticked): say so
+		// instead of drawing empty axes under a legend entry.
+		g.fillStyle = pal.text; g.font = '12px system-ui';
+		g.fillText(model.notes[0] ?? 'no data for the selected channels', ML + 8, MT + H / 2);
+		return base;
 	}
 
-	g.textAlign = 'center'; g.textBaseline = 'top';
+	const span = Math.max(1e-3, t1 - t0);
+	const xOf = (t: number) => ML + ((t - t0) / span) * W;
+	const cols = Math.max(1, Math.round(W * dpr));
+
+	let lo0 = 0, yr0 = 1;
+	for (const grp of groups) {
+		let [lo, hi] = dataRange(grp.id, grp.series) ?? [-1, 1];
+		const pad = 0.1 * (hi - lo || 1);
+		lo -= pad; hi += pad;
+		const yr = hi - lo || 1;
+		const yOf = (v: number) => MT + H - ((v - lo) / yr) * H;
+		if (!grp.right) { lo0 = lo; yr0 = yr; }
+
+		g.font = '10px system-ui'; g.textAlign = grp.right ? 'left' : 'right'; g.textBaseline = 'middle';
+		const yStep = niceStep(yr, Math.max(2, Math.floor(H / 50)));
+		const yStart = Math.ceil(lo / yStep) * yStep;
+		g.strokeStyle = pal.grid; g.lineWidth = 1;
+		for (let v = yStart; v <= hi; v += yStep) {
+			const y = yOf(v);
+			if (y < MT || y > MT + H) continue;
+			// Gridlines belong to the first axis only; the second just carries its own tick labels.
+			if (!grp.right) { g.beginPath(); g.moveTo(ML, y); g.lineTo(ML + W, y); g.stroke(); }
+			g.fillStyle = pal.text;
+			g.fillText(Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + 'k' : Number.isInteger(v) ? String(v) : v.toFixed(1), grp.right ? ML + W + 5 : ML - 5, y);
+		}
+		g.fillStyle = pal.textFaint; g.textAlign = 'center'; g.textBaseline = 'middle';
+		g.save(); g.translate(grp.right ? CW - 8 : 10, MT + H / 2); g.rotate(grp.right ? Math.PI / 2 : -Math.PI / 2);
+		g.fillText(grp.label, 0, 0); g.restore();
+
+		if (!grp.right && lo < 0 && hi > 0) { g.strokeStyle = pal.axisLine; g.lineWidth = 1; g.beginPath(); g.moveTo(ML, yOf(0)); g.lineTo(ML + W, yOf(0)); g.stroke(); }
+
+		// The cut-window shade is painted per frame (see draw()), over the traces: at 6% alpha it is
+		// indistinguishable from painting it underneath.
+		for (const [key, arr] of grp.series) {
+			const col = channelColor(key, theme.value) ?? '#94a3b8';
+			g.globalAlpha = 0.9; g.strokeStyle = col; g.lineWidth = 1.2;
+			g.beginPath();
+			if (shouldDecimate(n, cols)) {
+				const d = decimateMinMax(cache.t, arr, t0, t1, cols);
+				let started = false;
+				const pt = (c: number, v: number) => {
+					if (Number.isNaN(v)) return;
+					const x = ML + ((c + 0.5) / d.cols) * W, y = yOf(v);
+					if (started) g.lineTo(x, y); else { g.moveTo(x, y); started = true; }
+				};
+				for (let c = 0; c < d.cols; c++) { pt(c, d.first[c]); pt(c, d.min[c]); pt(c, d.max[c]); pt(c, d.last[c]); }
+			} else {
+				for (let i = 0; i < n; i++) { const x = xOf(cache.t[i]); const y = yOf(arr[i]); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+			}
+			g.stroke();
+		}
+		g.globalAlpha = 1;
+	}
+
+	g.font = '10px system-ui'; g.textAlign = 'center'; g.textBaseline = 'top';
 	const xStep = niceStep(span, Math.max(2, Math.floor(W / 80)));
 	const xStart = Math.ceil(t0 / xStep) * xStep;
+	g.strokeStyle = pal.grid; g.lineWidth = 1;
 	for (let t = xStart; t <= t1; t += xStep) {
 		const x = xOf(t);
 		if (x < ML || x > ML + W) continue;
@@ -175,38 +227,13 @@ function buildLayer(CW: number, CH: number, dpr: number): Layer | null {
 		g.fillStyle = pal.text;
 		g.fillText(t.toFixed(t >= 100 ? 0 : 1), x, MT + H + 4);
 	}
-
-	g.fillStyle = pal.textFaint; g.font = '10px system-ui';
-	g.textAlign = 'center'; g.textBaseline = 'bottom';
+	g.fillStyle = pal.textFaint; g.textBaseline = 'bottom';
 	g.fillText('Time (s)', ML + W / 2, CH - 2);
-	g.save(); g.translate(10, MT + H / 2); g.rotate(-Math.PI / 2);
-	g.textBaseline = 'middle'; g.fillText('Force (N)', 0, 0); g.restore();
 
-	if (lo < 0 && hi > 0) { g.strokeStyle = pal.axisLine; g.lineWidth = 1; g.beginPath(); g.moveTo(ML, yOf(0)); g.lineTo(ML + W, yOf(0)); g.stroke(); }
-
-	// The cut-window shade is painted per frame (see draw()), over the traces: at 6% alpha it is
-	// indistinguishable from painting it underneath.
-	const cols = Math.max(1, Math.round(W * dpr));
-	for (const [key, arr] of series) {
-		const col = channelColor(key, theme.value) ?? '#94a3b8';
-		g.globalAlpha = 0.9; g.strokeStyle = col; g.lineWidth = 1.2;
-		g.beginPath();
-		if (shouldDecimate(n, cols)) {
-			const d = decimateMinMax(cache.t, arr, t0, t1, cols);
-			let started = false;
-			const pt = (c: number, v: number) => {
-				if (Number.isNaN(v)) return;
-				const x = ML + ((c + 0.5) / d.cols) * W, y = yOf(v);
-				if (started) g.lineTo(x, y); else { g.moveTo(x, y); started = true; }
-			};
-			for (let c = 0; c < d.cols; c++) { pt(c, d.first[c]); pt(c, d.min[c]); pt(c, d.max[c]); pt(c, d.last[c]); }
-		} else {
-			for (let i = 0; i < n; i++) { const x = xOf(cache.t[i]); const y = yOf(arr[i]); i ? g.lineTo(x, y) : g.moveTo(x, y); }
-		}
-		g.stroke();
-	}
-	g.globalAlpha = 1;
-	return { ...base, lo, yr };
+	// Anything selected that is not drawn gets a line saying why.
+	g.fillStyle = pal.text; g.textAlign = 'left'; g.textBaseline = 'top';
+	model.notes.forEach((note, i) => g.fillText(note, ML + 8, MT + 4 + i * 13));
+	return { ...base, lo: lo0, yr: yr0 };
 }
 
 function draw() {
@@ -276,7 +303,7 @@ onBeforeUnmount(() => { window.removeEventListener('resize', resize); ro?.discon
 		<canvas ref="canvasEl" @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp"></canvas>
 		<div class="legend">
 			<span v-for="k in (channels ?? ['Fx', 'Fy', 'Fz'])" :key="k" class="lg" :style="{ color: channelColor(k, theme) }">
-				<i :style="{ background: channelColor(k, theme) }"></i>{{ k }}
+				<i :style="{ background: channelColor(k, theme) }"></i>{{ channelLabel(k, cacheTachoKind(cache)) }}
 			</span>
 		</div>
 	</div>

@@ -92,7 +92,7 @@ function seekTo(m: TimelineMarker) { w.playback.seek(m.seekT ?? m.t, { commit: t
 					<option v-for="s in SPEEDS" :key="s" :value="s">{{ s }}×</option>
 				</select>
 			</label>
-			<span class="note" title="This file stores summed Fx/Fy/Fz only. Per-sensor sub-channels are shown as an even split, and Tacho is not stored at all — RPM comes from the file's own rpm series.">
+			<span class="note" title="This file stores summed Fx/Fy/Fz only. Per-sensor sub-channels are shown as an even split, and the raw tacho pulse train is not stored — the Tacho channel shows the file's own RPM series (empty when the file has none).">
 				<span class="material-symbols-rounded">info</span> summed axes only
 			</span>
 		</div>

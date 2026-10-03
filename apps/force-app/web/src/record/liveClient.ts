@@ -9,6 +9,7 @@ import { firstAtOrAfter, WINDOW_MAX_SEC, WINDOW_SLIDER_MAX_SEC } from './plotWin
 import { RELAY_HEARTBEAT_MS, RelayPeers } from './relayPeers';
 import { createEmitThrottle } from './emitThrottle';
 import { parseStartError } from './recordingErrors';
+import type { TachoKind } from './tachoSignal';
 
 // Playback relays to pop-outs at most this often (see relayTick).
 const RELAY_TICK_MS = 200;
@@ -39,6 +40,12 @@ export interface LiveStatus {
 	rpm: number;
 	/** null until the first chunk is processed; false => tacho not producing readable pulses. */
 	tachoOk: boolean | null;
+	/**
+	 * What the Tacho channel in `trace.sub` holds: the raw pulse train of a live recording
+	 * ('signal'), the stored RPM series of a replayed cut ('rpm'), or nothing because the replayed
+	 * cache has none ('none'). See tachoSignal.ts.
+	 */
+	tachoKind: TachoKind;
 	peaks: { Fx: number; Fy: number; Fz: number };
 	nTotal: number;
 	error: string | null;
@@ -52,7 +59,7 @@ export interface LiveStatus {
 
 export class RecordClient {
 	status = reactive<LiveStatus>({
-		connected: false, state: 'idle', seq: 0, tSec: 0, rpm: 0, tachoOk: null,
+		connected: false, state: 'idle', seq: 0, tSec: 0, rpm: 0, tachoOk: null, tachoKind: 'signal',
 		peaks: { Fx: 0, Fy: 0, Fz: 0 }, nTotal: 0, error: null, errorKind: null, captureId: null, summary: null, cutStartSec: null,
 		diskAction: null,
 	});
@@ -551,7 +558,7 @@ export class RecordClient {
 		this.status.state = 'idle'; this.status.error = null; this.status.errorKind = null; this.status.summary = null;
 		this.status.captureId = null; this.status.nTotal = 0; this.status.tSec = 0;
 		this.status.peaks = { Fx: 0, Fy: 0, Fz: 0 }; this.status.cutStartSec = null;
-		this.status.diskAction = null;
+		this.status.diskAction = null; this.status.tachoKind = 'signal';
 		this.frameSeq.value++;
 	}
 
