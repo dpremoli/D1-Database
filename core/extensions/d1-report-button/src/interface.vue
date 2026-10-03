@@ -21,7 +21,9 @@ const isNew = computed(() => props.primaryKey == null || props.primaryKey === '+
 
 const reportType = computed(() => {
 	if (props.report && props.report !== 'auto') return props.report;
-	return props.collection === 'manufacturing_operations' ? 'operation' : 'sample';
+	if (props.collection === 'manufacturing_operations') return 'operation';
+	if (props.collection === 'test_sessions') return 'test';
+	return 'sample';
 });
 
 const url = computed(() => `/d1-report/${reportType.value}/${props.primaryKey}`);

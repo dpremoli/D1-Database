@@ -75,8 +75,8 @@ data leaves the server. See [ADR-0009](../../adr/0009-text-to-sql-guarded-readon
 ## Printable reports
 
 The `d1-report` endpoint renders print-ready reports (A4, one or two pages) for three kinds of
-record. Open one from a record's **Report** button (the `d1-report-button` field, where it is
-placed on the form), or directly at:
+record. Open one from the **Generate PDF** button at the top of a sample, operation or test form (the
+`d1-report-button` field, added by migration `20261003000117_report_buttons.sql`), or directly at:
 
 | Report | URL |
 |---|---|

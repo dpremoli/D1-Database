@@ -144,6 +144,35 @@ bf_check "lg:TEST-LG-002=block" "Rectangular -> block (case-insensitive)"
 bf_check "lg:TEST-LG-003=disc" "current values are left alone (disc)"
 bf_check "lg:TEST-LG-004=round_bar" "current values are left alone (round_bar)"
 
+echo "== Report (Generate PDF) buttons =="
+# The d1-report-button field must be registered on the sample, operation and test forms.
+# directus_fields is an empty stub in CI, so run the migration's up then down in a rolled-back
+# transaction, with a hand-added button seeded to prove the up leaves it alone.
+RPT=db/migrations/20261003000117_report_buttons.sql
+rpt_up=$(awk '/-- migrate:up/{f=1;next}/-- migrate:down/{f=0}f' "$RPT")
+rpt_down=$(awk '/-- migrate:down/{f=1;next}f' "$RPT")
+rpt_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+DELETE FROM directus_fields WHERE field = 'report_button';
+INSERT INTO directus_fields (collection, field, special, interface, sort) VALUES ('test_sessions','report_button','alias,no-data','d1-report-button',99);
+$rpt_up
+SELECT 'up_rows:' || count(*) FROM directus_fields WHERE field='report_button' AND interface='d1-report-button' AND special='alias,no-data' AND collection IN ('physical_samples','manufacturing_operations','test_sessions');
+SELECT 'up_types:' || string_agg(collection || '=' || ((options::jsonb)->>'report'), ',' ORDER BY collection) FROM directus_fields WHERE field='report_button' AND options IS NOT NULL;
+SELECT 'up_kept_manual:' || sort FROM directus_fields WHERE collection='test_sessions' AND field='report_button';
+$rpt_up
+SELECT 'up_idempotent:' || count(*) FROM directus_fields WHERE field='report_button';
+$rpt_down
+SELECT 'down_rows:' || count(*) FROM directus_fields WHERE field='report_button';
+ROLLBACK;
+SQL
+)
+rpt_check() { grep -qx "$1" <<<"$rpt_out" && ok "$2" || bad "$2 (psql output: $rpt_out)"; }
+rpt_check "up_rows:3" "up: button registered on samples, operations and tests"
+rpt_check "up_types:manufacturing_operations=operation,physical_samples=sample" "up: each button points at its own report"
+rpt_check "up_kept_manual:99" "up: an existing button is left alone"
+rpt_check "up_idempotent:3" "up: re-running adds no duplicates"
+rpt_check "down_rows:0" "down: buttons removed"
+
 echo "== Natural ordering of ID codes (#115) =="
 # The code columns use the ICU numeric collation natural_sort, so ORDER BY (and a Directus
 # column-header sort) puts 9 < 10 < 151 < 1000 and ...-F9 < ...-F10. Test rows live in a
