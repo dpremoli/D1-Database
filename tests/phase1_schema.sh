@@ -361,6 +361,39 @@ $PSQL -c "
     DELETE FROM manufacturing_methods WHERE method_id = 'c0000000-0000-4000-8000-0000000000a1';
 " > /dev/null 2>&1 || true
 
+echo "== Denormalised views keep every operation and test session (review 5.2) =="
+# Row parity between each view and its base table, including an operation that only has
+# output_sample_id and a test session whose subject is not a sample (test_sessions_subject).
+vp_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_methods (method_id, method_code, method_name)
+VALUES ('c0000000-0000-4000-8000-0000000000a2', 'T-C-VP', 'view parity test method');
+INSERT INTO physical_samples (sample_id, sample_code)
+VALUES ('c0000000-0000-4000-8000-0000000000d1', 'TEST-VP-001');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, pass_code) VALUES
+    ('c0000000-0000-4000-8000-0000000000c3', 'c0000000-0000-4000-8000-0000000000a2', 'c0000000-0000-4000-8000-0000000000d1', 'TEST-VP-OP-IN');
+INSERT INTO manufacturing_operations (operation_id, method_id, output_sample_id, pass_code) VALUES
+    ('c0000000-0000-4000-8000-0000000000c4', 'c0000000-0000-4000-8000-0000000000a2', 'c0000000-0000-4000-8000-0000000000d1', 'TEST-VP-OP-OUT');
+INSERT INTO test_sessions (session_id, sample_id) VALUES
+    ('c0000000-0000-4000-8000-0000000000e1', 'c0000000-0000-4000-8000-0000000000d1');
+INSERT INTO test_sessions (session_id) VALUES ('c0000000-0000-4000-8000-0000000000e2');
+INSERT INTO test_sessions_subject (test_sessions_id, collection, item)
+VALUES ('c0000000-0000-4000-8000-0000000000e2', 'tools', 'subject-only');
+SELECT 'ops_parity:' || ((SELECT count(*) FROM v_manufacturing_operations_full) = (SELECT count(*) FROM manufacturing_operations));
+SELECT 'ts_parity:' || ((SELECT count(*) FROM v_test_sessions_full) = (SELECT count(*) FROM test_sessions));
+SELECT 'op_out_only_in_view:' || count(*) FROM v_manufacturing_operations_full WHERE pass_code = 'TEST-VP-OP-OUT' AND sample_id IS NULL;
+SELECT 'ts_subject_only_in_view:' || count(*) FROM v_test_sessions_full WHERE session_id = 'c0000000-0000-4000-8000-0000000000e2' AND sample_code IS NULL;
+SELECT 'ts_with_sample_code:' || sample_code FROM v_test_sessions_full WHERE session_id = 'c0000000-0000-4000-8000-0000000000e1';
+ROLLBACK;
+SQL
+)
+vp_check() { grep -qx "$1" <<<"$vp_out" && ok "$2" || bad "$2 (psql output: $vp_out)"; }
+vp_check "ops_parity:true" "v_manufacturing_operations_full has one row per operation"
+vp_check "ts_parity:true" "v_test_sessions_full has one row per test session"
+vp_check "op_out_only_in_view:1" "operation with only output_sample_id is in the view"
+vp_check "ts_subject_only_in_view:1" "subject-only test session is in the view"
+vp_check "ts_with_sample_code:TEST-VP-001" "sample columns are still filled when there is a sample"
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy
