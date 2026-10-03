@@ -10,7 +10,9 @@
 --
 -- When it fires, matching the hook: package_quantity >= 1 (NULL = manual entry, 0 = the clone
 -- sentinel expand_tool_box_intake() gives its own rows, so it never recurses).
--- One condition is added: tool_box_code must still be the placeholder default ('TMP-<uuid>',
+-- One condition is added, checked inside the trigger function rather than in the WHEN clause (a
+-- column named in a WHEN clause blocks ALTER COLUMN ... TYPE, which migration 116's down and up
+-- do to tool_box_code and tests/phase1_schema.sh replays): tool_box_code must still be the placeholder default ('TMP-<uuid>',
 -- migration 022). The intake form leaves the code blank; every other writer of tool_boxes sets a
 -- real code. Without this, scripts/migrate_legacy.py (which loads the legacy inventory's
 -- "Package Quantity" - the inserts in the manufacturer package, not a number of boxes - with
@@ -22,7 +24,10 @@ CREATE FUNCTION trg_tool_boxes_intake() RETURNS trigger
     LANGUAGE plpgsql
 AS $$
 BEGIN
-    PERFORM expand_tool_box_intake(NEW.tool_box_id);
+    -- Only the intake form leaves the code at its placeholder default (see the header comment).
+    IF left(NEW.tool_box_code COLLATE "C", 4) = 'TMP-' THEN
+        PERFORM expand_tool_box_intake(NEW.tool_box_id);
+    END IF;
     RETURN NULL;
 END;
 $$;
@@ -35,7 +40,7 @@ COMMENT ON FUNCTION trg_tool_boxes_intake() IS
 CREATE TRIGGER intake_tool_boxes
     AFTER INSERT ON tool_boxes
     FOR EACH ROW
-    WHEN (NEW.package_quantity >= 1 AND left(NEW.tool_box_code COLLATE "C", 4) = 'TMP-')
+    WHEN (NEW.package_quantity >= 1)
     EXECUTE FUNCTION trg_tool_boxes_intake();
 
 COMMENT ON TRIGGER intake_tool_boxes ON tool_boxes IS
