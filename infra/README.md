@@ -28,11 +28,17 @@ host, so they are git-ignored.
 **Quick-start (Phase 2):**
 
 ```bash
-cp .env.example .env        # fill in secrets
+cp .env.example .env        # fill in secrets (openssl rand -hex 32); compose refuses to start without them
 make up                     # bring stack up
 make bootstrap-minio        # create d1-files + d1-backups buckets (once)
 make migrate && make seed   # apply schema + reference data
 ```
+
+**Network exposure.** Every published port (Directus, proxy, Postgres, MinIO, the
+workers, llm-text-to-sql) binds to `D1_BIND_ADDR`, default `127.0.0.1`. To reach the
+stack from other tailnet machines set `D1_BIND_ADDR` in `.env` to the host's tailnet IP
+(`tailscale ip -4`) and `make up` again; never `0.0.0.0`. Redis is not published at all
+(use `docker compose exec redis redis-cli`, which is already authenticated).
 
 **Backup / restore:**
 

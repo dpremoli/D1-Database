@@ -80,8 +80,9 @@ that produces 768-dimensional vectors, or add a migration to change the column.
 
 ## 3. Ask a question
 
-`POST /api/ask` on the plugin (host port `LLM_HTTP_PORT`, default `8082`). If
-`WORKER_WEBHOOK_SECRET` is set, send it in `X-Worker-Secret`.
+`POST /api/ask` on the plugin (host port `LLM_HTTP_PORT`, default `8082`, bound to
+`D1_BIND_ADDR`, i.e. `127.0.0.1` unless you changed it). `WORKER_WEBHOOK_SECRET` is
+required (compose will not start without it), so always send it in `X-Worker-Secret`.
 
 ```bash
 curl -s localhost:8082/api/ask \

@@ -67,7 +67,7 @@ automatically via the `healthcheck` block in `compose.yaml`.
 ### 2.3 Verify the queue is connected
 
 ```bash
-docker compose exec heavy-data-worker rq info --url redis://redis:6379
+docker compose exec heavy-data-worker rq info --url "$REDIS_URL"
 ```
 
 Expected output includes a `heavy-data` queue with 0 queued and 0 failed jobs
@@ -208,7 +208,7 @@ Log lines include the job ID, session ID, and timing for each processing stage.
 ### Redis queue status
 
 ```bash
-docker compose exec heavy-data-worker rq info --url redis://redis:6379
+docker compose exec heavy-data-worker rq info --url "$REDIS_URL"
 ```
 
 Output shows:
@@ -220,7 +220,7 @@ Output shows:
 ### Inspect a failed job
 
 ```bash
-docker compose exec heavy-data-worker rq failed-queue --url redis://redis:6379 dump
+docker compose exec heavy-data-worker rq failed-queue --url "$REDIS_URL" dump
 ```
 
 ### Check session status via the API
@@ -364,7 +364,7 @@ import os
 from redis import Redis
 from rq import Queue
 
-r = Redis.from_url("redis://redis:6379")
+r = Redis.from_url(os.environ["REDIS_URL"])
 q = Queue("heavy-data", connection=r)
 q.enqueue(
     "worker.process_session",
