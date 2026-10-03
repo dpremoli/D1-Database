@@ -34,6 +34,12 @@ describe('spotlight', () => {
 		expect(resolveSpotlightTarget(el)).toBe(el);
 	});
 
+	it('escapes quotes so an odd id cannot break out of the selector', () => {
+		const querySelector = vi.fn(() => null);
+		resolveSpotlightTarget('a"b\\c', { querySelector } as any);
+		expect(querySelector).toHaveBeenCalledWith('[data-focus="a\\"b\\\\c"]');
+	});
+
 	it('scrolls to centre, rings for the duration, then clears', () => {
 		const el = fakeEl();
 		expect(spotlight(el)).toBe(true);
