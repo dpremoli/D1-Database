@@ -1965,6 +1965,7 @@ async def browse_captures(limit: int = 200) -> dict:
                 entry["recoverable"] = bool(info and info["n_rows"] > 0)
                 entry["recording"] = cid == _active_session_id()
                 entry["discarding"] = cid in recovery._discarding
+                entry["recovering"] = cid in recovery._recovering
             rows.append(entry)
         return rows, storage.disk_usage_for(CAPTURES_ROOT)
 
@@ -1994,6 +1995,12 @@ async def delete_capture(cid: str) -> dict:
         raise HTTPException(404, "not found")
     if cid == _active_session_id():
         raise HTTPException(409, "that recording is still in progress")
+    # A restore/recover is reading or writing this directory right now, and a discard is already
+    # deleting it. Removing it from under either one is what makes them fail half-way.
+    if cid in recovery._recovering or cid in recovery._discarding:
+        raise HTTPException(
+            409, "that capture is being recovered, restored or discarded right now — wait for it to finish"
+        )
     t0 = time.perf_counter()
     freed = 0
     try:
