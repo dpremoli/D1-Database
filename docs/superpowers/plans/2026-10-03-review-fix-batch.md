@@ -173,7 +173,7 @@ each stream into `ccr-c5556a5a-jxwm8s`.
 
 | Stream | Wave | Worktree / branch id | State |
 |---|---|---|---|
-| A | 1 | `stream-a` (branch `worktree-stream-a`) | in progress |
+| A | 1 | `stream-a` (branch `worktree-stream-a`) | done (`266c2f7`..`e682f82`), reviewed; merge together with H (Redis URL) |
 | B | 1 | `agent-a87e02935fb18bd77` | in progress |
 | D | 1 | `agent-a919838a2c96882aa` | in progress |
 | H | 1 | `agent-a9501193950e18778` | in progress |
