@@ -177,7 +177,7 @@ each stream into `ccr-c5556a5a-jxwm8s`.
 | B | 1 | `agent-a87e02935fb18bd77` | in progress |
 | D | 1 | `agent-a919838a2c96882aa` | in progress |
 | H | 1 | `agent-a9501193950e18778` | merged (`8ec7a6e`), reviewed |
-| C | 2 | `stream-c` (branch `worktree-stream-c`) | in progress |
+| C | 2 | `stream-c` (branch `worktree-stream-c`) | merged, reviewed; CI purge + docs follow-up committed |
 | E | 2 | `stream-e` (branch `worktree-stream-e`) | in progress |
 | F | 2 | — | pending |
 | G | 2 | — | pending |
