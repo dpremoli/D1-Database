@@ -20,6 +20,7 @@ import { buildScaleLUT, colorizeValues, lutKey, type ColorScale } from './colorS
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { histogramFrom, type Histogram } from './histogram';
 import LoadingOverlay from './LoadingOverlay.vue';
+import { createLoadToken } from './loadToken';
 import { sameStage, stageInfo, type LoadStage, type StageInfo } from './loadStage';
 import {
 	buildStaticAttributes, spiralUniformValues,
@@ -94,7 +95,11 @@ const pointCount = ref(0);
 let raf = 0;
 let pendingRebuild = false;
 
+// Each load() takes a token and re-checks it after every await: this component stays mounted
+// across operation switches, so an older, slower download can finish after a newer one.
+const loadToken = createLoadToken();
 async function load(id: string) {
+	const mine = loadToken.next();
 	loading.value = true; error.value = null;
 	try {
 		let c = cacheGet(id);
@@ -103,10 +108,12 @@ async function load(id: string) {
 			const res = await api.get(`/assets/${id}`, {
 				responseType: 'arraybuffer',
 				onDownloadProgress: (e) => {
+					if (!loadToken.isCurrent(mine)) return;
 					const next: LoadStage = { kind: 'download', loaded: e.loaded, total: e.total ?? null };
 					if (!sameStage(stage.value, next)) stage.value = next;
 				},
 			});
+			if (!loadToken.isCurrent(mine)) return;   // superseded while downloading: emit nothing, touch nothing
 			stage.value = { kind: 'build' };
 			c = parseCache(res.data as ArrayBuffer);
 			cachePut(id, c);
@@ -120,11 +127,12 @@ async function load(id: string) {
 		resetView();
 		nextTick(() => { setupRenderer(); scheduleRebuild(); });
 	} catch (e: any) {
+		if (!loadToken.isCurrent(mine)) return;
 		error.value = e?.message || 'failed to load live cache';
 		cache.value = null;
 		stage.value = null;
 	} finally {
-		loading.value = false;
+		if (loadToken.isCurrent(mine)) loading.value = false;
 	}
 }
 // NOT immediate: an immediate watch runs during setup(), and on the precached (cache
@@ -136,7 +144,7 @@ async function load(id: string) {
 watch(() => props.cacheFileId, (id) => { if (id && !props.cacheOverride) load(id); });
 // Compare mode: the filtered pane's data arrives pre-parsed from the filter-service.
 watch(() => props.cacheOverride, (c) => {
-	if (c) { cache.value = c; loading.value = false; error.value = null; nextTick(() => { setupRenderer(); scheduleRebuild(); }); }
+	if (c) { loadToken.cancel(); cache.value = c; loading.value = false; error.value = null; nextTick(() => { setupRenderer(); scheduleRebuild(); }); }
 });
 
 // ---- interactive view transform (equal-aspect, world = mm) ---------------------
@@ -668,7 +676,13 @@ function teardownRenderer() {
 	gpuUploaded = false;
 	ready = false;
 }
-onBeforeUnmount(teardownRenderer);
+onBeforeUnmount(() => {
+	loadToken.cancel();
+	// The stage watcher is already stopped by now, so say "idle" directly: otherwise the host's busy
+	// bar stays on after a mid-load unmount.
+	if (stage.value) emit('stage', null);
+	teardownRenderer();
+});
 onDeactivated(teardownRenderer);
 onActivated(() => { if (!ready) nextTick(() => { setupRenderer(); scheduleRebuild(); }); });
 
