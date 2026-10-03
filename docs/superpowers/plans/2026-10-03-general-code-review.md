@@ -31,7 +31,7 @@ brief.
 | 1 | Sonnet reviewer | done; blockers 1 and 3 verified |
 | 2 | Sonnet reviewer | done; raw report in `docs/reviews/2026-10-03-general-code-review/`; blockers 1 and 3 verified |
 | 3 | Sonnet reviewer | done; blocker 1 and hover finding 4 verified |
-| 4 | Sonnet reviewer | in progress |
+| 4 | Sonnet reviewer | done; blockers 1 and 2 verified |
 | 5 | Sonnet reviewer | done; blocker 1 and view finding 2 verified |
 | 6 | Sonnet reviewer | in progress |
 | 7 | Sonnet reviewer | in progress |
