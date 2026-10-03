@@ -18,6 +18,7 @@ import json
 import os
 import threading
 import time
+import uuid
 from collections import OrderedDict
 
 import httpx
@@ -77,6 +78,18 @@ def _lru_put(file_id: str, c: Cache) -> None:
             _lru.popitem(last=False)
 
 
+def _valid_file_id(value: object) -> str:
+    """The canonical UUID string for a Directus file id, or a 422.
+
+    The id is interpolated into a Directus URL path; anything else ("../users/me", "x?y")
+    could collapse to a different route under the caller's own credentials.
+    """
+    try:
+        return str(uuid.UUID(str(value)))
+    except ValueError:
+        raise HTTPException(422, "cache_file_id must be a UUID") from None
+
+
 def _auth_headers(req: Request) -> dict:
     h: dict[str, str] = {}
     if "authorization" in req.headers:
@@ -107,6 +120,7 @@ async def _authorize(file_id: str, req: Request) -> None:
 
 
 async def _get_cache(file_id: str, req: Request) -> Cache:
+    file_id = _valid_file_id(file_id)
     c = _lru_get(file_id)
     if c is not None:
         await _authorize(

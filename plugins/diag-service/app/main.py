@@ -24,6 +24,7 @@ import re
 import sys
 import threading
 import time
+import uuid
 from collections import OrderedDict
 
 import httpx
@@ -158,6 +159,12 @@ async def _resolve_and_authorize(analysis_id: str, req: Request) -> dict:
     for any read, so a caller who may not see the row gets its 401/403 here. Runs on every
     request — there is no cached bypass, matching filter-service's post-32fb4b7 behaviour.
     """
+    try:
+        # Interpolated into a Directus URL path: only a real UUID may reach it ("../users/me"
+        # would collapse to a different route under the caller's own credentials).
+        analysis_id = str(uuid.UUID(str(analysis_id)))
+    except ValueError:
+        raise HTTPException(422, "analysis_id must be a UUID") from None
     async with httpx.AsyncClient(timeout=30) as cl:
         r = await cl.get(
             f"{DIRECTUS_URL}/items/machining_force_analysis/{analysis_id}",

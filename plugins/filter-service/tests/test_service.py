@@ -201,3 +201,58 @@ def test_lru_is_thread_safe(monkeypatch):
         t.join()
     assert not errors
     assert len(m._lru) <= 4
+
+
+# --- id validation ------------------------------------------------------------
+
+GOOD_ID = "3f2b8c1e-7a44-4f0e-9d0b-0a1b2c3d4e5f"
+
+
+class _FakeAsyncClient:
+    """Stands in for httpx.AsyncClient; records every URL it is asked for."""
+
+    urls: list[str] = []
+
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url, **k):
+        type(self).urls.append(url)
+        return httpx.Response(404)
+
+    async def head(self, url, **k):
+        type(self).urls.append(url)
+        return httpx.Response(404)
+
+
+@pytest.mark.parametrize(
+    "bad", ["../users/me", "x?fields=*", "abc", "../../items/x", "a/b", "%2e%2e"]
+)
+def test_non_uuid_cache_file_id_is_422_and_never_reaches_directus(monkeypatch, bad):
+    from fastapi.testclient import TestClient
+
+    _FakeAsyncClient.urls = []
+    m._lru.clear()
+    monkeypatch.setattr(m.httpx, "AsyncClient", _FakeAsyncClient)
+    r = TestClient(m.app).post("/run", json={"cache_file_id": bad, "chain": {}})
+    assert r.status_code == 422
+    assert _FakeAsyncClient.urls == []
+
+
+def test_uuid_cache_file_id_builds_the_canonical_url(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    _FakeAsyncClient.urls = []
+    m._lru.clear()
+    monkeypatch.setattr(m.httpx, "AsyncClient", _FakeAsyncClient)
+    r = TestClient(m.app).post(
+        "/run", json={"cache_file_id": GOOD_ID.upper(), "chain": {}}
+    )
+    assert r.status_code == 404  # Directus (fake) said so; the id was accepted
+    assert _FakeAsyncClient.urls == [f"{m.DIRECTUS_URL}/assets/{GOOD_ID}"]
