@@ -15,7 +15,9 @@ def client():
 
 
 @pytest.mark.parametrize("value", [None, ""])
-def test_unset_or_empty_secret_rejects_everything_but_health(client, monkeypatch, value):
+def test_unset_or_empty_secret_rejects_everything_but_health(
+    client, monkeypatch, value
+):
     if value is None:
         monkeypatch.delenv("WORKER_WEBHOOK_SECRET", raising=False)
     else:
@@ -30,7 +32,9 @@ def test_unset_or_empty_secret_rejects_everything_but_health(client, monkeypatch
 
 def test_wrong_secret_is_401(client, monkeypatch):
     monkeypatch.setenv("WORKER_WEBHOOK_SECRET", "s3cret")
-    r = client.post("/api/webhook/session", json=BODY, headers={"X-Worker-Secret": "nope"})
+    r = client.post(
+        "/api/webhook/session", json=BODY, headers={"X-Worker-Secret": "nope"}
+    )
     assert r.status_code == 401
     r = client.post("/api/webhook/session", json=BODY)
     assert r.status_code == 401

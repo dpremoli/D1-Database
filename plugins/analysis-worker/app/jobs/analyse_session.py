@@ -6,15 +6,29 @@ import tempfile
 from pathlib import Path
 
 from app.lib import directus_client, minio_client
-from app.lib.d1f_reader import CHANNEL_NAMES, parse_header, read_channel
-from app.lib.fft_analysis import analyse_channel, plot_spectrum
+from app.lib.d1f_reader import (
+    CHANNEL_NAMES,
+    available_samples,
+    parse_header,
+    read_channel_block,
+)
+from app.lib.fft_analysis import (
+    analyse_spectrum,
+    compute_spectrum,
+    default_nperseg,
+    plan_blocks,
+    plot_spectrum_from,
+)
 from app.lib.statuses import STATUS_ANALYSED, STATUS_ANALYSING, STATUS_FAILED
 
 log = logging.getLogger(__name__)
 
 COLLECTION = "test_sessions"
 FFT_CHANNEL_INDEX = int(os.getenv("FFT_CHANNEL_INDEX", "2"))  # default: Fz
-FFT_MAX_SAMPLES = int(os.getenv("FFT_MAX_SAMPLES", "131072"))  # 2^17
+# Welch segment length (0 = adapt to the sample rate) and the cap on how many
+# evenly spaced contiguous blocks are read from a large file.
+FFT_NPERSEG = int(os.getenv("FFT_NPERSEG", "0"))
+FFT_MAX_BLOCKS = int(os.getenv("FFT_MAX_BLOCKS", "32"))
 
 
 def analyse_session(session_id: str, object_key: str) -> None:
@@ -24,8 +38,9 @@ def analyse_session(session_id: str, object_key: str) -> None:
       1. Mark session status = 'analysing'
       2. Download D1F from MinIO to temp file
       3. Parse header
-      4. Read primary force channel (Fz by default) with stride
-      5. Compute amplitude spectrum + top frequencies + band energy
+      4. Read primary force channel (Fz by default) as contiguous blocks at the
+         native sample rate (no decimation)
+      5. Welch amplitude spectrum + distinct peaks + band energy
       6. Generate spectrum SVG plot
       7. Upload SVG to MinIO
       8. PATCH test_sessions with fft_analysis results + plot URI
@@ -49,14 +64,21 @@ def analyse_session(session_id: str, object_key: str) -> None:
         )
         ch_unit = "N" if ch_idx < 3 else "Nm"
 
-        actual_stride = max(1, header["n_samples"] // FFT_MAX_SAMPLES)
-        signal = read_channel(tmp_path, header, ch_idx, max_samples=FFT_MAX_SAMPLES)
-
-        metrics = analyse_channel(signal, header["sample_rate_hz"], actual_stride)
-
-        svg_bytes = plot_spectrum(
-            signal, header["sample_rate_hz"], actual_stride, ch_name, ch_unit
+        fs = header["sample_rate_hz"]
+        n_avail = available_samples(tmp_path, header)
+        nperseg = min(FFT_NPERSEG or default_nperseg(fs), n_avail)
+        blocks = plan_blocks(n_avail, nperseg, FFT_MAX_BLOCKS)
+        spec = compute_spectrum(
+            (read_channel_block(tmp_path, header, ch_idx, st, n) for st, n in blocks),
+            fs,
+            nperseg,
         )
+        if spec is None:
+            msg = "insufficient samples for FFT"
+            raise ValueError(msg)
+        metrics = analyse_spectrum(spec)
+
+        svg_bytes = plot_spectrum_from(spec, ch_name, ch_unit)
         plot_key = object_key.rsplit(".", 1)[0] + f"_fft_{ch_name}.svg"
         minio_client.put_object(plot_key, svg_bytes, "image/svg+xml")
         plot_uri = f"minio://{minio_client.BUCKET}/{plot_key}"
@@ -64,9 +86,10 @@ def analyse_session(session_id: str, object_key: str) -> None:
         analysis_result = {
             "channel": ch_name,
             "channel_index": ch_idx,
-            "n_samples_analysed": len(signal),
-            "stride": actual_stride,
-            "effective_sample_rate_hz": header["sample_rate_hz"] / actual_stride,
+            "n_samples_analysed": spec.n_samples,
+            "n_samples_total": n_avail,
+            "stride": 1,  # kept for schema compatibility: no decimation any more
+            "effective_sample_rate_hz": fs,
             **metrics,
         }
 
