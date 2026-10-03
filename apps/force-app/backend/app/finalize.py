@@ -34,7 +34,15 @@ from . import virtual_channels
 from .config import AXIS_SUM, SIGNAL_CHANNELS, RecordConfig
 from .d1lc import write_d1lc
 from .d1rw import read_header, read_rows, row_count
-from .dsp import DriftCheck, LinearFit, OrderSpectrum, TachoRpm, sum_axes
+from .dsp import (
+    DriftCheck,
+    LinearFit,
+    OrderSpectrum,
+    TachoRpm,
+    sum_axes,
+    tacho_threshold,
+    uniform_chunk,
+)
 from .storage import atomic_write_json
 
 log = logging.getLogger("force_app.finalize")
@@ -153,6 +161,7 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     raw_peaks = dict.fromkeys(AXIS_SUM, 0.0)
     fz_block_max: list[float] = []  # per-block max |Fz| of the FINAL axes, to locate the cut window
     tacho_lo, tacho_hi = np.inf, -np.inf
+    tacho_block_range: list[tuple[float, float]] = []  # per-block (min, max), see tacho_chunks
     for k in range(blocks.count):
         a, b = blocks.bounds(k)
         block = blocks.get(k)
@@ -167,8 +176,10 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
                 )
         sig = gained(block)
         chan_peaks = np.maximum(chan_peaks, np.max(np.abs(sig[:, :8]), axis=0))
-        tacho_lo = float(np.minimum(tacho_lo, np.min(sig[:, 8])))  # np.minimum: NaN propagates,
-        tacho_hi = float(np.maximum(tacho_hi, np.max(sig[:, 8])))  # as a whole-array min would
+        blo, bhi = float(np.min(sig[:, 8])), float(np.max(sig[:, 8]))
+        tacho_block_range.append((blo, bhi))
+        tacho_lo = float(np.minimum(tacho_lo, blo))  # np.minimum: NaN propagates,
+        tacho_hi = float(np.maximum(tacho_hi, bhi))  # as a whole-array min would
         if drift_corrected:
             # The axis peaks that matter are the corrected ones, which pass 2 computes once the
             # fit is complete, so summing the raw axes here would be thrown away.
@@ -252,11 +263,20 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     # for an unmeasured one wrote a fabricated rate into capture.mat and the revs column, where
     # nothing downstream could tell it apart from a real measurement. Unmeasured stays 0 and is
     # recorded as such in summary.json (tacho_measured) so the gap is visible rather than papered over.
-    tacho_chunks = (
-        blocks.get(k)[:, 1 + SIGNAL_CHANNELS.index("Tacho")].astype(np.float64)
-        for k in range(blocks.count)
-    )
-    rpm_stream = TachoRpm(tacho_chunks, n, fs, cfg.ppr, tacho_lo, tacho_hi)
+    # TachoRpm reads ahead to the end of the file once the pulses stop, to learn that no later edge
+    # exists, and the 2-block cache means the main loop below then re-reads all of it. A block whose
+    # tacho sits wholly on one side of the edge threshold (a stopped spindle's tail) is handed over
+    # as a UniformChunk from the pass-1 min/max instead, so neither pass reads it for the tacho.
+    tacho_thr = tacho_threshold(tacho_lo, tacho_hi)
+
+    def tacho_chunks():
+        for k in range(blocks.count):
+            a, b = blocks.bounds(k)
+            lo, hi = tacho_block_range[k]
+            chunk = uniform_chunk(b - a, lo, hi, tacho_thr)
+            yield chunk or blocks.get(k)[:, 1 + SIGNAL_CHANNELS.index("Tacho")].astype(np.float64)
+
+    rpm_stream = TachoRpm(tacho_chunks(), n, fs, cfg.ppr, tacho_lo, tacho_hi)
     tacho_measured = rpm_stream.measured
 
     # Local tier (Component 8, deliberately thin): a quick order spectrum + a drift-detection

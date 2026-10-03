@@ -32,16 +32,21 @@ from app.dsp import (
     LinearFit,
     OrderSpectrum,
     TachoRpm,
+    UniformChunk,
     drift_check,
     order_spectrum_quick,
     rpm_from_tacho,
+    tacho_threshold,
+    uniform_chunk,
 )
 from app.finalize import finalize, time_column_is_off
 
 F32_REL = float(np.finfo(np.float32).eps)  # one float32 ulp, relative
 
 
-def _synthetic(n, fs, rpm=1500.0, ppr=1, seed=0, drift=0.0, extra_cols=0, tacho=True):
+def _synthetic(
+    n, fs, rpm=1500.0, ppr=1, seed=0, drift=0.0, extra_cols=0, tacho=True, stop=None, stop_level=0.0
+):
     """A capture shaped like a real one: air-cut lead-in and tail around a cut on all three axes,
     tooth-passing ripple, noise, an optional linear drift, a tacho pulse train whose speed wanders,
     and `extra_cols` hardware Aux columns."""
@@ -57,6 +62,8 @@ def _synthetic(n, fs, rpm=1500.0, ppr=1, seed=0, drift=0.0, extra_cols=0, tacho=
             data[:, c] = env * mean * ripple + rng.normal(0, 0.5, n) + drift * t
     if tacho:
         data[:, 8] = ((phase * ppr) % 1.0 < 0.15) * 5.0
+        if stop is not None:  # the spindle stops: the pulses end and the sensor rests at one level
+            data[int(stop * n) :, 8] = stop_level
     for i in range(extra_cols):
         data[:, 9 + i] = rng.normal(3.0, 0.1, n)
     return t, data
@@ -87,6 +94,9 @@ CASES = {
     "per_channel_gains": dict(cfg={"dyno_gains": [1.5, 2, 2.5, 3, 0.5, 0.75, 1.25, 4]}),
     "ppr2": dict(cfg={"ppr": 2}, synth={"ppr": 2, "rpm": 900.0}),
     "no_tacho": dict(cfg={}, synth={"tacho": False}),
+    "tacho_stops_low": dict(cfg={}, synth={"stop": 0.3}),
+    "tacho_stops_high": dict(cfg={}, synth={"stop": 0.3, "stop_level": 5.0}),
+    "tacho_stops_in_cut": dict(cfg={}, synth={"stop": 0.6}),
     "extra_channels": dict(
         cfg={
             "drift_comp": True,
@@ -333,3 +343,67 @@ def test_linear_fit_and_drift_check_match_polyfit():
         np.testing.assert_allclose(
             got[ax]["slope_n_per_sec"], want[ax]["slope_n_per_sec"], rtol=1e-8
         )
+
+
+def _count_block_reads(tmp_path, monkeypatch, tacho_kwargs, block_rows=1_000, n=60_000):
+    monkeypatch.setattr(finalize_mod, "BLOCK_ROWS", block_rows)
+    reads = []
+    real = finalize_mod.read_rows
+    monkeypatch.setattr(
+        finalize_mod,
+        "read_rows",
+        lambda path, a, b, n_cols: reads.append(a) or real(path, a, b, n_cols),
+    )
+    fs = 5000.0
+    t, data = _synthetic(n, fs, **tacho_kwargs)
+    d = _write(str(tmp_path / "cap"), t, data, fs)
+    finalize(d, RecordConfig(sample_rate=fs, feed=0.05, diam=80))
+    return len(reads), -(-n // block_rows)
+
+
+@pytest.mark.parametrize("level", [0.0, 5.0])
+def test_a_stopped_tacho_does_not_double_the_final_pass_reads(tmp_path, monkeypatch, level):
+    """Once the pulses stop, TachoRpm has to look to the end of the file for a later edge, and the
+    2-block cache then forced the main loop to re-read all of it: 3 reads a block instead of 2
+    (pass 1 + final). The stopped tail is now read zero extra times."""
+    reads, blocks = _count_block_reads(tmp_path, monkeypatch, dict(stop=0.1, stop_level=level))
+    assert reads <= 2 * blocks + 4, (reads, blocks)  # was ~3 * blocks
+
+
+def test_a_running_tacho_still_reads_each_block_twice(tmp_path, monkeypatch):
+    reads, blocks = _count_block_reads(tmp_path, monkeypatch, {})
+    assert reads <= 2 * blocks + 4, (reads, blocks)
+
+
+def test_tacho_rpm_with_uniform_chunks_is_the_array_result():
+    """UniformChunk stands in for a chunk wholly on one side of the threshold, edge included."""
+    rng = np.random.default_rng(3)
+    fs, ppr = 2000.0, 1
+    for level in (0.0, 5.0):
+        _, data = _synthetic(40_000, fs, stop=0.25, stop_level=level)
+        tacho = data[:, 8]
+        lo, hi = float(tacho.min()), float(tacho.max())
+        thr = tacho_threshold(lo, hi)
+        want, _ = rpm_from_tacho(tacho, fs, ppr)
+        for size in (97, 1000, 4096):
+            chunks = []
+            for i in range(0, tacho.size, size):
+                c = tacho[i : i + size]
+                chunks.append(uniform_chunk(c.size, float(c.min()), float(c.max()), thr) or c)
+            assert any(isinstance(c, UniformChunk) for c in chunks)
+            stream = TachoRpm(iter(chunks), tacho.size, fs, ppr, lo, hi)
+            bounds = np.concatenate(
+                ([0], np.sort(rng.choice(np.arange(1, 40_000), 20, False)), [40_000])
+            )
+            got = np.concatenate(
+                [stream.rpm(int(a), int(b)) for a, b in zip(bounds[:-1], bounds[1:])]
+            )
+            np.testing.assert_array_equal(got, want)
+
+
+def test_a_chunk_with_a_nan_is_never_uniform():
+    assert uniform_chunk(10, float("nan"), float("nan"), 2.5) is None
+    assert uniform_chunk(10, 0.0, 1.0, float("nan")) is None
+    assert uniform_chunk(10, 3.0, 5.0, 2.5) == UniformChunk(10, True)
+    assert uniform_chunk(10, 0.0, 2.5, 2.5) == UniformChunk(10, False)  # `above` is strict >
+    assert uniform_chunk(10, 0.0, 5.0, 2.5) is None
