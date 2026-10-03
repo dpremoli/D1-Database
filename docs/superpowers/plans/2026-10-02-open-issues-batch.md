@@ -57,7 +57,7 @@ Each stream works in its own worktree under `.claude/worktrees/` on branch
 | Stream | Worktree / branch id | State |
 |---|---|---|
 | A | `agent-ac87f3fd4cc2d8fcb` | merged; review fixes `de16eb6`, `e5ddb01` |
-| B | `agent-a868c600a24febd73` | fixing review findings (1 blocker); resumed after the 2nd usage limit, 00:42 UTC |
+| B | `agent-a868c600a24febd73` | merged; blocker fixed in `062ba02`, other findings `dcf158f`..`1e78cf2` |
 | C | `agent-a00fe5a7493b655ca` | merged; review nits fixed (`55c96ba`..`08357c8`) |
 | D | `agent-a16dd8a730e68dddf` | merged; review nits fixed (`fdb83e7`..`4251934`) |
 | E | `agent-a9c22f1bdfa0cadc3` | done (9 commits, `291ce2e`..`6394ac1`); in review |
