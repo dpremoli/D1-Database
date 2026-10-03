@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: no job here writes to the repo, issues or PRs.
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint (pre-commit)
@@ -62,11 +66,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned by sha256. dbmate does not publish a checksum file, so this digest was computed
+      # from the official v2.23.0 release asset (fetched twice, identical). When bumping the
+      # version, download the new asset, verify it against the release page, and update both.
       - name: Install dbmate
+        env:
+          DBMATE_SHA256: 757e0ede33fad35010ce5fdba201a4f2181516471676fe5eab6f93ff70ec7424
         run: |
-          curl -fsSL -o /usr/local/bin/dbmate \
+          curl -fsSL -o /tmp/dbmate \
             https://github.com/amacneil/dbmate/releases/download/v2.23.0/dbmate-linux-amd64
-          chmod +x /usr/local/bin/dbmate
+          echo "${DBMATE_SHA256}  /tmp/dbmate" | sha256sum --check --strict -
+          sudo install -m 0755 /tmp/dbmate /usr/local/bin/dbmate
 
       - name: Apply all migrations (up)
         run: dbmate --no-dump-schema up

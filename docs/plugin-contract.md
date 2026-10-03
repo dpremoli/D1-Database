@@ -61,14 +61,20 @@ X-Actor-Identity: heavy-data-worker
 
 ### 2.3 Webhook authentication
 
-The Directus Flow POSTs to the plugin's webhook endpoint. The endpoint is
-reachable only within the Docker network (`http://heavy-data-worker:8080`) and
-is not exposed to the public internet. No additional token is required on the
-webhook path; network isolation is the control.
+The Directus Flow POSTs to the plugin's webhook endpoint
+(`http://heavy-data-worker:8080` on the Docker network). Network isolation alone
+is **not** the control: compose also publishes the worker ports on the host
+(bound to `D1_BIND_ADDR`, default `127.0.0.1`), so every request must carry the
+shared secret.
 
-If the deployment topology changes (e.g., the worker is exposed externally),
-a shared secret header (`X-D1-Webhook-Secret`) should be added to the Flow
-configuration and validated by the handler.
+- Header: `X-Worker-Secret: <WORKER_WEBHOOK_SECRET>`. The Flow sends it, and
+  the handler's `check_secret` rejects requests that lack it or carry a wrong
+  value.
+- `WORKER_WEBHOOK_SECRET` is **required** in `.env`: `docker-compose.yml` refuses
+  to start without it, and a plugin must fail closed (reject every request) if
+  it is unset rather than disabling authentication.
+- Only publish a worker port beyond the host by setting `D1_BIND_ADDR` to the
+  tailnet IP; never expose it to the public internet.
 
 ---
 

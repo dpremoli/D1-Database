@@ -31,17 +31,32 @@ ALTER ROLE d1_llm_app SET default_transaction_read_only = on;
 ALTER ROLE d1_llm_app SET statement_timeout = '5000ms';
 ```
 
-Then set the DSNs in `.env`:
+The embedding backfill needs its own writer login, which is **not** the `d1`
+superuser (this container also runs LLM-authored SQL, so it must not hold
+superuser credentials). It only reads the note view and upserts one table:
+
+```sql
+-- as the d1 superuser, against the d1_database database
+CREATE ROLE d1_embedder LOGIN PASSWORD 'choose-another-strong-password';
+GRANT CONNECT ON DATABASE d1_database TO d1_embedder;
+GRANT USAGE ON SCHEMA public TO d1_embedder;
+GRANT SELECT ON v_embeddings_source_notes TO d1_embedder;
+GRANT SELECT, INSERT, UPDATE ON semantic_embeddings TO d1_embedder;
+```
+
+Then set the DSNs in `.env` (use hex passwords so they are URL-safe):
 
 ```
 LLM_DATABASE_URL=postgres://d1_llm_app:choose-a-strong-password@postgres:5432/d1_database?sslmode=disable
-EMBED_DATABASE_URL=postgres://d1:<d1-password>@postgres:5432/d1_database?sslmode=disable
+EMBED_DATABASE_URL=postgres://d1_embedder:choose-another-strong-password@postgres:5432/d1_database?sslmode=disable
 ```
 
 - `LLM_DATABASE_URL` executes LLM-authored SQL — **never** point it at the
   superuser. It is the read-only, allow-listed login role above.
 - `EMBED_DATABASE_URL` is used **only** by the embedding backfill, which must
-  write `semantic_embeddings`; it needs INSERT/UPDATE on that one table.
+  write `semantic_embeddings`; the `d1_embedder` role above has INSERT/UPDATE on
+  that one table and nothing else. Never point it at `d1`. (A later migration or
+  setup script may create the role; until then this runbook step is the source.)
 
 > Verify the isolation any time with `make ai-test` (or
 > `bash tests/phase6_text_to_sql.sh`): it provisions a throwaway member of
@@ -80,8 +95,9 @@ that produces 768-dimensional vectors, or add a migration to change the column.
 
 ## 3. Ask a question
 
-`POST /api/ask` on the plugin (host port `LLM_HTTP_PORT`, default `8082`). If
-`WORKER_WEBHOOK_SECRET` is set, send it in `X-Worker-Secret`.
+`POST /api/ask` on the plugin (host port `LLM_HTTP_PORT`, default `8082`, bound to
+`D1_BIND_ADDR`, i.e. `127.0.0.1` unless you changed it). `WORKER_WEBHOOK_SECRET` is
+required (compose will not start without it), so always send it in `X-Worker-Secret`.
 
 ```bash
 curl -s localhost:8082/api/ask \
