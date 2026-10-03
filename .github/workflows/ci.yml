@@ -101,7 +101,9 @@ jobs:
             BEGIN
               FOR r IN SELECT tablename FROM pg_tables
                        WHERE schemaname = 'public'
-                         AND tablename != 'schema_migrations'
+                         -- audit_logs is append-only (a BEFORE TRUNCATE trigger raises);
+                         -- the rollback drops it like any other table.
+                         AND tablename NOT IN ('schema_migrations', 'audit_logs')
               LOOP
                 EXECUTE format('TRUNCATE TABLE %I CASCADE', r.tablename);
               END LOOP;
