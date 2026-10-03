@@ -424,6 +424,108 @@ grep -qx 'shadow:0' <<<"$sp_out" && grep -qx 'real:1' <<<"$sp_out" \
     && ok "audit row lands in public.audit_logs despite a shadowing schema" \
     || bad "search_path shadowing captured the audit write (output: $sp_out)"
 
+echo "== Audit coverage: every business table, keyed by its primary key (review 5.3) =="
+# Tables deliberately NOT audited: the log itself, dbmate bookkeeping, Directus system tables,
+# derived caches (project_rollup, semantic_embeddings) and the crawler's heartbeat row.
+AUDIT_EXCLUDED="'audit_logs','schema_migrations','project_rollup','semantic_embeddings','force_crawler_state'"
+run_eq "every business table has an audit trigger (missing: none)" \
+    "SELECT coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '')
+     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND c.relkind IN ('r','p')
+       AND c.relname NOT LIKE 'directus\\_%' AND c.relname NOT IN ($AUDIT_EXCLUDED)
+       AND NOT EXISTS (SELECT 1 FROM pg_trigger t
+                       WHERE t.tgrelid = c.oid AND NOT t.tgisinternal
+                         AND t.tgfoid = 'audit_trigger_function'::regproc
+                         AND (t.tgtype & 1) = 1                -- FOR EACH ROW
+                         AND (t.tgtype & 4) = 4 AND (t.tgtype & 8) = 8 AND (t.tgtype & 16) = 16)" \
+    ""
+run_eq "every audited table has a primary key (record_id is never 'unknown')" \
+    "SELECT coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '')
+     FROM pg_class c JOIN pg_trigger t ON t.tgrelid = c.oid AND t.tgfoid = 'audit_trigger_function'::regproc
+     WHERE NOT t.tgisinternal
+       AND NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary)" \
+    ""
+
+# INSERT / UPDATE / DELETE on tables that were unaudited before 20261003000121, in a rolled-back
+# transaction. people has a UUID key, alloying_elements a text key.
+au_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO people (person_id, full_name) VALUES ('c0000000-0000-4000-8000-0000000000f1', 'Audit Test Person');
+UPDATE people SET full_name = 'Audit Test Renamed' WHERE person_id = 'c0000000-0000-4000-8000-0000000000f1';
+DELETE FROM people WHERE person_id = 'c0000000-0000-4000-8000-0000000000f1';
+INSERT INTO alloying_elements (symbol, element_name, atomic_number) VALUES ('Zz', 'Zzium', 999);
+UPDATE alloying_elements SET element_name = 'Zzium2' WHERE symbol = 'Zz';
+DELETE FROM alloying_elements WHERE symbol = 'Zz';
+SELECT 'people_actions:' || string_agg(action_type, ',' ORDER BY log_id) FROM audit_logs
+  WHERE table_name = 'people' AND record_id = 'c0000000-0000-4000-8000-0000000000f1';
+SELECT 'people_changed:' || (changed_fields -> 'full_name' ->> 'old') || '>' || (changed_fields -> 'full_name' ->> 'new')
+  FROM audit_logs WHERE table_name = 'people' AND action_type = 'UPDATE' AND record_id = 'c0000000-0000-4000-8000-0000000000f1';
+SELECT 'people_delete_before:' || (row_before ->> 'full_name') FROM audit_logs
+  WHERE table_name = 'people' AND action_type = 'DELETE' AND record_id = 'c0000000-0000-4000-8000-0000000000f1';
+SELECT 'element_actions:' || string_agg(action_type, ',' ORDER BY log_id) FROM audit_logs
+  WHERE table_name = 'alloying_elements' AND record_id = 'Zz';
+SELECT 'element_changed:' || string_agg(k, ',' ORDER BY k) FROM audit_logs, jsonb_object_keys(changed_fields) AS k
+  WHERE table_name = 'alloying_elements' AND action_type = 'UPDATE' AND record_id = 'Zz';
+SELECT 'unknown_ids:' || count(*) FROM audit_logs WHERE record_id = 'unknown';
+ROLLBACK;
+SQL
+)
+au_check() { grep -qx "$1" <<<"$au_out" && ok "$2" || bad "$2 (psql output: $au_out)"; }
+au_check "people_actions:INSERT,UPDATE,DELETE" "people: INSERT, UPDATE and DELETE each write an audit row keyed by person_id"
+au_check "people_changed:Audit Test Person>Audit Test Renamed" "people: UPDATE records the changed field (old and new)"
+au_check "people_delete_before:Audit Test Renamed" "people: DELETE keeps the row as it was"
+au_check "element_actions:INSERT,UPDATE,DELETE" "alloying_elements: audit rows keyed by its text primary key (symbol)"
+au_check "element_changed:element_name" "alloying_elements: UPDATE changed_fields lists exactly the changed columns"
+au_check "unknown_ids:0" "no audit row is logged with record_id 'unknown'"
+
+# record_id was a guess from a fixed column list: an operation was logged under its sample_id.
+rid_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_methods (method_id, method_code, method_name)
+VALUES ('c0000000-0000-4000-8000-0000000000a3', 'T-C-AU', 'audit record_id test method');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-0000000000d2', 'TEST-AU-001');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, pass_code)
+VALUES ('c0000000-0000-4000-8000-0000000000c5', 'c0000000-0000-4000-8000-0000000000a3', 'c0000000-0000-4000-8000-0000000000d2', 'TEST-AU-OP');
+INSERT INTO test_sessions (session_id, sample_id) VALUES ('c0000000-0000-4000-8000-0000000000e3', 'c0000000-0000-4000-8000-0000000000d2');
+SELECT 'op_record_id:' || record_id FROM audit_logs WHERE table_name = 'manufacturing_operations' AND row_after ->> 'pass_code' = 'TEST-AU-OP';
+SELECT 'ts_record_id:' || record_id FROM audit_logs WHERE table_name = 'test_sessions' AND row_after ->> 'session_id' = 'c0000000-0000-4000-8000-0000000000e3';
+SELECT 'method_record_id:' || record_id FROM audit_logs WHERE table_name = 'manufacturing_methods' AND row_after ->> 'method_code' = 'T-C-AU';
+ROLLBACK;
+SQL
+)
+rid_check() { grep -qx "$1" <<<"$rid_out" && ok "$2" || bad "$2 (psql output: $rid_out)"; }
+rid_check "op_record_id:c0000000-0000-4000-8000-0000000000c5" "operation audit rows carry operation_id, not sample_id"
+rid_check "ts_record_id:c0000000-0000-4000-8000-0000000000e3" "test session audit rows carry session_id, not sample_id"
+rid_check "method_record_id:c0000000-0000-4000-8000-0000000000a3" "newly audited manufacturing_methods carries method_id"
+
+# machining_force_analysis: large derived envelopes are kept out of the audit snapshots.
+mfa_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO directus_files (id) VALUES ('c0000000-0000-4000-8000-0000000000f2');
+INSERT INTO manufacturing_methods (method_id, method_code, method_name)
+VALUES ('c0000000-0000-4000-8000-0000000000a4', 'T-C-MF', 'mfa audit test method');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-0000000000d3', 'TEST-MF-001');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, pass_code)
+VALUES ('c0000000-0000-4000-8000-0000000000c6', 'c0000000-0000-4000-8000-0000000000a4', 'c0000000-0000-4000-8000-0000000000d3', 'TEST-MF-OP');
+INSERT INTO machining_force_analysis (id, operation_id, directus_files_id, series, fft, render_status)
+VALUES ('c0000000-0000-4000-8000-0000000000f3', 'c0000000-0000-4000-8000-0000000000c6', 'c0000000-0000-4000-8000-0000000000f2',
+        '{"fx":[1,2,3]}', '{"fx":[4,5,6]}', 'pending');
+UPDATE machining_force_analysis SET render_status = 'done', series = '{"fx":[9,9,9]}' WHERE id = 'c0000000-0000-4000-8000-0000000000f3';
+SELECT 'mfa_rows:' || count(*) FROM audit_logs WHERE table_name = 'machining_force_analysis' AND record_id = 'c0000000-0000-4000-8000-0000000000f3';
+SELECT 'mfa_big_omitted:' || count(*) FROM audit_logs WHERE table_name = 'machining_force_analysis'
+  AND record_id = 'c0000000-0000-4000-8000-0000000000f3'
+  AND (coalesce(row_before, '{}') ?| ARRAY['series','fft','diag_metrics'] OR coalesce(row_after, '{}') ?| ARRAY['series','fft','diag_metrics']
+       OR coalesce(changed_fields, '{}') ?| ARRAY['series','fft','diag_metrics']);
+SELECT 'mfa_status_logged:' || (changed_fields -> 'render_status' ->> 'new') FROM audit_logs
+  WHERE table_name = 'machining_force_analysis' AND action_type = 'UPDATE' AND record_id = 'c0000000-0000-4000-8000-0000000000f3';
+ROLLBACK;
+SQL
+)
+mfa_check() { grep -qx "$1" <<<"$mfa_out" && ok "$2" || bad "$2 (psql output: $mfa_out)"; }
+mfa_check "mfa_rows:2" "machining_force_analysis: INSERT and UPDATE are audited"
+mfa_check "mfa_big_omitted:0" "machining_force_analysis: series/fft/diag_metrics are left out of the snapshots"
+mfa_check "mfa_status_logged:done" "machining_force_analysis: ordinary columns are still logged"
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy
