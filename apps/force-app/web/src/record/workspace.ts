@@ -14,6 +14,7 @@ import { createPlaybackEngine } from './playback/engine';
 import { createDebouncedSaver, loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
+import { isFetchFailure } from '../netErrors';
 import { confirmAction } from '../ui/confirm';
 import { spotlight } from '../ui/spotlight';
 import { FIELD_FOCUS, StartRequestError } from './recordingErrors';
@@ -375,7 +376,7 @@ export function createWorkspace() {
 			const m = e?.message || 'failed to start';
 			// A bare "Failed to fetch"/"Load failed" is a transport failure reaching the recorder
 			// (backend down, or blocked by CORS / HTTPS mixed-content) — spell that out.
-			errMsg.value = /failed to fetch|load failed|networkerror/i.test(m)
+			errMsg.value = isFetchFailure(m)
 				? `${m} — can't reach the recording backend. Is it running on this machine?`
 				: m;
 			// #84: the backend named the field it refused (e.g. a sample rate above the hardware's

@@ -6,6 +6,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { getConfig } from '../config';
+import { describeFetchError } from '../netErrors';
 import { api } from '../directusClient';
 import { uploadCaptureColdStart } from '../record/uploadCapture';
 import { discardQueued, listQueue, retryQueued, syncStatus, uploadQueuedAsMe, type QueuedRun } from '../record/directusSync';
@@ -90,9 +91,7 @@ async function load() {
 		void checkUploaded();
 		void loadRemoteIds();
 	} catch (e: any) {
-		error.value = /failed to fetch|load failed|networkerror/i.test(e?.message || '')
-			? "can't reach the recording backend — is it running?"
-			: e?.message || 'failed to list captures';
+		error.value = describeFetchError(e, 'failed to list captures');
 	} finally {
 		loading.value = false;
 	}

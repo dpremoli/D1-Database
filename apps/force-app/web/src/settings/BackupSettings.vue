@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { getConfig } from '../config';
+import { describeFetchError } from '../netErrors';
 import { confirmAction } from '../ui/confirm';
 import { backupStateLabel, listState, localStatusLabel, restoreBlockedReason, type RemoteSession } from './backupLabels';
 
@@ -100,9 +101,7 @@ async function loadSessions() {
 		sessionsLoaded.value = true;
 	} catch (e: any) {
 		// Keep whatever was listed before: a failed refresh isn't evidence the backups are gone.
-		sessionsError.value = /failed to fetch|load failed|networkerror/i.test(e?.message || '')
-			? "can't reach the recording backend — is it running?"
-			: e?.message || 'could not load remote backups';
+		sessionsError.value = describeFetchError(e, 'could not load remote backups');
 	} finally {
 		sessionsLoading.value = false;
 	}
