@@ -20,9 +20,9 @@ def main() -> int:
         payload = json.load(sys.stdin)
     except json.JSONDecodeError:
         return 0
-    path = payload.get("tool_input", {}).get("file_path") or payload.get("tool_input", {}).get(
-        "notebook_path"
-    )
+    path = payload.get("tool_input", {}).get("file_path") or payload.get(
+        "tool_input", {}
+    ).get("notebook_path")
     if not path or not config.is_file():
         return 0
     allowed = [line.strip().strip("/") for line in config.read_text().splitlines()]

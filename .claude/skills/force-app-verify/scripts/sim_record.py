@@ -30,7 +30,9 @@ def call(url, method="GET", body=None):
             ctype = r.headers.get("Content-Type", "")
             return json.loads(raw) if "json" in ctype else raw
     except urllib.error.HTTPError as e:
-        sys.exit(f"{method} {url} -> HTTP {e.code}: {e.read().decode(errors='replace')}")
+        sys.exit(
+            f"{method} {url} -> HTTP {e.code}: {e.read().decode(errors='replace')}"
+        )
 
 
 def check(ok, what):
@@ -47,8 +49,13 @@ def main():
     ap.add_argument("--json", default="{}", help="extra RecordConfig fields")
     a = ap.parse_args()
 
-    cfg = {"sample_name": "SKILL-SIM", "duration_sec": a.duration, "sample_rate": a.rate,
-           "source": "sim", **json.loads(a.json)}
+    cfg = {
+        "sample_name": "SKILL-SIM",
+        "duration_sec": a.duration,
+        "sample_rate": a.rate,
+        "source": "sim",
+        **json.loads(a.json),
+    }
     st = call(f"{a.url}/record/status")
     if st.get("state") in ("recording", "finalizing"):
         sys.exit(f"backend is busy ({st['state']}); stop it first")
@@ -68,13 +75,21 @@ def main():
     s = call(f"{a.url}/captures/{cid}/summary")
     s = s.get("summary", s)
     expect_n = a.duration * a.rate
-    check(abs(s.get("n", 0) - expect_n) <= 0.02 * expect_n,
-          f"n={s.get('n')} ~ duration*rate={expect_n:.0f}")
+    check(
+        abs(s.get("n", 0) - expect_n) <= 0.02 * expect_n,
+        f"n={s.get('n')} ~ duration*rate={expect_n:.0f}",
+    )
     check(s.get("fs") == a.rate, f"fs={s.get('fs')} matches the requested rate")
     chans = s.get("channels", [])
-    check(chans[:10] == ["Time", "Fx1", "Fx2", "Fy1", "Fy2", "Fz1", "Fz2", "Fz3", "Fz4", "Tacho"],
-          f"v1.0 column order kept ({chans[:10]})")
-    check(all(s.get("peaks", {}).get(ax, 0) > 0 for ax in ("Fx", "Fy", "Fz")), f"non-zero peaks {s.get('peaks')}")
+    check(
+        chans[:10]
+        == ["Time", "Fx1", "Fx2", "Fy1", "Fy2", "Fz1", "Fz2", "Fz3", "Fz4", "Tacho"],
+        f"v1.0 column order kept ({chans[:10]})",
+    )
+    check(
+        all(s.get("peaks", {}).get(ax, 0) > 0 for ax in ("Fx", "Fy", "Fz")),
+        f"non-zero peaks {s.get('peaks')}",
+    )
     check(s.get("mat_written") is True, f"mat_written ({s.get('mat_skip_reason')})")
     check(s.get("tacho_measured") is True, "tacho measured")
 
@@ -86,7 +101,9 @@ def main():
     check(magic == 0x44314C43, f"live_cache.bin has the D1LC magic ({magic:#x})")
     if ok:
         fs_lc = struct.unpack_from("<f", lc, 12)[0]
-        print(f"     live_cache v{version}: N={n_lc}, Fs={fs_lc:g} Hz, {len(lc)/1e6:.2f} MB")
+        print(
+            f"     live_cache v{version}: N={n_lc}, Fs={fs_lc:g} Hz, {len(lc)/1e6:.2f} MB"
+        )
     mat = call(f"{a.url}/captures/{cid}/capture.mat")
     check(isinstance(mat, bytes) and mat[:6] == b"MATLAB", "capture.mat is a MAT file")
 

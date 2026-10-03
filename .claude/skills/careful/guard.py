@@ -15,7 +15,10 @@ RULES = [
     # Database
     (r"\bmake\s+(reset-db|migrate-down|restore)\b", "drops or rolls back the database"),
     (r"\bdbmate\b.*\b(drop|down|rollback)\b", "rolls back or drops the schema"),
-    (r"\b(DROP\s+(TABLE|SCHEMA|DATABASE|VIEW|FUNCTION|TRIGGER)|TRUNCATE)\b", "destructive SQL"),
+    (
+        r"\b(DROP\s+(TABLE|SCHEMA|DATABASE|VIEW|FUNCTION|TRIGGER)|TRUNCATE)\b",
+        "destructive SQL",
+    ),
     (r"\bDELETE\s+FROM\b(?![^;]*\bWHERE\b)", "DELETE without WHERE"),
     (r"\bdropdb\b", "drops a database"),
     # Containers and volumes (postgres_data, minio_data, the SMB archive)
@@ -24,16 +27,31 @@ RULES = [
     # Object storage and files
     (r"\bmc\s+(rm|rb)\b", "deletes MinIO objects or buckets"),
     (r"\baws\s+s3\s+(rm|rb)\b", "deletes S3/MinIO objects"),
-    (r"\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*f|\brm\s+-[a-zA-Z]*f[a-zA-Z]*[rR]", "recursive force delete"),
-    (r"\b(rm|mv|cp|rsync|truncate|shred|tee)\b[^|;&]*(/mnt/archive|star_group1)", "writes to the lab archive share"),
+    (
+        r"\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*f|\brm\s+-[a-zA-Z]*f[a-zA-Z]*[rR]",
+        "recursive force delete",
+    ),
+    (
+        r"\b(rm|mv|cp|rsync|truncate|shred|tee)\b[^|;&]*(/mnt/archive|star_group1)",
+        "writes to the lab archive share",
+    ),
     (r"\bfind\b.*\s-delete\b", "bulk delete"),
     # Git
     (r"\bgit\s+push\b.*(--force\b|-f\b|--force-with-lease)", "force-push"),
     (r"\bgit\s+push\b.*\b(origin\s+)?main\b", "push to main"),
-    (r"\bgit\s+(reset\s+--hard|clean\s+-[a-zA-Z]*f|checkout\s+--\s+\.|restore\s+\.)", "discards work"),
-    (r"\bgit\s+(tag|push)\b.*\bforce-app-v", "creates or pushes a force-app release tag"),
+    (
+        r"\bgit\s+(reset\s+--hard|clean\s+-[a-zA-Z]*f|checkout\s+--\s+\.|restore\s+\.)",
+        "discards work",
+    ),
+    (
+        r"\bgit\s+(tag|push)\b.*\bforce-app-v",
+        "creates or pushes a force-app release tag",
+    ),
     # Production
-    (r"DATABASE_URL=\S*@(?!localhost|127\.0\.0\.1|postgres[:/])", "DATABASE_URL points at a non-local host"),
+    (
+        r"DATABASE_URL=\S*@(?!localhost|127\.0\.0\.1|postgres[:/])",
+        "DATABASE_URL points at a non-local host",
+    ),
 ]
 
 

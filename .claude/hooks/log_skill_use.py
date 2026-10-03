@@ -19,8 +19,11 @@ try:
     tool_input = payload.get("tool_input", {})
     skill = tool_input.get("skill") or tool_input.get("name") or "?"
     args = " ".join(str(tool_input.get("args", "")).split())[:120]
-    log = Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")) / ".claude" / "skill-usage.log"
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    log = (
+        Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")) / ".claude" / "skill-usage.log"
+    )
+    # timezone.utc, not datetime.UTC: hooks run on whatever python3 a developer has (UTC is 3.11+).
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: UP017
     with log.open("a", encoding="utf-8") as fh:
         fh.write(f"{stamp}\t{skill}\t{payload.get('session_id', '')[:8]}\t{args}\n")
 except Exception:  # noqa: BLE001 — a logging hook must never break a session
