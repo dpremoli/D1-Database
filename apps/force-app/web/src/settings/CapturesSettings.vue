@@ -15,6 +15,8 @@ import { OFFLINE_SESSION_UPLOAD_MESSAGE, hasServerSession, recorderFromExtra } f
 import { confirmAction } from '../ui/confirm';
 import EditCaptureMetadataDialog from './EditCaptureMetadataDialog.vue';
 import { matchUploaded, uploadedRowsSince } from './captureUploadState';
+import { remoteCopyLabel } from './backupLabels';
+import { fetchRemoteBackupStates } from '../recorderHttp';
 import { formatMegabytes } from '../format';
 import { canRevealPaths, copyText, revealPath } from '../localPaths';
 import { focusIdFrom } from '../ui/focusLink';
@@ -65,12 +67,8 @@ const editing = ref<Capture | null>(null);
 const remoteIds = ref<Map<string, string> | null>(null);
 async function loadRemoteIds() {
 	try {
-		const res = await fetch(`${base()}/backup/remote-sessions`);
-		if (!res.ok) { remoteIds.value = null; return; }
-		const d = await res.json();
-		remoteIds.value = d.configured === false
-			? null
-			: new Map<string, string>((d.sessions || []).filter((r: any) => r.backup_state !== 'deleted').map((r: any) => [r.id, r.backup_state || 'unknown']));
+		const r = await fetchRemoteBackupStates(base());
+		remoteIds.value = r.configured ? r.states : null;
 	} catch { remoteIds.value = null; }
 }
 const hasRemote = (id: string) => !!remoteIds.value?.has(id);
@@ -454,7 +452,7 @@ onMounted(async () => {
 					<span v-if="c.recording" class="tag">recording now</span>
 					<span v-if="c.recovering && busy[c.id] !== 'recovering'" class="tag warn" title="A recover or restore is working on this recording right now">recovering</span>
 					<span v-if="remoteState(c.id)" class="tag" :class="remoteState(c.id) === 'complete' ? 'ok' : 'warn'"
-						:title="remoteState(c.id) === 'complete' ? 'A full copy of this recording is on the remote backup server' : 'Only the part of this recording that was streamed before the backup was interrupted is on the remote backup server'">{{ remoteState(c.id) === 'complete' ? 'also backed up remotely' : 'partial remote copy' }}</span>
+						:title="remoteState(c.id) === 'complete' ? 'A full copy of this recording is on the remote backup server' : 'Only the part of this recording that was streamed before the backup was interrupted is on the remote backup server'">{{ remoteState(c.id) === 'complete' ? 'also backed up remotely' : remoteCopyLabel(remoteState(c.id)) }}</span>
 					<span v-if="c.source" class="tag dim">{{ c.source }}</span>
 				</div>
 				<div class="rsub">

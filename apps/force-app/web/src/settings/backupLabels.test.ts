@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backupStateLabel, expiresIn, listState, localStatusLabel, restoreBlockedReason, type RemoteSession } from './backupLabels';
+import { backupStateLabel, expiresIn, listState, localStatusLabel, remoteCopyLabel, restoreBlockedReason, type RemoteSession } from './backupLabels';
 
 const base: RemoteSession = { id: '20260101_000000', raw_size_mb: 12 };
 const NOW = 1_000_000 * 1000;
@@ -48,5 +48,15 @@ describe('listState', () => {
 		expect(listState({ loaded: false, loading: false, error: 'x', count: 0 })).toBe('error');
 		expect(listState({ loaded: true, loading: false, error: '', count: 0 })).toBe('empty');
 		expect(listState({ loaded: true, loading: true, error: '', count: 2 })).toBe('ready');
+	});
+});
+
+describe('remoteCopyLabel', () => {
+	it('tells a full, a partial and a missing remote copy apart', () => {
+		expect(remoteCopyLabel('complete')).toBe('remote copy exists');
+		expect(remoteCopyLabel('interrupted')).toBe('partial remote copy');
+		expect(remoteCopyLabel('unknown')).toBe('partial remote copy');
+		expect(remoteCopyLabel(undefined)).toBe('no remote copy');
+		expect(remoteCopyLabel(null)).toBe('no remote copy');
 	});
 });
