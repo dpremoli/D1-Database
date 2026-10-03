@@ -28,11 +28,11 @@ brief.
 
 | Stream | Agent | State |
 |---|---|---|
-| 1 | — | pending |
-| 2 | — | pending |
-| 3 | — | pending |
+| 1 | Sonnet reviewer | in progress |
+| 2 | Sonnet reviewer | in progress |
+| 3 | Sonnet reviewer | in progress |
 | 4 | — | pending |
-| 5 | — | pending |
+| 5 | Sonnet reviewer | in progress |
 | 6 | — | pending |
 | 7 | — | pending |
 | Consolidated report | coordinator | pending |
