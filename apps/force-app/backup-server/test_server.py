@@ -343,6 +343,42 @@ def test_mark_deleted_tombstones_and_restarts_the_retention_clock(client, tmp_pa
     assert client.get("/sessions/gone/info").json()["meta"]["state_before_delete"] == "complete"
 
 
+def test_mark_deleted_twice_does_not_restart_the_clock(client, tmp_path):
+    client.post("/ingest/start", json={"session_id": "twice", "header_hex": _make_header().hex()})
+    client.post("/sessions/twice/mark-deleted")
+    meta_path = os.path.join(str(tmp_path), "twice", "meta.json")
+    with open(meta_path) as f:
+        meta = json.load(f)
+    meta["updated_at"] -= 3600
+    meta["deleted_at"] -= 3600
+    with open(meta_path, "w") as f:
+        json.dump(meta, f)
+    r = client.post("/sessions/twice/mark-deleted")
+    assert r.status_code == 200
+    with open(meta_path) as f:
+        after = json.load(f)
+    assert after["updated_at"] == meta["updated_at"]
+    assert after["deleted_at"] == meta["deleted_at"]
+    assert r.json()["expires_at"] == pytest.approx(meta["updated_at"] + 12 * 3600)
+
+
+@pytest.mark.parametrize("bad", ["", ".", "..", "a/b", "a\\b"])
+def test_session_dir_rejects_names_that_point_at_storage(client, bad):
+    import server as srv
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as e:
+        srv._session_dir(bad)
+    assert e.value.status_code == 400
+
+
+def test_delete_dot_does_not_remove_the_storage_root(client, tmp_path):
+    client.post("/ingest/start", json={"session_id": "keep", "header_hex": _make_header().hex()})
+    # %2E: a literal "." segment would be normalised away by the HTTP client before it got here.
+    client.delete("/sessions/%2E")
+    assert os.path.isdir(os.path.join(str(tmp_path), "keep"))
+
+
 def test_mark_deleted_is_purged_after_retention(client, tmp_path, monkeypatch):
     import server as srv
 

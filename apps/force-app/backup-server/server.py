@@ -44,7 +44,8 @@ D1RW_HEADER_FMT = "<4sIIfd"
 
 
 def _session_dir(sid: str) -> str:
-    if "/" in sid or "\\" in sid or ".." in sid:
+    # "" and "." are not escapes but name STORAGE itself, which DELETE /sessions/{sid} would rmtree.
+    if not sid or sid == "." or "/" in sid or "\\" in sid or ".." in sid:
         raise HTTPException(400, "invalid session id")
     return os.path.join(STORAGE, sid)
 
@@ -338,10 +339,14 @@ async def session_mark_deleted(sid: str) -> dict:
             meta = json.load(f)
     except (OSError, ValueError):
         pass
+    # Idempotent: a repeat (a retry, or a delete followed by a discard) must not restart the
+    # retention clock, or a tombstone could be kept alive forever by repeated calls.
+    if meta.get("state") == "deleted":
+        base = meta.get("updated_at") or _mtime(d) or time.time()
+        return {"ok": True, "session_id": sid, "expires_at": base + RETENTION_HOURS * 3600}
     now = time.time()
     # Keep what the stream reached, so a restore can still say whether the copy was complete.
-    if meta.get("state") != "deleted":
-        meta["state_before_delete"] = meta.get("state", "unknown")
+    meta["state_before_delete"] = meta.get("state", "unknown")
     meta["state"] = "deleted"
     meta["deleted_at"] = now
     meta["updated_at"] = now
