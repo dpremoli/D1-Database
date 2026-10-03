@@ -62,6 +62,7 @@ Each stream works in its own worktree under `.claude/worktrees/` on branch
 | D | `agent-a16dd8a730e68dddf` | merged; review nits fixed (`fdb83e7`..`4251934`) |
 | E | `agent-a9c22f1bdfa0cadc3` | merged; blockers fixed in `ffd79fe`, `f7090dc`; nits `bc26b62`..`8f33785` |
 | F | `agent-a091876a6e38fc188` | merged (`de8e4b1`); review clean, nit fixed in `6bad005` |
+| Integration | `agent-ae500a5076c4b6316` | merged; cross-stream review blocker (folder switch during restore) fixed in `a7fba27` |
 
 ### A. Finalize at constant memory — #79
 - `finalize.py`/`dsp.py`: stream the memmap in blocks (gains, peaks, clipping, axis sums,
@@ -149,6 +150,11 @@ Each stream works in its own worktree under `.claude/worktrees/` on branch
 - Tests in `tests/phase1_schema.sh`; verified against a local Postgres 16.
 
 ## 4. After the streams merge
+
+Progress (2026-10-03): steps 1-4 are done. All streams are merged, each stream and the merged
+whole were reviewed and their findings fixed, every suite passes (including the slow 2 GB
+finalize test, run once), and the 0.1.33 changelog and version bump are in. Step 5 waits for the PR.
+
 1. Merge every stream into `claude/trusting-euler-ku2z3z` and resolve conflicts.
 2. Code review of the whole diff (correctness first), and fix the findings.
 3. Write the missing tests, then run every suite: backend pytest, backup-server, bug-report relay,
