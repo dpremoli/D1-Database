@@ -1573,29 +1573,13 @@ async def backup_restore(session_id: str) -> dict:
 
     with recovery.recovering(session_id):
         os.makedirs(capture_dir, exist_ok=True)
-        try:
-            nbytes = await run_in_threadpool(
-                backup_mod.download_remote_raw, url, session_id, part_path
-            )
-        except Exception as e:
-            raise _fail(502, f"download failed: {e}.{kept} The backup is still on the server.")
-
-        aside: str | None = None
-        if local_rows:
-            local_size = os.path.getsize(raw_path)
-            if nbytes <= local_size:
-                raise _fail(
-                    409,
-                    f"{session_id} already has a local recording with data "
-                    f"({local_info['n_rows']:,} samples) that is at least as long as the backup "
-                    "— it was not changed. Recover it from Settings > Local Captures instead.",
-                )
 
         # Recover the ORIGINAL config too, not just the bytes. recover_session reads the
         # per-channel dyno_gains out of manifest.json; with no manifest it builds a default
         # RecordConfig whose dyno_gains are empty, so finalize applies the scalar gain=1.0 and the
         # restored .mat/live_cache hold raw amplifier volts mislabelled as newtons — wrong by a
-        # per-channel factor, and not obviously wrong when you look at it.
+        # per-channel factor, and not obviously wrong when you look at it. Fetched before the
+        # download so a missing config doesn't cost a multi-GB transfer first.
         remote_cfg = await run_in_threadpool(backup_mod.fetch_remote_session_config, url, session_id)
         if not remote_cfg:
             raise _fail(
@@ -1611,10 +1595,37 @@ async def backup_restore(session_id: str) -> dict:
         except Exception as e:
             raise _fail(
                 500,
-                f"downloaded the backup but could not apply the original recording config ({e}); "
-                f"finalizing now would silently produce volts instead of newtons.{kept} The "
+                f"could not apply the original recording config from the backup ({e}); "
+                f"finalizing would silently produce volts instead of newtons.{kept} The "
                 "backup is still on the server.",
             )
+
+        try:
+            nbytes = await run_in_threadpool(
+                backup_mod.download_remote_raw, url, session_id, part_path
+            )
+        except Exception as e:
+            raise _fail(502, f"download failed: {e}.{kept} The backup is still on the server.")
+
+        if local_rows:
+            local_size = os.path.getsize(raw_path)
+            if nbytes <= local_size:
+                raise _fail(
+                    409,
+                    f"{session_id} already has a local recording with data "
+                    f"({local_info['n_rows']:,} samples) that is at least as long as the backup "
+                    "— it was not changed. Recover it from Settings > Local Captures instead.",
+                )
+
+        aside: str | None = None
+
+        def _restore_aside() -> None:
+            """Put the set-aside local raw back so nothing about the local capture has changed."""
+            if aside and os.path.exists(aside):
+                try:
+                    os.replace(aside, raw_path)
+                except OSError:
+                    pass
 
         # Swap in the download. The local raw (only possible here when the remote is larger) is
         # renamed, never deleted.
@@ -1631,23 +1642,14 @@ async def backup_restore(session_id: str) -> dict:
                     recovery.write_manifest, capture_dir, "restored", restored_cfg
                 )
         except Exception as e:
-            if aside and os.path.exists(aside):
-                try:
-                    os.replace(aside, raw_path)
-                except OSError:
-                    pass
+            _restore_aside()
             raise _fail(500, f"could not put the downloaded backup in place ({e}).{kept}")
 
         # Finalize the downloaded raw file
         try:
             summary = await run_in_threadpool(recovery.recover_session, root, session_id)
         except Exception as e:
-            if aside and os.path.exists(aside):
-                # Put the original back so nothing about the local capture has changed.
-                try:
-                    os.replace(aside, raw_path)
-                except OSError:
-                    pass
+            _restore_aside()
             raise _fail(500, f"finalize failed after download: {e}.{kept}")
     result = {"restored": True, "session_id": session_id, "bytes": nbytes, "summary": summary}
     if aside:
