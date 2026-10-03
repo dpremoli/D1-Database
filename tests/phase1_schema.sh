@@ -599,6 +599,69 @@ bi_check "owned_inserts:6" "owner_person_id and owner are copied onto every inse
 bi_check "owned_edges:12" "owner_person_id and owner are copied onto every edge"
 bi_check "boxes_after:TST4-1,TST4-3,TST4-4,TST4-5" "intake after a box delete continues from the highest code (no collision)"
 
+echo "== Owner cascade runs in Postgres (review 4.7) =="
+# A box with two inserts of two edges each, owned by person 1. Rolled back at the end.
+oc_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO people (person_id, full_name) VALUES
+    ('c0000000-0000-4000-8000-000000000101', 'Cascade Owner One'),
+    ('c0000000-0000-4000-8000-000000000102', 'Cascade Owner Two');
+INSERT INTO tool_boxes (tool_box_id, tool_box_code, owner_person_id)
+VALUES ('c0000000-0000-4000-8000-000000000111', 'TEST-OC-BOX', 'c0000000-0000-4000-8000-000000000101');
+INSERT INTO cutting_inserts (insert_id, insert_code, tool_box_id, owner_person_id) VALUES
+    ('c0000000-0000-4000-8000-000000000121', 'TEST-OC-BOX-1', 'c0000000-0000-4000-8000-000000000111', 'c0000000-0000-4000-8000-000000000101'),
+    ('c0000000-0000-4000-8000-000000000122', 'TEST-OC-BOX-2', 'c0000000-0000-4000-8000-000000000111', 'c0000000-0000-4000-8000-000000000101');
+INSERT INTO insert_edges (edge_id, edge_code, insert_id, edge_identifier, owner_person_id) VALUES
+    ('c0000000-0000-4000-8000-000000000131', 'TEST-OC-BOX-1A', 'c0000000-0000-4000-8000-000000000121', 'A', 'c0000000-0000-4000-8000-000000000101'),
+    ('c0000000-0000-4000-8000-000000000132', 'TEST-OC-BOX-1B', 'c0000000-0000-4000-8000-000000000121', 'B', 'c0000000-0000-4000-8000-000000000101'),
+    ('c0000000-0000-4000-8000-000000000133', 'TEST-OC-BOX-2A', 'c0000000-0000-4000-8000-000000000122', 'A', 'c0000000-0000-4000-8000-000000000101'),
+    ('c0000000-0000-4000-8000-000000000134', 'TEST-OC-BOX-2B', 'c0000000-0000-4000-8000-000000000122', 'B', 'c0000000-0000-4000-8000-000000000101');
+
+-- 1. Owner change WITHOUT the flag: children are left alone.
+UPDATE tool_boxes SET owner_person_id = 'c0000000-0000-4000-8000-000000000102' WHERE tool_box_id = 'c0000000-0000-4000-8000-000000000111';
+SELECT 'no_flag_children_unchanged:' || (SELECT count(*) FROM cutting_inserts WHERE tool_box_id = 'c0000000-0000-4000-8000-000000000111' AND owner_person_id = 'c0000000-0000-4000-8000-000000000101')
+    || '/' || (SELECT count(*) FROM insert_edges WHERE owner_person_id = 'c0000000-0000-4000-8000-000000000101' AND edge_code LIKE 'TEST-OC-BOX-%');
+
+-- 2. The flag, with the owner written in the same UPDATE (box 2 -> person 1 again).
+UPDATE tool_boxes SET owner_person_id = 'c0000000-0000-4000-8000-000000000101', cascade_ownership = TRUE WHERE tool_box_id = 'c0000000-0000-4000-8000-000000000111';
+UPDATE tool_boxes SET owner_person_id = 'c0000000-0000-4000-8000-000000000102', cascade_ownership = TRUE WHERE tool_box_id = 'c0000000-0000-4000-8000-000000000111';
+SELECT 'box_cascade_inserts:' || count(*) FROM cutting_inserts WHERE tool_box_id = 'c0000000-0000-4000-8000-000000000111' AND owner_person_id = 'c0000000-0000-4000-8000-000000000102';
+SELECT 'box_cascade_edges:' || count(*) FROM insert_edges WHERE edge_code LIKE 'TEST-OC-BOX-%' AND owner_person_id = 'c0000000-0000-4000-8000-000000000102';
+SELECT 'box_flag_reset:' || NOT cascade_ownership FROM tool_boxes WHERE tool_box_id = 'c0000000-0000-4000-8000-000000000111';
+
+-- 3. Insert-level flag only reaches that insert's edges.
+UPDATE cutting_inserts SET owner_person_id = 'c0000000-0000-4000-8000-000000000101', cascade_ownership = TRUE WHERE insert_id = 'c0000000-0000-4000-8000-000000000121';
+SELECT 'insert_cascade_own_edges:' || count(*) FROM insert_edges WHERE insert_id = 'c0000000-0000-4000-8000-000000000121' AND owner_person_id = 'c0000000-0000-4000-8000-000000000101';
+SELECT 'insert_cascade_other_edges:' || count(*) FROM insert_edges WHERE insert_id = 'c0000000-0000-4000-8000-000000000122' AND owner_person_id = 'c0000000-0000-4000-8000-000000000102';
+SELECT 'insert_flag_reset:' || NOT cascade_ownership FROM cutting_inserts WHERE insert_id = 'c0000000-0000-4000-8000-000000000121';
+
+-- 4. Flag alone (owner not in the UPDATE): the stored owner is propagated.
+UPDATE tool_boxes SET cascade_ownership = TRUE WHERE tool_box_id = 'c0000000-0000-4000-8000-000000000111';
+SELECT 'stored_owner_edges:' || count(*) FROM insert_edges WHERE edge_code LIKE 'TEST-OC-BOX-%' AND owner_person_id = 'c0000000-0000-4000-8000-000000000102';
+
+-- 5. A NULL owner is propagated as NULL.
+UPDATE tool_boxes SET owner_person_id = NULL, cascade_ownership = TRUE WHERE tool_box_id = 'c0000000-0000-4000-8000-000000000111';
+SELECT 'null_owner_inserts:' || count(*) FROM cutting_inserts WHERE tool_box_id = 'c0000000-0000-4000-8000-000000000111' AND owner_person_id IS NULL;
+SELECT 'null_owner_edges:' || count(*) FROM insert_edges WHERE edge_code LIKE 'TEST-OC-BOX-%' AND owner_person_id IS NULL;
+
+-- 6. The legacy owner column is never touched by the cascade.
+SELECT 'legacy_owner_untouched:' || count(*) FROM insert_edges WHERE edge_code LIKE 'TEST-OC-BOX-%' AND owner IS NULL;
+ROLLBACK;
+SQL
+)
+oc_check() { grep -qx "$1" <<<"$oc_out" && ok "$2" || bad "$2 (psql output: $oc_out)"; }
+oc_check "no_flag_children_unchanged:2/4" "owner change without cascade_ownership does not touch children"
+oc_check "box_cascade_inserts:2" "box cascade: every insert gets the box's owner_person_id"
+oc_check "box_cascade_edges:4" "box cascade: every edge of those inserts gets it too"
+oc_check "box_flag_reset:true" "box cascade: cascade_ownership is reset to false"
+oc_check "insert_cascade_own_edges:2" "insert cascade: the insert's edges get its owner_person_id"
+oc_check "insert_cascade_other_edges:2" "insert cascade: other inserts' edges are untouched"
+oc_check "insert_flag_reset:true" "insert cascade: cascade_ownership is reset to false"
+oc_check "stored_owner_edges:4" "flag alone propagates the stored owner"
+oc_check "null_owner_inserts:2" "a NULL owner is propagated to inserts"
+oc_check "null_owner_edges:4" "a NULL owner is propagated to edges"
+oc_check "legacy_owner_untouched:4" "the legacy owner column is not written by the cascade"
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy
