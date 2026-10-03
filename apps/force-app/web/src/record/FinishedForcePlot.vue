@@ -214,7 +214,9 @@ function draw() {
 	if (!c || !ctx) return;
 	const CW = c.clientWidth, CH = c.clientHeight;
 	if (CW === 0 || CH === 0) return;
-	const dpr = Math.min(window.devicePixelRatio || 1, 2);
+	// The ratio the canvas was actually sized with (resize() set its backing store), not the live
+	// devicePixelRatio: they differ after a DPR change that hasn't triggered a resize yet.
+	const dpr = c.width / CW;
 	const key = `${(props.channels ?? ['Fx', 'Fy', 'Fz']).join(',')}|${CW}x${CH}@${dpr}|${theme.value}|${props.cache.t.length}`;
 	if (!layer || layer.cache !== props.cache || layer.key !== key) {
 		const built = buildLayer(CW, CH, dpr);
@@ -224,9 +226,11 @@ function draw() {
 	}
 	const L = layer;
 	lastT0 = L.t0; lastT1 = L.t1; lastW = L.W;
-	ctx.setTransform(1, 0, 0, 1, 0, 0);
-	ctx.drawImage(L.canvas, 0, 0);
-	ctx.scale(dpr, dpr);
+	// Blit in CSS pixels under the dpr transform, scaled to the CSS size: the layer is device-pixel
+	// sized, so a devicePixelRatio change without a resize (window moved to another monitor) still
+	// draws it at the right size until the next rebuild.
+	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+	ctx.drawImage(L.canvas, 0, 0, CW, CH);
 	if (props.cache.t.length < 2) { lastHandles = null; return; }
 
 	const span = Math.max(1e-3, L.t1 - L.t0);
