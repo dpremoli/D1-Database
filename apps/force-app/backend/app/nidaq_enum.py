@@ -78,14 +78,16 @@ def _chan_names(collection) -> list[str]:
     return out
 
 
-def enumerate_real(system) -> dict:
+def enumerate_real(system, devices: list | None = None) -> dict:
     """Parse a live (or faked) nidaqmx System into the tree. Defensive: DAQmx property access can
-    raise per-device, so every read is guarded and a bad device is skipped rather than fatal."""
+    raise per-device, so every read is guarded and a bad device is skipped rather than fatal.
+    `devices` is the already-listed `system.devices`, so a caller that has it doesn't ask twice."""
     chassis_by_name: dict[str, dict] = {}
     modules_by_chassis: dict[str, list[dict]] = {}
     standalone: list[dict] = []
 
-    devices = list(getattr(system, "devices", []) or [])
+    if devices is None:
+        devices = list(getattr(system, "devices", []) or [])
     # First pass: identify chassis (they own module devices).
     for dev in devices:
         mods = _safe(lambda: list(dev.chassis_module_devices), [])
@@ -131,14 +133,23 @@ def _safe(fn, default):
         return default
 
 
+def _enumerate(sim_layout: dict | None, system) -> tuple[dict, list | None]:
+    """(tree, devices): the real tree when DAQmx lists at least one device, else the simulated one.
+
+    `devices` is None when there is no usable runtime: no System at all, or the package imports
+    but the driver is missing, in which case listing devices (the first call that needs it) is
+    what raises. That counts as "no runtime", the same as the package being absent."""
+    sysobj = system if system is not None else _local_system()
+    devices = _safe(lambda: list(sysobj.devices or []), None) if sysobj is not None else None
+    tree = enumerate_real(sysobj, devices) if devices else enumerate_simulated(sim_layout)
+    return tree, devices
+
+
 def enumerate_devices(sim_layout: dict | None = None, system=None) -> dict:
-    """Real enumeration when a DAQmx System is available/importable, else simulated."""
-    if system is not None:
-        return enumerate_real(system)
-    sysobj = _local_system()
-    if sysobj is not None and list(getattr(sysobj, "devices", []) or []):
-        return enumerate_real(sysobj)
-    return enumerate_simulated(sim_layout)
+    """Real enumeration when a DAQmx System lists a device, else simulated. Never raises for a
+    missing or broken runtime: the channel config, first-run autoassign and /record/start all
+    enumerate through here on machines that may have the nidaqmx package but no driver."""
+    return _enumerate(sim_layout, system)[0]
 
 
 def describe_devices(sim_layout: dict | None = None, system=None) -> dict:
@@ -155,11 +166,7 @@ def describe_devices(sim_layout: dict | None = None, system=None) -> dict:
     on them really runs (that is what they are for — validating a setup without the chassis).
     `nimax_simulated` flags that case so the UI can say so.
     """
-    sysobj = system if system is not None else _local_system()
-    # The package can import while the DAQmx driver itself is missing; listing devices is the
-    # first call that actually needs the runtime, so a failure there means "not available".
-    devices = _safe(lambda: list(sysobj.devices or []), None) if sysobj is not None else None
-    tree = enumerate_real(sysobj) if devices else enumerate_simulated(sim_layout)
+    tree, devices = _enumerate(sim_layout, system)
     return {
         **tree,
         "runtime_available": devices is not None,
