@@ -17,7 +17,12 @@ def sum_axes(signals: np.ndarray) -> dict[str, np.ndarray]:
     idx = {name: i for i, name in enumerate(SIGNAL_CHANNELS)}
     out: dict[str, np.ndarray] = {}
     for axis, parts in AXIS_SUM.items():
-        out[axis] = np.sum(signals[:, [idx[p] for p in parts]], axis=1)
+        # Left-to-right column adds: the same sequence of float additions as a row-wise
+        # np.sum(axis=1) (bit-identical), without gathering the columns into a copy first.
+        total = signals[:, idx[parts[0]]] + signals[:, idx[parts[1]]]
+        for p in parts[2:]:
+            total += signals[:, idx[p]]
+        out[axis] = total
     return out
 
 
@@ -424,9 +429,12 @@ class DriftCheck:
         self._n += t.size
         if not self._names:
             return
-        y = np.column_stack([np.asarray(axes[k], dtype=np.float64) for k in self._names])
+        cols = [np.asarray(axes[k], dtype=np.float64) for k in self._names]
+        y = np.column_stack(cols)
         self._fit.add(t, y)
-        lo, hi = np.min(y, axis=0), np.max(y, axis=0)
+        # Reduce each contiguous 1-D column rather than strided axis=0 over the (m, k) stack.
+        lo = np.array([c.min() for c in cols])
+        hi = np.array([c.max() for c in cols])
         self._lo = lo if self._lo is None else np.minimum(self._lo, lo)
         self._hi = hi if self._hi is None else np.maximum(self._hi, hi)
 
