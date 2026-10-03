@@ -316,6 +316,51 @@ run "genealogy insert roundtrips via view" \
     "SELECT child_sample_code FROM v_sample_genealogy_flat
      WHERE parent_sample_code = 'TEST-PARENT-001'"
 
+echo "== project_rollup refresh survives concurrent writers (review 5.1) =="
+# Two sessions updating DIFFERENT operations used to fail the second with a duplicate key on
+# project_rollup_pkey. Session A holds its transaction open (after its refresh has run); B must
+# queue on the advisory lock and then succeed.
+$PSQL -c "
+    INSERT INTO manufacturing_methods (method_id, method_code, method_name)
+    VALUES ('c0000000-0000-4000-8000-0000000000a1', 'T-C-RL', 'rollup lock test method');
+    INSERT INTO projects (project_id, project_code, project_name)
+    VALUES ('c0000000-0000-4000-8000-0000000000b1', 'TCRL-1', 'rollup lock test');
+    INSERT INTO physical_samples (sample_id, sample_code)
+    VALUES ('c0000000-0000-4000-8000-0000000000d0', 'TEST-RL-001');
+    INSERT INTO manufacturing_operations (operation_id, method_id, project_id, sample_id, pass_code) VALUES
+        ('c0000000-0000-4000-8000-0000000000c1', 'c0000000-0000-4000-8000-0000000000a1', 'c0000000-0000-4000-8000-0000000000b1', 'c0000000-0000-4000-8000-0000000000d0', 'TCRL-OP-1'),
+        ('c0000000-0000-4000-8000-0000000000c2', 'c0000000-0000-4000-8000-0000000000a1', 'c0000000-0000-4000-8000-0000000000b1', 'c0000000-0000-4000-8000-0000000000d0', 'TCRL-OP-2');
+" > /dev/null 2>&1 || true
+rl_a_log=$(mktemp); rl_b_log=$(mktemp)
+psql "$DATABASE_URL" --no-psqlrc -q -v ON_ERROR_STOP=1 > "$rl_a_log" 2>&1 <<SQL &
+BEGIN;
+UPDATE manufacturing_operations SET outcome_notes = 'rl-a' WHERE operation_id = 'c0000000-0000-4000-8000-0000000000c1';
+SELECT pg_sleep(3);
+COMMIT;
+SQL
+rl_a_pid=$!
+sleep 1
+rl_b_start=$(date +%s)
+$PSQL -v ON_ERROR_STOP=1 -c "UPDATE manufacturing_operations SET outcome_notes = 'rl-b' WHERE operation_id = 'c0000000-0000-4000-8000-0000000000c2'" > "$rl_b_log" 2>&1
+rl_b_rc=$?
+rl_b_secs=$(( $(date +%s) - rl_b_start ))
+wait "$rl_a_pid"; rl_a_rc=$?
+[[ $rl_a_rc -eq 0 ]] && ok "session A (held open) committed" || bad "session A failed: $(cat "$rl_a_log")"
+[[ $rl_b_rc -eq 0 ]] && ok "session B (different operation) succeeded" || bad "session B failed: $(cat "$rl_b_log")"
+[[ $rl_b_secs -ge 1 ]] && ok "session B queued behind A's refresh (${rl_b_secs}s)" || bad "session B did not wait for A (${rl_b_secs}s): the refresh is not serialised"
+run_eq "both concurrent updates landed" \
+    "SELECT string_agg(outcome_notes, ',' ORDER BY pass_code) FROM manufacturing_operations WHERE pass_code IN ('TCRL-OP-1','TCRL-OP-2')" \
+    "rl-a,rl-b"
+run_eq "project_rollup cache equals v_project_rollup after the race" \
+    "SELECT (SELECT count(*) FROM project_rollup) = (SELECT count(*) FROM v_project_rollup)" "t"
+rm -f "$rl_a_log" "$rl_b_log"
+$PSQL -c "
+    DELETE FROM manufacturing_operations WHERE operation_id IN ('c0000000-0000-4000-8000-0000000000c1','c0000000-0000-4000-8000-0000000000c2');
+    DELETE FROM physical_samples WHERE sample_id = 'c0000000-0000-4000-8000-0000000000d0';
+    DELETE FROM projects WHERE project_id = 'c0000000-0000-4000-8000-0000000000b1';
+    DELETE FROM manufacturing_methods WHERE method_id = 'c0000000-0000-4000-8000-0000000000a1';
+" > /dev/null 2>&1 || true
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy
