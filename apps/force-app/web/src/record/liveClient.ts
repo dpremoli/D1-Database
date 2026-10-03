@@ -120,7 +120,9 @@ export class RecordClient {
 	// the first sync-request and never cleared, so closing a pop-out did not stop the relaying.
 	// A pop-out that vanished without a 'bye' (crashed, killed) also stops asking for trace history
 	// once it expires; its retainSec demand would otherwise stay registered for good.
-	private peers = new RelayPeers(undefined, () => this.setWindowDemand(this.peers, this.peers.maxRetainSec(performance.now())));
+	private peers = new RelayPeers(undefined, () => this.syncPeerDemand());
+	// Keep the history this window retains at least as long as the widest pop-out asks for.
+	private syncPeerDemand() { this.setWindowDemand(this.peers, this.peers.maxRetainSec(performance.now())); }
 	private get hasRelayPeer() { return this.peers.alive(performance.now()); }
 	private relayThrottle = createEmitThrottle(RELAY_TICK_MS);
 	private relayTrailing: ReturnType<typeof setTimeout> | null = null;
@@ -179,7 +181,7 @@ export class RecordClient {
 			const isNew = this.peers.seen(String(d.id ?? 'anon'), performance.now(), Number(d.retainSec) || 0);
 			// A pop-out wider than our own history needs more of it kept here, or the snapshots
 			// it is sent could never cover its window.
-			this.setWindowDemand(this.peers, this.peers.maxRetainSec(performance.now()));
+			this.syncPeerDemand();
 			// A pop-out exists: send it the backlog, and start relaying live frames from here on.
 			// A heartbeat from a peer we had dropped (it expired while throttled, said bye and came
 			// back from the bfcache, or this window reloaded) means it holds stale buffers: resync
@@ -187,7 +189,7 @@ export class RecordClient {
 			if (d.type === 'sync-request' || isNew) this.sendSnapshot(true);
 		} else if (d?.type === 'bye') {
 			this.peers.bye(String(d.id ?? 'anon'));
-			this.setWindowDemand(this.peers, this.peers.maxRetainSec(performance.now()));
+			this.syncPeerDemand();
 		}
 	}
 
@@ -272,8 +274,7 @@ export class RecordClient {
 	/** Drop trace bins older than tMin (the front of the rolling history). */
 	trimTrace(tMin: number) {
 		const t = this.trace.t;
-		let drop = 0;
-		while (drop < t.length && t[drop] < tMin) drop++;
+		const drop = firstAtOrAfter(t, tMin);
 		if (drop <= 0) return;
 		t.splice(0, drop); this.trace.fx.splice(0, drop);
 		this.trace.fy.splice(0, drop); this.trace.fz.splice(0, drop);
@@ -292,7 +293,7 @@ export class RecordClient {
 		const from = full ? 0 : this.sent.frm;
 		const tr = this.trace;
 		const ti = full ? 0 : firstAtOrAfter(tr.t, this.sent.traceT + 1e-9);
-		const sliceEnv = (a: [number, number][]) => (ti === 0 ? a.slice() : a.slice(ti));
+		const sliceEnv = (a: [number, number][]) => a.slice(ti);
 		const newFft = full ? this.fftHistory.length : Math.min(this.fftHistory.length, this.fftTotal - this.sent.fftTotal);
 		const snap = {
 			type: 'snapshot' as const,
@@ -350,10 +351,11 @@ export class RecordClient {
 		this.heldEpoch = snap.epoch ?? -1;
 		if (snap.frm) {
 			const n = snap.frm.count || 0;
-			const xy = snap.frm.xy instanceof Float32Array ? snap.frm.xy : Float32Array.from(snap.frm.xy ?? []);
-			const cx = snap.frm.cx instanceof Float32Array ? snap.frm.cx : Float32Array.from(snap.frm.cx ?? []);
-			const cy = snap.frm.cy instanceof Float32Array ? snap.frm.cy : Float32Array.from(snap.frm.cy ?? []);
-			const cz = snap.frm.cz instanceof Float32Array ? snap.frm.cz : Float32Array.from(snap.frm.cz ?? []);
+			const f32 = (a: ArrayLike<number> | undefined) => (a instanceof Float32Array ? a : Float32Array.from(a ?? []));
+			const xy = f32(snap.frm.xy);
+			const cx = f32(snap.frm.cx);
+			const cy = f32(snap.frm.cy);
+			const cz = f32(snap.frm.cz);
 			if (xy.length >= n * 2 && cx.length >= n && cy.length >= n && cz.length >= n) {
 				this.frm.xy.set(xy.subarray(0, n * 2), 0);
 				this.frm.cx.set(cx.subarray(0, n), 0); this.frm.cy.set(cy.subarray(0, n), 0); this.frm.cz.set(cz.subarray(0, n), 0);
