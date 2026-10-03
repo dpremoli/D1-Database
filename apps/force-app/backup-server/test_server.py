@@ -413,3 +413,64 @@ def test_mark_deleted_is_purged_after_retention(client, tmp_path, monkeypatch):
 
 def test_mark_deleted_unknown_session_is_404(client):
     assert client.post("/sessions/ghost/mark-deleted").status_code == 404
+
+
+def _begin(client, sid, config=None):
+    client.post(
+        "/ingest/start",
+        json={
+            "session_id": sid,
+            "header_hex": _make_header().hex(),
+            "config": config or {"dyno_gains": [1, 2, 3, 4, 5, 6, 7, 8]},
+        },
+    )
+    return sid
+
+
+@pytest.mark.parametrize("content", [b"{not json", b"", b"[1, 2]", b"\xff\xfe"])
+def test_mark_deleted_does_not_overwrite_an_unreadable_meta(client, tmp_path, content):
+    _begin(client, "broken")
+    meta_path = os.path.join(str(tmp_path), "broken", "meta.json")
+    with open(meta_path, "wb") as f:
+        f.write(content)
+    r = client.post("/sessions/broken/mark-deleted")
+    assert r.status_code == 409
+    with open(meta_path, "rb") as f:
+        assert f.read() == content  # untouched: nothing was lost
+    assert not os.path.exists(meta_path + ".tmp")
+
+
+def test_mark_deleted_keeps_the_stored_config(client, tmp_path):
+    _begin(client, "cfg", {"dyno_gains": [9] * 8, "sample_name": "KEEP"})
+    assert client.post("/sessions/cfg/mark-deleted").status_code == 200
+    meta = client.get("/sessions/cfg/info").json()["meta"]
+    assert meta["config"] == {"dyno_gains": [9] * 8, "sample_name": "KEEP"}
+
+
+def test_mark_deleted_without_a_meta_file_still_tombstones(client, tmp_path):
+    _begin(client, "nometa")
+    os.remove(os.path.join(str(tmp_path), "nometa", "meta.json"))
+    assert client.post("/sessions/nometa/mark-deleted").status_code == 200
+    with open(os.path.join(str(tmp_path), "nometa", "meta.json")) as f:
+        assert json.load(f)["state"] == "deleted"
+
+
+def test_mark_deleted_writes_meta_atomically(client, tmp_path, monkeypatch):
+    """A write that dies part-way must leave the old meta.json whole, and no temp file behind."""
+    _begin(client, "atomic")
+    meta_path = os.path.join(str(tmp_path), "atomic", "meta.json")
+    with open(meta_path, "rb") as f:
+        before = f.read()
+
+    def dies_halfway(obj, f, *a, **k):
+        f.write('{"session_id": "atom')
+        raise OSError("disk full")
+
+    import server as srv
+
+    monkeypatch.setattr(srv.json, "dump", dies_halfway)
+    with pytest.raises(OSError):
+        client.post("/sessions/atomic/mark-deleted")
+    with open(meta_path, "rb") as f:
+        assert f.read() == before
+    assert not os.path.exists(meta_path + ".tmp")
