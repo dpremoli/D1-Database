@@ -1682,24 +1682,19 @@ def sample_rate_problem(rate: float, limits: dict) -> dict | None:
     """
     hi, lo = limits.get("max"), limits.get("min")
     if hi is not None and rate > hi:
-        return {
-            "field": "sample_rate",
-            "value": rate,
-            "max": hi,
-            "min": lo,
-            "message": f"Sample rate {rate:,.0f} Hz is above the {hi:,.0f} Hz maximum of the "
-            "NI-DAQ modules these channels are on. Lower it and start again.",
-        }
-    if lo is not None and rate < lo:
-        return {
-            "field": "sample_rate",
-            "value": rate,
-            "max": hi,
-            "min": lo,
-            "message": f"Sample rate {rate:,.0f} Hz is below the {lo:,.0f} Hz minimum of the "
-            "NI-DAQ modules these channels are on. Raise it and start again.",
-        }
-    return None
+        bound, side, extreme, action = hi, "above", "maximum", "Lower"
+    elif lo is not None and rate < lo:
+        bound, side, extreme, action = lo, "below", "minimum", "Raise"
+    else:
+        return None
+    return {
+        "field": "sample_rate",
+        "value": rate,
+        "max": hi,
+        "min": lo,
+        "message": f"Sample rate {rate:,.0f} Hz is {side} the {bound:,.0f} Hz {extreme} of "
+        f"the NI-DAQ modules these channels are on. {action} it and start again.",
+    }
 
 
 @app.post("/record/start")
