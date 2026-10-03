@@ -17,7 +17,8 @@ import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, owne
 import { isFetchFailure } from '../netErrors';
 import { confirmAction } from '../ui/confirm';
 import { spotlight } from '../ui/spotlight';
-import { FIELD_FOCUS, StartRequestError } from './recordingErrors';
+import { FIELD_FOCUS, StartRequestError, sampleRateIssue } from './recordingErrors';
+import { nidaqHardware } from './nidaqHardware';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 
@@ -223,6 +224,12 @@ export function createWorkspace() {
 	const isFinalizing = computed(() => st.state === 'finalizing');
 	const isDone = computed(() => st.state === 'done');
 	const locked = computed(() => isRecording.value || isFinalizing.value);
+	// #84: why Start can't be pressed for the chosen NI-DAQ sample rate (the hardware can't do it), or
+	// null. One computed for the footer's Start-disable and the red sample-rate tile, so they can't
+	// disagree.
+	const sampleRateBlocker = computed(() => (source.value === 'nidaq'
+		? sampleRateIssue(cfg.sample_rate, nidaqHardware.maxRateHz)
+		: null));
 
 	// The resolved Sample/Operator/Machine/Tool/Insert/Edge picks (`link.*`) and the folded
 	// machining-details section (`machining.*`) used to reach Directus ONLY via buildRunPayload()'s
@@ -761,7 +768,7 @@ export function createWorkspace() {
 	return {
 		client, source, setSource, nidaqChannels, cfg, meta, machining, plot, replay, st, busy, errMsg, finishedCache,
 		editCutStartSec, editCutEndSec,
-		isIdle, isRecording, isFinalizing, isDone, locked, saveOpen,
+		isIdle, isRecording, isFinalizing, isDone, locked, sampleRateBlocker, saveOpen,
 		mode, playback, rpmTarget,
 		start, stop, newRun, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
 		// 2d: Directus links + run write-back
