@@ -6,7 +6,7 @@
 // falls back to that field's default instead of reaching a plot as NaN or an unknown enum, and
 // one bad field never costs the others.
 import { COLORMAPS } from '@d1/force-plotting';
-import { clampWindowSec } from './plotWindow';
+import { clampWindowSec, DEFAULT_WINDOW_SEC } from './plotWindow';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 export interface PlotPrefs {
@@ -20,7 +20,7 @@ export const FRM_STRIDES = [1, 2, 5, 10, 25, 50];
 
 export function defaultPlotPrefs(): PlotPrefs {
 	return {
-		forceMode: 'time', frmAxis: 'Fz', colormap: 'viridis', pointSize: 1.8, windowSec: 12, liveFrmStride: 1,
+		forceMode: 'time', frmAxis: 'Fz', colormap: 'viridis', pointSize: 1.8, windowSec: DEFAULT_WINDOW_SEC, liveFrmStride: 1,
 		polarRadius: 'Fz', polarAngleSource: 'tacho', polarBins: 36,
 	};
 }

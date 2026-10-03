@@ -8,7 +8,6 @@ import { FrmCloud, ColorScaleEditor, defaultScale, useAutoColorScale, withOpenDi
 import { appUrl } from '../../appUrl';
 import { FRM_STRIDES } from '../plotPrefs';
 const w = useWorkspace();
-const STRIDES = FRM_STRIDES;
 const editorOpen = ref(false);
 
 // FrmCloud.vue and LiveFrm.vue both take a ColorScale prop now (Stage 2/3/4 of the colour-scale
@@ -59,7 +58,7 @@ function openLive() {
 			<input class="psize" type="range" min="1" max="5" step="0.1" v-model.number="w.plot.pointSize" :title="`Point size ${w.plot.pointSize.toFixed(1)}`" />
 			<select v-if="!w.isDone.value" class="cmap" v-model.number="w.plot.liveFrmStride"
 				title="Live map decimation — keep every Nth point. Raise this for long/dense cuts to keep the map responsive and under its point cap.">
-				<option v-for="s in STRIDES" :key="s" :value="s">{{ s === 1 ? 'full res' : `1 / ${s}` }}</option>
+				<option v-for="s in FRM_STRIDES" :key="s" :value="s">{{ s === 1 ? 'full res' : `1 / ${s}` }}</option>
 			</select>
 			<button class="btn icon sm" :class="{ on: editorOpen }" :aria-pressed="editorOpen" title="Colour scale editor" @click="editorOpen = !editorOpen">
 				<span class="material-symbols-rounded">palette</span>
