@@ -27,17 +27,24 @@ services:
     networks: [d1net]
 
   # Job queue for the heavy-data pipeline (Phase 4).
+  # rq pickles jobs, so anyone who can talk to Redis can run code in the workers: it is NOT
+  # published on the host (reach it with `docker compose exec redis redis-cli`) and it
+  # requires REDIS_PASSWORD. REDISCLI_AUTH lets redis-cli (healthcheck, `exec`) authenticate.
   redis:
     image: redis:7-alpine
     restart: unless-stopped
     # Persist every 60 s if at least 1 key changed; quiet logs.
-    command: redis-server --save 60 1 --loglevel warning
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    command:
+      - sh
+      - -c
+      - exec redis-server --save 60 1 --loglevel warning --requirepass "$$REDIS_PASSWORD"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env (openssl rand -hex 32)}
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -144,6 +151,8 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      # Full URL incl. password; preferred over REDIS_HOST/REDIS_PORT (kept for compatibility).
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env (openssl rand -hex 32)}@redis:6379/0
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change_me_too}
@@ -187,6 +196,8 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      # Full URL incl. password; preferred over REDIS_HOST/REDIS_PORT (kept for compatibility).
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env (openssl rand -hex 32)}@redis:6379/0
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change_me_too}
