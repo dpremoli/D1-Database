@@ -166,9 +166,8 @@ def scan_incomplete(captures_root: str, exclude_id: str | None = None) -> list[d
             continue
         if not os.path.isfile(raw_path):
             continue
-        if name in _discarding:
-            continue
-        if name == exclude_id:
+        # Being discarded, recovered or restored right now: not crashed, just busy.
+        if in_flight(name):
             continue
 
         info = raw_info(d)
