@@ -394,6 +394,36 @@ vp_check "op_out_only_in_view:1" "operation with only output_sample_id is in the
 vp_check "ts_subject_only_in_view:1" "subject-only test session is in the view"
 vp_check "ts_with_sample_code:TEST-VP-001" "sample columns are still filled when there is a sample"
 
+echo "== Audit trail hardening (review 5.7) =="
+run_eq "audit_trigger_function pins search_path" \
+    "SELECT array_to_string(proconfig, ',') FROM pg_proc WHERE proname = 'audit_trigger_function'" \
+    "search_path=pg_catalog, public"
+run_eq "no role but the owner holds TRUNCATE on audit_logs" \
+    "SELECT count(*) FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a
+     WHERE c.oid = 'public.audit_logs'::regclass AND a.privilege_type = 'TRUNCATE' AND a.grantee <> c.relowner" \
+    "0"
+tr_out=$($PSQL 2>&1 <<SQL
+TRUNCATE audit_logs;
+SQL
+)
+grep -q 'append-only' <<<"$tr_out" && ok "TRUNCATE audit_logs is rejected (even for the owner)" || bad "TRUNCATE audit_logs was not rejected (output: $tr_out)"
+run "audit_logs still has rows after the TRUNCATE attempt" "SELECT 1 FROM audit_logs LIMIT 1"
+# A schema placed ahead of public on the search_path must not capture the audit insert.
+sp_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+CREATE SCHEMA tc_shadow;
+CREATE TABLE tc_shadow.audit_logs (LIKE public.audit_logs);
+SET LOCAL search_path = tc_shadow, public;
+INSERT INTO public.physical_samples (sample_code) VALUES ('TEST-SHADOW-001');
+SELECT 'shadow:' || count(*) FROM tc_shadow.audit_logs;
+SELECT 'real:' || count(*) FROM public.audit_logs WHERE row_after->>'sample_code' = 'TEST-SHADOW-001';
+ROLLBACK;
+SQL
+)
+grep -qx 'shadow:0' <<<"$sp_out" && grep -qx 'real:1' <<<"$sp_out" \
+    && ok "audit row lands in public.audit_logs despite a shadowing schema" \
+    || bad "search_path shadowing captured the audit write (output: $sp_out)"
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy
