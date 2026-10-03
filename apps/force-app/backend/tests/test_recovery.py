@@ -174,9 +174,9 @@ def test_scan_incomplete_excludes_the_currently_active_session(tmp_path):
     incomplete = scan_incomplete(str(tmp_path), exclude_id=active_sid)
     ids = {s["id"] for s in incomplete}
     assert crashed_sid in ids, "a genuinely crashed sibling must still be reported"
-    assert active_sid not in ids, (
-        "the currently-recording session must never be offered as recoverable"
-    )
+    assert (
+        active_sid not in ids
+    ), "the currently-recording session must never be offered as recoverable"
 
 
 def test_scan_incomplete_multiple_sessions(tmp_path):
