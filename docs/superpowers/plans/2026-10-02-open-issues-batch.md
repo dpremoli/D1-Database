@@ -63,6 +63,8 @@ Each stream works in its own worktree under `.claude/worktrees/` on branch
 | E | `agent-a9c22f1bdfa0cadc3` | merged; blockers fixed in `ffd79fe`, `f7090dc`; nits `bc26b62`..`8f33785` |
 | F | `agent-a091876a6e38fc188` | merged (`de8e4b1`); review clean, nit fixed in `6bad005` |
 | Integration | `agent-ae500a5076c4b6316` | merged; cross-stream review blocker (folder switch during restore) fixed in `a7fba27` |
+| /simplify | `agent-a1832224d6e0ac779`, `agent-a767db3daae16117c` | merged (`6715e7a`, `97f2709`); lint fixed in `6080895` |
+| /code-review fixes | backend `agent-a87bebd62e1671252`, web/desktop `agent-a94d7341682b49027`, db `agent-a25eede646ce867e3` | in progress: 9 findings (restore race, sidecar exit, scan_incomplete, tacho read-ahead, Tacho default panel, enumerate_devices, tombstone after restore, project_rollup collation, mark-deleted meta) |
 
 ### A. Finalize at constant memory — #79
 - `finalize.py`/`dsp.py`: stream the memmap in blocks (gains, peaks, clipping, axis sums,
