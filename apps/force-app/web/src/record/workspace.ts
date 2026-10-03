@@ -131,6 +131,9 @@ export function createWorkspace() {
 	// auditable place.
 	const mode = computed<'record' | 'playback'>(() => (source.value === 'replay' ? 'playback' : 'record'));
 	const playback = createPlaybackEngine(client, { baseUrl: client.baseUrl });
+	// Playback drives client.status itself ('recording' while it plays), so the recorder's own
+	// state (RecordClient.reconcile, run on every stream (re)open) must not overwrite it.
+	client.canReconcile = () => mode.value === 'record';
 	// The RPM gauge's reference line: the replayed cut's own spindle speed in playback, the
 	// configured target when recording. Panels read this rather than cfg.rpm directly.
 	const rpmTarget = computed(() => (mode.value === 'playback' ? replay.rpm : cfg.rpm));
@@ -404,7 +407,19 @@ export function createWorkspace() {
 		// an interactive-looking-but-actually-stopped UI during the finalize gap.
 		saveOpen.value = true;
 		try {
-			await client.stop();
+			try {
+				await client.stop();
+			} catch (e: any) {
+				// The stop did not go through. Ask the recorder what is really happening: if the cut
+				// already ended on its own (auto-stop, disk-full) carry on into the save flow; if it
+				// is still running, or unreachable, say so and drop the dialog (it would only spin).
+				await client.reconcile().catch(() => {});
+				if (st.state === 'recording' || st.state === 'idle') {
+					saveOpen.value = false;
+					errMsg.value = `could not stop the recording - ${e?.message || e}`;
+					return;
+				}
+			}
 			await loadFinished();
 		} finally {
 			busy.value = false;
