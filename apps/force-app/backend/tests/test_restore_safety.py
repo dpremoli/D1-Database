@@ -10,7 +10,6 @@ import http.server
 import json
 import os
 import threading
-import time
 
 import numpy as np
 import pytest
@@ -46,7 +45,7 @@ class _Remote:
             def log_message(self, *a):
                 pass
 
-            def do_GET(self):
+            def do_GET(self):  # noqa: N802 (http.server dispatches on this name)
                 if self.path.endswith("/raw"):
                     if outer.on_raw:
                         outer.on_raw()
@@ -83,7 +82,11 @@ def env(tmp_path, monkeypatch):
     remotes: list[_Remote] = []
 
     def make(raw: bytes, config="default", cut_after=None, on_raw=None) -> _Remote:
-        cfg = RecordConfig(sample_rate=2000, sample_name="REMOTE-1").model_dump() if config == "default" else config
+        cfg = (
+            RecordConfig(sample_rate=2000, sample_name="REMOTE-1").model_dump()
+            if config == "default"
+            else config
+        )
         r = _Remote(raw, cfg, cut_after, on_raw)
         remotes.append(r)
         backup_mod.save_config(str(tmp_path), {"enabled": True, "server_url": r.url})
@@ -208,7 +211,9 @@ def test_discard_is_refused_while_the_same_id_is_being_recovered(env):
 def test_recover_clears_its_marker_afterwards_even_on_failure(env, monkeypatch):
     client, root, _ = env
     _local_incomplete(root, rows=100)
-    monkeypatch.setattr(recovery, "recover_session", lambda *a: (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setattr(
+        recovery, "recover_session", lambda *a: (_ for _ in ()).throw(RuntimeError("x"))
+    )
     assert client.post(f"/recovery/recover/{SID}").status_code == 500
     assert SID not in recovery._recovering
 

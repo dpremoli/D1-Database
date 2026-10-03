@@ -127,7 +127,9 @@ def test_legacy_package_captures_dir_is_a_migration_source_too(roots):
 
 def test_switching_the_captures_folder_keeps_the_channel_config(roots, tmp_path):
     with TestClient(app) as client:
-        assert client.put("/nidaq/channels", json={"channels": _custom_channels()}).status_code == 200
+        assert (
+            client.put("/nidaq/channels", json={"channels": _custom_channels()}).status_code == 200
+        )
         new_root = tmp_path / "new-drive" / "captures"
 
         res = client.post("/storage/config", json={"captures_root": str(new_root)})
@@ -147,7 +149,9 @@ def test_a_labamp_config_in_a_newly_chosen_folder_is_not_adopted(roots, tmp_path
     with TestClient(app) as client:
         new_root = tmp_path / "new-drive" / "captures"
         new_root.mkdir(parents=True)
-        (new_root / "labamp.json").write_text(json.dumps({"base_url": "http://stale", "channels": 2}))
+        (new_root / "labamp.json").write_text(
+            json.dumps({"base_url": "http://stale", "channels": 2})
+        )
 
         res = client.post("/storage/config", json={"captures_root": str(new_root)})
         assert res.status_code == 200 and main.CAPTURES_ROOT == str(new_root)

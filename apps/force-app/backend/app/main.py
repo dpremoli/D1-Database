@@ -1487,7 +1487,7 @@ def _annotate_remote_session(s: dict, retention_hours: float | None) -> dict:
             expires_at = float(meta["updated_at"]) + float(retention_hours) * 3600
         except (TypeError, ValueError):
             expires_at = None
-    if expires_at is not None and not isinstance(expires_at, (int, float)):
+    if expires_at is not None and not isinstance(expires_at, int | float):
         expires_at = None
     return {
         **s,
@@ -1586,7 +1586,9 @@ async def backup_restore(session_id: str) -> dict:
         # restored .mat/live_cache hold raw amplifier volts mislabelled as newtons — wrong by a
         # per-channel factor, and not obviously wrong when you look at it. Fetched before the
         # download so a missing config doesn't cost a multi-GB transfer first.
-        remote_cfg = await run_in_threadpool(backup_mod.fetch_remote_session_config, url, session_id)
+        remote_cfg = await run_in_threadpool(
+            backup_mod.fetch_remote_session_config, url, session_id
+        )
         if not remote_cfg:
             raise _fail(
                 502,

@@ -128,7 +128,9 @@ def test_delete_allows_a_finished_session_that_is_still_referenced(client, tmp_p
 
 
 @pytest.mark.parametrize("busy_set", ["_recovering", "_discarding"])
-def test_delete_refuses_a_capture_being_recovered_or_discarded(client, tmp_path, monkeypatch, busy_set):
+def test_delete_refuses_a_capture_being_recovered_or_discarded(
+    client, tmp_path, monkeypatch, busy_set
+):
     d = _make_capture(tmp_path, "busy-one", finalized=False)
     monkeypatch.setattr(recovery, busy_set, {"busy-one"})
 

@@ -56,7 +56,9 @@ def test_refused_when_the_folder_cannot_be_written(client, tmp_path, monkeypatch
     assert main.CAPTURES_ROOT == before
 
 
-def test_a_recording_that_starts_during_the_folder_check_blocks_the_change(client, tmp_path, monkeypatch):
+def test_a_recording_that_starts_during_the_folder_check_blocks_the_change(
+    client, tmp_path, monkeypatch
+):
     busy = {"now": False}
     real = storage.writable_error
 
@@ -139,8 +141,8 @@ def test_a_folder_switch_during_a_restore_download_never_deletes_the_download(tm
     directory (and the download) in the old one."""
     from fastapi.testclient import TestClient
 
-    from tests.test_restore_safety import SID, _Remote, _write_raw
     from app.config import RecordConfig
+    from tests.test_restore_safety import SID, _Remote, _write_raw
 
     old, new = tmp_path / "old", tmp_path / "new"
     old.mkdir()
@@ -172,4 +174,8 @@ def test_a_folder_switch_during_a_restore_download_never_deletes_the_download(tm
     finally:
         if remote:
             remote.close()
-        main.CAPTURES_ROOT, main.STORAGE_CONFIG_PATH, main._session = main_root, main_cfg, main_session
+        main.CAPTURES_ROOT, main.STORAGE_CONFIG_PATH, main._session = (
+            main_root,
+            main_cfg,
+            main_session,
+        )

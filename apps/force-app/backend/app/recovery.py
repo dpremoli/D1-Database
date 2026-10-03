@@ -178,8 +178,10 @@ def scan_incomplete(captures_root: str, exclude_id: str | None = None) -> list[d
 def is_safe_id(session_id: str) -> bool:
     """A bare directory name: no separators or parent references that could escape the root."""
     # "" and "." are not escapes but name the root itself, which a delete would then target.
-    return bool(session_id) and session_id != "." and not (
-        "/" in session_id or "\\" in session_id or ".." in session_id
+    return (
+        bool(session_id)
+        and session_id != "."
+        and not ("/" in session_id or "\\" in session_id or ".." in session_id)
     )
 
 

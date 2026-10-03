@@ -304,15 +304,21 @@ def test_purge_expired(client, tmp_path, monkeypatch):
 def test_session_info_reports_expiry(client, tmp_path):
     import server as srv
 
-    client.post("/ingest/start", json={"session_id": "exp", "header_hex": _make_header().hex()})
+    client.post(
+        "/ingest/start", json={"session_id": "exp", "header_hex": _make_header().hex()}
+    )
     info = client.get("/sessions/exp/info").json()
-    assert info["expires_at"] == pytest.approx(info["updated_at"] + srv.RETENTION_HOURS * 3600)
+    assert info["expires_at"] == pytest.approx(
+        info["updated_at"] + srv.RETENTION_HOURS * 3600
+    )
 
 
 def test_mark_deleted_tombstones_and_restarts_the_retention_clock(client, tmp_path):
     import server as srv
 
-    client.post("/ingest/start", json={"session_id": "gone", "header_hex": _make_header().hex()})
+    client.post(
+        "/ingest/start", json={"session_id": "gone", "header_hex": _make_header().hex()}
+    )
     client.post("/ingest/finish", json={"session_id": "gone"})
     # Backdate, so the reset of updated_at is observable.
     meta_path = os.path.join(str(tmp_path), "gone", "meta.json")
@@ -340,11 +346,17 @@ def test_mark_deleted_tombstones_and_restarts_the_retention_clock(client, tmp_pa
 
     # Marking twice is harmless and keeps the original pre-delete state.
     client.post("/sessions/gone/mark-deleted")
-    assert client.get("/sessions/gone/info").json()["meta"]["state_before_delete"] == "complete"
+    assert (
+        client.get("/sessions/gone/info").json()["meta"]["state_before_delete"]
+        == "complete"
+    )
 
 
 def test_mark_deleted_twice_does_not_restart_the_clock(client, tmp_path):
-    client.post("/ingest/start", json={"session_id": "twice", "header_hex": _make_header().hex()})
+    client.post(
+        "/ingest/start",
+        json={"session_id": "twice", "header_hex": _make_header().hex()},
+    )
     client.post("/sessions/twice/mark-deleted")
     meta_path = os.path.join(str(tmp_path), "twice", "meta.json")
     with open(meta_path) as f:
@@ -373,7 +385,9 @@ def test_session_dir_rejects_names_that_point_at_storage(client, bad):
 
 
 def test_delete_dot_does_not_remove_the_storage_root(client, tmp_path):
-    client.post("/ingest/start", json={"session_id": "keep", "header_hex": _make_header().hex()})
+    client.post(
+        "/ingest/start", json={"session_id": "keep", "header_hex": _make_header().hex()}
+    )
     # %2E: a literal "." segment would be normalised away by the HTTP client before it got here.
     client.delete("/sessions/%2E")
     assert os.path.isdir(os.path.join(str(tmp_path), "keep"))
@@ -382,10 +396,14 @@ def test_delete_dot_does_not_remove_the_storage_root(client, tmp_path):
 def test_mark_deleted_is_purged_after_retention(client, tmp_path, monkeypatch):
     import server as srv
 
-    client.post("/ingest/start", json={"session_id": "tomb", "header_hex": _make_header().hex()})
+    client.post(
+        "/ingest/start", json={"session_id": "tomb", "header_hex": _make_header().hex()}
+    )
     client.post("/sessions/tomb/mark-deleted")
     srv._purge_expired()
-    assert os.path.isdir(os.path.join(str(tmp_path), "tomb"))  # not yet: retention is 12 h
+    assert os.path.isdir(
+        os.path.join(str(tmp_path), "tomb")
+    )  # not yet: retention is 12 h
 
     monkeypatch.setattr(srv, "RETENTION_HOURS", 0.0)
     time.sleep(0.01)
