@@ -99,6 +99,39 @@ def _read_json(path: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _save_json(path: str, data) -> None:
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        storage.atomic_write_json(path, data, indent=2)
+    except OSError:
+        pass
+
+
+def _load_device_config(path: str, default):
+    """Load a device config file from CONFIG_DIR, migrating it there from the captures folder.
+
+    labamp.json, nidaq_sim.json and nidaq_channels.json used to live in CAPTURES_ROOT, so moving
+    the recording folder (or a restart after the folder picker, #101) made them vanish and the
+    channel assignment silently re-autoassigned. They now live beside backup_config.json. When
+    the new file doesn't exist but an old one does, the old one is copied over (never moved or
+    deleted, so it stays as a fallback). A new file that exists but is unreadable is not migrated
+    over.
+    """
+    data = _load_json(path, None)
+    if data is not None or os.path.exists(path):
+        return default if data is None else data
+    name = os.path.basename(path)
+    for old_dir in (CAPTURES_ROOT, LEGACY_CONFIG_DIR):
+        old = os.path.join(old_dir, name)
+        if os.path.abspath(old) == os.path.abspath(path):
+            continue
+        legacy = _load_json(old, None)
+        if legacy is not None:
+            _save_json(path, legacy)
+            return legacy
+    return default
+
+
 def _load_captures_root() -> str:
     """Load the user-configured captures directory, falling back to the default.
 
@@ -204,7 +237,7 @@ DEFAULT_BACKUP_URL = "https://d1-server.tail54eeb6.ts.net/backup-ingest"
 # ---- LabAmp (2c) config + instance ----
 # The amp is link-local (reachable only from the acquisition PC) so the backend owns the HTTP
 # conversation. Defaults to a mock (no hardware here); switch mode=real on the rig.
-LABAMP_CONFIG_PATH = os.path.join(CAPTURES_ROOT, "labamp.json")
+LABAMP_CONFIG_PATH = os.path.join(CONFIG_DIR, "labamp.json")
 
 
 def _load_labamp_config() -> dict:
@@ -221,7 +254,8 @@ def _load_labamp_config() -> dict:
         "labamp_dac_bits": int(os.environ.get("LABAMP_DAC_BITS", "12")),
         "analog_fullscale_v": float(os.environ.get("ANALOG_FULLSCALE_V", "10.0")),
     }
-    cfg.update(_read_json(LABAMP_CONFIG_PATH) or {})
+    stored = _load_device_config(LABAMP_CONFIG_PATH, None)
+    cfg.update(stored if isinstance(stored, dict) else {})
     return cfg
 
 
@@ -612,6 +646,25 @@ async def storage_get_config() -> dict:
     return {"captures_root": CAPTURES_ROOT, **current}
 
 
+def _refuse_folder_switch_if_busy() -> None:
+    """409 while anything is reading or writing a capture directory under the current root.
+
+    A recording splits across two folders if the root moves under it (#101). A restore, recovery
+    or discard is the same hazard: restore downloads raw.d1raw into the old root, then recovers
+    from the new one, finds no raw file, and its cleanup deletes the download.
+    """
+    if _busy():
+        raise HTTPException(
+            409,
+            "a recording is in progress or still being saved — change the folder once it finishes",
+        )
+    if recovery._recovering or recovery._discarding:
+        raise HTTPException(
+            409,
+            "a restore, recovery or discard is in progress — change the folder once it finishes",
+        )
+
+
 @app.post("/storage/config")
 async def storage_set_config(body: dict) -> dict:
     global CAPTURES_ROOT
@@ -627,23 +680,15 @@ async def storage_set_config(body: dict) -> dict:
     # #101: the in-flight session writes raw.d1raw and finalizes into CAPTURES_ROOT/<id>, and the
     # renderer then reads that capture back by id through the same root — moving the root under
     # it splits a recording across two folders and 404s the end-of-cut fetch of live_cache.bin.
-    if _busy():
-        raise HTTPException(
-            409,
-            "a recording is in progress or still being saved — change the folder once it finishes",
-        )
+    _refuse_folder_switch_if_busy()
     # makedirs succeeds on a folder that already exists however read-only it is, so the first sign
     # of a bad choice used to be a recording that failed to start. Find out now instead. Both steps
     # can block for a long time on a dead network path, so they run off the event loop.
     problem = await run_in_threadpool(storage.prepare_folder, path)
     if problem:
         raise HTTPException(400, problem)
-    # A recording may have started while the folder was being checked.
-    if _busy():
-        raise HTTPException(
-            409,
-            "a recording is in progress or still being saved — change the folder once it finishes",
-        )
+    # A recording, restore, recovery or discard may have started while the folder was checked.
+    _refuse_folder_switch_if_busy()
     CAPTURES_ROOT = path
     # Persisting is what makes the choice survive a restart, so a failure here must be reported.
     # It used to be swallowed: the drive change applied to the running process, the UI showed
@@ -1282,9 +1327,10 @@ async def recovery_recover(session_id: str) -> dict:
         raise HTTPException(409, f"session {session_id} is being discarded")
     if session_id in recovery._recovering:
         raise HTTPException(409, f"session {session_id} is already being recovered")
+    root = CAPTURES_ROOT  # one root for the whole request, however long it takes
     recovery._recovering.add(session_id)
     try:
-        summary = await run_in_threadpool(recovery.recover_session, CAPTURES_ROOT, session_id)
+        summary = await run_in_threadpool(recovery.recover_session, root, session_id)
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
@@ -1318,7 +1364,8 @@ async def recovery_discard(session_id: str) -> dict:
         raise HTTPException(
             400, f"session {session_id} is still recording — stop it, don't discard it"
         )
-    capture_dir = os.path.join(CAPTURES_ROOT, session_id)
+    root = CAPTURES_ROOT  # one root for the check and the background delete
+    capture_dir = os.path.join(root, session_id)
     if not os.path.isdir(capture_dir):
         log.info("recovery_discard: id=%s not found", session_id)
         raise HTTPException(404, f"session {session_id} not found")
@@ -1330,7 +1377,7 @@ async def recovery_discard(session_id: str) -> dict:
         t0 = time.perf_counter()
         recovery._discarding.add(session_id)
         try:
-            await run_in_threadpool(recovery.discard_session, CAPTURES_ROOT, session_id)
+            await run_in_threadpool(recovery.discard_session, root, session_id)
             await _mark_remote_deleted(session_id)
         except Exception:
             log.exception("recovery_discard: background delete failed for id=%s", session_id)
@@ -1478,7 +1525,9 @@ async def backup_restore(session_id: str) -> dict:
     """
     if not recovery.is_safe_id(session_id):
         raise HTTPException(400, "invalid session id")
-    cfg = backup_mod.load_config(CAPTURES_ROOT)
+    # Read the root once: a folder switch must never split one restore across two folders.
+    root = CAPTURES_ROOT
+    cfg = backup_mod.load_config(root)
     url = cfg.get("server_url", "")
     if not url:
         raise HTTPException(400, "no backup server configured")
@@ -1486,7 +1535,7 @@ async def backup_restore(session_id: str) -> dict:
         raise HTTPException(409, f"{session_id} is still being recorded — it can't be restored")
     if session_id in recovery._recovering or session_id in recovery._discarding:
         raise HTTPException(409, f"{session_id} is being recovered or discarded right now")
-    capture_dir = os.path.join(CAPTURES_ROOT, session_id)
+    capture_dir = os.path.join(root, session_id)
     raw_path = os.path.join(capture_dir, "raw.d1raw")
     part_path = raw_path + ".part"
     if os.path.isfile(os.path.join(capture_dir, "summary.json")):
@@ -1587,7 +1636,7 @@ async def backup_restore(session_id: str) -> dict:
 
         # Finalize the downloaded raw file
         try:
-            summary = await run_in_threadpool(recovery.recover_session, CAPTURES_ROOT, session_id)
+            summary = await run_in_threadpool(recovery.recover_session, root, session_id)
         except Exception as e:
             if aside and os.path.exists(aside):
                 # Put the original back so nothing about the local capture has changed.
@@ -1950,6 +1999,7 @@ async def browse_captures(limit: int = 200) -> dict:
                 entry["recoverable"] = bool(info and info["n_rows"] > 0)
                 entry["recording"] = cid == _active_session_id()
                 entry["discarding"] = cid in recovery._discarding
+                entry["recovering"] = cid in recovery._recovering
             rows.append(entry)
         return rows, storage.disk_usage_for(CAPTURES_ROOT)
 
@@ -1979,6 +2029,12 @@ async def delete_capture(cid: str) -> dict:
         raise HTTPException(404, "not found")
     if cid == _active_session_id():
         raise HTTPException(409, "that recording is still in progress")
+    # A restore/recover is reading or writing this directory right now, and a discard is already
+    # deleting it. Removing it from under either one is what makes them fail half-way.
+    if cid in recovery._recovering or cid in recovery._discarding:
+        raise HTTPException(
+            409, "that capture is being recovered, restored or discarded right now — wait for it to finish"
+        )
     t0 = time.perf_counter()
     freed = 0
     try:
@@ -2312,19 +2368,12 @@ async def labamp_post_config(body: dict) -> dict:
 # On dev machines with no DAQmx runtime the chassis is simulated (editable, persisted); on the rig
 # it enumerates real hardware. The channel model (roles + physical bindings) is persisted and, when
 # source="nidaq", feeds the recorder's channel list + per-channel gains at record start.
-NIDAQ_SIM_PATH = os.path.join(CAPTURES_ROOT, "nidaq_sim.json")
-NIDAQ_CHANNELS_PATH = os.path.join(CAPTURES_ROOT, "nidaq_channels.json")
-
-
-def _save_json(path: str, data) -> None:
-    try:
-        storage.atomic_write_json(path, data, indent=2)
-    except OSError:
-        pass
+NIDAQ_SIM_PATH = os.path.join(CONFIG_DIR, "nidaq_sim.json")
+NIDAQ_CHANNELS_PATH = os.path.join(CONFIG_DIR, "nidaq_channels.json")
 
 
 def _sim_layout() -> dict:
-    return _load_json(NIDAQ_SIM_PATH, dict(nidaq_enum.DEFAULT_SIM_LAYOUT))
+    return _load_device_config(NIDAQ_SIM_PATH, dict(nidaq_enum.DEFAULT_SIM_LAYOUT))
 
 
 def _devices() -> dict:
@@ -2332,7 +2381,7 @@ def _devices() -> dict:
 
 
 def _channel_config() -> list[dict]:
-    cfg = _load_json(NIDAQ_CHANNELS_PATH, None)
+    cfg = _load_device_config(NIDAQ_CHANNELS_PATH, None)
     if isinstance(cfg, dict) and isinstance(cfg.get("channels"), list):
         return cfg["channels"]
     # First run: auto-assign force-first from whatever devices are present.

@@ -16,6 +16,7 @@ import EditCaptureMetadataDialog from './EditCaptureMetadataDialog.vue';
 import { matchUploaded, uploadedRowsSince } from './captureUploadState';
 import { formatMegabytes } from '../format';
 import { canRevealPaths, copyText, revealPath } from '../localPaths';
+import { focusIdFrom } from '../ui/focusLink';
 import { spotlight } from '../ui/spotlight';
 
 interface Capture {
@@ -31,10 +32,12 @@ interface Capture {
 	n?: number;
 	peaks?: { Fx: number; Fy: number; Fz: number };
 	source?: string;
-	// Only on incomplete rows (#82): can Recover work, is it being recorded right now, is it mid-delete.
+	// Only on incomplete rows (#82): can Recover work, is it being recorded right now, is it mid-delete,
+	// is a recover or restore already working on it.
 	recoverable?: boolean;
 	recording?: boolean;
 	discarding?: boolean;
+	recovering?: boolean;
 }
 
 const base = () => getConfig().recorderUrl;
@@ -338,11 +341,15 @@ function queueLabel(item: QueuedRun): string {
 }
 
 const route = useRoute();
+// Read the wanted focus now, synchronously at setup: ui/focusLink.ts strips `?focus=` from the URL
+// after its 2 s wait, so on a slow /captures/browse the query is already gone by the time load()
+// resolves and checking it afterwards would never spotlight.
+const wantedFocus = focusIdFrom(route.query);
 onMounted(async () => {
 	refreshQueue();
 	await load();
 	// Arrived from the Connectivity doctor's "Open Local Captures": point at the incomplete rows.
-	if (route.query.focus === 'incomplete-captures') {
+	if (wantedFocus === 'incomplete-captures') {
 		await nextTick();
 		spotlight('incomplete-captures', { focus: false });
 	}
@@ -446,6 +453,7 @@ onMounted(async () => {
 					<span v-else class="tag warn">not uploaded</span>
 					<!-- Not part of the chain above: these say something else about the row. -->
 					<span v-if="c.recording" class="tag">recording now</span>
+					<span v-if="c.recovering && busy[c.id] !== 'recovering'" class="tag warn" title="A recover or restore is working on this recording right now">recovering</span>
 					<span v-if="remoteState(c.id)" class="tag" :class="remoteState(c.id) === 'complete' ? 'ok' : 'warn'"
 						:title="remoteState(c.id) === 'complete' ? 'A full copy of this recording is on the remote backup server' : 'Only the part of this recording that was streamed before the backup was interrupted is on the remote backup server'">{{ remoteState(c.id) === 'complete' ? 'also backed up remotely' : 'partial remote copy' }}</span>
 					<span v-if="c.source" class="tag dim">{{ c.source }}</span>
@@ -472,7 +480,7 @@ onMounted(async () => {
 				<button v-if="c.finalized" class="btn sm" :disabled="!!busy[c.id]" @click="openEdit(c)">
 					<span class="material-symbols-rounded">edit</span>Edit
 				</button>
-				<button v-if="!c.finalized && c.recoverable && !c.recording && !c.discarding" class="btn sm success" :disabled="!!busy[c.id]" title="Finalize this interrupted recording so it can be used" @click="recover(c)">
+				<button v-if="!c.finalized && c.recoverable && !c.recording && !c.discarding" class="btn sm success" :disabled="!!busy[c.id] || c.recovering" :title="c.recovering ? 'A recover or restore is already running for this recording' : 'Finalize this interrupted recording so it can be used'" @click="recover(c)">
 					<span class="material-symbols-rounded" :class="{ spin: busy[c.id] === 'recovering' }">{{ busy[c.id] === 'recovering' ? 'progress_activity' : 'healing' }}</span>
 					{{ busy[c.id] === 'recovering' ? 'Recovering…' : 'Recover' }}
 				</button>
@@ -480,7 +488,7 @@ onMounted(async () => {
 					<span class="material-symbols-rounded">{{ busy[c.id] === 'uploading' ? 'hourglass_top' : 'cloud_upload' }}</span>
 					{{ busy[c.id] === 'uploading' ? 'Uploading…' : 'Upload' }}
 				</button>
-				<button class="btn sm danger quiet" :disabled="!!busy[c.id] || c.recording || c.discarding" @click="remove(c)">
+				<button class="btn sm danger quiet" :disabled="!!busy[c.id] || c.recording || c.discarding || c.recovering" :title="c.recovering ? 'Can\'t delete while a recover or restore is running — wait for it to finish' : c.recording ? 'Can\'t delete the recording in progress' : c.discarding ? 'Already being deleted' : ''" @click="remove(c)">
 					<span class="material-symbols-rounded">{{ busy[c.id] === 'deleting' ? 'hourglass_top' : 'delete' }}</span>
 					{{ busy[c.id] === 'deleting' ? 'Deleting…' : 'Delete' }}
 				</button>

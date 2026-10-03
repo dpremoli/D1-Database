@@ -37,9 +37,10 @@ def _write_raw(path: str, rows: int) -> bytes:
 
 
 class _Remote:
-    def __init__(self, raw: bytes, config: dict | None, cut_after: int | None = None):
+    def __init__(self, raw: bytes, config: dict | None, cut_after: int | None = None, on_raw=None):
         outer = self
         self.raw, self.config, self.cut_after = raw, config, cut_after
+        self.on_raw = on_raw  # called (in the server thread) when the raw download is requested
 
         class H(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
@@ -47,6 +48,8 @@ class _Remote:
 
             def do_GET(self):
                 if self.path.endswith("/raw"):
+                    if outer.on_raw:
+                        outer.on_raw()
                     self.send_response(200)
                     self.send_header("Content-Length", str(len(outer.raw)))
                     self.end_headers()
@@ -79,9 +82,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "_session", None)
     remotes: list[_Remote] = []
 
-    def make(raw: bytes, config="default", cut_after=None) -> _Remote:
+    def make(raw: bytes, config="default", cut_after=None, on_raw=None) -> _Remote:
         cfg = RecordConfig(sample_rate=2000, sample_name="REMOTE-1").model_dump() if config == "default" else config
-        r = _Remote(raw, cfg, cut_after)
+        r = _Remote(raw, cfg, cut_after, on_raw)
         remotes.append(r)
         backup_mod.save_config(str(tmp_path), {"enabled": True, "server_url": r.url})
         return r
