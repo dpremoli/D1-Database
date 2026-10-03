@@ -99,6 +99,39 @@ def _read_json(path: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _save_json(path: str, data) -> None:
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        storage.atomic_write_json(path, data, indent=2)
+    except OSError:
+        pass
+
+
+def _load_device_config(path: str, default):
+    """Load a device config file from CONFIG_DIR, migrating it there from the captures folder.
+
+    labamp.json, nidaq_sim.json and nidaq_channels.json used to live in CAPTURES_ROOT, so moving
+    the recording folder (or a restart after the folder picker, #101) made them vanish and the
+    channel assignment silently re-autoassigned. They now live beside backup_config.json. When
+    the new file doesn't exist but an old one does, the old one is copied over (never moved or
+    deleted, so it stays as a fallback). A new file that exists but is unreadable is not migrated
+    over.
+    """
+    data = _load_json(path, None)
+    if data is not None or os.path.exists(path):
+        return default if data is None else data
+    name = os.path.basename(path)
+    for old_dir in (CAPTURES_ROOT, LEGACY_CONFIG_DIR):
+        old = os.path.join(old_dir, name)
+        if os.path.abspath(old) == os.path.abspath(path):
+            continue
+        legacy = _load_json(old, None)
+        if legacy is not None:
+            _save_json(path, legacy)
+            return legacy
+    return default
+
+
 def _load_captures_root() -> str:
     """Load the user-configured captures directory, falling back to the default.
 
@@ -204,7 +237,7 @@ DEFAULT_BACKUP_URL = "https://d1-server.tail54eeb6.ts.net/backup-ingest"
 # ---- LabAmp (2c) config + instance ----
 # The amp is link-local (reachable only from the acquisition PC) so the backend owns the HTTP
 # conversation. Defaults to a mock (no hardware here); switch mode=real on the rig.
-LABAMP_CONFIG_PATH = os.path.join(CAPTURES_ROOT, "labamp.json")
+LABAMP_CONFIG_PATH = os.path.join(CONFIG_DIR, "labamp.json")
 
 
 def _load_labamp_config() -> dict:
@@ -221,7 +254,8 @@ def _load_labamp_config() -> dict:
         "labamp_dac_bits": int(os.environ.get("LABAMP_DAC_BITS", "12")),
         "analog_fullscale_v": float(os.environ.get("ANALOG_FULLSCALE_V", "10.0")),
     }
-    cfg.update(_read_json(LABAMP_CONFIG_PATH) or {})
+    stored = _load_device_config(LABAMP_CONFIG_PATH, None)
+    cfg.update(stored if isinstance(stored, dict) else {})
     return cfg
 
 
@@ -2334,19 +2368,12 @@ async def labamp_post_config(body: dict) -> dict:
 # On dev machines with no DAQmx runtime the chassis is simulated (editable, persisted); on the rig
 # it enumerates real hardware. The channel model (roles + physical bindings) is persisted and, when
 # source="nidaq", feeds the recorder's channel list + per-channel gains at record start.
-NIDAQ_SIM_PATH = os.path.join(CAPTURES_ROOT, "nidaq_sim.json")
-NIDAQ_CHANNELS_PATH = os.path.join(CAPTURES_ROOT, "nidaq_channels.json")
-
-
-def _save_json(path: str, data) -> None:
-    try:
-        storage.atomic_write_json(path, data, indent=2)
-    except OSError:
-        pass
+NIDAQ_SIM_PATH = os.path.join(CONFIG_DIR, "nidaq_sim.json")
+NIDAQ_CHANNELS_PATH = os.path.join(CONFIG_DIR, "nidaq_channels.json")
 
 
 def _sim_layout() -> dict:
-    return _load_json(NIDAQ_SIM_PATH, dict(nidaq_enum.DEFAULT_SIM_LAYOUT))
+    return _load_device_config(NIDAQ_SIM_PATH, dict(nidaq_enum.DEFAULT_SIM_LAYOUT))
 
 
 def _devices() -> dict:
@@ -2354,7 +2381,7 @@ def _devices() -> dict:
 
 
 def _channel_config() -> list[dict]:
-    cfg = _load_json(NIDAQ_CHANNELS_PATH, None)
+    cfg = _load_device_config(NIDAQ_CHANNELS_PATH, None)
     if isinstance(cfg, dict) and isinstance(cfg.get("channels"), list):
         return cfg["channels"]
     # First run: auto-assign force-first from whatever devices are present.

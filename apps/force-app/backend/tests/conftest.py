@@ -11,6 +11,7 @@ later tests reading it would see that leftover state instead of the defaults the
 import pytest
 
 from app import backup as backup_mod
+from app import main as main_mod
 
 
 @pytest.fixture(autouse=True)
@@ -23,3 +24,18 @@ def isolate_backup_config(tmp_path_factory, monkeypatch):
     path = tmp_path_factory.mktemp("backup-config") / "backup_config.json"
     monkeypatch.setattr(backup_mod, "BACKUP_CONFIG_PATH", str(path))
     return path
+
+
+@pytest.fixture(autouse=True)
+def isolate_device_config(tmp_path_factory, monkeypatch):
+    """Point labamp.json / nidaq_*.json (and their migration sources) at a per-test temp dir.
+
+    Like the backup config, these live in the per-user config dir rather than under the captures
+    folder, so monkeypatching `main.CAPTURES_ROOT` no longer sandboxes them.
+    """
+    d = tmp_path_factory.mktemp("device-config")
+    monkeypatch.setattr(main_mod, "LABAMP_CONFIG_PATH", str(d / "labamp.json"))
+    monkeypatch.setattr(main_mod, "NIDAQ_SIM_PATH", str(d / "nidaq_sim.json"))
+    monkeypatch.setattr(main_mod, "NIDAQ_CHANNELS_PATH", str(d / "nidaq_channels.json"))
+    monkeypatch.setattr(main_mod, "LEGACY_CONFIG_DIR", str(d / "legacy-captures"))
+    return d
