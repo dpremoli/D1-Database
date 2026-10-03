@@ -29,9 +29,9 @@ brief.
 | Stream | Agent | State |
 |---|---|---|
 | 1 | Sonnet reviewer | in progress |
-| 2 | Sonnet reviewer | in progress |
+| 2 | Sonnet reviewer | done; raw report in `docs/reviews/2026-10-03-general-code-review/`; blockers 1 and 3 verified |
 | 3 | Sonnet reviewer | in progress |
-| 4 | — | pending |
+| 4 | Sonnet reviewer | in progress |
 | 5 | Sonnet reviewer | in progress |
 | 6 | — | pending |
 | 7 | — | pending |
