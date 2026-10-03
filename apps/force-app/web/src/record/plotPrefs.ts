@@ -58,25 +58,3 @@ export function loadPlotPrefs(): PlotPrefs {
 export function savePlotPrefs(p: PlotPrefs): void {
 	try { localStorage.setItem(PLOT_PREFS_KEY, JSON.stringify(p)); } catch { /* storage full or blocked: not worth an error */ }
 }
-
-/**
- * Coalesces a burst of changes (dragging a slider fires one per tick) into one write `ms` after
- * the last. `flush()` writes a pending change at once; call it when the page is going away.
- */
-export function createDebouncedSaver<T>(save: (v: T) => void, ms = 250) {
-	let timer: ReturnType<typeof setTimeout> | null = null;
-	let pending: (() => T) | null = null;
-	const flush = () => {
-		if (timer !== null) { clearTimeout(timer); timer = null; }
-		if (pending) { const get = pending; pending = null; save(get()); }
-	};
-	return {
-		/** Queue a write of `get()`, read when the write happens so it is the latest value. */
-		schedule(get: () => T) {
-			pending = get;
-			if (timer !== null) clearTimeout(timer);
-			timer = setTimeout(flush, ms);
-		},
-		flush,
-	};
-}

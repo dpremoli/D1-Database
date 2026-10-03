@@ -4,14 +4,14 @@
 import { computed, inject, reactive, ref, shallowRef, watch, type InjectionKey } from 'vue';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS, RecordClient } from './liveClient';
 import { api } from '../directusClient';
-import { buildSeriesEnvelope, parseCache, type Cache } from '@d1/force-plotting';
+import { buildSeriesEnvelope, debouncePublish, parseCache, type Cache } from '@d1/force-plotting';
 import { searchSamples, searchOperators, searchEquipment, searchTools, searchInserts, searchEdges, getMethods, resolveMachiningMethodId, type LookupItem } from './directusLookups';
 import { logRun, syncStatus } from './directusSync';
 import { alarmController } from './alarms';
 import { recordingPrefs } from './recordingPrefs';
 import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
-import { createDebouncedSaver, loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
+import { loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
 import { isFetchFailure } from '../netErrors';
@@ -96,8 +96,9 @@ export function createWorkspace() {
 	// Remembered across launches (#108), parsed defensively field by field (plotPrefs.ts).
 	const plot = reactive<PlotPrefs>(loadPlotPrefs());
 	// Written 250 ms after the last change, not on every slider tick; flushed when the page goes away.
-	const plotSaver = createDebouncedSaver<PlotPrefs>(savePlotPrefs);
-	watch(plot, () => plotSaver.schedule(() => ({ ...plot })), { deep: true });
+	// The reactive object itself is pushed, so the write serialises whatever it holds by then.
+	const plotSaver = debouncePublish<PlotPrefs>(savePlotPrefs, 250);
+	watch(plot, () => plotSaver.push(plot), { deep: true });
 	if (typeof window !== 'undefined') {
 		window.addEventListener('pagehide', plotSaver.flush);
 		window.addEventListener('beforeunload', plotSaver.flush);
