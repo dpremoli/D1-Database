@@ -4,6 +4,7 @@
 // opens the card catalog. The channel model (roles + physical bindings) drives what the recorder
 // captures. Simulated on dev machines, real hardware on the rig.
 import { onMounted, ref, computed } from 'vue';
+import { applyNidaqDevices } from '../record/nidaqHardware';
 import { nidaqApi, ROLE_COLORS, type Devices, type Channel, type CatalogCard, type Port, type Module } from './nidaqApi';
 import { promptAction } from '../ui/confirm';
 import VirtualChannelBuilder from './VirtualChannelBuilder.vue';
@@ -47,6 +48,7 @@ async function load() {
 	try {
 		const [d, ch, c] = await Promise.all([nidaqApi.devices(), nidaqApi.getChannels(), nidaqApi.catalog()]);
 		devices.value = d; channels.value = ch.channels; cards.value = c.cards;
+		applyNidaqDevices(d);   // keeps the Record page's NI-DAQ availability current
 	} catch (e: any) { err.value = e?.message || 'failed to load NI-DAQ config'; }
 	finally { loading.value = false; }
 }

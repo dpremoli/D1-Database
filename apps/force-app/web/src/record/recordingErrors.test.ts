@@ -53,6 +53,10 @@ describe('describeRecordingFailure', () => {
 	it('keeps the finalize and mid-run wording distinct', () => {
 		expect(describeRecordingFailure('finalize error: disk full', 'finalize').summary).toMatch(/can be recovered/);
 		expect(describeRecordingFailure('acquisition error: overrun', 'acquisition', 5000).rawKept).toBe(true);
+		// First chunk failed to process: rows are on disk even though the live counter is still 0.
+		const d = describeRecordingFailure('acquisition error: x', 'acquisition', 0);
+		expect(d.rawKept).toBe(true);
+		expect(d.summary).not.toMatch(/No data was captured|nothing was saved/);
 		// Older backend (no error_kind) with data: the finalize wording.
 		expect(describeRecordingFailure('boom', undefined, 10).title).toBe('Finalizing failed');
 	});

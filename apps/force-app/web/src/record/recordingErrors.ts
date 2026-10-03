@@ -92,7 +92,7 @@ export function describeRecordingFailure(error: string | null, kind: string | nu
 	if (k === 'acquisition') {
 		return {
 			title: 'Recording stopped with an error',
-			summary: 'Acquisition failed part-way through. The data captured up to that point was saved.',
+			summary: 'Acquisition failed part-way through. What was captured was kept — if it is not listed as a finished recording, recover it from Settings > Local Captures.',
 			details, rawKept: true,
 		};
 	}

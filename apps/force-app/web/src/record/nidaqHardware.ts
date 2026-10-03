@@ -32,16 +32,22 @@ export function nidaqUnavailableReason(d: NidaqDevicesReply | null | undefined):
 		: 'The NI-DAQmx driver isn\'t installed on this computer, so there is nothing to record from. Use Simulated, or record on the acquisition PC.';
 }
 
+/** Fold a /nidaq/devices reply into the shared state. The NI-DAQ page calls this with each reply it
+ *  loads, so "check again on the NI-DAQ page" (see nidaqUnavailableReason) is true: opening or
+ *  refreshing that page re-reads the hardware and the Record page's NI-DAQ button follows. */
+export function applyNidaqDevices(d: NidaqDevicesReply): void {
+	if (d.hardware_present === undefined) return; // older backend: say nothing rather than guess
+	nidaqHardware.hardwarePresent = !!d.hardware_present;
+	nidaqHardware.runtimeAvailable = !!d.runtime_available;
+	nidaqHardware.nimaxSimulated = !!d.nimax_simulated;
+	nidaqHardware.checked = true;
+}
+
 export async function checkNidaqPresence(baseUrl: string): Promise<void> {
 	try {
 		const res = await fetch(`${baseUrl}/nidaq/devices`);
 		if (!res.ok) return;
-		const d: NidaqDevicesReply = await res.json();
-		if (d.hardware_present === undefined) return; // older backend: say nothing rather than guess
-		nidaqHardware.hardwarePresent = !!d.hardware_present;
-		nidaqHardware.runtimeAvailable = !!d.runtime_available;
-		nidaqHardware.nimaxSimulated = !!d.nimax_simulated;
-		nidaqHardware.checked = true;
+		applyNidaqDevices(await res.json());
 	} catch { /* backend unreachable — leave it unknown */ }
 }
 
