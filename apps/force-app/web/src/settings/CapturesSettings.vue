@@ -3,8 +3,10 @@
 // save" deliberately leaves the raw on disk, and recovery.discard_session refuses to touch
 // finalized sessions — so until now nothing in the app could show what was there, let alone
 // remove it. This lists everything with sizes and upload state, and can delete or re-upload.
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
+import { useRoute } from 'vue-router';
 import { getConfig } from '../config';
+import { describeFetchError } from '../netErrors';
 import { api } from '../directusClient';
 import { uploadCaptureColdStart } from '../record/uploadCapture';
 import { discardQueued, listQueue, retryQueued, syncStatus, uploadQueuedAsMe, type QueuedRun } from '../record/directusSync';
@@ -13,10 +15,17 @@ import { OFFLINE_SESSION_UPLOAD_MESSAGE, hasServerSession, recorderFromExtra } f
 import { confirmAction } from '../ui/confirm';
 import EditCaptureMetadataDialog from './EditCaptureMetadataDialog.vue';
 import { matchUploaded, uploadedRowsSince } from './captureUploadState';
+import { remoteCopyLabel } from './backupLabels';
+import { fetchRemoteBackupStates } from '../recorderHttp';
 import { formatMegabytes } from '../format';
+import { canRevealPaths, copyText, revealPath } from '../localPaths';
+import { focusIdFrom } from '../ui/focusLink';
+import { spotlight } from '../ui/spotlight';
 
 interface Capture {
 	id: string;
+	/** Absolute folder on the recorder's disk (#96). */
+	dir?: string;
 	size_mb: number;
 	finalized: boolean;
 	files: Record<string, number>;
@@ -26,6 +35,12 @@ interface Capture {
 	n?: number;
 	peaks?: { Fx: number; Fy: number; Fz: number };
 	source?: string;
+	// Only on incomplete rows (#82): can Recover work, is it being recorded right now, is it mid-delete,
+	// is a recover or restore already working on it.
+	recoverable?: boolean;
+	recording?: boolean;
+	discarding?: boolean;
+	recovering?: boolean;
 }
 
 const base = () => getConfig().recorderUrl;
@@ -36,7 +51,7 @@ const totalMb = ref(0);
 const disk = ref<{ free_gb?: number; total_gb?: number }>({});
 const loading = ref(false);
 const error = ref('');
-const busy = ref<Record<string, string>>({});   // id -> 'deleting' | 'uploading'
+const busy = ref<Record<string, string>>({});   // id -> 'deleting' | 'uploading' | 'recovering'
 const rowMsg = ref<Record<string, string>>({});
 // Which captures already exist in Directus. Looked up once per load so the list can distinguish
 // "safe to delete, it's in the database" from "this is the only copy".
@@ -46,6 +61,19 @@ const uploaded = ref<Record<string, boolean>>({});
 const uploadedOpId = ref<Record<string, string>>({});
 const uploadedKnown = ref(false);
 const editing = ref<Capture | null>(null);
+// Ids that also exist on the remote backup server (a deleted-locally tombstone doesn't count: it
+// is only kept to undo the delete). null = couldn't tell (no server configured, or unreachable),
+// which must not read as "no remote copy" (#31 cross-link).
+const remoteIds = ref<Map<string, string> | null>(null);
+async function loadRemoteIds() {
+	try {
+		const r = await fetchRemoteBackupStates(base());
+		remoteIds.value = r.configured ? r.states : null;
+	} catch { remoteIds.value = null; }
+}
+const hasRemote = (id: string) => !!remoteIds.value?.has(id);
+// 'complete' = the whole recording; anything else (interrupted, unknown) is only a partial copy.
+const remoteState = (id: string): string | null => remoteIds.value?.get(id) ?? null;
 
 async function load() {
 	loading.value = true;
@@ -59,10 +87,9 @@ async function load() {
 		totalMb.value = data.total_size_mb || 0;
 		disk.value = data.disk || {};
 		void checkUploaded();
+		void loadRemoteIds();
 	} catch (e: any) {
-		error.value = /failed to fetch|load failed|networkerror/i.test(e?.message || '')
-			? "can't reach the recording backend — is it running?"
-			: e?.message || 'failed to list captures';
+		error.value = describeFetchError(e, 'failed to list captures');
 	} finally {
 		loading.value = false;
 	}
@@ -100,6 +127,8 @@ async function remove(c: Capture) {
 	const isUp = !!uploaded.value[c.id];
 	const warning = isUp
 		? 'It has been uploaded to the database, so the analysis record will remain.'
+		: remoteState(c.id) === 'complete'
+			? 'It has NOT been uploaded, but a copy is on the remote backup server — it stays there until the server\'s retention expires, and can be restored from Settings > Live Backup until then.'
 		: known
 			? 'It has NOT been uploaded — this is the only copy and it cannot be recovered.'
 			: "Its upload status is unknown (the database is unreachable), so this may be the only copy.";
@@ -111,6 +140,7 @@ async function remove(c: Capture) {
 			{ label: 'Capture', value: c.sample_name || c.id },
 			{ label: 'Size', value: formatMegabytes(c.size_mb) },
 			{ label: 'Uploaded to database', value: isUp ? 'yes' : known ? 'no' : 'unknown' },
+			...(remoteIds.value ? [{ label: 'Remote backup copy', value: remoteState(c.id) === 'complete' ? 'yes' : hasRemote(c.id) ? 'partial only' : 'no' }] : []),
 		],
 		confirmLabel: 'Delete permanently',
 		tone: 'danger',
@@ -125,6 +155,24 @@ async function remove(c: Capture) {
 		totalMb.value = Math.max(0, Number((totalMb.value - c.size_mb).toFixed(2)));
 	} catch (e: any) {
 		rowMsg.value[c.id] = `delete failed: ${e?.message || e}`;
+	} finally {
+		delete busy.value[c.id];
+	}
+}
+
+// Recover an interrupted recording: the same endpoint the Record page's banner uses. It finalizes
+// the raw capture (the original recording config is read back from manifest.json), after which the
+// row becomes an ordinary finalized capture (#82).
+async function recover(c: Capture) {
+	busy.value[c.id] = 'recovering';
+	rowMsg.value[c.id] = '';
+	try {
+		const res = await fetch(`${base()}/recovery/recover/${c.id}`, { method: 'POST' });
+		if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.detail || `HTTP ${res.status}`);
+		await load();
+		rowMsg.value[c.id] = 'recovered';
+	} catch (e: any) {
+		rowMsg.value[c.id] = `recover failed: ${e?.message || e}`;
 	} finally {
 		delete busy.value[c.id];
 	}
@@ -200,6 +248,22 @@ async function uploadAllUnsynced() {
 	if (!ok) return;
 	for (const c of pending) await upload(c);   // sequential: each is a multi-MB file upload
 }
+// #96: where a capture's files are. "Show in folder" needs the desktop app and a local recorder;
+// copying the path works everywhere.
+const canReveal = canRevealPaths();
+const rootMsg = ref('');
+async function copyPath(p: string, rowId?: string) {
+	const msg = (await copyText(p)) ? 'path copied' : 'copy failed: the clipboard is not available here';
+	if (rowId) rowMsg.value[rowId] = msg;
+	else rootMsg.value = msg;
+}
+async function showInFolder(p: string, rowId?: string) {
+	const err = await revealPath(p);
+	const msg = err ? `show in folder failed: ${err}` : '';
+	if (rowId) rowMsg.value[rowId] = msg;
+	else rootMsg.value = msg;
+}
+
 function fmtDate(mtime: number): string {
 	if (!mtime) return '—';
 	return new Date(mtime * 1000).toLocaleString();
@@ -273,7 +337,20 @@ function queueLabel(item: QueuedRun): string {
 	return rm.sample_name || rm.capture_id || item.collection;
 }
 
-onMounted(() => { load(); refreshQueue(); });
+const route = useRoute();
+// Read the wanted focus now, synchronously at setup: ui/focusLink.ts strips `?focus=` from the URL
+// after its 2 s wait, so on a slow /captures/browse the query is already gone by the time load()
+// resolves and checking it afterwards would never spotlight.
+const wantedFocus = focusIdFrom(route.query);
+onMounted(async () => {
+	refreshQueue();
+	await load();
+	// Arrived from the Connectivity doctor's "Open Local Captures": point at the incomplete rows.
+	if (wantedFocus === 'incomplete-captures') {
+		await nextTick();
+		spotlight('incomplete-captures', { focus: false });
+	}
+});
 </script>
 
 <template>
@@ -301,7 +378,16 @@ onMounted(() => { load(); refreshQueue(); });
 				Upload {{ unsynced.length }} unsynced
 			</button>
 		</div>
-		<p class="hint path" v-if="capturesRoot">{{ capturesRoot }}</p>
+		<div class="hint path" v-if="capturesRoot">
+			<span>{{ capturesRoot }}</span>
+			<button class="iconbtn" title="Copy path" aria-label="Copy path" @click="copyPath(capturesRoot)">
+				<span class="material-symbols-rounded">content_copy</span>
+			</button>
+			<button v-if="canReveal" class="iconbtn" title="Show in folder" aria-label="Show in folder" @click="showInFolder(capturesRoot)">
+				<span class="material-symbols-rounded">folder_open</span>
+			</button>
+			<span v-if="rootMsg" class="pathmsg" :class="{ bad: rootMsg.includes('failed') }">{{ rootMsg }}</span>
+		</div>
 
 		<p v-if="error" class="err">{{ error }}</p>
 
@@ -349,7 +435,7 @@ onMounted(() => { load(); refreshQueue(); });
 
 		<div v-if="!loading && !captures.length" class="empty">No recordings on this machine.</div>
 
-		<div v-for="c in captures" :key="c.id" class="row">
+		<div v-for="c in captures" :key="c.id" class="row" :data-focus="!c.finalized ? 'incomplete-captures' : undefined">
 			<div class="rmain">
 				<div class="rtop">
 					<span
@@ -357,11 +443,16 @@ onMounted(() => { load(); refreshQueue(); });
 						:title="c.finalized ? 'Click to edit this capture\'s metadata' : ''"
 						@click="c.finalized && openEdit(c)"
 					>{{ c.sample_name || c.id }}</span>
-					<span v-if="!c.finalized" class="tag warn" title="No summary.json — this recording was never finalized">incomplete</span>
+					<span v-if="!c.finalized" class="tag warn" title="No summary.json — this recording was never finalized. Recover it to keep the data.">incomplete</span>
 					<span v-else-if="!uploadedKnown" class="tag">upload state unknown</span>
 					<span v-else-if="uploaded[c.id]" class="tag ok">uploaded</span>
 					<span v-else-if="queuedCaptureIds.has(c.id)" class="tag">upload queued</span>
 					<span v-else class="tag warn">not uploaded</span>
+					<!-- Not part of the chain above: these say something else about the row. -->
+					<span v-if="c.recording" class="tag">recording now</span>
+					<span v-if="c.recovering && busy[c.id] !== 'recovering'" class="tag warn" title="A recover or restore is working on this recording right now">recovering</span>
+					<span v-if="remoteState(c.id)" class="tag" :class="remoteState(c.id) === 'complete' ? 'ok' : 'warn'"
+						:title="remoteState(c.id) === 'complete' ? 'A full copy of this recording is on the remote backup server' : 'Only the part of this recording that was streamed before the backup was interrupted is on the remote backup server'">{{ remoteState(c.id) === 'complete' ? 'also backed up remotely' : remoteCopyLabel(remoteState(c.id)) }}</span>
 					<span v-if="c.source" class="tag dim">{{ c.source }}</span>
 				</div>
 				<div class="rsub">
@@ -371,17 +462,30 @@ onMounted(() => { load(); refreshQueue(); });
 					<span v-if="c.n">{{ c.n.toLocaleString() }} samples</span>
 					<span>{{ fmtDate(c.mtime) }}</span>
 				</div>
+				<div v-if="c.dir" class="rpath">
+					<span class="mono" :title="c.dir">{{ c.dir }}</span>
+					<button class="iconbtn" title="Copy path" aria-label="Copy path" @click="copyPath(c.dir, c.id)">
+						<span class="material-symbols-rounded">content_copy</span>
+					</button>
+					<button v-if="canReveal" class="iconbtn" title="Show in folder" aria-label="Show in folder" @click="showInFolder(c.dir, c.id)">
+						<span class="material-symbols-rounded">folder_open</span>
+					</button>
+				</div>
 				<p v-if="rowMsg[c.id]" class="rmsg" :class="{ bad: rowMsg[c.id].includes('failed') }">{{ rowMsg[c.id] }}</p>
 			</div>
 			<div class="ract">
 				<button v-if="c.finalized" class="btn sm" :disabled="!!busy[c.id]" @click="openEdit(c)">
 					<span class="material-symbols-rounded">edit</span>Edit
 				</button>
+				<button v-if="!c.finalized && c.recoverable && !c.recording && !c.discarding" class="btn sm success" :disabled="!!busy[c.id] || c.recovering" :title="c.recovering ? 'A recover or restore is already running for this recording' : 'Finalize this interrupted recording so it can be used'" @click="recover(c)">
+					<span class="material-symbols-rounded" :class="{ spin: busy[c.id] === 'recovering' }">{{ busy[c.id] === 'recovering' ? 'progress_activity' : 'healing' }}</span>
+					{{ busy[c.id] === 'recovering' ? 'Recovering…' : 'Recover' }}
+				</button>
 				<button v-if="canUpload(c)" class="btn sm" :disabled="!!busy[c.id]" @click="upload(c)">
 					<span class="material-symbols-rounded">{{ busy[c.id] === 'uploading' ? 'hourglass_top' : 'cloud_upload' }}</span>
 					{{ busy[c.id] === 'uploading' ? 'Uploading…' : 'Upload' }}
 				</button>
-				<button class="btn sm danger quiet" :disabled="!!busy[c.id]" @click="remove(c)">
+				<button class="btn sm danger quiet" :disabled="!!busy[c.id] || c.recording || c.discarding || c.recovering" :title="c.recovering ? 'Can\'t delete while a recover or restore is running — wait for it to finish' : c.recording ? 'Can\'t delete the recording in progress' : c.discarding ? 'Already being deleted' : ''" @click="remove(c)">
 					<span class="material-symbols-rounded">{{ busy[c.id] === 'deleting' ? 'hourglass_top' : 'delete' }}</span>
 					{{ busy[c.id] === 'deleting' ? 'Deleting…' : 'Delete' }}
 				</button>
@@ -403,7 +507,15 @@ onMounted(() => { load(); refreshQueue(); });
 h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 .lead { margin: 0 0 18px; font-size: var(--fs-md); color: var(--text-dim); line-height: 1.5; }
 .hint { font-size: var(--fs-sm); color: var(--text-dim); }
-.path { margin: 6px 0 14px; font-family: var(--mono); word-break: break-all; }
+.path { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin: 6px 0 14px; font-family: var(--mono); word-break: break-all; }
+.pathmsg { font-family: var(--font); color: var(--ok); margin-left: 4px; }
+.pathmsg.bad { color: var(--danger); }
+.rpath { display: flex; align-items: center; gap: 2px; margin-top: 3px; min-width: 0; font-size: var(--fs-xs); color: var(--text-dim); }
+.rpath .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.iconbtn { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 24px; height: 24px; padding: 0;
+	color: var(--text-dim); background: none; border: 0; border-radius: 6px; cursor: pointer; }
+.iconbtn:hover { color: var(--text); background: var(--surface-2); }
+.iconbtn .material-symbols-rounded { font-size: var(--icon-xs); }
 .err { color: var(--danger); font-size: var(--fs-sm); }
 .summary { display: flex; align-items: flex-end; gap: 22px; padding: 12px 14px;
 	background: var(--surface); border: 1px solid var(--border); border-radius: 10px; flex-wrap: wrap; }

@@ -5,11 +5,32 @@
 
 -- ─── 1. COLLECTION ────────────────────────────────────────────────────────────
 INSERT INTO directus_collections (collection, icon, color, display_template, sort_field, sort, translations)
-VALUES ('campaigns','campaign','#3F51B5','{{name}}','start_date',26,
+VALUES ('campaigns','campaign','#3F51B5','{{name}}',NULL,26,
         '[{"language":"en-US","translation":"Campaigns","singular":"Campaign","plural":"Campaigns"}]')
 ON CONFLICT (collection) DO UPDATE SET
     icon=EXCLUDED.icon, color=EXCLUDED.color, display_template=EXCLUDED.display_template,
     sort_field=EXCLUDED.sort_field, sort=EXCLUDED.sort, translations=EXCLUDED.translations;
+
+-- No sort_field: it is Directus's drag-to-reorder column and would overwrite start_date
+-- (#115). The default order, newest first, is the global preset (bookmark/user/role NULL);
+-- an existing one keeps its columns and filter, only its sort is set.
+UPDATE directus_presets AS p
+SET layout = coalesce(p.layout, 'tabular'),
+    layout_query = (
+        CASE WHEN jsonb_typeof(p.layout_query::jsonb) = 'object' THEN p.layout_query::jsonb ELSE '{}'::jsonb END
+        || jsonb_build_object(
+            coalesce(p.layout, 'tabular'),
+            CASE WHEN jsonb_typeof(p.layout_query::jsonb -> coalesce(p.layout, 'tabular')) = 'object'
+                 THEN p.layout_query::jsonb -> coalesce(p.layout, 'tabular') ELSE '{}'::jsonb END
+            || '{"sort":["-start_date"]}'::jsonb)
+    )::json
+WHERE p.collection = 'campaigns' AND p.bookmark IS NULL AND p."user" IS NULL AND p.role IS NULL;
+INSERT INTO directus_presets (bookmark, "user", role, collection, layout, layout_query)
+SELECT NULL, NULL, NULL, 'campaigns', 'tabular', '{"tabular":{"sort":["-start_date"]}}'
+WHERE NOT EXISTS (
+    SELECT 1 FROM directus_presets AS p
+    WHERE p.collection = 'campaigns' AND p.bookmark IS NULL AND p."user" IS NULL AND p.role IS NULL
+);
 
 -- ─── 2. FIELDS ────────────────────────────────────────────────────────────────
 -- campaigns: full reset (new collection). Children: only the campaign_id field.

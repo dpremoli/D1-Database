@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { getConfig, getConfigDefaults, setConfigOverride, resetConfigOverride } from '../config';
 import OfflineModeCard from './OfflineModeCard.vue';
+import { confirmAction } from '../ui/confirm';
+import { formatMegabytes } from '../format';
+import { fetchRemoteBackupStates } from '../recorderHttp';
+import { remoteCopyLabel } from './backupLabels';
 
 interface Finding {
 	service: string;
@@ -11,6 +15,14 @@ interface Finding {
 	fix?: string;
 	fix_command?: string;
 	fixable?: string;
+	/** Label for the fix button when "Fix now" would undersell it (e.g. "Discard all…"). */
+	fix_label?: string;
+	/** Where the person can handle this by hand: an in-app route. */
+	link?: { to: string; label: string };
+	/** What a bulk fix would act on, so the confirmation can name it. */
+	items?: { id: string; sample_name?: string | null; raw_size_mb?: number; duration_sec?: number; started_iso?: string }[];
+	/** Still in progress (e.g. deletes running in the background) — not healthy yet. */
+	pending?: boolean;
 }
 
 const findings = ref<Finding[]>([]);
@@ -19,9 +31,23 @@ const lastChecked = ref('');
 const recorderDown = ref(false);
 const fixingId = ref('');
 
-async function runDoctor() {
-	loading.value = true;
-	findings.value = [];
+// A finding marked `pending` (discards still deleting in the background) means the answer isn't
+// final yet, so the doctor asks again by itself instead of settling on a half-true result (#83).
+let repollTimer: ReturnType<typeof setTimeout> | null = null;
+// A re-poll still in flight when the tab unmounts would otherwise re-arm the timer after the
+// cleanup below has already run, and keep polling forever.
+let unmounted = false;
+onBeforeUnmount(() => { unmounted = true; if (repollTimer) clearTimeout(repollTimer); });
+function scheduleRepoll() {
+	if (unmounted) return;
+	if (repollTimer) clearTimeout(repollTimer);
+	repollTimer = findings.value.some((f) => f.pending) ? setTimeout(() => { void runDoctor(true); }, 2500) : null;
+}
+
+async function runDoctor(quiet = false) {
+	// `quiet` (the automatic re-poll) keeps the current results on screen until the new ones land.
+	loading.value = !quiet;
+	if (!quiet) findings.value = [];
 	recorderDown.value = false;
 
 	const cfg = getConfig();
@@ -88,6 +114,7 @@ async function runDoctor() {
 		findings.value = list;
 		lastChecked.value = new Date().toLocaleTimeString();
 		loading.value = false;
+		scheduleRepoll();
 		return;
 	}
 
@@ -111,23 +138,68 @@ async function runDoctor() {
 
 	lastChecked.value = new Date().toLocaleTimeString();
 	loading.value = false;
+	scheduleRepoll();
 }
 
+// "Discard all…" for crashed recordings. This used to be a one-click "Fix now" that permanently
+// deleted every incomplete recording — including ones that still hold recoverable data — and then
+// re-ran the doctor, which (since deletes run in the background) reported "All systems healthy"
+// before anything was gone (#83). Now it lists exactly what goes and whether a remote copy exists.
 async function applyFix(f: Finding) {
 	if (!f.fixable) return;
-	fixingId.value = f.service;
-	try {
-		const base = getConfig().recorderUrl;
-		if (f.fixable === 'purge_incomplete') {
-			const incomplete = await fetch(`${base}/recovery/check`).then(r => r.json());
-			for (const s of incomplete.incomplete || []) {
-				await fetch(`${base}/recovery/discard/${s.id}`, { method: 'POST' });
-			}
-			await runDoctor();
+	const base = getConfig().recorderUrl;
+	if (f.fixable === 'purge_incomplete') {
+		// Fresh from the backend rather than the findings list, which may be a few minutes old. The
+		// remote-copy lookup is independent, so it runs alongside.
+		const [fresh, remote] = await Promise.all([freshIncomplete(base), remoteBackupIds(base)]);
+		const items = fresh ?? f.items ?? [];
+		if (!items.length) { await runDoctor(); return; }
+		const ok = await confirmAction({
+			title: `Discard ${items.length} incomplete recording${items.length === 1 ? '' : 's'}?`,
+			message: 'These recordings were interrupted and never finalized. Discarding deletes their captured data from this machine — recovering them instead (Settings > Local Captures) keeps it.',
+			detail: remote.known
+				? 'A full remote copy stays on the backup server until it expires there; a partial one holds only what was streamed before the backup was interrupted. Recordings with no remote copy cannot be recovered once discarded.'
+				: 'The backup server could not be checked, so any of these may be the only copy. This cannot be undone.',
+			stats: items.map((s) => ({
+				label: s.sample_name || s.id,
+				value: [
+					s.raw_size_mb != null ? formatMegabytes(s.raw_size_mb) : '',
+					s.duration_sec != null ? `${s.duration_sec.toFixed(0)}s` : '',
+					remote.known ? remoteCopyLabel(remote.ids.get(s.id)) : '',
+				].filter(Boolean).join(' · '),
+			})),
+			confirmLabel: 'Discard all',
+			tone: 'danger',
+		});
+		if (!ok) return;
+		fixingId.value = f.service;
+		try {
+			for (const s of items) await fetch(`${base}/recovery/discard/${s.id}`, { method: 'POST' });
+		} catch { /* the re-run below reports whatever is still there */ } finally {
+			fixingId.value = '';
 		}
-	} catch { /* ignore */ } finally {
-		fixingId.value = '';
+		await runDoctor();
 	}
+}
+
+// The incomplete recordings the backend sees right now, or null when it can't be asked (the caller
+// falls back to the list the doctor gave it).
+async function freshIncomplete(base: string): Promise<NonNullable<Finding['items']> | null> {
+	try {
+		const r = await fetch(`${base}/recovery/check`);
+		if (!r.ok) return null;
+		return ((await r.json()).incomplete || []).map((s: any) => ({
+			id: s.id, sample_name: s.manifest?.config?.sample_name,
+			raw_size_mb: s.raw?.raw_size_mb, duration_sec: s.raw?.duration_sec,
+		}));
+	} catch { return null; }
+}
+
+async function remoteBackupIds(base: string): Promise<{ known: boolean; ids: Map<string, string> }> {
+	try {
+		const r = await fetchRemoteBackupStates(base);
+		return { known: true, ids: r.configured ? r.states : new Map() };
+	} catch { return { known: false, ids: new Map() }; }
 }
 
 const copied = ref('');
@@ -173,7 +245,7 @@ onMounted(() => runDoctor());
 		<OfflineModeCard />
 
 		<div class="actions">
-			<button class="btn" :disabled="loading" @click="runDoctor">
+			<button class="btn" :disabled="loading" @click="runDoctor()">
 				<span class="material-symbols-rounded">{{ loading ? 'hourglass_top' : 'stethoscope' }}</span>
 				{{ loading ? 'Diagnosing…' : 'Run doctor' }}
 			</button>
@@ -203,9 +275,13 @@ onMounted(() => runDoctor());
 					<div v-if="f.fix" class="finding-fix">
 						<span class="material-symbols-rounded" style="font-size: var(--icon-xs);flex-shrink:0">build</span>
 						<span class="fix-text">{{ f.fix }}</span>
-						<button v-if="f.fixable" class="btn sm success" :disabled="fixingId === f.service" @click="applyFix(f)">
-							{{ fixingId === f.service ? 'Fixing…' : 'Fix now' }}
+						<router-link v-if="f.link" class="btn sm" :to="f.link.to">{{ f.link.label }}</router-link>
+						<button v-if="f.fixable" class="btn sm danger quiet" :disabled="fixingId === f.service" @click="applyFix(f)">
+							{{ fixingId === f.service ? 'Discarding…' : (f.fix_label || 'Fix now') }}
 						</button>
+					</div>
+					<div v-else-if="f.link" class="finding-fix">
+						<router-link class="btn sm" :to="f.link.to">{{ f.link.label }}</router-link>
 					</div>
 					<div v-if="f.fix_command" class="cmd-block">
 						<code>{{ f.fix_command }}</code>
@@ -218,14 +294,14 @@ onMounted(() => runDoctor());
 			</div>
 		</div>
 
-		<div v-if="!loading && findings.length && findings.every(f => f.status === 'ok' || f.status === 'info')" class="all-good">
+		<div v-if="!loading && findings.length && findings.every(f => (f.status === 'ok' || f.status === 'info') && !f.pending)" class="all-good">
 			<span class="material-symbols-rounded">verified</span>
 			All systems healthy
 		</div>
 
 		<h2 class="mt">Service endpoints</h2>
 		<p class="lead">Where the app connects to Directus and local services. Changes are saved to this browser and take effect immediately.</p>
-		<label v-for="f in epFields" :key="f.key" class="field">
+		<label v-for="f in epFields" :key="f.key" class="field" :data-focus="`endpoint-${f.key}`">
 			<span class="lbl">{{ f.label }}</span>
 			<input v-model="epForm[f.key]" spellcheck="false" />
 			<span class="ep-hint">{{ f.hint }}</span>

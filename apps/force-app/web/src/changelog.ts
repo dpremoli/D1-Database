@@ -9,6 +9,32 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.33',
+		date: '2026-10-03',
+		notes: [
+			'Long recordings no longer run out of memory when they are saved: the end-of-cut processing now reads the capture in blocks, so a multi-hour capture saves in a few hundred MB. Time stamps are now exact for long captures.',
+			'Fixed: the recorder could freeze silently after a few hundred requests. The app now also notices a backend that stops answering and restarts it, and offers to reload a window that crashes or hangs.',
+			'Choose any folder for local recordings (Settings > General). Local Captures shows each capture\'s folder, with "Show in folder" and a copy button.',
+			'Pop-out windows that were open when you quit reopen at the next start. Closing the main window now quits the app, because the pop-outs depend on it.',
+			'Connectivity Doctor: "crashed recordings" no longer deletes anything without asking. It lists each recording with its size and whether a backup exists, and says so while discarding is still in progress.',
+			'Local Captures: incomplete recordings have a Recover button, are named from their recording settings, and show when a remote backup exists.',
+			'Live Backup: the list of remote backups loads when you open the tab and says what each one is (fully backed up, partial, or deleted locally and when it expires). Retention is set on the backup server and shown read-only.',
+			'Restoring a backup never overwrites a local recording that holds data, and a download that is cut off is detected instead of being treated as complete.',
+			'A sample rate the NI-DAQ hardware cannot do is caught before recording starts, and the setting is highlighted. A failure to start is reported separately from a failure to save. NI-DAQ is greyed out when no hardware is connected.',
+			'Replay starts at the first sample of the cut, and the timeline shows cut and force-peak markers you can click to jump to.',
+			'Each force plot panel has its own time window, saved with the layout. Record plot options are remembered, and the bottom panel defaults to Tacho.',
+			'Fixed: the Tacho panel was empty once a cut finished and a flat line in replay. It now draws the cut\'s RPM in both, and says "No tacho signal in this recording" when the file has none.',
+			'Fixed: the live FRM map lost points after zooming or scrubbing, and the colour-scale histogram disappeared after scrubbing backwards. Pop-out windows no longer slow replay down.',
+			'The RPM gauge keeps a stable scale instead of jumping with every reading.',
+			'Plot page: switching force files no longer flashes or distorts the charts or shows the previous file\'s point cloud, switching Figure, Lite or Full shows loading progress, and dragging the crop handles on the end-of-cut plot is smooth.',
+			'Colour scale: unticking "symmetrical" or "always show zero" restores the original range, and the handles no longer get stuck.',
+			'Settings is a fixed-height page that scrolls inside itself, and links from hints and the Doctor open the right tab and highlight the setting.',
+			'The LabAmp and NI-DAQ pages show their last-known data at once while they refresh. Lookup lists mark the current and already-picked items.',
+			'Bug reports: pick several areas, the reported-issues list is kept between visits, and a new report appears in it immediately.',
+			'Lists in the database (samples, operations, tools and others) sort codes naturally, so F9 comes before F10.',
+		],
+	},
+	{
 		version: '0.1.32',
 		date: '2026-09-30',
 		notes: [

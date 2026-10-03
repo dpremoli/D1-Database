@@ -19,6 +19,9 @@ import { exportFrmFigure } from './frmExport';
 import { buildScaleLUT, colorizeValues, lutKey, type ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { histogramFrom, type Histogram } from './histogram';
+import LoadingOverlay from './LoadingOverlay.vue';
+import { createLoadToken } from './loadToken';
+import { sameStage, stageInfo, type LoadStage, type StageInfo } from './loadStage';
 import {
 	buildStaticAttributes, spiralUniformValues,
 	TURNING_SPIRAL_FRAG, TURNING_SPIRAL_VERT,
@@ -61,6 +64,7 @@ const emit = defineEmits<{
 	(e: 'histogram', v: Histogram): void;   // value distribution over the same auto-limits window, for ColorScaleEditor.vue's strip
 	(e: 'points', n: number): void;   // rendered point count (for the resolution readout)
 	(e: 'zscale', v: number): void;   // 3-finger vertical swipe adjusts the Z exaggeration
+	(e: 'stage', v: StageInfo | null): void;   // what the view is busy with (null = idle), for the host's busy mark (#102)
 }>();
 
 // `channel` wins when supplied; `axis` is the deprecated alias every existing caller still uses.
@@ -74,6 +78,11 @@ const effPath = computed<PathParams>(() => props.path ?? {
 
 const api = useForceHost().api;
 const loading = ref(true);
+// Download -> build, from the first request until the first frame of the new cloud is drawn. The
+// bare spinner used to vanish when the download finished and leave a blank canvas through the GPU
+// build (#102).
+const stage = ref<LoadStage | null>(null);
+watch(stage, (s) => emit('stage', stageInfo(s)));
 const error = ref<string | null>(null);
 const glRenderer = ref('');            // UNMASKED_RENDERER_WEBGL (for the software-GL badge)
 const softwareGL = ref(false);
@@ -86,15 +95,29 @@ const pointCount = ref(0);
 let raf = 0;
 let pendingRebuild = false;
 
+// Each load() takes a token and re-checks it after every await: this component stays mounted
+// across operation switches, so an older, slower download can finish after a newer one.
+const loadToken = createLoadToken();
 async function load(id: string) {
+	const mine = loadToken.next();
 	loading.value = true; error.value = null;
 	try {
 		let c = cacheGet(id);
 		if (!c) {
-			const res = await api.get(`/assets/${id}`, { responseType: 'arraybuffer' });
+			stage.value = { kind: 'download', loaded: 0, total: null };
+			const res = await api.get(`/assets/${id}`, {
+				responseType: 'arraybuffer',
+				onDownloadProgress: (e) => {
+					if (!loadToken.isCurrent(mine)) return;
+					const next: LoadStage = { kind: 'download', loaded: e.loaded, total: e.total ?? null };
+					if (!sameStage(stage.value, next)) stage.value = next;
+				},
+			});
+			if (!loadToken.isCurrent(mine)) return;   // superseded while downloading: emit nothing, touch nothing
 			c = parseCache(res.data as ArrayBuffer);
 			cachePut(id, c);
 		}
+		stage.value = { kind: 'build' };
 		cache.value = c;
 		emit('loaded', {
 			csSec: c.csSec, ceSec: c.ceSec, feed: c.feed, diam: c.diam,
@@ -103,10 +126,12 @@ async function load(id: string) {
 		resetView();
 		nextTick(() => { setupRenderer(); scheduleRebuild(); });
 	} catch (e: any) {
+		if (!loadToken.isCurrent(mine)) return;
 		error.value = e?.message || 'failed to load live cache';
 		cache.value = null;
+		stage.value = null;
 	} finally {
-		loading.value = false;
+		if (loadToken.isCurrent(mine)) loading.value = false;
 	}
 }
 // NOT immediate: an immediate watch runs during setup(), and on the precached (cache
@@ -118,7 +143,7 @@ async function load(id: string) {
 watch(() => props.cacheFileId, (id) => { if (id && !props.cacheOverride) load(id); });
 // Compare mode: the filtered pane's data arrives pre-parsed from the filter-service.
 watch(() => props.cacheOverride, (c) => {
-	if (c) { cache.value = c; loading.value = false; error.value = null; nextTick(() => { setupRenderer(); scheduleRebuild(); }); }
+	if (c) { loadToken.cancel(); cache.value = c; loading.value = false; error.value = null; nextTick(() => { setupRenderer(); scheduleRebuild(); }); }
 });
 
 // ---- interactive view transform (equal-aspect, world = mm) ---------------------
@@ -561,6 +586,7 @@ function scheduleDraw() {
 		if (pendingRebuild) { pendingRebuild = false; pendingRecolor = false; rebuild(); }
 		else if (pendingRecolor) { pendingRecolor = false; recolorCpu(); }
 		draw();
+		if (stage.value?.kind === 'build') stage.value = null;   // the new cloud is on screen
 	});
 }
 // Coalesce a rebuild into the next frame (geometry change).
@@ -649,7 +675,13 @@ function teardownRenderer() {
 	gpuUploaded = false;
 	ready = false;
 }
-onBeforeUnmount(teardownRenderer);
+onBeforeUnmount(() => {
+	loadToken.cancel();
+	// The stage watcher is already stopped by now, so say "idle" directly: otherwise the host's busy
+	// bar stays on after a mid-load unmount.
+	if (stage.value) emit('stage', null);
+	teardownRenderer();
+});
 onDeactivated(teardownRenderer);
 onActivated(() => { if (!ready) nextTick(() => { setupRenderer(); scheduleRebuild(); }); });
 
@@ -848,7 +880,7 @@ function onUp(ev: PointerEvent) {
 
 <template>
 	<div class="frm-cloud">
-		<div v-if="loading" class="fc-msg"><v-progress-circular indeterminate small /></div>
+		<LoadingOverlay v-if="loading || stage" :stage="stage" />
 		<div v-else-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
 		<canvas v-show="!loading && !error" ref="canvasEl"
 			:class="{ rect: rectTool }"

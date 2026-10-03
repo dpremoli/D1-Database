@@ -26,9 +26,8 @@ Other places the app keeps data:
 
 | What | Where (Windows) | Override |
 |---|---|---|
-| storage and backup settings | `%LOCALAPPDATA%\force-app` | `FORCE_APP_CONFIG_DIR` |
+| storage and backup settings, NI-DAQ channel map (`nidaq_channels.json`), simulated chassis, LabAmp settings | `%LOCALAPPDATA%\force-app` | `FORCE_APP_CONFIG_DIR` |
 | `backend.log` (+3 rotated) | Electron's `userData\logs` | `FORCE_APP_LOG_DIR` |
-| NI-DAQ channel map | `nidaq_channels.json` on the capture drive | — |
 | run records waiting to sync | the app's local storage | — |
 
 ## Local captures

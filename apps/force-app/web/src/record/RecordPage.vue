@@ -39,12 +39,17 @@ const PANEL_TYPES: Record<string, { title: string; icon: string; single?: boolea
 	frm: { title: 'FRM Map', icon: 'fingerprint', w: 4, h: 19 },
 	polar: { title: 'Polar Plot', icon: 'radar', w: 4, h: 16 },
 };
-type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: PlotMode; channels?: string[] };
+// windowSec: a Force panel's own time window (#34), persisted with the layout. Absent = follow the
+// workspace default (w.plot.windowSec).
+type Inst = { i: string; type: string; x: number; y: number; w: number; h: number; mode?: PlotMode; channels?: string[]; windowSec?: number };
 const DEFAULT_LAYOUT: Inst[] = [
 	{ i: 'options', type: 'options', x: 0, y: 0, w: 2, h: 28 },
 	{ i: 'overview', type: 'overview', x: 2, y: 0, w: 6, h: 3 },
 	{ i: 'force', type: 'force', x: 2, y: 3, w: 6, h: 12, mode: 'time', channels: ['Fx', 'Fy', 'Fz'] },
-	{ i: 'fft', type: 'force', x: 2, y: 15, w: 6, h: 13, mode: 'fft', channels: ['Fx', 'Fy', 'Fz'] },
+	// #108: the bottom plot defaults to the Tacho signal over time (was an Fx/Fy/Fz spectrum). Only new
+	// layouts and "Reset layout" pick this up: LS_KEY is deliberately NOT bumped, which would wipe
+	// every user's saved arrangement just to change one default.
+	{ i: 'tacho', type: 'force', x: 2, y: 15, w: 6, h: 13, mode: 'time', channels: ['Tacho'] },
 	{ i: 'frm', type: 'frm', x: 8, y: 0, w: 4, h: 20 },
 	{ i: 'rpm', type: 'rpm', x: 8, y: 20, w: 4, h: 8 },
 ];
@@ -263,7 +268,19 @@ function dismissRecovery(id: string) {
 	dismissedRecoveryIds.value.add(id);
 	localStorage.setItem(DISMISSED_RECOVERY_LS_KEY, JSON.stringify([...dismissedRecoveryIds.value]));
 }
-const visibleRecoveryItems = computed(() => recoveryItems.value.filter((s) => !dismissedRecoveryIds.value.has(s.id)));
+// #83: an ignored capture used to vanish from here for good while the Connectivity doctor kept
+// flagging it, with no way back to it from this page. Ignored ones are counted and can be shown
+// again (per capture, or all at once).
+function unignoreRecovery(id: string) {
+	dismissedRecoveryIds.value.delete(id);
+	localStorage.setItem(DISMISSED_RECOVERY_LS_KEY, JSON.stringify([...dismissedRecoveryIds.value]));
+}
+const showIgnoredRecovery = ref(false);
+const ignoredRecoveryCount = computed(() => recoveryItems.value.filter((s) => dismissedRecoveryIds.value.has(s.id)).length);
+const visibleRecoveryItems = computed(() => recoveryItems.value.filter(
+	(s) => showIgnoredRecovery.value || !dismissedRecoveryIds.value.has(s.id),
+));
+const recoveryBannerShown = computed(() => visibleRecoveryItems.value.length > 0 || ignoredRecoveryCount.value > 0);
 
 // #36: ResizeObserver only reports the OBSERVED element's own box size changing -- a banner above
 // the grid appearing/disappearing shifts the grid's top (via normal document flow) without
@@ -277,7 +294,7 @@ const visibleRecoveryItems = computed(() => recoveryItems.value.filter((s) => !d
 // error boundary swallowed it, so the page still rendered -- but dep collection aborted at the
 // throw, leaving this watcher permanently blind to the recovery banner (it kept the diskAction
 // dep, read before the throw, which is why it looked half-working).
-watch([() => !!st.diskAction, () => visibleRecoveryItems.value.length > 0], () => measureGrid(), { flush: 'post' });
+watch([() => !!st.diskAction, () => recoveryBannerShown.value], () => measureGrid(), { flush: 'post' });
 
 const recoveryBusy = ref<Record<string, boolean>>({});
 // Recover/discard on a crashed session's raw.d1raw can take a while for a large/long-running
@@ -487,8 +504,8 @@ onBeforeUnmount(() => {
 			</div>
 
 			<!-- Recovery banner for incomplete recordings found on startup -->
-			<div v-if="visibleRecoveryItems.length" class="recovery-banner">
-				<div class="rb-head">
+			<div v-if="recoveryBannerShown" class="recovery-banner">
+				<div v-if="visibleRecoveryItems.length" class="rb-head">
 					<span class="material-symbols-rounded">restore</span>
 					<b>{{ visibleRecoveryItems.length }} incomplete recording{{ visibleRecoveryItems.length > 1 ? 's' : '' }} found</b>
 					<span class="rb-hint">These recordings were interrupted by a crash or power failure. You can recover the data or discard them.</span>
@@ -508,9 +525,17 @@ onBeforeUnmount(() => {
 					<!-- #27: neither recovers nor discards -- just stops nagging about this one. The
 						 capture stays on disk exactly as-is (still visible to the health-doctor's
 						 "Crashed recordings" check if it's forgotten about entirely). -->
-					<button class="btn sm quiet" :disabled="!!recoveryBusy[s.id]" title="Deal with this later — stop showing it here, without recovering or discarding it" @click="dismissRecovery(s.id)">
+					<button v-if="dismissedRecoveryIds.has(s.id)" class="btn sm quiet" title="Ignored earlier — treat it like the others again" @click="unignoreRecovery(s.id)">
+						<span class="material-symbols-rounded">visibility</span>Stop ignoring
+					</button>
+					<button v-else class="btn sm quiet" :disabled="!!recoveryBusy[s.id]" title="Deal with this later — stop showing it here, without recovering or discarding it" @click="dismissRecovery(s.id)">
 						<span class="material-symbols-rounded">visibility_off</span>Ignore for now
 					</button>
+				</div>
+				<!-- #83: the Connectivity doctor still counts ignored captures, so say how many there are. -->
+				<div v-if="ignoredRecoveryCount" class="rb-ignored">
+					<span>{{ ignoredRecoveryCount }} ignored incomplete recording{{ ignoredRecoveryCount > 1 ? 's' : '' }} (the Connectivity doctor still lists them).</span>
+					<button class="btn sm quiet" @click="showIgnoredRecovery = !showIgnoredRecovery">{{ showIgnoredRecovery ? 'Hide ignored' : `Show ignored (${ignoredRecoveryCount})` }}</button>
 				</div>
 			</div>
 		</div>
@@ -608,6 +633,7 @@ onBeforeUnmount(() => {
 .rb-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .rb-head > .material-symbols-rounded { font-size: var(--icon-xl); color: var(--warn); }
 .rb-head b { font-size: var(--fs-lg); color: var(--text); }
+.rb-ignored { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--fs-sm); color: var(--text-dim); }
 .rb-hint { font-size: var(--fs-sm); color: var(--text-dim); }
 .rb-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; margin-bottom: 6px; }
 .rb-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
