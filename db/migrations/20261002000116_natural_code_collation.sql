@@ -17,6 +17,19 @@
 --     v_project_rollup selects o.* in a CTE, which Postgres expanded when migration 050
 --     ran; it is written out here as that expansion, so the stored definition is unchanged
 --     and the later columns' down migrations are not blocked by the view.
+--   * The project rollup is covered too. v_project_rollup UNIONs the natural_sort codes
+--     (pass_code, tool_code, sample_code, ...) with alloy_code and equipment_code, and the
+--     project_rollup cache table (the one Directus shows, refreshed from the view) stores the
+--     code as plain TEXT, so ordering it still compared text. The view's code column is now
+--     explicitly COLLATE natural_sort (an explicit collation wins in a UNION, rather than
+--     relying on the default collation losing the implicit-collation tie-break) and
+--     project_rollup.code is natural_sort too. refresh_project_rollup() needs no change: it
+--     copies the view's rows, and a collation only affects comparison, not the stored text.
+--   * alloy_code, equipment_code and campaign_code are human-readable codes that Directus
+--     lists and sorts ("FAST-2" < "FAST-10"), so they get natural_sort as well. Nothing else
+--     depends on their collation: the unique indexes on alloy_code / equipment_code are
+--     rebuilt (equality stays byte-wise) and the views that read them are dropped and
+--     recreated here.
 --   * code_sort (migration 085, a generated zero-padded copy of the code) reads
 --     sample_code / pass_code, so it is dropped and re-added with the same expression,
 --     same values and default collation. The Force App still sorts its sample picker on it.
@@ -49,6 +62,11 @@ ALTER TABLE cutting_inserts ALTER COLUMN insert_code TYPE VARCHAR(64) COLLATE na
 ALTER TABLE insert_edges ALTER COLUMN edge_code TYPE VARCHAR(64) COLLATE natural_sort;
 ALTER TABLE raw_stock_lots ALTER COLUMN lot_code TYPE VARCHAR(64) COLLATE natural_sort;
 ALTER TABLE projects ALTER COLUMN project_code TYPE VARCHAR(32) COLLATE natural_sort;
+ALTER TABLE materials ALTER COLUMN alloy_code TYPE VARCHAR(32) COLLATE natural_sort;
+ALTER TABLE equipment ALTER COLUMN equipment_code TYPE VARCHAR(64) COLLATE natural_sort;
+ALTER TABLE campaigns ALTER COLUMN campaign_code TYPE TEXT COLLATE natural_sort;
+-- The project_rollup cache (migration 051) is what Directus lists; its code column is TEXT.
+ALTER TABLE project_rollup ALTER COLUMN code TYPE TEXT COLLATE natural_sort;
 
 -- 3. Re-add code_sort exactly as migration 085 defined it (default collation).
 ALTER TABLE manufacturing_operations
@@ -320,7 +338,7 @@ WITH ops AS (
     WHERE COALESCE(o.project_id, c.project_id) IS NOT NULL
 )
 SELECT md5('operation:' || operation_id::text) AS row_id, proj AS project_id,
-       'operation'::text AS kind, pass_code AS code,
+       'operation'::text AS kind, pass_code COLLATE natural_sort AS code,
        machining_operation_subtype AS detail, campaign_id
 FROM ops
 UNION ALL
@@ -381,6 +399,10 @@ ALTER TABLE cutting_inserts ALTER COLUMN insert_code TYPE VARCHAR(64) COLLATE pg
 ALTER TABLE insert_edges ALTER COLUMN edge_code TYPE VARCHAR(64) COLLATE pg_catalog."default";
 ALTER TABLE raw_stock_lots ALTER COLUMN lot_code TYPE VARCHAR(64) COLLATE pg_catalog."default";
 ALTER TABLE projects ALTER COLUMN project_code TYPE VARCHAR(32) COLLATE pg_catalog."default";
+ALTER TABLE materials ALTER COLUMN alloy_code TYPE VARCHAR(32) COLLATE pg_catalog."default";
+ALTER TABLE equipment ALTER COLUMN equipment_code TYPE VARCHAR(64) COLLATE pg_catalog."default";
+ALTER TABLE campaigns ALTER COLUMN campaign_code TYPE TEXT COLLATE pg_catalog."default";
+ALTER TABLE project_rollup ALTER COLUMN code TYPE TEXT COLLATE pg_catalog."default";
 
 ALTER TABLE manufacturing_operations
     ADD COLUMN code_sort TEXT GENERATED ALWAYS AS (

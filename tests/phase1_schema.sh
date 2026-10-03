@@ -154,15 +154,21 @@ nat_down=$(awk '/-- migrate:down/{f=1;next}f' "$NAT")
 run_eq "natural_sort is an ICU collation" \
     "SELECT count(*) FROM pg_collation WHERE collname = 'natural_sort' AND collprovider = 'i'" \
     "1"
-run_eq "the 8 code columns use natural_sort" \
+run_eq "the 12 code columns use natural_sort" \
     "SELECT count(*) FROM information_schema.columns
      WHERE table_schema = 'public' AND collation_name = 'natural_sort'
        AND (table_name, column_name) IN (
            ('physical_samples','sample_code'), ('manufacturing_operations','pass_code'),
            ('tools','tool_code'), ('cutting_inserts','insert_code'),
            ('tool_boxes','tool_box_code'), ('insert_edges','edge_code'),
-           ('raw_stock_lots','lot_code'), ('projects','project_code'))" \
-    "8"
+           ('raw_stock_lots','lot_code'), ('projects','project_code'),
+           ('materials','alloy_code'), ('equipment','equipment_code'),
+           ('campaigns','campaign_code'), ('project_rollup','code'))" \
+    "12"
+run_eq "v_project_rollup.code is natural_sort" \
+    "SELECT c.collname FROM pg_attribute a JOIN pg_collation c ON c.oid = a.attcollation
+     WHERE a.attrelid = 'v_project_rollup'::regclass AND a.attname = 'code'" \
+    "natural_sort"
 run_eq "code_sort is still generated, in the default collation" \
     "SELECT count(*) FROM information_schema.columns
      WHERE table_schema = 'public' AND column_name = 'code_sort' AND is_generated = 'ALWAYS'
@@ -188,14 +194,41 @@ SELECT 'suffix:' || string_agg(substring(sample_code FROM 'F[0-9]+$'), '<' ORDER
 SELECT 'view:' || string_agg(split_part(sample_code, '-', 1), '<' ORDER BY sample_code)
   FROM v_complete_sample_history WHERE sample_code LIKE '%-TESTNAT-MF-%';
 SELECT 'code_sort:' || code_sort FROM physical_samples WHERE sample_code = '9-TESTNAT-MF-2026-10-1';
+-- project rollup: the cache table Directus shows and the live view it is refreshed from
+-- (the operations trigger refreshes project_rollup on insert)
+INSERT INTO projects (project_code, project_name) VALUES ('ZZ-TESTNAT', 'natural rollup probe');
+INSERT INTO physical_samples (sample_code) VALUES ('TESTNAT-ROLLUP-SAMPLE');
+INSERT INTO manufacturing_operations (method_id, project_id, sample_id, pass_code)
+SELECT (SELECT method_id FROM manufacturing_methods LIMIT 1),
+       (SELECT project_id FROM projects WHERE project_code = 'ZZ-TESTNAT'),
+       (SELECT sample_id FROM physical_samples WHERE sample_code = 'TESTNAT-ROLLUP-SAMPLE'),
+       c
+FROM unnest(ARRAY['1000-TESTNATRU-MF-1', '151-TESTNATRU-MF-1', '99-TESTNATRU-MF-1',
+                  '10-TESTNATRU-MF-1', '9-TESTNATRU-MF-1',
+                  '9-TESTNATRU-MR-F10', '9-TESTNATRU-MR-F9']) AS c;
+SELECT 'rollup_table:' || string_agg(split_part(code, '-', 1), '<' ORDER BY code)
+  FROM project_rollup WHERE kind = 'operation' AND code LIKE '%-TESTNATRU-MF-%';
+SELECT 'rollup_table_suffix:' || string_agg(substring(code FROM 'F[0-9]+$'), '<' ORDER BY code)
+  FROM project_rollup WHERE kind = 'operation' AND code LIKE '%-TESTNATRU-MR-%';
+SELECT 'rollup_view:' || string_agg(split_part(code, '-', 1), '<' ORDER BY code)
+  FROM v_project_rollup WHERE kind = 'operation' AND code LIKE '%-TESTNATRU-MF-%';
+SELECT 'rollup_view_suffix:' || string_agg(substring(code FROM 'F[0-9]+$'), '<' ORDER BY code)
+  FROM v_project_rollup WHERE kind = 'operation' AND code LIKE '%-TESTNATRU-MR-%';
 SELECT 'unique:' || count(*) FROM physical_samples WHERE sample_code = '10-TESTNAT-MF-2026-10-1';
 $nat_down
 SELECT 'down_columns:' || count(*) FROM information_schema.columns
   WHERE table_schema = 'public' AND collation_name = 'natural_sort';
 SELECT 'down_collation:' || count(*) FROM pg_collation WHERE collname = 'natural_sort';
+SELECT 'down_rollup_collation:' || count(*) FROM information_schema.columns
+  WHERE table_schema = 'public' AND table_name = 'project_rollup' AND column_name = 'code'
+    AND collation_name IS NULL;
 $nat_up
 SELECT 'reup_order:' || string_agg(split_part(sample_code, '-', 1), '<' ORDER BY sample_code)
   FROM physical_samples WHERE sample_code LIKE '%-TESTNAT-MF-%';
+SELECT 'reup_rollup_table:' || string_agg(split_part(code, '-', 1), '<' ORDER BY code)
+  FROM project_rollup WHERE kind = 'operation' AND code LIKE '%-TESTNATRU-MF-%';
+SELECT 'reup_rollup_view:' || string_agg(split_part(code, '-', 1), '<' ORDER BY code)
+  FROM v_project_rollup WHERE kind = 'operation' AND code LIKE '%-TESTNATRU-MF-%';
 SELECT 'reup_views:' || count(*) FROM pg_views
   WHERE schemaname = 'public' AND viewname IN ('v_project_rollup','v_complete_sample_history',
     'v_manufacturing_operations_full','v_sample_genealogy_flat','v_stock_provenance',
@@ -209,9 +242,16 @@ nat_check "suffix:F9<F10" "later digit runs too: ...-F9 < ...-F10"
 nat_check "view:9<10<99<151<1000" "views inherit the ordering (v_complete_sample_history)"
 nat_check "code_sort:00000009-TESTNAT-MF-2026-10-1" "code_sort keeps its zero-padded value"
 nat_check "unique:1" "equality is unchanged"
+nat_check "rollup_table:9<10<99<151<1000" "project_rollup (the Directus cache table) sorts by number: 9 < 10 < 99 < 151 < 1000"
+nat_check "rollup_table_suffix:F9<F10" "project_rollup: ...-F9 < ...-F10"
+nat_check "rollup_view:9<10<99<151<1000" "v_project_rollup sorts by number: 9 < 10 < 99 < 151 < 1000"
+nat_check "rollup_view_suffix:F9<F10" "v_project_rollup: ...-F9 < ...-F10"
 nat_check "down_columns:0" "down: code columns back on the default collation"
 nat_check "down_collation:0" "down: collation dropped"
 nat_check "reup_order:9<10<99<151<1000" "up again: natural ordering restored"
+nat_check "down_rollup_collation:1" "down: project_rollup.code back on the default collation"
+nat_check "reup_rollup_table:9<10<99<151<1000" "up again: project_rollup natural ordering restored"
+nat_check "reup_rollup_view:9<10<99<151<1000" "up again: v_project_rollup natural ordering restored"
 nat_check "reup_views:7" "up again: all 7 dependent views recreated"
 
 echo "== Campaigns layer (trials + testing campaigns) =="
