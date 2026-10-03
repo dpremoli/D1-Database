@@ -64,7 +64,7 @@ Each stream works in its own worktree under `.claude/worktrees/` on branch
 | F | `agent-a091876a6e38fc188` | merged (`de8e4b1`); review clean, nit fixed in `6bad005` |
 | Integration | `agent-ae500a5076c4b6316` | merged; cross-stream review blocker (folder switch during restore) fixed in `a7fba27` |
 | /simplify | `agent-a1832224d6e0ac779`, `agent-a767db3daae16117c` | merged (`6715e7a`, `97f2709`); lint fixed in `6080895` |
-| /code-review fixes | backend `agent-a87bebd62e1671252`, web/desktop `agent-a94d7341682b49027`, db `agent-a25eede646ce867e3` | in progress: 9 findings (restore race, sidecar exit, scan_incomplete, tacho read-ahead, Tacho default panel, enumerate_devices, tombstone after restore, project_rollup collation, mark-deleted meta) |
+| /code-review fixes | backend `agent-a87bebd62e1671252`, web/desktop `agent-a94d7341682b49027`, db `agent-a25eede646ce867e3` | merged (`0c2feee`, `1bf65bf`, `94553af`): all 9 findings fixed, with tests that fail on the old code |
 
 ### A. Finalize at constant memory — #79
 - `finalize.py`/`dsp.py`: stream the memmap in blocks (gains, peaks, clipping, axis sums,
@@ -155,8 +155,9 @@ Each stream works in its own worktree under `.claude/worktrees/` on branch
 
 Progress (2026-10-03): all five steps are done; the PR is dpremoli/D1-Database#117. All streams are merged, each stream and the merged
 whole were reviewed and their findings fixed, every suite passes (including the slow 2 GB
-finalize test, run once), and the 0.1.33 changelog and version bump are in. 33 issues are closed;
-#84 #86 #96 #101 #109 stay open for a check on real equipment, and #100 #67 #31 are partial.
+finalize test), and the 0.1.33 changelog and version bump are in. After /simplify and /code-review
+(2026-10-03), 29 issues are closed. #84 #86 #96 #101 #109 stay open for a check on real
+equipment. #30 #31 #67 #79 #100 #108 #110 are partial; see each issue's comment for what is left.
 
 1. Merge every stream into `claude/trusting-euler-ku2z3z` and resolve conflicts.
 2. Code review of the whole diff (correctness first), and fix the findings.
