@@ -299,3 +299,99 @@ def test_purge_expired(client, tmp_path, monkeypatch):
     srv._purge_expired()
 
     assert not os.path.exists(os.path.join(str(tmp_path), "old-sess"))
+
+
+def test_session_info_reports_expiry(client, tmp_path):
+    import server as srv
+
+    client.post("/ingest/start", json={"session_id": "exp", "header_hex": _make_header().hex()})
+    info = client.get("/sessions/exp/info").json()
+    assert info["expires_at"] == pytest.approx(info["updated_at"] + srv.RETENTION_HOURS * 3600)
+
+
+def test_mark_deleted_tombstones_and_restarts_the_retention_clock(client, tmp_path):
+    import server as srv
+
+    client.post("/ingest/start", json={"session_id": "gone", "header_hex": _make_header().hex()})
+    client.post("/ingest/finish", json={"session_id": "gone"})
+    # Backdate, so the reset of updated_at is observable.
+    meta_path = os.path.join(str(tmp_path), "gone", "meta.json")
+    with open(meta_path) as f:
+        meta = json.load(f)
+    meta["updated_at"] = time.time() - 3600
+    with open(meta_path, "w") as f:
+        json.dump(meta, f)
+
+    before = time.time()
+    r = client.post("/sessions/gone/mark-deleted")
+    assert r.status_code == 200
+    assert r.json()["expires_at"] >= before + srv.RETENTION_HOURS * 3600 - 1
+
+    info = client.get("/sessions/gone/info").json()
+    assert info["state"] == "deleted"
+    assert info["deleted_at"] >= before
+    assert info["meta"]["state_before_delete"] == "complete"
+    # The bytes are still there: a tombstone is a label, not a delete.
+    assert client.get("/sessions/gone/raw").status_code == 200
+
+    # A late /ingest/finish (the streamer flushing after the local delete) keeps the tombstone.
+    client.post("/ingest/finish", json={"session_id": "gone"})
+    assert client.get("/sessions/gone/info").json()["state"] == "deleted"
+
+    # Marking twice is harmless and keeps the original pre-delete state.
+    client.post("/sessions/gone/mark-deleted")
+    assert client.get("/sessions/gone/info").json()["meta"]["state_before_delete"] == "complete"
+
+
+def test_mark_deleted_twice_does_not_restart_the_clock(client, tmp_path):
+    client.post("/ingest/start", json={"session_id": "twice", "header_hex": _make_header().hex()})
+    client.post("/sessions/twice/mark-deleted")
+    meta_path = os.path.join(str(tmp_path), "twice", "meta.json")
+    with open(meta_path) as f:
+        meta = json.load(f)
+    meta["updated_at"] -= 3600
+    meta["deleted_at"] -= 3600
+    with open(meta_path, "w") as f:
+        json.dump(meta, f)
+    r = client.post("/sessions/twice/mark-deleted")
+    assert r.status_code == 200
+    with open(meta_path) as f:
+        after = json.load(f)
+    assert after["updated_at"] == meta["updated_at"]
+    assert after["deleted_at"] == meta["deleted_at"]
+    assert r.json()["expires_at"] == pytest.approx(meta["updated_at"] + 12 * 3600)
+
+
+@pytest.mark.parametrize("bad", ["", ".", "..", "a/b", "a\\b"])
+def test_session_dir_rejects_names_that_point_at_storage(client, bad):
+    import server as srv
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as e:
+        srv._session_dir(bad)
+    assert e.value.status_code == 400
+
+
+def test_delete_dot_does_not_remove_the_storage_root(client, tmp_path):
+    client.post("/ingest/start", json={"session_id": "keep", "header_hex": _make_header().hex()})
+    # %2E: a literal "." segment would be normalised away by the HTTP client before it got here.
+    client.delete("/sessions/%2E")
+    assert os.path.isdir(os.path.join(str(tmp_path), "keep"))
+
+
+def test_mark_deleted_is_purged_after_retention(client, tmp_path, monkeypatch):
+    import server as srv
+
+    client.post("/ingest/start", json={"session_id": "tomb", "header_hex": _make_header().hex()})
+    client.post("/sessions/tomb/mark-deleted")
+    srv._purge_expired()
+    assert os.path.isdir(os.path.join(str(tmp_path), "tomb"))  # not yet: retention is 12 h
+
+    monkeypatch.setattr(srv, "RETENTION_HOURS", 0.0)
+    time.sleep(0.01)
+    srv._purge_expired()
+    assert not os.path.exists(os.path.join(str(tmp_path), "tomb"))
+
+
+def test_mark_deleted_unknown_session_is_404(client):
+    assert client.post("/sessions/ghost/mark-deleted").status_code == 404

@@ -514,3 +514,32 @@ def test_restore_refuses_to_overwrite_a_finalized_local_capture(server, tmp_path
     assert res.status_code == 409
     assert "already finalized" in res.json()["detail"]
     assert raw.read_bytes() == b"the local copy, which must survive"
+
+
+def test_local_delete_tombstones_the_real_remote_copy(server, tmp_path, monkeypatch):
+    """#91 end to end: a recording streamed to the real server reads "complete" + finalized; after
+    a local delete it reads deleted on both sides, with an expiry, and its bytes are still there."""
+    from fastapi.testclient import TestClient
+
+    from app import main as mainmod
+
+    sess = _record(tmp_path, server.url)
+    assert sess.state == "done", sess.error
+    monkeypatch.setattr(mainmod, "CAPTURES_ROOT", sess.captures_root)
+    monkeypatch.setattr(mainmod, "_session", None)
+
+    with TestClient(mainmod.app) as c:
+        before = {s["id"]: s for s in c.get("/backup/remote-sessions").json()["sessions"]}
+        row = before[sess.id]
+        assert (row["backup_state"], row["local_status"]) == ("complete", "finalized")
+        assert row["name"] == "E2E-BACKUP"
+
+        body = c.delete(f"/captures/{sess.id}").json()
+        assert body["remote_marked_deleted"] is True
+
+        after = {s["id"]: s for s in c.get("/backup/remote-sessions").json()["sessions"]}
+        row = after[sess.id]
+        assert (row["backup_state"], row["local_status"]) == ("deleted", "deleted")
+        assert row["expires_at"] > time.time()
+
+    assert fetch_remote_session_config(server.url, sess.id)  # still restorable until it expires

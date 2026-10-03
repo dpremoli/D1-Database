@@ -12,6 +12,8 @@ import FinishedForcePlot from '../FinishedForcePlot.vue';
 import { useDialog } from '../../ui/useDialog';
 import { formatMegabytes } from '../../format';
 import { authStore } from '../../authStore';
+import { describeRecordingFailure } from '../recordingErrors';
+import { spotlight } from '../../ui/spotlight';
 
 const w = useWorkspace();
 const router = useRouter();
@@ -78,6 +80,14 @@ const nothingSelected = computed(() => !uploadDb.value && !saveMat.value && !sav
 // stopped. Only once state is 'done' AND the finished trace has loaded do we show the save form.
 const loading = computed(() => w.st.state === 'recording' || w.st.state === 'finalizing' || (w.st.state === 'done' && !w.finishedCache.value));
 const failed = computed(() => w.st.state === 'error' && !w.finishedCache.value);
+// #84: "failed to start" (nothing captured, nothing kept) is not "finalize failed" (raw still on
+// disk) — the dialog used to claim the latter for both. The raw driver text sits behind Details.
+const failure = computed(() => describeRecordingFailure(w.st.error, w.st.errorKind, w.st.nTotal));
+function fixField() {
+	const field = failure.value.field;
+	startNew();
+	if (field === 'sample_rate') setTimeout(() => spotlight('sample-rate'), 0);
+}
 
 // Three-stage save/finalize progress, each timed independently, so a slow save reads as "which
 // stage is taking long, and for how long" instead of one undifferentiated spinner. Backend timing
@@ -209,7 +219,7 @@ function startNew() {
 			<header class="scd-head">
 				<span class="material-symbols-rounded">task_alt</span>
 				<div class="scd-title">
-					<b id="scd-title">Recording finished</b>
+					<b id="scd-title">{{ failed ? failure.title : 'Recording finished' }}</b>
 					<span class="scd-sub">{{ w.meta.sample_name || 'Untitled cut' }} · {{ (w.st.summary?.duration_sec ?? w.st.tSec).toFixed(1) }}s</span>
 				</div>
 			</header>
@@ -231,10 +241,17 @@ function startNew() {
 			<template v-else-if="failed">
 				<div class="scd-confirm">
 					<span class="material-symbols-rounded warn">error</span>
-					<p>Finalizing this recording failed{{ w.st.error ? `: ${w.st.error}` : '' }}. The raw capture is still on disk and can be recovered later — nothing was uploaded.</p>
+					<div class="scd-fail">
+						<p>{{ failure.summary }}</p>
+						<details v-if="failure.details" class="scd-details">
+							<summary>Details</summary>
+							<pre>{{ failure.details }}</pre>
+						</details>
+					</div>
 				</div>
 				<div class="scd-actions">
 					<div class="scd-spacer"></div>
+					<button v-if="failure.field" class="btn" @click="fixField">Show me the setting</button>
 					<button class="btn primary" @click="startNew">Close</button>
 				</div>
 			</template>
@@ -376,4 +393,8 @@ function startNew() {
 .scd-confirm .material-symbols-rounded.warn { color: var(--warn); font-size: var(--icon-xl); }
 .scd-confirm .material-symbols-rounded.ok { color: var(--ok); font-size: var(--icon-xl); }
 .scd-confirm p { margin: 0; color: var(--text); }
+.scd-fail { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.scd-details { font-size: var(--fs-xs); color: var(--text-dim); }
+.scd-details summary { cursor: pointer; }
+.scd-details pre { margin: 4px 0 0; max-height: 140px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 </style>

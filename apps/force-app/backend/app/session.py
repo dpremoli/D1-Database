@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import threading
 import time
 import uuid
@@ -15,13 +16,13 @@ import numpy as np
 from . import virtual_channels
 from .acquisition.consumers import CutDetector, Decimator, FrmIntegrator
 from .acquisition.ring import Ring
-from .backup import BackupStreamer
+from .backup import BackupStreamer, mark_remote_deleted
 from .backup import load_config as load_backup_config
 from .config import RecordConfig
 from .d1rw import RawWriter
 from .dsp import sum_axes, tacho_column, welch_spectra
 from .finalize import finalize
-from .recovery import write_manifest
+from .recovery import _raw_info, write_manifest
 from .storage import disk_usage_for
 from .stream.broadcast import Broadcaster
 from .stream.frame import encode_frame
@@ -42,6 +43,12 @@ DISK_STOP_GB = 1.0
 DISK_CHECK_INTERVAL = 10.0
 
 
+def _raw_rows(capture_dir: str) -> int:
+    """Rows actually in the capture's raw file (0 when it is missing or has only its header)."""
+    info = _raw_info(capture_dir)
+    return info["n_rows"] if info else 0
+
+
 class RecordingSession:
     def __init__(
         self, cfg: RecordConfig, captures_root: str, source, broadcaster: Broadcaster | None = None
@@ -55,6 +62,12 @@ class RecordingSession:
         self.backup: BackupStreamer | None = None
         self.state = "idle"
         self.error: str | None = None
+        # Which stage failed, when state is "error" (#84): "start" = nothing was captured (the
+        # source never produced a sample — e.g. DAQmx refused the rate), and the empty capture
+        # directory is removed; "acquisition" = it failed mid-run but the data captured so far was
+        # finalized; "finalize" = data was captured but writing the outputs failed, so the raw is
+        # still on disk for recovery. The UI words each case differently.
+        self.error_kind: str | None = None
         self.summary: dict | None = None
         self.n_total = 0
         self.peaks = [0.0, 0.0, 0.0]
@@ -196,8 +209,10 @@ class RecordingSession:
             target=self._consume, name=f"rec-consume-{self.id}", daemon=True
         )
         consumer.start()
+        started = False
         try:
             self.source.start()
+            started = True
             while not self._stop.is_set():
                 chunk = self.source.read()
                 if chunk is None:
@@ -206,7 +221,9 @@ class RecordingSession:
                     self.error = "consumer overrun"
                     break
         except Exception as e:
-            self.error = f"acquisition error: {e}"
+            self.error = (
+                f"acquisition error: {e}" if started else f"could not start acquisition: {e}"
+            )
         finally:
             self.ring.close()
             t_consumer = time.perf_counter()
@@ -235,16 +252,35 @@ class RecordingSession:
                 self._finalize_thread.start()
             else:
                 self.state = "error" if self.error else "done"
-                write_manifest(self.dir, self.state, self.cfg, self.error)
+                if self.error and (_raw_rows(self.dir) == 0):
+                    # Failed before a single sample reached the raw file. There is nothing to
+                    # finalize or recover — recovery skips a 0-row raw, so the directory would just
+                    # sit on disk as an unnamed "incomplete" capture forever. Remove it.
+                    self.error_kind = "start"
+                    shutil.rmtree(self.dir, ignore_errors=True)
+                else:
+                    # n_total is bumped AFTER the raw append in _consume, so a failure while
+                    # processing the very first chunk leaves rows on disk with n_total == 0. That
+                    # data is real: keep the directory (recoverable from Local Captures) and call it
+                    # an acquisition failure, not a failed start.
+                    if self.error:
+                        self.error_kind = "acquisition"
+                    write_manifest(self.dir, self.state, self.cfg, self.error)
                 self._publish_control(
                     {
                         "type": "done",
                         "id": self.id,
                         "state": self.state,
                         "error": self.error,
+                        "error_kind": self.error_kind,
                         "summary": self.summary,
                     }
                 )
+                if self.error_kind == "start" and self.backup is not None:
+                    # The streamer may have registered the (header-only) session already; label
+                    # it like any other deleted capture so it expires instead of reading as a
+                    # backup. After the publish: it is a network call and the UI shouldn't wait.
+                    mark_remote_deleted(self.backup.server_url, self.id)
 
     def _finalize_async(self) -> None:
         t0 = time.perf_counter()
@@ -252,8 +288,11 @@ class RecordingSession:
         try:
             self.summary = finalize(self.dir, self.cfg)
             self.state = "error" if self.error else "done"
+            if self.error:
+                self.error_kind = "acquisition"
         except Exception as e:
             self.error = self.error or f"finalize error: {e}"  # keep the original cause
+            self.error_kind = "finalize"
             self.state = "error"
         log.info(
             "session._finalize_async: finished in %.2fs (state=%s)",
@@ -267,6 +306,7 @@ class RecordingSession:
                 "id": self.id,
                 "state": self.state,
                 "error": self.error,
+                "error_kind": self.error_kind,
                 "summary": self.summary,
             }
         )
@@ -389,6 +429,7 @@ class RecordingSession:
             "id": self.id,
             "state": self.state,
             "error": self.error,
+            "error_kind": self.error_kind,
             "elapsed_sec": round(self._t_last, 3),
             "n_total": self.n_total,
             "peaks": {"Fx": self.peaks[0], "Fy": self.peaks[1], "Fz": self.peaks[2]},

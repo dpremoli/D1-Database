@@ -8,6 +8,7 @@ import type { RecordConfig } from './types';
 import { firstAtOrAfter, WINDOW_MAX_SEC, WINDOW_SLIDER_MAX_SEC } from './plotWindow';
 import { RELAY_HEARTBEAT_MS, RelayPeers } from './relayPeers';
 import { createEmitThrottle } from './emitThrottle';
+import { parseStartError } from './recordingErrors';
 
 // Playback relays to pop-outs at most this often (see relayTick).
 const RELAY_TICK_MS = 200;
@@ -41,6 +42,8 @@ export interface LiveStatus {
 	peaks: { Fx: number; Fy: number; Fz: number };
 	nTotal: number;
 	error: string | null;
+	/** Which stage failed when state is 'error' — 'start' | 'acquisition' | 'finalize' (#84). */
+	errorKind: string | null;
 	captureId: string | null;
 	summary: any | null;
 	cutStartSec: number | null;   // detected cut start (2f) — null until the cut begins
@@ -50,7 +53,7 @@ export interface LiveStatus {
 export class RecordClient {
 	status = reactive<LiveStatus>({
 		connected: false, state: 'idle', seq: 0, tSec: 0, rpm: 0, tachoOk: null,
-		peaks: { Fx: 0, Fy: 0, Fz: 0 }, nTotal: 0, error: null, captureId: null, summary: null, cutStartSec: null,
+		peaks: { Fx: 0, Fy: 0, Fz: 0 }, nTotal: 0, error: null, errorKind: null, captureId: null, summary: null, cutStartSec: null,
 		diskAction: null,
 	});
 	// bump each frame so widgets can watch cheaply
@@ -427,6 +430,7 @@ export class RecordClient {
 		if (msg.type === 'done') {
 			this.status.state = msg.state;
 			this.status.error = msg.error ?? null;
+			this.status.errorKind = msg.error_kind ?? null;
 			this.status.captureId = msg.id ?? this.status.captureId;
 			this.status.summary = msg.summary ?? null;
 		} else if (msg.type === 'fft') {
@@ -510,7 +514,8 @@ export class RecordClient {
 			headers: { 'Content-Type': 'application/json', ...authHeaders() },
 			body: JSON.stringify(cfg),
 		});
-		if (!res.ok) throw new Error(`start failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+		// Structured when the backend names the offending field (#84) — see recordingErrors.ts.
+		if (!res.ok) throw parseStartError(res.status, await res.text());
 		const j = await res.json();
 		this.status.state = 'recording';
 		this.status.captureId = j.id;
@@ -541,7 +546,7 @@ export class RecordClient {
 		const fm = this.frm;
 		fm.count = 0; fm.cAbsMaxByAxis = { Fx: 1, Fy: 1, Fz: 1 }; fm.cLo = undefined; fm.cHi = undefined;
 		this.fft = null; this.fftHistory = []; this.fftSeq.value++;
-		this.status.state = 'idle'; this.status.error = null; this.status.summary = null;
+		this.status.state = 'idle'; this.status.error = null; this.status.errorKind = null; this.status.summary = null;
 		this.status.captureId = null; this.status.nTotal = 0; this.status.tSec = 0;
 		this.status.peaks = { Fx: 0, Fy: 0, Fz: 0 }; this.status.cutStartSec = null;
 		this.status.diskAction = null;

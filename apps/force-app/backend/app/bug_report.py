@@ -61,6 +61,24 @@ KIND_PREFIXES = {"bug": "[Bug]", "feature": "[Feature]"}
 # string a client sends) so the resulting `area:*` label is always one of these, never freeform —
 # the whole point is a stable set of labels to filter/catalogue by later.
 AREAS = {"gui", "recording", "plotting", "diagnostics", "settings", "labamp", "nidaq", "general"}
+# A report can touch several sections (#95), but a long tail of labels stops being a useful filter.
+MAX_AREAS = 4
+
+
+def normalize_areas(area: str | list[str] | tuple[str, ...] | None) -> list[str]:
+    """The `area:*` values to label an issue with: known AREAS only, de-duplicated in the order
+    given, at most MAX_AREAS, falling back to ["general"]. "general" (the catch-all) is dropped
+    when a specific area is also chosen — "Plotting + General/other" says no more than "Plotting".
+    Accepts a single string so older clients that send one area keep working."""
+    raw = [area] if isinstance(area, str) else list(area or [])
+    out: list[str] = []
+    for a in raw:
+        a = str(a).strip().lower()
+        if a in AREAS and a not in out:
+            out.append(a)
+    if len(out) > 1 and "general" in out:
+        out.remove("general")
+    return out[:MAX_AREAS] or ["general"]
 
 
 def build_body(
@@ -131,14 +149,15 @@ async def create_issue(
     diagnostics: str = "",
     console_tail: str = "",
     kind: str = "bug",
-    area: str = "general",
+    area: str | list[str] = "general",
 ) -> dict:
-    """Returns {"ok": True, "url": ...} or {"ok": False, "reason": ...}. Never raises."""
+    """Returns {"ok": True, "url": ..., "number": ..., "title": ..., "labels": [...]} or
+    {"ok": False, "reason": ...}. Never raises."""
     title = title.strip()
     if not title:
         return {"ok": False, "reason": "A title is required."}
     kind = kind if kind in KIND_LABELS else "bug"
-    area = area if area in AREAS else "general"
+    areas = normalize_areas(area)
     prefix = KIND_PREFIXES[kind]
     # Tag by prefix, not by trusting any "[Bug]"/"[Feature]" the reporter typed themselves — the
     # picker is the single source of truth so the title prefix and the label can never disagree.
@@ -155,15 +174,12 @@ async def create_issue(
         diagnostics=diagnostics,
         console_tail=console_tail,
     )
+    labels = ["force-app", "in-app-report", KIND_LABELS[kind], *(f"area:{a}" for a in areas)]
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             res = await client.post(
                 f"{_relay_url()}/report",
-                json={
-                    "title": title[:250],
-                    "body": body,
-                    "labels": ["force-app", "in-app-report", KIND_LABELS[kind], f"area:{area}"],
-                },
+                json={"title": title[:250], "body": body, "labels": labels},
             )
     except httpx.HTTPError as e:
         return {"ok": False, "reason": f"could not reach the bug-report relay: {e}"}
@@ -171,7 +187,13 @@ async def create_issue(
     if res.status_code >= 300:
         return {"ok": False, "reason": f"bug-report relay error (HTTP {res.status_code})"}
 
-    return res.json()
+    result = res.json()
+    if isinstance(result, dict) and result.get("ok"):
+        # What was actually filed (prefixed title, labels), so the app can list the new issue
+        # straight away instead of waiting for GitHub's issue list to catch up (#88).
+        result.setdefault("title", title[:250])
+        result.setdefault("labels", labels)
+    return result
 
 
 async def list_issues() -> dict:
