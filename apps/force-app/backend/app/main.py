@@ -951,7 +951,7 @@ async def health_doctor(request: Request) -> dict:
                     "message": "DIRECTUS_URL not configured",
                     "diagnosis": "No DIRECTUS_URL environment variable set. Database features (sample lookup, upload) are disabled.",
                     "fix": "Set the environment variable before starting the backend, then restart:",
-                    "fix_command": '$env:DIRECTUS_URL = "https://d1-server.tail54eeb6.ts.net"; python -m uvicorn app.main:app --host 0.0.0.0 --port 8200',
+                    "fix_command": '$env:DIRECTUS_URL = "https://d1-server.tail54eeb6.ts.net"; python -m uvicorn app.main:app --host 127.0.0.1 --port 8200',
                 }
             )
 
