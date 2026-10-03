@@ -526,6 +526,38 @@ mfa_check "mfa_rows:2" "machining_force_analysis: INSERT and UPDATE are audited"
 mfa_check "mfa_big_omitted:0" "machining_force_analysis: series/fft/diag_metrics are left out of the snapshots"
 mfa_check "mfa_status_logged:done" "machining_force_analysis: ordinary columns are still logged"
 
+echo "== OCC triggers on every versioned table (review 5.4) =="
+# schema_migrations.version is dbmate's bookkeeping column, not an OCC version.
+run_eq "every table with a version column has an OCC BEFORE UPDATE trigger (missing: none)" \
+    "SELECT coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '')
+     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND c.relkind IN ('r','p') AND c.relname <> 'schema_migrations'
+       AND EXISTS (SELECT 1 FROM pg_attribute a
+                   WHERE a.attrelid = c.oid AND a.attname = 'version' AND a.attnum > 0 AND NOT a.attisdropped)
+       AND NOT EXISTS (SELECT 1 FROM pg_trigger t
+                       WHERE t.tgrelid = c.oid AND NOT t.tgisinternal
+                         AND t.tgfoid = 'occ_update_trigger_function'::regproc
+                         AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 16) = 16)  -- ROW, BEFORE, UPDATE" \
+    ""
+# Stale-write detection as documented in docs/data-dictionary.md: UPDATE ... WHERE version = <known>
+# matches no row once another writer has bumped the version. tool_setup and diag_layer had no
+# trigger, so their version never moved and a stale write went through.
+occ_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO tool_setup (setup_id, setup_code) VALUES ('c0000000-0000-4000-8000-0000000000f4', 'TEST-OCC-SETUP');
+UPDATE tool_setup SET notes = 'writer one' WHERE setup_id = 'c0000000-0000-4000-8000-0000000000f4' AND version = 1;
+WITH stale AS (
+    UPDATE tool_setup SET notes = 'writer two (stale)'
+    WHERE setup_id = 'c0000000-0000-4000-8000-0000000000f4' AND version = 1 RETURNING 1)
+SELECT 'stale_rows:' || count(*) FROM stale;
+SELECT 'version:' || version || ' notes:' || notes FROM tool_setup WHERE setup_id = 'c0000000-0000-4000-8000-0000000000f4';
+ROLLBACK;
+SQL
+)
+occ_check() { grep -qx "$1" <<<"$occ_out" && ok "$2" || bad "$2 (psql output: $occ_out)"; }
+occ_check "stale_rows:0" "tool_setup: an update on a stale version matches no row"
+occ_check "version:2 notes:writer one" "tool_setup: version is bumped once and the stale write did not land"
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy
