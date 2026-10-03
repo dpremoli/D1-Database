@@ -51,6 +51,7 @@ MAT_MAX_BYTES = 1_500_000_000
 # Rows per streamed block (40 MB of float32 at the 10-column layout). Peak memory is a small
 # multiple of this — the float64 signals, axis sums, RPM/revs for one block — not of the capture.
 BLOCK_ROWS = 1_000_000
+DETREND_TILE_ROWS = 32_768
 CUT_FRAC = 0.2  # the cut window is where |Fz| exceeds this fraction of its peak
 
 
@@ -130,7 +131,11 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     def corrected(k: int, sig: np.ndarray) -> np.ndarray:
         if drift_corrected:
             a, b = blocks.bounds(k)
-            sig[:, :8] -= detrend_fit.trend(np.arange(a, b, dtype=np.float64))
+            # Tiled so the (rows, 8) trend temporaries stay cache-sized instead of two full-block
+            # float64 arrays; the arithmetic is elementwise, so the result is bit-identical.
+            for lo in range(a, b, DETREND_TILE_ROWS):
+                hi = min(lo + DETREND_TILE_ROWS, b)
+                sig[lo - a : hi - a, :8] -= detrend_fit.trend(np.arange(lo, hi, dtype=np.float64))
         return sig
 
     # --- Pass 1: whole-capture statistics ---
@@ -164,13 +169,16 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         chan_peaks = np.maximum(chan_peaks, np.max(np.abs(sig[:, :8]), axis=0))
         tacho_lo = float(np.minimum(tacho_lo, np.min(sig[:, 8])))  # np.minimum: NaN propagates,
         tacho_hi = float(np.maximum(tacho_hi, np.max(sig[:, 8])))  # as a whole-array min would
-        # Pre-correction axis peaks: final whenever drift_comp is off (pass 2 redoes them if on).
-        raw_axes = sum_axes(sig)
-        for ax in AXIS_SUM:
-            raw_peaks[ax] = np.maximum(raw_peaks[ax], np.max(np.abs(raw_axes[ax])))
-        fz_block_max.append(float(np.max(np.abs(raw_axes["Fz"]))))
         if drift_corrected:
+            # The axis peaks that matter are the corrected ones, which pass 2 computes once the
+            # fit is complete, so summing the raw axes here would be thrown away.
             detrend_fit.add(np.arange(a, b, dtype=np.float64), sig[:, :8])
+        else:
+            # Final as they stand: without drift_comp the raw axes are the corrected ones.
+            raw_axes = sum_axes(sig)
+            for ax in AXIS_SUM:
+                raw_peaks[ax] = np.maximum(raw_peaks[ax], np.max(np.abs(raw_axes[ax])))
+            fz_block_max.append(float(np.max(np.abs(raw_axes["Fz"]))))
 
     def time_of(k: int) -> np.ndarray:
         a, b = blocks.bounds(k)
@@ -273,8 +281,12 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         a, b = blocks.bounds(k)
         block = blocks.get(k)
         t = time_of(k)
+        cut = (t >= cs_sec) & (t <= ce_sec)
+        any_cut = bool(cut.any())
         sig = gained(block)
-        raw_axes = sum_axes(sig)
+        # The drift check sees the PRE-correction axes, so they are summed before `corrected`
+        # detrends sig in place; with drift_comp off they are also the final axes.
+        raw_axes = sum_axes(sig) if (any_cut or not drift_corrected) else None
         axes = sum_axes(corrected(k, sig)) if drift_corrected else raw_axes
         rpm = rpm_stream.rpm(a, b)
         # Cumulative revs, continued across blocks: seeding the first element with the carry makes
@@ -285,8 +297,7 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         np.cumsum(revs, out=revs)
         revs_carry = float(revs[-1])
 
-        cut = (t >= cs_sec) & (t <= ce_sec)
-        if cut.any():
+        if any_cut:
             drift.add(t[cut], {ax: v[cut] for ax, v in raw_axes.items()})
             if tacho_measured:
                 spectrum.add(revs[cut], axes["Fz"][cut])
