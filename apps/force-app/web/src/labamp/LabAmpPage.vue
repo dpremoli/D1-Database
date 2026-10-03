@@ -28,7 +28,9 @@ const arStatus = ref<Record<string, string> | null>(null);
 const arBusy = ref(false);
 async function persistDaq() {
 	await labamp.setConfig({ autorange_headroom: headroom.value, nidaq_bits: Number(daq.nidaq_bits), labamp_dac_bits: Number(daq.labamp_dac_bits), analog_fullscale_v: Number(daq.analog_fullscale_v) });
-	// Saved: the server now holds these values, so later refreshes may seed the fields again.
+	// Saved: the server now holds these values, so later refreshes may seed the fields again --
+	// but one already in flight read the server before this write and must not seed them back.
+	labampState.invalidate();
 	daqDirty.value = false;
 }
 const arSource = ref<'live' | 'previous'>('live');
@@ -77,7 +79,7 @@ async function measure() {
 }
 async function applyRanges() {
 	arBusy.value = true; err.value = null;
-	try { await persistDaq(); const r = await labamp.autorangeApply(headroom.value); recs.value = r.applied; arStatus.value = r.status; await refresh(); }
+	try { await persistDaq(); const r = await labamp.autorangeApply(headroom.value); recs.value = r.applied; arStatus.value = r.status; await refresh(true); }
 	catch (e: any) { err.value = e?.message || 'apply failed'; } finally { arBusy.value = false; }
 }
 function fmtRes(x: number) { return x >= 1 ? x.toFixed(2) : x >= 0.001 ? x.toFixed(4) : x.toExponential(1); }
@@ -128,13 +130,15 @@ function seedForms(snap: LabAmpSnapshot) {
 }
 watch(() => labampState.data.value, (snap) => { if (snap) seedForms(snap); }, { immediate: true });
 
-async function refresh() {
+// `afterWrite`: the caller has just changed server state, so don't join a request that started
+// before the change (it may carry the old values).
+async function refresh(afterWrite = false) {
 	actionErr.value = null;
-	await labampState.revalidate();
+	await labampState.revalidate({ fresh: afterWrite });
 }
 async function saveCfg() {
 	busy.value = true; err.value = null;
-	try { await labamp.setConfig({ base_url: cfg.base_url, channels: Number(cfg.channels), mode: cfg.mode }); cfgDirty.value = false; savedCfg.value = true; setTimeout(() => (savedCfg.value = false), 1600); await refresh(); }
+	try { await labamp.setConfig({ base_url: cfg.base_url, channels: Number(cfg.channels), mode: cfg.mode }); labampState.invalidate(); cfgDirty.value = false; savedCfg.value = true; setTimeout(() => (savedCfg.value = false), 1600); await refresh(true); }
 	catch (e: any) { err.value = e?.message || 'save failed'; } finally { busy.value = false; }
 }
 async function setMode(mode: 'MEASURE' | 'RESET') {
@@ -160,7 +164,7 @@ onMounted(() => { void labampState.revalidate(); });
 				{{ status?.reachable ? 'Connected' : 'Not connected' }}
 				<span v-if="status?.mock" class="mock">mock</span>
 			</div>
-			<button class="btn icon ic" :class="{ spinning: refreshing }" :disabled="busy || refreshing" title="Refresh" aria-label="Refresh" @click="refresh"><span class="material-symbols-rounded">refresh</span></button>
+			<button class="btn icon ic" :class="{ spinning: refreshing }" :disabled="busy || refreshing" title="Refresh" aria-label="Refresh" @click="refresh()"><span class="material-symbols-rounded">refresh</span></button>
 		</header>
 
 		<div class="grid">

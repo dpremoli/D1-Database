@@ -15,10 +15,16 @@ export interface Swr<T> {
 	loading: Ref<boolean>;
 	/** Message from the latest failed load; cleared by the next success. */
 	error: Ref<string | null>;
-	/** Refetch. Concurrent calls share the one in-flight request. */
-	revalidate(): Promise<void>;
+	/**
+	 * Refetch. Concurrent calls share the one in-flight request -- unless it started before a local
+	 * write (`mutate` / `invalidate`), or `fresh` is set: a request that began before a write may
+	 * carry pre-write data, so a caller that has just written must get a new one.
+	 */
+	revalidate(opts?: { fresh?: boolean }): Promise<void>;
 	/** Replace the data locally (e.g. with a save's response) and invalidate in-flight loads. */
 	mutate(next: T | ((cur: T | null) => T)): void;
+	/** A write happened that this cell's data doesn't reflect yet: drop in-flight results. */
+	invalidate(): void;
 }
 
 export function createSwr<T>(load: () => Promise<T>): Swr<T> {
@@ -26,31 +32,38 @@ export function createSwr<T>(load: () => Promise<T>): Swr<T> {
 	const loading = ref(false);
 	const error = ref<string | null>(null);
 	let inflight: Promise<void> | null = null;
+	let inflightEpoch = 0;
+	// Bumped by every local write; a request started under an older epoch is stale.
 	let epoch = 0;
+	// Only the newest request's result may be applied (and only it may clear `loading`): with
+	// overlapping requests an older one finishing last must not overwrite the newer data.
+	let newest = 0;
 
-	function revalidate(): Promise<void> {
-		if (inflight) return inflight;
-		const started = epoch;
+	function revalidate(opts: { fresh?: boolean } = {}): Promise<void> {
+		if (inflight && inflightEpoch === epoch && !opts.fresh) return inflight;
+		const started = epoch, mine = ++newest;
 		loading.value = true;
-		inflight = (async () => {
+		const run = (async () => {
 			try {
 				const next = await load();
-				if (started === epoch) { data.value = next; error.value = null; }
+				if (mine === newest && started === epoch) { data.value = next; error.value = null; }
 			} catch (e: any) {
 				// Keep showing the last-known data; the page shows the error beside it.
-				error.value = e?.message || String(e);
+				if (mine === newest) error.value = e?.message || String(e);
 			} finally {
-				loading.value = false;
-				inflight = null;
+				if (mine === newest) { loading.value = false; inflight = null; }
 			}
 		})();
-		return inflight;
+		inflight = run; inflightEpoch = started;
+		return run;
 	}
+
+	function invalidate() { epoch++; }
 
 	function mutate(next: T | ((cur: T | null) => T)) {
 		epoch++;
 		data.value = typeof next === 'function' ? (next as (cur: T | null) => T)(data.value) : next;
 	}
 
-	return { data, loading, error, revalidate, mutate };
+	return { data, loading, error, revalidate, mutate, invalidate };
 }
