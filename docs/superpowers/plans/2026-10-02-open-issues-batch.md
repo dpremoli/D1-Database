@@ -57,10 +57,10 @@ Each stream works in its own worktree under `.claude/worktrees/` on branch
 | Stream | Worktree / branch id | State |
 |---|---|---|
 | A | `agent-ac87f3fd4cc2d8fcb` | merged; review fixes `de16eb6`, `e5ddb01` |
-| B | `agent-a868c600a24febd73` | reviewed: 1 blocker (restore overwrites incomplete local raw); fixing |
+| B | `agent-a868c600a24febd73` | fixing review findings (1 blocker); resumed after the 2nd usage limit, 00:42 UTC |
 | C | `agent-a00fe5a7493b655ca` | merged; review nits fixed (`55c96ba`..`08357c8`) |
 | D | `agent-a16dd8a730e68dddf` | merged; review nits fixed (`fdb83e7`..`4251934`) |
-| E | `agent-a9c22f1bdfa0cadc3` | in progress (restarted on Sonnet) |
+| E | `agent-a9c22f1bdfa0cadc3` | in progress (9 commits); resumed after the 2nd usage limit, 00:42 UTC |
 | F | `agent-a091876a6e38fc188` | merged (`de8e4b1`); review clean, nit fixed in `6bad005` |
 
 ### A. Finalize at constant memory — #79
