@@ -612,6 +612,25 @@ async def storage_get_config() -> dict:
     return {"captures_root": CAPTURES_ROOT, **current}
 
 
+def _refuse_folder_switch_if_busy() -> None:
+    """409 while anything is reading or writing a capture directory under the current root.
+
+    A recording splits across two folders if the root moves under it (#101). A restore, recovery
+    or discard is the same hazard: restore downloads raw.d1raw into the old root, then recovers
+    from the new one, finds no raw file, and its cleanup deletes the download.
+    """
+    if _busy():
+        raise HTTPException(
+            409,
+            "a recording is in progress or still being saved — change the folder once it finishes",
+        )
+    if recovery._recovering or recovery._discarding:
+        raise HTTPException(
+            409,
+            "a restore, recovery or discard is in progress — change the folder once it finishes",
+        )
+
+
 @app.post("/storage/config")
 async def storage_set_config(body: dict) -> dict:
     global CAPTURES_ROOT
@@ -627,23 +646,15 @@ async def storage_set_config(body: dict) -> dict:
     # #101: the in-flight session writes raw.d1raw and finalizes into CAPTURES_ROOT/<id>, and the
     # renderer then reads that capture back by id through the same root — moving the root under
     # it splits a recording across two folders and 404s the end-of-cut fetch of live_cache.bin.
-    if _busy():
-        raise HTTPException(
-            409,
-            "a recording is in progress or still being saved — change the folder once it finishes",
-        )
+    _refuse_folder_switch_if_busy()
     # makedirs succeeds on a folder that already exists however read-only it is, so the first sign
     # of a bad choice used to be a recording that failed to start. Find out now instead. Both steps
     # can block for a long time on a dead network path, so they run off the event loop.
     problem = await run_in_threadpool(storage.prepare_folder, path)
     if problem:
         raise HTTPException(400, problem)
-    # A recording may have started while the folder was being checked.
-    if _busy():
-        raise HTTPException(
-            409,
-            "a recording is in progress or still being saved — change the folder once it finishes",
-        )
+    # A recording, restore, recovery or discard may have started while the folder was checked.
+    _refuse_folder_switch_if_busy()
     CAPTURES_ROOT = path
     # Persisting is what makes the choice survive a restart, so a failure here must be reported.
     # It used to be swallowed: the drive change applied to the running process, the UI showed
@@ -1282,9 +1293,10 @@ async def recovery_recover(session_id: str) -> dict:
         raise HTTPException(409, f"session {session_id} is being discarded")
     if session_id in recovery._recovering:
         raise HTTPException(409, f"session {session_id} is already being recovered")
+    root = CAPTURES_ROOT  # one root for the whole request, however long it takes
     recovery._recovering.add(session_id)
     try:
-        summary = await run_in_threadpool(recovery.recover_session, CAPTURES_ROOT, session_id)
+        summary = await run_in_threadpool(recovery.recover_session, root, session_id)
     except FileNotFoundError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
@@ -1318,7 +1330,8 @@ async def recovery_discard(session_id: str) -> dict:
         raise HTTPException(
             400, f"session {session_id} is still recording — stop it, don't discard it"
         )
-    capture_dir = os.path.join(CAPTURES_ROOT, session_id)
+    root = CAPTURES_ROOT  # one root for the check and the background delete
+    capture_dir = os.path.join(root, session_id)
     if not os.path.isdir(capture_dir):
         log.info("recovery_discard: id=%s not found", session_id)
         raise HTTPException(404, f"session {session_id} not found")
@@ -1330,7 +1343,7 @@ async def recovery_discard(session_id: str) -> dict:
         t0 = time.perf_counter()
         recovery._discarding.add(session_id)
         try:
-            await run_in_threadpool(recovery.discard_session, CAPTURES_ROOT, session_id)
+            await run_in_threadpool(recovery.discard_session, root, session_id)
             await _mark_remote_deleted(session_id)
         except Exception:
             log.exception("recovery_discard: background delete failed for id=%s", session_id)
@@ -1478,7 +1491,9 @@ async def backup_restore(session_id: str) -> dict:
     """
     if not recovery.is_safe_id(session_id):
         raise HTTPException(400, "invalid session id")
-    cfg = backup_mod.load_config(CAPTURES_ROOT)
+    # Read the root once: a folder switch must never split one restore across two folders.
+    root = CAPTURES_ROOT
+    cfg = backup_mod.load_config(root)
     url = cfg.get("server_url", "")
     if not url:
         raise HTTPException(400, "no backup server configured")
@@ -1486,7 +1501,7 @@ async def backup_restore(session_id: str) -> dict:
         raise HTTPException(409, f"{session_id} is still being recorded — it can't be restored")
     if session_id in recovery._recovering or session_id in recovery._discarding:
         raise HTTPException(409, f"{session_id} is being recovered or discarded right now")
-    capture_dir = os.path.join(CAPTURES_ROOT, session_id)
+    capture_dir = os.path.join(root, session_id)
     raw_path = os.path.join(capture_dir, "raw.d1raw")
     part_path = raw_path + ".part"
     if os.path.isfile(os.path.join(capture_dir, "summary.json")):
@@ -1587,7 +1602,7 @@ async def backup_restore(session_id: str) -> dict:
 
         # Finalize the downloaded raw file
         try:
-            summary = await run_in_threadpool(recovery.recover_session, CAPTURES_ROOT, session_id)
+            summary = await run_in_threadpool(recovery.recover_session, root, session_id)
         except Exception as e:
             if aside and os.path.exists(aside):
                 # Put the original back so nothing about the local capture has changed.
