@@ -9,10 +9,8 @@ export interface PickRow<T> {
 	item: T;
 	/** The field's current value. */
 	current: boolean;
-	/** Already picked into a multi-pick selection. */
+	/** Already picked into a multi-pick selection: shown (hideSelected is off) but not pickable. */
 	picked: boolean;
-	/** Not pickable (picked, but shown because hideSelected is off). */
-	disabled: boolean;
 }
 
 export interface PickOptions {
@@ -28,7 +26,7 @@ export function pickRows<T>(items: readonly T[], idOf: (item: T) => string, opts
 		const id = idOf(item);
 		const picked = selected.has(id);
 		if (picked && opts.hideSelected) continue;
-		rows.push({ item, current: !!opts.currentId && id === opts.currentId, picked, disabled: picked });
+		rows.push({ item, current: !!opts.currentId && id === opts.currentId, picked });
 	}
 	return rows;
 }

@@ -6,7 +6,6 @@ import CutPicker from './CutPicker.vue';
 import StatTile from './StatTile.vue';
 import MachineOperatorPanel from './MachineOperatorPanel.vue';
 import { checkMaxSampleRate, checkNidaqPresence, nidaqHardware, nidaqUnavailableReason } from '../nidaqHardware';
-import { sampleRateIssue } from '../recordingErrors';
 
 const w = useWorkspace();
 
@@ -21,8 +20,6 @@ watch([() => w.source.value, () => w.nidaqChannels.value], () => {
 	const chans = w.nidaqChannels.value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
 	void checkMaxSampleRate(w.client.baseUrl, chans);
 }, { immediate: true });
-const maxSampleRateHz = computed(() => nidaqHardware.maxRateHz);
-const sampleRateInvalid = computed(() => w.source.value === 'nidaq' && !!sampleRateIssue(w.cfg.sample_rate, maxSampleRateHz.value));
 
 // #86: NI-DAQ is only a choice when DAQmx reports a device — the button used to be enabled on a
 // machine with no driver or nothing plugged in, and Start then failed with a driver error. A
@@ -200,8 +197,8 @@ onBeforeUnmount(() => {
 					<StatTile editable label="Inner Ø" unit="mm" v-model="w.cfg.inner_diam" :disabled="w.locked.value" />
 				</template>
 				<StatTile editable label="Sample rate" unit="Hz" v-model="w.cfg.sample_rate" :disabled="w.locked.value"
-					data-focus="sample-rate" :invalid="sampleRateInvalid"
-					:title="sampleRateInvalid ? `${sampleRateIssue(w.cfg.sample_rate, maxSampleRateHz)} Recording would fail to start.` : ''" />
+					data-focus="sample-rate" :invalid="!!w.sampleRateBlocker.value"
+					:title="w.sampleRateBlocker.value ? `${w.sampleRateBlocker.value} Recording would fail to start.` : ''" />
 				<!-- Duration removed from view — but w.cfg.duration_sec is still real state: it drives
 					 checkDiskBeforeStart()/estimatedRecordingGb() in workspace.ts, the pre-Start
 					 disk-space warning. With no field left to change it, that warning now always

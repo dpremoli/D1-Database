@@ -54,6 +54,11 @@ function markerStyle(m: TimelineMarker) {
 	const color = m.kind === 'peak' && m.axis ? channelColor(m.axis, theme.value) : undefined;
 	return { left: `calc(8px + (100% - 16px) * ${f})`, ...(color ? { '--mc': color } : {}) };
 }
+// Computed, not called per marker in the template: the bar re-renders at ~60 Hz while playing, but
+// the styles only change with the cut (markers, t0, duration) or the theme, never with tSec.
+const markerItems = computed(() => p.value.markers.map((m) => ({
+	m, key: `${m.kind}-${m.axis ?? ''}-${m.t}`, style: markerStyle(m),
+})));
 function seekTo(m: TimelineMarker) { w.playback.seek(m.seekT ?? m.t, { commit: true }); }
 </script>
 
@@ -74,9 +79,9 @@ function seekTo(m: TimelineMarker) { w.playback.seek(m.seekT ?? m.t, { commit: t
 				<input class="scrub" type="range" :min="p.t0" :max="tEnd" step="0.01"
 					:value="p.tSec" :disabled="!p.loaded || w.replay.downloading" @input="onScrub" @change="onScrubEnd" />
 				<div v-if="p.loaded && p.markers.length" class="marks">
-					<button v-for="m in p.markers" :key="`${m.kind}-${m.axis ?? ''}-${m.t}`" type="button"
-						class="mark" :class="m.kind" :style="markerStyle(m)" :title="m.label" :aria-label="`Jump to ${m.label}`"
-						@click="seekTo(m)"></button>
+					<button v-for="it in markerItems" :key="it.key" type="button"
+						class="mark" :class="it.m.kind" :style="it.style" :title="it.m.label" :aria-label="`Jump to ${it.m.label}`"
+						@click="seekTo(it.m)"></button>
 				</div>
 			</div>
 			<span class="time" :title="timeTitle">{{ fmt(elapsed) }} / {{ fmt(p.duration) }}</span>
@@ -118,8 +123,9 @@ function seekTo(m: TimelineMarker) { w.playback.seek(m.seekT ?? m.t, { commit: t
 .marks { position: relative; height: 10px; }
 .mark { position: absolute; top: 1px; width: 8px; height: 8px; margin-left: -4px; padding: 0; border: none; border-radius: 50%; background: var(--mc, var(--text-dim)); cursor: pointer; opacity: 0.9; }
 .mark:hover, .mark:focus-visible { opacity: 1; transform: scale(1.35); }
-.mark.cut-start, .mark.cut-end { width: 3px; height: 10px; top: 0; margin-left: -1.5px; border-radius: 1px; background: var(--text-dim); }
-.mark.crop { width: 3px; height: 10px; top: 0; margin-left: -1.5px; border-radius: 1px; background: var(--accent); }
+.mark.cut-start, .mark.cut-end, .mark.crop { width: 3px; height: 10px; top: 0; margin-left: -1.5px; border-radius: 1px; }
+.mark.cut-start, .mark.cut-end { background: var(--text-dim); }
+.mark.crop { background: var(--accent); }
 .scrub:disabled { opacity: 0.5; cursor: not-allowed; }
 .time { font-size: var(--fs-sm); font-family: var(--mono); color: var(--text-dim); font-variant-numeric: tabular-nums; flex-shrink: 0; margin-left: auto; }
 .speed { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-dim); margin: 0; }

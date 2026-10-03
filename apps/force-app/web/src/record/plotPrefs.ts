@@ -6,7 +6,7 @@
 // falls back to that field's default instead of reaching a plot as NaN or an unknown enum, and
 // one bad field never costs the others.
 import { COLORMAPS } from '@d1/force-plotting';
-import { clampWindowSec } from './plotWindow';
+import { clampWindowSec, DEFAULT_WINDOW_SEC } from './plotWindow';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 export interface PlotPrefs {
@@ -20,7 +20,7 @@ export const FRM_STRIDES = [1, 2, 5, 10, 25, 50];
 
 export function defaultPlotPrefs(): PlotPrefs {
 	return {
-		forceMode: 'time', frmAxis: 'Fz', colormap: 'viridis', pointSize: 1.8, windowSec: 12, liveFrmStride: 1,
+		forceMode: 'time', frmAxis: 'Fz', colormap: 'viridis', pointSize: 1.8, windowSec: DEFAULT_WINDOW_SEC, liveFrmStride: 1,
 		polarRadius: 'Fz', polarAngleSource: 'tacho', polarBins: 36,
 	};
 }
@@ -57,26 +57,4 @@ export function loadPlotPrefs(): PlotPrefs {
 
 export function savePlotPrefs(p: PlotPrefs): void {
 	try { localStorage.setItem(PLOT_PREFS_KEY, JSON.stringify(p)); } catch { /* storage full or blocked: not worth an error */ }
-}
-
-/**
- * Coalesces a burst of changes (dragging a slider fires one per tick) into one write `ms` after
- * the last. `flush()` writes a pending change at once; call it when the page is going away.
- */
-export function createDebouncedSaver<T>(save: (v: T) => void, ms = 250) {
-	let timer: ReturnType<typeof setTimeout> | null = null;
-	let pending: (() => T) | null = null;
-	const flush = () => {
-		if (timer !== null) { clearTimeout(timer); timer = null; }
-		if (pending) { const get = pending; pending = null; save(get()); }
-	};
-	return {
-		/** Queue a write of `get()`, read when the write happens so it is the latest value. */
-		schedule(get: () => T) {
-			pending = get;
-			if (timer !== null) clearTimeout(timer);
-			timer = setTimeout(flush, ms);
-		},
-		flush,
-	};
 }

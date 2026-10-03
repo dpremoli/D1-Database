@@ -4,19 +4,21 @@
 import { computed, inject, reactive, ref, shallowRef, watch, type InjectionKey } from 'vue';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS, RecordClient } from './liveClient';
 import { api } from '../directusClient';
-import { buildSeriesEnvelope, parseCache, type Cache } from '@d1/force-plotting';
+import { buildSeriesEnvelope, debouncePublish, parseCache, type Cache } from '@d1/force-plotting';
 import { searchSamples, searchOperators, searchEquipment, searchTools, searchInserts, searchEdges, getMethods, resolveMachiningMethodId, type LookupItem } from './directusLookups';
 import { logRun, syncStatus } from './directusSync';
 import { alarmController } from './alarms';
 import { recordingPrefs } from './recordingPrefs';
 import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
-import { createDebouncedSaver, loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
+import { loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
+import { isFetchFailure } from '../netErrors';
 import { confirmAction } from '../ui/confirm';
 import { spotlight } from '../ui/spotlight';
-import { FIELD_FOCUS, StartRequestError } from './recordingErrors';
+import { FIELD_FOCUS, StartRequestError, sampleRateIssue } from './recordingErrors';
+import { nidaqHardware } from './nidaqHardware';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 
@@ -94,8 +96,9 @@ export function createWorkspace() {
 	// Remembered across launches (#108), parsed defensively field by field (plotPrefs.ts).
 	const plot = reactive<PlotPrefs>(loadPlotPrefs());
 	// Written 250 ms after the last change, not on every slider tick; flushed when the page goes away.
-	const plotSaver = createDebouncedSaver<PlotPrefs>(savePlotPrefs);
-	watch(plot, () => plotSaver.schedule(() => ({ ...plot })), { deep: true });
+	// The reactive object itself is pushed, so the write serialises whatever it holds by then.
+	const plotSaver = debouncePublish<PlotPrefs>(savePlotPrefs, 250);
+	watch(plot, () => plotSaver.push(plot), { deep: true });
 	if (typeof window !== 'undefined') {
 		window.addEventListener('pagehide', plotSaver.flush);
 		window.addEventListener('beforeunload', plotSaver.flush);
@@ -222,6 +225,12 @@ export function createWorkspace() {
 	const isFinalizing = computed(() => st.state === 'finalizing');
 	const isDone = computed(() => st.state === 'done');
 	const locked = computed(() => isRecording.value || isFinalizing.value);
+	// #84: why Start can't be pressed for the chosen NI-DAQ sample rate (the hardware can't do it), or
+	// null. One computed for the footer's Start-disable and the red sample-rate tile, so they can't
+	// disagree.
+	const sampleRateBlocker = computed(() => (source.value === 'nidaq'
+		? sampleRateIssue(cfg.sample_rate, nidaqHardware.maxRateHz)
+		: null));
 
 	// The resolved Sample/Operator/Machine/Tool/Insert/Edge picks (`link.*`) and the folded
 	// machining-details section (`machining.*`) used to reach Directus ONLY via buildRunPayload()'s
@@ -375,7 +384,7 @@ export function createWorkspace() {
 			const m = e?.message || 'failed to start';
 			// A bare "Failed to fetch"/"Load failed" is a transport failure reaching the recorder
 			// (backend down, or blocked by CORS / HTTPS mixed-content) — spell that out.
-			errMsg.value = /failed to fetch|load failed|networkerror/i.test(m)
+			errMsg.value = isFetchFailure(m)
 				? `${m} — can't reach the recording backend. Is it running on this machine?`
 				: m;
 			// #84: the backend named the field it refused (e.g. a sample rate above the hardware's
@@ -760,7 +769,7 @@ export function createWorkspace() {
 	return {
 		client, source, setSource, nidaqChannels, cfg, meta, machining, plot, replay, st, busy, errMsg, finishedCache,
 		editCutStartSec, editCutEndSec,
-		isIdle, isRecording, isFinalizing, isDone, locked, saveOpen,
+		isIdle, isRecording, isFinalizing, isDone, locked, sampleRateBlocker, saveOpen,
 		mode, playback, rpmTarget,
 		start, stop, newRun, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
 		// 2d: Directus links + run write-back

@@ -4,6 +4,8 @@ import { getConfig, getConfigDefaults, setConfigOverride, resetConfigOverride } 
 import OfflineModeCard from './OfflineModeCard.vue';
 import { confirmAction } from '../ui/confirm';
 import { formatMegabytes } from '../format';
+import { fetchRemoteBackupStates } from '../recorderHttp';
+import { remoteCopyLabel } from './backupLabels';
 
 interface Finding {
 	service: string;
@@ -147,20 +149,11 @@ async function applyFix(f: Finding) {
 	if (!f.fixable) return;
 	const base = getConfig().recorderUrl;
 	if (f.fixable === 'purge_incomplete') {
-		// Fresh from the backend rather than the findings list, which may be a few minutes old.
-		let items = f.items || [];
-		try {
-			const r = await fetch(`${base}/recovery/check`);
-			if (r.ok) {
-				const fresh = (await r.json()).incomplete || [];
-				items = fresh.map((s: any) => ({
-					id: s.id, sample_name: s.manifest?.config?.sample_name,
-					raw_size_mb: s.raw?.raw_size_mb, duration_sec: s.raw?.duration_sec,
-				}));
-			}
-		} catch { /* fall back to the list the doctor gave us */ }
+		// Fresh from the backend rather than the findings list, which may be a few minutes old. The
+		// remote-copy lookup is independent, so it runs alongside.
+		const [fresh, remote] = await Promise.all([freshIncomplete(base), remoteBackupIds(base)]);
+		const items = fresh ?? f.items ?? [];
 		if (!items.length) { await runDoctor(); return; }
-		const remote = await remoteBackupIds(base);
 		const ok = await confirmAction({
 			title: `Discard ${items.length} incomplete recording${items.length === 1 ? '' : 's'}?`,
 			message: 'These recordings were interrupted and never finalized. Discarding deletes their captured data from this machine — recovering them instead (Settings > Local Captures) keeps it.',
@@ -172,7 +165,7 @@ async function applyFix(f: Finding) {
 				value: [
 					s.raw_size_mb != null ? formatMegabytes(s.raw_size_mb) : '',
 					s.duration_sec != null ? `${s.duration_sec.toFixed(0)}s` : '',
-					remote.known ? (remote.ids.has(s.id) ? (remote.ids.get(s.id) === 'complete' ? 'remote copy exists' : 'partial remote copy') : 'no remote copy') : '',
+					remote.known ? remoteCopyLabel(remote.ids.get(s.id)) : '',
 				].filter(Boolean).join(' · '),
 			})),
 			confirmLabel: 'Discard all',
@@ -189,13 +182,23 @@ async function applyFix(f: Finding) {
 	}
 }
 
+// The incomplete recordings the backend sees right now, or null when it can't be asked (the caller
+// falls back to the list the doctor gave it).
+async function freshIncomplete(base: string): Promise<NonNullable<Finding['items']> | null> {
+	try {
+		const r = await fetch(`${base}/recovery/check`);
+		if (!r.ok) return null;
+		return ((await r.json()).incomplete || []).map((s: any) => ({
+			id: s.id, sample_name: s.manifest?.config?.sample_name,
+			raw_size_mb: s.raw?.raw_size_mb, duration_sec: s.raw?.duration_sec,
+		}));
+	} catch { return null; }
+}
+
 async function remoteBackupIds(base: string): Promise<{ known: boolean; ids: Map<string, string> }> {
 	try {
-		const r = await fetch(`${base}/backup/remote-sessions`);
-		if (!r.ok) return { known: false, ids: new Map() };
-		const d = await r.json();
-		if (!d.configured) return { known: true, ids: new Map() };
-		return { known: true, ids: new Map<string, string>((d.sessions || []).filter((s: any) => s.backup_state !== 'deleted').map((s: any) => [s.id, s.backup_state || 'unknown'])) };
+		const r = await fetchRemoteBackupStates(base);
+		return { known: true, ids: r.configured ? r.states : new Map() };
 	} catch { return { known: false, ids: new Map() }; }
 }
 

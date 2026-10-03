@@ -5,8 +5,7 @@
 import { computed } from 'vue';
 import { useWorkspace } from '../workspace';
 import TransportBar from './TransportBar.vue';
-import { nidaqHardware } from '../nidaqHardware';
-import { describeRecordingFailure, FIELD_FOCUS, sampleRateIssue } from '../recordingErrors';
+import { describeRecordingFailure, FIELD_FOCUS } from '../recordingErrors';
 import { spotlight } from '../../ui/spotlight';
 
 const w = useWorkspace();
@@ -14,9 +13,6 @@ const w = useWorkspace();
 // #84: a rate the assigned NI-DAQ modules can't do is caught here, before Start, instead of as a
 // driver error after a session (and a capture directory) already exists. Start stays disabled
 // until it is fixed; "Show me" points at the tile.
-const startBlocker = computed(() => (w.source.value === 'nidaq'
-	? sampleRateIssue(w.cfg.sample_rate, nidaqHardware.maxRateHz)
-	: null));
 function showSampleRate() { spotlight(FIELD_FOCUS.sample_rate); }
 // A failed run's line under Start: the plain-language summary, not the first line of a traceback.
 const failure = computed(() => (w.st.state === 'error' && w.st.error
@@ -47,8 +43,8 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
 				</button>
 			</div>
 			<div class="actions">
-				<button v-if="!w.locked.value" class="btn success start" :disabled="w.busy.value || !w.st.connected || !!startBlocker"
-					:title="startBlocker || ''" @click="w.start()">
+				<button v-if="!w.locked.value" class="btn success start" :disabled="w.busy.value || !w.st.connected || !!w.sampleRateBlocker.value"
+					:title="w.sampleRateBlocker.value || ''" @click="w.start()">
 					<span class="material-symbols-rounded">fiber_manual_record</span> Start
 				</button>
 				<button v-else class="btn danger stop" :disabled="w.busy.value || w.isFinalizing.value" @click="w.stop()">
@@ -61,8 +57,8 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
 			<p v-if="w.recordingPrefs.convergeEnabled && w.source.value !== 'nidaq'" class="hint">Applies live only with the NI-DAQ source; on sim/replay it just previews the recommendation.</p>
 			<p v-if="w.converge.status" class="sync" :class="w.converge.busy ? 'warn' : 'ok'"><span class="material-symbols-rounded">tune</span>{{ w.converge.status }}</p>
 		</div>
-		<p v-if="startBlocker && !w.locked.value" class="err">
-			{{ startBlocker }} <button type="button" class="linkbtn" @click="showSampleRate">Show me</button>
+		<p v-if="w.sampleRateBlocker.value && !w.locked.value" class="err">
+			{{ w.sampleRateBlocker.value }} <button type="button" class="linkbtn" @click="showSampleRate">Show me</button>
 		</p>
 		<p v-if="w.errMsg.value" class="err">{{ w.errMsg.value }}</p>
 		<p v-if="failure" class="err" :title="failure.details">{{ failure.summary }}</p>

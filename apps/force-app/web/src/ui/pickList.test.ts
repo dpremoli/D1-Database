@@ -8,13 +8,13 @@ describe('pickRows', () => {
 	it('passes everything through unmarked by default', () => {
 		const rows = pickRows(items, idOf);
 		expect(rows.map((r) => r.item.id)).toEqual(['a', 'b', 'c']);
-		expect(rows.every((r) => !r.current && !r.picked && !r.disabled)).toBe(true);
+		expect(rows.every((r) => !r.current && !r.picked)).toBe(true);
 	});
 
 	it('single-value: marks the current value but keeps it pickable', () => {
 		const rows = pickRows(items, idOf, { currentId: 'b' });
 		expect(rows.map((r) => r.current)).toEqual([false, true, false]);
-		expect(rows[1].disabled).toBe(false);
+		expect(rows.every((r) => !r.picked)).toBe(true);
 	});
 
 	it('multi-pick: hides already-picked items', () => {
@@ -24,8 +24,8 @@ describe('pickRows', () => {
 
 	it('picked items that are not hidden are shown disabled', () => {
 		const rows = pickRows(items, idOf, { selectedIds: ['a'] });
-		expect(rows[0]).toMatchObject({ picked: true, disabled: true });
-		expect(rows[1]).toMatchObject({ picked: false, disabled: false });
+		expect(rows[0]).toMatchObject({ picked: true });
+		expect(rows[1]).toMatchObject({ picked: false });
 	});
 
 	it('an empty currentId marks nothing', () => {

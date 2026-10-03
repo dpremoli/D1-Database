@@ -102,13 +102,13 @@ onMounted(() => {
 });
 
 async function submit() {
-	if (!title.value.trim() || submitting.value) return;
+	const typedTitle = title.value.trim();
+	if (!typedTitle || submitting.value) return;
 	submitting.value = true;
 	result.value = null;
 	try {
-		const typedTitle = title.value.trim();
 		const body = new URLSearchParams({
-			title: title.value.trim(),
+			title: typedTitle,
 			description: description.value.trim(),
 			app_version: appVersion.value,
 			platform: navigator.platform || '',

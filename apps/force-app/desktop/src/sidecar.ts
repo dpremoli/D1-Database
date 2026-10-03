@@ -55,12 +55,7 @@ async function isHealthy(url: string, timeoutMs: number): Promise<boolean> {
 async function waitForHealthy(url: string, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(1500) });
-      if (res.ok) return true;
-    } catch {
-      /* not up yet */
-    }
+    if (await isHealthy(url, 1500)) return true;
     await sleep(300);
   }
   return false;

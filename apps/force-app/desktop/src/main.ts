@@ -44,6 +44,14 @@ let recorderPort: number | null = null;
 // however the quit was triggered — window X, Alt+F4, or the application menu.
 let quitConfirmed = false;
 
+/** A request to the local recorder backend, or null when it has no port yet (not started, or
+ * between restarts). Rejects like `fetch` on a network error or timeout, so callers keep their own
+ * "couldn't ask" handling. */
+async function recorderFetch(path: string, timeoutMs: number, init: RequestInit = {}): Promise<Response | null> {
+  if (recorderPort == null) return null;
+  return fetch(`http://127.0.0.1:${recorderPort}${path}`, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+}
+
 /** Is the backend mid-recording, and what has it captured so far? Null when it is not.
  *
  * Asks the backend rather than the renderer: recording is server-side and keeps running even when
@@ -51,12 +59,9 @@ let quitConfirmed = false;
  * report "idle" for a recording that is very much still going.
  */
 async function activeRecording(): Promise<{ sample: string; elapsed: number; samples: number } | null> {
-  if (recorderPort == null) return null;
   try {
-    const res = await fetch(`http://127.0.0.1:${recorderPort}/record/status`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    if (!res.ok) return null;
+    const res = await recorderFetch('/record/status', 2000);
+    if (!res?.ok) return null;
     const s = (await res.json()) as {
       state?: string;
       elapsed_sec?: number;
@@ -166,12 +171,10 @@ function backendCommand(port: number): {
  * operator can see. Best effort: when the backend is the thing that is down, console is all. */
 function logToBackend(level: 'ERROR' | 'WARNING' | 'INFO', message: string): void {
   console.error(`[desktop] ${message}`);
-  if (recorderPort == null) return;
-  void fetch(`http://127.0.0.1:${recorderPort}/logs/client`, {
+  void recorderFetch('/logs/client', 2000, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ level, source: 'desktop', message }),
-    signal: AbortSignal.timeout(2000),
   }).catch(() => {});
 }
 
@@ -240,10 +243,9 @@ function registerShellIpc(): void {
 }
 
 async function currentCapturesRoot(): Promise<string | null> {
-  if (recorderPort == null) return null;
   try {
-    const res = await fetch(`http://127.0.0.1:${recorderPort}/storage/config`, { signal: AbortSignal.timeout(3000) });
-    if (!res.ok) return null;
+    const res = await recorderFetch('/storage/config', 3000);
+    if (!res?.ok) return null;
     const body = (await res.json()) as { captures_root?: unknown };
     return typeof body.captures_root === 'string' && body.captures_root ? body.captures_root : null;
   } catch {

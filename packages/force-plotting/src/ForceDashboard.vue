@@ -6,7 +6,8 @@ import ForceChart from './ForceChart.vue';
 import { pickMode, type FrmMode } from './frmMode';
 import { perKeyComputed } from './perKeyComputed';
 import LoadingOverlay from './LoadingOverlay.vue';
-import { stageInfo, type LoadStage, type StageInfo } from './loadStage';
+import { sameStage, stageInfo, type LoadStage, type StageInfo } from './loadStage';
+import { createLoadToken } from './loadToken';
 import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
@@ -1188,7 +1189,7 @@ function selectSample(s: any) {
 }
 
 const LAST_OP_KEY = 'd1-force-dashboard-lastop';
-let selectSeq = 0;
+const selectToken = createLoadToken();
 async function selectOp(row: any) {
 	selectedRowId.value = row.id;
 	selectedSampleId.value = sampleOf(row)?.sample_id ?? null;
@@ -1210,7 +1211,7 @@ async function selectOp(row: any) {
 	// The previous op stays on screen, under a veil, until this one arrives: clearing it here
 	// unmounted every chart and the cloud, so each switch flashed blank and reflowed (#94). A
 	// newer click supersedes this one, so a slow response can't land on top of it.
-	const seq = ++selectSeq;
+	const seq = selectToken.next();
 	loadingDetail.value = true;
 	try {
 		const res = await api.get(`/items/machining_force_analysis/${row.id}`, {
@@ -1243,27 +1244,27 @@ async function selectOp(row: any) {
 					'grid_fidelity', 'grid_arm_ratio', 'grid_cell_mm'],
 			},
 		});
-		if (seq !== selectSeq) return;
+		if (!selectToken.isCurrent(seq)) return;
 		detail.value = res.data.data;
 		editPpr.value = Number(detail.value?.pulses_per_rev) || 1;
-		// Not awaited: the figure is only shown in Figure mode, and waiting for it would hold the
-		// veil (and its pointer block) over Lite/Full, where it is never displayed. Figure mode shows
-		// its own download overlay while frmLoading.
-		void loadFrm();
+		// The figure is not loaded here: it is only shown in Figure mode, and the figure watcher
+		// (below) fetches it, not awaited, once the new detail is in place. Waiting for
+		// it would hold the veil (and its pointer block) over Lite/Full; Figure mode shows its own
+		// download overlay while frmLoading.
 	} catch (e) {
 		// Nothing to show for the selected row: don't leave the previous op displayed as if it were it.
-		if (seq === selectSeq) { detail.value = null; frmUrl.value = null; frmSeq++; frmLoading.value = false; }
+		if (selectToken.isCurrent(seq)) { detail.value = null; frmUrl.value = null; frmToken.cancel(); frmLoading.value = false; }
 		throw e;
 	} finally {
-		if (seq === selectSeq) loadingDetail.value = false;
+		if (selectToken.isCurrent(seq)) loadingDetail.value = false;
 	}
 }
 
 // Latest loadFrm() wins: an older figure download finishing late must not land on the newer op, or
 // clear frmLoading while the newer one is still downloading.
-let frmSeq = 0;
+const frmToken = createLoadToken();
 async function loadFrm() {
-	const mine = ++frmSeq;
+	const mine = frmToken.next();
 	const d = detail.value;
 	if (!d) { frmUrl.value = null; frmLoading.value = false; return; }
 	const fileId = d[`frm_${axis.value.toLowerCase()}`];
@@ -1274,15 +1275,27 @@ async function loadFrm() {
 	try {
 		const res = await api.get(`/assets/${fileId}`, {
 			responseType: 'blob',
-			onDownloadProgress: (e) => { if (mine === frmSeq) figStage.value = { kind: 'download', loaded: e.loaded, total: e.total ?? null, what: 'figure' }; },
+			onDownloadProgress: (e) => {
+				if (!frmToken.isCurrent(mine)) return;
+				// Progress events are frequent; only write when the label would change (whole percent).
+				const next: LoadStage = { kind: 'download', loaded: e.loaded, total: e.total ?? null, what: 'figure' };
+				if (!sameStage(figStage.value, next)) figStage.value = next;
+			},
 		});
 		const url = URL.createObjectURL(res.data);
 		frmCache.set(fileId, url);   // cached even when superseded: it is the right figure for that file
-		if (mine !== frmSeq) return;
+		if (!frmToken.isCurrent(mine)) return;
 		frmUrl.value = url;
-	} catch { if (mine === frmSeq) frmUrl.value = null; } finally { if (mine === frmSeq) frmLoading.value = false; }
+	} catch { if (frmToken.isCurrent(mine)) frmUrl.value = null; } finally { if (frmToken.isCurrent(mine)) frmLoading.value = false; }
 }
-function setAxis(a: Axis) { axis.value = a; loadFrm(); }
+// The static figure is only on screen when neither interactive renderer is (Lite needs a live cache,
+// Full an octree, so a mode with nothing behind it falls back to the figure too). Fetch it only
+// then, and again whenever the file to show changes (a new operation, another axis) or the figure
+// comes back on screen (a switch to Figure). The cache above makes a revisit instant.
+const figureShown = computed(() => !liveOn.value && !octreeOn.value);
+const figureFileId = computed<string | null>(() => detail.value?.[`frm_${axis.value.toLowerCase()}`] ?? null);
+watch([figureShown, figureFileId], () => { if (figureShown.value) void loadFrm(); });
+function setAxis(a: Axis) { axis.value = a; }
 
 const op = computed(() => detail.value?.operation_id ?? null);
 const opSample = computed(() => op.value?.sample_id ?? null);

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { getConfig } from '../config';
+import { describeFetchError } from '../netErrors';
 import { confirmAction } from '../ui/confirm';
 import { backupStateLabel, listState, localStatusLabel, restoreBlockedReason, type RemoteSession } from './backupLabels';
 
@@ -85,7 +86,6 @@ async function testConnection() {
 }
 
 async function loadSessions() {
-	if (!cfg.value.server_url) { sessions.value = []; sessionsLoaded.value = false; sessionsError.value = ''; return; }
 	sessionsLoading.value = true;
 	try {
 		const res = await fetch(`${base()}/backup/remote-sessions`);
@@ -94,15 +94,15 @@ async function loadSessions() {
 			throw new Error(typeof detail === 'string' ? detail : `HTTP ${res.status}`);
 		}
 		const data = await res.json();
+		// No server configured: nothing to list, and not an error (the page says to set a URL).
+		if (data.configured === false) { sessions.value = []; sessionsLoaded.value = false; sessionsError.value = ''; return; }
 		sessions.value = data.sessions || [];
 		serverRetentionHours.value = data.retention_hours ?? null;
 		sessionsError.value = '';
 		sessionsLoaded.value = true;
 	} catch (e: any) {
 		// Keep whatever was listed before: a failed refresh isn't evidence the backups are gone.
-		sessionsError.value = /failed to fetch|load failed|networkerror/i.test(e?.message || '')
-			? "can't reach the recording backend — is it running?"
-			: e?.message || 'could not load remote backups';
+		sessionsError.value = describeFetchError(e, 'could not load remote backups');
 	} finally {
 		sessionsLoading.value = false;
 	}
@@ -134,7 +134,8 @@ async function restoreSession(id: string) {
 	}
 }
 
-onMounted(async () => { await loadConfig(); void loadSessions(); });
+// Independent requests, so they run together; the sessions reply says for itself whether a server is set up.
+onMounted(() => { void loadConfig(); void loadSessions(); });
 </script>
 
 <template>
@@ -261,8 +262,7 @@ input:focus { border-color: var(--accent); }
 .ro-value { display: block; font-size: var(--fs-md); font-family: var(--mono); color: var(--text); }
 .rs-detail { font-size: var(--fs-xs); color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .rs-detail.dim { opacity: 0.7; }
-.rs-state { display: inline-block; margin-left: 6px; font-size: var(--fs-xs); font-weight: 700; padding: 1px 5px; border-radius: 4px; text-transform: uppercase; }
-.rs-state { text-transform: none; }
+.rs-state { display: inline-block; margin-left: 6px; font-size: var(--fs-xs); font-weight: 700; padding: 1px 5px; border-radius: 4px; text-transform: none; }
 .rs-state.ok { color: #15803d; background: rgba(34,197,94,0.15); }
 .rs-state.warn { color: #d97706; background: color-mix(in srgb, var(--warn) 15%, transparent); }
 .rs-state.dim { color: var(--text-dim); background: var(--surface-2); }

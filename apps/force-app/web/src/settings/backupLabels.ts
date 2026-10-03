@@ -61,6 +61,13 @@ export function backupStateLabel(s: RemoteSession, nowMs: number = Date.now()): 
 	}
 }
 
+/** The remote copy of a capture, in words. `state` is its backup_state, or null/undefined when the
+ *  server holds nothing for it; 'complete' is the whole recording, anything else only a partial one. */
+export function remoteCopyLabel(state: string | null | undefined): string {
+	if (state == null) return 'no remote copy';
+	return state === 'complete' ? 'remote copy exists' : 'partial remote copy';
+}
+
 /** What this machine holds for the capture, in words — shown beside the backup state. */
 export function localStatusLabel(s: RemoteSession): string | null {
 	switch (s.local_status) {

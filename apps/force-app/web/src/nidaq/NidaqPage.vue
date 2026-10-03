@@ -60,7 +60,7 @@ function cardSpec(productType: string): CatalogCard | undefined {
 async function load() {
 	err.value = null;
 	await nidaqState.revalidate();
-	if (nidaqState.error.value) err.value = nidaqState.error.value || 'failed to load NI-DAQ config';
+	if (nidaqState.error.value) err.value = nidaqState.error.value;
 }
 onMounted(load);
 

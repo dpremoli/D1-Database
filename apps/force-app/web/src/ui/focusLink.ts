@@ -7,7 +7,7 @@
 // SettingsPage has read `?tab=`, a form waiting on its first fetch — so the lookup polls for a
 // short while instead of giving up on the first miss.
 import type { LocationQuery, Router } from 'vue-router';
-import { spotlight } from './spotlight';
+import { resolveSpotlightTarget, spotlight } from './spotlight';
 
 export const FOCUS_WAIT_MS = 2000;
 const POLL_MS = 50;
@@ -17,11 +17,6 @@ export function focusIdFrom(query: LocationQuery): string | null {
 	const v = query.focus;
 	const id = Array.isArray(v) ? v[0] : v;
 	return typeof id === 'string' && id.trim() ? id.trim() : null;
-}
-
-/** Attribute selector for a `data-focus` id, with quotes and backslashes escaped. */
-export function focusSelector(id: string): string {
-	return `[data-focus="${id.replace(/["\\]/g, '\\$&')}"]`;
 }
 
 /** Resolves with the first non-null `probe()` result, or null once `timeoutMs` has passed. */
@@ -52,7 +47,7 @@ export function installFocusLinks(router: Router): void {
 		const id = focusIdFrom(to.query);
 		if (!id) return;
 		const mine = ++seq;
-		const el = await waitFor(() => document.querySelector(focusSelector(id)));
+		const el = await waitFor(() => resolveSpotlightTarget(id));
 		if (mine !== seq) return;
 		if (el) spotlight(el);
 		if (router.currentRoute.value.query.focus !== undefined) {

@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDebouncedSaver, defaultPlotPrefs, parsePlotPrefs } from './plotPrefs';
+import { describe, expect, it } from 'vitest';
+import { defaultPlotPrefs, parsePlotPrefs } from './plotPrefs';
 
 describe('parsePlotPrefs (#108)', () => {
 	it('gives the defaults with nothing stored, or junk', () => {
@@ -43,34 +43,5 @@ describe('parsePlotPrefs (#108)', () => {
 
 	it('ignores unknown keys', () => {
 		expect(parsePlotPrefs(JSON.stringify({ evil: true }))).not.toHaveProperty('evil');
-	});
-});
-
-describe('createDebouncedSaver (#108)', () => {
-	beforeEach(() => { vi.useFakeTimers(); });
-	afterEach(() => { vi.useRealTimers(); });
-
-	it('writes once, with the latest value, after a burst of changes', () => {
-		const save = vi.fn();
-		const s = createDebouncedSaver<number>(save, 250);
-		let v = 1;
-		for (let i = 0; i < 10; i++) { v = i; s.schedule(() => v); vi.advanceTimersByTime(50); }
-		expect(save).not.toHaveBeenCalled();
-		vi.advanceTimersByTime(250);
-		expect(save).toHaveBeenCalledTimes(1);
-		expect(save).toHaveBeenCalledWith(9);
-	});
-
-	it('flush writes a pending change at once, and only once', () => {
-		const save = vi.fn();
-		const s = createDebouncedSaver<string>(save, 250);
-		s.flush();
-		expect(save).not.toHaveBeenCalled();
-		s.schedule(() => 'x');
-		s.flush();
-		expect(save).toHaveBeenCalledWith('x');
-		vi.advanceTimersByTime(1000);
-		s.flush();
-		expect(save).toHaveBeenCalledTimes(1);
 	});
 });

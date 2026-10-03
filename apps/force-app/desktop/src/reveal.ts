@@ -3,6 +3,11 @@ import path from 'node:path';
 
 export type RevealCheck = { ok: true; path: string; isDir: boolean } | { ok: false; reason: string };
 
+/** Does `rel` (a `path.relative(root, target)` result) point outside the root? */
+function outsideRoot(rel: string): boolean {
+  return rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+}
+
 /** May the renderer open this path in the file browser? (#96)
  *
  * The request comes from page code, so it is held to what the feature needs: an absolute path
@@ -15,8 +20,7 @@ export function checkRevealTarget(requested: unknown, capturesRoot: string): Rev
   if (!path.isAbsolute(requested)) return { ok: false, reason: 'not an absolute path' };
   // Lexical prefilter before any filesystem call: realpath on a UNC path reaches out to that SMB
   // host, so a path outside the root must be refused without the main process ever touching it.
-  const lexical = path.relative(path.resolve(capturesRoot), path.resolve(requested));
-  if (lexical === '..' || lexical.startsWith(`..${path.sep}`) || path.isAbsolute(lexical)) {
+  if (outsideRoot(path.relative(path.resolve(capturesRoot), path.resolve(requested)))) {
     return { ok: false, reason: 'only folders inside the recording folder can be opened' };
   }
   let target: string;
@@ -31,8 +35,7 @@ export function checkRevealTarget(requested: unknown, capturesRoot: string): Rev
   } catch {
     return { ok: false, reason: 'the recording folder is not available' };
   }
-  const rel = path.relative(root, target);
-  if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+  if (outsideRoot(path.relative(root, target))) {
     return { ok: false, reason: 'only folders inside the recording folder can be opened' };
   }
   let isDir: boolean;

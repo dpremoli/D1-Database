@@ -114,7 +114,6 @@ async function load(id: string) {
 				},
 			});
 			if (!loadToken.isCurrent(mine)) return;   // superseded while downloading: emit nothing, touch nothing
-			stage.value = { kind: 'build' };
 			c = parseCache(res.data as ArrayBuffer);
 			cachePut(id, c);
 		}
