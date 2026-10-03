@@ -22,7 +22,7 @@ from .config import RecordConfig
 from .d1rw import RawWriter
 from .dsp import sum_axes, tacho_column, welch_spectra
 from .finalize import finalize
-from .recovery import write_manifest
+from .recovery import _raw_info, write_manifest
 from .storage import disk_usage_for
 from .stream.broadcast import Broadcaster
 from .stream.frame import encode_frame
@@ -41,6 +41,12 @@ SUB_NAMES = ["Fx1", "Fx2", "Fy1", "Fy2", "Fz1", "Fz2", "Fz3", "Fz4", "Tacho"]
 DISK_BACKUP_GB = 3.0
 DISK_STOP_GB = 1.0
 DISK_CHECK_INTERVAL = 10.0
+
+
+def _raw_rows(capture_dir: str) -> int:
+    """Rows actually in the capture's raw file (0 when it is missing or has only its header)."""
+    info = _raw_info(capture_dir)
+    return info["n_rows"] if info else 0
 
 
 class RecordingSession:
@@ -246,13 +252,19 @@ class RecordingSession:
                 self._finalize_thread.start()
             else:
                 self.state = "error" if self.error else "done"
-                if self.error:
-                    # Failed before a single sample arrived. There is nothing to finalize or
-                    # recover — recovery skips a 0-row raw, so the directory would just sit on disk
-                    # as an unnamed "incomplete" capture forever. Remove it.
+                if self.error and (_raw_rows(self.dir) == 0):
+                    # Failed before a single sample reached the raw file. There is nothing to
+                    # finalize or recover — recovery skips a 0-row raw, so the directory would just
+                    # sit on disk as an unnamed "incomplete" capture forever. Remove it.
                     self.error_kind = "start"
                     shutil.rmtree(self.dir, ignore_errors=True)
                 else:
+                    # n_total is bumped AFTER the raw append in _consume, so a failure while
+                    # processing the very first chunk leaves rows on disk with n_total == 0. That
+                    # data is real: keep the directory (recoverable from Local Captures) and call it
+                    # an acquisition failure, not a failed start.
+                    if self.error:
+                        self.error_kind = "acquisition"
                     write_manifest(self.dir, self.state, self.cfg, self.error)
                 self._publish_control(
                     {

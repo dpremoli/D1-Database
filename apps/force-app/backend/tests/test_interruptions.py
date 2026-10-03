@@ -334,6 +334,24 @@ class TestStartFailure:
         assert sess.status()["error_kind"] == "start"
         assert not os.path.exists(sess.dir)
 
+    def test_first_chunk_processing_error_keeps_the_raw(self, tmp_path):
+        """#84: _consume appends to the raw BEFORE bumping n_total, so a failure while processing
+        the very first chunk leaves rows on disk with n_total == 0. That is not a failed start and
+        its data must not be deleted: it stays recoverable."""
+        sess = RecordingSession(_cfg(), str(tmp_path), ExceptionAfterNSource(1))
+
+        def boom(*a, **k):
+            raise RuntimeError("processing failed")
+
+        sess.cut.update = boom
+        sess.start()
+        _wait(sess)
+        assert sess.n_total == 0
+        assert sess.state == "error"
+        assert sess.error_kind == "acquisition"
+        assert os.path.isfile(_raw_path(sess))
+        assert [s["id"] for s in scan_incomplete(str(tmp_path))] == [sess.id]
+
     def test_not_in_incomplete_scan(self, tmp_path):
         """Empty raw files should not appear in recovery scan."""
         sess = RecordingSession(_cfg(), str(tmp_path), StartFailureSource())
