@@ -8,7 +8,9 @@ summary.json from the crash-safe raw file (which is valid up to the last fsync p
 from __future__ import annotations
 
 import json
+import ntpath
 import os
+import posixpath
 import shutil
 import time
 from collections.abc import Iterator
@@ -197,20 +199,43 @@ def scan_incomplete(captures_root: str, exclude_id: str | None = None) -> list[d
 
 
 def is_safe_id(session_id: str) -> bool:
-    """A bare directory name: no separators or parent references that could escape the root."""
-    # "" and "." are not escapes but name the root itself, which a delete would then target.
-    return (
-        bool(session_id)
-        and session_id != "."
-        and not ("/" in session_id or "\\" in session_id or ".." in session_id)
+    """A bare directory name: no separators, drive letters or parent references that could escape
+    the root, under BOTH path flavours (the recorder runs on Windows, the tests on anything).
+
+    Beyond the obvious `/`, `\\` and `..`: a `:` is rejected because `ntpath.join(root, "C:", ...)`
+    resets to the drive's cwd and `"C:foo"` is drive-relative, so either escapes the captures root
+    on Windows. The final test is that the id is its own basename and already normalised."""
+    if not isinstance(session_id, str) or not session_id:
+        return False
+    if session_id in (".", "..") or ".." in session_id:
+        return False
+    if any(c in session_id for c in "/\\:\0"):
+        return False
+    return all(
+        flavour.basename(session_id) == session_id and flavour.normpath(session_id) == session_id
+        for flavour in (posixpath, ntpath)
     )
+
+
+def capture_dir_for(captures_root: str, session_id: str) -> str:
+    """`captures_root/session_id`, or ValueError if the id is unsafe or (belt and braces) the
+    result would not sit directly inside the root."""
+    if not is_safe_id(session_id):
+        raise ValueError("invalid session id")
+    root = os.path.abspath(captures_root)
+    path = os.path.abspath(os.path.join(root, session_id))
+    try:
+        inside = os.path.commonpath([root, path]) == root and os.path.dirname(path) == root
+    except ValueError:  # different drives
+        inside = False
+    if not inside:
+        raise ValueError("invalid session id")
+    return os.path.join(captures_root, session_id)
 
 
 def recover_session(captures_root: str, session_id: str) -> dict:
     """Re-run finalize on a crashed session's raw file."""
-    if not is_safe_id(session_id):
-        raise ValueError("invalid session id")
-    capture_dir = os.path.join(captures_root, session_id)
+    capture_dir = capture_dir_for(captures_root, session_id)
     raw_path = os.path.join(capture_dir, "raw.d1raw")
     if not os.path.isfile(raw_path):
         raise FileNotFoundError(f"no raw file for session {session_id}")
@@ -243,9 +268,7 @@ def discard_session(captures_root: str, session_id: str) -> None:
     discard finished after the client gave up waiting on it) is treated as success, not an error —
     otherwise a retried/duplicate request would surface a confusing 404 for a discard that actually
     already worked."""
-    if not is_safe_id(session_id):
-        raise ValueError("invalid session id")
-    capture_dir = os.path.join(captures_root, session_id)
+    capture_dir = capture_dir_for(captures_root, session_id)
     if not os.path.isdir(capture_dir):
         return
     if os.path.isfile(os.path.join(capture_dir, "summary.json")):

@@ -551,3 +551,37 @@ def test_unmark_deleted_does_not_overwrite_an_unreadable_meta(client, tmp_path):
     assert client.post("/sessions/bad/unmark-deleted").status_code == 409
     with open(meta_path, "rb") as f:
         assert f.read() == b"{oops"
+
+
+@pytest.mark.parametrize(
+    "sid",
+    ["C%3A", "C%3Afoo", "..", "a%2Fb", "a%5Cb", "%2e%2e", "%2E", "x%3Ay", "..%5Cx"],
+)
+def test_session_id_must_be_a_bare_basename(client, tmp_path, sid):
+    """Drive letters, parent refs, separators and encoded variants all name something other than a
+    direct child of STORAGE (on Windows `C:` escapes it) — refused before any filesystem call."""
+    assert client.delete(f"/sessions/{sid}").status_code in (400, 404)
+    assert client.post(f"/sessions/{sid}/mark-deleted").status_code in (400, 404)
+    assert client.get(f"/sessions/{sid}/info").status_code in (400, 404)
+    assert os.path.isdir(str(tmp_path))  # the storage root itself survived
+
+
+@pytest.mark.parametrize(
+    "sid", ["C:", "C:foo", "..", ".", "", "a/b", "a\\b", "x:y", "a\x00b"]
+)
+def test_session_dir_rejects_unsafe_ids(sid, tmp_path, monkeypatch):
+    import server as srv
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(srv, "STORAGE", str(tmp_path))
+    with pytest.raises(HTTPException) as e:
+        srv._session_dir(sid)
+    assert e.value.status_code == 400
+
+
+def test_session_dir_accepts_normal_ids(tmp_path, monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, "STORAGE", str(tmp_path))
+    for sid in ("20260101-000000-abc123", "test-001", "a.b", "a b"):
+        assert srv._session_dir(sid) == os.path.join(str(tmp_path), sid)

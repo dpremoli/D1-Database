@@ -22,7 +22,9 @@ Endpoints:
 from __future__ import annotations
 
 import json
+import ntpath
 import os
+import posixpath
 import shutil
 import struct
 import threading
@@ -51,9 +53,33 @@ D1RW_HEADER_SIZE = 32
 D1RW_HEADER_FMT = "<4sIIfd"
 
 
+def _is_safe_id(sid: str) -> bool:
+    """A bare directory name under BOTH path flavours (same rule as the recorder's
+    recovery.is_safe_id): no separators, drive letters (`:`), parent references, and the id must be
+    its own normalised basename. "" and "." name STORAGE itself, which DELETE /sessions/{sid} would
+    rmtree."""
+    if not isinstance(sid, str) or not sid or sid in (".", "..") or ".." in sid:
+        return False
+    if any(c in sid for c in "/\\:\0"):
+        return False
+    return all(
+        flavour.basename(sid) == sid and flavour.normpath(sid) == sid
+        for flavour in (posixpath, ntpath)
+    )
+
+
 def _session_dir(sid: str) -> str:
-    # "" and "." are not escapes but name STORAGE itself, which DELETE /sessions/{sid} would rmtree.
-    if not sid or sid == "." or "/" in sid or "\\" in sid or ".." in sid:
+    if not _is_safe_id(sid):
+        raise HTTPException(400, "invalid session id")
+    root = os.path.abspath(STORAGE)
+    path = os.path.abspath(os.path.join(root, sid))
+    try:
+        inside = (
+            os.path.commonpath([root, path]) == root and os.path.dirname(path) == root
+        )
+    except ValueError:  # different drives
+        inside = False
+    if not inside:
         raise HTTPException(400, "invalid session id")
     return os.path.join(STORAGE, sid)
 
