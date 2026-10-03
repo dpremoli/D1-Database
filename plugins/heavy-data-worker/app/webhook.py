@@ -11,11 +11,11 @@ import math
 import os
 
 from flask import Flask, jsonify, request
-from redis import Redis
 from rq import Queue
 
 from app.jobs.process_session import process_session
 from app.lib import minio_client
+from app.lib.redis_conn import get_redis
 from app.lib.security import (
     MAX_UPLOAD_BYTES,
     check_secret,
@@ -25,10 +25,7 @@ from app.lib.security import (
 app = Flask(__name__)
 app.before_request(check_secret)
 
-_redis = Redis(
-    host=os.getenv("REDIS_HOST", "redis"),
-    port=int(os.getenv("REDIS_PORT", "6379")),
-)
+_redis = get_redis()
 _queue = Queue("heavy-data", connection=_redis)
 
 PART_SIZE_BYTES: int = int(os.getenv("UPLOAD_PART_SIZE_BYTES", str(100 * 1024 * 1024)))

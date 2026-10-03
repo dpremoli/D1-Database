@@ -65,7 +65,7 @@ template updates.
 
 **`entrypoint.sh`**
 Starts gunicorn bound to `0.0.0.0:${WORKER_HTTP_PORT:-8080}` and an rq
-worker pointing at `redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}`. Both
+worker pointing at `${REDIS_URL:-redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}}`. Both
 processes run in the background; a `trap` catches `TERM` and `INT` and kills
 both before the container exits. The only line you must change is the rq queue
 name (see step 3 below).
@@ -217,8 +217,9 @@ are read at runtime from the container environment; none may be hard-coded.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `REDIS_HOST` | yes | `redis` | Hostname of the Redis service inside the Docker network. |
-| `REDIS_PORT` | yes | `6379` | Redis TCP port. |
+| `REDIS_URL` | no | — | Full Redis URL including the password (`redis://:<pw>@redis:6379/0`). Preferred by the webhook and by `rq worker --url` when set. |
+| `REDIS_HOST` | yes | `redis` | Fallback when `REDIS_URL` is unset: hostname of the Redis service inside the Docker network. |
+| `REDIS_PORT` | yes | `6379` | Fallback when `REDIS_URL` is unset: Redis TCP port. |
 | `MINIO_ENDPOINT` | yes | `http://minio:9000` | Full URL of the MinIO service. |
 | `MINIO_ROOT_USER` | yes | — | MinIO access key (S3 `aws_access_key_id`). |
 | `MINIO_ROOT_PASSWORD` | yes | — | MinIO secret key (S3 `aws_secret_access_key`). |
@@ -275,6 +276,7 @@ the `image` tag and host port as needed.
       minio:
         condition: service_healthy
     environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       REDIS_HOST: redis
       REDIS_PORT: 6379
       MINIO_ENDPOINT: http://minio:9000
@@ -285,6 +287,7 @@ the `image` tag and host port as needed.
       WORKER_DIRECTUS_TOKEN: ${YOUR_PLUGIN_DIRECTUS_TOKEN:-}
       WORKER_MEMORY_LIMIT_MB: ${WORKER_MEMORY_LIMIT_MB:-256}
       WORKER_HTTP_PORT: "8080"
+      WORKER_WEBHOOK_SECRET: ${WORKER_WEBHOOK_SECRET:?set WORKER_WEBHOOK_SECRET}
     ports:
       - "${YOUR_PLUGIN_HTTP_PORT:-8081}:8080"
     healthcheck:

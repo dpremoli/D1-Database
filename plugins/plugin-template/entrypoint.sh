@@ -15,7 +15,7 @@ gunicorn \
 WEBHOOK_PID=$!
 
 rq worker \
-    --url "redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}" \
+    --url "${REDIS_URL:-redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}}" \
     "${QUEUE_NAME:-plugin}" &
 WORKER_PID=$!
 

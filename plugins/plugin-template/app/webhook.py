@@ -10,20 +10,17 @@ Replace example_job with your job in the import below and in _queue.enqueue().
 import os
 
 from flask import Flask, jsonify, request
-from redis import Redis
 from rq import Queue
 
 from app.jobs.example_job import example_job
 from app.lib import minio_client
+from app.lib.redis_conn import get_redis
 from app.lib.security import check_secret, valid_object_key
 
 app = Flask(__name__)
 app.before_request(check_secret)
 
-_redis = Redis(
-    host=os.getenv("REDIS_HOST", "redis"),
-    port=int(os.getenv("REDIS_PORT", "6379")),
-)
+_redis = get_redis()
 _queue = Queue(os.getenv("QUEUE_NAME", "plugin"), connection=_redis)
 
 
