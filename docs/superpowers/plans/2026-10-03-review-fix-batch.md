@@ -173,12 +173,12 @@ each stream into `ccr-c5556a5a-jxwm8s`.
 
 | Stream | Wave | Worktree / branch id | State |
 |---|---|---|---|
-| A | 1 | `stream-a` (branch `worktree-stream-a`) | done (`266c2f7`..`e682f82`), reviewed; merge together with H (Redis URL) |
+| A | 1 | `stream-a` (branch `worktree-stream-a`) | merged (`de1b41f`); Flow secret header added in `06cde35` |
 | B | 1 | `agent-a87e02935fb18bd77` | in progress |
 | D | 1 | `agent-a919838a2c96882aa` | in progress |
-| H | 1 | `agent-a9501193950e18778` | in progress |
+| H | 1 | `agent-a9501193950e18778` | merged (`8ec7a6e`), reviewed |
 | C | 2 | `stream-c` (branch `worktree-stream-c`) | in progress |
-| E | 2 | — | pending |
+| E | 2 | `stream-e` (branch `worktree-stream-e`) | in progress |
 | F | 2 | — | pending |
 | G | 2 | — | pending |
 | I | 3 | — | pending |
