@@ -151,9 +151,10 @@ Each stream works in its own worktree under `.claude/worktrees/` on branch
 
 ## 4. After the streams merge
 
-Progress (2026-10-03): steps 1-4 are done. All streams are merged, each stream and the merged
+Progress (2026-10-03): all five steps are done; the PR is dpremoli/D1-Database#117. All streams are merged, each stream and the merged
 whole were reviewed and their findings fixed, every suite passes (including the slow 2 GB
-finalize test, run once), and the 0.1.33 changelog and version bump are in. Step 5 waits for the PR.
+finalize test, run once), and the 0.1.33 changelog and version bump are in. 33 issues are closed;
+#84 #86 #96 #101 #109 stay open for a check on real equipment, and #100 #67 #31 are partial.
 
 1. Merge every stream into `claude/trusting-euler-ku2z3z` and resolve conflicts.
 2. Code review of the whole diff (correctness first), and fix the findings.
