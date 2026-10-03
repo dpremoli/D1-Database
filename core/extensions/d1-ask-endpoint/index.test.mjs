@@ -1,4 +1,4 @@
-// Run with: node --test core/extensions/d1-ask-endpoint/
+// Run with: node --test core/extensions/d1-ask-endpoint/index.test.mjs
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
