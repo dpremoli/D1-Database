@@ -22,7 +22,7 @@ from .config import RecordConfig
 from .d1rw import RawWriter
 from .dsp import sum_axes, tacho_column, welch_spectra
 from .finalize import finalize
-from .recovery import _raw_info, write_manifest
+from .recovery import raw_info, write_manifest
 from .storage import disk_usage_for
 from .stream.broadcast import Broadcaster
 from .stream.frame import encode_frame
@@ -45,7 +45,7 @@ DISK_CHECK_INTERVAL = 10.0
 
 def _raw_rows(capture_dir: str) -> int:
     """Rows actually in the capture's raw file (0 when it is missing or has only its header)."""
-    info = _raw_info(capture_dir)
+    info = raw_info(capture_dir)
     return info["n_rows"] if info else 0
 
 

@@ -33,7 +33,7 @@ from app.backup import (
     BackupStreamer,
     download_remote_raw,
     fetch_remote_session_config,
-    list_remote_sessions,
+    fetch_remote_sessions,
     probe_server,
 )
 from app.config import SIGNAL_CHANNELS, RecordConfig
@@ -213,7 +213,7 @@ def test_streamed_backup_restores_byte_identically(server, tmp_path):
     sess = _record(tmp_path, server.url)
     assert sess.state == "done", f"local recording failed: {sess.error}"
 
-    sessions = list_remote_sessions(server.url)
+    sessions = fetch_remote_sessions(server.url)["sessions"]
     assert [s["id"] for s in sessions] == [sess.id]
 
     restored = _restore_and_finalize(server.url, sess.id, str(tmp_path / "restored"))
@@ -419,9 +419,11 @@ def test_probe_server_reports_reachability(server):
     assert down["reachable"] is False and "error" in down
 
 
-def test_list_remote_sessions_empty_and_unreachable(server):
-    assert list_remote_sessions(server.url) == []
-    assert list_remote_sessions("http://127.0.0.1:9") == []  # swallows errors by design
+def test_fetch_remote_sessions_empty_and_unreachable(server):
+    assert fetch_remote_sessions(server.url)["sessions"] == []
+    # An unreachable server is an error, not "no backups" (#92).
+    with pytest.raises(bmod.RemoteBackupError):
+        fetch_remote_sessions("http://127.0.0.1:9")
 
 
 def test_fetch_remote_session_config_missing_returns_empty(server):

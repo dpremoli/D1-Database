@@ -11,6 +11,8 @@ import json
 import os
 import shutil
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from .config import RecordConfig
 from .d1rw import HEADER_SIZE, read_header
@@ -29,6 +31,48 @@ _discarding: set[str] = set()
 _recovering: set[str] = set()
 
 
+def in_flight(session_id: str) -> str | None:
+    """'discarding' or 'recovering' when a background job owns this capture id right now, else None.
+
+    A restore counts as recovering. Discarding wins if (impossibly) both apply, since a retried
+    discard of an id already being deleted is the one case callers treat as success."""
+    if session_id in _discarding:
+        return "discarding"
+    if session_id in _recovering:
+        return "recovering"
+    return None
+
+
+def any_in_flight() -> bool:
+    """True while any capture is being recovered, restored or discarded."""
+    return bool(_recovering or _discarding)
+
+
+def discarding_ids() -> list[str]:
+    """Ids currently being deleted in the background, sorted."""
+    return sorted(_discarding)
+
+
+@contextmanager
+def recovering(session_id: str) -> Iterator[None]:
+    """Mark `session_id` as being recovered for the duration of the block."""
+    _recovering.add(session_id)
+    try:
+        yield
+    finally:
+        _recovering.discard(session_id)
+
+
+@contextmanager
+def discarding(session_id: str) -> Iterator[None]:
+    """Mark `session_id` as being discarded for the duration of the block."""
+    _discarding.add(session_id)
+    try:
+        yield
+    finally:
+        _discarding.discard(session_id)
+
+
 def write_manifest(
     capture_dir: str, state: str, cfg: RecordConfig | None = None, error: str | None = None
 ) -> None:
@@ -44,7 +88,7 @@ def write_manifest(
     atomic_write_json(os.path.join(capture_dir, MANIFEST), data, fsync=True, indent=2)
 
 
-def _raw_info(capture_dir: str) -> dict | None:
+def raw_info(capture_dir: str) -> dict | None:
     raw_path = os.path.join(capture_dir, "raw.d1raw")
     if not os.path.isfile(raw_path):
         return None
@@ -105,7 +149,7 @@ def scan_incomplete(captures_root: str, exclude_id: str | None = None) -> list[d
         if name == exclude_id:
             continue
 
-        info = _raw_info(d)
+        info = raw_info(d)
         if info is None or info["n_rows"] == 0:
             continue
 

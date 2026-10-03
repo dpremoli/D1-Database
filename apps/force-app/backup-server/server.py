@@ -36,6 +36,13 @@ STORAGE = os.environ.get(
     "BACKUP_STORAGE", os.path.join(os.path.dirname(__file__), "backups")
 )
 RETENTION_HOURS = float(os.environ.get("BACKUP_RETENTION_HOURS", "12"))
+
+
+def _expires_at(updated_at: float) -> float:
+    """When the purge sweep removes a session last updated at `updated_at`."""
+    return updated_at + RETENTION_HOURS * 3600
+
+
 PURGE_INTERVAL = 300  # seconds between purge sweeps
 
 D1RW_MAGIC = b"D1RW"
@@ -93,7 +100,7 @@ def _session_info(sid: str) -> dict | None:
     updated = meta.get("updated_at") or _mtime(d)
     if updated:
         info["updated_at"] = updated
-        info["expires_at"] = updated + RETENTION_HOURS * 3600
+        info["expires_at"] = _expires_at(updated)
     if meta.get("deleted_at"):
         info["deleted_at"] = meta["deleted_at"]
     return info
@@ -343,7 +350,7 @@ async def session_mark_deleted(sid: str) -> dict:
     # retention clock, or a tombstone could be kept alive forever by repeated calls.
     if meta.get("state") == "deleted":
         base = meta.get("updated_at") or _mtime(d) or time.time()
-        return {"ok": True, "session_id": sid, "expires_at": base + RETENTION_HOURS * 3600}
+        return {"ok": True, "session_id": sid, "expires_at": _expires_at(base)}
     now = time.time()
     # Keep what the stream reached, so a restore can still say whether the copy was complete.
     meta["state_before_delete"] = meta.get("state", "unknown")
@@ -352,7 +359,7 @@ async def session_mark_deleted(sid: str) -> dict:
     meta["updated_at"] = now
     with open(meta_path, "w") as f:
         json.dump(meta, f)
-    return {"ok": True, "session_id": sid, "expires_at": now + RETENTION_HOURS * 3600}
+    return {"ok": True, "session_id": sid, "expires_at": _expires_at(now)}
 
 
 @app.delete("/sessions/{sid}")
