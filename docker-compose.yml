@@ -24,7 +24,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -126,10 +126,8 @@ services:
       - directus-uploads:/directus/uploads
       # Mount the version-controlled hook extensions (read-only).
       - ./core/extensions:/directus/extensions:ro
-      # Read-only SMB archive (see the `archive_share` volume below).
-      # TEMPORARILY DETACHED: SMB credential expired (required key not available).
-      # Restore this line and refresh SMB_PASS in .env once the share re-auths.
-      # - archive_share:/mnt/archive:ro
+      # The SMB archive (`archive_share`, below) is deliberately NOT mounted here: files there are
+      # linked, not served, and only the `archive-indexer` service reads it.
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider",
              "http://127.0.0.1:8055/server/health"]
@@ -170,9 +168,6 @@ services:
       WORKER_HTTP_PORT: "8080"
     ports:
       - "${D1_BIND_ADDR:-127.0.0.1}:${WORKER_HTTP_PORT:-8080}:8080"
-    volumes:
-      # Read-only SMB archive — lets the worker fetch linked files by path.
-      - archive_share:/mnt/archive:ro
     healthcheck:
       test:
         - "CMD"
@@ -215,9 +210,6 @@ services:
       FFT_CHANNEL_INDEX: "2"
     ports:
       - "${D1_BIND_ADDR:-127.0.0.1}:${ANALYSIS_HTTP_PORT:-8081}:8081"
-    volumes:
-      # Read-only SMB archive — lets the worker fetch linked files by path.
-      - archive_share:/mnt/archive:ro
     healthcheck:
       test:
         - "CMD"
@@ -452,6 +444,23 @@ services:
       - caddy-config:/config
     networks: [d1net]
 
+  # One-off indexer for the SMB archive (`make index-archive`). Opt-in profile so a plain
+  # `docker compose up` never tries to mount the share. Nothing else reads /mnt/archive.
+  archive-indexer:
+    image: python:3.12-slim
+    profiles: ["archive"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-d1}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (openssl rand -hex 32)}@postgres:5432/${POSTGRES_DB:-d1_database}?sslmode=disable
+      ARCHIVE_ROOT: /mnt/archive/star_group1
+    volumes:
+      - ./scripts:/scripts:ro
+      - archive_share:/mnt/archive:ro
+    command: ["sh", "-c", "pip install -q psycopg2-binary && python /scripts/index_archive.py"]
+    networks: [d1net]
+
 volumes:
   pgdata:
   redis-data:
@@ -465,10 +474,11 @@ volumes:
   backup-raw:
 
   # Read-only mount of the university SMB archive (Z: → \\uosfstore.shef.ac.uk\shared).
-  # The whole `shared` export is mounted; only the star_group1 subtree is used
-  # (STORAGE_STAR_ROOT and the indexer point at /mnt/archive/star_group1).
-  # Credentials live in .env (SMB_USER / SMB_PASS). The mount is read-only twice
-  # over: `ro` in the options AND `:ro` on every service mount.
+  # Used only by the `archive-indexer` service (profile `archive`, run by `make index-archive`);
+  # the workers and Directus do not mount it. The whole `shared` export is mounted; only the
+  # star_group1 subtree is used (STORAGE_STAR_ROOT and the indexer point at
+  # /mnt/archive/star_group1). Credentials live in .env (SMB_USER / SMB_PASS). The mount is
+  # read-only twice over: `ro` in the options AND `:ro` on the service mount.
   # If SMB negotiation fails, adjust `vers=` (try 3.1.1 or 2.1) or add `domain=`.
   archive_share:
     driver: local
