@@ -35,4 +35,4 @@ brief.
 | 5 | Sonnet reviewer | done; blocker 1 and view finding 2 verified |
 | 6 | Sonnet reviewer | done; blockers 1, 2, 3 verified |
 | 7 | Sonnet reviewer | done; blockers 1, 2, 3 verified |
-| Consolidated report | coordinator | done; awaiting owner's pick of follow-up batches |
+| Consolidated report | coordinator | done; fixes run in `2026-10-03-review-fix-batch.md` |
