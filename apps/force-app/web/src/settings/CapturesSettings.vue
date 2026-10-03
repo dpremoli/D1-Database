@@ -16,6 +16,7 @@ import EditCaptureMetadataDialog from './EditCaptureMetadataDialog.vue';
 import { matchUploaded, uploadedRowsSince } from './captureUploadState';
 import { formatMegabytes } from '../format';
 import { canRevealPaths, copyText, revealPath } from '../localPaths';
+import { focusIdFrom } from '../ui/focusLink';
 import { spotlight } from '../ui/spotlight';
 
 interface Capture {
@@ -340,11 +341,15 @@ function queueLabel(item: QueuedRun): string {
 }
 
 const route = useRoute();
+// Read the wanted focus now, synchronously at setup: ui/focusLink.ts strips `?focus=` from the URL
+// after its 2 s wait, so on a slow /captures/browse the query is already gone by the time load()
+// resolves and checking it afterwards would never spotlight.
+const wantedFocus = focusIdFrom(route.query);
 onMounted(async () => {
 	refreshQueue();
 	await load();
 	// Arrived from the Connectivity doctor's "Open Local Captures": point at the incomplete rows.
-	if (route.query.focus === 'incomplete-captures') {
+	if (wantedFocus === 'incomplete-captures') {
 		await nextTick();
 		spotlight('incomplete-captures', { focus: false });
 	}
