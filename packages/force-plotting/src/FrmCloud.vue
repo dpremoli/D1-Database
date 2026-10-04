@@ -22,6 +22,7 @@ import { histogramFrom, type Histogram } from './histogram';
 import LoadingOverlay from './LoadingOverlay.vue';
 import { createLoadToken } from './loadToken';
 import { createFrameGate, createTrailingThrottle } from './frameScheduling';
+import { createGlLifecycle } from './glLifecycle';
 import { sameStage, stageInfo, type LoadStage, type StageInfo } from './loadStage';
 import {
 	buildStaticAttributes, spiralUniformValues,
@@ -235,7 +236,6 @@ let pointsObj: THREE.Points | null = null;
 let discTex: THREE.CanvasTexture | null = null;
 let controls: OrbitControls | null = null;   // 3D mode only (Z series active)
 let ready = false;
-let suspended = false;
 // Bumped on reactivation: a context released with forceContextLoss() is never handed back by
 // getContext() on the same canvas, so a new WebGLRenderer there would report "WebGL unavailable"
 // (review 3.2). A keyed <canvas> is a new element with a fresh context.
@@ -273,7 +273,7 @@ function setupRenderer() {
 	// suspended: deactivated (kept alive off-screen). A cache arriving now must not build a renderer
 	// on the old canvas, whose context teardownRenderer() deliberately lost; onActivated() sets up
 	// a fresh one.
-	if (suspended || ready || !canvasEl.value) return;
+	if (life.suspended || ready || !canvasEl.value) return;
 	const canvas = canvasEl.value;
 	try {
 		renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
@@ -659,6 +659,14 @@ onMounted(() => {
 // deactivated cloud tears down exactly like an unmounted one, and reactivating re-runs the same
 // first-mount setup path (setupRenderer's `if (ready ...) return` guard is why this is safe to
 // call again — ready is reset to false here).
+const life = createGlLifecycle({
+	teardown: () => teardownRenderer(),
+	replaceCanvas: () => {
+		canvasKey.value++;   // new canvas element -> a context that was not force-lost
+		if (error.value && /WebGL|GPU context/.test(error.value)) error.value = null;   // retry on the new canvas
+	},
+	start: () => nextTick(() => { setupRenderer(); scheduleRebuild(); }),
+});
 function teardownRenderer() {
 	// cancel() zeroes the pending ids too: left set, scheduleDraw()'s and onCropChange()'s "already
 	// queued" guards would block every redraw and crop rebuild after a reactivation (review 3.3).
@@ -690,17 +698,11 @@ onBeforeUnmount(() => {
 	// The stage watcher is already stopped by now, so say "idle" directly: otherwise the host's busy
 	// bar stays on after a mid-load unmount.
 	if (stage.value) emit('stage', null);
-	teardownRenderer();
+	life.unmount();
 });
-onDeactivated(() => { suspended = true; teardownRenderer(); });
+onDeactivated(() => life.deactivate());
 onActivated(() => {
-	if (suspended) {
-		suspended = false;
-		canvasKey.value++;   // new canvas element -> a context that was not force-lost
-		if (error.value && /WebGL|GPU context/.test(error.value)) error.value = null;   // retry on the new canvas
-		nextTick(() => { setupRenderer(); scheduleRebuild(); });
-		return;
-	}
+	if (life.activate()) return;
 	if (!ready) nextTick(() => { setupRenderer(); scheduleRebuild(); });
 });
 
