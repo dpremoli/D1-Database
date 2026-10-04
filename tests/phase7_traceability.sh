@@ -12,7 +12,7 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 
 : "${DATABASE_URL:?DATABASE_URL must be set (e.g. postgres://d1:pw@localhost:5432/d1_db)}"
-PSQL="psql $DATABASE_URL --no-psqlrc -t -A"
+PSQL="psql $DATABASE_URL --no-psqlrc -t -A -v ON_ERROR_STOP=1"
 
 pass=0; fail=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
@@ -23,6 +23,33 @@ run_eq() {
     [[ "$result" == "$expected" ]] && ok "$label" || bad "$label (got '$result', want '$expected')"
 }
 
+# The fixture rows below are removed again on exit (also after a failure or Ctrl-C), and any
+# leftovers of an earlier killed run are removed first. Only the P7-* rows this script creates
+# are touched. Rows written to audit_logs stay: it is append-only by design.
+FIXTURE_CODES="'P7-BILLET','P7-DISC','P7-PIECE-A','P7-PIECE-B'"
+cleanup_fixture() {
+    $PSQL -c "
+BEGIN;
+DELETE FROM test_sessions            WHERE sample_id IN (SELECT sample_id FROM physical_samples WHERE sample_code IN ($FIXTURE_CODES));
+DELETE FROM manufacturing_operations WHERE sample_id IN (SELECT sample_id FROM physical_samples WHERE sample_code IN ($FIXTURE_CODES));
+DELETE FROM sample_stock_provenance  WHERE sample_id IN (SELECT sample_id FROM physical_samples WHERE sample_code IN ($FIXTURE_CODES))
+                                        OR lot_id IN (SELECT lot_id FROM raw_stock_lots WHERE lot_code = 'P7-LOT-001');
+DELETE FROM sample_genealogy         WHERE child_sample_id  IN (SELECT sample_id FROM physical_samples WHERE sample_code IN ($FIXTURE_CODES))
+                                        OR parent_sample_id IN (SELECT sample_id FROM physical_samples WHERE sample_code IN ($FIXTURE_CODES));
+DELETE FROM physical_samples         WHERE sample_code IN ($FIXTURE_CODES);
+DELETE FROM raw_stock_lots           WHERE lot_code = 'P7-LOT-001';
+COMMIT;" >/dev/null
+}
+on_exit() {
+    local status=$? err
+    if ! err=$(cleanup_fixture 2>&1 >/dev/null); then
+        printf '\033[31mFAIL\033[0m could not remove the P7-* fixture rows: %s\n' "$err" >&2
+        status=1
+    fi
+    exit "$status"
+}
+trap on_exit EXIT
+
 echo "== Traceability functions exist =="
 for fn in f_trace_ancestors f_trace_descendants f_trace_stock_origins f_sample_timeline; do
     run_eq "$fn exists" \
@@ -30,7 +57,14 @@ for fn in f_trace_ancestors f_trace_descendants f_trace_stock_origins f_sample_t
 done
 
 echo "== Build an isolated lineage fixture (BILLET → DISC → PIECE-A/B) =="
-$PSQL -c "
+if ! cleanup_fixture >/dev/null 2>&1; then
+    bad "could not clear leftover P7-* fixture rows from an earlier run"
+    echo "Phase 7: $pass passed, $fail failed"
+    exit 1
+fi
+# One DO block = one transaction: either the whole fixture exists or none of it. A failure
+# here is fatal (every later check depends on it), not something to swallow.
+if ! fixture_err=$($PSQL -c "
 DO \$\$
 DECLARE v_lot uuid; v_mid uuid; v_mat uuid;
         v_billet uuid; v_disc uuid; v_pa uuid; v_pb uuid;
@@ -55,7 +89,12 @@ BEGIN
   INSERT INTO test_sessions (sample_id,test_type,session_date,status)
     VALUES (v_pa,'other','2026-01-12','registered');
 END \$\$;
-" > /dev/null 2>&1 || true
+" 2>&1 >/dev/null); then
+    bad "fixture creation failed: $fixture_err"
+    echo "Phase 7: $pass passed, $fail failed (fixture missing; remaining checks skipped)"
+    exit 1
+fi
+ok "fixture created"
 
 PA="(SELECT sample_id FROM physical_samples WHERE sample_code='P7-PIECE-A')"
 BILLET="(SELECT sample_id FROM physical_samples WHERE sample_code='P7-BILLET')"
