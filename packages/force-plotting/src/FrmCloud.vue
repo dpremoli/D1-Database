@@ -701,7 +701,11 @@ function timeToWorld(time: number | null | undefined, out: THREE.Vector3): boole
 		return true;
 	}
 	// 3D (Z comes from the cloud) and linear_feed/machine_xyz: find the sample in the built cloud.
-	if (!cloud?.idx || !pointsObj) return false;
+	if (!cloud?.idx || !pointsObj || !cloud.count) return false;
+	// The ring snaps to the nearest DRAWN sample, so a time beyond the ends of what was drawn (the
+	// crop's inner-diameter cut-out, or the crop edge falling between strided samples) has no point
+	// to sit on, and clamping to the last one would put a ring where nothing corresponds.
+	if (time < c.t[cloud.idx[0]] || time > c.t[cloud.idx[cloud.count - 1]]) return false;
 	const k = findNearestPathIndex(cloud.idx, cloud.count, i);
 	if (k < 0) return false;
 	out.set(cloud.pos[k * 3], cloud.pos[k * 3 + 1], cloud.pos[k * 3 + 2]).applyMatrix4(pointsObj.matrixWorld);
@@ -714,6 +718,9 @@ const pinPos = ref<{ x: number; y: number } | null>(null);
 const hoverPos = ref<{ x: number; y: number } | null>(null);
 const ringV = new THREE.Vector3();
 function ringAt(time: number | null | undefined, cur: { x: number; y: number } | null) {
+	// No renderer/camera (WebGL unavailable, context lost, torn down on deactivate): projectPx would
+	// dereference the null camera on the first chart hover.
+	if (!ready || !camera) return null;
 	if (!timeToWorld(time, ringV)) return null;
 	const p = projectPx(null, ringV.x, ringV.y, ringV.z);
 	return p ? settleRing(cur, p.px, p.py) : null;
