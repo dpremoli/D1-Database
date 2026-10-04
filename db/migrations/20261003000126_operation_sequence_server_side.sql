@@ -46,6 +46,10 @@
 -- declared UPDATE OF pass_code: a column-list trigger would block ALTER COLUMN pass_code TYPE, which
 -- the natural-sort collation migration's down section needs.
 --
+-- Deploy order: a NOT VALID CHECK on pass_code rejects a literal {seq} / {mf} (see the constraint
+-- below), so an interface bundle that runs before this migration gets an error instead of
+-- storing placeholder codes.
+--
 -- Not done here: UNIQUE(pass_code) and UNIQUE(sample_id, operation_sequence). Production may already
 -- hold duplicates; that needs a data check first (see the review-fix plan, section 2).
 --
@@ -128,6 +132,18 @@ CREATE TRIGGER mfg_op_assign_numbers
 COMMENT ON TRIGGER mfg_op_assign_numbers ON manufacturing_operations IS
     'Assigns operation_sequence and fills the {seq} / {mf} placeholders of pass_code server-side (review 4.5).';
 
+-- Deploy-order guard: if the new interface bundle runs before this migration, the placeholders are
+-- sent to a database with no trigger and would be stored literally. BEFORE triggers run before
+-- CHECK constraints, so every valid placeholder insert is rewritten first and passes; a literal
+-- {seq} or {mf} that survives is rejected. NOT VALID: rows already stored are not scanned (a row
+-- that already holds a literal placeholder can no longer be updated until it is corrected).
+ALTER TABLE manufacturing_operations
+    ADD CONSTRAINT manufacturing_operations_pass_code_no_placeholder_check
+    CHECK (pass_code !~ '\{(seq|mf)\}') NOT VALID;
+
+COMMENT ON CONSTRAINT manufacturing_operations_pass_code_no_placeholder_check ON manufacturing_operations IS
+    'Rejects a pass_code that still contains the {seq} / {mf} placeholders after the assign-numbers trigger ran (interface deployed before the migration). Not validated against existing rows.';
+
 COMMENT ON COLUMN manufacturing_operations.operation_sequence IS
     'Ordering of this operation within the sample lifecycle (1 = first). Left NULL on insert, it is '
     'assigned by the database as max+1 for the sample (not for imported rows, source_system set); '
@@ -139,6 +155,7 @@ COMMENT ON COLUMN manufacturing_operations.pass_code IS
     'by the database on insert; any other value is stored as given. Not the PK.';
 
 -- migrate:down
+ALTER TABLE manufacturing_operations DROP CONSTRAINT IF EXISTS manufacturing_operations_pass_code_no_placeholder_check;
 DROP TRIGGER IF EXISTS mfg_op_assign_numbers ON manufacturing_operations;
 DROP FUNCTION IF EXISTS trg_manufacturing_operations_assign_numbers();
 

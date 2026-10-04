@@ -60,12 +60,24 @@ CREATE TRIGGER physical_samples_assign_code_number
 COMMENT ON TRIGGER physical_samples_assign_code_number ON physical_samples IS
     'Assigns the sample number of a {seq}-... sample_code server-side (review 4.6).';
 
+-- Deploy-order guard: if the new interface bundle runs before this migration, a {seq}- code would be
+-- stored literally. The BEFORE trigger above runs before CHECK constraints, so every valid
+-- placeholder insert is rewritten first and passes; a literal {seq} that survives (a placeholder
+-- anywhere but the start) is rejected. NOT VALID: rows already stored are not scanned.
+ALTER TABLE physical_samples
+    ADD CONSTRAINT physical_samples_sample_code_no_placeholder_check
+    CHECK (sample_code !~ '\{seq\}') NOT VALID;
+
+COMMENT ON CONSTRAINT physical_samples_sample_code_no_placeholder_check ON physical_samples IS
+    'Rejects a sample_code that still contains the {seq} placeholder after the assign-number trigger ran (interface deployed before the migration). Not validated against existing rows.';
+
 COMMENT ON COLUMN physical_samples.sample_code IS
     'Human-readable pseudonym, e.g. 10-AA-MF-2023-06-03. Unique-constrained. NOT the primary key. '
     'A code that starts with {seq}- gets its number assigned by the database on insert (1 + the '
     'highest number in use); any other value is stored as given.';
 
 -- migrate:down
+ALTER TABLE physical_samples DROP CONSTRAINT IF EXISTS physical_samples_sample_code_no_placeholder_check;
 DROP TRIGGER IF EXISTS physical_samples_assign_code_number ON physical_samples;
 DROP FUNCTION IF EXISTS trg_physical_samples_assign_code_number();
 COMMENT ON COLUMN physical_samples.sample_code IS

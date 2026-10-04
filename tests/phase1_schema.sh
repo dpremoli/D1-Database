@@ -946,6 +946,23 @@ sc_check "code:0615:$((sc_base + 501))-TI-MF-2026-10-5" "a later placeholder con
 sc_check "renumber:$((sc_base + 501))-TI-MF-2026-10-5" "renumbering excludes the row's own number"
 sc_check "untouched:$((sc_base + 1))-TI-MF-2026-10-4" "an unrelated update does not renumber"
 
+# Deploy-order guard: a placeholder that survives the trigger is rejected (NOT VALID checks).
+ph_s=$($PSQL -q 2>&1 -c "INSERT INTO physical_samples (sample_code) VALUES ('TI-{seq}-MIDDLE')")
+grep -q 'physical_samples_sample_code_no_placeholder_check' <<<"$ph_s" \
+    && ok "a literal {seq} that the trigger does not replace is rejected" \
+    || bad "literal {seq} sample code was not rejected (psql output: $ph_s)"
+# With the trigger bypassed (as when the interface runs before the migration did) a literal
+# placeholder hits the CHECK; one implicit transaction per -c, so nothing is left behind.
+ph_o=$($PSQL -q 2>&1 -c "SET LOCAL session_replication_role = replica;
+INSERT INTO manufacturing_operations (method_id, process_category, source_system, pass_code)
+VALUES ((SELECT method_id FROM manufacturing_methods LIMIT 1), 'sintering', 'test', '05-01-26-MF{mf}')")
+grep -q 'manufacturing_operations_pass_code_no_placeholder_check' <<<"$ph_o" \
+    && ok "a literal {mf} / {seq} in pass_code is rejected when the trigger did not run" \
+    || bad "literal {mf} pass_code was not rejected (psql output: $ph_o)"
+ph_chk=$($PSQL -c "SELECT convalidated FROM pg_constraint WHERE conname IN ('physical_samples_sample_code_no_placeholder_check', 'manufacturing_operations_pass_code_no_placeholder_check')" | sort -u)
+[[ "$ph_chk" == "f" ]] && ok "both placeholder checks are NOT VALID (existing rows are not scanned)" \
+    || bad "placeholder check validity (got '$ph_chk')"
+
 # Two registrations at once: A holds its transaction open while B inserts.
 sc_dir=$(mktemp -d)
 sc_insert() {  # sc_insert <id-suffix> <hold-seconds>
