@@ -124,6 +124,55 @@ jobs:
           echo "Tables after full rollback: $tables"
           [[ "$tables" -eq 0 ]] || (echo "FAIL: $tables tables remain after rollback" && exit 1)
 
+  script-tests:
+    name: Scripts and diagnostics (pytest, incl. DB-level tests)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: d1
+          POSTGRES_PASSWORD: ci_secret
+          POSTGRES_DB: d1_scripts
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://d1:ci_secret@localhost:5432/d1_scripts?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Same pinned dbmate as the migrations job.
+      - name: Install dbmate
+        env:
+          DBMATE_SHA256: 757e0ede33fad35010ce5fdba201a4f2181516471676fe5eab6f93ff70ec7424
+        run: |
+          curl -fsSL -o /tmp/dbmate \
+            https://github.com/amacneil/dbmate/releases/download/v2.23.0/dbmate-linux-amd64
+          echo "${DBMATE_SHA256}  /tmp/dbmate" | sha256sum --check --strict -
+          sudo install -m 0755 /tmp/dbmate /usr/local/bin/dbmate
+
+      - name: Apply all migrations
+        run: dbmate --no-dump-schema up
+
+      # numpy/scipy/scikit-learn pinned to the plugins' versions: the diag goldens are exact for
+      # these (scikit-learn 1.3's HDBSCAN labels differ).
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q jq postgresql-client
+          pip install -r scripts/requirements.txt pytest requests \
+            "numpy==2.2.*" "scipy==1.14.*" "scikit-learn==1.5.*"
+
+      - name: Run tests/scripts
+        run: python -m pytest -q tests/scripts
+
   worker-build:
     name: Heavy-data worker (docker build + unit tests)
     runs-on: ubuntu-latest
