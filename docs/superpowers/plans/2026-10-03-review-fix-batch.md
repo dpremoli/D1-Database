@@ -181,6 +181,8 @@ each stream into `ccr-c5556a5a-jxwm8s`.
 | E | 2 | `stream-e` (branch `worktree-stream-e`) | merged (`c9e8fff`), reviewed; real-UI check pending |
 | F | 2 | `stream-f` (branch `worktree-stream-f`) | merged, reviewed (polls kept across deactivate in `6bf2704`) |
 | G | 2 | `stream-g` (branch `worktree-stream-g`) | merged (`6c70803`), reviewed; `script-tests` CI job added (300 passed locally) |
+| Verify (force-app-verify) | — | `verify` (branch `worktree-verify`) | found 3a bug, fixed in `aaf6d82`; re-run in progress |
+| Cross-stream review | — | 3 read-only reviewers | in progress |
 | I | 3 | `stream-i` (branch `worktree-stream-i`) | merged (`31c97af`), reviewed; docs + phase3 actor check follow-up; 4.9 needs a live-Directus check |
 
 ## 5. After the streams merge
