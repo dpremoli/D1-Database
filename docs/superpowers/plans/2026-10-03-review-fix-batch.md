@@ -180,7 +180,7 @@ each stream into `ccr-c5556a5a-jxwm8s`.
 | C | 2 | `stream-c` (branch `worktree-stream-c`) | merged, reviewed; CI purge + docs follow-up committed |
 | E | 2 | `stream-e` (branch `worktree-stream-e`) | merged (`c9e8fff`), reviewed; real-UI check pending |
 | F | 2 | `stream-f` (branch `worktree-stream-f`) | merged, reviewed (polls kept across deactivate in `6bf2704`) |
-| G | 2 | `stream-g` (branch `worktree-stream-g`) | in progress |
+| G | 2 | `stream-g` (branch `worktree-stream-g`) | merged (`6c70803`), reviewed; `script-tests` CI job added (300 passed locally) |
 | I | 3 | `stream-i` (branch `worktree-stream-i`) | in progress |
 
 ## 5. After the streams merge
