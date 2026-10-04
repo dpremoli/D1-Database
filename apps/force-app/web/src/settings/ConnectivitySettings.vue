@@ -67,9 +67,8 @@ async function runDoctor(quiet = false) {
 			const host = u.hostname;
 			const port = u.port || (u.protocol === 'https:' ? '443' : '80');
 			const isLocal = host === 'localhost' || host === '127.0.0.1';
-			const backendPath = window.location.hostname === 'localhost'
-				? 'C:\\Users\\WS-X180-PC\\Documents\\GitHub\\D1-Database\\apps\\force-app\\backend'
-				: 'apps\\force-app\\backend';
+			// Relative to the repository root: no machine-specific path belongs in the UI.
+			const backendPath = 'apps\\force-app\\backend';
 			list.push({
 				service: 'Recorder backend',
 				status: 'fail',
@@ -78,10 +77,10 @@ async function runDoctor(quiet = false) {
 					? `The recorder backend is not running on this machine (port ${port}). It needs to be started as a background process before recording.`
 					: `Cannot connect to ${host}:${port}. Check that the recorder backend is running on that host and the Recorder URL under Service endpoints below is correct.`,
 				fix: isLocal
-					? 'Start the backend by running this command in a terminal:'
+					? 'Start the backend by running this command in a terminal opened in the D1-Database folder:'
 					: `Verify the Recorder URL under Service endpoints below, or start the backend on ${host}.`,
 				fix_command: isLocal
-					? `cd "${backendPath}"; python -m uvicorn app.main:app --host 0.0.0.0 --port ${port}`
+					? `cd "${backendPath}"; python -m uvicorn app.main:app --host 127.0.0.1 --port ${port}`
 					: undefined,
 			});
 		} catch {
