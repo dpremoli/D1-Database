@@ -4,6 +4,8 @@
 -- then flush Redis + restart Directus.
 
 -- ─── 1. COLLECTION ────────────────────────────────────────────────────────────
+BEGIN;
+
 INSERT INTO directus_collections (collection, icon, color, display_template, sort_field, sort, translations)
 VALUES ('campaigns','campaign','#3F51B5','{{name}}',NULL,26,
         '[{"language":"en-US","translation":"Campaigns","singular":"Campaign","plural":"Campaigns"}]')
@@ -93,3 +95,5 @@ INSERT INTO directus_relations (many_collection, many_field, one_collection, one
 ('campaigns','default_material_id','materials',NULL,'nullify'),
 ('manufacturing_operations','campaign_id','campaigns','operations','nullify'),
 ('test_sessions','campaign_id','campaigns','sessions','nullify');
+
+COMMIT;

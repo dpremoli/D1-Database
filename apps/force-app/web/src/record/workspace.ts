@@ -13,6 +13,7 @@ import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
 import { loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
+import { analysisAlreadyLinked, ensureOperation, needsBlobs, uploadProgress } from './uploadResume';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
 import { isFetchFailure } from '../netErrors';
 import { confirmAction } from '../ui/confirm';
@@ -131,6 +132,9 @@ export function createWorkspace() {
 	// auditable place.
 	const mode = computed<'record' | 'playback'>(() => (source.value === 'replay' ? 'playback' : 'record'));
 	const playback = createPlaybackEngine(client, { baseUrl: client.baseUrl });
+	// Playback drives client.status itself ('recording' while it plays), so the recorder's own
+	// state (RecordClient.reconcile, run on every stream (re)open) must not overwrite it.
+	client.canReconcile = () => mode.value === 'record';
 	// The RPM gauge's reference line: the replayed cut's own spindle speed in playback, the
 	// configured target when recording. Panels read this rather than cfg.rpm directly.
 	const rpmTarget = computed(() => (mode.value === 'playback' ? replay.rpm : cfg.rpm));
@@ -357,13 +361,18 @@ export function createWorkspace() {
 
 	async function start() {
 		if (busy.value) return;
-		if (!(await checkAlarmsBeforeStart())) return;
-		if (!(await checkDiskBeforeStart())) return;
-		busy.value = true; errMsg.value = null; finishedCache.value = null;
-		alarms.reset();
-		// Replay is played, not recorded (it throws below): it keeps stamping lazily in metaObj().
-		if (source.value !== 'replay') recordedStamp.value = recorderFields(currentRecorder(), new Date().toISOString());
+		// Held across the pre-flight prompts and fetches too (not only the request itself): a
+		// double-click used to start a second start() while the first waited on them, which reset
+		// state under the first and then got a 409 (review 2.5). Cleared in the finally below.
+		busy.value = true;
+		cancelAmpReset?.();
 		try {
+			if (!(await checkAlarmsBeforeStart())) return;
+			if (!(await checkDiskBeforeStart())) return;
+			errMsg.value = null; finishedCache.value = null;
+			alarms.reset();
+			// Replay is played, not recorded (it throws below): it keeps stamping lazily in metaObj().
+			if (source.value !== 'replay') recordedStamp.value = recorderFields(currentRecorder(), new Date().toISOString());
 			if (source.value === 'replay') {
 				// Playback is driven by the transport bar, not by start(). Reaching here means a
 				// caller bypassed the mode switch.
@@ -404,15 +413,46 @@ export function createWorkspace() {
 		// an interactive-looking-but-actually-stopped UI during the finalize gap.
 		saveOpen.value = true;
 		try {
-			await client.stop();
+			try {
+				await client.stop();
+			} catch (e: any) {
+				// The stop did not go through. Ask the recorder what is really happening: if the cut
+				// already ended on its own (auto-stop, disk-full) carry on into the save flow; if it
+				// is still running, or unreachable, say so and drop the dialog (it would only spin).
+				await client.reconcile().catch(() => {});
+				if (st.state === 'recording' || st.state === 'idle') {
+					saveOpen.value = false;
+					errMsg.value = `could not stop the recording - ${e?.message || e}`;
+					return;
+				}
+			}
 			await loadFinished();
 		} finally {
 			busy.value = false;
-			// The amp should only ever be in MEASURE while a cut is actually running — left in MEASURE
-			// between cuts it keeps integrating charge drift for no reason. Best-effort: an unreachable
-			// amp shouldn't block the UI from settling after stop.
-			if (source.value === 'nidaq') labamp.setMode('RESET').catch(() => {});
+			if (source.value === 'nidaq') resetAmpWhenSettled();
 		}
+	}
+
+	// The amp should only ever be in MEASURE while a cut is actually running — left in MEASURE
+	// between cuts it keeps integrating charge drift for no reason. The recorder refuses amp writes
+	// (409) while it is busy, and that includes `finalizing`, which can last a long time on a big
+	// cut: so RESET goes out once the run has settled (done/error), not right after the stop
+	// request. Best-effort — an unreachable amp must not block the UI. A new recording starting
+	// meanwhile (or a different capture) cancels it: start() does its own RESET -> MEASURE.
+	let cancelAmpReset: (() => void) | null = null;
+	function resetAmpWhenSettled() {
+		cancelAmpReset?.();
+		const sendReset = () => { labamp.setMode('RESET').catch(() => {}); };
+		const state = st.state;
+		if (state === 'recording') return;                 // the stop did not take: still running
+		if (state !== 'finalizing') { sendReset(); return; }
+		const id = st.captureId;
+		const stopWatch = watch(() => [st.state, st.captureId] as const, ([s, cid]) => {
+			if (s === 'finalizing' && cid === id) return;
+			cancelAmpReset?.();
+			if (cid === id && (s === 'done' || s === 'error')) sendReset();
+		}, { flush: 'sync' });
+		cancelAmpReset = () => { stopWatch(); cancelAmpReset = null; };
 	}
 
 	async function loadFinished() {
@@ -474,22 +514,48 @@ export function createWorkspace() {
 	async function uploadCutToDatabase(): Promise<string> {
 		const id = st.captureId;
 		if (!id) throw new Error('no capture id for this recording');
+		if (!hasServerSession()) throw new Error(OFFLINE_SESSION_UPLOAD_MESSAGE);
+		// Resume (review 2.2): a retry after a failed file upload or analysis insert continues from
+		// what the earlier attempt finished instead of inserting a second operation row.
+		const progress = uploadProgress(id);
+		if (progress.analysisDone && progress.opId) return progress.opId;
+		// A null summary (the summary fetch failed during a reconcile) is not "a .mat was written":
+		// an over-MAT_MAX_BYTES cut has none. Ask the recorder before deciding. 404 = no
+		// summary.json at all (an old capture): treat as before. Any other failure is a retryable
+		// error, not a guess.
+		if (!st.summary) {
+			let r: Response;
+			try { r = await fetch(`${client.baseUrl}/captures/${id}/summary`); }
+			catch { throw new Error('could not read the capture summary from the recorder - try again'); }
+			if (r.ok) st.summary = await r.json();
+			else if (r.status !== 404) throw new Error(`could not read the capture summary from the recorder (${r.status}) - try again`);
+		}
+		const matWritten = st.summary?.mat_written !== false;
 		// The local blob reads don't need the logged run, so they start alongside it; the uploads
 		// still wait for it, so a failed insert never leaves orphaned files -- and cancels the reads.
 		// Without a capture.mat (over MAT_MAX_BYTES) the analysis record is still fully usable from
 		// the decimated cache; directus_files_id just goes in as null.
 		const blobReads = new AbortController();
-		const blobs = fetchCaptureBlobs(client.matUrl(id), client.cacheUrl(id), st.summary?.mat_written !== false, blobReads.signal);
-		blobs.catch(() => {});   // surfaced by the await below, not as an unhandled rejection
+		const blobs = needsBlobs(progress, matWritten)
+			? fetchCaptureBlobs(client.matUrl(id), client.cacheUrl(id), matWritten, blobReads.signal)
+			: null;
+		blobs?.catch(() => {});   // surfaced by the await below, not as an unhandled rejection
 		let opId: string;
+		let existing: boolean;
 		try {
-			opId = await logRunSync();
+			({ opId, existing } = await ensureOperation(id, progress, logRunSync));
+			logged.value = true;
 		} catch (e) {
 			blobReads.abort();
 			throw e;
 		}
-		const [matBlob, cacheBlob] = await blobs;
-		const [matFileId, cacheFileId] = await uploadCaptureFiles(id, matBlob, cacheBlob);
+		if (blobs) {
+			const [matBlob, cacheBlob] = await blobs;
+			await uploadCaptureFiles(id, matBlob, cacheBlob, progress);
+		}
+		if (await analysisAlreadyLinked(progress, opId, existing)) return opId;
+		const matFileId = progress.matFileId ?? null;
+		const cacheFileId = progress.cacheFileId!;
 		const peaks = st.summary?.peaks;
 		// ForceDashboard's chart reads its plot data from `series` (a JSONB min/max envelope), not
 		// from live_cache_file — without this, upload "succeeds" (peaks/FRM all show up fine) but
@@ -527,6 +593,7 @@ export function createWorkspace() {
 			matlab_version: 'force-app-direct',
 			processed_at: new Date().toISOString(),
 		});
+		progress.analysisDone = true;
 		} catch (e: any) {
 			throw new Error(`linking the capture failed - ${directusErrorMessage(e)} (the run was logged as operation ${opId}, and both files uploaded, but the analysis record could not be created)`);
 		}
@@ -627,7 +694,17 @@ export function createWorkspace() {
 	// whenever any of those three change while in replay mode.
 	// Flipped off the first time Directus rejects crop_start_idx_override (pre-migration); see below.
 	let cropFieldAvailable = true;
+	// Request tokens (review 2.7): searches fire per keystroke and per Sample/Machine/Operation-type
+	// change, and replies can arrive out of order. Only the latest call may write its result; a
+	// source switch also supersedes whatever is in flight (below).
+	let searchSeq = 0;
+	let pickSeq = 0;
+	watch(source, () => {
+		searchSeq++; pickSeq++;
+		replay.loading = false; replay.downloading = false;
+	}, { flush: 'sync' });
 	async function searchCuts(q: string) {
+		const my = ++searchSeq;
 		replay.loading = true;
 		try {
 			const filter: any = { status: { _eq: 'done' }, live_cache_file: { _nnull: true } };
@@ -664,6 +741,7 @@ export function createWorkspace() {
 					res = await api.get('/items/machining_force_analysis', { params: { ...params, fields: baseFields } });
 				} else { throw e; }
 			}
+			if (my !== searchSeq) return;   // superseded while the request was out
 			replay.options = (res.data?.data ?? []).map((r: any) => ({
 				label: r.operation_id?.pass_code || r.operation_id?.sample_id?.sample_code || r.operation_id?.sample_id?.nickname || r.id,
 				cacheId: r.live_cache_file, opId: r.id, operationId: r.operation_id?.operation_id ?? null,
@@ -673,7 +751,11 @@ export function createWorkspace() {
 				sampleRate: r.sample_rate != null ? Number(r.sample_rate) : null,
 				cropStartSec: (r.crop_start_idx_override != null && r.sample_rate) ? Number(r.crop_start_idx_override) / Number(r.sample_rate) : null,
 			})).filter((o: ReplayOption) => o.cacheId);
-		} catch { replay.options = []; } finally { replay.loading = false; }
+		} catch {
+			if (my === searchSeq) replay.options = [];
+		} finally {
+			if (my === searchSeq) replay.loading = false;
+		}
 	}
 
 	// Picking a cut to replay loads that operation's FULL original metadata into the same fields a
@@ -681,6 +763,7 @@ export function createWorkspace() {
 	// recording" left every other field (operator, machine, tool, insert/edge, machining params)
 	// blank even though the original operation had them all recorded.
 	async function pickReplayCut(o: ReplayOption) {
+		const my = ++pickSeq;   // a newer pick, or a switch of source, supersedes this one
 		errMsg.value = null;
 		replay.downloading = true;
 		// Parse the cut locally and hand it to the playhead. No backend session is opened and
@@ -696,10 +779,14 @@ export function createWorkspace() {
 			const res = await api.get(`/assets/${o.cacheId}`, { responseType: 'arraybuffer' });
 			c = parseCache(res.data as ArrayBuffer);
 		} catch (e: any) {
+			if (my !== pickSeq) return;
 			errMsg.value = `could not load that cut — ${e?.message || e}`;
 			replay.downloading = false;
 			return;
 		}
+		// Late result of a superseded pick: loading it would reset the live client and playhead under
+		// whatever the operator chose since (e.g. after switching to Sim).
+		if (my !== pickSeq) return;
 		// PPR (and diameters) come from the cut's own machining_force_analysis row, fetched
 		// alongside it in searchCuts — NOT from cfg.ppr, which is the recording form's value and
 		// has no relation to how this cut was actually recorded. Getting this wrong doesn't just
@@ -741,7 +828,7 @@ export function createWorkspace() {
 				] },
 			});
 			const d = res.data?.data;
-			if (!d) return;
+			if (!d || my !== pickSeq) return;
 			const rm = d.recorded_metadata || {};
 			link.sampleId = d.sample_id?.sample_id || ''; link.sampleLabel = d.sample_id?.sample_code || d.sample_id?.nickname || '';
 			link.operatorId = d.operator_person_id?.person_id || ''; link.operatorLabel = d.operator_person_id?.full_name || '';

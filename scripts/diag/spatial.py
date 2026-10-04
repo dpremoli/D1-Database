@@ -22,6 +22,53 @@ from scipy.stats import norm
 
 _MAD_TO_SIGMA = 1.4826
 
+# Distances closer than this fraction of the largest returned distance are treated as equal
+# when ordering neighbours (see knn_deterministic).
+_TIE_REL_TOL = 1e-9
+
+
+def knn_deterministic(
+    tree: cKDTree, query: np.ndarray, k: int, *, self_first: bool = False
+) -> tuple[np.ndarray, np.ndarray]:
+    """k nearest neighbours of every `query` row, with ties broken by point index.
+
+    `cKDTree.query` returns *a* set of k neighbours, but when several points sit at the same
+    distance as the k-th (routine on gridded data: a lattice has 4, 8 or 12 equidistant
+    neighbours per ring) which of them it keeps depends on the tree traversal, so it changes
+    with the scipy/numpy build. That made the Gi* and cluster hand-off goldens fail on
+    any machine other than the one that froze them. Here the neighbours are ordered by
+    (distance, index) and the first k kept, so the result depends only on the data.
+
+    Distances equal to within a relative 1e-9 count as ties, so one-ulp noise in the computed
+    distance of geometrically equidistant points cannot reorder them either. With
+    `self_first` (query == the tree's own points, row i being point i) each point is forced to
+    be its own first neighbour, even among coincident duplicates.
+
+    Returns (dist, idx), both shape (len(query), k), sorted nearest first.
+    """
+    n = tree.n
+    k = int(min(k, n))
+    window = min(n, k + 16)
+    rows = np.arange(len(query))
+    while True:
+        d, idx = tree.query(query, k=window)
+        d = d.reshape(len(query), window)
+        idx = idx.reshape(len(query), window)
+        scale = float(d.max()) if d.size else 0.0
+        tol = scale * _TIE_REL_TOL if scale > 0.0 else 1.0
+        key = np.round(d / tol).astype(np.int64)
+        if self_first:
+            key[idx == rows[:, None]] = -1
+        order = np.lexsort((idx, key), axis=1)
+        key = np.take_along_axis(key, order, axis=1)
+        d = np.take_along_axis(d, order, axis=1)
+        idx = np.take_along_axis(idx, order, axis=1)
+        # Complete when every neighbour tied with the k-th lies inside the window, i.e. the
+        # last one in the window is strictly farther than the k-th kept.
+        if window >= n or bool(np.all(key[:, window - 1] > key[:, k - 1])):
+            return d[:, :k], idx[:, :k]
+        window = min(n, window * 2)
+
 
 def getis_ord_gi_star(
     x: np.ndarray, y: np.ndarray, v: np.ndarray, k: int = 30
@@ -50,8 +97,11 @@ def getis_ord_gi_star(
             f"need at least k+1={k + 1} points for k={k} neighbours, got {n}"
         )
 
-    tree = cKDTree(np.column_stack([x, y]))
-    _, idx = tree.query(np.column_stack([x, y]), k=k)  # idx includes the point itself
+    pts = np.column_stack([x, y])
+    tree = cKDTree(pts)
+    # idx includes the point itself; ties at the k-th neighbour are broken by index so the
+    # statistic does not depend on the scipy/numpy build (see knn_deterministic).
+    _, idx = knn_deterministic(tree, pts, k, self_first=True)
 
     vbar = float(np.median(v))
     s = float(np.median(np.abs(v - vbar))) * _MAD_TO_SIGMA
@@ -255,11 +305,9 @@ def assign_by_neighbours(
     kq = int(max(1, min(k, xr.size)))
 
     tree = cKDTree(np.column_stack([xr, yr]))
-    dist, idx = tree.query(np.column_stack([x, y]), k=kq)
-    # cKDTree drops the trailing axis when k == 1; restore it so one code path handles both.
-    if kq == 1:
-        dist = dist[:, None]
-        idx = idx[:, None]
+    # Deterministic (distance, index) order: which centroids a tie at the kq-th place keeps
+    # must not depend on the scipy build. Always returns 2-D arrays, also for kq == 1.
+    dist, idx = knn_deterministic(tree, np.column_stack([x, y]), kq)
 
     # Inverse-distance weights. A point coincident with a centroid is at distance 0, which
     # must hand a coincident centroid ALL the weight rather than yielding inf/nan.

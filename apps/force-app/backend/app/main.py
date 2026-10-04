@@ -39,11 +39,19 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from . import backup as backup_mod
-from . import bug_report, nidaq_catalog, nidaq_enum, recovery, storage, virtual_channels
+from . import (
+    bug_report,
+    nidaq_catalog,
+    nidaq_enum,
+    origin_guard,
+    recovery,
+    storage,
+    virtual_channels,
+)
 from . import channels as chan
 from .config import DEFAULT_NIDAQ_CHANNELS, RecordConfig
 from .d1lc import read_d1lc_header
@@ -332,6 +340,15 @@ if _cors:
     app.add_middleware(
         CORSMiddleware, allow_origins=_cors, allow_methods=["*"], allow_headers=["*"]
     )
+
+# The API has no auth; loopback binding is its only protection, and a web page the operator visits
+# can still reach it from their browser (no-cors POSTs, the WebSocket handshake, DNS rebinding).
+# Added AFTER CORS so it is the outermost layer and runs first. See origin_guard.py.
+_origin_guard = origin_guard.OriginGuardSettings(
+    origins=_cors,
+    extra_hosts=os.environ.get("RECORDER_ALLOWED_HOSTS", "").split(","),
+)
+app.add_middleware(origin_guard.OriginGuard, settings=_origin_guard)
 
 
 @app.exception_handler(LabAmpError)
@@ -909,6 +926,22 @@ async def health_doctor(request: Request) -> dict:
         # actually uses (passed in the request body, same pattern as filter_url/octree_url below); only
         # fall back to the backend's own env var for setups that still rely on it.
         directus_url = body.get("directus_url") or os.environ.get("DIRECTUS_URL", "")
+        if body.get("directus_url"):
+            # Client-supplied, and the probe below resolves and connects to it: same SSRF guard as
+            # the filter/octree URLs. (The env var is operator-controlled, so not checked.)
+            try:
+                _validate_outbound_url(str(body["directus_url"]), "Directus URL")
+            except HTTPException as e:
+                findings.append(
+                    {
+                        "service": "Directus",
+                        "status": "fail",
+                        "message": str(e.detail),
+                        "diagnosis": "The configured Directus URL is invalid or not allowed.",
+                        "fix": "Check the Directus URL in Settings > Connectivity.",
+                    }
+                )
+                return
         if directus_url:
             parsed = urlparse(directus_url)
             host = parsed.hostname or ""
@@ -951,7 +984,7 @@ async def health_doctor(request: Request) -> dict:
                     "message": "DIRECTUS_URL not configured",
                     "diagnosis": "No DIRECTUS_URL environment variable set. Database features (sample lookup, upload) are disabled.",
                     "fix": "Set the environment variable before starting the backend, then restart:",
-                    "fix_command": '$env:DIRECTUS_URL = "https://d1-server.tail54eeb6.ts.net"; python -m uvicorn app.main:app --host 0.0.0.0 --port 8200',
+                    "fix_command": '$env:DIRECTUS_URL = "https://d1-server.tail54eeb6.ts.net"; python -m uvicorn app.main:app --host 127.0.0.1 --port 8200',
                 }
             )
 
@@ -1800,6 +1833,11 @@ async def record_start(cfg: RecordConfig) -> dict:
                 pass  # amp unreachable — fall back to the scalar gain
     else:
         source = SimSource(cfg, realtime=True)
+    # The NI-DAQ branch above awaits (thread pool, amp round-trip): a second POST can pass the
+    # first _busy() check while this one is parked there. Re-check with NO await between here and
+    # the assignment, so exactly one of two overlapping starts wins and none is orphaned.
+    if _busy():
+        raise HTTPException(409, "a recording is already in progress")
     _session = RecordingSession(cfg, CAPTURES_ROOT, source, broadcaster=_broadcaster)
     _session.start()
     return _session.status()
@@ -1828,17 +1866,32 @@ async def record_start_replay(
     except json.JSONDecodeError:
         meta = {}
     n, fs = h["n"], (h["fs"] or 1000.0)
-    cfg = RecordConfig(
-        sample_name=sample_name,
-        axis=axis if axis in ("Fx", "Fy", "Fz") else "Fz",
-        feed=max(1e-6, h["feed"]),
-        diam=max(1e-6, h["diam"]),
-        sample_rate=fs,
-        duration_sec=max(0.1, n / fs),
-        ppr=max(1, ppr),
-        extra_metadata=meta,
-    )
-    source = ReplaySource(cache_bytes, ppr=cfg.ppr, realtime=True, speed=speed)
+    # RecordConfig.duration_sec is capped at 600 s because it sizes a SIMULATED run. A replay is
+    # sized by the cache itself (ReplaySource streams every sample), so a cut longer than 10 min
+    # must not be refused (it used to raise ValidationError -> a bare 500). Validate with the cap,
+    # then record the true duration.
+    duration = max(0.1, n / fs)
+    try:
+        cfg = RecordConfig(
+            sample_name=sample_name,
+            axis=axis if axis in ("Fx", "Fy", "Fz") else "Fz",
+            feed=max(1e-6, h["feed"]),
+            diam=max(1e-6, h["diam"]),
+            sample_rate=fs,
+            duration_sec=min(duration, 600.0),
+            ppr=max(1, ppr),
+            extra_metadata=meta,
+        )
+    except ValidationError as e:
+        raise HTTPException(422, f"cannot replay this cache: {e.errors()[0]['msg']}") from e
+    cfg.duration_sec = duration
+    try:
+        source = ReplaySource(cache_bytes, ppr=cfg.ppr, realtime=True, speed=speed)
+    except ValueError as e:  # a body cut off after a valid header: frombuffer can't read N samples
+        raise HTTPException(422, f"not a complete D1LC cache: {e}") from e
+    # `await file.read()` above yielded to the loop; re-check with no await before assigning.
+    if _busy():
+        raise HTTPException(409, "a recording is already in progress")
     _session = RecordingSession(cfg, CAPTURES_ROOT, source, broadcaster=_broadcaster)
     _session.start()
     return _session.status()
@@ -2200,6 +2253,20 @@ _LABAMP_BUSY_MSG = (
 )
 
 
+_NIDAQ_BUSY_MSG = (
+    "a recording is in progress -- changing the NI-DAQ configuration or the tacho generator "
+    "would corrupt it"
+)
+
+
+def _refuse_nidaq_change_if_busy() -> None:
+    """Invariant 3: nothing that touches NI-DAQ state may change mid-recording. The tacho generator
+    drives PFI0, the tacho input of the channel being sampled; the channel list and simulated
+    chassis are what the next start (and the live source's layout) are built from."""
+    if _busy():
+        raise HTTPException(409, _NIDAQ_BUSY_MSG)
+
+
 @app.post("/labamp/mode")
 async def labamp_set_mode(body: dict) -> dict:
     # #33: the amp's analog outputs feed straight into the NI-DAQ channels a live recording is
@@ -2385,6 +2452,14 @@ async def labamp_post_config(body: dict) -> dict:
         raise HTTPException(409, _LABAMP_BUSY_MSG)
     if "base_url" in body:
         body["base_url"] = _validate_outbound_url(str(body["base_url"]), "amp URL")
+    # Validate before persisting anything: a bad value saved here is re-read at every startup and
+    # then breaks every /labamp/* call (int(...) of garbage, an unknown mode silently meaning real).
+    if "channels" in body:
+        ch = body["channels"]
+        if isinstance(ch, bool) or not isinstance(ch, int) or not 1 <= ch <= 64:
+            raise HTTPException(400, "channels must be an integer from 1 to 64")
+    if "mode" in body and body["mode"] not in ("mock", "real"):
+        raise HTTPException(400, 'mode must be "mock" or "real"')
     for k in (
         "base_url",
         "channels",
@@ -2441,6 +2516,7 @@ async def nidaq_catalog_list() -> dict:
 @app.post("/nidaq/sim/card")
 async def nidaq_add_card(body: dict) -> dict:
     """Add a card to a simulated slot (the '+' on an empty slot → card catalog)."""
+    _refuse_nidaq_change_if_busy()
     layout = _sim_layout()
     slot = int(body.get("slot", 0))
     product_type = str(body.get("product_type", "")).strip()
@@ -2455,6 +2531,7 @@ async def nidaq_add_card(body: dict) -> dict:
 
 @app.delete("/nidaq/sim/card")
 async def nidaq_remove_card(slot: int) -> dict:
+    _refuse_nidaq_change_if_busy()
     layout = _sim_layout()
     layout["cards"] = [c for c in layout.get("cards", []) if int(c["slot"]) != int(slot)]
     _save_json(NIDAQ_SIM_PATH, layout)
@@ -2468,6 +2545,7 @@ async def nidaq_get_channels() -> dict:
 
 @app.put("/nidaq/channels")
 async def nidaq_put_channels(body: dict) -> dict:
+    _refuse_nidaq_change_if_busy()
     channels = body.get("channels")
     if not isinstance(channels, list):
         raise HTTPException(400, "channels list required")
@@ -2502,6 +2580,7 @@ async def nidaq_validate_formula(body: dict) -> dict:
 
 @app.post("/nidaq/channels/autoassign")
 async def nidaq_autoassign() -> dict:
+    _refuse_nidaq_change_if_busy()
     channels = chan.autoassign(_devices())
     _save_json(NIDAQ_CHANNELS_PATH, {"channels": channels})
     return {"channels": channels}
@@ -2526,6 +2605,7 @@ _tacho_gen_task = None  # nidaqmx.Task or None
 @app.post("/nidaq/tacho/start")
 async def nidaq_tacho_start(body: dict = {}) -> dict:
     global _tacho_gen_task
+    _refuse_nidaq_change_if_busy()
     if _tacho_gen_task is not None:
         raise HTTPException(409, "tacho generator already running")
     freq = float(body.get("freq_hz", 20.0))
@@ -2557,6 +2637,7 @@ async def nidaq_tacho_start(body: dict = {}) -> dict:
 @app.post("/nidaq/tacho/stop")
 async def nidaq_tacho_stop() -> dict:
     global _tacho_gen_task
+    _refuse_nidaq_change_if_busy()
     if _tacho_gen_task is None:
         return {"running": False}
     try:
@@ -2617,9 +2698,21 @@ async def record_stream(ws: WebSocket) -> None:
     await ws.accept()
     assert _broadcaster is not None
     q = _broadcaster.subscribe()
+    # Watch the client side too. Waiting only on q.get() never noticed a client that left while
+    # nothing was being published, and at shutdown uvicorn's close frame went unread, so a SIGTERM
+    # hung on "Waiting for background tasks" for as long as a browser had the stream open.
+    disconnected = asyncio.create_task(_await_ws_disconnect(ws))
+    pending_get: asyncio.Task | None = None
     try:
         while True:
-            msg = await q.get()
+            pending_get = asyncio.ensure_future(q.get())
+            done, _ = await asyncio.wait(
+                {pending_get, disconnected}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if disconnected in done:
+                break
+            msg = pending_get.result()
+            pending_get = None
             if isinstance(msg, bytes):
                 await ws.send_bytes(msg)
             else:
@@ -2627,4 +2720,18 @@ async def record_stream(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        if pending_get is not None:
+            pending_get.cancel()
+        disconnected.cancel()
         _broadcaster.unsubscribe(q)
+
+
+async def _await_ws_disconnect(ws: WebSocket) -> None:
+    """Return once the client side of `ws` is gone. The stream is one-way, so anything the client
+    sends is ignored."""
+    try:
+        while True:
+            if (await ws.receive())["type"] == "websocket.disconnect":
+                return
+    except (WebSocketDisconnect, RuntimeError):
+        return

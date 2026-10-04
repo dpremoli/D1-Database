@@ -361,8 +361,13 @@ export function createPlaybackEngine(client: RecordClient, opts: PlaybackOpts): 
 	}
 
 	function pause() {
+		const wasPlaying = state.playing;
 		state.playing = false;
-		client.status.state = 'idle';
+		// Only undo what play() did. suspend() also runs when the Record page unmounts in record
+		// mode, and resetting a live cut's 'recording' to 'idle' there made the page lose a cut that
+		// finished while the operator was elsewhere: reconcile() only adopts a server-side 'done'
+		// for a cut it still believes is running.
+		if (wasPlaying) client.status.state = 'idle';
 		if (frame !== null) { cancel(frame); frame = null; }
 	}
 

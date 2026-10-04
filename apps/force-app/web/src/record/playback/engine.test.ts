@@ -543,6 +543,24 @@ describe('playback engine', () => {
 			expect(calls.some((c) => String(c[0]).includes('/dsp/spectrum'))).toBe(true);
 		});
 
+		it("leaves a live recording's state alone when nothing is playing", () => {
+			// Leaving the Record page mid-cut suspends playback. That must not reset the live cut to
+			// 'idle', or the page can't adopt the server's 'done' when the operator comes back.
+			const h = harness();
+			h.client.status.state = 'recording';
+			h.engine.suspend();
+			expect(h.client.status.state).toBe('recording');
+		});
+
+		it('returns to idle when suspended mid-playback', () => {
+			const h = harness();
+			h.engine.load(makeCache(), { ppr: 1, stride: 1 });
+			h.engine.play();
+			expect(h.client.status.state).toBe('recording');
+			h.engine.suspend();
+			expect(h.client.status.state).toBe('idle');
+		});
+
 		it('can play again after a suspend, advancing the playhead', () => {
 			const h = harness();
 			h.engine.load(makeCache(), { ppr: 1, stride: 1 });

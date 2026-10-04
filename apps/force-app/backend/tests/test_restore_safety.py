@@ -388,9 +388,43 @@ def test_discard_claims_the_id_before_its_task_runs(env):
 # ---- #7 + id hardening -------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("bad", ["", ".", "..", "a/b", "a\\b"])
+@pytest.mark.parametrize(
+    "bad", ["", ".", "..", "a/b", "a\\b", "C:", "C:foo", "c:\\x", "x:y", "a\x00b", "..\\x", "a/.."]
+)
 def test_is_safe_id_rejects_names_that_point_at_the_root(bad):
+    # "C:" is the review's 1.6 case: ntpath.join(root, "C:", ...) escapes the root on Windows.
     assert recovery.is_safe_id(bad) is False
+
+
+@pytest.mark.parametrize("good", ["20261001-100000-abc", "a.b", "a b", "x-1_2"])
+def test_is_safe_id_accepts_ordinary_ids(good):
+    assert recovery.is_safe_id(good) is True
+
+
+@pytest.mark.parametrize("bad", ["C:", "C:foo", "..", "a/b", "a\\b"])
+def test_capture_dir_for_and_discard_refuse_unsafe_ids(tmp_path, bad):
+    with pytest.raises(ValueError):
+        recovery.capture_dir_for(str(tmp_path), bad)
+    with pytest.raises(ValueError):
+        recovery.discard_session(str(tmp_path), bad)
+    with pytest.raises(ValueError):
+        recovery.recover_session(str(tmp_path), bad)
+
+
+def test_capture_dir_for_returns_a_direct_child(tmp_path):
+    assert recovery.capture_dir_for(str(tmp_path), "abc") == os.path.join(str(tmp_path), "abc")
+
+
+@pytest.mark.parametrize("cid", ["C%3A", "C%3Afoo", "%2e%2e", "..", "a%5Cb", "a%2Fb"])
+def test_capture_endpoints_refuse_unsafe_ids_over_http(env, cid):
+    client, root, _ = env
+    survivor = os.path.join(str(root), "keep-me")
+    os.makedirs(survivor)
+    for method in ("delete", "get", "post"):
+        for url in (f"/captures/{cid}", f"/captures/{cid}/discard", f"/captures/{cid}/summary"):
+            r = getattr(client, method)(url)
+            assert r.status_code in (400, 404, 405), (method, url, r.status_code)
+    assert os.path.isdir(survivor)
 
 
 def test_non_numeric_updated_at_does_not_break_the_list(env, monkeypatch):

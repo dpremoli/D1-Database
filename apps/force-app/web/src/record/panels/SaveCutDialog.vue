@@ -78,7 +78,11 @@ const nothingSelected = computed(() => !uploadDb.value && !saveMat.value && !sav
 // full-resolution .mat/live_cache/summary in the background. Show a loading state through both so
 // the user gets immediate feedback instead of a UI that looks live but has actually already
 // stopped. Only once state is 'done' AND the finished trace has loaded do we show the save form.
-const loading = computed(() => w.st.state === 'recording' || w.st.state === 'finalizing' || (w.st.state === 'done' && !w.finishedCache.value));
+// 'recording' only counts while the stop request is in flight: after it settles with the run still
+// recording (the recorder refused or could not be reached) there is nothing to wait for.
+const stopping = computed(() => w.st.state === 'recording' && w.busy.value);
+const notStopped = computed(() => w.st.state === 'recording' && !w.busy.value);
+const loading = computed(() => stopping.value || w.st.state === 'finalizing' || (w.st.state === 'done' && !w.finishedCache.value));
 const failed = computed(() => w.st.state === 'error' && !w.finishedCache.value);
 // #84: "failed to start" (nothing captured, nothing kept) is not "finalize failed" (raw still on
 // disk) — the dialog used to claim the latter for both. The raw driver text sits behind Details.
@@ -235,6 +239,20 @@ function startNew() {
 					</div>
 					<span v-if="w.st.nTotal" class="scd-loading-sub">{{ w.st.nTotal.toLocaleString() }} samples · ~{{ formatMegabytes(estSizeMb) }}</span>
 					<button v-if="showManualRetry" class="btn" @click="w.loadFinished()">Still loading — try again</button>
+				</div>
+			</template>
+
+			<template v-else-if="notStopped">
+				<div class="scd-confirm">
+					<span class="material-symbols-rounded warn">error</span>
+					<div class="scd-fail">
+						<p>The recording is still running: it did not stop. Close this and press Stop again.</p>
+						<p v-if="w.errMsg.value">{{ w.errMsg.value }}</p>
+					</div>
+				</div>
+				<div class="scd-actions">
+					<div class="scd-spacer"></div>
+					<button class="btn primary" @click="w.saveOpen.value = false">Close</button>
 				</div>
 			</template>
 

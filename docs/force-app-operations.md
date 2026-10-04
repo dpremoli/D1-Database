@@ -31,6 +31,20 @@ The app should show a loading screen, spawn the sidecar from
 
 To run the backend alone: `.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8200`.
 
+The recorder has no authentication, so it listens on loopback only and refuses browser requests
+from anywhere else (`app/origin_guard.py`):
+
+- `Host` must be `127.0.0.1`, `localhost` or `[::1]` on the recorder's own port, plus any name in
+  `RECORDER_ALLOWED_HOSTS` (comma-separated, default empty).
+- A request that carries an `Origin` must come from `app://force` or a name in
+  `RECORDER_CORS_ORIGINS` (default `http://localhost:5180,http://localhost:5181`, the Vite dev
+  servers). Requests with no `Origin` (curl, Electron's main process) are allowed.
+
+Running the web UI on another port means adding that origin to `RECORDER_CORS_ORIGINS`. The Caddy
+`/recorder/*` proxy on d1-server is refused by default, because it forwards the tailnet hostname.
+ADR-0010 already notes it points at the wrong machine for recording. To use it anyway, set
+`RECORDER_ALLOWED_HOSTS` to that hostname and add the page's origin to `RECORDER_CORS_ORIGINS`.
+
 ## Where things are kept
 
 | What | Where | Override |

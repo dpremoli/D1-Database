@@ -52,11 +52,18 @@ async function isHealthy(url: string, timeoutMs: number): Promise<boolean> {
   }
 }
 
-async function waitForHealthy(url: string, timeoutMs: number): Promise<boolean> {
+/** Polls `url` until it answers, the deadline passes, or `exited` settles (the process died: nothing
+ * will ever answer, so waiting out the rest of the timeout only delays the operator). */
+async function waitForHealthy(url: string, timeoutMs: number, exited?: Promise<unknown>): Promise<boolean> {
+  let gone = false;
+  void exited?.then(() => { gone = true; });
+  const orExit = <T>(p: Promise<T>, whenGone: T): Promise<T> =>
+    exited ? Promise.race([p, exited.then(() => whenGone)]) : p;
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await isHealthy(url, 1500)) return true;
-    await sleep(300);
+  while (!gone && Date.now() < deadline) {
+    if (await orExit(isHealthy(url, 1500), false)) return true;
+    if (gone) return false;
+    await orExit(sleep(300), undefined);
   }
   return false;
 }
@@ -109,6 +116,11 @@ export class SidecarSupervisor {
   // 'exit' event from it must not start a second one.
   private abandoned = new WeakSet<ChildProcess>();
   private stableTimer: ReturnType<typeof setTimeout> | null = null;
+  // While a spawn is waiting to become healthy, an exit of that process is reported to the wait
+  // (which handles it inline) instead of starting a second, concurrent restart: the two used to
+  // race, and the operator saw the wait's timeout AND the restart's outcome as separate errors.
+  private startingProc: ChildProcess | null = null;
+  private startupExited: ((detail: string) => void) | null = null;
 
   constructor(opts: SidecarOptions) {
     this.opts = {
@@ -178,10 +190,12 @@ export class SidecarSupervisor {
       if (isStale()) return;
       this.stopLiveness();
       if (this.stopping) {
+        if (this.startingProc === proc) this.startupExited?.('stopped');
         this.setState('stopped');
         return;
       }
       const why = this.hungReason ?? `exit code=${code} signal=${signal}`;
+      if (this.startingProc === proc) { this.startupExited?.(`${why}\n${outputTail}`); return; }
       void this.handleUnexpectedExit(`${why}\n${outputTail}`).catch(
         (err) => {
           console.error('sidecar: handleUnexpectedExit failed', err);
@@ -194,6 +208,7 @@ export class SidecarSupervisor {
         this.setState('stopped');
         return;
       }
+      if (this.startingProc === proc) { this.startupExited?.(`spawn error: ${err.message}`); return; }
       void this.handleUnexpectedExit(`spawn error: ${err.message}`).catch((handlerErr) => {
         console.error('sidecar: handleUnexpectedExit failed', handlerErr);
       });
@@ -219,18 +234,33 @@ export class SidecarSupervisor {
   private async spawnAndWait(): Promise<void> {
     this.setState('starting');
     this.hungReason = null;
-    this.proc = this.spawnProcess();
-    const ready = await waitForHealthy(this.opts.healthUrl, this.opts.readyTimeoutMs);
+    const proc = (this.proc = this.spawnProcess());
+    const exited = new Promise<string>((resolve) => { this.startupExited = resolve; });
+    this.startingProc = proc;
+    let exitDetail: string | null = null;
+    void exited.then((d) => { exitDetail = d; });
+    const ready = await waitForHealthy(this.opts.healthUrl, this.opts.readyTimeoutMs, exited);
+    this.startingProc = null;
+    this.startupExited = null;
+    if (this.stopping) return;
     if (ready) {
       this.setState('ready');
-      this.startLiveness(this.proc);
+      this.startLiveness(proc);
       this.stableTimer = setTimeout(() => {
         this.stableTimer = null;
         this.restarts = 0;
       }, this.opts.stableAfterMs);
       this.stableTimer.unref?.();
-    } else if (!this.stopping) {
+    } else if (exitDetail !== null) {
+      // It died before answering: take the normal restart path from here, awaited, so start()
+      // returns only once the outcome is final (ready, or crashed after the last restart).
+      await this.handleUnexpectedExit(exitDetail);
+    } else {
+      // Alive but never healthy. Stop it (it would keep holding the port) and do not let its exit
+      // start a restart: the state is final.
+      this.abandoned.add(proc);
       this.setState('crashed', `did not become healthy within ${this.opts.readyTimeoutMs}ms`);
+      await terminate(proc);
     }
   }
 

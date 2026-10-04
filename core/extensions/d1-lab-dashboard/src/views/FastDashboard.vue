@@ -27,7 +27,8 @@
 						</span>
 						<span class="d1-date">{{ formatDate(op.operation_date) }}</span>
 					</div>
-					<div v-if="operations.length === 0" class="d1-empty">No FAST runs found</div>
+					<div v-if="opsError" class="d1-error">{{ opsError }}</div>
+					<div v-else-if="operations.length === 0" class="d1-empty">No FAST runs found</div>
 				</template>
 			</div>
 		</div>
@@ -73,14 +74,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { useD1Items } from '../composables/useD1Items';
+import { useRequestGate, errorText } from '../composables/useRequestGate';
 import NodeGraph from './NodeGraph.vue';
 
 const { getItems } = useD1Items();
 
 const operations = ref<any[]>([]);
 const loadingOps = ref(false);
+const opsError = ref('');
+const opsGate = useRequestGate();
 const search = ref('');
 const selectedOp = ref<any | null>(null);
 const graphRef = ref<InstanceType<typeof NodeGraph> | null>(null);
@@ -92,7 +96,9 @@ function debouncedFetch() {
 }
 
 async function fetchOps() {
+	const token = opsGate.begin();
 	loadingOps.value = true;
+	opsError.value = '';
 	try {
 		const params: Record<string, unknown> = {
 			'filter[process_category][_eq]': 'sintering',
@@ -104,9 +110,14 @@ async function fetchOps() {
 			params['filter[_or][0][pass_code][_icontains]'] = search.value;
 			params['filter[_or][1][sample_id][sample_code][_icontains]'] = search.value;
 		}
-		operations.value = await getItems('manufacturing_operations', params);
+		const rows = await getItems('manufacturing_operations', params);
+		if (!opsGate.isCurrent(token)) return; // a newer search replaced this one
+		operations.value = rows;
+	} catch (e) {
+		if (!opsGate.isCurrent(token)) return;
+		opsError.value = `Could not load FAST runs: ${errorText(e)}`;
 	} finally {
-		loadingOps.value = false;
+		if (opsGate.isCurrent(token)) loadingOps.value = false;
 	}
 }
 
@@ -124,9 +135,20 @@ function formatDate(d: string | null): string {
 }
 
 onMounted(fetchOps);
+
+onBeforeUnmount(() => {
+	if (debounceTimer) clearTimeout(debounceTimer);
+	opsGate.cancel();
+});
 </script>
 
 <style scoped>
+.d1-error {
+	padding: 10px 12px;
+	font-size: 12px;
+	color: var(--theme--danger, #c62828);
+}
+
 .d1-fast {
 	display: grid;
 	grid-template-columns: 280px 1fr 340px;

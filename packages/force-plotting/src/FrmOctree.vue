@@ -9,7 +9,7 @@
  * The octree carries all three axes as attributes, so switching axis is just a uniform
  * change (no reload, no shader recompile). Served same-origin by Caddy at /octrees/<path>/.
  */
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Potree, type PointCloudOctree } from 'potree-core';
@@ -19,6 +19,7 @@ import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
 import LoadingOverlay from './LoadingOverlay.vue';
 import { createLoadToken } from './loadToken';
+import { createGlLifecycle } from './glLifecycle';
 import { sameStage, stageInfo, streamStage, type LoadStage, type StageInfo } from './loadStage';
 
 const props = defineProps<{
@@ -221,6 +222,7 @@ function disposeCloud() {
 const loadToken = createLoadToken();
 
 async function load() {
+	if (life.suspended) return;   // deactivated: onActivated() reloads on a fresh canvas
 	const mine = loadToken.next();
 	disposeCloud();
 	loading.value = true; error.value = null;
@@ -366,15 +368,25 @@ function sizeCanvas() {
 }
 
 let ro: ResizeObserver | undefined;
-onMounted(() => {
-	ro = new ResizeObserver(() => { sizeCanvas(); frameCamera(); });
-	nextTick(() => { setupGL(); if (canvasEl.value) ro!.observe(canvasEl.value); load(); });
-});
-onBeforeUnmount(() => {
+// Bumped on reactivation: teardown force-loses the GL context and a canvas never gets a lost
+// context back, so the template swaps in a new element (see glLifecycle.ts).
+const canvasKey = ref(0);
+function boot() {
+	setupGL();
+	if (canvasEl.value) ro?.observe(canvasEl.value);
+	load();
+}
+// Stops the rAF/Potree loop, frees the octree's GPU memory and the GL context, and makes any load
+// still in flight stale. Runs on unmount AND on deactivate: this viewer lives inside the kept-alive
+// Plot route (#24/#57), so without the deactivate half it kept streaming (up to ~25M points of GPU
+// memory) while the operator was on the Record page (review 3.6).
+function teardownGL() {
 	loadToken.cancel();
-	// The stage watcher is already stopped by now: say "idle" directly so the host's busy bar clears.
+	// The stage watcher is already stopped on unmount: say "idle" directly so the host's busy bar clears.
 	if (stage.value) emit('stage', null);
+	stage.value = null;
 	if (raf) cancelAnimationFrame(raf);
+	raf = 0;
 	const c = canvasEl.value;
 	if (c) {
 		c.removeEventListener('pointerdown', onPtrDown);
@@ -382,11 +394,26 @@ onBeforeUnmount(() => {
 		c.removeEventListener('pointerup', onPtrUp);
 		c.removeEventListener('pointercancel', onPtrUp);
 	}
+	zPointers.clear();
 	ro?.disconnect(); controls?.dispose();
 	disposeCloud();
 	try { renderer?.forceContextLoss(); } catch { /* ignore */ }   // release the GL context (not freed by dispose())
 	renderer?.dispose();
+	renderer = null; scene = null; camera = null; controls = null; potree = null;
+	loading.value = true;
+}
+const life = createGlLifecycle({
+	teardown: teardownGL,
+	replaceCanvas: () => { canvasKey.value++; error.value = null; },
+	start: () => nextTick(boot),
 });
+onMounted(() => {
+	ro = new ResizeObserver(() => { sizeCanvas(); frameCamera(); });
+	nextTick(boot);
+});
+onBeforeUnmount(() => life.unmount());
+onDeactivated(() => life.deactivate());
+onActivated(() => { life.activate(); });
 
 watch(() => props.octreePath, () => { load(); });
 watch(() => props.axis, () => { if (material) { material.uniforms.uAxis.value = AXIS_IDX[props.axis] ?? 2; emitAutoRange(); } });
@@ -434,7 +461,7 @@ defineExpose({ currentBounds, exportViewport });
 	<div class="frm-octree">
 		<LoadingOverlay v-if="stage" :stage="stage" />
 		<div v-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
-		<canvas v-show="!error" ref="canvasEl"></canvas>
+		<canvas :key="canvasKey" v-show="!error" ref="canvasEl"></canvas>
 		<span v-if="!loading && !error" class="fc-count">{{ pointCount.toLocaleString() }} pts (LOD)</span>
 	</div>
 </template>

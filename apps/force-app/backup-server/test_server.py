@@ -551,3 +551,118 @@ def test_unmark_deleted_does_not_overwrite_an_unreadable_meta(client, tmp_path):
     assert client.post("/sessions/bad/unmark-deleted").status_code == 409
     with open(meta_path, "rb") as f:
         assert f.read() == b"{oops"
+
+
+@pytest.mark.parametrize(
+    "sid",
+    ["C%3A", "C%3Afoo", "..", "a%2Fb", "a%5Cb", "%2e%2e", "%2E", "x%3Ay", "..%5Cx"],
+)
+def test_session_id_must_be_a_bare_basename(client, tmp_path, sid):
+    """Drive letters, parent refs, separators and encoded variants all name something other than a
+    direct child of STORAGE (on Windows `C:` escapes it) — refused before any filesystem call."""
+    assert client.delete(f"/sessions/{sid}").status_code in (400, 404)
+    assert client.post(f"/sessions/{sid}/mark-deleted").status_code in (400, 404)
+    assert client.get(f"/sessions/{sid}/info").status_code in (400, 404)
+    assert os.path.isdir(str(tmp_path))  # the storage root itself survived
+
+
+@pytest.mark.parametrize(
+    "sid", ["C:", "C:foo", "..", ".", "", "a/b", "a\\b", "x:y", "a\x00b"]
+)
+def test_session_dir_rejects_unsafe_ids(sid, tmp_path, monkeypatch):
+    import server as srv
+    from fastapi import HTTPException
+
+    monkeypatch.setattr(srv, "STORAGE", str(tmp_path))
+    with pytest.raises(HTTPException) as e:
+        srv._session_dir(sid)
+    assert e.value.status_code == 400
+
+
+def test_session_dir_accepts_normal_ids(tmp_path, monkeypatch):
+    import server as srv
+
+    monkeypatch.setattr(srv, "STORAGE", str(tmp_path))
+    for sid in ("20260101-000000-abc123", "test-001", "a.b", "a b"):
+        assert srv._session_dir(sid) == os.path.join(str(tmp_path), sid)
+
+
+def _start_body(sid, config=None):
+    return {
+        "session_id": sid,
+        "header_hex": _make_header().hex(),
+        "config": config or {},
+    }
+
+
+def test_duplicate_ingest_start_keeps_the_streamed_bytes(client, tmp_path):
+    """Review 1.9: a retried /ingest/start used to reopen raw.d1rw with "wb", truncating a
+    recording that was already streaming back to its 32-byte header."""
+    sid = "dup-1"
+    client.post("/ingest/start", json=_start_body(sid, {"gain": 1}))
+    body = os.urandom(400)
+    assert _chunk(client, sid, body, offset=32).json()["appended"] == 400
+    before = _meta(tmp_path, sid)
+
+    r = client.post("/ingest/start", json=_start_body(sid, {"gain": 2}))
+
+    assert r.status_code == 200
+    assert r.json()["existing"] is True
+    assert r.json()["size"] == 32 + 400  # where the client should resume
+    raw = (tmp_path / sid / "raw.d1rw").read_bytes()
+    assert raw == _make_header() + body
+    after = _meta(tmp_path, sid)
+    assert after["started_at"] == before["started_at"]
+    assert after["config"] == {"gain": 1}
+    assert after["chunks_received"] == before["chunks_received"]
+
+
+def test_duplicate_ingest_start_does_not_clear_a_tombstone(client, tmp_path):
+    sid = "dup-2"
+    client.post("/ingest/start", json=_start_body(sid))
+    _chunk(client, sid, os.urandom(400), offset=32)
+    client.post(f"/sessions/{sid}/mark-deleted")
+
+    r = client.post("/ingest/start", json=_start_body(sid))
+
+    assert r.status_code == 200 and r.json()["size"] == 432
+    meta = _meta(tmp_path, sid)
+    assert meta["state"] == "deleted" and "deleted_at" in meta
+    assert (tmp_path / sid / "raw.d1rw").stat().st_size == 432
+
+
+def test_ingest_start_with_bad_hex_is_a_400_not_a_500(client, tmp_path):
+    r = client.post("/ingest/start", json={"session_id": "bad-hex", "header_hex": "zz"})
+    assert r.status_code == 400
+    assert not (tmp_path / "bad-hex").exists()
+
+
+def test_session_info_validates_the_id_like_the_other_routes(client):
+    assert client.get("/sessions/a%5Cb/info").status_code == 400
+    assert client.get("/sessions/C%3A/info").status_code == 400
+    assert client.get("/sessions/ghost/info").status_code == 404
+
+
+def test_meta_updates_leave_no_temp_file_and_stay_valid_json(client, tmp_path):
+    sid = "atomic-1"
+    client.post("/ingest/start", json=_start_body(sid))
+    _chunk(client, sid, os.urandom(400), offset=32)
+    client.post("/ingest/finish", json={"session_id": sid})
+    names = sorted(os.listdir(tmp_path / sid))
+    assert names == ["meta.json", "raw.d1rw"]
+    assert _meta(tmp_path, sid)["state"] == "complete"
+
+
+def test_meta_writes_go_through_write_meta(client, tmp_path, monkeypatch):
+    import server as srv
+
+    calls = []
+    real = srv._write_meta
+    monkeypatch.setattr(
+        srv, "_write_meta", lambda d, m: (calls.append(m["state"]), real(d, m))
+    )
+    sid = "atomic-2"
+    client.post("/ingest/start", json=_start_body(sid))
+    _chunk(client, sid, os.urandom(400), offset=32)
+    client.post("/ingest/finish", json={"session_id": sid})
+    assert calls == ["streaming", "streaming", "complete"]

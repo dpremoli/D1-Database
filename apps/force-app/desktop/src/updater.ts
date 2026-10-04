@@ -1,5 +1,6 @@
 import { app, dialog, ipcMain, Notification, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { isAppSender } from './windowOpen';
 
 export type UpdateStatus =
   | { state: 'idle' }
@@ -57,8 +58,22 @@ function showUpdateDialog(version: string): void {
       message: `Version ${version} has been downloaded and is ready to install.`,
       detail: 'Choose "Not now" to keep working on the current version — you can install it anytime from Settings > About.',
     })
-    .then(({ response }) => {
-      if (response === 0) performInstall(version);
+    .then(async ({ response }) => {
+      if (response !== 0) return;
+      // The dialog can sit open for a long time: a cut may have started (or still be finalizing)
+      // since offerUpdate() looked. Check again at the moment of the click, as update:install does.
+      if (await isRecording()) {
+        deferUntilIdle(version);
+        void dialog.showMessageBox({
+          type: 'warning',
+          buttons: ['OK'],
+          title: 'Update postponed',
+          message: 'A recording is in progress or still being saved, so the update was not installed.',
+          detail: 'You will be asked again once it has finished.',
+        });
+        return;
+      }
+      performInstall(version);
     });
 }
 
@@ -68,20 +83,23 @@ function showUpdateDialog(version: string): void {
 let pendingVersion: string | null = null;
 let recheckTimer: ReturnType<typeof setInterval> | null = null;
 
+function deferUntilIdle(version: string): void {
+  pendingVersion = version;
+  if (recheckTimer) return;
+  recheckTimer = setInterval(async () => {
+    if (pendingVersion && !(await isRecording())) {
+      if (recheckTimer) clearInterval(recheckTimer);
+      recheckTimer = null;
+      const v = pendingVersion;
+      pendingVersion = null;
+      showUpdateDialog(v);
+    }
+  }, 60_000);
+}
+
 async function offerUpdate(version: string): Promise<void> {
   if (await isRecording()) {
-    pendingVersion = version;
-    if (!recheckTimer) {
-      recheckTimer = setInterval(async () => {
-        if (pendingVersion && !(await isRecording())) {
-          if (recheckTimer) clearInterval(recheckTimer);
-          recheckTimer = null;
-          const v = pendingVersion;
-          pendingVersion = null;
-          showUpdateDialog(v);
-        }
-      }, 60_000);
-    }
+    deferUntilIdle(version);
     return;
   }
   showUpdateDialog(version);
@@ -92,13 +110,22 @@ async function offerUpdate(version: string): Promise<void> {
  * IPC handlers stay registered either way so the Settings UI can show "dev build" instead of
  * hanging on a renderer call that never resolves. */
 // `isRecording` asks the backend, not the renderer: the recording keeps running server-side even
-// when the Record page (and its websocket) is gone, so renderer state would read idle.
+// when the Record page (and its websocket) is gone, so renderer state would read idle. It must
+// also be true while a stopped recording is finalizing: the installer kills the backend, and that
+// leaves the cut's capture.mat, live cache and summary unwritten.
 export function initAutoUpdater(getMainWindow: () => BrowserWindow | null, recordingInProgress: () => Promise<boolean>): void {
   getWindow = getMainWindow;
   isRecording = recordingInProgress;
 
-  ipcMain.handle('update:get-info', () => ({ version: app.getVersion(), packaged: app.isPackaged, status }));
-  ipcMain.handle('update:check', () => {
+  // Same origin check as dialog:pickFolder / shell:reveal (main.ts): only the app's own pages may
+  // read update state or trigger a check or an install.
+  const NOT_ALLOWED = { ok: false, reason: 'not allowed from this page' };
+  ipcMain.handle('update:get-info', (event) =>
+    isAppSender(event)
+      ? { version: app.getVersion(), packaged: app.isPackaged, status }
+      : { version: '', packaged: false, status: { state: 'idle' } satisfies UpdateStatus });
+  ipcMain.handle('update:check', (event) => {
+    if (!isAppSender(event)) return NOT_ALLOWED;
     if (!app.isPackaged) return { ok: false, reason: 'not a packaged build' };
     autoUpdater.checkForUpdates().catch((err) => push({ state: 'error', message: err?.message || String(err) }));
     return { ok: true };
@@ -106,9 +133,10 @@ export function initAutoUpdater(getMainWindow: () => BrowserWindow | null, recor
   // Same guard as the automatic prompt — a manual click from Settings must not be able to force
   // a restart mid-cut either. Re-checks live rather than trusting offerUpdate()'s earlier read,
   // since recording could have started in between.
-  ipcMain.handle('update:install', async () => {
+  ipcMain.handle('update:install', async (event) => {
+    if (!isAppSender(event)) return NOT_ALLOWED;
     if (status.state !== 'downloaded') return { ok: false, reason: 'no update downloaded yet' };
-    if (await isRecording()) return { ok: false, reason: 'a recording is in progress — try again once it finishes' };
+    if (await isRecording()) return { ok: false, reason: 'a recording is in progress or still being saved — try again once it finishes' };
     performInstall(status.version);
     return { ok: true };
   });
