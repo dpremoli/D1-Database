@@ -21,6 +21,8 @@
 --     attributed.
 --   * v_audit_logs_with_actor is audit_logs with actor_identity = COALESCE(logged actor, recorded
 --     actor). Readers that want "who did this" should use it.
+-- audit_log_actors is part of the audit mechanism itself, like audit_logs: it carries no OCC or
+-- audit trigger of its own.
 -- Writes that bypass Directus (plugins, scripts, psql) are unaffected: they still set
 -- d1.actor_identity themselves (docs/api-contract.md section 8.4).
 --
@@ -102,11 +104,11 @@ SELECT l.log_id,
        l.table_name,
        l.record_id,
        l.action_type,
-       COALESCE(l.actor_identity, a.actor_identity) AS actor_identity,
-       (l.actor_identity IS NULL AND a.actor_identity IS NOT NULL) AS actor_from_directus_activity,
        l.row_before,
        l.row_after,
-       l.changed_fields
+       l.changed_fields,
+       COALESCE(l.actor_identity, a.actor_identity) AS actor_identity,
+       (l.actor_identity IS NULL AND a.actor_identity IS NOT NULL) AS actor_from_directus_activity
 FROM   audit_logs l
 LEFT   JOIN audit_log_actors a ON a.log_id = l.log_id;
 
