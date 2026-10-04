@@ -949,6 +949,66 @@ act_check "old_rows:0" "an audit row from an earlier transaction is not re-attri
 act_check "guc:guc-user/false" "an actor set through the GUC wins over the fallback"
 act_check "guc_rows:0" "a GUC-attributed row gets no side-table row"
 
+echo "== Process category comes from the method, in Postgres (review 4.11) =="
+pc_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_methods (method_id, method_code, method_name, process_category) VALUES
+  ('c0000000-0000-4000-8000-000000000801', 'T-I-PH', 'pc heat method', 'heat_treatment'),
+  ('c0000000-0000-4000-8000-000000000802', 'T-I-PS', 'pc sinter method', 'sintering');
+INSERT INTO manufacturing_methods (method_id, method_code, method_name) VALUES
+  ('c0000000-0000-4000-8000-000000000803', 'T-I-PU', 'pc unmapped method'),
+  ('c0000000-0000-4000-8000-000000000804', 'T-I-PV', 'pc unmapped method 2');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000811', 'TI-PC');
+-- derived on insert when blank; an explicit value wins
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id) VALUES
+  ('c0000000-0000-4000-8000-000000000821', 'c0000000-0000-4000-8000-000000000801', 'c0000000-0000-4000-8000-000000000811');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category) VALUES
+  ('c0000000-0000-4000-8000-000000000822', 'c0000000-0000-4000-8000-000000000801', 'c0000000-0000-4000-8000-000000000811', 'deformation');
+-- an unmapped method never blanks or invents a category
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category) VALUES
+  ('c0000000-0000-4000-8000-000000000823', 'c0000000-0000-4000-8000-000000000803', 'c0000000-0000-4000-8000-000000000811', 'machining');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id) VALUES
+  ('c0000000-0000-4000-8000-000000000824', 'c0000000-0000-4000-8000-000000000803', 'c0000000-0000-4000-8000-000000000811');
+UPDATE manufacturing_operations SET method_id = 'c0000000-0000-4000-8000-000000000804'
+  WHERE operation_id = 'c0000000-0000-4000-8000-000000000823';
+-- changing to a mapped method re-derives; setting the category in the same statement wins
+UPDATE manufacturing_operations SET method_id = 'c0000000-0000-4000-8000-000000000802'
+  WHERE operation_id = 'c0000000-0000-4000-8000-000000000821';
+SELECT 'rederived:' || process_category FROM manufacturing_operations WHERE operation_id = 'c0000000-0000-4000-8000-000000000821';
+UPDATE manufacturing_operations SET method_id = 'c0000000-0000-4000-8000-000000000802', process_category = 'additive'
+  WHERE operation_id = 'c0000000-0000-4000-8000-000000000822';
+-- an update that does not touch the method leaves the category alone, even if the method is mapped
+UPDATE manufacturing_operations SET process_category = 'machining' WHERE operation_id = 'c0000000-0000-4000-8000-000000000821';
+UPDATE manufacturing_operations SET outcome_notes = 'x' WHERE operation_id = 'c0000000-0000-4000-8000-000000000821';
+SELECT 'cat:' || substr(operation_id::text, 33) || ':' || COALESCE(process_category, 'null')
+FROM manufacturing_operations WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-00000000082_' ORDER BY operation_id;
+SELECT 'seed_MP:' || COALESCE(process_category, 'null') FROM manufacturing_methods WHERE method_code = 'MP';
+SELECT 'seed_HT:' || COALESCE(process_category, 'null') FROM manufacturing_methods WHERE method_code = 'HT';
+ROLLBACK;
+SQL
+)
+pc_check() { grep -qx "$1" <<<"$pc_out" && ok "$2" || bad "$2 (psql output: $pc_out)"; }
+pc_check "rederived:sintering" "changing the method re-derives the category (heat_treatment -> sintering)"
+pc_check "cat:0821:machining" "a later edit of the category (method unchanged) is not overwritten"
+pc_check "cat:0822:additive" "a category set in the same statement as a method change wins"
+pc_check "cat:0823:machining" "an unmapped method never blanks a stored category"
+pc_check "cat:0824:null" "an unmapped method on a blank category stays blank (nothing invented)"
+pc_check "seed_MP:sample_prep" "the method map covers MP (sample preparation), which the old SQL map missed"
+pc_check "seed_HT:heat_treatment" "the method map covers HT"
+# insert-time derivation on its own (separate transaction so the later UPDATEs above cannot mask it)
+pc2_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_methods (method_id, method_code, method_name, process_category)
+VALUES ('c0000000-0000-4000-8000-000000000805', 'T-I-PW', 'pc method', 'additive');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000812', 'TI-PC2');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id)
+VALUES ('c0000000-0000-4000-8000-000000000825', 'c0000000-0000-4000-8000-000000000805', 'c0000000-0000-4000-8000-000000000812');
+SELECT 'inserted:' || process_category FROM manufacturing_operations WHERE operation_id = 'c0000000-0000-4000-8000-000000000825';
+ROLLBACK;
+SQL
+)
+grep -qx "inserted:additive" <<<"$pc2_out" && ok "a new operation with no category gets its method's category on insert" || bad "insert-time derivation failed (output: $pc2_out)"
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy
