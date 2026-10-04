@@ -21,6 +21,11 @@ import LoadingOverlay from './LoadingOverlay.vue';
 import { createLoadToken } from './loadToken';
 import { createGlLifecycle } from './glLifecycle';
 import { sameStage, stageInfo, streamStage, type LoadStage, type StageInfo } from './loadStage';
+import type { Cache } from './liveCache';
+import { idxOfTime } from './liveCache';
+import { buildPath, type PathResult } from './path';
+import { findNearestPathIndex, octreePathParams, pickNearest, pointInfo, type PointMenuEvent } from './cloudPick';
+import { shaderZ, timeInPath } from './octreePick';
 
 const props = defineProps<{
 	octreePath: string;                       // served subdir: /octrees/<octreePath>/
@@ -34,12 +39,21 @@ const props = defineProps<{
 	cellSize?: number;                        // grid cell spacing (mm), for fill sizing
 	minNodePx?: number;                       // Potree LOD cutoff (settings; default 1)
 	budgetCap?: number;                       // Potree point-budget hard cap (settings; default 25M)
+	// Linking to the Signals charts. Octree points carry no time, so a pick works by position
+	// through the live cache's own path (see cloudPick.ts's header); without a cache the time
+	// items are unavailable.
+	sampleCache?: Cache | null;
+	innerDiam?: number;                       // bore diameter (mm) the octree path was built with
+	ppr?: number;                             // tacho pulses per revolution
+	markTime?: number | null;                 // pinned ring (seconds on the chart axis)
+	hoverTime?: number | null;                // hover ring
 }>();
 const emit = defineEmits<{
 	(e: 'climits', v: { cmin: number; cmax: number }): void;
 	(e: 'points', n: number): void;   // LOD-visible point count (for the resolution readout)
 	(e: 'zscale', v: number): void;   // 3-finger vertical swipe adjusts the Z exaggeration
 	(e: 'stage', v: StageInfo | null): void;   // what the view is busy with (null = idle), for the host's busy mark (#102)
+	(e: 'pointmenu', v: PointMenuEvent): void;   // right-click on the map (point null = nothing resolvable)
 }>();
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
@@ -182,6 +196,7 @@ function applyZ() {
 		controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
 		frameCamera();   // snap back to a clean top-down view when flattening
 	}
+	ringDirty = true;
 	invalidate();
 }
 
@@ -304,11 +319,13 @@ function setupGL() {
 	canvas.addEventListener('pointermove', onPtrMove);
 	canvas.addEventListener('pointerup', onPtrUp);
 	canvas.addEventListener('pointercancel', onPtrUp);
+	canvas.addEventListener('contextmenu', onContextMenu);
 	controls.addEventListener('change', invalidate);
 	const loop = () => {
 		raf = requestAnimationFrame(loop);
 		controls!.update();
 		if (pco && potree && renderer && camera) {
+			updateRings();   // before the render gate below: the rings follow the camera even on idle frames
 			const r = potree.updatePointClouds([pco], camera, renderer);
 			const n = (r as any)?.numVisiblePoints ?? pointCount.value;
 			if (n !== lastVisibleN) { lastVisibleN = n; needsRender = true; lastChangeAt = performance.now(); }   // nodes streamed in/out
@@ -340,6 +357,9 @@ const zPointers = new Map<number, number>();   // pointerId -> clientY
 let zBaseY = 0;
 function avgVals(m: Map<number, number>): number { let s = 0; for (const v of m.values()) s += v; return s / (m.size || 1); }
 function onPtrDown(ev: PointerEvent) {
+	// OrbitControls pans on right-drag (2D and 3D), and the browser still fires `contextmenu` on
+	// release, so remember where the button went down to tell a click from a pan.
+	if (ev.pointerType === 'mouse' && ev.button === 2) { rightDownX = ev.clientX; rightDownY = ev.clientY; }
 	if (ev.pointerType !== 'touch') return;
 	zPointers.set(ev.pointerId, ev.clientY);
 	if (zPointers.size === 3) { if (controls) controls.enabled = false; zBaseY = avgVals(zPointers); }
@@ -358,6 +378,139 @@ function onPtrMove(ev: PointerEvent) {
 function onPtrUp(ev: PointerEvent) {
 	zPointers.delete(ev.pointerId);
 	if (zPointers.size < 3 && controls) controls.enabled = true;
+}
+
+// ---- Linking to the Signals charts: right-click picking and time rings ----
+// The octree has no per-point time, so both directions go through the live cache's own path
+// (octreePathParams + buildPath: the same mm frame and geometry the octree was built with; see
+// cloudPick.ts's header). Path positions are true world mm (potree-core restores the LAS
+// offset), so no pco matrix is applied to them.
+let rightDownX = NaN, rightDownY = NaN;
+let memoCache: Cache | null = null, memoInner = NaN, memoPpr = NaN;
+let memoPath: PathResult | null = null;
+// Memoised per (cache identity, innerDiam, ppr): a rebuild walks the whole cache (up to ~5M samples).
+function samplePath(): PathResult | null {
+	const c = props.sampleCache;
+	if (!c) { memoCache = null; memoPath = null; return null; }
+	const inner = props.innerDiam ?? 0, ppr = props.ppr ?? 1;
+	if (c !== memoCache || inner !== memoInner || ppr !== memoPpr) {
+		const { path, window } = octreePathParams(c, inner, ppr);
+		memoPath = buildPath(c, path, window);
+		memoCache = c; memoInner = inner; memoPpr = ppr;
+	}
+	return memoPath;
+}
+
+const _v = new THREE.Vector3();
+// World position of path sample k into _v, with Z matching the vertex shader (flat = 0).
+function sampleWorld(path: PathResult, k: number): THREE.Vector3 {
+	const c = props.sampleCache!;
+	let z = 0;
+	const zAxis = material ? (material.uniforms.uZAxis.value as number) : -1;
+	if (material && zAxis >= 0) {
+		const r = material.uniforms.uZRange.value as THREE.Vector2;
+		const series = zAxis === 0 ? c.Fx : zAxis === 1 ? c.Fy : c.Fz;
+		z = shaderZ(series[path.idx[k]], r.x, r.y, material.uniforms.uZScale.value as number);
+	}
+	return _v.set(path.pos[3 * k], path.pos[3 * k + 1], z);
+}
+// CSS px relative to the canvas; false when the point is outside the view (clip) unless `clip` is off.
+function toScreen(v: THREE.Vector3, out: { px: number; py: number }, clip = true): boolean {
+	v.project(camera!);
+	if (clip && (v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1)) return false;
+	out.px = (v.x + 1) / 2 * cssW; out.py = (1 - v.y) / 2 * cssH;
+	return true;
+}
+
+function onContextMenu(ev: MouseEvent) {
+	ev.preventDefault();
+	const moved = Math.hypot(ev.clientX - rightDownX, ev.clientY - rightDownY) > 4;
+	rightDownX = rightDownY = NaN;
+	if (moved || !canvasEl.value || !camera) return;
+	const base = { clientX: ev.clientX, clientY: ev.clientY };
+	const c = props.sampleCache;
+	const path = samplePath();
+	if (!c || !path) { emit('pointmenu', { ...base, point: null, reason: 'no-cache' }); return; }
+	const r = canvasEl.value.getBoundingClientRect();
+	const px = ev.clientX - r.left, py = ev.clientY - r.top;
+	camera.updateMatrixWorld();   // controls.update() moved it since the last render
+	const pp = { px: 0, py: 0 };
+	// Mirrors the shader's displayed-range discard (a greyed point is still drawn, so still pickable).
+	const s = props.colorScale;
+	const vals = c[props.axis];
+	const keep = s.greyOutOfRange ? undefined : (k: number) => { const v = vals[path.idx[k]]; return v >= s.dispMin && v <= s.dispMax; };
+	// Gridded octrees (`fill`) still pick the nearest SAMPLE to the spot: cells aren't samples.
+	const k = pickNearest(path.count, (i) => (toScreen(sampleWorld(path, i), pp) ? pp : null),
+		px, py, Math.max(8, (props.pointSize || 1.5) * 2), keep);
+	if (k === null) { emit('pointmenu', { ...base, point: null }); return; }
+	emit('pointmenu', { ...base, point: pointInfo(c, path.idx[k], path.pos[3 * k], path.pos[3 * k + 1], path.rho?.[k]) });
+}
+
+// Ring overlays (CSS px in the canvas box). Positions are refs so the template moves them; they
+// are only written when a ring actually moved >= 0.25 px, so idle frames cost no reactivity.
+const markRing = ref<{ x: number; y: number } | null>(null);
+const hoverRing = ref<{ x: number; y: number } | null>(null);
+const _pt = { px: 0, py: 0 };
+// The path position k of the sample nearest time `sec`, or -1 (no cache, or outside the path's span).
+function pathIndexAt(sec: number | null | undefined): number {
+	const c = props.sampleCache, path = samplePath();
+	if (sec == null || !c || !path || !timeInPath(c.t, path.idx, path.count, sec)) return -1;
+	return findNearestPathIndex(path.idx, path.count, idxOfTime(c.t, sec));
+}
+function ringPos(sec: number | null | undefined): { x: number; y: number } | null {
+	const k = pathIndexAt(sec);
+	if (k < 0) return null;
+	return toScreen(sampleWorld(samplePath()!, k), _pt) ? { x: _pt.px, y: _pt.py } : null;
+}
+function setRing(r: typeof markRing, v: { x: number; y: number } | null) {
+	const o = r.value;
+	if (!v || !o) { if (o !== v) r.value = v; return; }
+	if (Math.abs(o.x - v.x) >= 0.25 || Math.abs(o.y - v.y) >= 0.25) r.value = v;
+}
+// What the ring positions depend on, compared in place each frame (no allocation): camera
+// framing, canvas size, the shader's Z mapping and the two times. `ringDirty` covers what
+// can't be a number (cache identity, innerDiam, ppr, octree reload).
+const ringSig = new Float64Array(20).fill(NaN);
+const _sig = new Float64Array(20);
+let ringDirty = true;
+function updateRings() {
+	if (!camera || !controls) return;
+	const u = material?.uniforms;
+	const zr = u?.uZRange.value as THREE.Vector2 | undefined;
+	const p = camera.position, t = controls.target, q = camera.quaternion;
+	_sig[0] = camera.zoom; _sig[1] = p.x; _sig[2] = p.y; _sig[3] = p.z;
+	_sig[4] = t.x; _sig[5] = t.y; _sig[6] = t.z;
+	_sig[7] = q.x; _sig[8] = q.y; _sig[9] = q.z; _sig[10] = q.w;
+	_sig[11] = camera.left; _sig[12] = camera.right; _sig[13] = camera.top; _sig[14] = camera.bottom;
+	_sig[15] = cssW; _sig[16] = cssH;
+	_sig[17] = u ? u.uZAxis.value * 1e6 + u.uZScale.value : 0;
+	_sig[18] = zr ? zr.x + zr.y : 0;
+	let changed = ringDirty;
+	for (let i = 0; i < _sig.length && !changed; i++) if (_sig[i] !== ringSig[i]) changed = true;
+	if (!changed) return;
+	ringSig.set(_sig); ringDirty = false;
+	if (!props.sampleCache) { setRing(markRing, null); setRing(hoverRing, null); return; }
+	camera.updateMatrixWorld();
+	setRing(markRing, ringPos(props.markTime));
+	setRing(hoverRing, ringPos(props.hoverTime));
+}
+watch(() => [props.sampleCache, props.innerDiam, props.ppr, props.markTime, props.hoverTime], () => { ringDirty = true; });
+
+// Bring the sample at time t into view (pans the target and camera together so the view angle
+// is unchanged). false when there is no sample for t (no cache, or outside the cut window).
+function revealTime(t: number): boolean {
+	if (!camera || !controls) return false;
+	const k = pathIndexAt(t);
+	if (k < 0) return false;
+	camera.updateMatrixWorld();
+	const v = sampleWorld(samplePath()!, k);
+	const flat = !material || (material.uniforms.uZAxis.value as number) < 0;
+	const d = v.clone().sub(controls.target);   // a rare call: allocation is fine here
+	if (flat) d.z = 0;
+	if (toScreen(v.clone(), _pt)) return true;   // already in view
+	controls.target.add(d); camera.position.add(d);
+	controls.update(); invalidate(); ringDirty = true;
+	return true;
 }
 
 function sizeCanvas() {
@@ -393,6 +546,7 @@ function teardownGL() {
 		c.removeEventListener('pointermove', onPtrMove);
 		c.removeEventListener('pointerup', onPtrUp);
 		c.removeEventListener('pointercancel', onPtrUp);
+		c.removeEventListener('contextmenu', onContextMenu);
 	}
 	zPointers.clear();
 	ro?.disconnect(); controls?.dispose();
@@ -454,7 +608,7 @@ function exportViewport(filename: string, subtitle?: string) {
 		axis: props.axis, subtitle, filename,
 	});
 }
-defineExpose({ currentBounds, exportViewport });
+defineExpose({ currentBounds, exportViewport, revealTime });
 </script>
 
 <template>
@@ -462,6 +616,8 @@ defineExpose({ currentBounds, exportViewport });
 		<LoadingOverlay v-if="stage" :stage="stage" />
 		<div v-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
 		<canvas :key="canvasKey" v-show="!error" ref="canvasEl"></canvas>
+		<span v-if="markRing" class="fo-ring mark" :style="{ transform: `translate(${markRing.x}px, ${markRing.y}px)` }"></span>
+		<span v-if="hoverRing" class="fo-ring hover" :style="{ transform: `translate(${hoverRing.x}px, ${hoverRing.y}px)` }"></span>
 		<span v-if="!loading && !error" class="fc-count">{{ pointCount.toLocaleString() }} pts (LOD)</span>
 	</div>
 </template>
@@ -470,6 +626,10 @@ defineExpose({ currentBounds, exportViewport });
 .frm-octree { position: relative; width: 100%; height: 100%; min-height: 160px; background: var(--plot-bg, #0b1020); border-radius: 6px; overflow: hidden; }
 .frm-octree canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .frm-octree canvas:active { cursor: grabbing; }
+/* Rings sit centred on their point: the box is offset by half its size from the translate origin. */
+.fo-ring { position: absolute; left: 0; top: 0; pointer-events: none; border-radius: 50%; box-sizing: border-box; }
+.fo-ring.mark { width: 12px; height: 12px; margin: -6px 0 0 -6px; border: 2px solid var(--accent, #38bdf8); background: color-mix(in srgb, var(--accent, #38bdf8) 35%, transparent); }
+.fo-ring.hover { width: 10px; height: 10px; margin: -5px 0 0 -5px; border: 1.5px solid var(--accent, #38bdf8); opacity: 0.7; }
 .fc-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim, #94a3b8); }
 .fc-msg.err { color: var(--danger, #fca5a5); font-size: var(--fs-sm, 12px); padding: 12px; text-align: center; }
 .fc-count { position: absolute; right: 6px; bottom: 4px; font-size: var(--fs-xs, 11px); color: var(--text-dim, rgba(255,255,255,0.6)); font-variant-numeric: tabular-nums; }
