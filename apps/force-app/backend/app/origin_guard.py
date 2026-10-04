@@ -64,6 +64,15 @@ def _host_ok(host_header: str, server_port: int | None, extra_hosts: set[str]) -
     return port is None or server_port is None or port == server_port
 
 
+def _has_body(headers: dict[str, str]) -> bool:
+    if "transfer-encoding" in headers:
+        return True
+    try:
+        return int(headers.get("content-length", "0") or "0") > 0
+    except ValueError:
+        return True
+
+
 class OriginGuard:
     def __init__(self, app, settings: OriginGuardSettings):
         self.app = app
@@ -77,8 +86,18 @@ class OriginGuard:
         server = scope.get("server")
         server_port = server[1] if server and len(server) > 1 else None
         reason = None
+        status = 403
         if not _host_ok(headers.get("host", ""), server_port, self.settings.extra_hosts):
             reason = "host not allowed"
+        elif (
+            scope["type"] == "http"
+            and scope.get("method") in ("POST", "PUT", "PATCH")
+            and not headers.get("content-type", "").strip()
+            and _has_body(headers)
+        ):
+            # A no-cors `fetch` with an untyped Blob sends a body with no Content-Type, and some
+            # FastAPI versions parse that as JSON. Every real client labels its body.
+            reason, status = "a request body needs a Content-Type", 415
         else:
             origin = headers.get("origin")
             if origin is not None and normalize_origin(origin) not in self.settings.origins:
@@ -95,7 +114,7 @@ class OriginGuard:
         await send(
             {
                 "type": "http.response.start",
-                "status": 403,
+                "status": status,
                 "headers": [
                     (b"content-type", b"application/json"),
                     (b"content-length", str(len(body)).encode()),
