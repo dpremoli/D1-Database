@@ -58,3 +58,36 @@ describe('Connectivity Reset', () => {
 		expect(ls.dump()[OVERRIDE]).toBeUndefined();
 	});
 });
+
+describe('stored overrides from versions that pinned every endpoint', () => {
+	const pinnedAll = (over: Record<string, string> = {}) => JSON.stringify({
+		directusUrl: 'https://d1.example', filterUrl: '/filter', diagUrl: '/diag', octreeUrl: '/octrees',
+		recorderUrl: 'http://127.0.0.1:8200', ...over,
+	});
+
+	it('drops stored keys equal to the base config and rewrites the storage', async () => {
+		const { cfg, ls } = await boot({ directusUrl: 'https://d1.example', recorderUrl: 'http://127.0.0.1:8200' }, {
+			[OVERRIDE]: pinnedAll({ filterUrl: 'https://filter.example/' }),
+		});
+		expect(JSON.parse(ls.dump()[OVERRIDE])).toEqual({ filterUrl: 'https://filter.example/' });
+		expect(cfg.getConfig().filterUrl).toBe('https://filter.example');
+		expect(cfg.getConfig().recorderUrl).toBe('http://127.0.0.1:8200');
+	});
+
+	it('removes the override entirely when nothing differs from the base', async () => {
+		const { ls } = await boot({ directusUrl: 'https://d1.example', recorderUrl: 'http://127.0.0.1:8200' }, { [OVERRIDE]: pinnedAll() });
+		expect(ls.dump()[OVERRIDE]).toBeUndefined();
+	});
+
+	it('in the desktop build the sidecar\'s recorder URL wins over a stored one', async () => {
+		vi.stubGlobal('window', { forceApp: {} });
+		const { cfg, ls } = await boot(DESKTOP, { [OVERRIDE]: pinnedAll({ recorderUrl: 'http://127.0.0.1:8200' }) });
+		expect(cfg.getConfig().recorderUrl).toBe('http://127.0.0.1:8201');
+		expect(JSON.parse(ls.dump()[OVERRIDE] ?? '{}').recorderUrl).toBeUndefined();
+	});
+
+	it('in a browser build a stored recorder URL that differs is still honoured', async () => {
+		const { cfg } = await boot(DESKTOP, { [OVERRIDE]: JSON.stringify({ recorderUrl: 'http://localhost:9999' }) });
+		expect(cfg.getConfig().recorderUrl).toBe('http://localhost:9999');
+	});
+});

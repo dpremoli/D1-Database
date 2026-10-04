@@ -54,10 +54,41 @@ export async function loadRuntimeConfig(): Promise<void> {
 	}
 	base = { ...config };
 	try {
-		applyPartial(JSON.parse(localStorage.getItem(LS_OVERRIDE) || 'null'));
+		const stored = JSON.parse(localStorage.getItem(LS_OVERRIDE) || 'null');
+		const kept = migrateStoredOverride(stored);
+		if (kept !== stored) {
+			try {
+				if (kept && Object.keys(kept).length) localStorage.setItem(LS_OVERRIDE, JSON.stringify(kept));
+				else localStorage.removeItem(LS_OVERRIDE);
+			} catch { /* storage not writable: the pruned copy still applies for this session */ }
+		}
+		applyPartial(kept);
 	} catch {
 		/* no local override */
 	}
+}
+
+// The desktop shell serves the SPA with the values resolved for THIS launch in /config.json.
+function isDesktopBuild(): boolean {
+	return import.meta.env.MODE === 'desktop' || (typeof window !== 'undefined' && !!window.forceApp);
+}
+
+// Older versions saved the whole Connectivity form, pinning all five endpoints (including the
+// desktop's per-launch recorder URL) in localStorage for good. Drop what such a save left behind: a
+// stored key equal to the base config is no override at all, and on the desktop a stored recorder
+// URL must never beat the sidecar's value for this launch (8200 -> 8201 fallback). Returns the
+// input object itself when nothing needed dropping.
+function migrateStoredOverride(stored: Partial<AppConfig> | null | undefined): Partial<AppConfig> | null | undefined {
+	if (!stored || typeof stored !== 'object') return stored;
+	const kept: Partial<AppConfig> = {};
+	let dropped = false;
+	for (const k of KEYS) {
+		const v = stored[k];
+		if (v === undefined) continue;
+		if (!v || stripSlash(v) === base[k] || (k === 'recorderUrl' && isDesktopBuild())) dropped = true;
+		else kept[k] = v;
+	}
+	return dropped ? kept : stored;
 }
 
 export function getConfig(): Readonly<AppConfig> {
