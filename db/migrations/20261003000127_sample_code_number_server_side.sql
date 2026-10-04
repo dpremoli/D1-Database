@@ -15,6 +15,13 @@
 -- see each other's committed rows. A code without the placeholder (typed by hand, imported, a
 -- legacy code) is stored exactly as given. On UPDATE the row's own current number is excluded, which
 -- is what the "renumber" button in the interface asks for.
+--
+-- Lock order: the project_rollup refresh (migration 118) holds its advisory lock to commit, and the
+-- operation trigger (migration 126) takes it before its own locks. This trigger takes the same
+-- rollup lock before the sample-number lock, so every transaction acquires rollup -> sample ->
+-- counter in that order and the two cannot deadlock (a transaction that registers a sample and
+-- writes operations in either order is safe). It is taken only when a placeholder is being
+-- replaced; samples written with a plain code take no lock.
 
 CREATE FUNCTION trg_physical_samples_assign_code_number() RETURNS trigger
     LANGUAGE plpgsql
@@ -26,6 +33,9 @@ BEGIN
     IF NEW.sample_code LIKE '{seq}-%'
        AND (TG_OP = 'INSERT' OR NEW.sample_code IS DISTINCT FROM OLD.sample_code)
     THEN
+        -- Same key as refresh_project_rollup() in migration 118; always first (see the header).
+        PERFORM pg_catalog.pg_advisory_xact_lock(
+            pg_catalog.hashtextextended('refresh_project_rollup', 0));
         PERFORM pg_catalog.pg_advisory_xact_lock(
             pg_catalog.hashtextextended('physical_samples.sample_code_number', 0));
         SELECT COALESCE(max((substring(ps.sample_code FROM '^(\d{1,9})-'))::bigint), 0) + 1

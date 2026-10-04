@@ -833,10 +833,52 @@ cc_a=$(cat "$cc_dir/a"); cc_b=$(cat "$cc_dir/b")
 [[ -n "$cc_a" && -n "$cc_b" && "$cc_a" != "$cc_b" ]] \
     && ok "concurrent sintering inserts get distinct MF numbers ($cc_a, $cc_b)" \
     || bad "concurrent sintering inserts collided (A='$cc_a', B='$cc_b')"
+
+# Lock order (rollup -> sample -> MF/code): A writes an operation for sample X, holds its
+# transaction open, then writes one for sample Y; B meanwhile writes one for Y. With the rollup lock
+# taken after the sample lock, B holds Y and waits for the rollup lock that A holds while A waits
+# for Y: "deadlock detected".
+$PSQL -q -c "
+INSERT INTO physical_samples (sample_id, sample_code) VALUES
+    ('c0000000-0000-4000-8000-000000000414', 'TI-DLX'), ('c0000000-0000-4000-8000-000000000415', 'TI-DLY');" >/dev/null 2>&1
+dl_a() {
+    $PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000461', 'c0000000-0000-4000-8000-000000000402',
+        'c0000000-0000-4000-8000-000000000414', 'heat_treatment', 'TI-DLX-HTA{seq}');
+SELECT pg_sleep(2);
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000462', 'c0000000-0000-4000-8000-000000000402',
+        'c0000000-0000-4000-8000-000000000415', 'heat_treatment', 'TI-DLY-HTA{seq}');
+COMMIT;
+SQL
+}
+dl_b() {
+    $PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000463', 'c0000000-0000-4000-8000-000000000402',
+        'c0000000-0000-4000-8000-000000000415', 'heat_treatment', 'TI-DLY-HTA{seq}');
+COMMIT;
+SQL
+}
+dl_a > "$cc_dir/dla" &
+sleep 0.7
+dl_b > "$cc_dir/dlb"
+wait
+dl_n=$($PSQL -c "SELECT count(*) FROM manufacturing_operations WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-00000000046_'" 2>&1)
+if ! grep -qi 'deadlock\|ERROR' "$cc_dir/dla" "$cc_dir/dlb" && [[ "$dl_n" == "3" ]]; then
+    ok "operation writes for samples X,Y and Y do not deadlock (rollup lock is taken first)"
+else
+    bad "operation writes deadlocked or failed (A: $(cat "$cc_dir/dla"); B: $(cat "$cc_dir/dlb"); rows: $dl_n)"
+fi
+
 rm -rf "$cc_dir"
 $PSQL -q -c "
 DELETE FROM manufacturing_operations WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-0000000004_%';
-DELETE FROM physical_samples WHERE sample_id = 'c0000000-0000-4000-8000-000000000413';
+DELETE FROM physical_samples WHERE sample_id IN ('c0000000-0000-4000-8000-000000000413',
+    'c0000000-0000-4000-8000-000000000414', 'c0000000-0000-4000-8000-000000000415');
 DELETE FROM manufacturing_methods WHERE method_id = 'c0000000-0000-4000-8000-000000000402';" >/dev/null 2>&1 || true
 
 echo "== Sample numbers are assigned server-side (review 4.6) =="

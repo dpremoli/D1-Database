@@ -37,9 +37,17 @@
 -- Not done here: UNIQUE(pass_code) and UNIQUE(sample_id, operation_sequence). Production may already
 -- hold duplicates; that needs a data check first (see the review-fix plan, section 2).
 --
--- Deadlocks: a single statement that inserts operations for several samples takes the sample locks
--- in row order; two such statements with the samples in opposite order could deadlock. Postgres
--- aborts one of them with a clear error. The interface and the API insert one row at a time.
+-- Lock order (deadlocks): refresh_project_rollup() (migration 118) takes the rollup advisory lock in
+-- the statement-level refresh trigger and holds it to commit. This BEFORE ROW trigger takes its own
+-- locks (the per-sample lock, the MF counter lock) earlier in the statement, so a transaction that
+-- wrote operations for sample X and then sample Y could deadlock against one writing only Y: the
+-- first holds the rollup lock and waits for Y, the second holds Y and waits for the rollup lock.
+-- The trigger therefore takes the rollup lock FIRST (same key as migration 118), so the order is
+-- always rollup -> sample -> MF counter (and rollup -> sample_code counter in migration 127).
+-- Every operation write already queues on that lock at the end of its statement, so this adds no
+-- serialisation, only moves it earlier. A transaction that locks a sample row by other means
+-- (e.g. a plain UPDATE of physical_samples) before it writes an operation can still deadlock with
+-- one that takes the rollup lock first; Postgres aborts one of the two with SQLSTATE 40P01.
 
 CREATE FUNCTION trg_manufacturing_operations_assign_numbers() RETURNS trigger
     LANGUAGE plpgsql
@@ -51,6 +59,11 @@ BEGIN
     IF TG_OP = 'UPDATE' AND NEW.pass_code IS NOT DISTINCT FROM OLD.pass_code THEN
         RETURN NEW;
     END IF;
+
+    -- Lock order: the rollup lock before any lock below (see the header). Same key as
+    -- refresh_project_rollup() in migration 118.
+    PERFORM pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended('refresh_project_rollup', 0));
 
     -- Per-sample operation number.
     IF NEW.operation_sequence IS NULL
