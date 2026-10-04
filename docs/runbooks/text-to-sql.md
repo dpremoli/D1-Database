@@ -16,19 +16,15 @@ The capability has two halves:
 
 ## 1. One-time: create the read-only login role
 
-The migration creates `d1_llm_readonly` as a NOLOGIN **privilege bundle** (SELECT
-on the allow-listed views only; read-only + statement-timeout defaults). The
-plugin must connect as a **login** role that *inherits* it. Create it once, with
-a password kept out of version control:
+Migrations create `d1_llm_readonly`, a NOLOGIN **privilege bundle** (SELECT on an
+explicit allow-list of lab tables and views), and `d1_llm_app`, a NOLOGIN member of
+it that already has `default_transaction_read_only = on` and a 5 s
+`statement_timeout` (migration `…117_llm_readonly_allow_list`). Turn it into the
+plugin's login once, with a password kept out of version control:
 
 ```sql
 -- as the d1 superuser, against the d1_database database
-CREATE ROLE d1_llm_app LOGIN PASSWORD 'choose-a-strong-password' IN ROLE d1_llm_readonly;
-
--- Member roles do NOT inherit a group role's SET values, so pin them here too
--- (defence-in-depth; the plugin also enforces these per connection):
-ALTER ROLE d1_llm_app SET default_transaction_read_only = on;
-ALTER ROLE d1_llm_app SET statement_timeout = '5000ms';
+ALTER ROLE d1_llm_app LOGIN PASSWORD 'choose-a-strong-password';
 ```
 
 The embedding backfill needs its own writer login, which is **not** the `d1`
@@ -62,15 +58,20 @@ EMBED_DATABASE_URL=postgres://d1_embedder:choose-another-strong-password@postgre
 > `bash tests/phase6_text_to_sql.sh`): it provisions a throwaway member of
 > `d1_llm_readonly` and asserts the role can read but not write.
 
-**Read surface (widened 2026-07-01, migration `…052_llm_readonly_broad_read`):**
-`d1_llm_readonly` can now `SELECT` **all lab/domain tables** and benign Directus
-metadata — so the AI can answer questions about any recorded field (e.g.
-`manufacturing_operations.machining_feed_mm_per_rev`). It is still **denied**
-every credential/auth/system table (`directus_users`, `directus_sessions`,
-`directus_settings`, `directus_flows`/`operations`, the policy/permission tables,
-`schema_migrations`, and `pg_catalog`/`information_schema`). The same deny-list is
-enforced a second time by `app/lib/sql_guard.py` (deny-by-default for any unknown
-`directus_*` table). See ADR-0009 §"Update (2026-07-01)".
+**Read surface (allow-list since migration `…117_llm_readonly_allow_list`):**
+`d1_llm_readonly` can `SELECT` the lab tables and `v_*` views listed in that
+migration and nothing else. `audit_logs`, `people`, `Machine_Operators`,
+`archive_metadata_edits`, `force_crawler_state`, `schema_migrations` and every
+`directus_*` table are not granted, and a table added later stays invisible to the
+LLM until a migration grants it (a view that is dropped and recreated must be
+re-granted). `app/lib/sql_guard.py` enforces the same deny-list a second time and
+also rejects side-effect and SQL-running functions (`query_to_xml`,
+`pg_read_file`, `set_config`, …) and `FOR UPDATE`. See ADR-0009's status note.
+
+Who may ask: `/d1-ask` serves admins and users with app access only (API-only
+tokens get 403). It forwards only the last 20 messages (4000 characters each),
+the plugin caps `row_limit` at 1000, and both refuse to run (503) when
+`WORKER_WEBHOOK_SECRET` is unset.
 
 ---
 
