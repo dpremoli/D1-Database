@@ -9,6 +9,7 @@ import { startSync } from './directusSync';
 import { hwStatus } from './hwStatus';
 import { labamp } from './labampApi';
 import { IntervalGate, shouldPollBackup, shouldPollDisk } from './recordPolling';
+import { shouldOpenSaveDialog } from './saveDialogGate';
 import { parseDismissedIds, parseSavedLayout } from './recordLayout';
 import PanelFrame from './panels/PanelFrame.vue';
 import { PLOT_MODES, type PlotMode } from './plotModes';
@@ -164,9 +165,9 @@ watch(() => st.state, async (s, prev) => {
 	if (w.mode.value === 'playback') return;
 	// Covers auto-stop (self-terminating duration, disk-full, etc) where the frontend never called
 	// w.stop() itself — the manual-stop path already opens this via workspace.ts's stop().
-	if ((s === 'finalizing' || s === 'done' || s === 'error') && prev === 'recording') {
-		w.saveOpen.value = true;
-	}
+	// A reconcile that adopts a cut already finalizing resets the client first, so prev is never
+	// 'recording' there (saveDialogGate.ts).
+	if (shouldOpenSaveDialog(s, prev)) w.saveOpen.value = true;
 	if (s === 'done' && prev !== 'done' && !w.finishedCache.value) {
 		await w.loadFinished();
 	}
