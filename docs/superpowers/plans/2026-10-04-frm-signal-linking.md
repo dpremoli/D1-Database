@@ -10,7 +10,7 @@
 | B — Lite cloud (FrmCloud.vue) | `.claude/worktrees/agent-a99c2d5ee82294d19` | `worktree-agent-a99c2d5ee82294d19` | reviewed, merged |
 | C — octree (FrmOctree.vue) | `.claude/worktrees/agent-a35ad8aa3b3a5f987` | `worktree-agent-a35ad8aa3b3a5f987` | reviewed, merged |
 | D — charts (ForceChart.vue) | `.claude/worktrees/agent-a6a66bb9a4070ea27` | `worktree-agent-a6a66bb9a4070ea27` | reviewed, merged |
-| E — dashboard wiring + docs | — | — | blocked on B–D |
+| E — dashboard wiring + docs | `.claude/worktrees/agent-aec03ca06d8f2455a` | `worktree-agent-aec03ca06d8f2455a` | in progress (Sonnet worker) |
 | Simplify / review / verify | coordinator | `ccr-37b6f575-4lu7ni` | not started |
 | PR + merge | coordinator | — | not started |
 
