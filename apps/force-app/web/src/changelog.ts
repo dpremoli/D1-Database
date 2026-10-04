@@ -14,6 +14,7 @@ export const CHANGELOG: ChangelogEntry[] = [
 		notes: [
 			'The Record page keeps up with the recorder: a cut that finished while you were on another page now offers to save when you come back, and after a backend restart the page reconnects on its own and points you to Recover for an interrupted cut.',
 			'Saving a cut to the database after a failed attempt resumes where it stopped instead of creating a second run record.',
+			'Pop-out windows follow the main window when it catches up with the recorder, and the Lab Amp is reset once a long save finishes. The banner says "Saving" while a cut is being saved.',
 			'Quitting or updating while a recording is still being saved now warns you first, instead of cutting the save short.',
 			'Fixed: a recording could hang for good if writing its data failed (for example a full disk); it now stops with the error and keeps what was captured. A virtual-channel formula that would fail during a recording is refused when you save it.',
 			'NI-DAQ channel, card and tacho settings are locked while a recording runs or is being saved.',
