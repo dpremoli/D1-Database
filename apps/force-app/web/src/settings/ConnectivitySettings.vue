@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';
-import { getConfig, getConfigDefaults, setConfigOverride, resetConfigOverride } from '../config';
+import { getConfig, setConfigOverride, resetConfigOverride } from '../config';
 import OfflineModeCard from './OfflineModeCard.vue';
 import { confirmAction } from '../ui/confirm';
 import { formatMegabytes } from '../format';
@@ -228,7 +228,7 @@ function saveEndpoints() {
 }
 function resetEndpoints() {
 	resetConfigOverride();
-	Object.assign(epForm, getConfigDefaults());
+	Object.assign(epForm, getConfig());
 }
 
 const statusIcon: Record<string, string> = { ok: 'check_circle', fail: 'cancel', warn: 'warning', info: 'info' };
