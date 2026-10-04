@@ -180,7 +180,7 @@ each stream into `ccr-c5556a5a-jxwm8s`.
 | C | 2 | `stream-c` (branch `worktree-stream-c`) | merged, reviewed; CI purge + docs follow-up committed |
 | E | 2 | `stream-e` (branch `worktree-stream-e`) | in progress (2.1 committed; resumed after usage limit) |
 | F | 2 | `stream-f` (branch `worktree-stream-f`) | in progress |
-| G | 2 | — | pending |
+| G | 2 | `stream-g` (branch `worktree-stream-g`) | in progress |
 | I | 3 | — | pending |
 
 ## 5. After the streams merge
