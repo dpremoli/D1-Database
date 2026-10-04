@@ -827,6 +827,66 @@ DELETE FROM manufacturing_operations WHERE operation_id::text LIKE 'c0000000-000
 DELETE FROM physical_samples WHERE sample_id = 'c0000000-0000-4000-8000-000000000413';
 DELETE FROM manufacturing_methods WHERE method_id = 'c0000000-0000-4000-8000-000000000402';" >/dev/null 2>&1 || true
 
+echo "== Sample numbers are assigned server-side (review 4.6) =="
+# A code written as {seq}-<rest> gets the next free number from the trigger; any other code is stored as given.
+sc_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+SELECT COALESCE(max((substring(sample_code FROM '^(\d{1,9})-'))::bigint), 0) AS sbase FROM physical_samples \gset
+INSERT INTO physical_samples (sample_id, sample_code)
+VALUES ('c0000000-0000-4000-8000-000000000611', '{seq}-TI-MF-2026-10-4');
+INSERT INTO physical_samples (sample_id, sample_code)
+VALUES ('c0000000-0000-4000-8000-000000000612', '{seq}-TI-HT-2026-10-4');
+INSERT INTO physical_samples (sample_id, sample_code)
+VALUES ('c0000000-0000-4000-8000-000000000613', 'TI-HAND-TYPED');
+INSERT INTO physical_samples (sample_id, sample_code)
+VALUES ('c0000000-0000-4000-8000-000000000614', (:sbase + 500)::text || '-TI-OLD-2020-1-1');
+INSERT INTO physical_samples (sample_id, sample_code)
+VALUES ('c0000000-0000-4000-8000-000000000615', '{seq}-TI-MF-2026-10-5');
+SELECT 'base:' || :sbase;
+SELECT 'code:' || substr(sample_id::text, 33) || ':' || sample_code FROM physical_samples
+WHERE sample_id::text LIKE 'c0000000-0000-4000-8000-00000000061_' ORDER BY sample_id;
+-- "renumber": the row's own number is excluded, so it keeps the top slot rather than jumping past itself
+UPDATE physical_samples SET sample_code = '{seq}-TI-MF-2026-10-5' WHERE sample_id = 'c0000000-0000-4000-8000-000000000615';
+SELECT 'renumber:' || sample_code FROM physical_samples WHERE sample_id = 'c0000000-0000-4000-8000-000000000615';
+-- an unrelated update leaves the code alone
+UPDATE physical_samples SET nickname = 'x' WHERE sample_id = 'c0000000-0000-4000-8000-000000000611';
+SELECT 'untouched:' || sample_code FROM physical_samples WHERE sample_id = 'c0000000-0000-4000-8000-000000000611';
+ROLLBACK;
+SQL
+)
+sc_check() { grep -qx "$1" <<<"$sc_out" && ok "$2" || bad "$2 (psql output: $sc_out)"; }
+sc_base=$(grep -m1 '^base:' <<<"$sc_out" | cut -d: -f2)
+sc_check "code:0611:$((sc_base + 1))-TI-MF-2026-10-4" "a {seq}- sample code gets max+1 and keeps the rest of the code"
+sc_check "code:0612:$((sc_base + 2))-TI-HT-2026-10-4" "the next one gets the next number"
+sc_check "code:0613:TI-HAND-TYPED" "a hand-typed code without the placeholder is stored as given"
+sc_check "code:0614:$((sc_base + 500))-TI-OLD-2020-1-1" "an explicit number is stored as given"
+sc_check "code:0615:$((sc_base + 501))-TI-MF-2026-10-5" "a later placeholder continues after the highest number in use"
+sc_check "renumber:$((sc_base + 501))-TI-MF-2026-10-5" "renumbering excludes the row's own number"
+sc_check "untouched:$((sc_base + 1))-TI-MF-2026-10-4" "an unrelated update does not renumber"
+
+# Two registrations at once: A holds its transaction open while B inserts.
+sc_dir=$(mktemp -d)
+sc_insert() {  # sc_insert <id-suffix> <hold-seconds>
+    $PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO physical_samples (sample_id, sample_code)
+VALUES ('c0000000-0000-4000-8000-0000000006$1', '{seq}-TI-CC-2026-10-4') RETURNING sample_code;
+SELECT pg_sleep($2);
+COMMIT;
+SQL
+}
+sc_insert 21 2 | grep TI-CC > "$sc_dir/a" &
+sleep 0.7
+sc_insert 22 0 | grep TI-CC > "$sc_dir/b"
+wait
+sc_a=$(cat "$sc_dir/a"); sc_b=$(cat "$sc_dir/b")
+sc_na=${sc_a%%-*}; sc_nb=${sc_b%%-*}
+[[ -n "$sc_na" && "$sc_nb" == "$((sc_na + 1))" ]] \
+    && ok "concurrent registrations get distinct, consecutive sample numbers ($sc_a, $sc_b)" \
+    || bad "concurrent registrations collided (A='$sc_a', B='$sc_b')"
+rm -rf "$sc_dir"
+$PSQL -q -c "DELETE FROM physical_samples WHERE sample_id::text LIKE 'c0000000-0000-4000-8000-0000000006__';" >/dev/null 2>&1 || true
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy
