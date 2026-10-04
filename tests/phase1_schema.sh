@@ -1032,7 +1032,23 @@ VALUES ('physical_samples', 'TI-ACT-OLD', 'UPDATE', now() - interval '1 hour');
 INSERT INTO directus_activity (action, "user", collection, item)
 VALUES ('update', 'c0000000-0000-4000-8000-000000000799', 'physical_samples', 'TI-ACT-OLD');
 SELECT 'old_rows:' || count(*) FROM audit_log_actors a JOIN audit_logs l USING (log_id) WHERE l.record_id = 'TI-ACT-OLD';
--- 4. a GUC-supplied actor wins and is not duplicated in the side table
+-- 4. rows written by OTHER triggers in the same transaction have no activity row of their own:
+-- the intake creates a second box, inserts and edges (audited, no actor), Directus only logs the
+-- box it was asked to create
+INSERT INTO insert_types (insert_type_id, type_code, short_code, inserts_per_box, edge_count)
+VALUES ('c0000000-0000-4000-8000-000000000721', 'TEST-ACT-TYPE', 'TACT', 2, 2);
+INSERT INTO tool_boxes (tool_box_id, insert_type_id, package_quantity)
+VALUES ('c0000000-0000-4000-8000-000000000722', 'c0000000-0000-4000-8000-000000000721', 2);
+INSERT INTO directus_activity (action, "user", collection, item)
+VALUES ('create', 'c0000000-0000-4000-8000-000000000799', 'tool_boxes', 'c0000000-0000-4000-8000-000000000722');
+SELECT 'child_edges:' || count(*) || '/' || count(*) FILTER (WHERE actor_identity = 'c0000000-0000-4000-8000-000000000799' AND actor_from_directus_activity)
+  FROM v_audit_logs_with_actor WHERE table_name = 'insert_edges' AND event_timestamp = transaction_timestamp();
+SELECT 'child_boxes:' || count(*) || '/' || count(*) FILTER (WHERE actor_identity = 'c0000000-0000-4000-8000-000000000799')
+  FROM v_audit_logs_with_actor WHERE table_name = 'tool_boxes' AND record_id <> 'c0000000-0000-4000-8000-000000000722'
+   AND event_timestamp = transaction_timestamp();
+SELECT 'child_unattributed:' || count(*) FROM v_audit_logs_with_actor
+  WHERE event_timestamp = transaction_timestamp() AND table_name IN ('insert_edges', 'cutting_inserts') AND actor_identity IS NULL;
+-- 5. a GUC-supplied actor wins and is not duplicated in the side table
 SELECT set_config('d1.actor_identity', 'guc-user', true) \gset
 INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000713', 'TI-ACT-3');
 INSERT INTO directus_activity (action, "user", collection, item)
@@ -1050,6 +1066,9 @@ act_check "actor_rows:2" "one side-table row per attributed audit row, no duplic
 act_check "public:public" "an unauthenticated write is attributed to 'public'"
 act_check "old_rows:0" "an audit row from an earlier transaction is not re-attributed"
 act_check "guc:guc-user/false" "an actor set through the GUC wins over the fallback"
+act_check "child_edges:8/8" "audit rows of the intake's child edges (written by a trigger) are attributed too"
+act_check "child_boxes:1/1" "so are the clone box rows the intake trigger created"
+act_check "child_unattributed:0" "no audit row of the transaction is left without an actor"
 act_check "guc_rows:0" "a GUC-attributed row gets no side-table row"
 
 echo "== Process category comes from the method, in Postgres (review 4.11) =="
