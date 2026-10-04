@@ -218,7 +218,9 @@ def main() -> None:
     ap.add_argument("--apply", action="store_true", help="execute against the DB")
     args = ap.parse_args()
 
-    db_url = os.environ.get("DATABASE_URL") or sys.exit("ERROR: DATABASE_URL is required")
+    db_url = os.environ.get("DATABASE_URL") or sys.exit(
+        "ERROR: DATABASE_URL is required"
+    )
     conn = psycopg2.connect(db_url)
     conn.autocommit = False
     cur = conn.cursor()
