@@ -182,10 +182,12 @@ each stream into `ccr-c5556a5a-jxwm8s`.
 | F | 2 | `stream-f` (branch `worktree-stream-f`) | merged, reviewed (polls kept across deactivate in `6bf2704`) |
 | G | 2 | `stream-g` (branch `worktree-stream-g`) | merged (`6c70803`), reviewed; `script-tests` CI job added (300 passed locally) |
 | Verify (force-app-verify) | — | `verify` (branch `worktree-verify`) | all scenarios pass after `aaf6d82`; stream-handler shutdown fix `968b021` |
-| Cross-stream review | — | 3 read-only reviewers | done. `fix-infra` merged; `fix-db` merged (CI DB sequence: 135 migrations, phase1 195 / phase7 12 / phase6 59, full rollback to 0; tests/scripts 303 with no skips); `fix-web` in progress; 0.1.34 changelog + bump in `110916b` |
+| Cross-stream review | — | 3 read-only reviewers | done; follow-ups , ,  merged. Final run on the head: every suite green (see the PR) |
 | I | 3 | `stream-i` (branch `worktree-stream-i`) | merged (`31c97af`), reviewed; docs + phase3 actor check follow-up; 4.9 needs a live-Directus check |
 
 ## 5. After the streams merge
+
+Progress (2026-10-04): steps 1–4 done (all streams and follow-ups merged, whole-diff review fixed, every suite green, 0.1.34 changelog and bump); step 5, the PR, opened.
 
 1. Merge every stream into `ccr-c5556a5a-jxwm8s` and resolve conflicts.
 2. Review the whole diff (correctness first) and fix the findings.
