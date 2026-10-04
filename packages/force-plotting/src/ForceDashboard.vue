@@ -2014,8 +2014,17 @@ async function copyPointInfo(p: PointInfo) {
 function openChartMenu(e: { clientX: number; clientY: number; x: number }) {
 	const t = e.x;
 	let hint: string | undefined;
-	if (octreeOn.value) { if (!detail.value?.live_cache_file) hint = 'Needs this cut’s live cache'; }
-	else if (liveAvailable.value) { if (t < cropStartSec.value || t > cropEndSec.value) hint = 'Outside the cropped window'; }
+	if (octreeOn.value) {
+		const c = octreeSampleCache.value;
+		if (!detail.value?.live_cache_file) hint = 'Needs this cut’s live cache';
+		// The octree covers the live cache's own window; a time outside it has no mapped sample. With
+		// the cache still loading we can't say, so the item stays enabled (the map queues the reveal).
+		else if (c && c.N && (t < c.t[0] || t > c.t[c.N - 1])) hint = 'Outside the mapped window';
+	}
+	else if (liveAvailable.value) {
+		// A zero-width crop means the crop isn't loaded/seeded yet (both edges 0), not "nothing is inside".
+		if (cropEndSec.value > cropStartSec.value && (t < cropStartSec.value || t > cropEndSec.value)) hint = 'Outside the cropped window';
+	}
 	else hint = 'No interactive map for this cut';
 	openMenu(e.clientX, e.clientY, [
 		{ label: 'Show position on map', disabled: !!hint, hint, run: () => showOnMap(t) },
