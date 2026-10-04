@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
+import { hoverIndexAt } from './hoverIndex';
 
 // Dependency-free chart. kind='env' → min/max envelope (force or RPM; always
 // includes 0 on the y-axis); kind='line' → FFT amplitude (optional log y).
@@ -310,8 +311,9 @@ function emitHover(ev: MouseEvent) {
 	const r = svg.getBoundingClientRect();
 	const px = (ev.clientX - r.left) * (g.W / r.width);
 	const frac = (px - ML) / (g.W - ML - MR);
-	const i = Math.round(Math.min(1, Math.max(0, frac)) * (g.xs.length - 1));
-	emit('hover', i);
+	// The plot spans the visible window [x0, x1], not the whole record, so map into that and find
+	// the nearest sample by value (see hoverIndex.ts).
+	emit('hover', hoverIndexAt(g.xs, g.x0, g.x1, frac, g.iA, g.iB));
 }
 function onMove(ev: MouseEvent) {
 	if (!geom.value) return;
