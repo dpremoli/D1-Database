@@ -153,10 +153,14 @@ const rendererWatchDeps = {
 // Why the backend last restarted. It is down while 'restarting' is reported, so the log line
 // waits for the 'ready' that follows.
 let restartCause: string | undefined;
+// supervisor.start() settles (ready or crashed) before this is set. A crash during that startup is
+// reported once by createWindow() below, so the state callback must stay quiet for it, or the
+// operator gets two error boxes for one failure (review 2.9).
+let startupSettled = false;
 
 function onSidecarStateChange(state: SidecarState, detail?: string): void {
   if (state === 'restarting') restartCause = detail;
-  if (state === 'crashed') {
+  if (state === 'crashed' && startupSettled) {
     dialog.showErrorBox('Recorder backend stopped responding', detail ?? 'See logs for details.');
   }
   // A restart (not the initial start) means the backend crashed mid-session — route the
@@ -335,6 +339,7 @@ async function createWindow(): Promise<void> {
     onStateChange: onSidecarStateChange,
   });
   await supervisor.start();
+  startupSettled = true;
 
   if (supervisor.getState() !== 'ready') {
     dialog.showErrorBox(
