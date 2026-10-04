@@ -7,7 +7,7 @@
 | Stream | Worktree / agent | Branch | State |
 |---|---|---|---|
 | A — foundation (cloudPick, ContextMenu, Cloud.idx) | `.claude/worktrees/agent-a5863abf6683d5394` | `worktree-agent-a5863abf6683d5394` (from main b7bdac7) | reviewed, merged |
-| B — Lite cloud (FrmCloud.vue) | `.claude/worktrees/agent-a99c2d5ee82294d19` | `worktree-agent-a99c2d5ee82294d19` | in progress (Sonnet worker) |
+| B — Lite cloud (FrmCloud.vue) | `.claude/worktrees/agent-a99c2d5ee82294d19` | `worktree-agent-a99c2d5ee82294d19` | reviewed, merged |
 | C — octree (FrmOctree.vue) | `.claude/worktrees/agent-a35ad8aa3b3a5f987` | `worktree-agent-a35ad8aa3b3a5f987` | reviewed, merged |
 | D — charts (ForceChart.vue) | `.claude/worktrees/agent-a6a66bb9a4070ea27` | `worktree-agent-a6a66bb9a4070ea27` | reviewed, merged |
 | E — dashboard wiring + docs | — | — | blocked on B–D |
