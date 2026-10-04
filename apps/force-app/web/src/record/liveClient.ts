@@ -14,6 +14,7 @@ import type { TachoKind } from './tachoSignal';
 // Playback relays to pop-outs at most this often (see relayTick).
 const RELAY_TICK_MS = 200;
 
+const STREAM_ERROR = 'stream connection error';
 const MAGIC = 0x46_4c_31_44; // 'D1LF' bytes D,1,L,F read little-endian as a u32
 // The 8 dyno sub-channels the frame streams (min/max envelope), in raw-file column order.
 export const SUB_NAMES = ['Fx1', 'Fx2', 'Fy1', 'Fy2', 'Fz1', 'Fz2', 'Fz3', 'Fz4', 'Tacho'] as const;
@@ -115,6 +116,22 @@ export class RecordClient {
 	};
 
 	private ws: WebSocket | null = null;
+	// Reconnect state (#2.1): the stream drops whenever the backend restarts (the desktop shell's
+	// supervisor does that after a crash) or the Record page is left and re-entered, and nothing
+	// used to reopen it. `wantConnected` is the page's intent (connect() .. disconnect()); a close
+	// while it holds schedules a retry with backoff.
+	private wantConnected = false;
+	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	private reconnectAttempts = 0;
+	/** Backoff before reconnect attempt n (0-based): 0.5 s doubling to a 10 s ceiling. */
+	static reconnectDelayMs(attempt: number): number { return Math.min(10_000, 500 * 2 ** attempt); }
+	/** Called after every stream (re)open and once its reconcile with /record/status finished. */
+	onStreamOpen: (() => void) | null = null;
+	/**
+	 * Whether this client reflects the recorder. The workspace turns it off in playback mode, where
+	 * the playback engine drives `status` itself and the recorder's state is irrelevant.
+	 */
+	canReconcile: () => boolean = () => true;
 	private base = getConfig().recorderUrl;
 	get baseUrl() { return this.base; }
 	// Playback (engine.ts) has no per-frame room check like onFrame's below — it needs to know the
@@ -159,19 +176,10 @@ export class RecordClient {
 	}
 
 	connect() {
-		const ws = new WebSocket(this.streamUrl());
-		ws.binaryType = 'arraybuffer';
-		ws.onopen = () => { this.status.connected = true; };
-		ws.onclose = () => { this.status.connected = false; };
-		ws.onerror = () => { this.status.error = 'stream connection error'; };
-		ws.onmessage = (ev) => {
-			if (typeof ev.data === 'string') this.onControl(JSON.parse(ev.data));
-			else this.onFrame(ev.data as ArrayBuffer);
-			if (this.hasRelayPeer) {
-				this.relay?.postMessage(ev.data instanceof ArrayBuffer ? { bin: new Uint8Array(ev.data) } : { txt: ev.data });
-			}
-		};
-		this.ws = ws;
+		this.wantConnected = true;
+		this.reconnectAttempts = 0;
+		if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+		this.openSocket();
 		// Close any channel from a previous connect() before replacing it — reconnecting otherwise
 		// leaks the old BroadcastChannel, which stays subscribed and keeps its handler alive.
 		this.relay?.close();
@@ -180,6 +188,104 @@ export class RecordClient {
 		// Pop-outs that opened before this source did (reopened at app start, #108, while the main
 		// window is not yet on Record) sent their sync-request to nobody. Ask them to send again.
 		this.relay.postMessage({ type: 'source-ready' });
+	}
+
+	private openSocket() {
+		let ws: WebSocket;
+		try { ws = new WebSocket(this.streamUrl()); } catch { this.scheduleReconnect(); return; }
+		ws.binaryType = 'arraybuffer';
+		ws.onopen = () => {
+			if (this.ws !== ws) return;
+			this.reconnectAttempts = 0;
+			this.status.connected = true;
+			if (this.status.error === STREAM_ERROR) this.status.error = null;
+			// The stream sends no state on connect and anything that happened while it was down
+			// (a cut that auto-stopped, a backend restart) was never delivered: ask the recorder.
+			void this.reconcile().finally(() => { if (this.ws === ws) this.onStreamOpen?.(); });
+		};
+		ws.onclose = () => {
+			// A socket we already replaced or disconnected must not touch the live one's state.
+			if (this.ws !== ws) return;
+			this.status.connected = false;
+			this.ws = null;
+			this.scheduleReconnect();
+		};
+		ws.onerror = () => { if (this.ws === ws) this.status.error = STREAM_ERROR; };
+		ws.onmessage = (ev) => {
+			if (typeof ev.data === 'string') this.onControl(JSON.parse(ev.data));
+			else this.onFrame(ev.data as ArrayBuffer);
+			if (this.hasRelayPeer) {
+				this.relay?.postMessage(ev.data instanceof ArrayBuffer ? { bin: new Uint8Array(ev.data) } : { txt: ev.data });
+			}
+		};
+		this.ws = ws;
+	}
+
+	private scheduleReconnect() {
+		if (!this.wantConnected || this.reconnectTimer) return;
+		const delay = RecordClient.reconnectDelayMs(this.reconnectAttempts++);
+		this.reconnectTimer = setTimeout(() => {
+			this.reconnectTimer = null;
+			if (this.wantConnected && !this.ws) this.openSocket();
+		}, delay);
+	}
+
+	/**
+	 * Bring `status` in line with the recorder's own record of the session (GET /record/status).
+	 * The recorder is the source of truth (see invariant 1): the stream only delivers transitions
+	 * while it is open, so a missed `done` left a finished cut showing as recording, and a restarted
+	 * backend left a dead one. Terminal states are adopted only when this client believed the cut was
+	 * still running (so a run the operator already dismissed does not come back), and a result that
+	 * arrives after local state moved on is dropped.
+	 */
+	async reconcile(): Promise<void> {
+		if (!this.canReconcile()) return;
+		const before = { state: this.status.state, id: this.status.captureId };
+		const unchanged = () => this.status.state === before.state && this.status.captureId === before.id;
+		let data: any;
+		try {
+			const res = await fetch(this.base + '/record/status');
+			if (!res.ok) return;
+			data = await res.json();
+		} catch { return; }
+		if (!this.canReconcile() || !unchanged()) return;
+
+		const srv = data?.state;
+		const local = before.state;
+		const live = local === 'recording' || local === 'finalizing';
+		if (srv === 'recording' || srv === 'finalizing') {
+			if (local !== srv || this.status.captureId !== (data.id ?? null)) {
+				if (!live) this.reset();
+				this.status.state = srv;
+				this.status.captureId = data.id ?? null;
+				this.status.error = null;
+				this.status.nTotal = Number(data.n_total ?? 0);
+				this.status.tSec = Number(data.elapsed_sec ?? 0);
+				const p = data.peaks ?? {};
+				this.status.peaks = { Fx: Number(p.Fx ?? 0), Fy: Number(p.Fy ?? 0), Fz: Number(p.Fz ?? 0) };
+			}
+		} else if ((srv === 'done' || srv === 'error') && live) {
+			const id: string | null = data.id ?? this.status.captureId;
+			let summary: any = null;
+			if (srv === 'done' && id) {
+				try {
+					const r = await fetch(`${this.base}/captures/${id}/summary`);
+					if (r.ok) summary = await r.json();
+				} catch { /* the dialog still works from live_cache.bin; summary only adds extras */ }
+				if (!unchanged()) return;
+			}
+			this.status.captureId = id;
+			this.status.error = data.error ?? null;
+			this.status.errorKind = data.error_kind ?? null;
+			this.status.summary = summary;
+			this.status.state = srv;
+		} else if (live && (srv === 'idle' || srv == null)) {
+			// The recorder has no such session any more: it restarted mid-cut. Whatever it had
+			// written is on disk (raw.d1raw), recoverable from the banner.
+			this.status.error = 'The recorder restarted while this recording was running. What was captured so far is on disk: use "Recover" in the banner at the top of this page.';
+			this.status.errorKind = 'acquisition';
+			this.status.state = 'error';
+		}
 	}
 
 	// Opener side: a pop-out spoke. Public for tests; the relay is its only real caller.
@@ -427,11 +533,15 @@ export class RecordClient {
 	}
 
 	disconnect() {
+		this.wantConnected = false;
+		if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
 		// A pop-out says goodbye so the opener stops relaying at once rather than on expiry.
 		if (this.peerId) this.relay?.postMessage({ type: 'bye', id: this.peerId });
 		if (this.heartbeat) { clearInterval(this.heartbeat); this.heartbeat = null; }
 		if (this.onPageHide) { window.removeEventListener('pagehide', this.onPageHide); this.onPageHide = null; }
-		this.ws?.close(); this.ws = null; this.relay?.close(); this.relay = null; this.peers.clear();
+		const ws = this.ws; this.ws = null; ws?.close();
+		this.status.connected = false;
+		this.relay?.close(); this.relay = null; this.peers.clear();
 		if (this.relayTrailing !== null) { clearTimeout(this.relayTrailing); this.relayTrailing = null; }
 	}
 
@@ -540,12 +650,13 @@ export class RecordClient {
 
 	async stop() {
 		const res = await fetch(this.base + '/record/stop', { method: 'POST', headers: { ...authHeaders() } });
-		if (res.ok) {
-			const j = await res.json();
-			this.status.state = j.state;
-			this.status.captureId = j.id ?? this.status.captureId;
-			this.status.summary = j.summary ?? this.status.summary;
-		}
+		// Not ok means the stop did NOT happen (409 = nothing is recording, e.g. the cut already
+		// auto-stopped; 4xx/5xx = refused). It used to be ignored, leaving the UI in "recording".
+		if (!res.ok) throw new Error(`stop failed: ${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`.trim());
+		const j = await res.json();
+		this.status.state = j.state;
+		this.status.captureId = j.id ?? this.status.captureId;
+		this.status.summary = j.summary ?? this.status.summary;
 	}
 
 	reset() {

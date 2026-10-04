@@ -8,6 +8,8 @@ import { getWorkspace, WORKSPACE } from './workspace';
 import { startSync } from './directusSync';
 import { hwStatus } from './hwStatus';
 import { labamp } from './labampApi';
+import { IntervalGate, shouldPollBackup, shouldPollDisk } from './recordPolling';
+import { parseDismissedIds, parseSavedLayout } from './recordLayout';
 import PanelFrame from './panels/PanelFrame.vue';
 import { PLOT_MODES, type PlotMode } from './plotModes';
 import { PlotModeFlyout } from '@d1/force-plotting';
@@ -56,11 +58,10 @@ const DEFAULT_LAYOUT: Inst[] = [
 const LS_KEY = 'force-app.record.layout.v7';
 
 function loadLayout(): Inst[] {
-	try {
-		const s = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
-		if (Array.isArray(s) && s.every((x) => x.type && PANEL_TYPES[x.type])) return s;
-	} catch { /* fall through */ }
-	return DEFAULT_LAYOUT.map((x) => ({ ...x }));
+	// Unknown panel types are skipped, not fatal (invariant 11) — see recordLayout.ts.
+	let raw: string | null = null;
+	try { raw = localStorage.getItem(LS_KEY); } catch { /* storage unavailable: default layout */ }
+	return parseSavedLayout<Inst>(raw, PANEL_TYPES) ?? DEFAULT_LAYOUT.map((x) => ({ ...x }));
 }
 const layout = ref<Inst[]>(loadLayout());
 let saveT: any = null;
@@ -173,7 +174,6 @@ watch(() => st.state, async (s, prev) => {
 
 // Periodic disk space check during recording (every 30s)
 const diskInfo = reactive<{ free_gb: number; total_gb: number; used_pct: number; checking: boolean }>({ free_gb: -1, total_gb: 0, used_pct: 0, checking: false });
-let diskTimer: ReturnType<typeof setInterval> | null = null;
 async function checkDisk() {
 	try {
 		diskInfo.checking = true;
@@ -189,16 +189,11 @@ async function checkDisk() {
 }
 // Guarded to record mode: play() marks status 'recording' too (see playback/engine.ts), and
 // polling disk/backup status for an archived cut that writes nothing would be pure noise —
-// playback's only backend traffic is its own throttled /dsp/spectrum call.
-watch(() => st.state, (s) => {
-	if (w.mode.value === 'record' && s === 'recording' && !diskTimer) {
-		checkDisk();
-		diskTimer = setInterval(checkDisk, 30_000);
-	} else if ((s !== 'recording' || w.mode.value !== 'record') && diskTimer) {
-		clearInterval(diskTimer);
-		diskTimer = null;
-	}
-});
+// playback's only backend traffic is its own throttled /dsp/spectrum call. `immediate`: the page
+// may mount (or the reconcile may adopt a cut) while already recording, with no state change left
+// to trigger the watcher (review 2.6).
+const diskGate = new IntervalGate(checkDisk, 30_000);
+watch([() => st.state, () => w.mode.value], ([s, m]) => diskGate.set(shouldPollDisk(m, s)), { immediate: true });
 
 // ---- Live backup status ----
 const backupStatus = reactive<{ enabled: boolean; state: string; progress: number; connected: boolean; error: string | null }>({
@@ -222,17 +217,12 @@ async function checkBackup() {
 		}
 	} catch { /* ignore */ }
 }
-let backupTimer: ReturnType<typeof setInterval> | null = null;
-watch(() => st.state, (s) => {
-	if (w.mode.value === 'record' && s === 'recording' && !backupTimer && backupStatus.enabled) {
-		checkBackup();
-		backupTimer = setInterval(checkBackup, 5_000);
-	} else if ((s !== 'recording' || w.mode.value !== 'record') && backupTimer) {
-		clearInterval(backupTimer);
-		backupTimer = null;
-		checkBackup();
-	}
-});
+// One last read when polling stops, so the chip shows the final state.
+const backupGate = new IntervalGate(checkBackup, 5_000, () => { void checkBackup(); });
+// backupStatus.enabled is only known after the first reply, which on a remount arrives after the
+// state is already 'recording' — so it is a source too.
+watch([() => st.state, () => w.mode.value, () => backupStatus.enabled],
+	([s, m, en]) => backupGate.set(shouldPollBackup(m, s, en)), { immediate: true });
 
 // Mirror this page's local status state into the shared singleton AppShell's sidebar reads from,
 // since the sidebar is mounted on every route (not just Record) and has no access to this instance.
@@ -262,7 +252,7 @@ const recoveryItems = ref<IncompleteSession[]>([]);
 // "maybe after restarting the app," not just "for the rest of this session."
 const DISMISSED_RECOVERY_LS_KEY = 'force-app.dismissedRecoveryIds';
 const dismissedRecoveryIds = ref<Set<string>>(
-	new Set(JSON.parse(localStorage.getItem(DISMISSED_RECOVERY_LS_KEY) || '[]')),
+	(() => { try { return parseDismissedIds(localStorage.getItem(DISMISSED_RECOVERY_LS_KEY)); } catch { return new Set<string>(); } })(),
 );
 function dismissRecovery(id: string) {
 	dismissedRecoveryIds.value.add(id);
@@ -451,7 +441,11 @@ function onVisibilityChange() {
 }
 
 onMounted(() => {
-	w.client.connect(); startSync(); checkDisk(); checkRecovery(); checkRemoteBackupIds(); checkBackup();
+	// Reconcile with the recorder on entry and on every stream (re)open: a cut that ended while this
+	// page was away, or a backend that restarted, is never announced over the stream (#2.1). The
+	// stream also reconnects by itself, so a restart that leaves this route unchanged recovers too.
+	w.client.onStreamOpen = () => { checkRecovery(); checkRemoteBackupIds(); checkBackup(); };
+	w.client.connect(); void w.client.reconcile(); startSync(); checkDisk(); checkRecovery(); checkRemoteBackupIds(); checkBackup();
 	// ResizeObserver catches content reflow (a banner appearing/dismissing shifts the grid's top);
 	// the window listener is the belt-and-braces fallback, since RO can fire unreliably under rapid
 	// or programmatic viewport changes. Same pairing ForceDashboard uses.
@@ -465,12 +459,13 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
 	document.removeEventListener('visibilitychange', onVisibilityChange);
+	w.client.onStreamOpen = null;
 	w.client.disconnect();
 	// Suspend, never tear down: `w` is the app-lifetime workspace singleton (#25), so anything
 	// destroyed here is destroyed for the rest of the session -- see PlaybackEngine.suspend().
 	w.playback.suspend();
-	if (diskTimer) clearInterval(diskTimer);
-	if (backupTimer) clearInterval(backupTimer);
+	diskGate.stop();
+	backupGate.stop();
 	if (recoveryTickTimer) clearInterval(recoveryTickTimer);
 	gridRO?.disconnect();
 	window.removeEventListener('resize', measureGrid);

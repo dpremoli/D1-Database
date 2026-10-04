@@ -18,6 +18,28 @@ export function isAppUrl(raw: string): boolean {
   }
 }
 
+/** Did this IPC call come from one of the app's own pages? The privileged handlers (file dialogs,
+ * reveal, update install) must never serve a page some navigation or window.open() slip let in. */
+export function isAppSender(event: { senderFrame?: { url?: string } | null }): boolean {
+  return isAppUrl(event.senderFrame?.url ?? '');
+}
+
+/** Called for every window's WebContents (app 'web-contents-created'): the app's pages only ever
+ * navigate within app://force, so anything else - a stray link, a redirect, a script setting
+ * location - is refused instead of loading remote content into a window that has the preload
+ * bridge. External links are handled by the window-open handler above, not here. Defence in depth:
+ * no current code path navigates away. Webviews are never used, so none may attach. */
+export function guardNavigation(contents: {
+  on(event: string, listener: (event: { preventDefault(): void }, url?: string) => void): unknown;
+}): void {
+  const deny = (event: { preventDefault(): void }, url?: string) => {
+    if (!isAppUrl(url ?? '')) event.preventDefault();
+  };
+  contents.on('will-navigate', deny);
+  contents.on('will-redirect', deny);
+  contents.on('will-attach-webview', (event) => event.preventDefault());
+}
+
 export function classifyWindowOpen(
   details: Electron.HandlerDetails,
   windowState?: WindowStateStore,

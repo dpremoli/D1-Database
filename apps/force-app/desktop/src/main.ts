@@ -7,10 +7,11 @@ import { registerAppScheme, handleAppProtocol } from './protocol';
 import { checkRevealTarget } from './reveal';
 import { watchRenderer } from './rendererWatch';
 import { PopoutTracker } from './popouts';
+import { fetchBusySession, confirmQuit, type BusySession } from './quitGuard';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
 import { initAutoUpdater } from './updater';
-import { classifyWindowOpen, isAppUrl, popoutKey } from './windowOpen';
+import { classifyWindowOpen, guardNavigation, isAppSender, popoutKey } from './windowOpen';
 import { WindowStateStore, isOnSomeDisplay } from './windowState';
 
 const PREFERRED_PORT = 8200;
@@ -52,58 +53,24 @@ async function recorderFetch(path: string, timeoutMs: number, init: RequestInit 
   return fetch(`http://127.0.0.1:${recorderPort}${path}`, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
-/** Is the backend mid-recording, and what has it captured so far? Null when it is not.
+/** Is the backend recording, or finalizing a recording it just stopped? Null when neither.
  *
  * Asks the backend rather than the renderer: recording is server-side and keeps running even when
  * RecordPage is unmounted (navigating away tears down its websocket), so renderer state would
- * report "idle" for a recording that is very much still going.
+ * report "idle" for a recording that is very much still going. Finalizing counts too: killing the
+ * backend then leaves capture.mat, live_cache.bin and summary.json unwritten.
  */
-async function activeRecording(): Promise<{ sample: string; elapsed: number; samples: number } | null> {
-  try {
-    const res = await recorderFetch('/record/status', 2000);
-    if (!res?.ok) return null;
-    const s = (await res.json()) as {
-      state?: string;
-      elapsed_sec?: number;
-      n_total?: number;
-      config?: { sample_name?: string };
-    };
-    if (s.state !== 'recording') return null;
-    return {
-      sample: s.config?.sample_name || 'the current run',
-      elapsed: Number(s.elapsed_sec ?? 0),
-      samples: Number(s.n_total ?? 0),
-    };
-  } catch {
-    // Backend unreachable => fail OPEN and allow the quit. Failing closed would trap the operator
-    // in an app they cannot close whenever the sidecar has already died, which is precisely when
-    // they most want to restart it.
-    return null;
-  }
+function activeSession(): Promise<BusySession | null> {
+  return fetchBusySession((p, t) => recorderFetch(p, t));
 }
 
-/** True if it is safe to proceed with quitting. Prompts only when a recording is actually running. */
+/** True if it is safe to proceed with quitting. Prompts only when a recording is actually running
+ * or still being saved. */
 async function confirmQuitDuringRecording(): Promise<boolean> {
   // Native dialogs are invisible to Playwright's CDP dialog interception and would hang the e2e
   // suite for its full timeout — the same trap window.confirm() gates fell into (commit d0b075c).
   if (process.env.FORCE_APP_TEST_HOOKS === '1') return true;
-  const rec = await activeRecording();
-  if (!rec) return true;
-  const mins = Math.floor(rec.elapsed / 60);
-  const secs = Math.floor(rec.elapsed % 60);
-  const { response } = await dialog.showMessageBox({
-    type: 'warning',
-    buttons: ['Keep recording', 'Stop recording and quit'],
-    defaultId: 0, // safe option focused, so a stray Enter does not end a run
-    cancelId: 0,
-    title: 'A recording is in progress',
-    message: `"${rec.sample}" is still recording.`,
-    detail:
-      `${mins}:${String(secs).padStart(2, '0')} elapsed, ${rec.samples.toLocaleString()} samples captured.\n\n` +
-      'Quitting stops acquisition now. Data captured so far is written to disk and can be recovered, ' +
-      'but the rest of the cut will not be recorded.',
-  });
-  return response === 1;
+  return confirmQuit({ getBusy: activeSession, showMessageBox: (o) => dialog.showMessageBox(o) });
 }
 Menu.setApplicationMenu(buildMenu(() => mainWindow));
 
@@ -186,10 +153,14 @@ const rendererWatchDeps = {
 // Why the backend last restarted. It is down while 'restarting' is reported, so the log line
 // waits for the 'ready' that follows.
 let restartCause: string | undefined;
+// supervisor.start() settles (ready or crashed) before this is set. A crash during that startup is
+// reported once by createWindow() below, so the state callback must stay quiet for it, or the
+// operator gets two error boxes for one failure (review 2.9).
+let startupSettled = false;
 
 function onSidecarStateChange(state: SidecarState, detail?: string): void {
   if (state === 'restarting') restartCause = detail;
-  if (state === 'crashed') {
+  if (state === 'crashed' && startupSettled) {
     dialog.showErrorBox('Recorder backend stopped responding', detail ?? 'See logs for details.');
   }
   // A restart (not the initial start) means the backend crashed mid-session — route the
@@ -204,7 +175,7 @@ function onSidecarStateChange(state: SidecarState, detail?: string): void {
 /** Only the app's own pages may use the file-system IPC below — never a page some navigation or
  * window.open() slip let into a window. */
 function fromApp(event: IpcMainInvokeEvent): boolean {
-  return isAppUrl(event.senderFrame?.url ?? '');
+  return isAppSender(event);
 }
 
 function registerShellIpc(): void {
@@ -368,6 +339,7 @@ async function createWindow(): Promise<void> {
     onStateChange: onSidecarStateChange,
   });
   await supervisor.start();
+  startupSettled = true;
 
   if (supervisor.getState() !== 'ready') {
     dialog.showErrorBox(
@@ -380,7 +352,7 @@ async function createWindow(): Promise<void> {
   await mainWindow.loadURL('app://force/');
   reopenPopouts();
   void offerScheduledTaskCleanup();
-  initAutoUpdater(() => mainWindow, async () => (await activeRecording()) != null);
+  initAutoUpdater(() => mainWindow, async () => (await activeSession()) != null);
 }
 
 /** #108: reopens the pop-outs that were open at the last quit. Opened from the main window's own
@@ -426,6 +398,10 @@ if (gotLock) {
   // Reload/Toggle DevTools still work via their normal accelerators; only the visible bar goes
   // away. Covers every window the app creates, including the "open in a second window" popouts
   // from AppShell.vue, not just the main one.
+  // Every window and pop-out (and any WebContents the app might create later) may only navigate
+  // within app://force.
+  app.on('web-contents-created', (_event, contents) => guardNavigation(contents));
+
   app.on('browser-window-created', (_event, window) => {
     window.setMenuBarVisibility(false);
   });

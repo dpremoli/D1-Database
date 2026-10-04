@@ -17,11 +17,13 @@ declare global {
   interface Window {
     forceApp?: {
       testHooks: boolean;
-      onNavigate: (callback: (path: string) => void) => void;
+      /** Returns the function that removes the listener. */
+      onNavigate: (callback: (path: string) => void) => () => void;
       getUpdateInfo: () => Promise<{ version: string; packaged: boolean; status: UpdateStatus }>;
       checkForUpdates: () => Promise<{ ok: boolean; reason?: string }>;
       installUpdate: () => Promise<{ ok: boolean; reason?: string }>;
-      onUpdateStatus: (callback: (status: UpdateStatus) => void) => void;
+      /** Returns the function that removes the listener; call it when the view goes away. */
+      onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
       /** Native folder picker (#101); the chosen folder, or null if cancelled. */
       pickFolder: (defaultPath?: string) => Promise<string | null>;
       /** Opens a local capture's folder in the file browser (#96). Only paths inside the backend's

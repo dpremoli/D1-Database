@@ -184,4 +184,63 @@ describe('SidecarSupervisor', () => {
     await waitFor(() => states.filter((s) => s === 'restarting').length >= 2, 15000);
     expect(states).not.toContain('crashed');
   }, 20000);
+
+  // Review 2.9: a backend that dies while starting.
+  it('fails fast when the process exits during startup instead of waiting out the timeout', async () => {
+    const port = freePort();
+    sup = new SidecarSupervisor({
+      exePath: process.execPath,
+      args: [FIXTURE, String(port), '--delay=999999', '--exit-after=100'],
+      port,
+      healthUrl: `http://127.0.0.1:${port}/health`,
+      readyTimeoutMs: 15_000,
+      maxRestarts: 0,
+    });
+    const t0 = Date.now();
+    await sup.start();
+    expect(sup.getState()).toBe('crashed');
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(sup.lastDetail()).toMatch(/exit code=3/);
+  });
+
+  it('start() settles only after the restarts, and reports the failure once', async () => {
+    const port = freePort();
+    const states: SidecarState[] = [];
+    sup = new SidecarSupervisor({
+      exePath: process.execPath,
+      args: [FIXTURE, String(port), '--delay=999999', '--exit-after=100'],
+      port,
+      healthUrl: `http://127.0.0.1:${port}/health`,
+      readyTimeoutMs: 1500,
+      maxRestarts: 1,
+      onStateChange: (s) => states.push(s),
+    });
+    await sup.start();
+    // Final state when start() returns, not 'restarting' with a second process still coming up.
+    expect(sup.getState()).toBe('crashed');
+    expect(sup.getRestartCount()).toBe(1);
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(states.filter((s) => s === 'crashed')).toHaveLength(1);
+    expect(states.filter((s) => s === 'starting')).toHaveLength(2);
+    expect(sup.getState()).toBe('crashed');
+  });
+
+  it('a startup that dies once and then comes up ends ready, awaited by start()', async () => {
+    const port = freePort();
+    // First launch dies at once; the supervisor's restart uses the same args, so make the first
+    // process the only one that exits: it exits only if the port is still unbound by anything else.
+    const marker = path.join(require('node:os').tmpdir(), `fb-${port}.once`);
+    sup = new SidecarSupervisor({
+      exePath: process.execPath,
+      args: [FIXTURE, String(port), `--exit-once=${marker}`],
+      port,
+      healthUrl: `http://127.0.0.1:${port}/health`,
+      readyTimeoutMs: 5000,
+      maxRestarts: 2,
+    });
+    await sup.start();
+    expect(sup.getState()).toBe('ready');
+    expect(sup.getRestartCount()).toBe(1);
+    require('node:fs').rmSync(marker, { force: true });
+  });
 });
