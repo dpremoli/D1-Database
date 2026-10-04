@@ -66,6 +66,11 @@ run "Ti-6Al-4V seeded" \
     "SELECT alloy_code FROM materials WHERE alloy_code = 'AA'"
 run "FAST method seeded" \
     "SELECT method_code FROM manufacturing_methods WHERE method_code = 'MF'"
+# migration 129 back-fills process_category before the seed runs on a fresh install, so the seed carries it
+run_eq "seeded methods carry the process_category migration 129 maps" \
+    "SELECT string_agg(method_code || '=' || COALESCE(process_category, 'NULL'), ',' ORDER BY method_code)
+       FROM manufacturing_methods WHERE method_code IN ('HT','MC','MF','MM','MO','MR')" \
+    "HT=heat_treatment,MC=machining,MF=sintering,MM=machining,MO=deformation,MR=deformation"
 run "Equipment seeded" \
     "SELECT equipment_code FROM equipment WHERE equipment_code = 'NLX-2500'"
 echo "== Code-generation functions =="
@@ -678,6 +683,14 @@ SELECT 'edges:' || count(*) FROM insert_edges e JOIN cutting_inserts i USING (in
 SELECT 'clone_sentinel:' || string_agg(DISTINCT package_quantity::text, ',') FROM tool_boxes WHERE insert_type_id = 'c0000000-0000-4000-8000-000000000211' AND tool_box_id <> 'c0000000-0000-4000-8000-000000000221';
 SELECT 'owned_edges:' || count(*) FROM insert_edges e JOIN cutting_inserts i USING (insert_id)
   WHERE i.insert_type_id = 'c0000000-0000-4000-8000-000000000211' AND e.owner_person_id = 'c0000000-0000-4000-8000-000000000201';
+-- The deleted box-intake hook stays loaded until Directus restarts and calls the function again
+-- after the trigger already ran: the second call (on the renamed box 1 and on a clone) is a no-op.
+SELECT expand_tool_box_intake('c0000000-0000-4000-8000-000000000221');
+SELECT expand_tool_box_intake(tool_box_id) FROM tool_boxes
+  WHERE insert_type_id = 'c0000000-0000-4000-8000-000000000211' AND tool_box_id <> 'c0000000-0000-4000-8000-000000000221';
+SELECT 'boxes_second_call:' || string_agg(tool_box_code, ',' ORDER BY tool_box_code) FROM tool_boxes WHERE insert_type_id = 'c0000000-0000-4000-8000-000000000211';
+SELECT 'inserts_second_call:' || count(*) FROM cutting_inserts WHERE insert_type_id = 'c0000000-0000-4000-8000-000000000211';
+SELECT 'edges_second_call:' || count(*) FROM insert_edges e JOIN cutting_inserts i USING (insert_id) WHERE i.insert_type_id = 'c0000000-0000-4000-8000-000000000211';
 -- Writers that must NOT trigger an expansion: explicit code, NULL quantity, zero quantity, no insert type.
 INSERT INTO tool_boxes (tool_box_code, insert_type_id, package_quantity) VALUES ('TEST-INTAKE-LEGACY', 'c0000000-0000-4000-8000-000000000211', 5);
 INSERT INTO tool_boxes (insert_type_id) VALUES ('c0000000-0000-4000-8000-000000000211');
@@ -695,6 +708,9 @@ bt_check "inserts:4" "2 boxes x 2 inserts are created"
 bt_check "edges:8" "4 inserts x 2 edges are created"
 bt_check "clone_sentinel:0" "clone boxes carry package_quantity = 0 (no re-expansion)"
 bt_check "owned_edges:8" "owner_person_id reaches every edge through the trigger path"
+bt_check "boxes_second_call:TST5-1,TST5-2" "a second expand_tool_box_intake() call creates no boxes and renames nothing"
+bt_check "inserts_second_call:4" "a second call creates no inserts"
+bt_check "edges_second_call:8" "a second call creates no edges"
 bt_check "untouched_boxes:5" "explicit code, NULL, 0 quantity and typeless boxes are not expanded"
 bt_check "legacy_code_kept:1" "a box with an explicit code and a quantity (legacy import) keeps both"
 bt_check "no_type_box:1" "a quantity without an insert type is left alone, no error"
@@ -737,6 +753,12 @@ VALUES ('c0000000-0000-4000-8000-000000000427', 'c0000000-0000-4000-8000-0000000
 -- no sample: the placeholder collapses to nothing and the sequence stays NULL (as before)
 INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
 VALUES ('c0000000-0000-4000-8000-000000000428', 'c0000000-0000-4000-8000-000000000401', 'heat_treatment', 'test', 'TI-NOSAMPLE{seq}-X');
+-- an imported row (source_system set) keeps a NULL sequence even with a sample; a later explicit
+-- number is kept, so the importer's own numbering cannot collide with an auto-assigned one
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000429', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000412', 'sintering', 'test', 'TI-IMP{seq}-FAST');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, source_system, operation_sequence, pass_code)
+VALUES ('c0000000-0000-4000-8000-00000000042a', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000412', 'machining', 'test', 1, 'TI-IMP-F1');
 SELECT 'op:' || substr(operation_id::text, 33) || ':' || COALESCE(operation_sequence::text, 'null') || ':' || pass_code
 FROM manufacturing_operations WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-0000000004_%' ORDER BY operation_id;
 
@@ -771,6 +793,8 @@ seq_check "op:0426:1:TI-S2-HTA1" "numbering restarts per sample"
 seq_check "op:0427:2:MY-OWN-CODE" "a typed code without a placeholder is stored unchanged"
 seq_check "op:0428:null:TI-NOSAMPLE-X" "an operation without a sample keeps a NULL sequence and an empty placeholder"
 mf_exp=$(grep -m1 '^mf_explicit:' <<<"$seq_out" | cut -d: -f2)
+seq_check "op:0429:null:TI-IMP-FAST" "an imported row (source_system set) is not auto-numbered, even with a sample"
+seq_check "op:042a:1:TI-IMP-F1" "an imported row's explicit number is kept"
 seq_check "mf:0431:01-01-26-MF${mf_exp}-950C" "an explicit MF number is stored as given"
 seq_check "mf:0433:03-01-26-MF$((mf_exp + 2))" "the sintering MF counter is max+1 over existing codes"
 seq_check "mf:0434:04-01-26-MF$((mf_exp + 3))" "an MF number is not handed out again after a delete"
@@ -822,10 +846,72 @@ cc_a=$(cat "$cc_dir/a"); cc_b=$(cat "$cc_dir/b")
 [[ -n "$cc_a" && -n "$cc_b" && "$cc_a" != "$cc_b" ]] \
     && ok "concurrent sintering inserts get distinct MF numbers ($cc_a, $cc_b)" \
     || bad "concurrent sintering inserts collided (A='$cc_a', B='$cc_b')"
+
+# Bulk load: the per-sample lock must not use the shared lock table (advisory locks do, and
+# ~13,000 samples in one transaction ran out of it). 400 samples, one operation each, one
+# transaction: no per-sample advisory lock is held at the end, and each sample's number is 1.
+bulk_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO physical_samples (sample_id, sample_code)
+SELECT ('c0000000-0000-4000-8001-' || lpad(g::text, 12, '0'))::uuid, 'TI-BULK-' || g FROM generate_series(1, 400) g;
+INSERT INTO manufacturing_operations (method_id, sample_id, process_category, pass_code)
+SELECT 'c0000000-0000-4000-8000-000000000402', sample_id, 'heat_treatment', 'TI-BULK-HTA{seq}'
+FROM physical_samples WHERE sample_code LIKE 'TI-BULK-%';
+SELECT 'bulk_ops:' || count(*) || ':' || min(operation_sequence) || ':' || max(operation_sequence)
+FROM manufacturing_operations WHERE pass_code = 'TI-BULK-HTA1';
+SELECT 'bulk_advisory_locks:' || (count(*) <= 3) FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory';
+ROLLBACK;
+SQL
+)
+grep -qx "bulk_ops:400:1:1" <<<"$bulk_out" && grep -qx "bulk_advisory_locks:true" <<<"$bulk_out" \
+    && ok "400 samples' operations in one transaction: numbered 1, no per-sample advisory locks" \
+    || bad "bulk operation insert (psql output: $bulk_out)"
+
+# Lock order (rollup -> sample -> MF/code): A writes an operation for sample X, holds its
+# transaction open, then writes one for sample Y; B meanwhile writes one for Y. With the rollup lock
+# taken after the sample lock, B holds Y and waits for the rollup lock that A holds while A waits
+# for Y: "deadlock detected".
+$PSQL -q -c "
+INSERT INTO physical_samples (sample_id, sample_code) VALUES
+    ('c0000000-0000-4000-8000-000000000414', 'TI-DLX'), ('c0000000-0000-4000-8000-000000000415', 'TI-DLY');" >/dev/null 2>&1
+dl_a() {
+    $PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000461', 'c0000000-0000-4000-8000-000000000402',
+        'c0000000-0000-4000-8000-000000000414', 'heat_treatment', 'TI-DLX-HTA{seq}');
+SELECT pg_sleep(2);
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000462', 'c0000000-0000-4000-8000-000000000402',
+        'c0000000-0000-4000-8000-000000000415', 'heat_treatment', 'TI-DLY-HTA{seq}');
+COMMIT;
+SQL
+}
+dl_b() {
+    $PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000463', 'c0000000-0000-4000-8000-000000000402',
+        'c0000000-0000-4000-8000-000000000415', 'heat_treatment', 'TI-DLY-HTA{seq}');
+COMMIT;
+SQL
+}
+dl_a > "$cc_dir/dla" &
+sleep 0.7
+dl_b > "$cc_dir/dlb"
+wait
+dl_n=$($PSQL -c "SELECT count(*) FROM manufacturing_operations WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-00000000046_'" 2>&1)
+if ! grep -qi 'deadlock\|ERROR' "$cc_dir/dla" "$cc_dir/dlb" && [[ "$dl_n" == "3" ]]; then
+    ok "operation writes for samples X,Y and Y do not deadlock (rollup lock is taken first)"
+else
+    bad "operation writes deadlocked or failed (A: $(cat "$cc_dir/dla"); B: $(cat "$cc_dir/dlb"); rows: $dl_n)"
+fi
+
 rm -rf "$cc_dir"
 $PSQL -q -c "
 DELETE FROM manufacturing_operations WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-0000000004_%';
-DELETE FROM physical_samples WHERE sample_id = 'c0000000-0000-4000-8000-000000000413';
+DELETE FROM physical_samples WHERE sample_id IN ('c0000000-0000-4000-8000-000000000413',
+    'c0000000-0000-4000-8000-000000000414', 'c0000000-0000-4000-8000-000000000415');
 DELETE FROM manufacturing_methods WHERE method_id = 'c0000000-0000-4000-8000-000000000402';" >/dev/null 2>&1 || true
 
 echo "== Sample numbers are assigned server-side (review 4.6) =="
@@ -864,6 +950,23 @@ sc_check "code:0614:$((sc_base + 500))-TI-OLD-2020-1-1" "an explicit number is s
 sc_check "code:0615:$((sc_base + 501))-TI-MF-2026-10-5" "a later placeholder continues after the highest number in use"
 sc_check "renumber:$((sc_base + 501))-TI-MF-2026-10-5" "renumbering excludes the row's own number"
 sc_check "untouched:$((sc_base + 1))-TI-MF-2026-10-4" "an unrelated update does not renumber"
+
+# Deploy-order guard: a placeholder that survives the trigger is rejected (NOT VALID checks).
+ph_s=$($PSQL -q 2>&1 -c "INSERT INTO physical_samples (sample_code) VALUES ('TI-{seq}-MIDDLE')")
+grep -q 'physical_samples_sample_code_no_placeholder_check' <<<"$ph_s" \
+    && ok "a literal {seq} that the trigger does not replace is rejected" \
+    || bad "literal {seq} sample code was not rejected (psql output: $ph_s)"
+# With the trigger bypassed (as when the interface runs before the migration did) a literal
+# placeholder hits the CHECK; one implicit transaction per -c, so nothing is left behind.
+ph_o=$($PSQL -q 2>&1 -c "SET LOCAL session_replication_role = replica;
+INSERT INTO manufacturing_operations (method_id, process_category, source_system, pass_code)
+VALUES ((SELECT method_id FROM manufacturing_methods LIMIT 1), 'sintering', 'test', '05-01-26-MF{mf}')")
+grep -q 'manufacturing_operations_pass_code_no_placeholder_check' <<<"$ph_o" \
+    && ok "a literal {mf} / {seq} in pass_code is rejected when the trigger did not run" \
+    || bad "literal {mf} pass_code was not rejected (psql output: $ph_o)"
+ph_chk=$($PSQL -c "SELECT convalidated FROM pg_constraint WHERE conname IN ('physical_samples_sample_code_no_placeholder_check', 'manufacturing_operations_pass_code_no_placeholder_check')" | sort -u)
+[[ "$ph_chk" == "f" ]] && ok "both placeholder checks are NOT VALID (existing rows are not scanned)" \
+    || bad "placeholder check validity (got '$ph_chk')"
 
 # Two registrations at once: A holds its transaction open while B inserts.
 sc_dir=$(mktemp -d)
@@ -929,7 +1032,23 @@ VALUES ('physical_samples', 'TI-ACT-OLD', 'UPDATE', now() - interval '1 hour');
 INSERT INTO directus_activity (action, "user", collection, item)
 VALUES ('update', 'c0000000-0000-4000-8000-000000000799', 'physical_samples', 'TI-ACT-OLD');
 SELECT 'old_rows:' || count(*) FROM audit_log_actors a JOIN audit_logs l USING (log_id) WHERE l.record_id = 'TI-ACT-OLD';
--- 4. a GUC-supplied actor wins and is not duplicated in the side table
+-- 4. rows written by OTHER triggers in the same transaction have no activity row of their own:
+-- the intake creates a second box, inserts and edges (audited, no actor), Directus only logs the
+-- box it was asked to create
+INSERT INTO insert_types (insert_type_id, type_code, short_code, inserts_per_box, edge_count)
+VALUES ('c0000000-0000-4000-8000-000000000721', 'TEST-ACT-TYPE', 'TACT', 2, 2);
+INSERT INTO tool_boxes (tool_box_id, insert_type_id, package_quantity)
+VALUES ('c0000000-0000-4000-8000-000000000722', 'c0000000-0000-4000-8000-000000000721', 2);
+INSERT INTO directus_activity (action, "user", collection, item)
+VALUES ('create', 'c0000000-0000-4000-8000-000000000799', 'tool_boxes', 'c0000000-0000-4000-8000-000000000722');
+SELECT 'child_edges:' || count(*) || '/' || count(*) FILTER (WHERE actor_identity = 'c0000000-0000-4000-8000-000000000799' AND actor_from_directus_activity)
+  FROM v_audit_logs_with_actor WHERE table_name = 'insert_edges' AND event_timestamp = transaction_timestamp();
+SELECT 'child_boxes:' || count(*) || '/' || count(*) FILTER (WHERE actor_identity = 'c0000000-0000-4000-8000-000000000799')
+  FROM v_audit_logs_with_actor WHERE table_name = 'tool_boxes' AND record_id <> 'c0000000-0000-4000-8000-000000000722'
+   AND event_timestamp = transaction_timestamp();
+SELECT 'child_unattributed:' || count(*) FROM v_audit_logs_with_actor
+  WHERE event_timestamp = transaction_timestamp() AND table_name IN ('insert_edges', 'cutting_inserts') AND actor_identity IS NULL;
+-- 5. a GUC-supplied actor wins and is not duplicated in the side table
 SELECT set_config('d1.actor_identity', 'guc-user', true) \gset
 INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000713', 'TI-ACT-3');
 INSERT INTO directus_activity (action, "user", collection, item)
@@ -947,7 +1066,34 @@ act_check "actor_rows:2" "one side-table row per attributed audit row, no duplic
 act_check "public:public" "an unauthenticated write is attributed to 'public'"
 act_check "old_rows:0" "an audit row from an earlier transaction is not re-attributed"
 act_check "guc:guc-user/false" "an actor set through the GUC wins over the fallback"
+act_check "child_edges:8/8" "audit rows of the intake's child edges (written by a trigger) are attributed too"
+act_check "child_boxes:1/1" "so are the clone box rows the intake trigger created"
+act_check "child_unattributed:0" "no audit row of the transaction is left without an actor"
 act_check "guc_rows:0" "a GUC-attributed row gets no side-table row"
+
+# The migration's down section refuses to drop a populated audit_log_actors unless the loss is accepted.
+act_down=$(sed -n '/^-- migrate:down/,$p' db/migrations/20261003000128_audit_actor_from_directus_activity.sql)
+act_down_run() {  # act_down_run <setup SQL>
+    $PSQL -q 2>&1 <<SQL
+BEGIN;
+$1
+$act_down
+SELECT 'dropped:' || (to_regclass('public.audit_log_actors') IS NULL);
+ROLLBACK;
+SQL
+}
+act_d1=$(act_down_run "INSERT INTO audit_log_actors (log_id, actor_identity) VALUES (-1, 'x');")
+grep -q 'audit_log_actors holds 1 row' <<<"$act_d1" && ! grep -q 'dropped:true' <<<"$act_d1" \
+    && ok "down refuses to drop audit_log_actors while it has rows" \
+    || bad "down did not refuse a populated audit_log_actors (psql output: $act_d1)"
+act_d2=$(act_down_run "INSERT INTO audit_log_actors (log_id, actor_identity) VALUES (-1, 'x'); SET LOCAL d1.allow_audit_actor_loss = 'on';")
+grep -qx 'dropped:true' <<<"$act_d2" \
+    && ok "down drops a populated audit_log_actors when d1.allow_audit_actor_loss is on" \
+    || bad "down ignored the override (psql output: $act_d2)"
+act_d3=$(act_down_run "DELETE FROM audit_log_actors;")
+grep -qx 'dropped:true' <<<"$act_d3" \
+    && ok "down drops an empty audit_log_actors with no override (CI's purged rollback)" \
+    || bad "down failed on an empty audit_log_actors (psql output: $act_d3)"
 
 echo "== Process category comes from the method, in Postgres (review 4.11) =="
 pc_out=$($PSQL -q 2>&1 <<SQL

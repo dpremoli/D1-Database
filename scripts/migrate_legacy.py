@@ -51,6 +51,12 @@ _LEGACY_NS = uuid.uuid5(uuid.NAMESPACE_DNS, "d1-database.legacy-migration.v1")
 
 LEGACY_NOTE = "Imported from legacy AppSheet/Sheets export (Phase 8 migration)."
 
+# Provenance tag for the rows this script writes to manufacturing_operations. A row with
+# source_system set is an import: the operation trigger (migration 126) leaves its
+# operation_sequence NULL instead of numbering it, so the machining pass numbers written here
+# are not duplicated by auto-assigned ones.
+LEGACY_SOURCE_SYSTEM = "legacy_migration"
+
 _LAB_ADMIN_ROLE_ID = "10000001-0000-0000-0000-000000000001"
 _LAB_MEMBER_ROLE_ID = "10000001-0000-0000-0000-000000000002"
 
@@ -1203,9 +1209,9 @@ def load_fast_runs(
                   sintering_max_force_kn, sintering_voltage_at_max_t_v,
                   sintering_power_at_max_t_kw, sintering_ptc_top_celsius,
                   sintering_ptc_bot_celsius, sintering_coshh_ref,
-                  sintering_material_type_note, sintering_mass_grams)
+                  sintering_material_type_note, sintering_mass_grams, source_system)
                VALUES %s ON CONFLICT DO NOTHING""",
-            data,
+            [row + (LEGACY_SOURCE_SYSTEM,) for row in data],
         )
     return len(data), skipped_no_sample
 
@@ -1399,9 +1405,10 @@ def load_machining_ops(
                   machining_coolant_pressure_bar, machining_tacho_used,
                   machining_force_captured, machining_chips_collected,
                   machining_chips_ref_code, machining_experiment_sheet_url,
-                  machining_legacy_insert_edge_id, machining_legacy_machining_uid)
+                  machining_legacy_insert_edge_id, machining_legacy_machining_uid,
+                  source_system)
                VALUES %s ON CONFLICT DO NOTHING""",
-            data,
+            [row + (LEGACY_SOURCE_SYSTEM,) for row in data],
         )
     return len(data), warnings_out
 

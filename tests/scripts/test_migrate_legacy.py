@@ -399,6 +399,28 @@ def test_machining_and_fast_parameters_land_in_the_inline_columns(cur):
     ) == ("sintering",)
 
 
+def test_imported_operations_keep_their_own_sequence_numbers(cur):
+    # The operation trigger auto-numbers only rows with source_system NULL. The importer tags its
+    # rows, so the FAST run keeps a NULL sequence and the machining pass keeps its explicit number
+    # instead of colliding with an auto-assigned one (migration 126).
+    ml.migrate(_sheets(), cur, False)
+    cur.execute(
+        "SELECT o.process_category, o.operation_sequence, o.source_system "
+        "FROM manufacturing_operations o JOIN physical_samples s USING (sample_id) "
+        "WHERE s.sample_code = 'ZZ-LEG-S1' ORDER BY o.process_category"
+    )
+    assert cur.fetchall() == [
+        ("machining", 3, "legacy_migration"),
+        ("sintering", None, "legacy_migration"),
+    ]
+    cur.execute(
+        "SELECT count(*) FROM (SELECT sample_id, operation_sequence "
+        "FROM manufacturing_operations WHERE operation_sequence IS NOT NULL "
+        "GROUP BY 1, 2 HAVING count(*) > 1) d"
+    )
+    assert cur.fetchone() == (0,)
+
+
 def test_dry_run_reads_a_workbook_and_touches_no_database(
     tmp_path, monkeypatch, capsys
 ):

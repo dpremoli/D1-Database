@@ -152,9 +152,11 @@ The central entity. Everything else points to or from here.
 **Numbers are assigned by the database** (migrations `…126`, `…127`). The Directus
 interfaces send a code whose number part is the literal placeholder `{seq}` (and, for
 sintering pass codes, `{mf}`); a BEFORE trigger replaces it with the next free number
-under an advisory lock, so concurrent registrations never collide. A code without a
+under a lock (an advisory lock for sample and MF numbers, a row lock on the sample for
+operation numbers), so concurrent registrations never collide. A code without a
 placeholder is stored as given. `manufacturing_operations.operation_sequence` is filled
-the same way when it is NULL.
+the same way when it is NULL, except for imported rows (`source_system` set), which keep
+a NULL sequence because importers number their own rows.
 
 ---
 

@@ -17,6 +17,8 @@
 -- Caveat: the lock is held to the end of the transaction, so a transaction that updates rows
 -- in an order that conflicts with another writer can now deadlock where it used to queue. The
 -- server detects and aborts one side (SQLSTATE 40P01); callers retry as for any OCC conflict.
+-- The operation and sample-code triggers (migrations 126, 127) take this same lock before their own
+-- per-sample / counter locks, so the order is always rollup -> sample -> counter.
 CREATE OR REPLACE FUNCTION refresh_project_rollup() RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
     -- Fixed key; xact-scoped so it is released on COMMIT or ROLLBACK.
