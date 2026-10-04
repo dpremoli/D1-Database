@@ -9,6 +9,21 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.34',
+		date: '2026-10-04',
+		notes: [
+			'The Record page keeps up with the recorder: a cut that finished while you were on another page now offers to save when you come back, and after a backend restart the page reconnects on its own and points you to Recover for an interrupted cut.',
+			'Saving a cut to the database after a failed attempt resumes where it stopped instead of creating a second run record.',
+			'Quitting or updating while a recording is still being saved now warns you first, instead of cutting the save short.',
+			'Fixed: a recording could hang for good if writing its data failed (for example a full disk); it now stops with the error and keeps what was captured. A virtual-channel formula that would fail during a recording is refused when you save it.',
+			'NI-DAQ channel, card and tacho settings are locked while a recording runs or is being saved.',
+			'Security: the recorder only answers this PC and the app itself, so a web page you visit can no longer start, stop or delete recordings or read the live data.',
+			'Plot page: a filter bake or point-cloud build that finishes after you switch operation no longer lands on the wrong operation, hovering a zoomed chart marks the right sample, the FRM views come back correctly after visiting another page, and polar plots handle negative values.',
+			'Settings > Connectivity: Save keeps only what you changed, and Reset returns to the app\'s own settings.',
+			'Replays of cuts longer than ten minutes work, and the live backup keeps its data if a session is registered twice.',
+		],
+	},
+	{
 		version: '0.1.33',
 		date: '2026-10-03',
 		notes: [
