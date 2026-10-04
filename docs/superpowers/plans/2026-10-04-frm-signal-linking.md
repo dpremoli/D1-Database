@@ -6,7 +6,7 @@
 
 | Stream | Worktree / agent | Branch | State |
 |---|---|---|---|
-| A — foundation (cloudPick, ContextMenu, Cloud.idx) | — | — | not started |
+| A — foundation (cloudPick, ContextMenu, Cloud.idx) | `.claude/worktrees/agent-a5863abf6683d5394` | `worktree-agent-a5863abf6683d5394` (from main b7bdac7) | in progress (Sonnet worker) |
 | B — Lite cloud (FrmCloud.vue) | — | — | blocked on A |
 | C — octree (FrmOctree.vue) | — | — | blocked on A |
 | D — charts (ForceChart.vue) | — | — | blocked on A |
