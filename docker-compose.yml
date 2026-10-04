@@ -4,8 +4,9 @@
 # and MinIO bucket bootstrap added. Config from `.env` (copy from `.env.example`).
 #
 # Security defaults:
-#   * Every published host port binds to ${D1_BIND_ADDR:-127.0.0.1}, i.e. loopback only. Set
-#     D1_BIND_ADDR in .env to the host's tailnet IP to expose them on the tailnet (never 0.0.0.0).
+#   * Every published host port binds to ${D1_BIND_ADDR:-127.0.0.1}, i.e. loopback only. Keep the
+#     default when Tailscale Serve on the host fronts the proxy; set the host's tailnet IP only if
+#     clients must reach the ports directly (never 0.0.0.0). See infra/README.md.
 #   * Secrets use ${VAR:?} so `docker compose` refuses to start without them: there are no
 #     working default passwords. Non-secret settings keep ${VAR:-default}.
 name: d1-database
