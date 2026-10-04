@@ -33,7 +33,7 @@ export { default as ColorScaleEditor } from './ColorScaleEditor.vue';
 export { default as PlotModeFlyout } from './PlotModeFlyout.vue';
 export { default as ContextMenu } from './ContextMenu.vue';
 export {
-	pickNearest, pointInfo, formatPointInfo, recentreWindow, findPathIndex, findNearestPathIndex,
+	pickNearest, pointInfo, formatPointInfo, recentreWindow, findNearestPathIndex,
 	octreePathParams,
 } from './cloudPick';
 export type { PointInfo, PointMenuEvent } from './cloudPick';

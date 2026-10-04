@@ -12,12 +12,3 @@ export function shaderZ(v: number, r0: number, r1: number, zScale: number): numb
 	const u = (v - r0) / Math.max(1e-6, r1 - r0);
 	return ((u < 0 ? 0 : u > 1 ? 1 : u) - 0.5) * zScale;
 }
-
-/**
- * Whether time `sec` lies within the span of the path's samples (cache times at its first and
- * last emitted index); a ring outside it has no sample to sit on.
- */
-export function timeInPath(t: Float32Array, idx: Int32Array, count: number, sec: number): boolean {
-	if (count <= 0) return false;
-	return sec >= t[idx[0]] && sec <= t[idx[count - 1]];
-}

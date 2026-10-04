@@ -20,7 +20,7 @@
 //      sequential `break` exactly, without needing cross-vertex ordering in the shader.
 // If a future cache with a genuinely noisy/decelerating tacho breaks assumption 1, the symptom
 // is a scattering of points beyond where the CPU path would have stopped; re-run the probe.
-import type { Cache } from './liveCache';
+import { type Cache, idxOfTime } from './liveCache';
 import type { SpeedMode, CloudChannel } from './liveCloud';
 
 export const SPEED_MODE_CODE: Record<SpeedMode, number> = { measured: 0, rpm: 1, vc: 2 };
@@ -120,6 +120,14 @@ export function spiralUniformValues(p: SpiralUniformParams) {
 	};
 }
 
+// The crop-start anchor every spiral position is measured from (r = 0 at the crop-start sample):
+// t and revs at that sample. One copy for the shader uniforms (FrmCloud's updateGpuCropUniforms)
+// and the CPU mirrors below, so a ring or pick can't drift from what the shader draws.
+export function spiralAnchor(c: Cache, cropStartSec: number): { tCs: number; revsCs: number } {
+	const cs = idxOfTime(c.t, cropStartSec);
+	return { tCs: cs >= 0 ? c.t[cs] : 0, revsCs: cs >= 0 ? c.revs[cs] : 0 };
+}
+
 // Pure JS mirror of the vertex shader's position math — same formula, same branches, same
 // discard conditions — so it can be unit-tested against buildTurningSpiral's CPU output without
 // a GPU. Keep this and TURNING_SPIRAL_VERT's `main()` in lockstep by construction: if one
@@ -179,3 +187,13 @@ export function buildStaticAttributes(
 // DiagScatter.vue's) to be consolidated. It bakes every ColorScale parameter except the
 // displayed-range filter (steps, symmetrical, always-show-zero, log scale) into the LUT bytes,
 // so TURNING_SPIRAL_VERT above only ever needed the one addition: the uDisp/uGreyOOR branch.
+
+// Where cache sample i sits on a turning spiral cropped to [cropStart, cropEnd] -- exactly where
+// the shader draws it -- in O(1) after the O(log N) anchor. FrmCloud's ring and reveal use it, and
+// so does FrmOctree's (with octreePathParams), so neither has to build and hold a full path.
+export function spiralPointAt(
+	c: Cache, p: Omit<SpiralUniformParams, 'tCs' | 'revsCs'>, cropStart: number, cropEnd: number, i: number,
+	anchor = spiralAnchor(c, cropStart),
+) {
+	return computeSpiralVertexJS(c.t[i], c.revs[i], { ...p, ...anchor }, cropStart, cropEnd);
+}

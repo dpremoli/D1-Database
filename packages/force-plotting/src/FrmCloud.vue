@@ -14,8 +14,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { type Cache, cacheGet, cachePut, idxOfTime, parseCache } from './liveCache';
 import { type Axis, type Cloud, type CloudChannel, type SpeedMode, axisAutoLimits, buildCloud } from './liveCloud';
-import { buildPath, type PathParams, type PathResult } from './path';
-import { findNearestPathIndex, type PointMenuEvent, pickNearest, pointInfo } from './cloudPick';
+import { buildPath, type PathParams } from './path';
+import {
+	createClickTracker, displayedKeep, findNearestPathIndex, pickNearest, pickRadius, pointInfo, settleRing,
+	type PointMenuEvent,
+} from './cloudPick';
+import { nearestIndex } from './hoverIndex';
 import { exportFrmFigure } from './frmExport';
 import { buildScaleLUT, colorizeValues, lutKey, type ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
@@ -27,7 +31,7 @@ import { createGlLifecycle } from './glLifecycle';
 import { sameStage, stageInfo, type LoadStage, type StageInfo } from './loadStage';
 import {
 	buildStaticAttributes, spiralUniformValues,
-	computeSpiralVertexJS, TURNING_SPIRAL_FRAG, TURNING_SPIRAL_VERT,
+	spiralAnchor, spiralPointAt, TURNING_SPIRAL_FRAG, TURNING_SPIRAL_VERT,
 } from './frmCloudShader';
 
 const props = defineProps<{
@@ -480,9 +484,7 @@ function updateGpuCropUniforms() {
 	const c = cache.value;
 	const pp = effPath.value;
 	if (pp.kind !== 'turning_spiral') return;
-	const cs = idxOfTime(c.t, props.cropStartSec);
-	const tCs = cs >= 0 ? c.t[cs] : 0, revsCs = cs >= 0 ? c.revs[cs] : 0;
-	const u = spiralUniformValues({ ...pp, tCs, revsCs });
+	const u = spiralUniformValues({ ...pp, ...spiralAnchor(c, props.cropStartSec) });
 	const uni = gpuMat.uniforms;
 	uni.uFeed.value = u.uFeed; uni.uRho0.value = u.uRho0; uni.uInnerR.value = u.uInnerR;
 	uni.uSpeedMode.value = u.uSpeedMode; uni.uRevPerSec.value = u.uRevPerSec; uni.uTimeScale.value = u.uTimeScale;
@@ -620,7 +622,8 @@ function projectPx(m: THREE.Matrix4 | null, x: number, y: number, z: number) {
 	projOut.px = (tmpV.x + 1) / 2 * cssW; projOut.py = (1 - tmpV.y) / 2 * cssH;
 	return projOut;
 }
-// Make the camera (and the cloud's matrixWorld, which carries the 3D Z scale) current.
+// Make the camera (and the cloud's matrixWorld, which carries the 3D Z scale) current: a pan/zoom
+// sets the view immediately but the render only happens next frame.
 function syncPickCamera() {
 	if (!camera) return;
 	if (!is3D.value) applyCamera2D();
@@ -630,40 +633,30 @@ function syncPickCamera() {
 
 // What a pick scans: positions with the cache index behind each (path.idx).
 interface PickSource { pos: Float32Array; idx: Int32Array; count: number; rho?: Float32Array; m: THREE.Matrix4 | null }
+const NO_SAMPLES: PickSource = { pos: new Float32Array(0), idx: new Int32Array(0), count: 0, m: null };
 // The GPU path never holds positions on the CPU (the vertex shader computes them), and a gridded
-// cloud's points are cell centres with no single sample. For both, and for a 2D turning spiral
-// (so the pick also carries rho), rebuild the plain ungridded path — the same call
-// refineGpuPointCount makes. Memoised on what it depends on: a right-click costs one build, not
-// one per click while the crop is unchanged.
-let pickPath: { key: unknown[]; path: PathResult | null } | null = null;
-function ungriddedPath(): PathResult | null {
-	const c = cache.value; if (!c) return null;
-	const key = [c, effPath.value, props.cropStartSec, props.cropEndSec, props.stride];
-	if (pickPath && pickPath.key.every((v, j) => v === key[j])) return pickPath.path;
-	const path = buildPath(c, effPath.value, { cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec, stride: props.stride });
-	pickPath = { key, path };
-	return path;
-}
+// cloud's points are cell centres with no single sample. For both, and for any 2D turning spiral
+// (so the pick also carries rho), build the plain ungridded path for this one pick and let it go:
+// at ~20 B per sample (about 100 MB at 5M) it is too big to keep between right-clicks.
 // null = this view can't resolve samples (gridded 3D: cells aren't samples and the height is
 // unrelated to any one of them).
 function pickSource(): PickSource | null {
-	if (!cache.value) return null;
-	if (!is3D.value && (usesGpuPath.value || props.gridding || effPath.value.kind === 'turning_spiral')) {
-		const p = ungriddedPath();
-		return p ? { pos: p.pos, idx: p.idx, count: p.count, rho: p.rho, m: null } : { pos: new Float32Array(0), idx: new Int32Array(0), count: 0, m: null };
+	const c = cache.value;
+	if (!c) return null;
+	if (!is3D.value && (props.gridding || effPath.value.kind === 'turning_spiral')) {
+		const p = buildPath(c, effPath.value, { cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec, stride: props.stride });
+		return p ? { pos: p.pos, idx: p.idx, count: p.count, rho: p.rho, m: null } : NO_SAMPLES;
 	}
 	if (cloud?.idx && pointsObj) return { pos: cloud.pos, idx: cloud.idx, count: cloud.count, m: pointsObj.matrixWorld };
 	return null;
 }
 
 // Right button: the 2D handlers must not pan on it (it opens the menu), but a drag with it is
-// still a pan in 3D (OrbitControls). Remember where it went down so contextmenu can tell a
-// click from a drag.
-let rightDown: { x: number; y: number } | null = null;
+// still a pan in 3D (OrbitControls), so contextmenu has to tell a click from a drag.
+const rightClick = createClickTracker();
 function onContextMenu(ev: MouseEvent) {
 	ev.preventDefault();
-	if (rightDown && Math.hypot(ev.clientX - rightDown.x, ev.clientY - rightDown.y) > 4) { rightDown = null; return; }
-	rightDown = null;
+	if (!rightClick.isClick(ev)) return;
 	const c = cache.value;
 	if (!c || !ready || !camera) return;
 	const base = { clientX: ev.clientX, clientY: ev.clientY };
@@ -671,15 +664,9 @@ function onContextMenu(ev: MouseEvent) {
 	if (!src) { emit('pointmenu', { ...base, point: null, reason: 'gridded' }); return; }
 	syncPickCamera();
 	const r = canvasEl.value!.getBoundingClientRect();
-	const px = ev.clientX - r.left, py = ev.clientY - r.top;
-	// Mirror the displayed-range hide, or a right-click would land on a point that isn't drawn.
-	const s = props.colorScale;
-	const vals = (c as any)[effChannel.value] as Float32Array | undefined;
-	const keep = !s.greyOutOfRange && vals
-		? (k: number) => { const v = vals[src.idx[k]]; return v >= s.dispMin && v <= s.dispMax; }
-		: undefined;
 	const k = pickNearest(src.count, (j) => projectPx(src.m, src.pos[j * 3], src.pos[j * 3 + 1], src.pos[j * 3 + 2]),
-		px, py, Math.max(8, (props.pointSize || 1.4) * 2), keep);
+		ev.clientX - r.left, ev.clientY - r.top, pickRadius(props.pointSize, 1.4),
+		displayedKeep(c[effChannel.value], src.idx, props.colorScale));
 	if (k == null) { emit('pointmenu', { ...base, point: null }); return; }
 	emit('pointmenu', { ...base, point: pointInfo(c, src.idx[k], src.pos[k * 3], src.pos[k * 3 + 1], src.rho?.[k]) });
 }
@@ -690,15 +677,12 @@ function timeToWorld(time: number | null | undefined, out: THREE.Vector3): boole
 	const c = cache.value;
 	if (time == null || !c || !c.N) return false;
 	if (time < props.cropStartSec || time > props.cropEndSec || time < c.t[0] || time > c.t[c.N - 1]) return false;
-	let i = idxOfTime(c.t, time);
-	if (i > 0 && time - c.t[i - 1] < c.t[i] - time) i--;   // idxOfTime is the first t >= time; take the nearer neighbour
+	const i = nearestIndex(c.t, time);
 	const pp = effPath.value;
 	if (pp.kind === 'turning_spiral' && !is3D.value) {
-		// Same maths as the vertex shader (and the same crop-start anchoring as updateGpuCropUniforms),
-		// so the ring sits on the drawn point for every 2D turning-spiral mode and costs O(log N).
-		const cs = idxOfTime(c.t, props.cropStartSec);
-		const v = computeSpiralVertexJS(c.t[i], c.revs[i],
-			{ ...pp, tCs: cs >= 0 ? c.t[cs] : 0, revsCs: cs >= 0 ? c.revs[cs] : 0 }, props.cropStartSec, props.cropEndSec);
+		// The shader's own maths (frmCloudShader.ts), so the ring sits on the drawn point in every
+		// 2D turning-spiral mode for O(log N), with no path to build.
+		const v = spiralPointAt(c, pp, props.cropStartSec, props.cropEndSec, i);
 		if (!v.visible) return false;
 		out.set(v.x, v.y, 0);
 		return true;
@@ -719,22 +703,16 @@ const ringV = new THREE.Vector3();
 function ringAt(time: number | null | undefined, cur: { x: number; y: number } | null) {
 	if (!timeToWorld(time, ringV)) return null;
 	const p = projectPx(null, ringV.x, ringV.y, ringV.z);
-	if (!p) return null;
-	// keep the old object when it hasn't visibly moved, so a draw() doesn't invalidate the template
-	if (cur && Math.abs(cur.x - p.px) < 0.25 && Math.abs(cur.y - p.py) < 0.25) return cur;
-	return { x: p.px, y: p.py };
+	return p ? settleRing(cur, p.px, p.py) : null;
 }
 function updateRings() {
 	if (!ready || !camera) return;
-	if (props.markTime == null && props.hoverTime == null) {
-		if (pinPos.value) pinPos.value = null;
-		if (hoverPos.value) hoverPos.value = null;
-		return;
-	}
 	pinPos.value = ringAt(props.markTime, pinPos.value);
 	hoverPos.value = ringAt(props.hoverTime, hoverPos.value);
 }
-watch(() => [props.markTime, props.hoverTime], () => { syncPickCamera(); updateRings(); });
+// Between draws the camera may be a frame behind the view (draw() syncs it itself).
+watch(() => props.markTime, () => { syncPickCamera(); pinPos.value = ringAt(props.markTime, pinPos.value); });
+watch(() => props.hoverTime, () => { syncPickCamera(); hoverPos.value = ringAt(props.hoverTime, hoverPos.value); });
 
 // Pan the view so the sample at `t` is on screen (the chart's "show on map"). Leaves the view
 // alone if it already is. Returns false when there is no such drawn point (outside the crop, no
@@ -979,10 +957,8 @@ let zGestureY: number | null = null;
 function avgPy(): number { let s = 0; for (const p of pointers.values()) s += p.py; return s / (pointers.size || 1); }
 
 function onDown(ev: PointerEvent) {
-	if (ev.pointerType === 'mouse' && ev.button === 2) {
-		rightDown = { x: ev.clientX, y: ev.clientY };
-		if (!is3D.value) return;   // 2D: the right button opens the menu, it doesn't pan
-	}
+	rightClick.down(ev);
+	if (ev.pointerType === 'mouse' && ev.button === 2 && !is3D.value) return;   // 2D: the right button opens the menu, it doesn't pan
 	if (!cache.value) return;
 	const { px, py } = localXY(ev);
 	(ev.currentTarget as Element).setPointerCapture(ev.pointerId);

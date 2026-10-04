@@ -22,10 +22,14 @@ import { createLoadToken } from './loadToken';
 import { createGlLifecycle } from './glLifecycle';
 import { sameStage, stageInfo, streamStage, type LoadStage, type StageInfo } from './loadStage';
 import type { Cache } from './liveCache';
-import { idxOfTime } from './liveCache';
-import { buildPath, type PathResult } from './path';
-import { findNearestPathIndex, octreePathParams, pickNearest, pointInfo, type PointMenuEvent } from './cloudPick';
-import { shaderZ, timeInPath } from './octreePick';
+import { buildPath } from './path';
+import {
+	createClickTracker, displayedKeep, octreePathParams, pickNearest, pickRadius, pointInfo, settleRing,
+	type PointMenuEvent,
+} from './cloudPick';
+import { nearestIndex } from './hoverIndex';
+import { spiralPointAt } from './frmCloudShader';
+import { shaderZ } from './octreePick';
 
 const props = defineProps<{
 	octreePath: string;                       // served subdir: /octrees/<octreePath>/
@@ -196,7 +200,6 @@ function applyZ() {
 		controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
 		frameCamera();   // snap back to a clean top-down view when flattening
 	}
-	ringDirty = true;
 	invalidate();
 }
 
@@ -359,7 +362,7 @@ function avgVals(m: Map<number, number>): number { let s = 0; for (const v of m.
 function onPtrDown(ev: PointerEvent) {
 	// OrbitControls pans on right-drag (2D and 3D), and the browser still fires `contextmenu` on
 	// release, so remember where the button went down to tell a click from a pan.
-	if (ev.pointerType === 'mouse' && ev.button === 2) { rightDownX = ev.clientX; rightDownY = ev.clientY; }
+	rightClick.down(ev);
 	if (ev.pointerType !== 'touch') return;
 	zPointers.set(ev.pointerId, ev.clientY);
 	if (zPointers.size === 3) { if (controls) controls.enabled = false; zBaseY = avgVals(zPointers); }
@@ -381,135 +384,99 @@ function onPtrUp(ev: PointerEvent) {
 }
 
 // ---- Linking to the Signals charts: right-click picking and time rings ----
-// The octree has no per-point time, so both directions go through the live cache's own path
-// (octreePathParams + buildPath: the same mm frame and geometry the octree was built with; see
-// cloudPick.ts's header). Path positions are true world mm (potree-core restores the LAS
-// offset), so no pco matrix is applied to them.
-let rightDownX = NaN, rightDownY = NaN;
-let memoCache: Cache | null = null, memoInner = NaN, memoPpr = NaN;
-let memoPath: PathResult | null = null;
-// Memoised per (cache identity, innerDiam, ppr): a rebuild walks the whole cache (up to ~5M samples).
-function samplePath(): PathResult | null {
-	const c = props.sampleCache;
-	if (!c) { memoCache = null; memoPath = null; return null; }
-	const inner = props.innerDiam ?? 0, ppr = props.ppr ?? 1;
-	if (c !== memoCache || inner !== memoInner || ppr !== memoPpr) {
-		const { path, window } = octreePathParams(c, inner, ppr);
-		memoPath = buildPath(c, path, window);
-		memoCache = c; memoInner = inner; memoPpr = ppr;
-	}
-	return memoPath;
+// The octree has no per-point time, so both directions go through the live cache, laid out with
+// the geometry the octree was built with (octreePathParams: the same mm frame; see cloudPick.ts's
+// header). Positions are true world mm (potree-core restores the LAS offset), so no pco matrix is
+// applied to them. Rings and reveal place one sample in closed form (spiralPointAt, O(log N)); only
+// a right-click builds the full path, and it lets it go again (~20 B per sample, about 100 MB at 5M).
+const rightClick = createClickTracker();
+
+function octreeGeometry(c: Cache) {
+	return octreePathParams(c, props.innerDiam ?? 0, props.ppr ?? 1);
+}
+// The vertex shader's Z for this frame: flat (null) or the series, range and scale it reads.
+function zMapping(c: Cache): { series: Float32Array; r0: number; r1: number; scale: number } | null {
+	const u = material?.uniforms;
+	const zAxis = u ? (u.uZAxis.value as number) : -1;
+	if (!u || zAxis < 0) return null;
+	const r = u.uZRange.value as THREE.Vector2;
+	return { series: zAxis === 0 ? c.Fx : zAxis === 1 ? c.Fy : c.Fz, r0: r.x, r1: r.y, scale: u.uZScale.value as number };
 }
 
 const _v = new THREE.Vector3();
-// World position of path sample k into _v, with Z matching the vertex shader (flat = 0).
-function sampleWorld(path: PathResult, k: number): THREE.Vector3 {
-	const c = props.sampleCache!;
-	let z = 0;
-	const zAxis = material ? (material.uniforms.uZAxis.value as number) : -1;
-	if (material && zAxis >= 0) {
-		const r = material.uniforms.uZRange.value as THREE.Vector2;
-		const series = zAxis === 0 ? c.Fx : zAxis === 1 ? c.Fy : c.Fz;
-		z = shaderZ(series[path.idx[k]], r.x, r.y, material.uniforms.uZScale.value as number);
-	}
-	return _v.set(path.pos[3 * k], path.pos[3 * k + 1], z);
-}
-// CSS px relative to the canvas; false when the point is outside the view (clip) unless `clip` is off.
-function toScreen(v: THREE.Vector3, out: { px: number; py: number }, clip = true): boolean {
+const _pt = { px: 0, py: 0 };
+// _v (world) -> CSS px relative to the canvas in `out`; false when outside the view.
+function toScreen(v: THREE.Vector3, out: { px: number; py: number }): boolean {
 	v.project(camera!);
-	if (clip && (v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1)) return false;
+	if (v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1) return false;
 	out.px = (v.x + 1) / 2 * cssW; out.py = (1 - v.y) / 2 * cssH;
 	return true;
 }
 
 function onContextMenu(ev: MouseEvent) {
 	ev.preventDefault();
-	const moved = Math.hypot(ev.clientX - rightDownX, ev.clientY - rightDownY) > 4;
-	rightDownX = rightDownY = NaN;
-	if (moved || !canvasEl.value || !camera) return;
+	if (!rightClick.isClick(ev) || !canvasEl.value || !camera) return;
 	const base = { clientX: ev.clientX, clientY: ev.clientY };
 	const c = props.sampleCache;
-	const path = samplePath();
+	const g = c && octreeGeometry(c);
+	const path = c && g ? buildPath(c, g.path, g.window) : null;
 	if (!c || !path) { emit('pointmenu', { ...base, point: null, reason: 'no-cache' }); return; }
 	const r = canvasEl.value.getBoundingClientRect();
-	const px = ev.clientX - r.left, py = ev.clientY - r.top;
 	camera.updateMatrixWorld();   // controls.update() moved it since the last render
-	const pp = { px: 0, py: 0 };
-	// Mirrors the shader's displayed-range discard (a greyed point is still drawn, so still pickable).
-	const s = props.colorScale;
-	const vals = c[props.axis];
-	const keep = s.greyOutOfRange ? undefined : (k: number) => { const v = vals[path.idx[k]]; return v >= s.dispMin && v <= s.dispMax; };
+	const z = zMapping(c);   // hoisted: read the uniforms once, not per sample
 	// Gridded octrees (`fill`) still pick the nearest SAMPLE to the spot: cells aren't samples.
-	const k = pickNearest(path.count, (i) => (toScreen(sampleWorld(path, i), pp) ? pp : null),
-		px, py, Math.max(8, (props.pointSize || 1.5) * 2), keep);
+	const k = pickNearest(path.count, (j) => {
+		_v.set(path.pos[3 * j], path.pos[3 * j + 1], z ? shaderZ(z.series[path.idx[j]], z.r0, z.r1, z.scale) : 0);
+		return toScreen(_v, _pt) ? _pt : null;
+	}, ev.clientX - r.left, ev.clientY - r.top, pickRadius(props.pointSize), displayedKeep(c[props.axis], path.idx, props.colorScale));
 	if (k === null) { emit('pointmenu', { ...base, point: null }); return; }
 	emit('pointmenu', { ...base, point: pointInfo(c, path.idx[k], path.pos[3 * k], path.pos[3 * k + 1], path.rho?.[k]) });
 }
 
-// Ring overlays (CSS px in the canvas box). Positions are refs so the template moves them; they
-// are only written when a ring actually moved >= 0.25 px, so idle frames cost no reactivity.
+// World position of the sample at time `sec` into _v (Z as the shader draws it); false when there
+// is none (no cache, outside the octree's cut window, or past the inner-diameter cut-out).
+function timeToWorld(sec: number | null | undefined): boolean {
+	const c = props.sampleCache;
+	if (sec == null || !c || !c.N) return false;
+	const g = octreeGeometry(c);
+	if (g.path.kind !== 'turning_spiral' || sec < g.window.cropStartSec || sec > g.window.cropEndSec) return false;
+	const i = nearestIndex(c.t, sec);
+	const p = spiralPointAt(c, g.path, g.window.cropStartSec, g.window.cropEndSec, i);
+	if (!p.visible) return false;
+	const z = zMapping(c);
+	_v.set(p.x, p.y, z ? shaderZ(z.series[i], z.r0, z.r1, z.scale) : 0);
+	return true;
+}
+
+// Ring overlays (CSS px in the canvas box). The render loop runs every frame, so the rings are
+// placed there: two O(log N) lookups, and settleRing keeps idle frames from touching reactivity.
 const markRing = ref<{ x: number; y: number } | null>(null);
 const hoverRing = ref<{ x: number; y: number } | null>(null);
-const _pt = { px: 0, py: 0 };
-// The path position k of the sample nearest time `sec`, or -1 (no cache, or outside the path's span).
-function pathIndexAt(sec: number | null | undefined): number {
-	const c = props.sampleCache, path = samplePath();
-	if (sec == null || !c || !path || !timeInPath(c.t, path.idx, path.count, sec)) return -1;
-	return findNearestPathIndex(path.idx, path.count, idxOfTime(c.t, sec));
+function ringPos(sec: number | null | undefined, cur: { x: number; y: number } | null) {
+	return timeToWorld(sec) && toScreen(_v, _pt) ? settleRing(cur, _pt.px, _pt.py) : null;
 }
-function ringPos(sec: number | null | undefined): { x: number; y: number } | null {
-	const k = pathIndexAt(sec);
-	if (k < 0) return null;
-	return toScreen(sampleWorld(samplePath()!, k), _pt) ? { x: _pt.px, y: _pt.py } : null;
-}
-function setRing(r: typeof markRing, v: { x: number; y: number } | null) {
-	const o = r.value;
-	if (!v || !o) { if (o !== v) r.value = v; return; }
-	if (Math.abs(o.x - v.x) >= 0.25 || Math.abs(o.y - v.y) >= 0.25) r.value = v;
-}
-// What the ring positions depend on, compared in place each frame (no allocation): camera
-// framing, canvas size, the shader's Z mapping and the two times. `ringDirty` covers what
-// can't be a number (cache identity, innerDiam, ppr, octree reload).
-const ringSig = new Float64Array(20).fill(NaN);
-const _sig = new Float64Array(20);
-let ringDirty = true;
 function updateRings() {
-	if (!camera || !controls) return;
-	const u = material?.uniforms;
-	const zr = u?.uZRange.value as THREE.Vector2 | undefined;
-	const p = camera.position, t = controls.target, q = camera.quaternion;
-	_sig[0] = camera.zoom; _sig[1] = p.x; _sig[2] = p.y; _sig[3] = p.z;
-	_sig[4] = t.x; _sig[5] = t.y; _sig[6] = t.z;
-	_sig[7] = q.x; _sig[8] = q.y; _sig[9] = q.z; _sig[10] = q.w;
-	_sig[11] = camera.left; _sig[12] = camera.right; _sig[13] = camera.top; _sig[14] = camera.bottom;
-	_sig[15] = cssW; _sig[16] = cssH;
-	_sig[17] = u ? u.uZAxis.value * 1e6 + u.uZScale.value : 0;
-	_sig[18] = zr ? zr.x + zr.y : 0;
-	let changed = ringDirty;
-	for (let i = 0; i < _sig.length && !changed; i++) if (_sig[i] !== ringSig[i]) changed = true;
-	if (!changed) return;
-	ringSig.set(_sig); ringDirty = false;
-	if (!props.sampleCache) { setRing(markRing, null); setRing(hoverRing, null); return; }
+	if (!camera) return;
+	if (props.markTime == null && props.hoverTime == null) {
+		if (markRing.value) markRing.value = null;
+		if (hoverRing.value) hoverRing.value = null;
+		return;
+	}
 	camera.updateMatrixWorld();
-	setRing(markRing, ringPos(props.markTime));
-	setRing(hoverRing, ringPos(props.hoverTime));
+	markRing.value = ringPos(props.markTime, markRing.value);
+	hoverRing.value = ringPos(props.hoverTime, hoverRing.value);
 }
-watch(() => [props.sampleCache, props.innerDiam, props.ppr, props.markTime, props.hoverTime], () => { ringDirty = true; });
 
 // Bring the sample at time t into view (pans the target and camera together so the view angle
 // is unchanged). false when there is no sample for t (no cache, or outside the cut window).
 function revealTime(t: number): boolean {
-	if (!camera || !controls) return false;
-	const k = pathIndexAt(t);
-	if (k < 0) return false;
+	if (!camera || !controls || !timeToWorld(t)) return false;
 	camera.updateMatrixWorld();
-	const v = sampleWorld(samplePath()!, k);
-	const flat = !material || (material.uniforms.uZAxis.value as number) < 0;
-	const d = v.clone().sub(controls.target);   // a rare call: allocation is fine here
-	if (flat) d.z = 0;
-	if (toScreen(v.clone(), _pt)) return true;   // already in view
+	const d = _v.clone().sub(controls.target);   // a rare call: allocation is fine here
+	if (toScreen(_v, _pt)) return true;   // already in view
+	if (!zMapping(props.sampleCache!)) d.z = 0;
 	controls.target.add(d); camera.position.add(d);
-	controls.update(); invalidate(); ringDirty = true;
+	controls.update(); invalidate();
 	return true;
 }
 

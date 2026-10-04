@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	findNearestPathIndex, findPathIndex, formatPointInfo, octreePathParams, pickNearest, pointInfo,
+	createClickTracker, displayedKeep, findNearestPathIndex, formatPointInfo, octreePathParams, pickNearest, pointInfo, settleRing,
 	recentreWindow,
 } from './cloudPick';
 import type { Cache } from './liveCache';
@@ -53,24 +53,6 @@ describe('recentreWindow', () => {
 	it('returns the full range when the width covers it', () => {
 		expect(recentreWindow(-5, 105, 200, 0, 100)).toEqual({ start: 0, end: 100 });
 		expect(recentreWindow(0, 100, 150, 0, 100)).toEqual({ start: 0, end: 100 });
-	});
-});
-
-describe('findPathIndex', () => {
-	const idx = Int32Array.from([3, 5, 8, 13, 21]);
-	it('finds an exact index', () => {
-		expect(findPathIndex(idx, 5, 3)).toBe(0);
-		expect(findPathIndex(idx, 5, 13)).toBe(3);
-		expect(findPathIndex(idx, 5, 21)).toBe(4);
-	});
-	it('returns -1 for an absent index', () => {
-		expect(findPathIndex(idx, 5, 4)).toBe(-1);
-		expect(findPathIndex(idx, 5, 0)).toBe(-1);
-		expect(findPathIndex(idx, 5, 99)).toBe(-1);
-	});
-	it('respects count and an empty array', () => {
-		expect(findPathIndex(idx, 3, 13)).toBe(-1);
-		expect(findPathIndex(new Int32Array(0), 0, 3)).toBe(-1);
 	});
 });
 
@@ -154,5 +136,41 @@ describe('octreePathParams', () => {
 	it('falls back to rpm 0 when the cache carries no rpm', () => {
 		const { path } = octreePathParams(makeCache(false), 0, 1);
 		expect(path.kind === 'turning_spiral' && path.rpm).toBe(0);
+	});
+});
+
+describe('displayedKeep', () => {
+	const vals = Float32Array.from([1, 5, 9]);
+	const idx = Int32Array.from([0, 1, 2]);
+	it('is undefined when nothing is hidden', () => {
+		expect(displayedKeep(vals, idx, { dispMin: 2, dispMax: 8, greyOutOfRange: true })).toBeUndefined();
+		expect(displayedKeep(undefined, idx, { dispMin: 2, dispMax: 8 })).toBeUndefined();
+	});
+	it('keeps only values inside the displayed range', () => {
+		const keep = displayedKeep(vals, idx, { dispMin: 2, dispMax: 8 })!;
+		expect([0, 1, 2].map(keep)).toEqual([false, true, false]);
+	});
+});
+
+describe('createClickTracker', () => {
+	const ev = (x: number, y: number, button = 2) => ({ clientX: x, clientY: y, button, pointerType: 'mouse' }) as PointerEvent;
+	it('tells a click from a drag', () => {
+		const t = createClickTracker();
+		t.down(ev(10, 10)); expect(t.isClick(ev(12, 11))).toBe(true);
+		t.down(ev(10, 10)); expect(t.isClick(ev(30, 10))).toBe(false);
+	});
+	it('treats a contextmenu with no recorded right press (menu key, long-press) as a click', () => {
+		const t = createClickTracker();
+		t.down(ev(10, 10, 0));   // a left press is not recorded
+		expect(t.isClick(ev(90, 90))).toBe(true);
+	});
+});
+
+describe('settleRing', () => {
+	it('keeps the old object for sub-quarter-pixel moves', () => {
+		const cur = { x: 10, y: 10 };
+		expect(settleRing(cur, 10.1, 10.2)).toBe(cur);
+		expect(settleRing(cur, 11, 10)).toEqual({ x: 11, y: 10 });
+		expect(settleRing(null, 1, 2)).toEqual({ x: 1, y: 2 });
 	});
 });

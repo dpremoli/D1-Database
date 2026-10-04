@@ -313,15 +313,19 @@ const hoverPt = computed(() => {
 // frame. Coalesce to one emit per animation frame, same rationale/pattern as onCropMove below.
 let hoverRafId = 0;
 let pendingHoverEv: MouseEvent | null = null;
-function emitHover(ev: MouseEvent) {
+// The bucket under a pointer, shared by the hover crosshair and the right-click menu so both
+// always agree. The plot spans the visible window [x0, x1], not the whole record, so map into
+// that and find the nearest sample by value (see hoverIndex.ts).
+function bucketAt(ev: MouseEvent): number | null {
 	const g = geom.value, svg = svgEl.value;
-	if (!g || !svg) return;
+	if (!g || !svg) return null;
 	const r = svg.getBoundingClientRect();
 	const px = (ev.clientX - r.left) * (g.W / r.width);
-	const frac = (px - ML) / (g.W - ML - MR);
-	// The plot spans the visible window [x0, x1], not the whole record, so map into that and find
-	// the nearest sample by value (see hoverIndex.ts).
-	emit('hover', hoverIndexAt(g.xs, g.x0, g.x1, frac, g.iA, g.iB));
+	return hoverIndexAt(g.xs, g.x0, g.x1, (px - ML) / (g.W - ML - MR), g.iA, g.iB);
+}
+function emitHover(ev: MouseEvent) {
+	const i = bucketAt(ev);
+	if (i != null) emit('hover', i);
 }
 function onMove(ev: MouseEvent) {
 	if (!geom.value) return;
@@ -345,15 +349,11 @@ const mark = computed(() => {
 // the host can offer "show position on map". Other charts keep the browser's own menu. A right
 // drag is not a gesture here (the pointerdown handlers ignore button 2), so no drag guard.
 function onContextMenu(ev: MouseEvent) {
-	const g = geom.value, svg = svgEl.value;
-	if (props.kind !== 'env' || !g || !svg) return;
+	const g = geom.value;
+	if (props.kind !== 'env' || !g) return;
 	ev.preventDefault();
-	const r = svg.getBoundingClientRect();
-	const px = (ev.clientX - r.left) * (g.W / r.width);
-	const frac = (px - ML) / (g.W - ML - MR);
-	const i = hoverIndexAt(g.xs, g.x0, g.x1, frac, g.iA, g.iB);
-	if (i == null) return;
-	emit('chartmenu', { clientX: ev.clientX, clientY: ev.clientY, x: g.xs[i] });
+	const i = bucketAt(ev);
+	if (i != null) emit('chartmenu', { clientX: ev.clientX, clientY: ev.clientY, x: g.xs[i] });
 }
 
 // ---- draggable crop handles (Live mode) ----

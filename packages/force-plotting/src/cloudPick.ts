@@ -16,6 +16,7 @@
 // camera and picked like any other cloud.
 import type { Cache } from './liveCache';
 import type { PathParams, PathWindow } from './path';
+import { nearestIndex } from './hoverIndex';
 
 export interface PointInfo {
 	i: number;       // cache sample index
@@ -89,28 +90,56 @@ export function recentreWindow(
 	return { start: s, end: s + w };
 }
 
-/** Position k in the ascending idx[0..count) holding exactly cache index i, or -1. */
-export function findPathIndex(idx: Int32Array, count: number, i: number): number {
-	let lo = 0, hi = count - 1;
-	while (lo <= hi) {
-		const m = (lo + hi) >> 1, v = idx[m];
-		if (v === i) return m;
-		if (v < i) lo = m + 1; else hi = m - 1;
-	}
-	return -1;
-}
-
 /**
  * Position k in the ascending idx[0..count) whose cache index is nearest i (ties to the lower
  * k), or -1 when empty. Rings use this because a strided path doesn't hold every cache index.
  */
 export function findNearestPathIndex(idx: Int32Array, count: number, i: number): number {
-	if (count <= 0) return -1;
-	let lo = 0, hi = count - 1;
-	while (lo < hi) { const m = (lo + hi) >> 1; if (idx[m] < i) lo = m + 1; else hi = m; }
-	// lo is now the first k with idx[k] >= i, or the last k when i is past the end.
-	if (lo > 0 && i - idx[lo - 1] <= idx[lo] - i) return lo - 1;
-	return lo;
+	return count > 0 ? nearestIndex(idx, i, 0, count - 1) : -1;
+}
+
+// ---- small pieces both map views share (FrmCloud, FrmOctree) ----
+
+/** Pick radius in CSS px for a given point size: a few px of slack around even the smallest dot. */
+export function pickRadius(pointSize: number | undefined, fallback = 1.5): number {
+	return Math.max(8, (pointSize || fallback) * 2);
+}
+
+/**
+ * Tells a right-click from a right-drag (the map views pan on right-drag, and the browser fires
+ * `contextmenu` on release either way): record the press, then ask on `contextmenu`.
+ */
+export function createClickTracker(slopPx = 4) {
+	let x = NaN, y = NaN;
+	return {
+		down(ev: PointerEvent) { if (ev.pointerType === 'mouse' && ev.button === 2) { x = ev.clientX; y = ev.clientY; } },
+		/** true unless the right button moved more than slopPx since its press (resets the press). */
+		isClick(ev: MouseEvent): boolean {
+			const moved = Math.hypot(ev.clientX - x, ev.clientY - y) > slopPx;
+			x = y = NaN;
+			return !moved;
+		},
+	};
+}
+
+/**
+ * The displayed-range hide as a pick filter, or undefined when nothing is hidden: a point whose
+ * value is outside [dispMin, dispMax] isn't drawn unless greyOutOfRange (colorizeValues and the
+ * map shaders' uDisp/uGreyOOR test), so it must not be pickable either.
+ */
+export function displayedKeep(
+	vals: ArrayLike<number> | undefined, idx: Int32Array,
+	s: { dispMin: number; dispMax: number; greyOutOfRange?: boolean },
+): ((k: number) => boolean) | undefined {
+	if (s.greyOutOfRange || !vals) return undefined;
+	return (k) => { const v = vals[idx[k]]; return v >= s.dispMin && v <= s.dispMax; };
+}
+
+/** A ring overlay's next position: `cur` itself when it moved < 0.25 px, so idle redraws don't touch reactivity. */
+export function settleRing(
+	cur: { x: number; y: number } | null, px: number, py: number,
+): { x: number; y: number } {
+	return cur && Math.abs(cur.x - px) < 0.25 && Math.abs(cur.y - py) < 0.25 ? cur : { x: px, y: py };
 }
 
 /**
