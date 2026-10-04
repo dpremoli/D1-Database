@@ -5,8 +5,11 @@ read-only Sonnet reviewer that read the code and ran the area's own checks, and 
 reproduced bugs with small scripts. The coordinator then re-read the code behind every finding
 listed under **Verified blockers** below. Everything else comes from the reviewers' reports in
 [`2026-10-03-general-code-review/`](2026-10-03-general-code-review/), which give `file:line`,
-scenario and fix for each item. No code was changed. The plan and its status table are in
-[`docs/superpowers/plans/2026-10-03-general-code-review.md`](../superpowers/plans/2026-10-03-general-code-review.md).
+scenario and fix for each item. No code was changed by the review itself.
+
+**Status:** the fixes shipped in PR #119 (merged 2026-10-04). Its description lists what was fixed,
+the owner decisions taken and the items held back. The review and fix-batch plans were deleted
+once the batch shipped (see `docs/superpowers/README.md`); git history keeps them.
 
 | # | Area | Raw report | Blocking | Should fix |
 |---|---|---|---|---|
