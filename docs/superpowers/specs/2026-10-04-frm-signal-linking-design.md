@@ -24,19 +24,27 @@ decimated caches (compare, filtered) keep the true `t`. The dashboard holds one 
   it when it is off-screen (`recentreWindow`). The crop items reuse `onCropEdit`, so they batch
   into *Save changes*.
 - **Time to map.** Hovering an env chart puts a hollow ring on the map; right-click gives *Show
-  position on map* (pins the ring and marker, pans the map via `revealTime`).
-- **Picking, Lite.** The GPU path computes positions in the shader, so the CPU rebuilds them with
-  `buildPath()` (as `refineGpuPointCount` already did) and picks against those. The CPU path
-  (`buildCloud`) now keeps `Cloud.idx`. Both project through the camera and take the nearest point
-  within a few pixels. A gridded 3D cloud can't be resolved to samples and says so.
+  position on map* (pins the ring and marker, pans the map via `revealTime`). `revealTime` is
+  `false` only when there is definitely no drawn sample for that time; a map that is still loading
+  queues the request itself and applies it after its first draw with content.
+- **Picking, Lite.** The GPU path computes positions in the shader, so a 2D turning-spiral pick
+  (GPU, and gridded) replays them on the CPU: `pickSpiral` walks the GPU's own phase-0 samples inside
+  the crop and places each with `spiralPositionInto`, the allocation-free form of the shader maths
+  (`computeSpiralVertexJS` wraps it). No path is built, so a right-click costs no memory
+  proportional to N. The CPU path (`buildCloud`) keeps `Cloud.idx`; 3D and non-spiral clouds scan
+  `cloud.pos` through the cloud's matrix. Only a gridded non-spiral 2D path still calls `buildPath()`
+  for the one pick. All take the nearest point within a few pixels. A gridded 3D cloud can't be
+  resolved to samples and says so.
 - **Picking, octree, by position.** Octree points have no time (only x, y and Fx/Fy/Fz). But the
   octree is in the same world frame as Lite's measured mode: mm, centred on the part axis, θ = 0 at
   the cut start (`process_force.m:168-176,227` against the measured branch of `path.ts`), and
   potree-core restores the LAS offset, so coordinates are true mm. It is also built from fixed
   geometry: measured speed, the auto cut start, and the feed and diameter from the `.mat`. That is
-  the live cache header (`csSec`, `ceSec`, `feed`, `diam`) plus the analysis row's
-  `pulses_per_rev` and `inner_diameter`. So `octreePathParams()` rebuilds the octree's own path from
-  the live cache, and the samples are projected through the octree camera and picked. The result is
+  the live cache (its own samples are the auto-cut window, so the window is `t[0]..t[N-1]`, not
+  `csSec`/`ceSec`, which only equal them when Time = (n-1)/Fs) with the header's `feed` and `diam`
+  plus the analysis row's `pulses_per_rev` and `inner_diameter`. So `octreePathParams()` describes
+  the octree's own path, and the cache's samples are streamed through it (`pickSpiral`, stride 1),
+  projected through the octree camera and picked. The result is
   the sample (within one cache sample when the cache was decimated above 5M samples). This needs
   the live cache; without it the time items are disabled. In a gridded octree the pick means
   "nearest sample to this spot".
