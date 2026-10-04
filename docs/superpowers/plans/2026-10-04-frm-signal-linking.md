@@ -11,8 +11,8 @@
 | C — octree (FrmOctree.vue) | `.claude/worktrees/agent-a35ad8aa3b3a5f987` | `worktree-agent-a35ad8aa3b3a5f987` | reviewed, merged |
 | D — charts (ForceChart.vue) | `.claude/worktrees/agent-a6a66bb9a4070ea27` | `worktree-agent-a6a66bb9a4070ea27` | reviewed, merged |
 | E — dashboard wiring + docs | `.claude/worktrees/agent-aec03ca06d8f2455a` | `worktree-agent-aec03ca06d8f2455a` | reviewed, merged |
-| Simplify / review / verify | `.claude/worktrees/agent-ab75e0c33d96a43f3` (review fixes) | `worktree-agent-ab75e0c33d96a43f3` | simplify done; Opus review done — fixes in progress (Sonnet worker) |
-| Verify harness (`plot_link_smoke.mjs`) | `.claude/worktrees/agent-a054ddb396e4deccc` | `worktree-agent-a054ddb396e4deccc` | merged; passes all but the Escape check (fix pending) |
+| Simplify / review / verify | `.claude/worktrees/agent-ab75e0c33d96a43f3` (review fixes) | `worktree-agent-ab75e0c33d96a43f3` | simplify done; Opus review done; fixes merged; smoke test all green |
+| Verify harness (`plot_link_smoke.mjs`) | `.claude/worktrees/agent-a054ddb396e4deccc` | `worktree-agent-a054ddb396e4deccc` | merged; all assertions pass after the fixes |
 | PR + merge | coordinator | — | not started |
 
 ## Worker agent definition (local-only — recreate at `.claude/agents/force-plotting-implementer.md` if the container was reclaimed)

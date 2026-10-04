@@ -136,7 +136,7 @@ charts. The two panels are linked through that time, in both directions. It work
 
 Items that need a point are greyed out, with a reason, when there is none under the cursor.
 
-<!-- ![The map's right-click menu](../images/force-app/plot-point-menu.png) -->
+![The map's right-click menu](../images/force-app/plot-point-menu.png)
 
 **From the charts to the map.** Hover a Force chart and a hollow ring follows the matching sample
 on the map. Right-click a chart for **Show position on map**, which pins the marker and the ring
@@ -144,7 +144,10 @@ and pans the map to the point if it is out of view. The menu also has **Clear ma
 **Set crop … here** items. In Lite the time must be inside the cropped window; if the cut is
 showing as a Figure, the menu switches it to Lite first.
 
-<!-- ![The chart's right-click menu](../images/force-app/plot-chart-menu.png) -->
+![The chart's right-click menu](../images/force-app/plot-chart-menu.png)
+
+> These two screenshots are of a simulated cut on a test database, so the signal and the spiral are
+> artificial. The hollow ring at the right of the map in the second one follows the chart cursor.
 
 Things to know:
 
