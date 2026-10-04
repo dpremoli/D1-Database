@@ -1954,14 +1954,23 @@ function retryPendingReveal() {
 watch(octreeSampleCache, (c) => { if (c) retryPendingReveal(); });
 watch(selectedRowId, () => { markTime.value = null; menu.value = null; pendingReveal = null; });
 function onLinkKey(e: KeyboardEvent) {
-	if (e.key !== 'Escape' || menu.value || markTime.value == null) return;
+	// defaultPrevented: the open ContextMenu consumed this Escape (it closes itself and preventDefaults),
+	// and `menu` may already be null by the time we run, so the flag is the reliable signal.
+	if (e.key !== 'Escape' || e.defaultPrevented || menu.value || markTime.value == null) return;
 	const el = document.activeElement as HTMLElement | null;
 	if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
 	markTime.value = null;
 	pendingReveal = null;
 }
-onMounted(() => window.addEventListener('keydown', onLinkKey));
-onBeforeUnmount(() => { window.removeEventListener('keydown', onLinkKey); clearTimeout(linkMsgTimer); });
+// This page is kept alive (#24): onMounted runs once, so the listener is also dropped on deactivate
+// (Escape on the Record page must not reach us) and re-added on activate. addEventListener ignores a
+// second registration of the same function, so onMounted + onActivated can't double up.
+function addLinkKey() { window.addEventListener('keydown', onLinkKey); }
+function removeLinkKey() { window.removeEventListener('keydown', onLinkKey); }
+onMounted(addLinkKey);
+onActivated(addLinkKey);
+onDeactivated(removeLinkKey);
+onBeforeUnmount(() => { removeLinkKey(); clearTimeout(linkMsgTimer); });
 
 function openMenu(x: number, y: number, items: ContextMenuItem[]) { menu.value = { x, y, items }; }
 function clearMarkItem(): ContextMenuItem[] {
