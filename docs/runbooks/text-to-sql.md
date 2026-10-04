@@ -19,7 +19,7 @@ The capability has two halves:
 Migrations create `d1_llm_readonly`, a NOLOGIN **privilege bundle** (SELECT on an
 explicit allow-list of lab tables and views), and `d1_llm_app`, a NOLOGIN member of
 it that already has `default_transaction_read_only = on` and a 5 s
-`statement_timeout` (migration `…117_llm_readonly_allow_list`). Turn it into the
+`statement_timeout` (migration `…132_llm_readonly_allow_list`). Turn it into the
 plugin's login once, with a password kept out of version control:
 
 ```sql
@@ -58,7 +58,7 @@ EMBED_DATABASE_URL=postgres://d1_embedder:choose-another-strong-password@postgre
 > `bash tests/phase6_text_to_sql.sh`): it provisions a throwaway member of
 > `d1_llm_readonly` and asserts the role can read but not write.
 
-**Read surface (allow-list since migration `…117_llm_readonly_allow_list`):**
+**Read surface (allow-list since migration `…132_llm_readonly_allow_list`):**
 `d1_llm_readonly` can `SELECT` the lab tables and `v_*` views listed in that
 migration and nothing else. `audit_logs`, `people`, `Machine_Operators`,
 `archive_metadata_edits`, `force_crawler_state`, `schema_migrations` and every

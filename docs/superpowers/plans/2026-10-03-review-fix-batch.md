@@ -55,7 +55,7 @@ Files: `docker-compose.yml`, `.env.example`, `infra/`, `Makefile`, `.github/work
 
 ### B. Text-to-SQL, `/d1-ask`, `/d1-report` — 4.1 4.2 6.4 5.8 (P0 security)
 Files: `plugins/llm-text-to-sql/`, `core/extensions/d1-ask-endpoint/`,
-`core/extensions/d1-report/`, migration `20261003000117_llm_readonly_allow_list.sql`,
+`core/extensions/d1-report/`, migration `20261003000132_llm_readonly_allow_list.sql`,
 `tests/phase6_text_to_sql.sh`, `docs/adr/0009-*` (status note only).
 - `d1-report`: read via `ItemsService` with the caller's accountability; 403/404 identical for
   "not found" and "not permitted".

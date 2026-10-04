@@ -8,7 +8,7 @@
   `…052`: `SELECT ON ALL TABLES` + default privileges, minus a deny-list) left
   `audit_logs`, `people`, `Machine_Operators` and, on a live Directus database,
   `directus_activity` / `directus_revisions` readable, and made every new table readable
-  by default. Migration `20261003000117_llm_readonly_allow_list.sql` revokes everything
+  by default. Migration `20261003000132_llm_readonly_allow_list.sql` revokes everything
   from `d1_llm_readonly` and grants `SELECT` on 42 named lab tables and 9 views only;
   new tables stay invisible until a migration grants them. The guard now also denies
   every `directus_*` table, resolves CTE names per scope, allow-lists functions and

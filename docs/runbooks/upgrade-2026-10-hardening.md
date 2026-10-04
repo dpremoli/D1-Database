@@ -2,7 +2,7 @@
 
 **System:** D1-Database
 **Scope:** an already-running compose stack (data in `pgdata`, `minio-data`, `directus-uploads`)
-**Applies to:** the review-fix batch of 2026-10-03 (migrations `…000117` to `…000129`)
+**Applies to:** the review-fix batch of 2026-10-03 (migrations `…000118` to `…000132`)
 
 A fresh install needs none of this: follow the quick start in [`infra/README.md`](../../infra/README.md).
 An existing install **will break** if you only `git pull` and `docker compose up`. Work through
@@ -13,7 +13,7 @@ What changed, in one paragraph: compose now binds every published port to `127.0
 `D1_BIND_ADDR`), refuses to start without its secrets (`${VAR:?}`), protects Redis with a
 password, and lets Directus Flows read `WORKER_WEBHOOK_SECRET`. The heavy-data and analysis
 workers and the text-to-SQL API reject every request without the `X-Worker-Secret` header. The
-text-to-SQL role is an allow-list (`d1_llm_app`, created `NOLOGIN` by migration 117). Four
+text-to-SQL role is an allow-list (`d1_llm_app`, created `NOLOGIN` by migration 132). Four
 Directus hooks (`box-intake`, `owner-cascade`, `d1-operation-sequence`, `d1-apply-prep-recipe`)
 were replaced by database triggers (migrations 124, 125, 126, 127, 129). The recorder refuses
 non-loopback `Host` and `Origin` headers.
@@ -168,7 +168,7 @@ compose sets `FLOWS_ENV_ALLOW_LIST`. A Flow that does not exist yet is created f
 
 ## 7. Text-to-SQL (skip if you do not run `llm-text-to-sql`)
 
-Migration 117 made `d1_llm_app` a `NOLOGIN` member of the allow-listed `d1_llm_readonly`. If
+Migration 132 made `d1_llm_app` a `NOLOGIN` member of the allow-listed `d1_llm_readonly`. If
 the role already existed as a login, it is left as it is; the command below is then still safe.
 
 ```bash
@@ -224,7 +224,7 @@ analysis-worker`.
 
 ## Rolling back
 
-Migrations 117 to 129 have down sections (`make migrate-down` rolls back one at a time), but the
+Migrations 118 to 132 have down sections (`make migrate-down` rolls back one at a time), but the
 old compose file and the old Directus hooks come back with `git checkout` of the previous
 commit. Restore the database from the step 1 backup only if data was damaged
 (`backup-restore.md`).

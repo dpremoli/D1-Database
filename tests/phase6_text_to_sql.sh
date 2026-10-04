@@ -2,7 +2,7 @@
 # Phase 6 AI-readiness test: verifies the durable-core half of the text-to-SQL
 # capability — the semantic dictionary view, the LLM query-target menu, the
 # pgvector embedding store, and the read-only role's grant isolation: an explicit
-# allow-list of lab tables and views (migration …117) — never audit_logs, people,
+# allow-list of lab tables and views (migration …132) — never audit_logs, people,
 # Machine_Operators or any directus_* table — and no write privilege anywhere.
 # Requires a running Postgres with DATABASE_URL set (superuser, to create roles),
 # or a local stack via `make up`.
@@ -18,7 +18,7 @@ cd "$ROOT"
 PSQL="psql $DATABASE_URL --no-psqlrc -t -A"
 
 # A login role that inherits the d1_llm_readonly group — this is exactly what the
-# runbook tells the operator to provision for the plugin (migration …117 creates
+# runbook tells the operator to provision for the plugin (migration …132 creates
 # d1_llm_app NOLOGIN; the operator adds LOGIN + a password). Read-only + statement
 # timeout are pinned here too (group-role SETs are not inherited by members).
 LLM_USER="phase6_llm_app"
@@ -115,7 +115,7 @@ run_eq "d1_llm_app is default_transaction_read_only" \
     "SELECT 'y' FROM pg_roles WHERE rolname='d1_llm_app'
        AND 'default_transaction_read_only=on' = ANY(rolconfig)" "y"
 
-echo "== Allow-list: privileges per has_table_privilege (migration …117) =="
+echo "== Allow-list: privileges per has_table_privilege (migration …132) =="
 # Writes: not a single relation in public may be writable by the role.
 run_eq "role has no write-ish privilege on any relation in public" \
     "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace

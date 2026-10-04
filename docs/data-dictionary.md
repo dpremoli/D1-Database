@@ -343,7 +343,7 @@ WHERE  sample_id  = '<uuid>'
   session start, picked up by the audit trigger.
 - Passwords must never be stored in this schema (use Directus or separate auth).
 - **Text-to-SQL read surface (Phase 6):** the `d1_llm_readonly` role is granted
-  `SELECT` on an explicit allow-list of lab tables and `v_*` views (migration `…117`) —
+  `SELECT` on an explicit allow-list of lab tables and `v_*` views (migration `…132`) —
   never `audit_logs`, `people` or any `directus_*` table. It is `default_transaction_read_only` with a statement timeout.
   LLM-generated SQL is additionally validated by the plugin's SQL guard before it
   runs (ADR-0009, `docs/runbooks/text-to-sql.md`). The login role used by the

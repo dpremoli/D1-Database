@@ -38,7 +38,7 @@ BEGIN
         CREATE ROLE d1_llm_app NOLOGIN IN ROLE d1_llm_readonly;
         -- Marker the down section uses to tell "created here" from "created by hand".
         COMMENT ON ROLE d1_llm_app IS
-            'text-to-SQL login member; created NOLOGIN by migration 20261003000117 (set LOGIN and a password per docs/runbooks/text-to-sql.md)';
+            'text-to-SQL login member; created NOLOGIN by migration 20261003000132 (set LOGIN and a password per docs/runbooks/text-to-sql.md)';
     ELSE
         GRANT d1_llm_readonly TO d1_llm_app;
     END IF;
@@ -148,7 +148,7 @@ BEGIN
         SELECT 1 FROM pg_roles
         WHERE rolname = 'd1_llm_app'
             AND NOT rolcanlogin
-            AND shobj_description(oid, 'pg_authid') LIKE '%created NOLOGIN by migration 20261003000117%'
+            AND shobj_description(oid, 'pg_authid') LIKE '%created NOLOGIN by migration 20261003000132%'
     ) THEN
         DROP OWNED BY d1_llm_app;
         DROP ROLE d1_llm_app;

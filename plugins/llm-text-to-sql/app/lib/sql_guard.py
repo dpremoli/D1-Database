@@ -4,7 +4,7 @@ The text-to-SQL flow lets a local LLM author SQL from a natural-language
 question. That SQL is *never* trusted. This module is the first of two layers;
 the second is the ``d1_llm_readonly`` Postgres role, which holds ``SELECT`` on an
 explicit allow-list of lab tables and views only (ADR-0009, migration
-``20261003000117_llm_readonly_allow_list.sql``). Either layer failing alone must
+``20261003000132_llm_readonly_allow_list.sql``). Either layer failing alone must
 not leak data.
 
   0. The raw text is lexed the way Postgres lexes it: comments (including nested
@@ -54,7 +54,7 @@ ALLOWED_RELATIONS: frozenset[str] = frozenset(
 )
 
 # Relations the LLM may NEVER read. Mirrors what migration
-# 20261003000117_llm_readonly_allow_list.sql leaves OFF the role's grant list —
+# 20261003000132_llm_readonly_allow_list.sql leaves OFF the role's grant list —
 # keep the two in sync. Names are lower-case; comparison is case-insensitive.
 DENIED_RELATIONS: frozenset[str] = frozenset(
     {

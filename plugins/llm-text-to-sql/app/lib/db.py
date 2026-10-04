@@ -97,7 +97,7 @@ def fetch_dictionary_all() -> list[dict]:
 
     Only objects this role can actually SELECT are returned, so the prompt never
     advertises a table the explicit grant list (migration
-    20261003000117_llm_readonly_allow_list.sql) leaves out. ``to_regclass`` (not
+    20261003000132_llm_readonly_allow_list.sql) leaves out. ``to_regclass`` (not
     a bare name cast) because the planner may evaluate the filter before the
     view's own ``public`` filter, and a cast would raise for other schemas.
     """
