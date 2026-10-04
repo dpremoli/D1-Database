@@ -64,6 +64,16 @@ Modules: `cloudPick.ts` (contract and pure helpers), `octreePick.ts`, `chartMark
 - The Record page's live panels.
 - A reverse ring for compare-on-octree (only the raw Lite pane's ref is revealed in compare mode).
 - Persisting the marker or sharing it between panels.
+- Code-quality follow-ups from the final simplify pass, skipped as not worth the churn here: one
+  shared pending-reveal helper for FrmCloud and FrmOctree, one shared ring overlay component, and a
+  faster 2D pick (reject samples by radius before the trig and projection, and fold the view and
+  projection matrices into one multiply). A 5M-sample pick currently takes roughly 0.3–0.5 s.
+
+## Pre-existing, found during review
+
+Since 5e3876a FrmCloud never reads `Cloud.zv` (`buildCloud` writes z = 0 when a Z series is set),
+so the Lite 3D view renders flat. The 3D pick and ring read `cloud.pos`, so they match what is
+drawn today. If `zv` is wired back, it has to go into `pos` so they stay aligned.
 
 ## Side finding
 
