@@ -11,7 +11,7 @@ import { fetchBusySession, confirmQuit, type BusySession } from './quitGuard';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
 import { initAutoUpdater } from './updater';
-import { classifyWindowOpen, isAppUrl, popoutKey } from './windowOpen';
+import { classifyWindowOpen, guardNavigation, isAppSender, popoutKey } from './windowOpen';
 import { WindowStateStore, isOnSomeDisplay } from './windowState';
 
 const PREFERRED_PORT = 8200;
@@ -175,7 +175,7 @@ function onSidecarStateChange(state: SidecarState, detail?: string): void {
 /** Only the app's own pages may use the file-system IPC below — never a page some navigation or
  * window.open() slip let into a window. */
 function fromApp(event: IpcMainInvokeEvent): boolean {
-  return isAppUrl(event.senderFrame?.url ?? '');
+  return isAppSender(event);
 }
 
 function registerShellIpc(): void {
@@ -398,6 +398,10 @@ if (gotLock) {
   // Reload/Toggle DevTools still work via their normal accelerators; only the visible bar goes
   // away. Covers every window the app creates, including the "open in a second window" popouts
   // from AppShell.vue, not just the main one.
+  // Every window and pop-out (and any WebContents the app might create later) may only navigate
+  // within app://force.
+  app.on('web-contents-created', (_event, contents) => guardNavigation(contents));
+
   app.on('browser-window-created', (_event, window) => {
     window.setMenuBarVisibility(false);
   });

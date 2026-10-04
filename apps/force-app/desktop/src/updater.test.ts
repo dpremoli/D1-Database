@@ -24,6 +24,9 @@ vi.mock('electron-updater', () => {
   return { autoUpdater: u };
 });
 
+const APP = { senderFrame: { url: 'app://force/settings/about' } };
+const FOREIGN = { senderFrame: { url: 'https://evil.example/' } };
+
 async function boot(isRecording: () => Promise<boolean>) {
   vi.resetModules();
   h.handlers.clear();
@@ -81,8 +84,27 @@ describe('updater recording gate', () => {
     h.showMessageBox.mockResolvedValue({ response: 1 });
     await downloaded();   // status becomes "downloaded" (prompt deferred)
     const install = h.handlers.get('update:install')!;
-    expect(await install()).toMatchObject({ ok: false });
+    expect(await install(APP)).toMatchObject({ ok: false });
     busy = false;
-    expect(await install()).toEqual({ ok: true });
+    expect(await install(APP)).toEqual({ ok: true });
+  });
+
+  // Review 2.11: the update:* handlers check the sender like dialog:pickFolder / shell:reveal.
+  it('update:* handlers refuse a page that is not app://force', async () => {
+    await boot(async () => false);
+    h.showMessageBox.mockResolvedValue({ response: 1 });
+    await downloaded();
+    expect(await h.handlers.get('update:install')!(FOREIGN)).toEqual({ ok: false, reason: 'not allowed from this page' });
+    expect(await h.handlers.get('update:check')!(FOREIGN)).toEqual({ ok: false, reason: 'not allowed from this page' });
+    expect(await h.handlers.get('update:get-info')!(FOREIGN)).toMatchObject({ version: '', packaged: false });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it('update:* handlers serve the app\'s own pages', async () => {
+    await boot(async () => false);
+    expect(await h.handlers.get('update:get-info')!(APP)).toMatchObject({ version: '1.0.0', packaged: true });
+    expect(await h.handlers.get('update:check')!(APP)).toEqual({ ok: true });
+    expect(await h.handlers.get('update:install')!(APP)).toMatchObject({ ok: false, reason: 'no update downloaded yet' });
   });
 });
