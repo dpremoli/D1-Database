@@ -67,7 +67,7 @@ automatically via the `healthcheck` block in `compose.yaml`.
 ### 2.3 Verify the queue is connected
 
 ```bash
-docker compose exec heavy-data-worker rq info --url "$REDIS_URL"
+docker compose exec heavy-data-worker sh -c 'rq info --url "$REDIS_URL"'
 ```
 
 Expected output includes a `heavy-data` queue with 0 queued and 0 failed jobs
@@ -240,19 +240,31 @@ Log lines include the job ID, session ID, and timing for each processing stage.
 ### Redis queue status
 
 ```bash
-docker compose exec heavy-data-worker rq info --url "$REDIS_URL"
+docker compose exec heavy-data-worker sh -c 'rq info --url "$REDIS_URL"'
 ```
 
 Output shows:
 
 - Queued jobs (waiting to be picked up).
-- Failed jobs (examine with `rq failed-queue` for tracebacks).
+- Failed jobs (see "Inspect a failed job" below for tracebacks).
 - Workers connected to the `heavy-data` queue.
 
 ### Inspect a failed job
 
 ```bash
-docker compose exec heavy-data-worker rq failed-queue --url "$REDIS_URL" dump
+docker compose exec heavy-data-worker python - <<'PY'
+import os
+from redis import Redis
+from rq import Queue
+from rq.job import Job
+
+r = Redis.from_url(os.environ["REDIS_URL"])
+for job_id in Queue("heavy-data", connection=r).failed_job_registry.get_job_ids():
+    job = Job.fetch(job_id, connection=r)
+    result = job.latest_result()
+    print(job_id, job.args)
+    print(result.exc_string if result else "(no traceback)")
+PY
 ```
 
 ### Check session status via the API
