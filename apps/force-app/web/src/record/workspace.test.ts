@@ -231,3 +231,95 @@ describe('workspace.start() (2.5)', () => {
 		expect(calls.filter((c) => c === 'POST /record/start')).toHaveLength(0);
 	});
 });
+
+// ---- 2.7: late replies from superseded searches / picks are dropped ----
+function deferred<T>() {
+	let resolve!: (v: T) => void; let reject!: (e: unknown) => void;
+	const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+	return { promise, resolve, reject };
+}
+const row = (id: string) => ({ id, live_cache_file: `cache-${id}`, operation_id: { operation_id: null, pass_code: `P-${id}` } });
+
+describe('workspace.searchCuts() (2.7)', () => {
+	it('a slow older search cannot overwrite the newer one\'s options', async () => {
+		const slow = deferred<any>(); const fast = deferred<any>();
+		dx.get.mockReturnValueOnce(slow.promise).mockReturnValueOnce(fast.promise);
+		const w = await make();
+		const a = w.searchCuts('old');
+		const b = w.searchCuts('new');
+		fast.resolve({ data: { data: [row('new')] } });
+		await b;
+		expect(w.replay.options.map((o) => o.opId)).toEqual(['new']);
+		expect(w.replay.loading).toBe(false);
+		slow.resolve({ data: { data: [row('old')] } });
+		await a;
+		expect(w.replay.options.map((o) => o.opId)).toEqual(['new']);
+	});
+
+	it('a failure of a superseded search does not clear the newer results or the spinner state', async () => {
+		const slow = deferred<any>(); const fast = deferred<any>();
+		dx.get.mockReturnValueOnce(slow.promise).mockReturnValueOnce(fast.promise);
+		const w = await make();
+		const a = w.searchCuts('old');
+		const b = w.searchCuts('new');
+		slow.reject(new Error('timeout'));
+		await a;
+		expect(w.replay.loading).toBe(true);   // the newer search is still out
+		fast.resolve({ data: { data: [row('new')] } });
+		await b;
+		expect(w.replay.options.map((o) => o.opId)).toEqual(['new']);
+	});
+});
+
+describe('workspace.pickReplayCut() (2.7)', () => {
+	const opt = (id: string) => ({
+		label: id, cacheId: `cache-${id}`, opId: id, operationId: null, ppr: null, outerDiam: null,
+		innerDiam: null, sampleRate: null, cropStartSec: null,
+	});
+
+	it('a download that finishes after switching to Sim does not load into the playhead', async () => {
+		const dl = deferred<any>();
+		dx.get.mockReturnValueOnce(dl.promise);
+		const w = await make();
+		const load = vi.spyOn(w.playback, 'load').mockImplementation(() => {});
+		w.setSource('replay');
+		const p = w.pickReplayCut(opt('a'));
+		expect(w.replay.downloading).toBe(true);
+		w.setSource('sim');
+		expect(w.replay.downloading).toBe(false);
+		dl.resolve({ data: new ArrayBuffer(8) });
+		await p;
+		expect(load).not.toHaveBeenCalled();
+		expect(w.replay.cacheId).toBe('');
+	});
+
+	it('of two picks, only the later one loads, whichever download finishes first', async () => {
+		const first = deferred<any>(); const second = deferred<any>();
+		dx.get.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+		const w = await make();
+		const load = vi.spyOn(w.playback, 'load').mockImplementation(() => {});
+		w.setSource('replay');
+		const a = w.pickReplayCut(opt('a'));
+		const b = w.pickReplayCut(opt('b'));
+		second.resolve({ data: new ArrayBuffer(8) });
+		await b;
+		first.resolve({ data: new ArrayBuffer(8) });
+		await a;
+		expect(load).toHaveBeenCalledTimes(1);
+		expect(w.replay.cacheId).toBe('cache-b');
+		expect(w.replay.downloading).toBe(false);
+	});
+
+	it('a superseded pick\'s error does not overwrite the current state', async () => {
+		const first = deferred<any>();
+		dx.get.mockReturnValueOnce(first.promise);
+		const w = await make();
+		vi.spyOn(w.playback, 'load').mockImplementation(() => {});
+		w.setSource('replay');
+		const a = w.pickReplayCut(opt('a'));
+		w.setSource('sim');
+		first.reject(new Error('network'));
+		await a;
+		expect(w.errMsg.value).toBeNull();
+	});
+});
