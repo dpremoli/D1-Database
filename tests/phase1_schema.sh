@@ -1071,6 +1071,30 @@ act_check "child_boxes:1/1" "so are the clone box rows the intake trigger create
 act_check "child_unattributed:0" "no audit row of the transaction is left without an actor"
 act_check "guc_rows:0" "a GUC-attributed row gets no side-table row"
 
+# The migration's down section refuses to drop a populated audit_log_actors unless the loss is accepted.
+act_down=$(sed -n '/^-- migrate:down/,$p' db/migrations/20261003000128_audit_actor_from_directus_activity.sql)
+act_down_run() {  # act_down_run <setup SQL>
+    $PSQL -q 2>&1 <<SQL
+BEGIN;
+$1
+$act_down
+SELECT 'dropped:' || (to_regclass('public.audit_log_actors') IS NULL);
+ROLLBACK;
+SQL
+}
+act_d1=$(act_down_run "INSERT INTO audit_log_actors (log_id, actor_identity) VALUES (-1, 'x');")
+grep -q 'audit_log_actors holds 1 row' <<<"$act_d1" && ! grep -q 'dropped:true' <<<"$act_d1" \
+    && ok "down refuses to drop audit_log_actors while it has rows" \
+    || bad "down did not refuse a populated audit_log_actors (psql output: $act_d1)"
+act_d2=$(act_down_run "INSERT INTO audit_log_actors (log_id, actor_identity) VALUES (-1, 'x'); SET LOCAL d1.allow_audit_actor_loss = 'on';")
+grep -qx 'dropped:true' <<<"$act_d2" \
+    && ok "down drops a populated audit_log_actors when d1.allow_audit_actor_loss is on" \
+    || bad "down ignored the override (psql output: $act_d2)"
+act_d3=$(act_down_run "DELETE FROM audit_log_actors;")
+grep -qx 'dropped:true' <<<"$act_d3" \
+    && ok "down drops an empty audit_log_actors with no override (CI's purged rollback)" \
+    || bad "down failed on an empty audit_log_actors (psql output: $act_d3)"
+
 echo "== Process category comes from the method, in Postgres (review 4.11) =="
 pc_out=$($PSQL -q 2>&1 <<SQL
 BEGIN;

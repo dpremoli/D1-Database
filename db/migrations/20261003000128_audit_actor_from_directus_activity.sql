@@ -35,10 +35,10 @@
 -- CI's bare Postgres it is not one of the stubs. It is created inside an exception guard so that a
 -- deployment where the migration user does not own the table still migrates; the NOTICE says so.
 -- If Directus ever drops and recreates directus_activity (a major upgrade), re-run the CREATE TRIGGER
--- below. The index on audit_logs (table_name, record_id) serves the trigger's lookup and the
--- common "history of this record" query; it takes a brief write lock while it builds.
-
-CREATE INDEX idx_audit_logs_table_record ON audit_logs (table_name, record_id);
+-- below. The trigger's lookup (audit rows of this transaction without an actor) and the common
+-- "history of this record" query are served by indexes on audit_logs that migrations 130 and 131 build
+-- CONCURRENTLY, so that building them does not block audited writes; this trigger works without
+-- them, only slower, until they have run.
 
 CREATE TABLE audit_log_actors (
     log_id          BIGINT      NOT NULL,
@@ -121,6 +121,25 @@ COMMENT ON VIEW v_audit_logs_with_actor IS
     'directus_activity (audit_log_actors). Use this to ask who made a change.';
 
 -- migrate:down
+-- audit_log_actors is the only place those actors are recorded (audit_logs is append-only and its
+-- rows stay actor-less), so dropping a populated table loses audit information for good. The
+-- rollback therefore stops with an error while the table has rows, unless the loss is accepted
+-- explicitly by setting d1.allow_audit_actor_loss to 'on' for the session, e.g.
+--     PGOPTIONS='-c d1.allow_audit_actor_loss=on' dbmate down
+-- (or `SET d1.allow_audit_actor_loss = on;` in a psql session that runs this section). An empty
+-- table, as after CI's purge before the full rollback, needs no override.
+DO $$
+BEGIN
+    IF to_regclass('public.audit_log_actors') IS NOT NULL
+       AND COALESCE(pg_catalog.current_setting('d1.allow_audit_actor_loss', true), '') <> 'on'
+       AND EXISTS (SELECT 1 FROM public.audit_log_actors)
+    THEN
+        RAISE EXCEPTION 'audit_log_actors holds % row(s) that exist nowhere else; rolling back migration 20261003000128 would delete them',
+            (SELECT count(*) FROM public.audit_log_actors)
+            USING HINT = 'Export them first, or accept the loss with: SET d1.allow_audit_actor_loss = on (PGOPTIONS=''-c d1.allow_audit_actor_loss=on'' for dbmate).';
+    END IF;
+END
+$$;
 DROP VIEW IF EXISTS v_audit_logs_with_actor;
 DO $$
 BEGIN
@@ -131,4 +150,3 @@ END
 $$;
 DROP FUNCTION IF EXISTS audit_attribute_directus_activity();
 DROP TABLE IF EXISTS audit_log_actors;
-DROP INDEX IF EXISTS idx_audit_logs_table_record;
