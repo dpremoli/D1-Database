@@ -31,6 +31,7 @@ vi.mock('../ui/confirm', () => confirmMock);
 vi.mock('../ui/spotlight', () => ({ spotlight: vi.fn() }));
 
 import { createWorkspace } from './workspace';
+import { clearUploadProgress } from './uploadResume';
 
 type Reply = { ok?: boolean; status?: number; body?: unknown; text?: string };
 let replies: Record<string, Reply | (() => Reply | Promise<Reply>)>;
@@ -42,6 +43,7 @@ function memoryStorage() {
 }
 
 beforeEach(() => {
+	clearUploadProgress();
 	replies = {};
 	calls.length = 0;
 	dx.post.mockReset(); dx.get.mockReset();
@@ -97,5 +99,104 @@ describe('workspace.stop() (2.1)', () => {
 		await w.stop();
 		expect(w.saveOpen.value).toBe(false);
 		expect(w.errMsg.value).toMatch(/could not stop/);
+	});
+});
+
+// ---- 2.2: the save retry resumes instead of inserting a second operation row ----
+const posts = (url: string) => dx.post.mock.calls.filter((c) => c[0] === url).length;
+const netErr = () => Object.assign(new Error('Network Error'), { response: undefined });
+const serverErr = () => Object.assign(new Error('Request failed'), { response: { status: 500, data: { errors: [{ message: 'boom' }] } } });
+
+function okReplies() {
+	replies['/captures/cap-up/capture.mat'] = { body: null };
+	replies['/captures/cap-up/live_cache.bin'] = { body: null };
+}
+async function uploadable() {
+	const w = await make();
+	w.st.state = 'done'; w.st.captureId = 'cap-up'; w.st.summary = { mat_written: true, peaks: { Fx: 1, Fy: 2, Fz: 3 } };
+	w.link.sampleId = 'sample-1';
+	return w;
+}
+let fileN = 0;
+
+describe('workspace.uploadCutToDatabase() resume (2.2)', () => {
+	beforeEach(() => { okReplies(); fileN = 0; dx.get.mockResolvedValue({ data: { data: [] } }); });
+
+	it('a failed analysis insert does not insert the operation or upload the files again', async () => {
+		let analysisFails = true;
+		dx.post.mockImplementation(async (url: string) => {
+			if (url === '/items/manufacturing_operations') return { data: { data: { operation_id: 'op-1' } } };
+			if (url === '/files') return { data: { data: { id: `file-${++fileN}` } } };
+			if (url === '/items/machining_force_analysis') { if (analysisFails) throw serverErr(); return { data: { data: {} } }; }
+			throw new Error(url);
+		});
+		const w = await uploadable();
+		await expect(w.uploadCutToDatabase()).rejects.toThrow(/linking the capture failed/);
+		analysisFails = false;
+		await expect(w.uploadCutToDatabase()).resolves.toBe('op-1');
+		expect(posts('/items/manufacturing_operations')).toBe(1);
+		expect(posts('/files')).toBe(2);
+		expect(posts('/items/machining_force_analysis')).toBe(2);
+		// and a third call (a double click on Save) is a no-op returning the same row
+		await expect(w.uploadCutToDatabase()).resolves.toBe('op-1');
+		expect(posts('/items/machining_force_analysis')).toBe(2);
+	});
+
+	it('a failed file upload keeps the operation id and the file that did land', async () => {
+		let cacheFails = true;
+		dx.post.mockImplementation(async (url: string, body: any) => {
+			if (url === '/items/manufacturing_operations') return { data: { data: { operation_id: 'op-2' } } };
+			if (url === '/files') {
+				const name = (body as FormData).get('file') as File;
+				if (cacheFails && name.name.endsWith('live_cache.bin')) throw serverErr();
+				return { data: { data: { id: `file-${++fileN}` } } };
+			}
+			return { data: { data: {} } };
+		});
+		const w = await uploadable();
+		await expect(w.uploadCutToDatabase()).rejects.toThrow(/file upload/);
+		cacheFails = false;
+		await expect(w.uploadCutToDatabase()).resolves.toBe('op-2');
+		expect(posts('/items/manufacturing_operations')).toBe(1);
+		expect(posts('/files')).toBe(3);   // mat once, cache failed once then uploaded
+		const analysis = dx.post.mock.calls.find((c) => c[0] === '/items/machining_force_analysis')![1];
+		expect(analysis.operation_id).toBe('op-2');
+		expect(analysis.directus_files_id).toBe('file-1');
+	});
+
+	it('finds the row a lost response committed (by capture id) instead of inserting again', async () => {
+		let first = true;
+		dx.post.mockImplementation(async (url: string) => {
+			if (url === '/items/manufacturing_operations') {
+				if (first) { first = false; throw netErr(); }   // the server committed, the reply was lost
+				return { data: { data: { operation_id: 'op-dup' } } };
+			}
+			if (url === '/files') return { data: { data: { id: `file-${++fileN}` } } };
+			return { data: { data: {} } };
+		});
+		dx.get.mockImplementation(async (url: string) => {
+			if (url === '/items/manufacturing_operations') return { data: { data: [{ operation_id: 'op-lost', recorded_metadata: { capture_id: 'cap-up' } }] } };
+			return { data: { data: [] } };   // no analysis row yet
+		});
+		const w = await uploadable();
+		await expect(w.uploadCutToDatabase()).rejects.toThrow(/logging the run failed/);
+		await expect(w.uploadCutToDatabase()).resolves.toBe('op-lost');
+		expect(posts('/items/manufacturing_operations')).toBe(1);
+		expect(dx.post.mock.calls.find((c) => c[0] === '/items/machining_force_analysis')![1].operation_id).toBe('op-lost');
+	});
+
+	it('does not post a second analysis row when the first attempt\'s reply was lost', async () => {
+		let first = true;
+		dx.post.mockImplementation(async (url: string) => {
+			if (url === '/items/manufacturing_operations') return { data: { data: { operation_id: 'op-3' } } };
+			if (url === '/files') return { data: { data: { id: `file-${++fileN}` } } };
+			if (url === '/items/machining_force_analysis' && first) { first = false; throw netErr(); }
+			return { data: { data: {} } };
+		});
+		dx.get.mockImplementation(async (url: string) => (url === '/items/machining_force_analysis' ? { data: { data: [{ id: 'a-1' }] } } : { data: { data: [] } }));
+		const w = await uploadable();
+		await expect(w.uploadCutToDatabase()).rejects.toThrow(/linking/);
+		await expect(w.uploadCutToDatabase()).resolves.toBe('op-3');
+		expect(posts('/items/machining_force_analysis')).toBe(1);
 	});
 });

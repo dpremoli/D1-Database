@@ -13,6 +13,7 @@ import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
 import { loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
+import { analysisAlreadyLinked, ensureOperation, needsBlobs, uploadProgress } from './uploadResume';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
 import { isFetchFailure } from '../netErrors';
 import { confirmAction } from '../ui/confirm';
@@ -489,22 +490,37 @@ export function createWorkspace() {
 	async function uploadCutToDatabase(): Promise<string> {
 		const id = st.captureId;
 		if (!id) throw new Error('no capture id for this recording');
+		if (!hasServerSession()) throw new Error(OFFLINE_SESSION_UPLOAD_MESSAGE);
+		// Resume (review 2.2): a retry after a failed file upload or analysis insert continues from
+		// what the earlier attempt finished instead of inserting a second operation row.
+		const progress = uploadProgress(id);
+		if (progress.analysisDone && progress.opId) return progress.opId;
+		const matWritten = st.summary?.mat_written !== false;
 		// The local blob reads don't need the logged run, so they start alongside it; the uploads
 		// still wait for it, so a failed insert never leaves orphaned files -- and cancels the reads.
 		// Without a capture.mat (over MAT_MAX_BYTES) the analysis record is still fully usable from
 		// the decimated cache; directus_files_id just goes in as null.
 		const blobReads = new AbortController();
-		const blobs = fetchCaptureBlobs(client.matUrl(id), client.cacheUrl(id), st.summary?.mat_written !== false, blobReads.signal);
-		blobs.catch(() => {});   // surfaced by the await below, not as an unhandled rejection
+		const blobs = needsBlobs(progress, matWritten)
+			? fetchCaptureBlobs(client.matUrl(id), client.cacheUrl(id), matWritten, blobReads.signal)
+			: null;
+		blobs?.catch(() => {});   // surfaced by the await below, not as an unhandled rejection
 		let opId: string;
+		let existing: boolean;
 		try {
-			opId = await logRunSync();
+			({ opId, existing } = await ensureOperation(id, progress, logRunSync));
+			logged.value = true;
 		} catch (e) {
 			blobReads.abort();
 			throw e;
 		}
-		const [matBlob, cacheBlob] = await blobs;
-		const [matFileId, cacheFileId] = await uploadCaptureFiles(id, matBlob, cacheBlob);
+		if (blobs) {
+			const [matBlob, cacheBlob] = await blobs;
+			await uploadCaptureFiles(id, matBlob, cacheBlob, progress);
+		}
+		if (await analysisAlreadyLinked(progress, opId, existing)) return opId;
+		const matFileId = progress.matFileId ?? null;
+		const cacheFileId = progress.cacheFileId!;
 		const peaks = st.summary?.peaks;
 		// ForceDashboard's chart reads its plot data from `series` (a JSONB min/max envelope), not
 		// from live_cache_file — without this, upload "succeeds" (peaks/FRM all show up fine) but
@@ -542,6 +558,7 @@ export function createWorkspace() {
 			matlab_version: 'force-app-direct',
 			processed_at: new Date().toISOString(),
 		});
+		progress.analysisDone = true;
 		} catch (e: any) {
 			throw new Error(`linking the capture failed - ${directusErrorMessage(e)} (the run was logged as operation ${opId}, and both files uploaded, but the analysis record could not be created)`);
 		}

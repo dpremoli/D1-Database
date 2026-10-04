@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // api.post is the seam for the manufacturing_operations insert AND the two file uploads (/files);
 // api.get isn't used by this path. The .mat/live_cache fetches go through global fetch.
 const post = vi.fn();
-vi.mock('../directusClient', () => ({ api: { post: (...a: unknown[]) => post(...a) } }));
+const get = vi.fn();
+vi.mock('../directusClient', () => ({ api: { post: (...a: unknown[]) => post(...a), get: (...a: unknown[]) => get(...a) } }));
 // Uploading needs a real (non-offline) session; `user` is whoever is signed in at upload time.
 const auth = vi.hoisted(() => ({
 	state: { user: { id: 'u-uploader', email: 'up@lab.org' } as any, offline: false, accessToken: 'at' as string | null, refreshToken: 'rt' as string | null },
@@ -16,15 +17,19 @@ vi.mock('@d1/force-plotting', () => ({
 }));
 
 import { uploadCaptureColdStart } from './uploadCapture';
+import { clearUploadProgress } from './uploadResume';
 
 function mockFetchOk() {
 	vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(['x']) }));
 }
 
 beforeEach(() => {
-	auth.state.offline = false;
+	clearUploadProgress();
+	auth.state.offline = false; auth.state.accessToken = 'at'; auth.state.refreshToken = 'rt';
 	auth.state.user = { id: 'u-uploader', email: 'up@lab.org' };
 	post.mockReset();
+	get.mockReset();
+	get.mockResolvedValue({ data: { data: [] } });
 	mockFetchOk();
 	// operation insert -> file uploads (x2) -> analysis record insert
 	post.mockImplementation((url: string) => {
@@ -135,5 +140,36 @@ describe('uploadCaptureColdStart', () => {
 				.rejects.toThrow(/signed in offline/i);
 			expect(post).not.toHaveBeenCalled();
 		});
+	});
+});
+
+// Review 2.2: a retry resumes instead of inserting a second operation row.
+describe('uploadCaptureColdStart resume', () => {
+	const info = { ...BASE_INFO, cfg: { source: 'nidaq', extra_metadata: {} } };
+	const count = (url: string) => post.mock.calls.filter(([u]) => u === url).length;
+
+	it('a failed analysis insert is retried without a second operation row or file uploads', async () => {
+		let fail = true;
+		post.mockImplementation((url: string) => {
+			if (url === '/items/manufacturing_operations') return Promise.resolve({ data: { data: { operation_id: 'op-9' } } });
+			if (url === '/files') return Promise.resolve({ data: { data: { id: 'file-1' } } });
+			if (fail) return Promise.reject(Object.assign(new Error('x'), { response: { status: 500 } }));
+			return Promise.resolve({ data: { data: {} } });
+		});
+		await expect(uploadCaptureColdStart(info)).rejects.toThrow(/linking the capture failed/);
+		fail = false;
+		await expect(uploadCaptureColdStart(info)).resolves.toBe('op-9');
+		expect(count('/items/manufacturing_operations')).toBe(1);
+		expect(count('/files')).toBe(2);
+		expect(count('/items/machining_force_analysis')).toBe(2);
+	});
+
+	it('reuses an operation already stamped with this capture id (a reply lost earlier)', async () => {
+		get.mockImplementation(async (url: string) => (url === '/items/manufacturing_operations'
+			? { data: { data: [{ operation_id: 'op-old', recorded_metadata: { capture_id: 'cap-1' } }] } }
+			: { data: { data: [] } }));
+		await expect(uploadCaptureColdStart(info)).resolves.toBe('op-old');
+		expect(count('/items/manufacturing_operations')).toBe(0);
+		expect(post.mock.calls.find(([u]) => u === '/items/machining_force_analysis')![1].operation_id).toBe('op-old');
 	});
 });
