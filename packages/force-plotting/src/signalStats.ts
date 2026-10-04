@@ -77,6 +77,19 @@ function axisStats(a: Float32Array, i0: number, i1: number): AxisStats {
 	return { n, mean, rms, std, min: mn, max: mx, p2p: mx - mn, effBits, railLoPct, railHiPct, clipped };
 }
 
+/**
+ * The window the statistics panel should analyse. The dashboard's crop refs default to 0/0 when no
+ * crop is set, and a crop end of 0 can never be a real window, so `end` is what says "unset" (then
+ * the cache's own crop is used). A START of 0 is a real crop start: it used to be treated as unset
+ * by `cropStartSec || c.csSec` and silently replaced by the cache's start (review 3.11).
+ */
+export function resolveStatsWindow(
+	start: number | null | undefined, end: number | null | undefined, c: Pick<Cache, 'csSec' | 'ceSec'>,
+): [number, number] {
+	if (!end) return [c.csSec, c.ceSec];
+	return [start ?? c.csSec, end];
+}
+
 export function computeSignalStats(c: Cache, cropStartSec: number, cropEndSec: number): SignalStats {
 	const i0 = idxOfTime(c.t, cropStartSec);
 	let i1 = idxOfTime(c.t, cropEndSec);

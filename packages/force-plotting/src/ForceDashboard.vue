@@ -24,7 +24,7 @@ import { cacheGet, cachePut, decimateCache, parseCache, type Cache } from './liv
 import { alignMeasuredRho, measuredRhoSpan, type TurningSpiralParams } from './path';
 import { computeAutoCode } from './operationCode';
 import { activeFindings, diagnose, worstSeverity, type Finding } from './metadataDoctor';
-import { computeSignalStats, type SignalStats } from './signalStats';
+import { computeSignalStats, resolveStatsWindow, type SignalStats } from './signalStats';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
 
@@ -241,6 +241,7 @@ function stopHostPolls() {
 	buildingOctree.value = false; octreeMsg.value = null;
 	baking.value = false;
 	rendering.value = false; renderMsg.value = null;
+	statsBusy.value = false;
 }
 async function buildOctree() {
 	const d = detail.value;
@@ -426,6 +427,9 @@ const statsCacheMb = computed(() => {
 async function computeStats() {
 	const d = detail.value;
 	if (!d?.live_cache_file || statsBusy.value) return;
+	// The cache download can take a while: if the operator opens another op (or leaves the page)
+	// meanwhile, this result belongs to the old op and must not land in the new op's panel.
+	const live = opGuard.begin(d.id);
 	statsBusy.value = true; statsErr.value = null;
 	try {
 		let c = cacheGet(d.live_cache_file);
@@ -434,11 +438,13 @@ async function computeStats() {
 			c = parseCache(res.data as ArrayBuffer);
 			cachePut(d.live_cache_file, c);
 		}
-		const cs = cropStartSec.value || c.csSec, ce = cropEndSec.value || c.ceSec;
+		if (!live()) return;
+		const [cs, ce] = resolveStatsWindow(cropStartSec.value, cropEndSec.value, c);
 		sigStats.value = computeSignalStats(c, cs, ce);
 	} catch (e: any) {
+		if (!live()) return;
 		statsErr.value = e?.message || 'failed to compute statistics';
-	} finally { statsBusy.value = false; }
+	} finally { if (live()) statsBusy.value = false; }
 }
 // Recompute (cheap, cache already local) when the crop moves while the panel is open.
 let statsTimer = 0;
