@@ -174,12 +174,43 @@ def test_websocket_from_the_app_connects(client, origin):
 
 
 def test_json_endpoints_refuse_a_non_json_content_type(client):
-    """A no-cors cross-site POST can only send a "simple" content type (text/plain, form...). The
-    guard above is what stops it, but the endpoints must not parse such a body as JSON either: the
-    installed FastAPI rejects it (strict content-type checking). A FastAPI old enough to accept
-    it would fail this."""
+    """A no-cors cross-site POST can only send a "simple" content type (text/plain, form...) or
+    none at all. The Origin check above is what stops it, but the body must not be parsed as JSON
+    either: text/plain is a 422 from FastAPI, and a body with no Content-Type (which some FastAPI
+    versions, e.g. 0.115, do parse as JSON) is refused by the guard with 415."""
     for url in ("/storage/config", "/record/start"):
         r = client.post(url, content=b'{"duration_sec": 1}', headers={"content-type": "text/plain"})
         assert r.status_code == 422, (url, r.status_code)
         r = client.post(url, content=b'{"duration_sec": 1}', headers={"content-type": ""})
-        assert r.status_code == 422, (url, r.status_code)
+        assert r.status_code == 415, (url, r.status_code)
+    # A bodiless POST (e.g. /record/stop from the app) still needs no Content-Type.
+    assert client.post("/record/stop").status_code != 415
+
+
+def test_stream_handler_returns_when_an_idle_client_disconnects(monkeypatch):
+    """A client that leaves while nothing is being published must end the handler. It used to wait
+    only on the broadcast queue, so it never saw the disconnect, and a SIGTERM hung on "Waiting for
+    background tasks" for as long as a browser had the stream open."""
+    import asyncio
+
+    from app.stream.broadcast import Broadcaster
+
+    class _ClientGone:
+        async def accept(self):
+            pass
+
+        async def receive(self):
+            return {"type": "websocket.disconnect", "code": 1001}
+
+        async def send_bytes(self, b):
+            raise AssertionError("nothing was published")
+
+        send_text = send_bytes
+
+    async def run():
+        b = Broadcaster(asyncio.get_running_loop())
+        monkeypatch.setattr(main, "_broadcaster", b)
+        await asyncio.wait_for(main.record_stream(_ClientGone()), timeout=2)
+        assert b._subs == set()
+
+    asyncio.run(run())

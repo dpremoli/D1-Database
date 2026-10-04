@@ -2698,9 +2698,21 @@ async def record_stream(ws: WebSocket) -> None:
     await ws.accept()
     assert _broadcaster is not None
     q = _broadcaster.subscribe()
+    # Watch the client side too. Waiting only on q.get() never noticed a client that left while
+    # nothing was being published, and at shutdown uvicorn's close frame went unread, so a SIGTERM
+    # hung on "Waiting for background tasks" for as long as a browser had the stream open.
+    disconnected = asyncio.create_task(_await_ws_disconnect(ws))
+    pending_get: asyncio.Task | None = None
     try:
         while True:
-            msg = await q.get()
+            pending_get = asyncio.ensure_future(q.get())
+            done, _ = await asyncio.wait(
+                {pending_get, disconnected}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if disconnected in done:
+                break
+            msg = pending_get.result()
+            pending_get = None
             if isinstance(msg, bytes):
                 await ws.send_bytes(msg)
             else:
@@ -2708,4 +2720,18 @@ async def record_stream(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        if pending_get is not None:
+            pending_get.cancel()
+        disconnected.cancel()
         _broadcaster.unsubscribe(q)
+
+
+async def _await_ws_disconnect(ws: WebSocket) -> None:
+    """Return once the client side of `ws` is gone. The stream is one-way, so anything the client
+    sends is ignored."""
+    try:
+        while True:
+            if (await ws.receive())["type"] == "websocket.disconnect":
+                return
+    except (WebSocketDisconnect, RuntimeError):
+        return
