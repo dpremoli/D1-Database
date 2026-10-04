@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { hoverIndexAt } from './hoverIndex';
+import { markInView, markTagText } from './chartMark';
 
 // Dependency-free chart. kind='env' → min/max envelope (force or RPM; always
 // includes 0 on the y-axis); kind='line' → FFT amplitude (optional log y).
@@ -38,9 +39,16 @@ const props = defineProps<{
 	// clamped to the nearest valid value.
 	secondXValues?: Float32Array | number[] | null;
 	secondXLabel?: string;
+	// Pinned marker (x-units, seconds): a solid vertical line + tag, set by the host when a map
+	// point is "shown in time". Optional; no marker by default.
+	markX?: number | null;
+	markLabel?: string;
 }>();
 const emit = defineEmits<{
 	(e: 'hover', i: number | null): void;
+	// Right-click on an env chart: x is the time of the nearest bucket under the cursor. The host
+	// decides what the menu holds; this only reports where.
+	(e: 'chartmenu', v: { clientX: number; clientY: number; x: number }): void;
 	(e: 'update:cropStart', v: number): void;
 	(e: 'update:cropEnd', v: number): void;
 	(e: 'zoom', v: { start: number; end: number } | null): void;   // null = reset to full
@@ -322,6 +330,32 @@ function onMove(ev: MouseEvent) {
 }
 function onLeave() { emit('hover', null); }
 
+// Pinned marker. Kept out of `geom` so a marker change doesn't redo the envelope paths. Only
+// 'env' charts take one: the FFT x-axis is frequency, where a time marker means nothing.
+const mark = computed(() => {
+	const g = geom.value;
+	if (!g || props.kind !== 'env' || !markInView(props.markX, g.x0, g.x1)) return null;
+	const px = g.sx(props.markX);
+	// Flip the tag to the left of the line near the right edge so it never clips.
+	const flip = px > (ML + g.W - MR) / 2;
+	return { px, flip, text: markTagText(props.markX, props.markLabel, props.xUnit, niceNum) };
+});
+
+// Right-click on an env chart: report the nearest bucket's time (same mapping as emitHover) so
+// the host can offer "show position on map". Other charts keep the browser's own menu. A right
+// drag is not a gesture here (the pointerdown handlers ignore button 2), so no drag guard.
+function onContextMenu(ev: MouseEvent) {
+	const g = geom.value, svg = svgEl.value;
+	if (props.kind !== 'env' || !g || !svg) return;
+	ev.preventDefault();
+	const r = svg.getBoundingClientRect();
+	const px = (ev.clientX - r.left) * (g.W / r.width);
+	const frac = (px - ML) / (g.W - ML - MR);
+	const i = hoverIndexAt(g.xs, g.x0, g.x1, frac, g.iA, g.iB);
+	if (i == null) return;
+	emit('chartmenu', { clientX: ev.clientX, clientY: ev.clientY, x: g.xs[i] });
+}
+
 // ---- draggable crop handles (Live mode) ----
 let dragging: 'start' | 'end' | null = null;
 // Raw pointermove can fire far faster than the screen repaints (some mice/trackpads report at
@@ -340,6 +374,7 @@ function xToSec(ev: PointerEvent): number {
 	return g.x0 + Math.min(1, Math.max(0, frac)) * (g.x1 - g.x0);
 }
 function onCropDown(ev: PointerEvent) {
+	if (ev.button !== 0) return;   // right button opens the chart menu, it must not grab a handle
 	if (!props.cropEditable || !geom.value) return;
 	const sec = xToSec(ev);
 	const ds = props.cropStart != null ? Math.abs(sec - props.cropStart) : Infinity;
@@ -384,6 +419,7 @@ function fracToX(frac: number): number {
 const zoomRect = ref<{ x: number; w: number } | null>(null);
 let zoomDrag = false, zStartPx = 0;
 function onZoomDown(ev: PointerEvent) {
+	if (ev.button !== 0) return;   // right button opens the chart menu, it must not start a zoom box
 	if (!props.zoomTool || !geom.value) return;
 	zoomDrag = true; zStartPx = pxOf(ev); zoomRect.value = { x: zStartPx, w: 0 };
 	(ev.currentTarget as Element).setPointerCapture(ev.pointerId); ev.stopPropagation();
@@ -433,7 +469,7 @@ function onWheel(ev: WheelEvent) {
 		<div ref="bodyEl" class="chart-body">
 		<svg
 			ref="svgEl" v-if="geom" :viewBox="`0 0 ${geom.W} ${geom.Hh}`" class="chart-svg" :class="{ zoomtool: zoomTool }"
-			preserveAspectRatio="none" @mousemove="onMove" @mouseleave="onLeave" @wheel="onWheel"
+			preserveAspectRatio="none" @mousemove="onMove" @mouseleave="onLeave" @wheel="onWheel" @contextmenu="onContextMenu"
 			@pointerdown="onZoomDown" @pointermove="onZoomMove" @pointerup="onZoomUp" @pointercancel="onZoomUp"
 		>
 			<line v-for="(t, i) in geom.yticks" :key="'gy' + i" :x1="ML" :x2="geom.W - MR" :y1="t.y" :y2="t.y" class="fc-grid" stroke-width="0.5" />
@@ -474,6 +510,13 @@ function onWheel(ev: WheelEvent) {
 			<g v-if="hoverPt">
 				<line :x1="hoverPt.px" :x2="hoverPt.px" :y1="MT_EFF" :y2="geom.Hh - MB" stroke="#64748b" stroke-width="0.6" stroke-dasharray="3 3" />
 				<circle :cx="hoverPt.px" :cy="hoverPt.py" r="2.8" :fill="stroke" />
+			</g>
+			<!-- Pinned marker: solid, in its own colour (not the chart's --accent, which the active
+			     chart overrides with its trace colour) so it reads apart from the dashed hover line
+			     and the teal/red crop handles. -->
+			<g v-if="mark" class="fc-mark" pointer-events="none">
+				<line :x1="mark.px" :x2="mark.px" :y1="MT_EFF" :y2="geom.Hh - MB" class="fc-mark-line" stroke-width="1.5" />
+				<text :x="mark.px + (mark.flip ? -4 : 4)" :y="MT_EFF + 10" :text-anchor="mark.flip ? 'end' : 'start'" class="fc-mark-tag">{{ mark.text }}</text>
 			</g>
 			<!-- Live-mode draggable crop handles (start = teal, end = red); wide invisible
 			     hit rects keep them easy to grab. Pointer events are captured on drag. -->
@@ -523,6 +566,8 @@ function onWheel(ev: WheelEvent) {
 .chart-svg .fc-grid { stroke: var(--border, #e2e8f0); }
 .chart-svg .fc-axis { stroke: var(--border-2, #94a3b8); }
 .chart-svg .fc-zero { stroke: var(--border-2, #cbd5e1); }
+.chart-svg .fc-mark-line { stroke: var(--mark-color, #f59e0b); }
+.chart-svg .fc-mark-tag { fill: var(--mark-color, #f59e0b); font-size: var(--fs-xs, 11px); font-weight: 700; font-variant-numeric: tabular-nums; paint-order: stroke; stroke: var(--theme--background, #fff); stroke-width: 3px; }
 .chart-empty { flex: 1; display: grid; place-items: center; color: var(--theme--foreground-subdued, #98a2b3); font-size: var(--fs-sm, 12px); }
 /* The accent, not a sky blue a shade off the Fz trace it is dragged across. */
 .zoom-rect { fill: var(--accent, #38bdf8); fill-opacity: 0.16; stroke: var(--accent, #0ea5e9); stroke-width: 0.8; }
