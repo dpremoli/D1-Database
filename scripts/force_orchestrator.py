@@ -17,9 +17,9 @@ Two phases (run together by default, or separately):
 Usage
 -----
     # one-off, scoped to a single sample's files, verbose:
-    DATABASE_URL=postgres://d1:change_me@localhost:5432/d1_database \
+    DATABASE_URL=postgres://d1:$POSTGRES_PASSWORD@localhost:5432/d1_database \
     DIRECTUS_URL=http://localhost:8055 \
-    DIRECTUS_ADMIN_EMAIL=admin@example.com DIRECTUS_ADMIN_PASSWORD=change_me_admin \
+    DIRECTUS_ADMIN_EMAIL=admin@example.com DIRECTUS_ADMIN_PASSWORD="$DIRECTUS_ADMIN_PASSWORD" \
         py scripts/force_orchestrator.py --discover --run --file-like '%10-AA-MF%' -v
 
     # background crawler: 2 MATLAB workers, 5 s between launches, 200 files/pass:
