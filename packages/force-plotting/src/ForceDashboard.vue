@@ -8,6 +8,7 @@ import { perKeyComputed } from './perKeyComputed';
 import LoadingOverlay from './LoadingOverlay.vue';
 import { sameStage, stageInfo, type LoadStage, type StageInfo } from './loadStage';
 import { createLoadToken } from './loadToken';
+import { createOpGuard } from './opGuard';
 import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
@@ -229,17 +230,33 @@ const zSeries = ref<'none' | 'Fx' | 'Fy' | 'Fz'>('none');
 const zScale = ref(0.35);
 const octreeAvailable = computed(() => detail.value?.octree_status === 'done' && !!detail.value?.octree_path);
 const octreeOn = computed(() => frmMode.value === 'full' && octreeAvailable.value);
+// Every long host poll below (octree, grid, bake, clear-bake, full-res render) runs under this
+// guard. A poll belongs to the op that started it: it stops, and writes nothing, once another op
+// is open, the page is deactivated (#24 keep-alive) or the dashboard unmounts. cancelAll() is
+// called from the op-change watcher and the lifecycle hooks, which also reset the busy flags and
+// status messages the stopped polls would otherwise leave behind.
+const opGuard = createOpGuard(() => detail.value?.id);
+function stopHostPolls() {
+	opGuard.cancelAll();
+	buildingOctree.value = false; octreeMsg.value = null;
+	baking.value = false;
+	rendering.value = false; renderMsg.value = null;
+}
 async function buildOctree() {
 	const d = detail.value;
 	if (!d?.id || buildingOctree.value) return;
+	const live = opGuard.begin(d.id);
 	buildingOctree.value = true; octreeMsg.value = 'Requesting full-res octree build on the host…';
 	try {
 		await api.patch(`/items/machining_force_analysis/${d.id}`, { octree_status: 'pending', octree_requested_at: new Date().toISOString() });
+		if (!live()) return;
 		octreeMsg.value = 'Building on the host (minutes for large ops)…';
 		const deadline = Date.now() + 15 * 60 * 1000;
 		while (Date.now() < deadline) {
 			await new Promise((r) => setTimeout(r, 3000));
+			if (!live()) return;
 			const res = await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['octree_status', 'octree_path', 'octree_points', 'octree_error'] } });
+			if (!live()) return;
 			const row = res.data?.data;
 			if (row?.octree_status === 'done' && row.octree_path) {
 				detail.value = { ...detail.value, octree_status: 'done', octree_path: row.octree_path, octree_points: row.octree_points };
@@ -249,8 +266,9 @@ async function buildOctree() {
 		}
 		octreeMsg.value = 'Still building — check back shortly (is the force orchestrator running?).';
 	} catch (e: any) {
+		if (!live()) return;
 		octreeMsg.value = e?.response?.status === 403 ? 'Not permitted (admin only) to request a host build.' : (e?.message || 'octree request failed');
-	} finally { buildingOctree.value = false; }
+	} finally { if (live()) buildingOctree.value = false; }
 }
 
 // ---- Interpolated-grid octree (Gridded + Full-res) ---------------------------------
@@ -265,14 +283,18 @@ const gridFidelityPct = computed(() => {
 async function buildGridOctree() {
 	const d = detail.value;
 	if (!d?.id || buildingOctree.value) return;
+	const live = opGuard.begin(d.id);
 	buildingOctree.value = true; octreeMsg.value = 'Requesting interpolated-grid build on the host…';
 	try {
 		await api.patch(`/items/machining_force_analysis/${d.id}`, { grid_octree_status: 'pending', grid_octree_requested_at: new Date().toISOString() });
+		if (!live()) return;
 		octreeMsg.value = 'Interpolating grid on the host (minutes for large ops)…';
 		const deadline = Date.now() + 15 * 60 * 1000;
 		while (Date.now() < deadline) {
 			await new Promise((r) => setTimeout(r, 3000));
+			if (!live()) return;
 			const res = await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['grid_octree_status', 'grid_octree_path', 'grid_octree_points', 'grid_octree_error', 'grid_fidelity', 'grid_arm_ratio', 'grid_cell_mm'] } });
+			if (!live()) return;
 			const row = res.data?.data;
 			if (row?.grid_octree_status === 'done' && row.grid_octree_path) {
 				detail.value = { ...detail.value, grid_octree_status: 'done', grid_octree_path: row.grid_octree_path,
@@ -284,8 +306,9 @@ async function buildGridOctree() {
 		}
 		octreeMsg.value = 'Still building — check back shortly (is the force orchestrator running?).';
 	} catch (e: any) {
+		if (!live()) return;
 		octreeMsg.value = e?.response?.status === 403 ? 'Not permitted (admin only) to request a host build.' : (e?.message || 'grid request failed');
-	} finally { buildingOctree.value = false; }
+	} finally { if (live()) buildingOctree.value = false; }
 }
 // When the user turns on Gridded in Full-res and no grid octree exists yet, build it.
 watch(() => [gridFull.value, frmMode.value], () => {
@@ -569,6 +592,7 @@ watch([workChain, () => detail.value?.live_cache_file, () => filtersOpen.value, 
 	previewTimer = window.setTimeout(runPreview, 400);
 }, { deep: true });
 watch(() => detail.value?.id, () => {
+	stopHostPolls();   // a poll started for the previous op must not report into this one
 	workChain.value = savedChain.value ?? defaultChain();
 	filteredCache.value = null; filterErr.value = null; filterFftOverlay.value = null;
 });
@@ -597,23 +621,31 @@ async function applyFilter() {
 async function bakeFilters() {
 	const d = detail.value;
 	if (!d?.id || baking.value) return;
+	const live = opGuard.begin(d.id);
 	baking.value = true; filterErr.value = null;
 	try {
 		await api.patch(`/items/machining_force_analysis/${d.id}`, { filter_chain: workChain.value, status: 'pending' });
 		const deadline = Date.now() + 15 * 60 * 1000;
 		while (Date.now() < deadline) {
 			await new Promise((r) => setTimeout(r, 3000));
+			if (!live()) return;
 			const row = (await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['status', 'filter_chain', 'live_cache_file', 'error_message'] } })).data?.data;
+			if (!live()) return;
 			if (row?.status === 'done') {
 				await api.patch(`/items/machining_force_analysis/${d.id}`, { filter_baked: true }).catch(() => {});   // outputs now reprocessed
+				// The bake is on the server either way; only the open op's view is updated.
+				if (!live()) return;
 				detail.value = { ...detail.value, filter_chain: row.filter_chain, filter_baked: true, live_cache_file: row.live_cache_file };
 				cachePut(row.live_cache_file, null as any); await loadFrm(); return;
 			}
 			if (row?.status === 'error') { filterErr.value = `Bake failed: ${row.error_message || 'unknown'}`; return; }
 		}
 		filterErr.value = 'Still baking — check back shortly (is the force orchestrator running?).';
-	} catch (e: any) { filterErr.value = e?.response?.status === 403 ? 'Not permitted (admin only) to bake.' : (e?.message || 'bake request failed'); }
-	finally { baking.value = false; }
+	} catch (e: any) {
+		if (!live()) return;
+		filterErr.value = e?.response?.status === 403 ? 'Not permitted (admin only) to bake.' : (e?.message || 'bake request failed');
+	}
+	finally { if (live()) baking.value = false; }
 }
 // Clear routes by state: a light apply just drops the saved chain (no host); a bake must reprocess
 // the outputs back to raw (status='pending', admin-only), so it keeps the polling path.
@@ -630,18 +662,22 @@ async function clearFilter() {
 }
 async function clearBake() {
 	const d = detail.value; if (!d?.id) return;
+	const live = opGuard.begin(d.id);
 	workChain.value = defaultChain();
 	await api.patch(`/items/machining_force_analysis/${d.id}`, { filter_chain: null, filter_baked: false, status: 'pending' }).catch(() => {});
+	if (!live()) return;
 	baking.value = true;
 	try {
 		const deadline = Date.now() + 15 * 60 * 1000;
 		while (Date.now() < deadline) {
 			await new Promise((r) => setTimeout(r, 3000));
+			if (!live()) return;
 			const row = (await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['status', 'live_cache_file'] } })).data?.data;
+			if (!live()) return;
 			if (row?.status === 'done') { detail.value = { ...detail.value, filter_chain: null, filter_baked: false, live_cache_file: row.live_cache_file }; cachePut(row.live_cache_file, null as any); await loadFrm(); return; }
 			if (row?.status === 'error') return;
 		}
-	} finally { baking.value = false; }
+	} finally { if (live()) baking.value = false; }
 }
 // Full ColorScale editor (Stage 5/6): `colorScale` is now the real source of truth for every
 // FRM pane on this dashboard, driven by ColorScaleEditor.vue's update:colorScale. `locked`
@@ -1037,6 +1073,9 @@ function releaseFrmCache() {
 }
 onDeactivated(releaseFrmCache);
 onBeforeUnmount(releaseFrmCache);
+// The host polls (bake, octree, render) also stop when the page is left (#24 keep-alive) or torn down.
+onDeactivated(stopHostPolls);
+onBeforeUnmount(stopHostPolls);
 
 function sampleOf(r: any) { return r.operation_id?.sample_id; }
 
@@ -1924,31 +1963,36 @@ const timeScale = computed(() => (editRate.value > 0 ? cacheFs / editRate.value 
 async function processFullRes() {
 	const d = detail.value;
 	if (!d?.id || rendering.value) return;
+	const live = opGuard.begin(d.id);
 	rendering.value = true;
 	renderMsg.value = 'Requesting host render…';
 	try {
 		await api.patch(`/items/machining_force_analysis/${d.id}`, {
 			status: 'pending', live_render_points: Math.max(1, Math.round(renderPoints.value)),
 		});
+		if (!live()) return;
 		renderMsg.value = 'Queued — waiting for the host crawler…';
-		await pollRender(d.id, d.live_cache_file);
+		await pollRender(d.id, d.live_cache_file, live);
 	} catch (e: any) {
+		if (!live()) return;
 		renderMsg.value = e?.response?.status === 403
 			? 'Not permitted (admin only) to request a host render.'
 			: (e?.message || 'render request failed');
 	} finally {
-		rendering.value = false;
+		if (live()) rendering.value = false;
 	}
 }
-async function pollRender(id: string, prevCacheId: string | null) {
+async function pollRender(id: string, prevCacheId: string | null, live: () => boolean) {
 	const deadline = Date.now() + 5 * 60 * 1000;         // give the host up to 5 min
 	while (Date.now() < deadline) {
 		await new Promise((r) => setTimeout(r, 2500));
+		if (!live()) return;
 		let row: any = null;
 		try {
 			const res = await api.get(`/items/machining_force_analysis/${id}`, { params: { fields: ['status', 'live_cache_file', 'live_render_points', 'error_message'] } });
 			row = res.data?.data;
 		} catch { /* transient */ }
+		if (!live()) return;
 		if (!row) continue;
 		if (row.status === 'error') { renderMsg.value = `Host render failed: ${row.error_message || 'unknown error'}`; return; }
 		if (row.status === 'done' && !row.live_render_points) {
