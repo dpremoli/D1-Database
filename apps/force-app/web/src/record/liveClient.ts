@@ -270,11 +270,14 @@ export class RecordClient {
 			const id: string | null = data.id ?? this.status.captureId;
 			let summary: any = null;
 			if (srv === 'done' && id) {
-				try {
-					const r = await fetch(`${this.base}/captures/${id}/summary`);
-					if (r.ok) summary = await r.json();
-				} catch { /* the dialog still works from live_cache.bin; summary only adds extras */ }
-				if (!unchanged()) return;
+				// One retry: a blip here left summary null, which uploads read as "a .mat exists".
+				for (let attempt = 0; attempt < 2 && summary === null; attempt++) {
+					try {
+						const r = await fetch(`${this.base}/captures/${id}/summary`);
+						if (r.ok) summary = await r.json();
+					} catch { /* the dialog still works from live_cache.bin; summary only adds extras */ }
+					if (!unchanged()) return;
+				}
 			}
 			this.status.captureId = id;
 			this.status.error = data.error ?? null;

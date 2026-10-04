@@ -53,6 +53,17 @@ describe('RecordClient reconcile with /record/status', () => {
 		expect(c.status.summary).toEqual({ duration_sec: 8, mat_written: true });
 	});
 
+	it('retries the summary fetch once after a blip', async () => {
+		reply('/record/status', { body: { state: 'done', id: 'cap-1' } });
+		let n = 0;
+		reply('/captures/cap-1/summary', () => (++n === 1 ? { ok: false, status: 503 } : { body: { mat_written: false } }));
+		const c = new RecordClient();
+		c.status.state = 'recording'; c.status.captureId = 'cap-1';
+		await c.reconcile();
+		expect(c.status.state).toBe('done');
+		expect(c.status.summary).toEqual({ mat_written: false });
+	});
+
 	it('adopts a recording it was never told about (page mounted mid-cut)', async () => {
 		reply('/record/status', { body: { state: 'recording', id: 'cap-2', n_total: 500, elapsed_sec: 3.5, peaks: { Fx: 1, Fy: 2, Fz: 3 } } });
 		const c = new RecordClient();

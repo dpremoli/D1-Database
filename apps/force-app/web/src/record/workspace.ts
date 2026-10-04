@@ -519,6 +519,17 @@ export function createWorkspace() {
 		// what the earlier attempt finished instead of inserting a second operation row.
 		const progress = uploadProgress(id);
 		if (progress.analysisDone && progress.opId) return progress.opId;
+		// A null summary (the summary fetch failed during a reconcile) is not "a .mat was written":
+		// an over-MAT_MAX_BYTES cut has none. Ask the recorder before deciding. 404 = no
+		// summary.json at all (an old capture): treat as before. Any other failure is a retryable
+		// error, not a guess.
+		if (!st.summary) {
+			let r: Response;
+			try { r = await fetch(`${client.baseUrl}/captures/${id}/summary`); }
+			catch { throw new Error('could not read the capture summary from the recorder - try again'); }
+			if (r.ok) st.summary = await r.json();
+			else if (r.status !== 404) throw new Error(`could not read the capture summary from the recorder (${r.status}) - try again`);
+		}
 		const matWritten = st.summary?.mat_written !== false;
 		// The local blob reads don't need the logged run, so they start alongside it; the uploads
 		// still wait for it, so a failed insert never leaves orphaned files -- and cancels the reads.

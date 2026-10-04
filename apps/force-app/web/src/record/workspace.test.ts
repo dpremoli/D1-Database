@@ -202,6 +202,35 @@ describe('workspace.uploadCutToDatabase() resume (2.2)', () => {
 	});
 });
 
+describe('workspace.uploadCutToDatabase() with an unknown summary', () => {
+	beforeEach(() => {
+		fileN = 0; dx.get.mockResolvedValue({ data: { data: [] } });
+		dx.post.mockImplementation(async (url: string) => {
+			if (url === '/items/manufacturing_operations') return { data: { data: { operation_id: 'op-s' } } };
+			if (url === '/files') return { data: { data: { id: `file-${++fileN}` } } };
+			return { data: { data: {} } };
+		});
+		replies['/captures/cap-up/live_cache.bin'] = { body: null };
+	});
+	const noSummary = async () => { const w = await uploadable(); w.st.summary = null; return w; };
+
+	it('asks the recorder and skips the capture.mat of an over-size cut', async () => {
+		replies['/captures/cap-up/summary'] = { body: { mat_written: false } };
+		const w = await noSummary();
+		await expect(w.uploadCutToDatabase()).resolves.toBe('op-s');
+		expect(calls).not.toContain('GET /captures/cap-up/capture.mat');
+		expect(posts('/files')).toBe(1);
+		expect(dx.post.mock.calls.find((c) => c[0] === '/items/machining_force_analysis')![1].directus_files_id).toBeNull();
+	});
+
+	it('fails retryably, without logging a run, when the summary cannot be read', async () => {
+		replies['/captures/cap-up/summary'] = { ok: false, status: 503 };
+		const w = await noSummary();
+		await expect(w.uploadCutToDatabase()).rejects.toThrow(/capture summary/);
+		expect(posts('/items/manufacturing_operations')).toBe(0);
+	});
+});
+
 // ---- 2.5: Start is one-shot from the first click, not from the request ----
 describe('workspace.start() (2.5)', () => {
 	beforeEach(() => { alarmController.testedSinceStart.value = false; });
