@@ -2,8 +2,14 @@
 """Phase 8 — Legacy data migration from Sample_Data.xlsx into D1 PostgreSQL.
 
 Reads the AppSheet/Sheets export and loads every entity into the target schema
-in FK-dependency order. Safe to re-run: existing rows are skipped via
-ON CONFLICT DO NOTHING (materials use COALESCE to back-fill missing density).
+in FK-dependency order. Safe to re-run: a re-run never overwrites a value that is already
+in the database (so edits made in the app survive). Where a row already exists it is left
+as is (ON CONFLICT DO NOTHING) or only has its NULL columns filled in
+(ON CONFLICT DO UPDATE SET col = COALESCE(table.col, EXCLUDED.col)).
+
+Owners and operators are written to both the people-based columns the UI reads
+(owner_person_id, operator_person_id, sample_co_owners.person_id) and the legacy user
+columns (owner, user_id), resolved through the `people` table (see legacy_people.py).
 
 Provenance: every imported row records 'Imported from legacy AppSheet export'
 in its notes / outcome_notes field so the audit trail is clear.
@@ -11,7 +17,7 @@ in its notes / outcome_notes field so the audit trail is clear.
 Usage
 -----
     pip install -r scripts/requirements.txt
-    DATABASE_URL="postgres://d1:change_me@localhost:5432/d1_database" \\
+    DATABASE_URL="postgres://d1:$POSTGRES_PASSWORD@localhost:5432/d1_database" \\
         python3 scripts/migrate_legacy.py --xlsx /path/to/Sample_Data.xlsx
 
     # Dry-run (prints row counts only, no DB writes):
@@ -58,17 +64,24 @@ def legacy_uuid(raw_id: Any) -> uuid.UUID:
     return uuid.uuid5(_LEGACY_NS, str(raw_id).strip())
 
 
+def is_null_token(s: str) -> bool:
+    """AppSheet "no value" spellings. "na"/"NA" are matched case-sensitively so that the
+    element symbol "Na" (sodium) survives; "none" and "n/a" are unambiguous in any case.
+    """
+    return s.lower() in ("none", "n/a") or s in ("na", "NA")
+
+
 def clean_str(v: Any) -> str | None:
     s = str(v).strip() if v is not None else None
-    return s if s and s.lower() not in ("none", "n/a", "na") else None
+    return s if s and not is_null_token(s) else None
 
 
 def clean_float(v: Any) -> float | None:
+    """float(v), or None when blank/unparseable. A genuine 0.0 is kept."""
     if v is None:
         return None
     try:
-        f = float(v)
-        return None if f == 0.0 else f
+        return float(v)
     except (ValueError, TypeError):
         return None
 
@@ -170,12 +183,12 @@ def load_alloying_elements(cur, rows: list[dict], dry: bool) -> int:
                   boiling_point_k, electronegativity, atomic_radius_pm)
                VALUES %s
                ON CONFLICT (symbol) DO UPDATE SET
-                 atomic_weight     = COALESCE(EXCLUDED.atomic_weight, alloying_elements.atomic_weight),
-                 density_g_per_cm3 = COALESCE(EXCLUDED.density_g_per_cm3, alloying_elements.density_g_per_cm3),
-                 melting_point_k   = COALESCE(EXCLUDED.melting_point_k, alloying_elements.melting_point_k),
-                 boiling_point_k   = COALESCE(EXCLUDED.boiling_point_k, alloying_elements.boiling_point_k),
-                 electronegativity = COALESCE(EXCLUDED.electronegativity, alloying_elements.electronegativity),
-                 atomic_radius_pm  = COALESCE(EXCLUDED.atomic_radius_pm, alloying_elements.atomic_radius_pm)""",
+                 atomic_weight     = COALESCE(alloying_elements.atomic_weight, EXCLUDED.atomic_weight),
+                 density_g_per_cm3 = COALESCE(alloying_elements.density_g_per_cm3, EXCLUDED.density_g_per_cm3),
+                 melting_point_k   = COALESCE(alloying_elements.melting_point_k, EXCLUDED.melting_point_k),
+                 boiling_point_k   = COALESCE(alloying_elements.boiling_point_k, EXCLUDED.boiling_point_k),
+                 electronegativity = COALESCE(alloying_elements.electronegativity, EXCLUDED.electronegativity),
+                 atomic_radius_pm  = COALESCE(alloying_elements.atomic_radius_pm, EXCLUDED.atomic_radius_pm)""",
             data,
         )
     return len(data)
@@ -253,11 +266,16 @@ def load_material_elements(cur, rows: list[dict], dry: bool) -> int:
         Also handles multi-character symbols like "Mo", "Hf", "Ti" etc.
         """
         token = token.strip()
-        if token.lower() in ("n/a", "na", "others", "other", "balance", "bal"):
-            return None
-        # Direct match first
+        # Direct match first (so sodium, "Na", is not mistaken for "na" = not available)
         if token in known:
             return token
+        if is_null_token(token) or token.lower() in (
+            "others",
+            "other",
+            "balance",
+            "bal",
+        ):
+            return None
         # Try each word in the token
         for word in re.split(r"[\s%–\-/:.]+", token):
             word = word.strip()
@@ -286,11 +304,10 @@ def load_material_elements(cur, rows: list[dict], dry: bool) -> int:
                 else token.strip()
             )
             if not sym:
-                if known_symbols and token.strip().lower() not in (
-                    "n/a",
-                    "na",
-                    "others",
-                    "",
+                if (
+                    known_symbols
+                    and not is_null_token(token.strip())
+                    and token.strip().lower() not in ("others", "")
                 ):
                     log.debug(
                         "material_elements: no match for %r, skipping", token.strip()
@@ -336,7 +353,7 @@ def load_equipment(cur, rows: list[dict], dry: bool) -> int:
                  (equipment_id, equipment_code, equipment_name, equipment_type, manufacturer, notes)
                VALUES %s
                ON CONFLICT (equipment_code) DO UPDATE SET
-                 manufacturer = COALESCE(EXCLUDED.manufacturer, equipment.manufacturer)""",
+                 manufacturer = COALESCE(equipment.manufacturer, EXCLUDED.manufacturer)""",
             data,
         )
     return len(data)
@@ -386,16 +403,16 @@ def load_tools(cur, rows: list[dict], dry: bool) -> int:
                   shank_type, cutting_direction, insert_clamping_system, notes)
                VALUES %s
                ON CONFLICT (tool_code) DO UPDATE SET
-                 manufacturer          = COALESCE(EXCLUDED.manufacturer, tools.manufacturer),
-                 datasheet_url         = COALESCE(EXCLUDED.datasheet_url, tools.datasheet_url),
-                 op_type               = COALESCE(EXCLUDED.op_type, tools.op_type),
-                 cutter_diameter_mm    = COALESCE(EXCLUDED.cutter_diameter_mm, tools.cutter_diameter_mm),
-                 shank_width_mm        = COALESCE(EXCLUDED.shank_width_mm, tools.shank_width_mm),
-                 shank_length_mm       = COALESCE(EXCLUDED.shank_length_mm, tools.shank_length_mm),
-                 overall_length_mm     = COALESCE(EXCLUDED.overall_length_mm, tools.overall_length_mm),
-                 shank_type            = COALESCE(EXCLUDED.shank_type, tools.shank_type),
-                 cutting_direction     = COALESCE(EXCLUDED.cutting_direction, tools.cutting_direction),
-                 insert_clamping_system = COALESCE(EXCLUDED.insert_clamping_system, tools.insert_clamping_system)""",
+                 manufacturer          = COALESCE(tools.manufacturer, EXCLUDED.manufacturer),
+                 datasheet_url         = COALESCE(tools.datasheet_url, EXCLUDED.datasheet_url),
+                 op_type               = COALESCE(tools.op_type, EXCLUDED.op_type),
+                 cutter_diameter_mm    = COALESCE(tools.cutter_diameter_mm, EXCLUDED.cutter_diameter_mm),
+                 shank_width_mm        = COALESCE(tools.shank_width_mm, EXCLUDED.shank_width_mm),
+                 shank_length_mm       = COALESCE(tools.shank_length_mm, EXCLUDED.shank_length_mm),
+                 overall_length_mm     = COALESCE(tools.overall_length_mm, EXCLUDED.overall_length_mm),
+                 shank_type            = COALESCE(tools.shank_type, EXCLUDED.shank_type),
+                 cutting_direction     = COALESCE(tools.cutting_direction, EXCLUDED.cutting_direction),
+                 insert_clamping_system = COALESCE(tools.insert_clamping_system, EXCLUDED.insert_clamping_system)""",
             data,
         )
     return len(data)
@@ -461,16 +478,16 @@ def load_insert_types(cur, rows: list[dict], dry: bool) -> int:
                   fixing_hole_diameter_mm, material_class)
                VALUES %s
                ON CONFLICT (type_code) DO UPDATE SET
-                 manufacturer          = COALESCE(EXCLUDED.manufacturer, insert_types.manufacturer),
-                 op_type               = COALESCE(EXCLUDED.op_type, insert_types.op_type),
-                 mounting_style_code   = COALESCE(EXCLUDED.mounting_style_code, insert_types.mounting_style_code),
-                 inserts_per_box       = COALESCE(EXCLUDED.inserts_per_box, insert_types.inserts_per_box),
-                 edge_count            = COALESCE(EXCLUDED.edge_count, insert_types.edge_count),
-                 nose_radius_mm        = COALESCE(EXCLUDED.nose_radius_mm, insert_types.nose_radius_mm),
-                 cutting_edge_length_mm = COALESCE(EXCLUDED.cutting_edge_length_mm, insert_types.cutting_edge_length_mm),
-                 included_angle_deg    = COALESCE(EXCLUDED.included_angle_deg, insert_types.included_angle_deg),
-                 fixing_hole_diameter_mm = COALESCE(EXCLUDED.fixing_hole_diameter_mm, insert_types.fixing_hole_diameter_mm),
-                 material_class        = COALESCE(EXCLUDED.material_class, insert_types.material_class)""",
+                 manufacturer          = COALESCE(insert_types.manufacturer, EXCLUDED.manufacturer),
+                 op_type               = COALESCE(insert_types.op_type, EXCLUDED.op_type),
+                 mounting_style_code   = COALESCE(insert_types.mounting_style_code, EXCLUDED.mounting_style_code),
+                 inserts_per_box       = COALESCE(insert_types.inserts_per_box, EXCLUDED.inserts_per_box),
+                 edge_count            = COALESCE(insert_types.edge_count, EXCLUDED.edge_count),
+                 nose_radius_mm        = COALESCE(insert_types.nose_radius_mm, EXCLUDED.nose_radius_mm),
+                 cutting_edge_length_mm = COALESCE(insert_types.cutting_edge_length_mm, EXCLUDED.cutting_edge_length_mm),
+                 included_angle_deg    = COALESCE(insert_types.included_angle_deg, EXCLUDED.included_angle_deg),
+                 fixing_hole_diameter_mm = COALESCE(insert_types.fixing_hole_diameter_mm, EXCLUDED.fixing_hole_diameter_mm),
+                 material_class        = COALESCE(insert_types.material_class, EXCLUDED.material_class)""",
             data,
         )
     return len(data)
@@ -598,8 +615,8 @@ def load_tool_boxes(
                   insert_type_id, package_quantity, owner, notes)
                VALUES %s
                ON CONFLICT (tool_box_code) DO UPDATE SET
-                 package_quantity = COALESCE(EXCLUDED.package_quantity, tool_boxes.package_quantity),
-                 owner            = COALESCE(EXCLUDED.owner, tool_boxes.owner)""",
+                 package_quantity = COALESCE(tool_boxes.package_quantity, EXCLUDED.package_quantity),
+                 owner            = COALESCE(tool_boxes.owner, EXCLUDED.owner)""",
             data,
         )
     return len(data), box_uuid_map
@@ -642,7 +659,9 @@ def load_cutting_inserts(
             insert_code = f"{insert_code}-{uid[:4]}"
         seen_codes.add(insert_code)
         status = clean_str(r.get("Status"))
-        is_depleted = status and status.lower() in ("used", "depleted", "consumed")
+        is_depleted = bool(
+            status and status.lower() in ("used", "depleted", "consumed")
+        )
         location = clean_str(r.get("Location"))
         owner = clean_str(r.get("Owner"))
         insert_uuid = str(legacy_uuid(f"insert:{uid}"))
@@ -669,8 +688,8 @@ def load_cutting_inserts(
                   insert_number, location, owner, is_depleted, notes)
                VALUES %s
                ON CONFLICT (insert_code) DO UPDATE SET
-                 location = COALESCE(EXCLUDED.location, cutting_inserts.location),
-                 owner    = COALESCE(EXCLUDED.owner, cutting_inserts.owner)""",
+                 location = COALESCE(cutting_inserts.location, EXCLUDED.location),
+                 owner    = COALESCE(cutting_inserts.owner, EXCLUDED.owner)""",
             data,
         )
     return len(data), insert_uuid_map
@@ -694,7 +713,9 @@ def load_insert_edges(
             "SELECT ci.insert_code, ci.insert_number, tb.tool_box_code "
             "FROM cutting_inserts ci JOIN tool_boxes tb ON ci.tool_box_id=tb.tool_box_id"
         )
-        insert_info: dict[str, tuple] = {r[0]: (r[2], r[1]) for r in cur.fetchall()}  # noqa: F841
+        insert_info: dict[str, tuple] = {
+            r[0]: (r[2], r[1]) for r in cur.fetchall()
+        }  # noqa: F841
     else:
         insert_info = {}  # noqa: F841
 
@@ -847,19 +868,19 @@ def load_physical_samples(
                   legacy_notes)
                VALUES %s
                ON CONFLICT (sample_code) DO UPDATE SET
-                 form                = EXCLUDED.form,
-                 item_type           = COALESCE(EXCLUDED.item_type, physical_samples.item_type),
-                 nickname            = COALESCE(EXCLUDED.nickname, physical_samples.nickname),
-                 location            = COALESCE(EXCLUDED.location, physical_samples.location),
-                 surface_finish      = COALESCE(EXCLUDED.surface_finish, physical_samples.surface_finish),
-                 owner               = COALESCE(EXCLUDED.owner, physical_samples.owner),
-                 co_owners           = COALESCE(EXCLUDED.co_owners, physical_samples.co_owners),
-                 manufacturing_route = COALESCE(EXCLUDED.manufacturing_route, physical_samples.manufacturing_route),
-                 mounted             = COALESCE(EXCLUDED.mounted, physical_samples.mounted),
-                 mounting_method     = COALESCE(EXCLUDED.mounting_method, physical_samples.mounting_method),
-                 width_mm            = COALESCE(EXCLUDED.width_mm, physical_samples.width_mm),
-                 legacy_notes        = COALESCE(EXCLUDED.legacy_notes, physical_samples.legacy_notes),
-                 notes               = EXCLUDED.notes""",
+                 form                = COALESCE(physical_samples.form, EXCLUDED.form),
+                 item_type           = COALESCE(physical_samples.item_type, EXCLUDED.item_type),
+                 nickname            = COALESCE(physical_samples.nickname, EXCLUDED.nickname),
+                 location            = COALESCE(physical_samples.location, EXCLUDED.location),
+                 surface_finish      = COALESCE(physical_samples.surface_finish, EXCLUDED.surface_finish),
+                 owner               = COALESCE(physical_samples.owner, EXCLUDED.owner),
+                 co_owners           = COALESCE(physical_samples.co_owners, EXCLUDED.co_owners),
+                 manufacturing_route = COALESCE(physical_samples.manufacturing_route, EXCLUDED.manufacturing_route),
+                 mounted             = COALESCE(physical_samples.mounted, EXCLUDED.mounted),
+                 mounting_method     = COALESCE(physical_samples.mounting_method, EXCLUDED.mounting_method),
+                 width_mm            = COALESCE(physical_samples.width_mm, EXCLUDED.width_mm),
+                 legacy_notes        = COALESCE(physical_samples.legacy_notes, EXCLUDED.legacy_notes),
+                 notes               = COALESCE(physical_samples.notes, EXCLUDED.notes)""",
             data,
         )
     return len(data), sample_uuid_map, sample_code_map
