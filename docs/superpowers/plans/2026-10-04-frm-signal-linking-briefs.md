@@ -127,11 +127,92 @@ Add props `markX?: number | null`, `markLabel?: string`; emit
    (check `ev.button`).
 4. If you extract a helper (e.g. a "marker in view" or label formatter), unit-test it.
 
-## Stream E — dashboard wiring + docs (coordinator-reviewed, after B–D merge)
+## Stream E — dashboard wiring + docs (after A–D are merged)
 
-Files: `packages/force-plotting/src/ForceDashboard.vue`, `docs/wiki/force-app/plot-dashboard.md`,
-`docs/wiki/force-app/developer-guide.md`,
-`.claude/skills/force-app-conventions/references/architecture.md`,
+Files you own: `packages/force-plotting/src/ForceDashboard.vue`, `docs/wiki/force-app/plot-dashboard.md`,
+`docs/wiki/force-app/developer-guide.md`, `.claude/skills/force-app-conventions/references/architecture.md`,
 `docs/superpowers/specs/2026-10-04-frm-signal-linking-design.md` (new), `docs/superpowers/README.md`,
-`apps/force-app/web/src/changelog.ts`. Follow the plan's Stream E section exactly; details are
-written into the worker prompt at launch.
+`apps/force-app/web/src/changelog.ts`. Do not edit FrmCloud/FrmOctree/ForceChart/cloudPick/ContextMenu —
+if you find a bug there, report it instead.
+
+What the merged streams give you (read their code):
+- `FrmCloud` and `FrmOctree`: emit `pointmenu(PointMenuEvent)`; props `markTime`, `hoverTime`; exposed
+  `revealTime(t): boolean`. `FrmOctree` also takes `sampleCache`, `innerDiam`, `ppr`.
+- `ForceChart`: props `markX`, `markLabel`; emit `chartmenu({clientX, clientY, x})` (env charts only).
+- `ContextMenu.vue` (`x`, `y`, `items: {label, hint?, disabled?, run}[]`, emits `close`) and
+  `cloudPick.ts` (`recentreWindow`, `formatPointInfo`, types).
+
+### ForceDashboard.vue
+1. **State**: `markTime = ref<number | null>(null)`; `menu = ref<{ x: number; y: number; items: ContextMenuItem[] } | null>(null)`;
+   `hoverTime = computed(...)`: `hoverIndex` (:83) is a bucket index into the env series — map it through
+   `detail.value?.series?.[<first open axis or 'Fz'>]?.t[hoverIndex]`, only when `chartMode === 'force'`, else null.
+   Clear `markTime` and `menu` when `selectedRowId` changes. A window `keydown` Escape clears `markTime`
+   when no menu is open and focus isn't in an input/textarea/select/contenteditable (remove the listener on unmount).
+2. **Map wiring**: on every Lite `FrmCloud` mount (compare raw + filtered panes, filtered-solo, live — around
+   :2670-2690) add `:mark-time="markTime" :hover-time="hoverTime" @pointmenu="openPointMenu"`. On `FrmOctree`
+   (:2663) add the same plus `:sample-cache="octreeSampleCache" :inner-diam="Number(detail.inner_diameter) || 0"
+   :ppr="Number(detail.pulses_per_rev) || 1"` — the analysis row's stored values, which are what the host
+   built the octree with (NOT the editable `editInnerDiam`/`editPpr`).
+   `octreeSampleCache = computed(() => { void cacheEpoch.value; const id = detail.value?.live_cache_file; if (!id || !octreeOn.value) return null; const c = cacheGet(id); if (!c) fetchRadialCache(); return c ?? null; })`
+   — reuse the existing lazy loader `fetchRadialCache()` / `cacheEpoch` (≈:1890), which the measured-mode radial axis
+   already uses, so in practice the cache is usually already in the LRU. Declare it where the TDZ comments allow
+   (read the comments around `cacheEpoch` ≈:701 and `liveOn` ≈:500).
+3. **Chart wiring**: on the `ForceChart` loop (≈:2512) add `:mark-x="c.kind === 'env' && chartMode === 'force' ? markTime : null"`
+   and `@chartmenu="openChartMenu"`.
+4. **Render** `<ContextMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menu.items" @close="menu = null" />` once,
+   at the dashboard root (it is position:fixed).
+5. **Map menu** (`openPointMenu(e: PointMenuEvent)`), items in this order:
+   - **Show position in time** — disabled unless `e.point`; hint by reason: `gridded` → "Gridded 3D view averages
+     samples", `no-cache` → "Needs this cut's live cache", no point → "No point under the cursor". Run:
+     `if (chartMode.value !== 'force') chartMode.value = 'force'` (the existing watch resets zoom), set `markTime = t`,
+     then `await nextTick()` and apply `recentreWindow(zoomStart.value, zoomEnd.value, t, tMin, tMax)` via
+     `onChartZoom` when non-null, where tMin/tMax are the first/last of the env series `t`.
+   - **Clear marker** — only when `markTime != null`.
+   - **Copy point info** — disabled unless `e.point`; `navigator.clipboard?.writeText(formatPointInfo(p))`; on
+     rejection/absence show the failure through the dashboard's existing transient message mechanism (find the one
+     used for save/bake feedback); never throw.
+   - **Set crop start here** / **Set crop end here** — disabled unless `e.point`, and when the new edge would cross
+     the other (`t >= cropEndSec` / `t <= cropStartSec`, hint "Would cross the crop end/start"). Run
+     `onCropEdit('start' | 'end', t)` (:466) — the existing path, so it's batched into Save changes.
+6. **Chart menu** (`openChartMenu({clientX, clientY, x: t})`):
+   - **Show position on map** — work out the target map: Full/Gridded when `octreeOn`, else Lite when
+     `liveAvailable` (if the FRM view is the static Figure, run `chooseMode('lite')` first), else disabled with hint
+     "No interactive map for this cut". Disabled with "Outside the cropped window" when Lite and `t` is outside
+     `[cropStartSec, cropEndSec]`; with "Needs this cut's live cache" when Full and no `live_cache_file`. Run: set
+     `markTime = t`, then on `nextTick` call `(octreeOn ? frmOctreeRef : frmCloudRef).value?.revealTime?.(t)`; if that
+     returns false because the view is still loading, keep `pendingReveal = t` and retry it from `onCloudLoaded`
+     (and once the octree sample cache arrives), then clear it.
+   - **Clear marker** (when set), **Set crop start here**, **Set crop end here** — as in the map menu.
+7. Invariants: no new panel type, `RIGHT_KEY` unchanged, `markTime` not persisted (force-app-conventions #11);
+   plotting code stays host-agnostic (#10).
+
+### Docs
+- `docs/wiki/force-app/plot-dashboard.md`: new section **Linking the map and the signals** (after *FRM map panel*):
+  right-click a map point (menu items and what each does), the pinned marker and zoom recentring, chart hover →
+  hollow ring on the map, chart right-click → Show position on map, works in Lite and Full/Gridded (Full needs the
+  cut's live cache; gridded picks the nearest sample to the spot; gridded 3D Lite can't), Escape / switching
+  operation clears the marker. Add one-line cross-links from *Signals panel* and *FRM map panel*. Leave image
+  references `../images/force-app/plot-point-menu.png` and `plot-chart-menu.png` commented out
+  (`<!-- ![…](…) -->`) — the coordinator adds the screenshots after verification. Follow the page's existing voice.
+- `docs/wiki/force-app/developer-guide.md`: one short paragraph (or a bullet under *Things worth knowing*): time is
+  the key between chart buckets and cache indices; octree picks work by position through the live cache; pointer to
+  `cloudPick.ts` and the spec.
+- `.claude/skills/force-app-conventions/references/architecture.md`: add `ContextMenu` and modules `cloudPick`,
+  `octreePick`, `chartMark` to the `packages/force-plotting/` row.
+- `docs/superpowers/specs/2026-10-04-frm-signal-linking-design.md`: short design spec in the folder's style
+  (look at an existing spec's opening): **Status** line (Implemented — on branch, pending merge), problem, decision
+  (time as the shared key; GPU/CPU picking; octree picking by position with the frame argument —
+  `process_force.m:168-176,227` vs `path.ts` measured branch, LAS offset restored by potree-core; fixed octree
+  geometry = cache header + analysis row `pulses_per_rev`/`inner_diameter`), scope, deferred (Record page, reverse
+  ring for compare-on-octree…), and the side finding: `saveCropAsOfficial` re-queues octrees but the orchestrator
+  ignores the crop override. Add a row to `docs/superpowers/README.md`'s table.
+- `apps/force-app/web/src/changelog.ts`: the top entry (0.1.34) is unreleased (no tag) — append one plain-language
+  note to its `notes`: Plot page: right-click a point on the FRM map to show when it happened on the force charts
+  (and set the crop there); hovering or right-clicking the charts shows the spot on the map, in Lite and Full views.
+
+### Checks
+`npm test -w @d1/force-plotting`, `npm run typecheck -w @d1/force-plotting`, `npm test -w force-app-web`,
+`npm run typecheck -w force-app-web`, `npm run lint:theme -w force-app-web`, and `npm run build:extension`
+(from the repo root; if the extension build needs deps it can't get, report it). For web typecheck in a worktree the
+`@d1/force-plotting` symlink in the root node_modules may point at the coordinator checkout — if so run
+`npm ci --no-audit --no-fund` in your worktree first.
