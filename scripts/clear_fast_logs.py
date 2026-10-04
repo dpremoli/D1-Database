@@ -62,7 +62,8 @@ WHERE source_system = 'fast_log' AND process_category = 'sintering'
                   WHERE b.operation_id = manufacturing_operations.operation_id)
 """
 
-SNAPSHOT_SQL = """
+SNAPSHOT_SQL = (
+    """
 INSERT INTO fast_log_qa_backup (
     operation_id, operation_date, recipe, batch, max_temp_celsius, max_force_kn,
     coshh_ref, ptc_top_celsius, ptc_bot_celsius, mass_grams, mould_diameter_mm, outcome_notes)
@@ -71,7 +72,9 @@ SELECT
     sintering_max_temp_celsius, sintering_max_force_kn,
     sintering_coshh_ref, sintering_ptc_top_celsius, sintering_ptc_bot_celsius,
     sintering_mass_grams, sintering_mould_diameter_mm, outcome_notes
-""" + _SNAPSHOT_FROM
+"""
+    + _SNAPSHOT_FROM
+)
 
 COUNT_SNAPSHOT_SQL = "SELECT count(*) " + _SNAPSHOT_FROM
 

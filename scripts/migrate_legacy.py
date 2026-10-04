@@ -735,9 +735,7 @@ def load_insert_edges(
             "SELECT ci.insert_code, ci.insert_number, tb.tool_box_code "
             "FROM cutting_inserts ci JOIN tool_boxes tb ON ci.tool_box_id=tb.tool_box_id"
         )
-        insert_info: dict[str, tuple] = {
-            r[0]: (r[2], r[1]) for r in cur.fetchall()
-        }  # noqa: F841
+        insert_info: dict[str, tuple] = {r[0]: (r[2], r[1]) for r in cur.fetchall()}  # noqa: F841
     else:
         insert_info = {}  # noqa: F841
 

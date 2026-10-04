@@ -191,7 +191,7 @@ def test_preview_approximates_a_full_bake(client):
         )
 
     # continuous statistics: close, not equal
-    for name in ("tsa_resid", "resid_z", "glosh"):
+    for name in ("tsa_resid", "resid_z"):
         np.testing.assert_allclose(
             got[name],
             want[name],
@@ -199,6 +199,12 @@ def test_preview_approximates_a_full_bake(client):
             atol=0.05,
             err_msg=f"{name} out of float32 band",
         )
+    # glosh is broadcast back to every point from its nearest reduced neighbour, and the synthetic
+    # has exact distance ties: since neighbours are ordered by (distance, index)
+    # (scripts/diag/spatial.knn_deterministic), a float32 distance that ties where the float64 one
+    # doesn't picks another neighbour. Allow that for a handful of points, never more.
+    off = ~np.isclose(got["glosh"], want["glosh"], rtol=0.05, atol=0.05)
+    assert off.mean() <= 0.001, f"glosh out of float32 band at {int(off.sum())} points"
 
     # gi_star swings hardest on the synthetic's tie degeneracy — assert shape, not values
     gs_a, gs_b = got["gi_star"].astype(np.float64), want["gi_star"].astype(np.float64)
@@ -447,9 +453,9 @@ def test_preview_reflects_a_param_change(client):
     )
     assert a.status_code == b.status_code == 200
     ga, gb = _read_bytes(a.content), _read_bytes(b.content)
-    assert not np.array_equal(ga["gi_star"], gb["gi_star"]), (
-        "k=30 vs k=50 must move gi_star"
-    )
+    assert not np.array_equal(
+        ga["gi_star"], gb["gi_star"]
+    ), "k=30 vs k=50 must move gi_star"
     assert a.headers["x-diag-cache"] == "miss"
 
 
