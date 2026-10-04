@@ -2644,7 +2644,8 @@ function fmtDateTime(v: string | null | undefined) {
 									:crop-editable="c.kind === 'env'" :active="c.key === axis"
 									:overlay="(chartMode === 'fft' && filtersOpen && c.kind === 'line' && c.key === axis) ? filterFftOverlay : null"
 									:view-start="zoomStart" :view-end="zoomEnd" :zoom-tool="rectZoomTool" @zoom="onChartZoom"
-									@update:crop-start="onCropEdit('start', $event)" @update:crop-end="onCropEdit('end', $event)" />
+									@update:crop-start="onCropEdit('start', $event)" @update:crop-end="onCropEdit('end', $event)"
+									:mark-x="c.kind === 'env' && chartMode === 'force' ? markTime : null" @chartmenu="openChartMenu" />
 							</div>
 						</div>
 
