@@ -134,8 +134,22 @@ export function spiralAnchor(c: Cache, cropStartSec: number): { tCs: number; rev
 // changes, re-derive the other from this file's own doc comment, don't hand-edit both separately.
 export function computeSpiralVertexJS(
 	aT: number, aRevs: number, p: SpiralUniformParams, cropStart: number, cropEnd: number,
-): { x: number; y: number; rho: number; visible: boolean } {
-	const u = spiralUniformValues(p);
+): SpiralPos {
+	const out: SpiralPos = { x: 0, y: 0, rho: 0, visible: false };
+	spiralPositionInto(spiralUniformValues(p), aT, aRevs, cropStart, cropEnd, out);
+	return out;
+}
+
+export interface SpiralPos { x: number; y: number; rho: number; visible: boolean }
+export type SpiralUniforms = ReturnType<typeof spiralUniformValues>;
+
+// The vertex shader's position math itself (computeSpiralVertexJS is a thin wrapper), split out so
+// a pick can run it over millions of samples with nothing allocated per call: `u` is
+// spiralUniformValues() computed ONCE, and the result goes into the caller's `out`. This is the
+// function to keep in lockstep with TURNING_SPIRAL_VERT's `main()`.
+export function spiralPositionInto(
+	u: SpiralUniforms, aT: number, aRevs: number, cropStart: number, cropEnd: number, out: SpiralPos,
+): void {
 	let visible = aT >= cropStart && aT <= cropEnd;
 	let rho = u.uRho0, r = 0;
 	if (u.uSpeedMode === 2) {
@@ -151,7 +165,29 @@ export function computeSpiralVertexJS(
 		if (rho < u.uInnerR) visible = false;
 	}
 	const theta = 2 * Math.PI * r;
-	return { x: rho * Math.cos(theta), y: rho * Math.sin(theta), rho, visible };
+	out.x = rho * Math.cos(theta); out.y = rho * Math.sin(theta); out.rho = rho; out.visible = visible;
+}
+
+// The stride buildStaticAttributes applies (and so the one a pick must replay).
+export function normStride(stride: number): number { return Math.max(1, Math.round(stride) || 1); }
+
+// The samples the GPU draws for a crop window, as a run of phase-0 indices i = (k0 + j) * stride,
+// j < n: every stride-th cache sample from index 0 (buildStaticAttributes) whose t lies in
+// [cropStart, cropEnd] (the shader's crop test). A pick walks these instead of building a
+// cs-anchored path (~20 B per sample), so it looks at exactly the points on screen.
+export function phase0Samples(
+	c: Cache, cropStart: number, cropEnd: number, stride: number,
+): { k0: number; n: number; stride: number } {
+	const st = normStride(stride);
+	const none = { k0: 0, n: 0, stride: st };
+	if (!c.N || !(cropEnd >= cropStart)) return none;
+	const lo = idxOfTime(c.t, cropStart);                  // first t >= cropStart (clamped to the last sample)
+	if (c.t[lo] < cropStart) return none;                  // the whole cache is before the crop
+	let hi = idxOfTime(c.t, cropEnd);                      // first t >= cropEnd ...
+	if (c.t[hi] > cropEnd) hi--;                           // ... so step back to the last t <= cropEnd
+	if (hi < lo) return none;
+	const k0 = Math.ceil(lo / st), k1 = Math.floor(hi / st);
+	return k1 < k0 ? none : { k0, n: k1 - k0 + 1, stride: st };
 }
 
 // Decimate the FULL cache (index 0..N, not just the crop window) into the static per-vertex
@@ -170,7 +206,7 @@ export function computeSpiralVertexJS(
 export function buildStaticAttributes(
 	c: Cache, channel: CloudChannel, stride: number,
 ): { aT: Float32Array; aRevs: Float32Array; aVal: Float32Array; count: number } {
-	const st = Math.max(1, Math.round(stride) || 1);
+	const st = normStride(stride);
 	const channelArr = (c as any)[channel] as Float32Array | undefined;
 	const n = Math.ceil(c.N / st);
 	const aT = new Float32Array(n), aRevs = new Float32Array(n), aVal = new Float32Array(n);

@@ -34,7 +34,9 @@ function activate(it: ContextMenuItem) {
 }
 
 function onKey(e: KeyboardEvent) {
-	if (e.key === 'Escape') { e.preventDefault(); emit('close'); return; }
+	// stopPropagation + preventDefault: the host's Escape handler (the dashboard clears the pinned
+	// marker on Escape) must see this press as already used up by closing the menu.
+	if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); emit('close'); return; }
 	if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
 	const btns = enabledButtons();
 	if (!btns.length) return;

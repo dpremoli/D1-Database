@@ -1879,7 +1879,6 @@ function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam:
 	// the cache's feed/diam/rate are the "source" for the modified-highlight in Live
 	srcCut.feed = editFeed.value; srcCut.diam = editDiam.value; srcCut.rate = editRate.value;
 	cacheEpoch.value++;   // the cache just landed in the LRU — let radialValuesFor() see it
-	retryPendingReveal();
 }
 
 // ---- Second X-axis (radial tool position) on the time-series charts ------------------------
@@ -1940,32 +1939,34 @@ const octreeSampleCache = computed<Cache | null>(() => {
 	if (!c) fetchRadialCache();
 	return c ?? null;
 });
-// A reveal asked for while the target map was still loading; retried when it reports ready.
-let pendingReveal: number | null = null;
+// A reveal for a map that is still loading is queued inside the map component itself (it applies
+// it after its first draw with content), so the dashboard only handles a definite "no such point".
 function tryReveal(t: number): boolean {
 	const ref = octreeOn.value ? frmOctreeRef : frmCloudRef;
 	return !!ref.value?.revealTime?.(t);
 }
-function retryPendingReveal() {
-	const t = pendingReveal;
-	if (t == null) return;
-	nextTick(() => { if (pendingReveal === t && tryReveal(t)) pendingReveal = null; });
-}
-watch(octreeSampleCache, (c) => { if (c) retryPendingReveal(); });
-watch(selectedRowId, () => { markTime.value = null; menu.value = null; pendingReveal = null; });
+watch(selectedRowId, () => { markTime.value = null; menu.value = null; });
 function onLinkKey(e: KeyboardEvent) {
-	if (e.key !== 'Escape' || menu.value || markTime.value == null) return;
+	// defaultPrevented: the open ContextMenu consumed this Escape (it closes itself and preventDefaults),
+	// and `menu` may already be null by the time we run, so the flag is the reliable signal.
+	if (e.key !== 'Escape' || e.defaultPrevented || menu.value || markTime.value == null) return;
 	const el = document.activeElement as HTMLElement | null;
 	if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
 	markTime.value = null;
-	pendingReveal = null;
 }
-onMounted(() => window.addEventListener('keydown', onLinkKey));
-onBeforeUnmount(() => { window.removeEventListener('keydown', onLinkKey); clearTimeout(linkMsgTimer); });
+// This page is kept alive (#24): onMounted runs once, so the listener is also dropped on deactivate
+// (Escape on the Record page must not reach us) and re-added on activate. addEventListener ignores a
+// second registration of the same function, so onMounted + onActivated can't double up.
+function addLinkKey() { window.addEventListener('keydown', onLinkKey); }
+function removeLinkKey() { window.removeEventListener('keydown', onLinkKey); }
+onMounted(addLinkKey);
+onActivated(addLinkKey);
+onDeactivated(removeLinkKey);
+onBeforeUnmount(() => { removeLinkKey(); clearTimeout(linkMsgTimer); });
 
 function openMenu(x: number, y: number, items: ContextMenuItem[]) { menu.value = { x, y, items }; }
 function clearMarkItem(): ContextMenuItem[] {
-	return markTime.value != null ? [{ label: 'Clear marker', run: () => { markTime.value = null; pendingReveal = null; } }] : [];
+	return markTime.value != null ? [{ label: 'Clear marker', run: () => { markTime.value = null; } }] : [];
 }
 // Crop edges go through onCropEdit, so they batch into Save changes like a handle drag; refuse an
 // edge that would cross the other one.
@@ -2013,8 +2014,17 @@ async function copyPointInfo(p: PointInfo) {
 function openChartMenu(e: { clientX: number; clientY: number; x: number }) {
 	const t = e.x;
 	let hint: string | undefined;
-	if (octreeOn.value) { if (!detail.value?.live_cache_file) hint = 'Needs this cut’s live cache'; }
-	else if (liveAvailable.value) { if (t < cropStartSec.value || t > cropEndSec.value) hint = 'Outside the cropped window'; }
+	if (octreeOn.value) {
+		const c = octreeSampleCache.value;
+		if (!detail.value?.live_cache_file) hint = 'Needs this cut’s live cache';
+		// The octree covers the live cache's own window; a time outside it has no mapped sample. With
+		// the cache still loading we can't say, so the item stays enabled (the map queues the reveal).
+		else if (c && c.N && (t < c.t[0] || t > c.t[c.N - 1])) hint = 'Outside the mapped window';
+	}
+	else if (liveAvailable.value) {
+		// A zero-width crop means the crop isn't loaded/seeded yet (both edges 0), not "nothing is inside".
+		if (cropEndSec.value > cropStartSec.value && (t < cropStartSec.value || t > cropEndSec.value)) hint = 'Outside the cropped window';
+	}
 	else hint = 'No interactive map for this cut';
 	openMenu(e.clientX, e.clientY, [
 		{ label: 'Show position on map', disabled: !!hint, hint, run: () => showOnMap(t) },
@@ -2026,8 +2036,8 @@ async function showOnMap(t: number) {
 	markTime.value = t;
 	if (!octreeOn.value && !liveOn.value) chooseMode('lite');   // the Figure PNG can't show a ring
 	await nextTick();
-	// false while the view is still loading its cache: retried from onCloudLoaded / the octree cache watch
-	if (!tryReveal(t)) pendingReveal = t;
+	// false = no drawn sample for t (a map still loading queues the reveal itself and says true)
+	if (!tryReveal(t)) flashLinkMsg('No mapped point at this time');
 }
 // Memoized once per (op, geometry, crop, cache-arrival) rather than recomputed per axis per
 // render: chartsFor() calls radialValuesFor() once per open axis (+ RPM), so without this,

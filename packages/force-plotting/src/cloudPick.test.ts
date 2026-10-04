@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-	createClickTracker, displayedKeep, findNearestPathIndex, formatPointInfo, octreePathParams, pickNearest, pointInfo, settleRing,
+	createClickTracker, displayedKeep, findNearestPathIndex, formatPointInfo, octreePathParams, pickNearest, pickSpiral, pointInfo, settleRing,
 	recentreWindow,
 } from './cloudPick';
 import type { Cache } from './liveCache';
-import { buildPath, type PathParams } from './path';
+import { buildPath, type PathParams, type TurningSpiralParams } from './path';
 
 describe('pickNearest', () => {
 	const pts = [{ px: 0, py: 0 }, { px: 10, py: 10 }, { px: 12, py: 10 }, { px: 100, py: 100 }];
@@ -117,21 +117,34 @@ describe('octreePathParams', () => {
 		const c = makeCache();
 		const { path, window } = octreePathParams(c, 10, 4);
 		expect(path).toMatchObject({ kind: 'turning_spiral', speedMode: 'measured', feed: 0.05, diam: 80, innerDiam: 10, ppr: 4, rpm: 1200 });
-		expect(window).toEqual({ cropStartSec: 0.05, cropEndSec: 0.5, stride: 1 });
+		// the whole cache, from its own t: deliberately not the header's csSec (0.05) / ceSec (0.5)
+		expect(window.cropStartSec).toBe(c.t[0]);
+		expect(window.cropEndSec).toBe(c.t[c.N - 1]);
+		expect(window.stride).toBe(1);
 
 		const hand: PathParams = {
 			kind: 'turning_spiral', feed: 0.05, diam: 80, innerDiam: 10,
 			speedMode: 'measured', rpm: 0, vc: 0, timeScale: 1, ppr: 4,
 		};
 		const a = buildPath(c, path, window)!;
-		const b = buildPath(c, hand, { cropStartSec: 0.05, cropEndSec: 0.5, stride: 1 })!;
+		const b = buildPath(c, hand, { cropStartSec: c.t[0], cropEndSec: c.t[c.N - 1], stride: 1 })!;
 		expect(a.count).toBeGreaterThan(0);
 		expect(a.count).toBe(b.count);
 		expect(Array.from(a.pos)).toEqual(Array.from(b.pos));
 		expect(Array.from(a.idx)).toEqual(Array.from(b.idx));
-		// csSec / ceSec share c.t's time base: the path spans exactly the header's window.
-		expect(a.idx[0]).toBe(5);
-		expect(a.idx[a.count - 1]).toBe(50);
+		// the path spans the whole cache, first sample (r = 0) to last
+		expect(a.idx[0]).toBe(0);
+		expect(a.idx[a.count - 1]).toBe(c.N - 1);
+	});
+	it('anchors at t[0] even when csSec is not on the same time base', () => {
+		const c = makeCache();
+		c.csSec = 0.0123; c.ceSec = 9;   // header values that don't line up with t
+		const { window } = octreePathParams(c, 0, 1);
+		expect(window).toEqual({ cropStartSec: c.t[0], cropEndSec: c.t[c.N - 1], stride: 1 });
+		const a = buildPath(c, octreePathParams(c, 0, 1).path, window)!;
+		expect(a.idx[0]).toBe(0);
+		expect(a.pos[0]).toBeCloseTo(c.diam / 2, 5);   // r = 0 at the first sample: on the +x axis at rho0
+		expect(a.pos[1]).toBeCloseTo(0, 5);
 	});
 	it('falls back to rpm 0 when the cache carries no rpm', () => {
 		const { path } = octreePathParams(makeCache(false), 0, 1);
@@ -153,16 +166,67 @@ describe('displayedKeep', () => {
 });
 
 describe('createClickTracker', () => {
-	const ev = (x: number, y: number, button = 2) => ({ clientX: x, clientY: y, button, pointerType: 'mouse' }) as PointerEvent;
-	it('tells a click from a drag', () => {
+	const ev = (x: number, y: number, button = 2, pointerType = 'mouse') => ({ clientX: x, clientY: y, button, pointerType }) as PointerEvent;
+	it('tells a click from a drag on the right-button release', () => {
 		const t = createClickTracker();
-		t.down(ev(10, 10)); expect(t.isClick(ev(12, 11))).toBe(true);
-		t.down(ev(10, 10)); expect(t.isClick(ev(30, 10))).toBe(false);
+		t.down(ev(10, 10)); expect(t.up(ev(12, 11))).toBe(true);
+		t.down(ev(10, 10)); expect(t.up(ev(30, 10))).toBe(false);
 	});
-	it('treats a contextmenu with no recorded right press (menu key, long-press) as a click', () => {
+	it('forgets the press after the release', () => {
 		const t = createClickTracker();
-		t.down(ev(10, 10, 0));   // a left press is not recorded
-		expect(t.isClick(ev(90, 90))).toBe(true);
+		t.down(ev(10, 10)); t.up(ev(10, 10));
+		expect(t.up(ev(10, 10))).toBe(false);
+	});
+	it('ignores other buttons and touch', () => {
+		const t = createClickTracker();
+		t.down(ev(10, 10, 0)); expect(t.up(ev(10, 10, 0))).toBe(false);
+		t.down(ev(10, 10, 2, 'touch')); expect(t.up(ev(10, 10, 2, 'touch'))).toBe(false);
+	});
+	it('does not open for a release with no recorded press', () => {
+		expect(createClickTracker().up(ev(10, 10))).toBe(false);
+	});
+});
+
+describe('pickSpiral', () => {
+	const c = makeCache();
+	// a hand-rolled ortho view: 5 px per mm, origin at (400, 400)
+	const project = (x: number, y: number) => ({ px: 400 + x * 5, py: 400 - y * 5 });
+	const path: TurningSpiralParams = {
+		kind: 'turning_spiral', feed: 0.05, diam: 80, innerDiam: 0, speedMode: 'measured', rpm: 0, vc: 0, timeScale: 1, ppr: 1,
+	};
+	it('finds the sample buildPath would, without a path (stride 1)', () => {
+		const ref = buildPath(c, path, { cropStartSec: 0.1, cropEndSec: 0.4, stride: 1 })!;
+		for (const k of [0, 7, 15, ref.count - 1]) {
+			const p = project(ref.pos[k * 3], ref.pos[k * 3 + 1]);
+			const hit = pickSpiral(c, path, 0.1, 0.4, 1, project, p.px + 0.3, p.py - 0.2, 8)!;
+			expect(hit.i).toBe(ref.idx[k]);
+			expect(hit.x).toBeCloseTo(ref.pos[k * 3], 4);
+			expect(hit.y).toBeCloseTo(ref.pos[k * 3 + 1], 4);
+			expect(hit.rho).toBeCloseTo(ref.rho![k], 4);
+		}
+	});
+	it('only offers the GPU\'s phase-0 samples at stride > 1', () => {
+		const ref = buildPath(c, path, { cropStartSec: 0.1, cropEndSec: 0.4, stride: 1 })!;
+		const k = ref.idx.indexOf(11);                    // not a multiple of 3: not drawn at stride 3
+		const p = project(ref.pos[k * 3], ref.pos[k * 3 + 1]);
+		const hit = pickSpiral(c, path, 0.1, 0.4, 3, project, p.px, p.py, 40)!;
+		expect(hit.i % 3).toBe(0);
+	});
+	it('ignores samples outside the crop, hidden by keep(), or off-screen, and returns null when nothing is near', () => {
+		const ref = buildPath(c, path, { cropStartSec: 0.1, cropEndSec: 0.4, stride: 1 })!;
+		const k0 = project(ref.pos[0], ref.pos[1]);
+		const outside = pickSpiral(c, path, 0.3, 0.4, 1, project, k0.px, k0.py, 1);   // sample 10 is before this crop
+		expect(outside === null || outside.i >= 30).toBe(true);
+		const hidden = pickSpiral(c, path, 0.1, 0.4, 1, project, k0.px, k0.py, 1, (i) => i !== 10);
+		expect(hidden === null || hidden.i !== 10).toBe(true);
+		expect(pickSpiral(c, path, 0.1, 0.4, 1, () => null, k0.px, k0.py, 1000)).toBeNull();
+		expect(pickSpiral(c, path, 10, 20, 1, project, 400, 400, 1000)).toBeNull();
+	});
+	it('does not place samples past the inner-diameter cut-out', () => {
+		const donut: TurningSpiralParams = { ...path, innerDiam: 79.9 };
+		const hit = pickSpiral(c, donut, 0.1, 0.5, 1, project, 400, 400, 1000);
+		expect(hit).not.toBeNull();
+		expect(hit!.rho).toBeGreaterThanOrEqual(39.95 - 1e-3);
 	});
 });
 
