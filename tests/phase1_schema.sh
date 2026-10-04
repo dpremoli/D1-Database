@@ -748,6 +748,12 @@ VALUES ('c0000000-0000-4000-8000-000000000427', 'c0000000-0000-4000-8000-0000000
 -- no sample: the placeholder collapses to nothing and the sequence stays NULL (as before)
 INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
 VALUES ('c0000000-0000-4000-8000-000000000428', 'c0000000-0000-4000-8000-000000000401', 'heat_treatment', 'test', 'TI-NOSAMPLE{seq}-X');
+-- an imported row (source_system set) keeps a NULL sequence even with a sample; a later explicit
+-- number is kept, so the importer's own numbering cannot collide with an auto-assigned one
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000429', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000412', 'sintering', 'test', 'TI-IMP{seq}-FAST');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, source_system, operation_sequence, pass_code)
+VALUES ('c0000000-0000-4000-8000-00000000042a', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000412', 'machining', 'test', 1, 'TI-IMP-F1');
 SELECT 'op:' || substr(operation_id::text, 33) || ':' || COALESCE(operation_sequence::text, 'null') || ':' || pass_code
 FROM manufacturing_operations WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-0000000004_%' ORDER BY operation_id;
 
@@ -782,6 +788,8 @@ seq_check "op:0426:1:TI-S2-HTA1" "numbering restarts per sample"
 seq_check "op:0427:2:MY-OWN-CODE" "a typed code without a placeholder is stored unchanged"
 seq_check "op:0428:null:TI-NOSAMPLE-X" "an operation without a sample keeps a NULL sequence and an empty placeholder"
 mf_exp=$(grep -m1 '^mf_explicit:' <<<"$seq_out" | cut -d: -f2)
+seq_check "op:0429:null:TI-IMP-FAST" "an imported row (source_system set) is not auto-numbered, even with a sample"
+seq_check "op:042a:1:TI-IMP-F1" "an imported row's explicit number is kept"
 seq_check "mf:0431:01-01-26-MF${mf_exp}-950C" "an explicit MF number is stored as given"
 seq_check "mf:0433:03-01-26-MF$((mf_exp + 2))" "the sintering MF counter is max+1 over existing codes"
 seq_check "mf:0434:04-01-26-MF$((mf_exp + 3))" "an MF number is not handed out again after a delete"

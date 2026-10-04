@@ -20,7 +20,14 @@
 --                       the shared lock table, and one transaction that loads the operations of
 --                       ~13,000 samples exhausted it ("out of shared memory"); row locks do not.
 --                       A value the caller supplies (e.g. a machining pass number) is never
---                       overwritten.
+--                       overwritten. Imported rows (source_system IS NOT NULL) are not numbered:
+--                       importers keep the NULL semantics they had before this trigger, because
+--                       they write their own numbers in a later pass (scripts/migrate_legacy.py
+--                       numbers FAST runs by leaving the column NULL and the machining operations
+--                       explicitly; auto-numbering the FAST rows in insertion order made the
+--                       explicit numbers duplicate them). scripts/migrate_legacy.py now tags its
+--                       rows source_system = 'legacy_migration'. A {seq} placeholder in the code
+--                       of an imported row collapses to nothing, as for a sample-less operation.
 --   pass_code           the interface still composes the readable part of the code (alloy, method,
 --                       parameters; see d1-operation-code), but leaves the two database-owned
 --                       numbers as placeholders that the trigger fills in:
@@ -73,6 +80,7 @@ BEGIN
     -- Per-sample operation number.
     IF NEW.operation_sequence IS NULL
        AND NEW.sample_id IS NOT NULL
+       AND NEW.source_system IS NULL          -- imported rows keep their NULL (see the header)
        AND (TG_OP = 'INSERT' OR NEW.pass_code LIKE '%{seq}%')
     THEN
         -- Serialise writers for this sample on its parent row (no row is locked when sample_id
@@ -109,7 +117,7 @@ $$;
 
 COMMENT ON FUNCTION trg_manufacturing_operations_assign_numbers() IS
     'BEFORE INSERT / UPDATE on manufacturing_operations (UPDATE only when pass_code changes): assigns operation_sequence '
-    '(max+1 per sample, serialised on the sample row) when NULL, and replaces the {seq} and {mf} placeholders '
+    '(max+1 per sample, serialised on the sample row) when NULL and the row is not an import (source_system IS NULL), and replaces the {seq} and {mf} placeholders '
     'in a client-composed pass_code with the operation number and the next sintering MF number '
     '(review 4.5). Replaces the d1-operation-sequence Directus hook.';
 
@@ -122,8 +130,8 @@ COMMENT ON TRIGGER mfg_op_assign_numbers ON manufacturing_operations IS
 
 COMMENT ON COLUMN manufacturing_operations.operation_sequence IS
     'Ordering of this operation within the sample lifecycle (1 = first). Left NULL on insert, it is '
-    'assigned by the database as max+1 for the sample; a supplied value (e.g. a machining pass '
-    'number) is kept.';
+    'assigned by the database as max+1 for the sample (not for imported rows, source_system set); '
+    'a supplied value (e.g. a machining pass number) is kept.';
 
 COMMENT ON COLUMN manufacturing_operations.pass_code IS
     'Human-readable operation code, e.g. 9-AA-MR-2023-03-23-F9 or 22-04-21-MF1-950C_11kN_20dia. '
