@@ -1009,6 +1009,62 @@ SQL
 )
 grep -qx "inserted:additive" <<<"$pc2_out" && ok "a new operation with no category gets its method's category on insert" || bad "insert-time derivation failed (output: $pc2_out)"
 
+echo "== Prep recipes are applied in Postgres (review 4.12) =="
+pr_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO prep_recipes (recipe_id, name) VALUES
+  ('c0000000-0000-4000-8000-000000000901', 'TI recipe A'),
+  ('c0000000-0000-4000-8000-000000000902', 'TI recipe B'),
+  ('c0000000-0000-4000-8000-000000000903', 'TI recipe empty');
+INSERT INTO prep_recipe_steps (recipe_id, step_order, step_type, grit, duration_s) VALUES
+  ('c0000000-0000-4000-8000-000000000901', 2, 'polishing', NULL, 120),
+  ('c0000000-0000-4000-8000-000000000901', 1, 'grinding', 'P1200', 60),
+  ('c0000000-0000-4000-8000-000000000902', 1, 'etching', NULL, 10);
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000911', 'TI-PR');
+-- MP is the Sample Preparation method: its operations derive process_category = sample_prep
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, source_recipe_id)
+SELECT 'c0000000-0000-4000-8000-000000000921', method_id, 'c0000000-0000-4000-8000-000000000911', 'c0000000-0000-4000-8000-000000000901'
+FROM manufacturing_methods WHERE method_code = 'MP';
+SELECT 'steps:' || string_agg(step_order || ':' || step_type || ':' || COALESCE(grit, '-'), ',' ORDER BY step_order)
+FROM prep_steps WHERE operation_id = 'c0000000-0000-4000-8000-000000000921';
+-- an operation that already has steps is not clobbered by a different recipe
+UPDATE manufacturing_operations SET source_recipe_id = 'c0000000-0000-4000-8000-000000000902'
+WHERE operation_id = 'c0000000-0000-4000-8000-000000000921';
+SELECT 'steps_after_switch:' || count(*) FROM prep_steps WHERE operation_id = 'c0000000-0000-4000-8000-000000000921';
+-- an empty recipe copies nothing and is not an error
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, source_recipe_id)
+SELECT 'c0000000-0000-4000-8000-000000000922', method_id, 'c0000000-0000-4000-8000-000000000911', 'c0000000-0000-4000-8000-000000000903'
+FROM manufacturing_methods WHERE method_code = 'MP';
+SELECT 'empty_recipe_steps:' || count(*) FROM prep_steps WHERE operation_id = 'c0000000-0000-4000-8000-000000000922';
+-- setting a recipe on an existing prep operation without steps applies it
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id)
+SELECT 'c0000000-0000-4000-8000-000000000923', method_id, 'c0000000-0000-4000-8000-000000000911'
+FROM manufacturing_methods WHERE method_code = 'MP';
+UPDATE manufacturing_operations SET source_recipe_id = 'c0000000-0000-4000-8000-000000000902'
+WHERE operation_id = 'c0000000-0000-4000-8000-000000000923';
+SELECT 'late_apply_steps:' || count(*) FROM prep_steps WHERE operation_id = 'c0000000-0000-4000-8000-000000000923';
+ROLLBACK;
+SQL
+)
+pr_check() { grep -qx "$1" <<<"$pr_out" && ok "$2" || bad "$2 (psql output: $pr_out)"; }
+pr_check "steps:1:grinding:P1200,2:polishing:-" "a prep operation created with a recipe gets its steps, in order"
+pr_check "steps_after_switch:2" "existing steps are never clobbered by another recipe"
+pr_check "empty_recipe_steps:0" "an empty recipe copies nothing"
+pr_check "late_apply_steps:1" "setting a recipe on an existing prep operation without steps applies it"
+# A recipe on anything but a Sample Preparation operation is rejected and the write is rolled back.
+pr_err=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO prep_recipes (recipe_id, name) VALUES ('c0000000-0000-4000-8000-000000000904', 'TI recipe C');
+INSERT INTO manufacturing_methods (method_id, method_code, method_name, process_category)
+VALUES ('c0000000-0000-4000-8000-000000000905', 'T-I-PR', 'not a prep method', 'heat_treatment');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000912', 'TI-PR2');
+INSERT INTO manufacturing_operations (method_id, sample_id, source_recipe_id)
+VALUES ('c0000000-0000-4000-8000-000000000905', 'c0000000-0000-4000-8000-000000000912', 'c0000000-0000-4000-8000-000000000904');
+ROLLBACK;
+SQL
+)
+grep -q 'only be set on a Sample Preparation operation' <<<"$pr_err" && ok "a recipe on a non-prep operation is rejected with a clear error" || bad "non-prep recipe was not rejected (output: $pr_err)"
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy
