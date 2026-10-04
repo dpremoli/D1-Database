@@ -14,8 +14,13 @@
 -- by a BEFORE trigger on manufacturing_operations:
 --
 --   operation_sequence  NULL on insert and sample_id set  ->  max(operation_sequence)+1 for that
---                       sample, under pg_advisory_xact_lock keyed by the sample. A value the caller
---                       supplies (e.g. a machining pass number) is never overwritten.
+--                       sample, under a row lock on the parent physical_samples row (SELECT ...
+--                       FOR NO KEY UPDATE; it does not block the foreign-key checks of other
+--                       writers). A row lock rather than an advisory lock: advisory locks live in
+--                       the shared lock table, and one transaction that loads the operations of
+--                       ~13,000 samples exhausted it ("out of shared memory"); row locks do not.
+--                       A value the caller supplies (e.g. a machining pass number) is never
+--                       overwritten.
 --   pass_code           the interface still composes the readable part of the code (alloy, method,
 --                       parameters; see d1-operation-code), but leaves the two database-owned
 --                       numbers as placeholders that the trigger fills in:
@@ -39,7 +44,7 @@
 --
 -- Lock order (deadlocks): refresh_project_rollup() (migration 118) takes the rollup advisory lock in
 -- the statement-level refresh trigger and holds it to commit. This BEFORE ROW trigger takes its own
--- locks (the per-sample lock, the MF counter lock) earlier in the statement, so a transaction that
+-- locks (the per-sample row lock, the MF counter lock) earlier in the statement, so a transaction that
 -- wrote operations for sample X and then sample Y could deadlock against one writing only Y: the
 -- first holds the rollup lock and waits for Y, the second holds Y and waits for the rollup lock.
 -- The trigger therefore takes the rollup lock FIRST (same key as migration 118), so the order is
@@ -70,8 +75,12 @@ BEGIN
        AND NEW.sample_id IS NOT NULL
        AND (TG_OP = 'INSERT' OR NEW.pass_code LIKE '%{seq}%')
     THEN
-        PERFORM pg_catalog.pg_advisory_xact_lock(
-            pg_catalog.hashtextextended('manufacturing_operations.sample:' || NEW.sample_id::text, 0));
+        -- Serialise writers for this sample on its parent row (no row is locked when sample_id
+        -- points at nothing; the foreign key rejects the write afterwards).
+        PERFORM 1
+        FROM    public.physical_samples ps
+        WHERE   ps.sample_id = NEW.sample_id
+        FOR NO KEY UPDATE;
         SELECT COALESCE(max(mo.operation_sequence), 0) + 1
         INTO   NEW.operation_sequence
         FROM   public.manufacturing_operations mo
@@ -100,7 +109,7 @@ $$;
 
 COMMENT ON FUNCTION trg_manufacturing_operations_assign_numbers() IS
     'BEFORE INSERT / UPDATE on manufacturing_operations (UPDATE only when pass_code changes): assigns operation_sequence '
-    '(max+1 per sample, advisory-locked) when NULL, and replaces the {seq} and {mf} placeholders '
+    '(max+1 per sample, serialised on the sample row) when NULL, and replaces the {seq} and {mf} placeholders '
     'in a client-composed pass_code with the operation number and the next sintering MF number '
     '(review 4.5). Replaces the d1-operation-sequence Directus hook.';
 

@@ -834,6 +834,26 @@ cc_a=$(cat "$cc_dir/a"); cc_b=$(cat "$cc_dir/b")
     && ok "concurrent sintering inserts get distinct MF numbers ($cc_a, $cc_b)" \
     || bad "concurrent sintering inserts collided (A='$cc_a', B='$cc_b')"
 
+# Bulk load: the per-sample lock must not use the shared lock table (advisory locks do, and
+# ~13,000 samples in one transaction ran out of it). 400 samples, one operation each, one
+# transaction: no per-sample advisory lock is held at the end, and each sample's number is 1.
+bulk_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO physical_samples (sample_id, sample_code)
+SELECT ('c0000000-0000-4000-8001-' || lpad(g::text, 12, '0'))::uuid, 'TI-BULK-' || g FROM generate_series(1, 400) g;
+INSERT INTO manufacturing_operations (method_id, sample_id, process_category, pass_code)
+SELECT 'c0000000-0000-4000-8000-000000000402', sample_id, 'heat_treatment', 'TI-BULK-HTA{seq}'
+FROM physical_samples WHERE sample_code LIKE 'TI-BULK-%';
+SELECT 'bulk_ops:' || count(*) || ':' || min(operation_sequence) || ':' || max(operation_sequence)
+FROM manufacturing_operations WHERE pass_code = 'TI-BULK-HTA1';
+SELECT 'bulk_advisory_locks:' || (count(*) <= 3) FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory';
+ROLLBACK;
+SQL
+)
+grep -qx "bulk_ops:400:1:1" <<<"$bulk_out" && grep -qx "bulk_advisory_locks:true" <<<"$bulk_out" \
+    && ok "400 samples' operations in one transaction: numbered 1, no per-sample advisory locks" \
+    || bad "bulk operation insert (psql output: $bulk_out)"
+
 # Lock order (rollup -> sample -> MF/code): A writes an operation for sample X, holds its
 # transaction open, then writes one for sample Y; B meanwhile writes one for Y. With the rollup lock
 # taken after the sample lock, B holds Y and waits for the rollup lock that A holds while A waits
