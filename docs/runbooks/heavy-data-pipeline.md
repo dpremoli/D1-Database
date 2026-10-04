@@ -142,61 +142,68 @@ with HTTP 200 by both workers, so a Flow that fires on every create does not log
 
 ## 4. Uploading a File (Python Client Example)
 
-The upload process has four steps: presign, upload parts, complete, register.
+The upload process has four steps: presign, upload parts, complete, register. The worker's
+`/api/*` endpoints authenticate with `X-Worker-Secret` (the value of `WORKER_WEBHOOK_SECRET`);
+only the Directus call in step 4 uses the Directus token.
 
 ```python
 import os
-import math
+
 import requests
 
-WORKER_URL = "http://localhost:8080"
-DIRECTUS_URL = "http://localhost:8055"
+BIND = os.environ.get("D1_BIND_ADDR", "127.0.0.1")
+WORKER_URL = f"http://{BIND}:8080"
+DIRECTUS_URL = f"http://{BIND}:8055"
 TOKEN = os.environ["WORKER_DIRECTUS_TOKEN"]
+WORKER_HEADERS = {"X-Worker-Secret": os.environ["WORKER_WEBHOOK_SECRET"]}
 
 file_path = "/data/10-AA-MF-2024-03-15-F1.d1f"
 object_key = "10-AA-MF-2024-03-15/10-AA-MF-2024-03-15-F1/10-AA-MF-2024-03-15-F1.d1f"
 sample_id = "<uuid of physical_samples record>"
 
-# Step 1 — presign
-PART_SIZE = 64 * 1024 * 1024  # 64 MB per part
+# Step 1 - presign. The worker decides the part size (UPLOAD_PART_SIZE_BYTES, default 100 MiB)
+# and returns one presigned URL per part.
 file_size = os.path.getsize(file_path)
-n_parts = math.ceil(file_size / PART_SIZE)
-
 resp = requests.post(
     f"{WORKER_URL}/api/presign-upload",
     json={
         "object_key": object_key,
-        "n_parts": n_parts,
+        "file_size_bytes": file_size,
         "content_type": "application/octet-stream",
     },
-    headers={"Authorization": f"Bearer {TOKEN}"},
+    headers=WORKER_HEADERS,
 )
 resp.raise_for_status()
 presign = resp.json()
 upload_id = presign["upload_id"]
-presigned_urls = {p["part_number"]: p["url"] for p in presign["presigned_urls"]}
+part_urls = {p["part_number"]: p["url"] for p in presign["parts"]}
+# Each part but the last is exactly the worker's part size; read the same size from the file.
+PART_SIZE = int(os.environ.get("UPLOAD_PART_SIZE_BYTES", 100 * 1024 * 1024))
 
-# Step 2 — upload parts directly to MinIO
+# Step 2 - upload the parts straight to MinIO. The presigned URLs name the compose host
+# `minio:9000`, which a client outside the Docker network cannot resolve; send the request to the
+# published port and keep `minio:9000` as the Host header (the signature covers it).
 parts = []
 with open(file_path, "rb") as fh:
-    for part_number in range(1, n_parts + 1):
+    for part_number in sorted(part_urls):
         chunk = fh.read(PART_SIZE)
-        put_resp = requests.put(presigned_urls[part_number], data=chunk)
+        url = part_urls[part_number].replace("http://minio:9000", f"http://{BIND}:9000")
+        put_resp = requests.put(url, data=chunk, headers={"Host": "minio:9000"})
         put_resp.raise_for_status()
-        etag = put_resp.headers["ETag"]
-        parts.append({"part_number": part_number, "etag": etag})
-        print(f"  uploaded part {part_number}/{n_parts}")
+        parts.append({"PartNumber": part_number, "ETag": put_resp.headers["ETag"]})
+        print(f"  uploaded part {part_number}/{len(part_urls)}")
 
-# Step 3 — complete the multipart upload
+# Step 3 - complete the multipart upload. Parts use the S3 field names PartNumber / ETag.
 resp = requests.post(
     f"{WORKER_URL}/api/complete-upload",
     json={"object_key": object_key, "upload_id": upload_id, "parts": parts},
-    headers={"Authorization": f"Bearer {TOKEN}"},
+    headers=WORKER_HEADERS,
 )
 resp.raise_for_status()
-print("upload complete:", resp.json()["size_bytes"], "bytes")
+pointer = resp.json()["file_storage_pointer"]  # minio://<bucket>/<object_key>
+print("upload complete:", pointer)
 
-# Step 4 — register the session in Directus
+# Step 4 - register the session in Directus
 resp = requests.post(
     f"{DIRECTUS_URL}/items/test_sessions",
     json={
@@ -204,7 +211,7 @@ resp = requests.post(
         "session_date": "2026-06-18T10:00:00Z",
         "operator_name": "J. Smith",
         "test_type": "force_sensor",
-        "file_storage_pointer": f"minio://d1-data/{object_key}",
+        "file_storage_pointer": pointer,
         "status": "pending_processing",
     },
     headers={"Authorization": f"Bearer {TOKEN}"},
@@ -253,7 +260,7 @@ docker compose exec heavy-data-worker rq failed-queue --url "$REDIS_URL" dump
 ```bash
 curl -sf \
   -H "Authorization: Bearer $WORKER_DIRECTUS_TOKEN" \
-  "$DIRECTUS_URL/items/test_sessions?filter[status][_eq]=error&fields=session_id,summary_stats" \
+  "$DIRECTUS_URL/items/test_sessions?filter[status][_eq]=failed&fields=session_id,summary_stats" \
   | jq .
 ```
 
@@ -264,7 +271,8 @@ curl -sf \
 ### Integration test (full pipeline)
 
 ```bash
-make phase4-test
+set -a; . ./.env; set +a          # WORKER_WEBHOOK_SECRET (required), D1_BIND_ADDR
+MACHINE_TOKEN=<Operator token from core/apply.sh> make phase4-test
 ```
 
 This spins up the full stack, uploads a synthetic `.d1f` file, registers a

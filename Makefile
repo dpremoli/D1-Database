@@ -120,7 +120,7 @@ worker-test: worker-build ## Run heavy-data worker unit tests inside Docker
 worker-logs: ## Tail heavy-data worker container logs
 	docker compose logs -f heavy-data-worker
 
-phase4-test: ## Phase 4 integration test (requires running stack + MACHINE_TOKEN)
+phase4-test: ## Phase 4 integration test (requires running stack, MACHINE_TOKEN and WORKER_WEBHOOK_SECRET)
 	bash tests/phase4_heavy_data.sh
 
 analysis-build: ## Build the FFT analysis worker Docker image
