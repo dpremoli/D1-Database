@@ -16,7 +16,8 @@ import { type Cache, cacheGet, cachePut, idxOfTime, parseCache } from './liveCac
 import { type Axis, type Cloud, type CloudChannel, type SpeedMode, axisAutoLimits, buildCloud } from './liveCloud';
 import { buildPath, type PathParams } from './path';
 import {
-	createClickTracker, displayedKeep, findNearestPathIndex, pickNearest, pickRadius, pointInfo, settleRing,
+	createClickTracker, displayedKeep, displayedKeepIndex, findNearestPathIndex, pickNearest, pickRadius, pickSpiral,
+	pointInfo, settleRing,
 	type PointMenuEvent,
 } from './cloudPick';
 import { nearestIndex } from './hoverIndex';
@@ -631,21 +632,22 @@ function syncPickCamera() {
 	pointsObj?.updateMatrixWorld();
 }
 
-// What a pick scans: positions with the cache index behind each (path.idx).
+// How a pick resolves samples, by what the view draws:
+//  - 2D turning spiral (GPU path, and gridded 2D): stream the GPU's own phase-0 samples through
+//    the shader's maths (pickSpiral). The GPU never holds positions on the CPU, and a gridded cloud's
+//    points are cell centres with no single sample, so "the nearest sample to the spot" is the
+//    meaning in both. Nothing is built, so a right-click allocates nothing proportional to N.
+//  - 3D and ungridded CPU clouds: scan the cloud's own positions (cloud.idx maps them to samples).
+//  - 2D gridded linear_feed/machine_xyz: buildPath for this one pick and drop it. This is the one
+//    case that still allocates ~20 B per sample; it is rare (a gridded, non-spiral path) and has no
+//    closed-form position to stream.
+//  - gridded 3D: null, the cells aren't samples and the height is unrelated to any one of them.
 interface PickSource { pos: Float32Array; idx: Int32Array; count: number; rho?: Float32Array; m: THREE.Matrix4 | null }
-const NO_SAMPLES: PickSource = { pos: new Float32Array(0), idx: new Int32Array(0), count: 0, m: null };
-// The GPU path never holds positions on the CPU (the vertex shader computes them), and a gridded
-// cloud's points are cell centres with no single sample. For both, and for any 2D turning spiral
-// (so the pick also carries rho), build the plain ungridded path for this one pick and let it go:
-// at ~20 B per sample (about 100 MB at 5M) it is too big to keep between right-clicks.
-// null = this view can't resolve samples (gridded 3D: cells aren't samples and the height is
-// unrelated to any one of them).
-function pickSource(): PickSource | null {
-	const c = cache.value;
-	if (!c) return null;
-	if (!is3D.value && (props.gridding || effPath.value.kind === 'turning_spiral')) {
-		const p = buildPath(c, effPath.value, { cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec, stride: props.stride });
-		return p ? { pos: p.pos, idx: p.idx, count: p.count, rho: p.rho, m: null } : NO_SAMPLES;
+function cloudSource(): PickSource | null {
+	if (props.gridding) {
+		const c = cache.value;
+		const p = !is3D.value && c ? buildPath(c, effPath.value, { cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec, stride: props.stride }) : null;
+		return p ? { pos: p.pos, idx: p.idx, count: p.count, rho: p.rho, m: null } : null;
 	}
 	if (cloud?.idx && pointsObj) return { pos: cloud.pos, idx: cloud.idx, count: cloud.count, m: pointsObj.matrixWorld };
 	return null;
@@ -661,15 +663,25 @@ function pickAt(clientX: number, clientY: number) {
 	const c = cache.value;
 	if (!c || !ready || !camera) return;
 	const base = { clientX, clientY };
-	const src = pickSource();
-	if (!src) { emit('pointmenu', { ...base, point: null, reason: 'gridded' }); return; }
 	syncPickCamera();
 	const r = canvasEl.value!.getBoundingClientRect();
+	const px = clientX - r.left, py = clientY - r.top, radius = pickRadius(props.pointSize, 1.4);
+	const pp = effPath.value;
+	if (!is3D.value && pp.kind === 'turning_spiral') {
+		const hit = pickSpiral(c, pp, props.cropStartSec, props.cropEndSec, props.stride,
+			(x, y) => projectPx(null, x, y, 0), px, py, radius, displayedKeepIndex(c[effChannel.value], props.colorScale));
+		emit('pointmenu', { ...base, point: hit ? pointInfo(c, hit.i, hit.x, hit.y, hit.rho) : null });
+		return;
+	}
+	const src = cloudSource();
+	if (!src) { emit('pointmenu', { ...base, point: null, ...(props.gridding && is3D.value ? { reason: 'gridded' as const } : {}) }); return; }
 	const k = pickNearest(src.count, (j) => projectPx(src.m, src.pos[j * 3], src.pos[j * 3 + 1], src.pos[j * 3 + 2]),
-		clientX - r.left, clientY - r.top, pickRadius(props.pointSize, 1.4),
-		displayedKeep(c[effChannel.value], src.idx, props.colorScale));
+		px, py, radius, displayedKeep(c[effChannel.value], src.idx, props.colorScale));
 	if (k == null) { emit('pointmenu', { ...base, point: null }); return; }
-	emit('pointmenu', { ...base, point: pointInfo(c, src.idx[k], src.pos[k * 3], src.pos[k * 3 + 1], src.rho?.[k]) });
+	const x = src.pos[k * 3], y = src.pos[k * 3 + 1];
+	// rho is the distance from the part axis, which only a turning spiral (3D here) is centred on
+	const rho = src.rho?.[k] ?? (pp.kind === 'turning_spiral' ? Math.hypot(x, y) : undefined);
+	emit('pointmenu', { ...base, point: pointInfo(c, src.idx[k], x, y, rho) });
 }
 
 // World position (mm, after the cloud's matrix) of the sample at `time`, into `out`; false when

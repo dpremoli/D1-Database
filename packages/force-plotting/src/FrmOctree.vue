@@ -22,13 +22,13 @@ import { createLoadToken } from './loadToken';
 import { createGlLifecycle } from './glLifecycle';
 import { sameStage, stageInfo, streamStage, type LoadStage, type StageInfo } from './loadStage';
 import type { Cache } from './liveCache';
-import { buildPath } from './path';
+import type { TurningSpiralParams } from './path';
 import {
-	createClickTracker, displayedKeep, octreePathParams, pickNearest, pickRadius, pointInfo, settleRing,
+	createClickTracker, displayedKeepIndex, octreePathParams, pickRadius, pickSpiral, pointInfo, settleRing,
 	type PointMenuEvent,
 } from './cloudPick';
 import { nearestIndex } from './hoverIndex';
-import { spiralPointAt } from './frmCloudShader';
+import { spiralAnchor, spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
 import { shaderZ } from './octreePick';
 
 const props = defineProps<{
@@ -388,21 +388,42 @@ function onPtrUp(ev: PointerEvent) {
 // The octree has no per-point time, so both directions go through the live cache, laid out with
 // the geometry the octree was built with (octreePathParams: the same mm frame; see cloudPick.ts's
 // header). Positions are true world mm (potree-core restores the LAS offset), so no pco matrix is
-// applied to them. Rings and reveal place one sample in closed form (spiralPointAt, O(log N)); only
-// a right-click builds the full path, and it lets it go again (~20 B per sample, about 100 MB at 5M).
+// applied to them. Nothing here ever builds a path (~20 B per sample, about 100 MB at 5M): a pick
+// streams the samples through the shader's own maths (pickSpiral, stride 1 over the whole cache,
+// which is the octree window), and rings and reveal place one sample in closed form.
 const rightClick = createClickTracker();
 
-function octreeGeometry(c: Cache) {
-	return octreePathParams(c, props.innerDiam ?? 0, props.ppr ?? 1);
+// What the spiral maths needs, per (sampleCache, innerDiam, ppr): small objects only. The render
+// loop places rings every frame, so none of this may be rebuilt there.
+interface OctreeGeo { c: Cache; innerDiam: number; ppr: number; path: TurningSpiralParams; cs: number; ce: number; u: SpiralUniforms }
+let geo: OctreeGeo | null = null;
+function octreeGeometry(): OctreeGeo | null {
+	const c = props.sampleCache;
+	if (!c || !c.N) return null;
+	const innerDiam = props.innerDiam ?? 0, ppr = props.ppr ?? 1;
+	if (geo && geo.c === c && geo.innerDiam === innerDiam && geo.ppr === ppr) return geo;
+	const g = octreePathParams(c, innerDiam, ppr);
+	if (g.path.kind !== 'turning_spiral') return null;
+	const cs = g.window.cropStartSec, ce = g.window.cropEndSec;
+	geo = { c, innerDiam, ppr, path: g.path, cs, ce, u: spiralUniformValues({ ...g.path, ...spiralAnchor(c, cs) }) };
+	return geo;
 }
-// The vertex shader's Z for this frame: flat (null) or the series, range and scale it reads.
-function zMapping(c: Cache): { series: Float32Array; r0: number; r1: number; scale: number } | null {
+
+// The vertex shader's Z for this frame (flat, or the series, range and scale it reads), read from
+// the uniforms into one reused object: it runs per frame for the rings.
+const zMap = { on: false, series: null as Float32Array | null, r0: 0, r1: 1, scale: 0 };
+function readZ(c: Cache): typeof zMap {
 	const u = material?.uniforms;
 	const zAxis = u ? (u.uZAxis.value as number) : -1;
-	if (!u || zAxis < 0) return null;
-	const r = u.uZRange.value as THREE.Vector2;
-	return { series: zAxis === 0 ? c.Fx : zAxis === 1 ? c.Fy : c.Fz, r0: r.x, r1: r.y, scale: u.uZScale.value as number };
+	zMap.on = !!u && zAxis >= 0;
+	if (zMap.on) {
+		const r = u!.uZRange.value as THREE.Vector2;
+		zMap.series = zAxis === 0 ? c.Fx : zAxis === 1 ? c.Fy : c.Fz;
+		zMap.r0 = r.x; zMap.r1 = r.y; zMap.scale = u!.uZScale.value as number;
+	}
+	return zMap;
 }
+const zAt = (i: number) => (zMap.on ? shaderZ(zMap.series![i], zMap.r0, zMap.r1, zMap.scale) : 0);
 
 const _v = new THREE.Vector3();
 const _pt = { px: 0, py: 0 };
@@ -422,34 +443,32 @@ function onContextMenu(ev: MouseEvent) { ev.preventDefault(); }
 function pickAt(clientX: number, clientY: number) {
 	if (!canvasEl.value || !camera) return;
 	const base = { clientX, clientY };
-	const c = props.sampleCache;
-	const g = c && octreeGeometry(c);
-	const path = c && g ? buildPath(c, g.path, g.window) : null;
-	if (!c || !path) { emit('pointmenu', { ...base, point: null, reason: 'no-cache' }); return; }
+	const g = octreeGeometry();
+	if (!g) { emit('pointmenu', { ...base, point: null, reason: 'no-cache' }); return; }
+	const c = g.c;
 	const r = canvasEl.value.getBoundingClientRect();
 	camera.updateMatrixWorld();   // controls.update() moved it since the last render
-	const z = zMapping(c);   // hoisted: read the uniforms once, not per sample
+	readZ(c);   // hoisted: read the uniforms once, not per sample
 	// Gridded octrees (`fill`) still pick the nearest SAMPLE to the spot: cells aren't samples.
-	const k = pickNearest(path.count, (j) => {
-		_v.set(path.pos[3 * j], path.pos[3 * j + 1], z ? shaderZ(z.series[path.idx[j]], z.r0, z.r1, z.scale) : 0);
+	const hit = pickSpiral(c, g.path, g.cs, g.ce, 1, (x, y, i) => {
+		_v.set(x, y, zAt(i));
 		return toScreen(_v, _pt) ? _pt : null;
-	}, clientX - r.left, clientY - r.top, pickRadius(props.pointSize), displayedKeep(c[props.axis], path.idx, props.colorScale));
-	if (k === null) { emit('pointmenu', { ...base, point: null }); return; }
-	emit('pointmenu', { ...base, point: pointInfo(c, path.idx[k], path.pos[3 * k], path.pos[3 * k + 1], path.rho?.[k]) });
+	}, clientX - r.left, clientY - r.top, pickRadius(props.pointSize), displayedKeepIndex(c[props.axis], props.colorScale));
+	emit('pointmenu', { ...base, point: hit ? pointInfo(c, hit.i, hit.x, hit.y, hit.rho) : null });
 }
 
 // World position of the sample at time `sec` into _v (Z as the shader draws it); false when there
 // is none (no cache, outside the octree's cut window, or past the inner-diameter cut-out).
+const _pos: SpiralPos = { x: 0, y: 0, rho: 0, visible: false };
 function timeToWorld(sec: number | null | undefined): boolean {
-	const c = props.sampleCache;
-	if (sec == null || !c || !c.N) return false;
-	const g = octreeGeometry(c);
-	if (g.path.kind !== 'turning_spiral' || sec < g.window.cropStartSec || sec > g.window.cropEndSec) return false;
+	const g = octreeGeometry();
+	if (sec == null || !g || sec < g.cs || sec > g.ce) return false;
+	const c = g.c;
 	const i = nearestIndex(c.t, sec);
-	const p = spiralPointAt(c, g.path, g.window.cropStartSec, g.window.cropEndSec, i);
-	if (!p.visible) return false;
-	const z = zMapping(c);
-	_v.set(p.x, p.y, z ? shaderZ(z.series[i], z.r0, z.r1, z.scale) : 0);
+	spiralPositionInto(g.u, c.t[i], c.revs[i], g.cs, g.ce, _pos);
+	if (!_pos.visible) return false;
+	readZ(c);
+	_v.set(_pos.x, _pos.y, zAt(i));
 	return true;
 }
 
@@ -479,7 +498,7 @@ function revealTime(t: number): boolean {
 	camera.updateMatrixWorld();
 	const d = _v.clone().sub(controls.target);   // a rare call: allocation is fine here
 	if (toScreen(_v, _pt)) return true;   // already in view
-	if (!zMapping(props.sampleCache!)) d.z = 0;
+	if (!zMap.on) d.z = 0;
 	controls.target.add(d); camera.position.add(d);
 	controls.update(); invalidate();
 	return true;

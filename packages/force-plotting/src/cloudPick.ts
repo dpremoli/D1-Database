@@ -17,6 +17,10 @@
 import type { Cache } from './liveCache';
 import type { PathParams, PathWindow } from './path';
 import { nearestIndex } from './hoverIndex';
+import {
+	phase0Samples, spiralAnchor, spiralPositionInto, spiralUniformValues,
+	type SpiralPos, type SpiralUniformParams,
+} from './frmCloudShader';
 
 export interface PointInfo {
 	i: number;       // cache sample index
@@ -139,6 +143,43 @@ export function displayedKeep(
 	return (k) => { const v = vals[idx[k]]; return v >= s.dispMin && v <= s.dispMax; };
 }
 
+/** displayedKeep for a caller that walks cache indices directly instead of a path's idx array. */
+export function displayedKeepIndex(
+	vals: ArrayLike<number> | undefined,
+	s: { dispMin: number; dispMax: number; greyOutOfRange?: boolean },
+): ((i: number) => boolean) | undefined {
+	if (s.greyOutOfRange || !vals) return undefined;
+	return (i) => { const v = vals[i]; return v >= s.dispMin && v <= s.dispMax; };
+}
+
+/**
+ * Pick on a turning spiral without building a path: walk the samples the GPU draws (phase0Samples),
+ * place each with the shader's own maths (spiralPositionInto, nothing allocated per sample), let
+ * `project` map (x, y, cache index) to canvas px (null = not drawn), and return the winner with its
+ * position recomputed. This is what both map views use for a right-click: a full path costs ~20 B
+ * per sample (about 100 MB at 5M), too much to build and drop on every click.
+ */
+export function pickSpiral(
+	c: Cache, p: Omit<SpiralUniformParams, 'tCs' | 'revsCs'>, cropStart: number, cropEnd: number, stride: number,
+	project: (x: number, y: number, i: number) => { px: number; py: number } | null,
+	px: number, py: number, radiusPx: number, keep?: (i: number) => boolean,
+): { i: number; x: number; y: number; rho: number } | null {
+	const s = phase0Samples(c, cropStart, cropEnd, stride);
+	if (!s.n) return null;
+	const u = spiralUniformValues({ ...p, ...spiralAnchor(c, cropStart) });
+	const out: SpiralPos = { x: 0, y: 0, rho: 0, visible: false };
+	const at = (j: number) => (s.k0 + j) * s.stride;
+	const j = pickNearest(s.n, (j) => {
+		const i = at(j);
+		spiralPositionInto(u, c.t[i], c.revs[i], cropStart, cropEnd, out);
+		return out.visible ? project(out.x, out.y, i) : null;
+	}, px, py, radiusPx, keep && ((j) => keep(at(j))));
+	if (j === null) return null;
+	const i = at(j);
+	spiralPositionInto(u, c.t[i], c.revs[i], cropStart, cropEnd, out);
+	return { i, x: out.x, y: out.y, rho: out.rho };
+}
+
 /** A ring overlay's next position: `cur` itself when it moved < 0.25 px, so idle redraws don't touch reactivity. */
 export function settleRing(
 	cur: { x: number; y: number } | null, px: number, py: number,
@@ -148,14 +189,15 @@ export function settleRing(
 
 /**
  * The path and window that reproduce the octree's own geometry from a live cache: measured
- * tacho speed, the auto cut start, and the feed and diameter the cache header carries (the
- * same values the octree was built with). `rpm` is unused by measured mode; it is set to the
- * last sample's for completeness.
+ * tacho speed, the feed and diameter the cache header carries (the same values the octree was
+ * built with), and the whole cache as the window. `rpm` is unused by measured mode; it is set to
+ * the last sample's for completeness.
  *
- * Time base: csSec/ceSec are written by process_force.m's write_live_cache as
- * (cutstart-1)/Fs and (cutend-1)/Fs, the times of the cache's first and last window samples,
- * i.e. the same axis as `t` (= tt(idx)). buildPath feeds cropStartSec straight to
- * idxOfTime(c.t, ...), so no conversion is needed.
+ * Window: the live cache IS the octree's window by construction (write_live_cache keeps only the
+ * auto-cut samples), so the window is the cache's own first and last `t`. It is NOT csSec/ceSec:
+ * those are (cutstart-1)/Fs and (cutend-1)/Fs, which equal t[0]/t[N-1] only while the cache's Time
+ * column is exactly (n-1)/Fs; any other Time base would move the spiral's r = 0 anchor off the
+ * first sample, and every ring and pick would sit off the octree's points.
  */
 export function octreePathParams(c: Cache, innerDiam: number, ppr: number): { path: PathParams; window: PathWindow } {
 	const rpm = c.rpm && c.rpm.length ? c.rpm[c.rpm.length - 1] : 0;
@@ -164,6 +206,6 @@ export function octreePathParams(c: Cache, innerDiam: number, ppr: number): { pa
 			kind: 'turning_spiral', feed: c.feed, diam: c.diam, innerDiam,
 			speedMode: 'measured', rpm, vc: 0, timeScale: 1, ppr,
 		},
-		window: { cropStartSec: c.csSec, cropEndSec: c.ceSec, stride: 1 },
+		window: { cropStartSec: c.N ? c.t[0] : 0, cropEndSec: c.N ? c.t[c.N - 1] : 0, stride: 1 },
 	};
 }
