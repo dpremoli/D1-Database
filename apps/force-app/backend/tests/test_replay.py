@@ -168,3 +168,23 @@ def test_replay_of_a_cache_longer_than_600_s_is_accepted(tmp_path, monkeypatch):
             if main._session is not None:
                 main._session.stop(wait=True, timeout=10)
                 main._session.join_finalize(10)
+
+
+def test_truncated_d1lc_uploads_are_a_422_not_a_500(tmp_path, monkeypatch):
+    """A cache cut off inside the header raised struct.error, and one cut off inside the sample
+    arrays raised ValueError from numpy: both surfaced as a bare 500."""
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+
+    cache, _ = _make_cache(tmp_path)
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path / "captures"))
+    monkeypatch.setattr(main, "_session", None)
+    with TestClient(main.app) as client:
+        for cut in (0, 5, 20, 31, 100, len(cache) // 2):
+            r = client.post(
+                "/record/start_replay",
+                files={"file": ("live_cache.bin", cache[:cut], "application/octet-stream")},
+            )
+            assert r.status_code == 422, (cut, r.status_code, r.text)
+        assert main._session is None

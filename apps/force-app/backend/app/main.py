@@ -1869,7 +1869,10 @@ async def record_start_replay(
     except ValidationError as e:
         raise HTTPException(422, f"cannot replay this cache: {e.errors()[0]['msg']}") from e
     cfg.duration_sec = duration
-    source = ReplaySource(cache_bytes, ppr=cfg.ppr, realtime=True, speed=speed)
+    try:
+        source = ReplaySource(cache_bytes, ppr=cfg.ppr, realtime=True, speed=speed)
+    except ValueError as e:  # a body cut off after a valid header: frombuffer can't read N samples
+        raise HTTPException(422, f"not a complete D1LC cache: {e}") from e
     # `await file.read()` above yielded to the loop; re-check with no await before assigning.
     if _busy():
         raise HTTPException(409, "a recording is already in progress")
