@@ -2798,21 +2798,23 @@ function fmtDateTime(v: string | null | undefined) {
 									:total-points="gridActive ? Number(detail.grid_octree_points) : (fullResPoints ?? undefined)"
 									:fill="gridActive" :cell-size="Number(detail.grid_cell_mm) || 1"
 									:min-node-px="octreeMinNodePx" :budget-cap="octreeBudgetCap"
+									:sample-cache="octreeSampleCache" :inner-diam="Number(detail.inner_diameter) || 0" :ppr="Number(detail.pulses_per_rev) || 1"
+									:mark-time="markTime" :hover-time="hoverTime" @pointmenu="openPointMenu"
 									@climits="onClimits" @points="displayedPoints = $event" @zscale="zScale = $event" @stage="frmStage = $event" />
 								<!-- Compare mode: raw | filtered, sharing one view (linked pan/zoom) + colour scale. -->
 								<div v-else-if="compareOn" class="frm-compare" :class="{ stacked }">
 									<FrmCloud ref="frmCloudRef" v-bind="cloudProps" :cache-override="rawDecimatedCache" :color-scale="colorScale"
-										:shared-view="compareView" pane-label="raw"
+										:shared-view="compareView" pane-label="raw" :mark-time="markTime" :hover-time="hoverTime" @pointmenu="openPointMenu"
 										@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event" @stage="frmStage = $event" />
 									<FrmCloud v-bind="cloudProps" :cache-override="filteredCache" :color-scale="filteredColorScale"
-										:shared-view="compareView" pane-label="filtered"
+										:shared-view="compareView" pane-label="filtered" :mark-time="markTime" :hover-time="hoverTime" @pointmenu="openPointMenu"
 										@climits="filteredAuto = $event" />
 								</div>
-								<FrmCloud v-else-if="filteredSoloOn" ref="frmCloudRef" v-bind="cloudProps" :cache-override="filteredCache" :color-scale="colorScale"
+								<FrmCloud v-else-if="filteredSoloOn" ref="frmCloudRef" v-bind="cloudProps" :cache-override="filteredCache" :color-scale="colorScale" :mark-time="markTime" :hover-time="hoverTime" @pointmenu="openPointMenu"
 										:z-series="zSeries" :z-scale="zScale"
 										@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event"
 										@zscale="zScale = $event" />
-									<FrmCloud v-else-if="liveOn" ref="frmCloudRef" v-bind="cloudProps" :color-scale="colorScale"
+									<FrmCloud v-else-if="liveOn" ref="frmCloudRef" v-bind="cloudProps" :color-scale="colorScale" :mark-time="markTime" :hover-time="hoverTime" @pointmenu="openPointMenu"
 									:z-series="zSeries" :z-scale="zScale"
 									@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event"
 									@zscale="zScale = $event" @stage="frmStage = $event" />
