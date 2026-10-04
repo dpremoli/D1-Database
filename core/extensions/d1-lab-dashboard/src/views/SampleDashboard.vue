@@ -36,7 +36,8 @@
 					</span>
 					<span class="d1-secondary">{{ s.project_id?.project_code ?? '' }}</span>
 				</div>
-				<div v-if="samples.length === 0 && !loadingSamples" class="d1-empty">No samples found</div>
+				<div v-if="samplesError" class="d1-error">{{ samplesError }}</div>
+				<div v-else-if="samples.length === 0 && !loadingSamples" class="d1-empty">No samples found</div>
 				<div v-if="loadingSamples" class="d1-loading"><v-progress-circular indeterminate /></div>
 			</div>
 		</div>
@@ -76,7 +77,8 @@
 
 				<div class="d1-detail-section">
 					<h4>Manufacturing Operations ({{ operations.length }})</h4>
-					<div v-if="loadingOps" class="d1-loading"><v-progress-circular indeterminate small /></div>
+					<div v-if="detailError" class="d1-error">{{ detailError }}</div>
+					<div v-else-if="loadingOps" class="d1-loading"><v-progress-circular indeterminate small /></div>
 					<div v-else-if="operations.length === 0" class="d1-empty-inline">None recorded</div>
 					<table v-else class="d1-table">
 						<thead>
@@ -115,6 +117,7 @@
 				<span v-if="selectedSampleId" class="d1-count">{{ testSessions.length }}</span>
 			</div>
 			<div v-if="!selectedSampleId" class="d1-empty">Select a sample</div>
+			<div v-else-if="detailError" class="d1-error">{{ detailError }}</div>
 			<div v-else-if="loadingTests" class="d1-loading"><v-progress-circular indeterminate /></div>
 			<div v-else class="d1-list">
 				<div
@@ -147,8 +150,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { useD1Items } from '../composables/useD1Items';
+import { useRequestGate, errorText } from '../composables/useRequestGate';
 import NodeGraph from './NodeGraph.vue';
 
 const { getItems } = useD1Items();
@@ -157,6 +161,8 @@ const samples = ref<any[]>([]);
 const sampleSearch = ref('');
 const statusFilter = ref<string | null>(null);
 const loadingSamples = ref(false);
+const samplesError = ref('');
+const detailError = ref('');
 
 const selectedSampleId = ref<string | null>(null);
 const selectedSample = ref<any | null>(null);
@@ -178,6 +184,8 @@ const statusOptions = [
 ];
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const listGate = useRequestGate();
+const detailGate = useRequestGate();
 
 function debouncedFetch() {
 	if (debounceTimer) clearTimeout(debounceTimer);
@@ -185,7 +193,9 @@ function debouncedFetch() {
 }
 
 async function fetchSamples() {
+	const token = listGate.begin();
 	loadingSamples.value = true;
+	samplesError.value = '';
 	try {
 		const params: Record<string, unknown> = {
 			'fields[]': [
@@ -214,21 +224,30 @@ async function fetchSamples() {
 		if (statusFilter.value) {
 			params['filter[current_status][_eq]'] = statusFilter.value;
 		}
-		samples.value = await getItems('physical_samples', params);
+		const rows = await getItems('physical_samples', params);
+		if (!listGate.isCurrent(token)) return; // a newer search replaced this one
+		samples.value = rows;
+	} catch (e) {
+		if (!listGate.isCurrent(token)) return;
+		samplesError.value = `Could not load samples: ${errorText(e)}`;
 	} finally {
-		loadingSamples.value = false;
+		if (listGate.isCurrent(token)) loadingSamples.value = false;
 	}
 }
 
 async function selectSample(s: any) {
+	const token = detailGate.begin();
 	selectedSampleId.value = s.sample_id;
 	selectedSample.value = s;
 	selectedTestId.value = null;
+	operations.value = []; // never show the previous sample's rows under this sample's header
+	testSessions.value = [];
+	detailError.value = '';
 	loadingOps.value = true;
 	loadingTests.value = true;
 
 	try {
-		[operations.value, testSessions.value] = await Promise.all([
+		const [ops, tests] = await Promise.all([
 			getItems('manufacturing_operations', {
 				'filter[sample_id][_eq]': s.sample_id,
 				'fields[]': [
@@ -248,9 +267,18 @@ async function selectSample(s: any) {
 				limit: 100,
 			}),
 		]);
+		if (!detailGate.isCurrent(token)) return; // another sample was selected meanwhile
+		operations.value = ops;
+		testSessions.value = tests;
+	} catch (e) {
+		if (!detailGate.isCurrent(token)) return;
+		detailError.value = `Could not load this sample's operations and tests: ${errorText(e)}`;
+		return;
 	} finally {
-		loadingOps.value = false;
-		loadingTests.value = false;
+		if (detailGate.isCurrent(token)) {
+			loadingOps.value = false;
+			loadingTests.value = false;
+		}
 	}
 
 	graphRef.value?.loadNeighbors('physical_samples', s.sample_id);
@@ -271,6 +299,12 @@ function formatDate(d: string | null): string {
 }
 
 onMounted(fetchSamples);
+
+onBeforeUnmount(() => {
+	if (debounceTimer) clearTimeout(debounceTimer);
+	listGate.cancel();
+	detailGate.cancel();
+});
 </script>
 
 <style scoped>
@@ -290,6 +324,12 @@ onMounted(fetchSamples);
 	border: 1px solid var(--theme--border-color, #e2e8f0);
 	border-radius: var(--theme--border-radius, 10px);
 	overflow: hidden;
+}
+
+.d1-error {
+	padding: 10px 12px;
+	font-size: 12px;
+	color: var(--theme--danger, #c62828);
 }
 
 .d1-panel--graph {

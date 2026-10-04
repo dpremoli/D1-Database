@@ -426,8 +426,9 @@ grep -qx 'shadow:0' <<<"$sp_out" && grep -qx 'real:1' <<<"$sp_out" \
 
 echo "== Audit coverage: every business table, keyed by its primary key (review 5.3) =="
 # Tables deliberately NOT audited: the log itself, dbmate bookkeeping, Directus system tables,
-# derived caches (project_rollup, semantic_embeddings) and the crawler's heartbeat row.
-AUDIT_EXCLUDED="'audit_logs','schema_migrations','project_rollup','semantic_embeddings','force_crawler_state'"
+# derived caches (project_rollup, semantic_embeddings), the crawler's heartbeat row and
+# audit_log_actors (the actor side-table of the log itself).
+AUDIT_EXCLUDED="'audit_logs','audit_log_actors','schema_migrations','project_rollup','semantic_embeddings','force_crawler_state'"
 run_eq "every business table has an audit trigger (missing: none)" \
     "SELECT coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '')
      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -706,6 +707,363 @@ ROLLBACK;
 SQL
 )
 grep -q 'cannot derive short_code' <<<"$bt_err" && ok "an expansion error aborts the INSERT and reaches the caller" || bad "expansion error was swallowed (output: $bt_err)"
+
+echo "== Operation numbers and codes are assigned server-side (review 4.5) =="
+# The trigger fills operation_sequence (max+1 per sample) and the {seq} / {mf} placeholders of a
+# client-composed pass_code. Rolled-back transaction first: the numbers a new heat-treatment,
+# deformation and additive operation get, a supplied number being kept, and the sintering counter.
+seq_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_methods (method_id, method_code, method_name)
+VALUES ('c0000000-0000-4000-8000-000000000401', 'T-I-HT', 'stream I test method');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000411', 'TI-S1');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000412', 'TI-S2');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000421', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000411', 'heat_treatment', 'TI-S1-HTA{seq}-800C_60min_AC');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000422', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000411', 'deformation', 'TI-S1-DR{seq}-20C_50pct');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000423', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000411', 'additive', 'TI-S1-AM{seq}-200W');
+-- a machining pass number the user typed is kept, and the next blank one continues after it
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, operation_sequence, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000424', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000411', 'machining', 9, 'TI-S1-F9-20MPM');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000425', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000411', 'heat_treatment', 'TI-S1-HTS{seq}');
+-- numbering is per sample, and a typed override without a placeholder is stored as given
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000426', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000412', 'heat_treatment', 'TI-S2-HTA{seq}');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000427', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000412', 'heat_treatment', 'MY-OWN-CODE');
+-- no sample: the placeholder collapses to nothing and the sequence stays NULL (as before)
+INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000428', 'c0000000-0000-4000-8000-000000000401', 'heat_treatment', 'test', 'TI-NOSAMPLE{seq}-X');
+SELECT 'op:' || substr(operation_id::text, 33) || ':' || COALESCE(operation_sequence::text, 'null') || ':' || pass_code
+FROM manufacturing_operations WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-0000000004_%' ORDER BY operation_id;
+
+-- sintering "MF" counter: max+1 over live codes, not count+1
+SELECT COALESCE(max((substring(pass_code FROM '(?:^|-)MF(\d{1,9})(?:-|$)'))::bigint), 0) AS mfbase
+FROM manufacturing_operations WHERE process_category = 'sintering' \gset
+INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000431', 'c0000000-0000-4000-8000-000000000401', 'sintering', 'test', '01-01-26-MF' || (:mfbase + 5) || '-950C');
+INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000432', 'c0000000-0000-4000-8000-000000000401', 'sintering', 'test', '02-01-26-MF{mf}-950C_11kN');
+INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000433', 'c0000000-0000-4000-8000-000000000401', 'sintering', 'test', '03-01-26-MF{mf}');
+DELETE FROM manufacturing_operations WHERE operation_id = 'c0000000-0000-4000-8000-000000000432';
+INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000434', 'c0000000-0000-4000-8000-000000000401', 'sintering', 'test', '04-01-26-MF{mf}');
+SELECT 'mf_explicit:' || (:mfbase + 5);
+SELECT 'mf:' || substr(operation_id::text, 33) || ':' || pass_code FROM manufacturing_operations
+WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-00000000043_' ORDER BY operation_id;
+-- regenerating the code of an existing operation must not store a raw placeholder
+UPDATE manufacturing_operations SET pass_code = 'TI-S1-HTA{seq}-regen' WHERE operation_id = 'c0000000-0000-4000-8000-000000000421';
+SELECT 'regen:' || pass_code || ':' || operation_sequence FROM manufacturing_operations WHERE operation_id = 'c0000000-0000-4000-8000-000000000421';
+ROLLBACK;
+SQL
+)
+seq_check() { grep -qx "$1" <<<"$seq_out" && ok "$2" || bad "$2 (psql output: $seq_out)"; }
+seq_check "op:0421:1:TI-S1-HTA1-800C_60min_AC" "a new heat-treatment op gets sequence 1 and a code that carries it"
+seq_check "op:0422:2:TI-S1-DR2-20C_50pct" "a new deformation op gets the next number, in its code too"
+seq_check "op:0423:3:TI-S1-AM3-200W" "a new additive op gets the next number, in its code too"
+seq_check "op:0424:9:TI-S1-F9-20MPM" "a supplied (machining pass) number is kept"
+seq_check "op:0425:10:TI-S1-HTS10" "the next blank number continues after the highest one"
+seq_check "op:0426:1:TI-S2-HTA1" "numbering restarts per sample"
+seq_check "op:0427:2:MY-OWN-CODE" "a typed code without a placeholder is stored unchanged"
+seq_check "op:0428:null:TI-NOSAMPLE-X" "an operation without a sample keeps a NULL sequence and an empty placeholder"
+mf_exp=$(grep -m1 '^mf_explicit:' <<<"$seq_out" | cut -d: -f2)
+seq_check "mf:0431:01-01-26-MF${mf_exp}-950C" "an explicit MF number is stored as given"
+seq_check "mf:0433:03-01-26-MF$((mf_exp + 2))" "the sintering MF counter is max+1 over existing codes"
+seq_check "mf:0434:04-01-26-MF$((mf_exp + 3))" "an MF number is not handed out again after a delete"
+seq_check "regen:TI-S1-HTA1-regen:1" "regenerating an existing code fills the placeholder from the stored sequence"
+
+# Two writers at once: session A inserts and holds its transaction open, session B inserts for the
+# same sample meanwhile. Without the advisory lock both read max = 0 and get 1.
+cc_dir=$(mktemp -d)
+$PSQL -q -c "
+INSERT INTO manufacturing_methods (method_id, method_code, method_name)
+VALUES ('c0000000-0000-4000-8000-000000000402', 'T-I-CC', 'stream I concurrency method');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000413', 'TI-CC1');" >/dev/null 2>&1
+cc_insert() {  # cc_insert <op-id-suffix> <code> <hold-seconds>
+    $PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-0000000004$1', 'c0000000-0000-4000-8000-000000000402',
+        'c0000000-0000-4000-8000-000000000413', 'heat_treatment', '$2')
+RETURNING operation_sequence || '|' || pass_code;
+SELECT pg_sleep($3);
+COMMIT;
+SQL
+}
+cc_insert 51 'TI-CC1-HTA{seq}' 2 | grep '|' > "$cc_dir/a" &
+sleep 0.7
+cc_insert 52 'TI-CC1-HTA{seq}' 0 | grep '|' > "$cc_dir/b"
+wait
+cc_a=$(cat "$cc_dir/a"); cc_b=$(cat "$cc_dir/b")
+[[ "$cc_a" == "1|TI-CC1-HTA1" && "$cc_b" == "2|TI-CC1-HTA2" ]] \
+    && ok "concurrent inserts for one sample get distinct sequences and codes ($cc_a, $cc_b)" \
+    || bad "concurrent inserts collided (A='$cc_a', B='$cc_b')"
+
+# Same for the global sintering counter.
+cc_mf() {  # cc_mf <op-id-suffix> <hold-seconds>
+    $PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-0000000004$1', 'c0000000-0000-4000-8000-000000000402', 'sintering', 'test', '05-01-26-MF{mf}')
+RETURNING pass_code;
+SELECT pg_sleep($2);
+COMMIT;
+SQL
+}
+cc_mf 53 2 | grep MF > "$cc_dir/a" &
+sleep 0.7
+cc_mf 54 0 | grep MF > "$cc_dir/b"
+wait
+cc_a=$(cat "$cc_dir/a"); cc_b=$(cat "$cc_dir/b")
+[[ -n "$cc_a" && -n "$cc_b" && "$cc_a" != "$cc_b" ]] \
+    && ok "concurrent sintering inserts get distinct MF numbers ($cc_a, $cc_b)" \
+    || bad "concurrent sintering inserts collided (A='$cc_a', B='$cc_b')"
+rm -rf "$cc_dir"
+$PSQL -q -c "
+DELETE FROM manufacturing_operations WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-0000000004_%';
+DELETE FROM physical_samples WHERE sample_id = 'c0000000-0000-4000-8000-000000000413';
+DELETE FROM manufacturing_methods WHERE method_id = 'c0000000-0000-4000-8000-000000000402';" >/dev/null 2>&1 || true
+
+echo "== Sample numbers are assigned server-side (review 4.6) =="
+# A code written as {seq}-<rest> gets the next free number from the trigger; any other code is stored as given.
+sc_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+SELECT COALESCE(max((substring(sample_code FROM '^(\d{1,9})-'))::bigint), 0) AS sbase FROM physical_samples \gset
+INSERT INTO physical_samples (sample_id, sample_code)
+VALUES ('c0000000-0000-4000-8000-000000000611', '{seq}-TI-MF-2026-10-4');
+INSERT INTO physical_samples (sample_id, sample_code)
+VALUES ('c0000000-0000-4000-8000-000000000612', '{seq}-TI-HT-2026-10-4');
+INSERT INTO physical_samples (sample_id, sample_code)
+VALUES ('c0000000-0000-4000-8000-000000000613', 'TI-HAND-TYPED');
+INSERT INTO physical_samples (sample_id, sample_code)
+VALUES ('c0000000-0000-4000-8000-000000000614', (:sbase + 500)::text || '-TI-OLD-2020-1-1');
+INSERT INTO physical_samples (sample_id, sample_code)
+VALUES ('c0000000-0000-4000-8000-000000000615', '{seq}-TI-MF-2026-10-5');
+SELECT 'base:' || :sbase;
+SELECT 'code:' || substr(sample_id::text, 33) || ':' || sample_code FROM physical_samples
+WHERE sample_id::text LIKE 'c0000000-0000-4000-8000-00000000061_' ORDER BY sample_id;
+-- "renumber": the row's own number is excluded, so it keeps the top slot rather than jumping past itself
+UPDATE physical_samples SET sample_code = '{seq}-TI-MF-2026-10-5' WHERE sample_id = 'c0000000-0000-4000-8000-000000000615';
+SELECT 'renumber:' || sample_code FROM physical_samples WHERE sample_id = 'c0000000-0000-4000-8000-000000000615';
+-- an unrelated update leaves the code alone
+UPDATE physical_samples SET nickname = 'x' WHERE sample_id = 'c0000000-0000-4000-8000-000000000611';
+SELECT 'untouched:' || sample_code FROM physical_samples WHERE sample_id = 'c0000000-0000-4000-8000-000000000611';
+ROLLBACK;
+SQL
+)
+sc_check() { grep -qx "$1" <<<"$sc_out" && ok "$2" || bad "$2 (psql output: $sc_out)"; }
+sc_base=$(grep -m1 '^base:' <<<"$sc_out" | cut -d: -f2)
+sc_check "code:0611:$((sc_base + 1))-TI-MF-2026-10-4" "a {seq}- sample code gets max+1 and keeps the rest of the code"
+sc_check "code:0612:$((sc_base + 2))-TI-HT-2026-10-4" "the next one gets the next number"
+sc_check "code:0613:TI-HAND-TYPED" "a hand-typed code without the placeholder is stored as given"
+sc_check "code:0614:$((sc_base + 500))-TI-OLD-2020-1-1" "an explicit number is stored as given"
+sc_check "code:0615:$((sc_base + 501))-TI-MF-2026-10-5" "a later placeholder continues after the highest number in use"
+sc_check "renumber:$((sc_base + 501))-TI-MF-2026-10-5" "renumbering excludes the row's own number"
+sc_check "untouched:$((sc_base + 1))-TI-MF-2026-10-4" "an unrelated update does not renumber"
+
+# Two registrations at once: A holds its transaction open while B inserts.
+sc_dir=$(mktemp -d)
+sc_insert() {  # sc_insert <id-suffix> <hold-seconds>
+    $PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO physical_samples (sample_id, sample_code)
+VALUES ('c0000000-0000-4000-8000-0000000006$1', '{seq}-TI-CC-2026-10-4') RETURNING sample_code;
+SELECT pg_sleep($2);
+COMMIT;
+SQL
+}
+sc_insert 21 2 | grep TI-CC > "$sc_dir/a" &
+sleep 0.7
+sc_insert 22 0 | grep TI-CC > "$sc_dir/b"
+wait
+sc_a=$(cat "$sc_dir/a"); sc_b=$(cat "$sc_dir/b")
+sc_na=${sc_a%%-*}; sc_nb=${sc_b%%-*}
+[[ -n "$sc_na" && "$sc_nb" == "$((sc_na + 1))" ]] \
+    && ok "concurrent registrations get distinct, consecutive sample numbers ($sc_a, $sc_b)" \
+    || bad "concurrent registrations collided (A='$sc_a', B='$sc_b')"
+rm -rf "$sc_dir"
+$PSQL -q -c "DELETE FROM physical_samples WHERE sample_id::text LIKE 'c0000000-0000-4000-8000-0000000006__';" >/dev/null 2>&1 || true
+
+echo "== Audit actor fallback from directus_activity (review 4.9) =="
+# The actor-identity hook's set_config may not reach the write's transaction for PATCH/DELETE (see
+# migration 20261003000128). Directus then still writes a directus_activity row in that transaction;
+# the trigger on it attributes the audit rows. directus_activity is not a CI stub, so the test
+# creates a minimal one inside the rolled-back transaction and installs the trigger with the
+# migration's own DO block.
+act_do=$(sed -n '/^-- migrate:up/,/^-- migrate:down/p' db/migrations/20261003000128_audit_actor_from_directus_activity.sql \
+    | awk '/^DO \$\$/{f=1} f{print} f && /^\$\$;/{exit}')
+[[ -n "$act_do" ]] && ok "found the migration's trigger-install block" || bad "could not extract the trigger-install block"
+act_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+CREATE TABLE IF NOT EXISTS directus_activity (
+    id serial PRIMARY KEY, action varchar(45), "user" uuid, collection varchar(64), item varchar(255),
+    "timestamp" timestamptz DEFAULT now());
+DROP TRIGGER IF EXISTS audit_actor_from_activity ON directus_activity;
+$act_do
+SELECT 'trigger:' || count(*) FROM pg_trigger WHERE tgname = 'audit_actor_from_activity' AND NOT tgisinternal;
+-- 1. API-style write: no GUC (the hook could not reach this transaction), then Directus' activity rows
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000711', 'TI-ACT-1');
+INSERT INTO directus_activity (action, "user", collection, item)
+VALUES ('create', 'c0000000-0000-4000-8000-000000000799', 'physical_samples', 'c0000000-0000-4000-8000-000000000711');
+UPDATE physical_samples SET nickname = 'renamed' WHERE sample_id = 'c0000000-0000-4000-8000-000000000711';
+INSERT INTO directus_activity (action, "user", collection, item)
+VALUES ('update', 'c0000000-0000-4000-8000-000000000799', 'physical_samples', 'c0000000-0000-4000-8000-000000000711');
+SELECT 'raw_actor_null:' || count(*) FROM audit_logs
+  WHERE record_id = 'c0000000-0000-4000-8000-000000000711' AND actor_identity IS NULL;
+SELECT 'attributed:' || string_agg(action_type || '=' || actor_identity || '/' || actor_from_directus_activity, ',' ORDER BY log_id)
+  FROM v_audit_logs_with_actor WHERE record_id = 'c0000000-0000-4000-8000-000000000711';
+SELECT 'actor_rows:' || count(*) FROM audit_log_actors a JOIN audit_logs l USING (log_id)
+  WHERE l.record_id = 'c0000000-0000-4000-8000-000000000711';
+-- 2. an unauthenticated write is recorded as 'public'
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000712', 'TI-ACT-2');
+INSERT INTO directus_activity (action, "user", collection, item)
+VALUES ('create', NULL, 'physical_samples', 'c0000000-0000-4000-8000-000000000712');
+SELECT 'public:' || actor_identity FROM v_audit_logs_with_actor WHERE record_id = 'c0000000-0000-4000-8000-000000000712';
+-- 3. an audit row from an earlier transaction is never re-attributed
+INSERT INTO audit_logs (table_name, record_id, action_type, event_timestamp)
+VALUES ('physical_samples', 'TI-ACT-OLD', 'UPDATE', now() - interval '1 hour');
+INSERT INTO directus_activity (action, "user", collection, item)
+VALUES ('update', 'c0000000-0000-4000-8000-000000000799', 'physical_samples', 'TI-ACT-OLD');
+SELECT 'old_rows:' || count(*) FROM audit_log_actors a JOIN audit_logs l USING (log_id) WHERE l.record_id = 'TI-ACT-OLD';
+-- 4. a GUC-supplied actor wins and is not duplicated in the side table
+SELECT set_config('d1.actor_identity', 'guc-user', true) \gset
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000713', 'TI-ACT-3');
+INSERT INTO directus_activity (action, "user", collection, item)
+VALUES ('create', 'c0000000-0000-4000-8000-000000000799', 'physical_samples', 'c0000000-0000-4000-8000-000000000713');
+SELECT 'guc:' || actor_identity || '/' || actor_from_directus_activity FROM v_audit_logs_with_actor WHERE record_id = 'c0000000-0000-4000-8000-000000000713';
+SELECT 'guc_rows:' || count(*) FROM audit_log_actors a JOIN audit_logs l USING (log_id) WHERE l.record_id = 'c0000000-0000-4000-8000-000000000713';
+ROLLBACK;
+SQL
+)
+act_check() { grep -qx "$1" <<<"$act_out" && ok "$2" || bad "$2 (psql output: $act_out)"; }
+act_check "trigger:1" "the migration's block installs the directus_activity trigger"
+act_check "raw_actor_null:2" "setup: the audit rows carried no actor (the hook could not reach the transaction)"
+act_check "attributed:INSERT=c0000000-0000-4000-8000-000000000799/true,UPDATE=c0000000-0000-4000-8000-000000000799/true" "INSERT and UPDATE audit rows are attributed to the Directus user"
+act_check "actor_rows:2" "one side-table row per attributed audit row, no duplicates"
+act_check "public:public" "an unauthenticated write is attributed to 'public'"
+act_check "old_rows:0" "an audit row from an earlier transaction is not re-attributed"
+act_check "guc:guc-user/false" "an actor set through the GUC wins over the fallback"
+act_check "guc_rows:0" "a GUC-attributed row gets no side-table row"
+
+echo "== Process category comes from the method, in Postgres (review 4.11) =="
+pc_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_methods (method_id, method_code, method_name, process_category) VALUES
+  ('c0000000-0000-4000-8000-000000000801', 'T-I-PH', 'pc heat method', 'heat_treatment'),
+  ('c0000000-0000-4000-8000-000000000802', 'T-I-PS', 'pc sinter method', 'sintering');
+INSERT INTO manufacturing_methods (method_id, method_code, method_name) VALUES
+  ('c0000000-0000-4000-8000-000000000803', 'T-I-PU', 'pc unmapped method'),
+  ('c0000000-0000-4000-8000-000000000804', 'T-I-PV', 'pc unmapped method 2');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000811', 'TI-PC');
+-- derived on insert when blank; an explicit value wins
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id) VALUES
+  ('c0000000-0000-4000-8000-000000000821', 'c0000000-0000-4000-8000-000000000801', 'c0000000-0000-4000-8000-000000000811');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category) VALUES
+  ('c0000000-0000-4000-8000-000000000822', 'c0000000-0000-4000-8000-000000000801', 'c0000000-0000-4000-8000-000000000811', 'deformation');
+-- an unmapped method never blanks or invents a category
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category) VALUES
+  ('c0000000-0000-4000-8000-000000000823', 'c0000000-0000-4000-8000-000000000803', 'c0000000-0000-4000-8000-000000000811', 'machining');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id) VALUES
+  ('c0000000-0000-4000-8000-000000000824', 'c0000000-0000-4000-8000-000000000803', 'c0000000-0000-4000-8000-000000000811');
+UPDATE manufacturing_operations SET method_id = 'c0000000-0000-4000-8000-000000000804'
+  WHERE operation_id = 'c0000000-0000-4000-8000-000000000823';
+-- changing to a mapped method re-derives; setting the category in the same statement wins
+UPDATE manufacturing_operations SET method_id = 'c0000000-0000-4000-8000-000000000802'
+  WHERE operation_id = 'c0000000-0000-4000-8000-000000000821';
+SELECT 'rederived:' || process_category FROM manufacturing_operations WHERE operation_id = 'c0000000-0000-4000-8000-000000000821';
+UPDATE manufacturing_operations SET method_id = 'c0000000-0000-4000-8000-000000000802', process_category = 'additive'
+  WHERE operation_id = 'c0000000-0000-4000-8000-000000000822';
+-- an update that does not touch the method leaves the category alone, even if the method is mapped
+UPDATE manufacturing_operations SET process_category = 'machining' WHERE operation_id = 'c0000000-0000-4000-8000-000000000821';
+UPDATE manufacturing_operations SET outcome_notes = 'x' WHERE operation_id = 'c0000000-0000-4000-8000-000000000821';
+SELECT 'cat:' || substr(operation_id::text, 33) || ':' || COALESCE(process_category, 'null')
+FROM manufacturing_operations WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-00000000082_' ORDER BY operation_id;
+SELECT 'seed_MP:' || COALESCE(process_category, 'null') FROM manufacturing_methods WHERE method_code = 'MP';
+SELECT 'seed_HT:' || COALESCE(process_category, 'null') FROM manufacturing_methods WHERE method_code = 'HT';
+ROLLBACK;
+SQL
+)
+pc_check() { grep -qx "$1" <<<"$pc_out" && ok "$2" || bad "$2 (psql output: $pc_out)"; }
+pc_check "rederived:sintering" "changing the method re-derives the category (heat_treatment -> sintering)"
+pc_check "cat:0821:machining" "a later edit of the category (method unchanged) is not overwritten"
+pc_check "cat:0822:additive" "a category set in the same statement as a method change wins"
+pc_check "cat:0823:machining" "an unmapped method never blanks a stored category"
+pc_check "cat:0824:null" "an unmapped method on a blank category stays blank (nothing invented)"
+pc_check "seed_MP:sample_prep" "the method map covers MP (sample preparation), which the old SQL map missed"
+pc_check "seed_HT:heat_treatment" "the method map covers HT"
+# insert-time derivation on its own (separate transaction so the later UPDATEs above cannot mask it)
+pc2_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_methods (method_id, method_code, method_name, process_category)
+VALUES ('c0000000-0000-4000-8000-000000000805', 'T-I-PW', 'pc method', 'additive');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000812', 'TI-PC2');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id)
+VALUES ('c0000000-0000-4000-8000-000000000825', 'c0000000-0000-4000-8000-000000000805', 'c0000000-0000-4000-8000-000000000812');
+SELECT 'inserted:' || process_category FROM manufacturing_operations WHERE operation_id = 'c0000000-0000-4000-8000-000000000825';
+ROLLBACK;
+SQL
+)
+grep -qx "inserted:additive" <<<"$pc2_out" && ok "a new operation with no category gets its method's category on insert" || bad "insert-time derivation failed (output: $pc2_out)"
+
+echo "== Prep recipes are applied in Postgres (review 4.12) =="
+pr_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO prep_recipes (recipe_id, name) VALUES
+  ('c0000000-0000-4000-8000-000000000901', 'TI recipe A'),
+  ('c0000000-0000-4000-8000-000000000902', 'TI recipe B'),
+  ('c0000000-0000-4000-8000-000000000903', 'TI recipe empty');
+INSERT INTO prep_recipe_steps (recipe_id, step_order, step_type, grit, duration_s) VALUES
+  ('c0000000-0000-4000-8000-000000000901', 2, 'polishing', NULL, 120),
+  ('c0000000-0000-4000-8000-000000000901', 1, 'grinding', 'P1200', 60),
+  ('c0000000-0000-4000-8000-000000000902', 1, 'etching', NULL, 10);
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000911', 'TI-PR');
+-- MP is the Sample Preparation method: its operations derive process_category = sample_prep
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, source_recipe_id)
+SELECT 'c0000000-0000-4000-8000-000000000921', method_id, 'c0000000-0000-4000-8000-000000000911', 'c0000000-0000-4000-8000-000000000901'
+FROM manufacturing_methods WHERE method_code = 'MP';
+SELECT 'steps:' || string_agg(step_order || ':' || step_type || ':' || COALESCE(grit, '-'), ',' ORDER BY step_order)
+FROM prep_steps WHERE operation_id = 'c0000000-0000-4000-8000-000000000921';
+-- an operation that already has steps is not clobbered by a different recipe
+UPDATE manufacturing_operations SET source_recipe_id = 'c0000000-0000-4000-8000-000000000902'
+WHERE operation_id = 'c0000000-0000-4000-8000-000000000921';
+SELECT 'steps_after_switch:' || count(*) FROM prep_steps WHERE operation_id = 'c0000000-0000-4000-8000-000000000921';
+-- an empty recipe copies nothing and is not an error
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, source_recipe_id)
+SELECT 'c0000000-0000-4000-8000-000000000922', method_id, 'c0000000-0000-4000-8000-000000000911', 'c0000000-0000-4000-8000-000000000903'
+FROM manufacturing_methods WHERE method_code = 'MP';
+SELECT 'empty_recipe_steps:' || count(*) FROM prep_steps WHERE operation_id = 'c0000000-0000-4000-8000-000000000922';
+-- setting a recipe on an existing prep operation without steps applies it
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id)
+SELECT 'c0000000-0000-4000-8000-000000000923', method_id, 'c0000000-0000-4000-8000-000000000911'
+FROM manufacturing_methods WHERE method_code = 'MP';
+UPDATE manufacturing_operations SET source_recipe_id = 'c0000000-0000-4000-8000-000000000902'
+WHERE operation_id = 'c0000000-0000-4000-8000-000000000923';
+SELECT 'late_apply_steps:' || count(*) FROM prep_steps WHERE operation_id = 'c0000000-0000-4000-8000-000000000923';
+ROLLBACK;
+SQL
+)
+pr_check() { grep -qx "$1" <<<"$pr_out" && ok "$2" || bad "$2 (psql output: $pr_out)"; }
+pr_check "steps:1:grinding:P1200,2:polishing:-" "a prep operation created with a recipe gets its steps, in order"
+pr_check "steps_after_switch:2" "existing steps are never clobbered by another recipe"
+pr_check "empty_recipe_steps:0" "an empty recipe copies nothing"
+pr_check "late_apply_steps:1" "setting a recipe on an existing prep operation without steps applies it"
+# A recipe on anything but a Sample Preparation operation is rejected and the write is rolled back.
+pr_err=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO prep_recipes (recipe_id, name) VALUES ('c0000000-0000-4000-8000-000000000904', 'TI recipe C');
+INSERT INTO manufacturing_methods (method_id, method_code, method_name, process_category)
+VALUES ('c0000000-0000-4000-8000-000000000905', 'T-I-PR', 'not a prep method', 'heat_treatment');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000912', 'TI-PR2');
+INSERT INTO manufacturing_operations (method_id, sample_id, source_recipe_id)
+VALUES ('c0000000-0000-4000-8000-000000000905', 'c0000000-0000-4000-8000-000000000912', 'c0000000-0000-4000-8000-000000000904');
+ROLLBACK;
+SQL
+)
+grep -q 'only be set on a Sample Preparation operation' <<<"$pr_err" && ok "a recipe on a non-prep operation is rejected with a clear error" || bad "non-prep recipe was not rejected (output: $pr_err)"
 
 echo "== Cleanup test rows =="
 $PSQL -c "

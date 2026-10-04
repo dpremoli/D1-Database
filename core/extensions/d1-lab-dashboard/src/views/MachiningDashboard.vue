@@ -29,7 +29,8 @@
 				<h3>Operations</h3>
 				<span v-if="selectedEquipmentId" class="d1-count">{{ operations.length }}</span>
 			</div>
-			<div v-if="!selectedEquipmentId" class="d1-empty">Select equipment to filter operations</div>
+			<div v-if="loadError" class="d1-error">{{ loadError }}</div>
+			<div v-else-if="!selectedEquipmentId" class="d1-empty">Select equipment to filter operations</div>
 			<div v-else-if="loadingOps" class="d1-loading"><v-progress-circular indeterminate /></div>
 			<div v-else class="d1-list">
 				<div
@@ -111,8 +112,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useD1Items } from '../composables/useD1Items';
+import { useRequestGate, errorText } from '../composables/useRequestGate';
 import NodeGraph from './NodeGraph.vue';
 
 const { getItems } = useD1Items();
@@ -124,6 +126,8 @@ const selectedEquipmentCollection = 'equipment';
 
 const operations = ref<any[]>([]);
 const loadingOps = ref(false);
+const loadError = ref('');
+const opsGate = useRequestGate();
 const selectedOp = ref<any | null>(null);
 
 const graphRef = ref<InstanceType<typeof NodeGraph> | null>(null);
@@ -137,19 +141,28 @@ const filteredEquipment = computed(() =>
 );
 
 onMounted(async () => {
-	equipment.value = await getItems('equipment', {
-		'fields[]': ['equipment_id', 'equipment_name', 'equipment_type'],
-		'sort[]': 'equipment_name',
-		limit: 200,
-	});
+	try {
+		equipment.value = await getItems('equipment', {
+			'fields[]': ['equipment_id', 'equipment_name', 'equipment_type'],
+			'sort[]': 'equipment_name',
+			limit: 200,
+		});
+	} catch (e) {
+		loadError.value = `Could not load machines: ${errorText(e)}`;
+	}
 });
 
+onBeforeUnmount(() => opsGate.cancel());
+
 async function selectEquipment(eq: any) {
+	const token = opsGate.begin();
 	selectedEquipmentId.value = eq.equipment_id;
 	selectedOp.value = null;
+	operations.value = []; // never show the previous machine's operations under this machine
+	loadError.value = '';
 	loadingOps.value = true;
 	try {
-		operations.value = await getItems('manufacturing_operations', {
+		const rows = await getItems('manufacturing_operations', {
 			'filter[equipment_id][_eq]': eq.equipment_id,
 			'fields[]': [
 				'*',
@@ -163,8 +176,14 @@ async function selectEquipment(eq: any) {
 			'sort[]': '-operation_date',
 			limit: 500,
 		});
+		if (!opsGate.isCurrent(token)) return; // another machine was selected meanwhile
+		operations.value = rows;
+	} catch (e) {
+		if (!opsGate.isCurrent(token)) return;
+		loadError.value = `Could not load this machine's operations: ${errorText(e)}`;
+		return;
 	} finally {
-		loadingOps.value = false;
+		if (opsGate.isCurrent(token)) loadingOps.value = false;
 	}
 	graphRef.value?.loadNeighbors(selectedEquipmentCollection, eq.equipment_id);
 }
@@ -197,6 +216,12 @@ function formatDate(d: string | null): string {
 	border: 1px solid var(--theme--border-color, #e2e8f0);
 	border-radius: var(--theme--border-radius, 10px);
 	overflow: hidden;
+}
+
+.d1-error {
+	padding: 10px 12px;
+	font-size: 12px;
+	color: var(--theme--danger, #c62828);
 }
 
 .d1-panel--graph {
