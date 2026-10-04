@@ -24,6 +24,9 @@ for _var, _sub in (
     ("LOCALAPPDATA", "localappdata"),
 ):
     os.environ[_var] = os.path.join(_STATE, _sub)
+# The Host/Origin guard (app/origin_guard.py) only admits loopback names; Starlette's TestClient
+# sends `Host: testserver`. Tests of the guard itself talk to 127.0.0.1 and clear this.
+os.environ["RECORDER_ALLOWED_HOSTS"] = "testserver"
 
 import pytest  # noqa: E402
 

@@ -611,3 +611,107 @@ class TestGracefulShutdown:
         if sess.n_total > 0:
             rows = memmap_rows(_raw_path(sess))
             assert rows.shape[0] == sess.n_total
+
+
+class FloodSource(_BaseSource):
+    """Produces as fast as it can and ignores stop(): only the session's own stop flag ends it."""
+
+    def stop(self):
+        pass
+
+    def read(self):
+        return self._chunk(50)
+
+
+class _NullBroadcaster:
+    def publish(self, msg):
+        pass
+
+
+class TestConsumerFailure:
+    """A consumer-thread exception must end the run, not wedge it in "recording" (review 1.1)."""
+
+    def _boom_after(self, monkeypatch, sess, n_ok: int, exc: Exception) -> None:
+        orig = sess.raw.append
+        calls = {"n": 0}
+
+        def _append(t, data):
+            calls["n"] += 1
+            if calls["n"] > n_ok:
+                raise exc
+            return orig(t, data)
+
+        monkeypatch.setattr(sess.raw, "append", _append)
+
+    def test_raw_append_failure_ends_in_terminal_state(self, tmp_path, monkeypatch):
+        sess = RecordingSession(_cfg(), str(tmp_path), FloodSource())
+        self._boom_after(monkeypatch, sess, 20, OSError("disk I/O error"))
+        sess.start()
+        _wait(sess, timeout=20)
+
+        assert sess.state == "error"
+        assert sess.error_kind == "acquisition"
+        assert "disk I/O error" in sess.error  # the real cause, not "consumer overrun"
+        assert sess.ring.closed
+        # raw.close() ran: the 20 good chunks are on disk and the file handle is released
+        assert sess.raw._fh is None or sess.raw._fh.closed
+        assert memmap_rows(_raw_path(sess)).shape[0] == 20 * 50
+        assert _manifest(sess)["state"] == "error"
+
+    def test_encode_frame_failure_ends_in_terminal_state(self, tmp_path, monkeypatch):
+        import app.session as session_mod
+
+        calls = {"n": 0}
+
+        def _bad_frame(*a, **k):
+            calls["n"] += 1
+            if calls["n"] > 5:
+                raise ValueError("bad frame")
+            return b""
+
+        monkeypatch.setattr(session_mod, "encode_frame", _bad_frame)
+        sess = RecordingSession(_cfg(), str(tmp_path), FloodSource(), _NullBroadcaster())
+        sess.start()
+        t0 = time.monotonic()
+        _wait(sess, timeout=20)
+
+        assert time.monotonic() - t0 < 10
+        assert sess.state == "error"
+        assert "bad frame" in sess.error
+
+    def test_stop_completes_after_consumer_death(self, tmp_path, monkeypatch):
+        sess = RecordingSession(_cfg(), str(tmp_path), FloodSource())
+        self._boom_after(monkeypatch, sess, 3, RuntimeError("boom"))
+        sess.start()
+        time.sleep(0.5)
+        t0 = time.monotonic()
+        sess.stop(wait=True, timeout=10)
+        assert time.monotonic() - t0 < 8
+        sess.join_finalize(10)
+        assert sess.state == "error"
+        assert "boom" in sess.error
+
+
+class TestRing:
+    def test_close_never_blocks_on_a_full_ring(self):
+        from app.acquisition.ring import Ring
+
+        ring = Ring(maxsize=2)
+        z = np.zeros(1)
+        assert ring.put(z, z) and ring.put(z, z)
+        t0 = time.monotonic()
+        ring.close()  # used to block forever on a full queue
+        assert time.monotonic() - t0 < 1
+        assert ring.put(z, z) is False  # closed: nothing will drain it
+
+    def test_closed_ring_delivers_every_queued_chunk_then_none(self):
+        from app.acquisition.ring import Ring
+
+        ring = Ring(maxsize=2)
+        z = np.zeros(1)
+        ring.put(z, z)
+        ring.put(z, z)
+        ring.close()
+        assert ring.get() is not None
+        assert ring.get() is not None
+        assert ring.get() is None

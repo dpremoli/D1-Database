@@ -1,5 +1,6 @@
 """NI-DAQ catalog + enumeration (sim/real) + channel model + endpoints."""
 
+import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main
@@ -402,3 +403,19 @@ def test_first_run_channel_config_survives_a_missing_runtime(monkeypatch):
         assert r.status_code == 200, r.text
         assert r.json()["channels"]
         assert client.get("/nidaq/devices").status_code == 200
+
+
+@pytest.mark.parametrize("formula", ["min(Fx)", "sqrt()", "1/0"])
+def test_put_channels_rejects_formulas_that_would_crash_at_record_time(
+    monkeypatch, tmp_path, formula
+):
+    path = tmp_path / "nidaq_channels.json"
+    monkeypatch.setattr(main, "NIDAQ_CHANNELS_PATH", str(path))
+    with TestClient(fastapi_app) as client:
+        body = {"channels": [chan.make_channel("Bad", "Aux", source="virtual", formula=formula)]}
+        res = client.put("/nidaq/channels", json=body)
+        assert res.status_code == 400
+        assert "Bad" in res.json()["detail"]
+        assert not path.exists()
+        res = client.post("/nidaq/channels/validate-formula", json={"formula": formula})
+        assert res.json()["valid"] is False
