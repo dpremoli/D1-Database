@@ -254,23 +254,45 @@ async def ingest_start(request: Request) -> dict:
     if not sid:
         raise HTTPException(400, "session_id required")
     d = _session_dir(sid)
-    os.makedirs(d, exist_ok=True)
-    # Write header bytes if provided
     header_hex = body.get("header_hex", "")
-    if header_hex:
-        raw_path = os.path.join(d, "raw.d1rw")
+    try:
+        header = bytes.fromhex(header_hex) if header_hex else b""
+    except (TypeError, ValueError):
+        raise HTTPException(400, "header_hex is not valid hex")
+    raw_path = os.path.join(d, "raw.d1rw")
+    meta_path = os.path.join(d, "meta.json")
+    # Idempotent: a retry (or a replay of the start) for a session we already hold must not
+    # truncate the raw file back to its header or clear a tombstone -- the streamed bytes are the
+    # only copy a lost local capture can be restored from. Tell the client where we are instead;
+    # it resumes from that offset.
+    if os.path.isfile(raw_path) and os.path.getsize(raw_path) > 0:
+        if not os.path.isfile(meta_path):
+            # Raw but no meta (a crash between the two writes): re-create the meta only.
+            os.makedirs(d, exist_ok=True)
+            _write_meta(d, _new_meta(sid, body))
+        return {
+            "ok": True,
+            "session_id": sid,
+            "existing": True,
+            "size": os.path.getsize(raw_path),
+        }
+    os.makedirs(d, exist_ok=True)
+    if header:
         with open(raw_path, "wb") as f:
-            f.write(bytes.fromhex(header_hex))
-    meta = {
+            f.write(header)
+    _write_meta(d, _new_meta(sid, body))
+    return {"ok": True, "session_id": sid, "size": len(header)}
+
+
+def _new_meta(sid: str, body: dict) -> dict:
+    now = time.time()
+    return {
         "session_id": sid,
         "state": "streaming",
-        "started_at": time.time(),
-        "updated_at": time.time(),
+        "started_at": now,
+        "updated_at": now,
         "config": body.get("config", {}),
     }
-    with open(os.path.join(d, "meta.json"), "w") as f:
-        json.dump(meta, f)
-    return {"ok": True, "session_id": sid}
 
 
 @app.post("/ingest/chunk")
@@ -324,8 +346,7 @@ async def ingest_chunk(request: Request) -> dict:
             meta = json.load(f)
         meta["updated_at"] = time.time()
         meta["chunks_received"] = meta.get("chunks_received", 0) + 1
-        with open(meta_path, "w") as f:
-            json.dump(meta, f)
+        _write_meta(d, meta)
     except (OSError, ValueError):
         pass
     return {"ok": True, "appended": len(chunk)}
@@ -349,8 +370,7 @@ async def ingest_finish(request: Request) -> dict:
             meta["state"] = "complete"
         meta["finished_at"] = time.time()
         meta["updated_at"] = time.time()
-        with open(meta_path, "w") as f:
-            json.dump(meta, f)
+        _write_meta(d, meta)
     except (OSError, ValueError):
         pass
     return {"ok": True, "session_id": sid}
@@ -373,6 +393,7 @@ async def list_sessions() -> dict:
 
 @app.get("/sessions/{sid}/info")
 async def session_info(sid: str) -> dict:
+    _session_dir(sid)  # same id validation as every other /sessions/{sid} route
     info = _session_info(sid)
     if not info:
         raise HTTPException(404, "session not found")
