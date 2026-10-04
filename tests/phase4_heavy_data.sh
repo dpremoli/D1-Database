@@ -25,8 +25,8 @@ PASS=0
 FAIL=0
 
 info() { echo "  [INFO] $*"; }
-ok()   { echo "  [PASS] $*"; ((PASS++)); }
-fail() { echo "  [FAIL] $*"; ((FAIL++)); }
+ok()   { echo "  [PASS] $*"; PASS=$((PASS+1)); }
+fail() { echo "  [FAIL] $*"; FAIL=$((FAIL+1)); }
 
 require_env() {
     if [[ -z "${!1:-}" ]]; then
