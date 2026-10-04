@@ -31,7 +31,7 @@ export type { Histogram, HistogramAccumulator } from './histogram';
 export { default as ColorBar } from './ColorBar.vue';
 export { default as ColorScaleEditor } from './ColorScaleEditor.vue';
 export { default as PlotModeFlyout } from './PlotModeFlyout.vue';
-export { buildPath, alignRhoToBuckets } from './path';
+export { buildPath, alignRhoToBuckets, alignMeasuredRho, measuredRhoSpan } from './path';
 export type {
 	PathKind, PathParams, PathWindow, PathBounds, PathResult,
 	TurningSpiralParams, LinearFeedParams, MachineXyzParams,

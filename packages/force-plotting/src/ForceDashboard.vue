@@ -21,7 +21,7 @@ import { histogramFrom, type Histogram } from './histogram';
 import ColorScaleEditor from './ColorScaleEditor.vue';
 import PlotModeFlyout from './PlotModeFlyout.vue';
 import { cacheGet, cachePut, decimateCache, parseCache, type Cache } from './liveCache';
-import { buildPath, alignRhoToBuckets, type TurningSpiralParams } from './path';
+import { alignMeasuredRho, measuredRhoSpan, type TurningSpiralParams } from './path';
 import { computeAutoCode } from './operationCode';
 import { activeFindings, diagnose, worstSeverity, type Finding } from './metadataDoctor';
 import { computeSignalStats, type SignalStats } from './signalStats';
@@ -1868,7 +1868,7 @@ function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam:
 // (see fetchRadialCache); 'rpm'/'vc' modes are closed-form in elapsed time alone and never do.
 // The radial second X-axis is always on now (its old 'none'/'radial' picker is gone). It used to
 // default to 'none' because turning it on fetches a multi-MB cache asset, which wanted to be an
-// explicit user action -- that fetch is still lazy (measuredRadialPath below only calls
+// explicit user action -- that fetch is still lazy (measuredRadialSpan below only calls
 // fetchRadialCache when the LRU misses, and Lite mode has usually already put it there), it just
 // no longer waits for a click.
 const radialFetchBusy = ref(false);
@@ -1884,12 +1884,13 @@ async function fetchRadialCache() {
 	finally { radialFetchBusy.value = false; }
 }
 // Memoized once per (op, geometry, crop, cache-arrival) rather than recomputed per axis per
-// render: chartsFor() calls radialValuesFor() once per open axis (+ RPM), and buildPath() over
-// the raw cache is O(N) with a cos/sin per point (N up to ~250k+) — without this, dragging the
-// mouse (hoverIndex re-renders every open chart, see the Phase-1.3 rAF fix) would re-run that
-// O(N) work 3-4x per animation frame. rho is axis-independent (a function of time only), so one
-// path serves every axis + RPM chart in the panel.
-const measuredRadialPath = computed(() => {
+// render: chartsFor() calls radialValuesFor() once per open axis (+ RPM), so without this,
+// dragging the mouse (hoverIndex re-renders every open chart, see the Phase-1.3 rAF fix) would
+// re-run the O(N) scan 3-4x per animation frame. rho is axis-independent (a function of time
+// only), so one span serves every axis + RPM chart in the panel. It is a span (where the spiral
+// starts and stops), not a built path: buildPath() allocated ~100 MB at 5M points on every
+// crop-handle drag only for alignRhoToBuckets to read rho back out of it (review 3.10).
+const measuredRadialSpan = computed(() => {
 	if (speedMode.value !== 'measured') return null;
 	const d = detail.value;
 	const cropStart = activeCrop.value?.start;
@@ -1901,7 +1902,7 @@ const measuredRadialPath = computed(() => {
 		kind: 'turning_spiral', feed: editFeed.value, diam: editDiam.value, innerDiam: editInnerDiam.value,
 		speedMode: 'measured', rpm: editRpm.value, vc: editVc.value, timeScale: timeScale.value, ppr: editPpr.value,
 	};
-	return { c, path: buildPath(c, p, { cropStartSec: cropStart, cropEndSec: c.t[c.N - 1], stride: 1 }) };
+	return { c, span: measuredRhoSpan(c, p, cropStart) };
 });
 // bucketT: the chart's own x-axis time array (d.series[a].t) — a full-range, uncropped envelope,
 // same as what cropStart/cropEnd shade a sub-window of. Radial position is only meaningful from
@@ -1914,9 +1915,9 @@ function radialValuesFor(bucketT: number[] | Float32Array | undefined): Float32A
 	const rho0 = editDiam.value / 2;
 	const innerR = Math.max(0, (editInnerDiam.value || 0) / 2);
 	if (speedMode.value === 'measured') {
-		const m = measuredRadialPath.value;
-		if (!m?.path) { const out = new Float32Array(bucketT.length); out.fill(NaN); return out; }
-		return alignRhoToBuckets(m.path, m.c, bucketT);
+		const m = measuredRadialSpan.value;
+		if (!m?.span) { const out = new Float32Array(bucketT.length); out.fill(NaN); return out; }
+		return alignMeasuredRho(m.span, m.c, bucketT);
 	}
 	const out = new Float32Array(bucketT.length);
 	if (speedMode.value === 'rpm') {
