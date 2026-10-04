@@ -225,6 +225,9 @@ async function loadMeta(base: string): Promise<Record<string, [number, number]>>
 // just drop the reference (only unmount disposed), which leaked GPU memory on every op switch once
 // the component stayed mounted across them.
 function disposeCloud() {
+	// The rings belong to the octree being dropped: the loop that updates them only runs while a
+	// pco exists, so without this the old operation's rings would sit frozen on the new load.
+	markRing.value = null; hoverRing.value = null;
 	if (pco) {
 		scene?.remove(pco);
 		try { pco.dispose(); } catch { /* already disposed */ }
@@ -630,8 +633,9 @@ defineExpose({ currentBounds, exportViewport, revealTime });
 		<LoadingOverlay v-if="stage" :stage="stage" />
 		<div v-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
 		<canvas :key="canvasKey" v-show="!error" ref="canvasEl"></canvas>
-		<span v-if="markRing" class="fo-ring mark" :style="{ transform: `translate(${markRing.x}px, ${markRing.y}px)` }"></span>
-		<span v-if="hoverRing" class="fo-ring hover" :style="{ transform: `translate(${hoverRing.x}px, ${hoverRing.y}px)` }"></span>
+		<!-- linked-moment rings, same look and positioning as FrmCloud's .fc-ring; placed by updateRings() -->
+		<div v-if="markRing" class="fc-ring pin" :style="{ left: markRing.x + 'px', top: markRing.y + 'px' }"></div>
+		<div v-if="hoverRing" class="fc-ring hover" :style="{ left: hoverRing.x + 'px', top: hoverRing.y + 'px' }"></div>
 		<span v-if="!loading && !error" class="fc-count">{{ pointCount.toLocaleString() }} pts (LOD)</span>
 	</div>
 </template>
@@ -640,10 +644,10 @@ defineExpose({ currentBounds, exportViewport, revealTime });
 .frm-octree { position: relative; width: 100%; height: 100%; min-height: 160px; background: var(--plot-bg, #0b1020); border-radius: 6px; overflow: hidden; }
 .frm-octree canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .frm-octree canvas:active { cursor: grabbing; }
-/* Rings sit centred on their point: the box is offset by half its size from the translate origin. */
-.fo-ring { position: absolute; left: 0; top: 0; pointer-events: none; border-radius: 50%; box-sizing: border-box; }
-.fo-ring.mark { width: 12px; height: 12px; margin: -6px 0 0 -6px; border: 2px solid var(--accent, #38bdf8); background: color-mix(in srgb, var(--accent, #38bdf8) 35%, transparent); }
-.fo-ring.hover { width: 10px; height: 10px; margin: -5px 0 0 -5px; border: 1.5px solid var(--accent, #38bdf8); opacity: 0.7; }
+/* Kept identical to FrmCloud.vue's .fc-ring so a marker looks the same in Lite and Full. */
+.fc-ring { position: absolute; border-radius: 50%; box-sizing: border-box; pointer-events: none; transform: translate(-50%, -50%); }
+.fc-ring.pin { width: 12px; height: 12px; background: var(--accent, #38bdf8); border: 2px solid var(--text, #fff); box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
+.fc-ring.hover { width: 10px; height: 10px; border: 1.5px solid var(--accent, #38bdf8); opacity: 0.8; box-shadow: 0 0 0 1px rgba(0,0,0,0.4); }
 .fc-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim, #94a3b8); }
 .fc-msg.err { color: var(--danger, #fca5a5); font-size: var(--fs-sm, 12px); padding: 12px; text-align: center; }
 .fc-count { position: absolute; right: 6px; bottom: 4px; font-size: var(--fs-xs, 11px); color: var(--text-dim, rgba(255,255,255,0.6)); font-variant-numeric: tabular-nums; }
