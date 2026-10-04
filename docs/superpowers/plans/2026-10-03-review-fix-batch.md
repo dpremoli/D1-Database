@@ -182,7 +182,7 @@ each stream into `ccr-c5556a5a-jxwm8s`.
 | F | 2 | `stream-f` (branch `worktree-stream-f`) | merged, reviewed (polls kept across deactivate in `6bf2704`) |
 | G | 2 | `stream-g` (branch `worktree-stream-g`) | merged (`6c70803`), reviewed; `script-tests` CI job added (300 passed locally) |
 | Verify (force-app-verify) | — | `verify` (branch `worktree-verify`) | all scenarios pass after `aaf6d82`; stream-handler shutdown fix `968b021` |
-| Cross-stream review | — | 3 read-only reviewers | infra + db done; force-app review running. Follow-ups: `fix-db` (migration fixes), `fix-infra` (upgrade runbook, docs, webhook, CI) in progress |
+| Cross-stream review | — | 3 read-only reviewers | done. Follow-ups: `fix-db` (migration fixes), `fix-infra` (upgrade runbook, docs, webhook, CI), `fix-web` (pop-out relay, amp reset, summary, nits) — resumed after a usage limit; 0.1.34 changelog + bump in `110916b` |
 | I | 3 | `stream-i` (branch `worktree-stream-i`) | merged (`31c97af`), reviewed; docs + phase3 actor check follow-up; 4.9 needs a live-Directus check |
 
 ## 5. After the streams merge
