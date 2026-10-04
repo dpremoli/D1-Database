@@ -179,7 +179,7 @@ each stream into `ccr-c5556a5a-jxwm8s`.
 | H | 1 | `agent-a9501193950e18778` | merged (`8ec7a6e`), reviewed |
 | C | 2 | `stream-c` (branch `worktree-stream-c`) | merged, reviewed; CI purge + docs follow-up committed |
 | E | 2 | `stream-e` (branch `worktree-stream-e`) | in progress (2.1 committed; resumed after usage limit) |
-| F | 2 | `stream-f` (branch `worktree-stream-f`) | in progress |
+| F | 2 | `stream-f` (branch `worktree-stream-f`) | merged, reviewed (polls kept across deactivate in `6bf2704`) |
 | G | 2 | `stream-g` (branch `worktree-stream-g`) | in progress |
 | I | 3 | `stream-i` (branch `worktree-stream-i`) | in progress |
 
