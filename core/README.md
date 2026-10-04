@@ -47,10 +47,15 @@ changes across the bind mount (ADR-0010).
 
 | Type | Extensions |
 |---|---|
-| **hook** — server-side logic | `actor-identity` (attributes API writes in the audit log), `campaign-inherit`, `d1-default-owner`, `d1-equipment-code`, `d1-operation-sequence`, `d1-apply-prep-recipe` |
+| **hook** — server-side logic | `actor-identity` (attributes API writes in the audit log), `campaign-inherit`, `d1-default-owner`, `d1-equipment-code`, `d1-apply-prep-recipe` |
 | **endpoint** — custom API routes | `d1-ask-endpoint` (`/d1-ask`), `d1-report` (`/d1-report`: printable sample, operation and test reports) |
 | **module** — full-page apps | `d1-home`, `d1-lab-dashboard`, `d1-ask-db` (Ask the Database), `d1-force-dashboard` (force analysis, built on [`packages/force-plotting`](../packages/force-plotting/)), `d1-force-crawler` (drives `scripts/force_orchestrator.py --daemon`), `d1-fast-dashboard` (FAST sintering traces) |
 | **interface** — form fields | code builders (`d1-sample-code`, `d1-operation-code`); inherit-from-parent pickers (`d1-material-inherit`, `d1-project-inherit`, `d1-edge-new-toggle`); category inference (`d1-process-category`, `d1-test-category`); `d1-machine-picker`, `d1-campaign-ops`, `d1-project-items`, `d1-composition-bar`, `d1-geometry-preview`, `d1-file-link`, `d1-archive-links`, `d1-report-button` |
+
+Operation numbers and operation codes are assigned by Postgres, not by an extension: a trigger on
+`manufacturing_operations` fills `operation_sequence` (max+1 per sample, locked) and replaces the
+`{seq}` and `{mf}` placeholders that the `d1-operation-code` interface leaves in a new record's code
+(migration `20261003000126`). The interface shows a preview; the database decides.
 
 `d1-ask-endpoint` is the server-side proxy for the **Ask the Database** page: it
 requires a logged-in user and forwards questions to the guarded

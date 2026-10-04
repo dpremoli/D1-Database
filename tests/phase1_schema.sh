@@ -707,6 +707,126 @@ SQL
 )
 grep -q 'cannot derive short_code' <<<"$bt_err" && ok "an expansion error aborts the INSERT and reaches the caller" || bad "expansion error was swallowed (output: $bt_err)"
 
+echo "== Operation numbers and codes are assigned server-side (review 4.5) =="
+# The trigger fills operation_sequence (max+1 per sample) and the {seq} / {mf} placeholders of a
+# client-composed pass_code. Rolled-back transaction first: the numbers a new heat-treatment,
+# deformation and additive operation get, a supplied number being kept, and the sintering counter.
+seq_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_methods (method_id, method_code, method_name)
+VALUES ('c0000000-0000-4000-8000-000000000401', 'T-I-HT', 'stream I test method');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000411', 'TI-S1');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000412', 'TI-S2');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000421', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000411', 'heat_treatment', 'TI-S1-HTA{seq}-800C_60min_AC');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000422', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000411', 'deformation', 'TI-S1-DR{seq}-20C_50pct');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000423', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000411', 'additive', 'TI-S1-AM{seq}-200W');
+-- a machining pass number the user typed is kept, and the next blank one continues after it
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, operation_sequence, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000424', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000411', 'machining', 9, 'TI-S1-F9-20MPM');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000425', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000411', 'heat_treatment', 'TI-S1-HTS{seq}');
+-- numbering is per sample, and a typed override without a placeholder is stored as given
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000426', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000412', 'heat_treatment', 'TI-S2-HTA{seq}');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000427', 'c0000000-0000-4000-8000-000000000401', 'c0000000-0000-4000-8000-000000000412', 'heat_treatment', 'MY-OWN-CODE');
+-- no sample: the placeholder collapses to nothing and the sequence stays NULL (as before)
+INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000428', 'c0000000-0000-4000-8000-000000000401', 'heat_treatment', 'test', 'TI-NOSAMPLE{seq}-X');
+SELECT 'op:' || substr(operation_id::text, 33) || ':' || COALESCE(operation_sequence::text, 'null') || ':' || pass_code
+FROM manufacturing_operations WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-0000000004_%' ORDER BY operation_id;
+
+-- sintering "MF" counter: max+1 over live codes, not count+1
+SELECT COALESCE(max((substring(pass_code FROM '(?:^|-)MF(\d{1,9})(?:-|$)'))::bigint), 0) AS mfbase
+FROM manufacturing_operations WHERE process_category = 'sintering' \gset
+INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000431', 'c0000000-0000-4000-8000-000000000401', 'sintering', 'test', '01-01-26-MF' || (:mfbase + 5) || '-950C');
+INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000432', 'c0000000-0000-4000-8000-000000000401', 'sintering', 'test', '02-01-26-MF{mf}-950C_11kN');
+INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000433', 'c0000000-0000-4000-8000-000000000401', 'sintering', 'test', '03-01-26-MF{mf}');
+DELETE FROM manufacturing_operations WHERE operation_id = 'c0000000-0000-4000-8000-000000000432';
+INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-000000000434', 'c0000000-0000-4000-8000-000000000401', 'sintering', 'test', '04-01-26-MF{mf}');
+SELECT 'mf_explicit:' || (:mfbase + 5);
+SELECT 'mf:' || substr(operation_id::text, 33) || ':' || pass_code FROM manufacturing_operations
+WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-00000000043_' ORDER BY operation_id;
+-- regenerating the code of an existing operation must not store a raw placeholder
+UPDATE manufacturing_operations SET pass_code = 'TI-S1-HTA{seq}-regen' WHERE operation_id = 'c0000000-0000-4000-8000-000000000421';
+SELECT 'regen:' || pass_code || ':' || operation_sequence FROM manufacturing_operations WHERE operation_id = 'c0000000-0000-4000-8000-000000000421';
+ROLLBACK;
+SQL
+)
+seq_check() { grep -qx "$1" <<<"$seq_out" && ok "$2" || bad "$2 (psql output: $seq_out)"; }
+seq_check "op:0421:1:TI-S1-HTA1-800C_60min_AC" "a new heat-treatment op gets sequence 1 and a code that carries it"
+seq_check "op:0422:2:TI-S1-DR2-20C_50pct" "a new deformation op gets the next number, in its code too"
+seq_check "op:0423:3:TI-S1-AM3-200W" "a new additive op gets the next number, in its code too"
+seq_check "op:0424:9:TI-S1-F9-20MPM" "a supplied (machining pass) number is kept"
+seq_check "op:0425:10:TI-S1-HTS10" "the next blank number continues after the highest one"
+seq_check "op:0426:1:TI-S2-HTA1" "numbering restarts per sample"
+seq_check "op:0427:2:MY-OWN-CODE" "a typed code without a placeholder is stored unchanged"
+seq_check "op:0428:null:TI-NOSAMPLE-X" "an operation without a sample keeps a NULL sequence and an empty placeholder"
+mf_exp=$(grep -m1 '^mf_explicit:' <<<"$seq_out" | cut -d: -f2)
+seq_check "mf:0431:01-01-26-MF${mf_exp}-950C" "an explicit MF number is stored as given"
+seq_check "mf:0433:03-01-26-MF$((mf_exp + 2))" "the sintering MF counter is max+1 over existing codes"
+seq_check "mf:0434:04-01-26-MF$((mf_exp + 3))" "an MF number is not handed out again after a delete"
+seq_check "regen:TI-S1-HTA1-regen:1" "regenerating an existing code fills the placeholder from the stored sequence"
+
+# Two writers at once: session A inserts and holds its transaction open, session B inserts for the
+# same sample meanwhile. Without the advisory lock both read max = 0 and get 1.
+cc_dir=$(mktemp -d)
+$PSQL -q -c "
+INSERT INTO manufacturing_methods (method_id, method_code, method_name)
+VALUES ('c0000000-0000-4000-8000-000000000402', 'T-I-CC', 'stream I concurrency method');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000413', 'TI-CC1');" >/dev/null 2>&1
+cc_insert() {  # cc_insert <op-id-suffix> <code> <hold-seconds>
+    $PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, process_category, pass_code)
+VALUES ('c0000000-0000-4000-8000-0000000004$1', 'c0000000-0000-4000-8000-000000000402',
+        'c0000000-0000-4000-8000-000000000413', 'heat_treatment', '$2')
+RETURNING operation_sequence || '|' || pass_code;
+SELECT pg_sleep($3);
+COMMIT;
+SQL
+}
+cc_insert 51 'TI-CC1-HTA{seq}' 2 | grep '|' > "$cc_dir/a" &
+sleep 0.7
+cc_insert 52 'TI-CC1-HTA{seq}' 0 | grep '|' > "$cc_dir/b"
+wait
+cc_a=$(cat "$cc_dir/a"); cc_b=$(cat "$cc_dir/b")
+[[ "$cc_a" == "1|TI-CC1-HTA1" && "$cc_b" == "2|TI-CC1-HTA2" ]] \
+    && ok "concurrent inserts for one sample get distinct sequences and codes ($cc_a, $cc_b)" \
+    || bad "concurrent inserts collided (A='$cc_a', B='$cc_b')"
+
+# Same for the global sintering counter.
+cc_mf() {  # cc_mf <op-id-suffix> <hold-seconds>
+    $PSQL -q 2>&1 <<SQL
+BEGIN;
+INSERT INTO manufacturing_operations (operation_id, method_id, process_category, source_system, pass_code)
+VALUES ('c0000000-0000-4000-8000-0000000004$1', 'c0000000-0000-4000-8000-000000000402', 'sintering', 'test', '05-01-26-MF{mf}')
+RETURNING pass_code;
+SELECT pg_sleep($2);
+COMMIT;
+SQL
+}
+cc_mf 53 2 | grep MF > "$cc_dir/a" &
+sleep 0.7
+cc_mf 54 0 | grep MF > "$cc_dir/b"
+wait
+cc_a=$(cat "$cc_dir/a"); cc_b=$(cat "$cc_dir/b")
+[[ -n "$cc_a" && -n "$cc_b" && "$cc_a" != "$cc_b" ]] \
+    && ok "concurrent sintering inserts get distinct MF numbers ($cc_a, $cc_b)" \
+    || bad "concurrent sintering inserts collided (A='$cc_a', B='$cc_b')"
+rm -rf "$cc_dir"
+$PSQL -q -c "
+DELETE FROM manufacturing_operations WHERE operation_id::text LIKE 'c0000000-0000-4000-8000-0000000004_%';
+DELETE FROM physical_samples WHERE sample_id = 'c0000000-0000-4000-8000-000000000413';
+DELETE FROM manufacturing_methods WHERE method_id = 'c0000000-0000-4000-8000-000000000402';" >/dev/null 2>&1 || true
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy
