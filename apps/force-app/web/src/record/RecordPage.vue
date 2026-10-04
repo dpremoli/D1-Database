@@ -9,6 +9,7 @@ import { startSync } from './directusSync';
 import { hwStatus } from './hwStatus';
 import { labamp } from './labampApi';
 import { IntervalGate, shouldPollBackup, shouldPollDisk } from './recordPolling';
+import { parseDismissedIds, parseSavedLayout } from './recordLayout';
 import PanelFrame from './panels/PanelFrame.vue';
 import { PLOT_MODES, type PlotMode } from './plotModes';
 import { PlotModeFlyout } from '@d1/force-plotting';
@@ -57,11 +58,10 @@ const DEFAULT_LAYOUT: Inst[] = [
 const LS_KEY = 'force-app.record.layout.v7';
 
 function loadLayout(): Inst[] {
-	try {
-		const s = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
-		if (Array.isArray(s) && s.every((x) => x.type && PANEL_TYPES[x.type])) return s;
-	} catch { /* fall through */ }
-	return DEFAULT_LAYOUT.map((x) => ({ ...x }));
+	// Unknown panel types are skipped, not fatal (invariant 11) — see recordLayout.ts.
+	let raw: string | null = null;
+	try { raw = localStorage.getItem(LS_KEY); } catch { /* storage unavailable: default layout */ }
+	return parseSavedLayout<Inst>(raw, PANEL_TYPES) ?? DEFAULT_LAYOUT.map((x) => ({ ...x }));
 }
 const layout = ref<Inst[]>(loadLayout());
 let saveT: any = null;
@@ -252,7 +252,7 @@ const recoveryItems = ref<IncompleteSession[]>([]);
 // "maybe after restarting the app," not just "for the rest of this session."
 const DISMISSED_RECOVERY_LS_KEY = 'force-app.dismissedRecoveryIds';
 const dismissedRecoveryIds = ref<Set<string>>(
-	new Set(JSON.parse(localStorage.getItem(DISMISSED_RECOVERY_LS_KEY) || '[]')),
+	(() => { try { return parseDismissedIds(localStorage.getItem(DISMISSED_RECOVERY_LS_KEY)); } catch { return new Set<string>(); } })(),
 );
 function dismissRecovery(id: string) {
 	dismissedRecoveryIds.value.add(id);
