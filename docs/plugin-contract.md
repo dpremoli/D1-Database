@@ -239,9 +239,13 @@ Content-Type: application/json
 { "queued": true, "session_id": "<session_id>" }
 ```
 
-If the `file_storage_pointer` is absent or does not begin with `minio://`, the
-handler logs a warning and returns 200 without enqueuing (the session does not
-have a heavy-data file to process).
+If the `file_storage_pointer` is absent or empty, or is a URL into another store (it contains
+`://` but does not begin with `minio://<bucket>/`), the handler returns `200` with
+`{"status": "skipped", "reason": "..."}` and does not enqueue: the Flow fires on every
+`test_sessions` create, and most sessions have no file for this worker, so answering `400` would
+log a failed Flow run each time. A bare object key (no `://`) is accepted as the object key. A
+missing `key` / `session_id`, or an unsafe object key (characters outside `A-Za-z0-9._/-`, or
+`..`), is still `400`.
 
 ---
 
