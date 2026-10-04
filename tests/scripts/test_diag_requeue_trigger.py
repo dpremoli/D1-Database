@@ -4,14 +4,17 @@ import pytest
 
 psycopg2 = pytest.importorskip("psycopg2")
 
-DSN = os.environ.get(
-    "DATABASE_URL", "postgres://d1:change_me@localhost:5432/d1_database"
-)
+DSN = os.environ.get("DATABASE_URL")
 
 
 @pytest.fixture
 def conn():
-    c = psycopg2.connect(DSN)
+    if not DSN:
+        pytest.skip("DATABASE_URL not set (needs a migrated Postgres)")
+    try:
+        c = psycopg2.connect(DSN)
+    except psycopg2.OperationalError as exc:
+        pytest.skip(f"database not reachable: {exc}")
     yield c
     c.rollback()
     c.close()
