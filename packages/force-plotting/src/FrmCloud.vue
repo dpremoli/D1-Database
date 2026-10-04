@@ -21,6 +21,8 @@ import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { histogramFrom, type Histogram } from './histogram';
 import LoadingOverlay from './LoadingOverlay.vue';
 import { createLoadToken } from './loadToken';
+import { createFrameGate, createTrailingThrottle } from './frameScheduling';
+import { createGlLifecycle } from './glLifecycle';
 import { sameStage, stageInfo, type LoadStage, type StageInfo } from './loadStage';
 import {
 	buildStaticAttributes, spiralUniformValues,
@@ -91,8 +93,8 @@ const pointCount = ref(0);
 // Declared up here (not next to scheduleDraw) because the cacheFileId watch below runs
 // load() with immediate:true; when the cache is already in the LRU (precached), load()
 // runs synchronously during setup and calls resetView()->scheduleDraw(), which reads
-// these — so they must be initialised first (else a "Cannot access 'raf'…" TDZ error).
-let raf = 0;
+// these — so they must be initialised first (else a "Cannot access 'frame'…" TDZ error).
+const frame = createFrameGate();
 let pendingRebuild = false;
 
 // Each load() takes a token and re-checks it after every await: this component stays mounted
@@ -234,6 +236,10 @@ let pointsObj: THREE.Points | null = null;
 let discTex: THREE.CanvasTexture | null = null;
 let controls: OrbitControls | null = null;   // 3D mode only (Z series active)
 let ready = false;
+// Bumped on reactivation: a context released with forceContextLoss() is never handed back by
+// getContext() on the same canvas, so a new WebGLRenderer there would report "WebGL unavailable"
+// (review 3.2). A keyed <canvas> is a new element with a fresh context.
+const canvasKey = ref(0);
 // GPU (turning-spiral) path — see usesGpuPath above and frmCloudShader.ts. gpuGeom's aT/aRevs/
 // aVal attributes are STATIC (uploaded once per real geometry change); crop dragging only
 // updates gpuMat.uniforms (updateGpuCropUniforms), never touches the geometry.
@@ -264,7 +270,10 @@ function makeDisc(): THREE.CanvasTexture {
 }
 
 function setupRenderer() {
-	if (ready || !canvasEl.value) return;
+	// suspended: deactivated (kept alive off-screen). A cache arriving now must not build a renderer
+	// on the old canvas, whose context teardownRenderer() deliberately lost; onActivated() sets up
+	// a fresh one.
+	if (life.suspended || ready || !canvasEl.value) return;
 	const canvas = canvasEl.value;
 	try {
 		renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
@@ -580,9 +589,7 @@ function draw() {
 
 let pendingRecolor = false;
 function scheduleDraw() {
-	if (raf) return;
-	raf = requestAnimationFrame(() => {
-		raf = 0;
+	frame.request(() => {
 		if (pendingRebuild) { pendingRebuild = false; pendingRecolor = false; rebuild(); }
 		else if (pendingRecolor) { pendingRecolor = false; recolorCpu(); }
 		draw();
@@ -652,14 +659,25 @@ onMounted(() => {
 // deactivated cloud tears down exactly like an unmounted one, and reactivating re-runs the same
 // first-mount setup path (setupRenderer's `if (ready ...) return` guard is why this is safe to
 // call again — ready is reset to false here).
+const life = createGlLifecycle({
+	teardown: () => teardownRenderer(),
+	replaceCanvas: () => {
+		canvasKey.value++;   // new canvas element -> a context that was not force-lost
+		if (error.value && /WebGL|GPU context/.test(error.value)) error.value = null;   // retry on the new canvas
+	},
+	start: () => nextTick(() => { setupRenderer(); scheduleRebuild(); }),
+});
 function teardownRenderer() {
-	if (raf) cancelAnimationFrame(raf);
+	// cancel() zeroes the pending ids too: left set, scheduleDraw()'s and onCropChange()'s "already
+	// queued" guards would block every redraw and crop rebuild after a reactivation (review 3.3).
+	frame.cancel();
 	ro?.disconnect();
-	if (cropTimer) clearTimeout(cropTimer);
+	cropThrottle.cancel();
 	controls?.dispose();
 	pointsGeom?.dispose(); pointsMat?.dispose(); discTex?.dispose();
 	gpuGeom?.dispose(); gpuMat?.dispose(); colormapTex?.dispose();
 	if (gpuRefineTimer) clearTimeout(gpuRefineTimer);
+	gpuRefineTimer = 0;
 	// dispose() alone does NOT free the WebGL context; forceContextLoss() releases it so a
 	// mode/filter toggle (which unmounts one cloud and mounts another) can't accumulate live
 	// contexts until the browser reclaims one — the "Lite never recovered" bug on big ops.
@@ -680,10 +698,13 @@ onBeforeUnmount(() => {
 	// The stage watcher is already stopped by now, so say "idle" directly: otherwise the host's busy
 	// bar stays on after a mid-load unmount.
 	if (stage.value) emit('stage', null);
-	teardownRenderer();
+	life.unmount();
 });
-onDeactivated(teardownRenderer);
-onActivated(() => { if (!ready) nextTick(() => { setupRenderer(); scheduleRebuild(); }); });
+onDeactivated(() => life.deactivate());
+onActivated(() => {
+	if (life.activate()) return;
+	if (!ready) nextTick(() => { setupRenderer(); scheduleRebuild(); });
+});
 
 // Geometry/colour props → rebuild immediately. pointSize is view-only (a uniform). Crop
 // (cropStartSec/cropEndSec) is DELIBERATELY excluded here — it has its own throttled watcher
@@ -724,7 +745,7 @@ watch(() => props.colorScale, (s) => {
 // ungridded, flat) path below skips this entirely — that's the actual Phase-5 fix; this throttle
 // is now only a fallback for the cases that were deliberately kept on the old CPU path.
 // The force charts' crop shading stays instant regardless (cheap SVG overlay).
-let cropTimer = 0, cropTrailing = false;
+const cropThrottle = createTrailingThrottle(() => scheduleRebuild(), 80);
 function onCropChange() {
 	if (usesGpuPath.value) {
 		// The actual Phase-5 fix: no CPU recompute, no GPU re-upload, no throttle — just a
@@ -734,13 +755,7 @@ function onCropChange() {
 		scheduleGpuRefine();
 		return;
 	}
-	if (cropTimer) { cropTrailing = true; return; }
-	scheduleRebuild();
-	const step = () => {
-		cropTimer = 0;
-		if (cropTrailing) { cropTrailing = false; scheduleRebuild(); cropTimer = window.setTimeout(step, 80); }
-	};
-	cropTimer = window.setTimeout(step, 80);
+	cropThrottle.trigger();
 }
 watch(() => [props.cropStartSec, props.cropEndSec], onCropChange);
 
@@ -882,7 +897,7 @@ function onUp(ev: PointerEvent) {
 	<div class="frm-cloud">
 		<LoadingOverlay v-if="loading || stage" :stage="stage" />
 		<div v-else-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
-		<canvas v-show="!loading && !error" ref="canvasEl"
+		<canvas :key="canvasKey" v-show="!loading && !error" ref="canvasEl"
 			:class="{ rect: rectTool }"
 			@wheel="onWheel" @pointerdown="onDown" @pointermove="onMove" @pointerup="onUp" @pointercancel="onUp"></canvas>
 

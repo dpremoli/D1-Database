@@ -8,6 +8,7 @@ import { perKeyComputed } from './perKeyComputed';
 import LoadingOverlay from './LoadingOverlay.vue';
 import { sameStage, stageInfo, type LoadStage, type StageInfo } from './loadStage';
 import { createLoadToken } from './loadToken';
+import { createActivationQueue, createOpGuard } from './opGuard';
 import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
@@ -20,10 +21,10 @@ import { histogramFrom, type Histogram } from './histogram';
 import ColorScaleEditor from './ColorScaleEditor.vue';
 import PlotModeFlyout from './PlotModeFlyout.vue';
 import { cacheGet, cachePut, decimateCache, parseCache, type Cache } from './liveCache';
-import { buildPath, alignRhoToBuckets, type TurningSpiralParams } from './path';
+import { alignMeasuredRho, measuredRhoSpan, type TurningSpiralParams } from './path';
 import { computeAutoCode } from './operationCode';
 import { activeFindings, diagnose, worstSeverity, type Finding } from './metadataDoctor';
-import { computeSignalStats, type SignalStats } from './signalStats';
+import { computeSignalStats, resolveStatsWindow, type SignalStats } from './signalStats';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
 
@@ -229,28 +230,52 @@ const zSeries = ref<'none' | 'Fx' | 'Fy' | 'Fz'>('none');
 const zScale = ref(0.35);
 const octreeAvailable = computed(() => detail.value?.octree_status === 'done' && !!detail.value?.octree_path);
 const octreeOn = computed(() => frmMode.value === 'full' && octreeAvailable.value);
+// Every long host poll below (octree, grid, bake, clear-bake, full-res render) runs under this
+// guard. A poll belongs to the op that started it: it stops, and writes nothing, once another op
+// is open or the dashboard unmounts. cancelAll() is called from the op-change watcher and on
+// unmount, which also reset the busy flags and status messages the stopped polls would otherwise
+// leave behind. Leaving the page (#24 keep-alive deactivate) does NOT stop them: the dashboard's
+// state survives, so a bake started before a visit to the Record page is applied when it finishes.
+// Only what needs the GL viewers (the figure reload, switching to Full) waits in `activation`
+// until the page is back.
+const opGuard = createOpGuard(() => detail.value?.id);
+const activation = createActivationQueue();
+function stopHostPolls() {
+	opGuard.cancelAll();
+	buildingOctree.value = false; octreeMsg.value = null;
+	baking.value = false;
+	rendering.value = false; renderMsg.value = null;
+	statsBusy.value = false;
+}
 async function buildOctree() {
 	const d = detail.value;
 	if (!d?.id || buildingOctree.value) return;
+	const live = opGuard.begin(d.id);
 	buildingOctree.value = true; octreeMsg.value = 'Requesting full-res octree build on the host…';
 	try {
 		await api.patch(`/items/machining_force_analysis/${d.id}`, { octree_status: 'pending', octree_requested_at: new Date().toISOString() });
+		if (!live()) return;
 		octreeMsg.value = 'Building on the host (minutes for large ops)…';
 		const deadline = Date.now() + 15 * 60 * 1000;
 		while (Date.now() < deadline) {
 			await new Promise((r) => setTimeout(r, 3000));
+			if (!live()) return;
 			const res = await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['octree_status', 'octree_path', 'octree_points', 'octree_error'] } });
+			if (!live()) return;
 			const row = res.data?.data;
 			if (row?.octree_status === 'done' && row.octree_path) {
 				detail.value = { ...detail.value, octree_status: 'done', octree_path: row.octree_path, octree_points: row.octree_points };
-				octreeMsg.value = null; chooseMode('full'); return;
+				octreeMsg.value = null;
+				activation.whenActive(() => { if (live()) chooseMode('full'); });   // mounts FrmOctree: not while deactivated
+				return;
 			}
 			if (row?.octree_status === 'error') { octreeMsg.value = `Build failed: ${row.octree_error || 'unknown'}`; return; }
 		}
 		octreeMsg.value = 'Still building — check back shortly (is the force orchestrator running?).';
 	} catch (e: any) {
+		if (!live()) return;
 		octreeMsg.value = e?.response?.status === 403 ? 'Not permitted (admin only) to request a host build.' : (e?.message || 'octree request failed');
-	} finally { buildingOctree.value = false; }
+	} finally { if (live()) buildingOctree.value = false; }
 }
 
 // ---- Interpolated-grid octree (Gridded + Full-res) ---------------------------------
@@ -265,14 +290,18 @@ const gridFidelityPct = computed(() => {
 async function buildGridOctree() {
 	const d = detail.value;
 	if (!d?.id || buildingOctree.value) return;
+	const live = opGuard.begin(d.id);
 	buildingOctree.value = true; octreeMsg.value = 'Requesting interpolated-grid build on the host…';
 	try {
 		await api.patch(`/items/machining_force_analysis/${d.id}`, { grid_octree_status: 'pending', grid_octree_requested_at: new Date().toISOString() });
+		if (!live()) return;
 		octreeMsg.value = 'Interpolating grid on the host (minutes for large ops)…';
 		const deadline = Date.now() + 15 * 60 * 1000;
 		while (Date.now() < deadline) {
 			await new Promise((r) => setTimeout(r, 3000));
+			if (!live()) return;
 			const res = await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['grid_octree_status', 'grid_octree_path', 'grid_octree_points', 'grid_octree_error', 'grid_fidelity', 'grid_arm_ratio', 'grid_cell_mm'] } });
+			if (!live()) return;
 			const row = res.data?.data;
 			if (row?.grid_octree_status === 'done' && row.grid_octree_path) {
 				detail.value = { ...detail.value, grid_octree_status: 'done', grid_octree_path: row.grid_octree_path,
@@ -284,8 +313,9 @@ async function buildGridOctree() {
 		}
 		octreeMsg.value = 'Still building — check back shortly (is the force orchestrator running?).';
 	} catch (e: any) {
+		if (!live()) return;
 		octreeMsg.value = e?.response?.status === 403 ? 'Not permitted (admin only) to request a host build.' : (e?.message || 'grid request failed');
-	} finally { buildingOctree.value = false; }
+	} finally { if (live()) buildingOctree.value = false; }
 }
 // When the user turns on Gridded in Full-res and no grid octree exists yet, build it.
 watch(() => [gridFull.value, frmMode.value], () => {
@@ -403,6 +433,9 @@ const statsCacheMb = computed(() => {
 async function computeStats() {
 	const d = detail.value;
 	if (!d?.live_cache_file || statsBusy.value) return;
+	// The cache download can take a while: if the operator opens another op (or leaves the page)
+	// meanwhile, this result belongs to the old op and must not land in the new op's panel.
+	const live = opGuard.begin(d.id);
 	statsBusy.value = true; statsErr.value = null;
 	try {
 		let c = cacheGet(d.live_cache_file);
@@ -411,11 +444,13 @@ async function computeStats() {
 			c = parseCache(res.data as ArrayBuffer);
 			cachePut(d.live_cache_file, c);
 		}
-		const cs = cropStartSec.value || c.csSec, ce = cropEndSec.value || c.ceSec;
+		if (!live()) return;
+		const [cs, ce] = resolveStatsWindow(cropStartSec.value, cropEndSec.value, c);
 		sigStats.value = computeSignalStats(c, cs, ce);
 	} catch (e: any) {
+		if (!live()) return;
 		statsErr.value = e?.message || 'failed to compute statistics';
-	} finally { statsBusy.value = false; }
+	} finally { if (live()) statsBusy.value = false; }
 }
 // Recompute (cheap, cache already local) when the crop moves while the panel is open.
 let statsTimer = 0;
@@ -569,6 +604,7 @@ watch([workChain, () => detail.value?.live_cache_file, () => filtersOpen.value, 
 	previewTimer = window.setTimeout(runPreview, 400);
 }, { deep: true });
 watch(() => detail.value?.id, () => {
+	stopHostPolls();   // a poll started for the previous op must not report into this one
 	workChain.value = savedChain.value ?? defaultChain();
 	filteredCache.value = null; filterErr.value = null; filterFftOverlay.value = null;
 });
@@ -597,23 +633,31 @@ async function applyFilter() {
 async function bakeFilters() {
 	const d = detail.value;
 	if (!d?.id || baking.value) return;
+	const live = opGuard.begin(d.id);
 	baking.value = true; filterErr.value = null;
 	try {
 		await api.patch(`/items/machining_force_analysis/${d.id}`, { filter_chain: workChain.value, status: 'pending' });
 		const deadline = Date.now() + 15 * 60 * 1000;
 		while (Date.now() < deadline) {
 			await new Promise((r) => setTimeout(r, 3000));
+			if (!live()) return;
 			const row = (await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['status', 'filter_chain', 'live_cache_file', 'error_message'] } })).data?.data;
+			if (!live()) return;
 			if (row?.status === 'done') {
 				await api.patch(`/items/machining_force_analysis/${d.id}`, { filter_baked: true }).catch(() => {});   // outputs now reprocessed
+				// The bake is on the server either way; only the open op's view is updated.
+				if (!live()) return;
 				detail.value = { ...detail.value, filter_chain: row.filter_chain, filter_baked: true, live_cache_file: row.live_cache_file };
 				cachePut(row.live_cache_file, null as any); await loadFrm(); return;
 			}
 			if (row?.status === 'error') { filterErr.value = `Bake failed: ${row.error_message || 'unknown'}`; return; }
 		}
 		filterErr.value = 'Still baking — check back shortly (is the force orchestrator running?).';
-	} catch (e: any) { filterErr.value = e?.response?.status === 403 ? 'Not permitted (admin only) to bake.' : (e?.message || 'bake request failed'); }
-	finally { baking.value = false; }
+	} catch (e: any) {
+		if (!live()) return;
+		filterErr.value = e?.response?.status === 403 ? 'Not permitted (admin only) to bake.' : (e?.message || 'bake request failed');
+	}
+	finally { if (live()) baking.value = false; }
 }
 // Clear routes by state: a light apply just drops the saved chain (no host); a bake must reprocess
 // the outputs back to raw (status='pending', admin-only), so it keeps the polling path.
@@ -630,18 +674,22 @@ async function clearFilter() {
 }
 async function clearBake() {
 	const d = detail.value; if (!d?.id) return;
+	const live = opGuard.begin(d.id);
 	workChain.value = defaultChain();
 	await api.patch(`/items/machining_force_analysis/${d.id}`, { filter_chain: null, filter_baked: false, status: 'pending' }).catch(() => {});
+	if (!live()) return;
 	baking.value = true;
 	try {
 		const deadline = Date.now() + 15 * 60 * 1000;
 		while (Date.now() < deadline) {
 			await new Promise((r) => setTimeout(r, 3000));
+			if (!live()) return;
 			const row = (await api.get(`/items/machining_force_analysis/${d.id}`, { params: { fields: ['status', 'live_cache_file'] } })).data?.data;
+			if (!live()) return;
 			if (row?.status === 'done') { detail.value = { ...detail.value, filter_chain: null, filter_baked: false, live_cache_file: row.live_cache_file }; cachePut(row.live_cache_file, null as any); await loadFrm(); return; }
 			if (row?.status === 'error') return;
 		}
-	} finally { baking.value = false; }
+	} finally { if (live()) baking.value = false; }
 }
 // Full ColorScale editor (Stage 5/6): `colorScale` is now the real source of truth for every
 // FRM pane on this dashboard, driven by ColorScaleEditor.vue's update:colorScale. `locked`
@@ -844,7 +892,8 @@ function measureLayout() {
 // the stale/default measurements -- e.g. the FRM panel claiming the Signals column's width too --
 // then snaps to the correct layout a moment later once the observer catches up. onActivated forces
 // an immediate remeasure instead of waiting on that.
-onActivated(() => { measureLayout(); nextTick(measureLayout); });
+onActivated(() => { measureLayout(); nextTick(measureLayout); activation.activate(); });
+onDeactivated(() => activation.deactivate());
 let layoutRO: ResizeObserver | undefined;
 onMounted(() => {
 	// ResizeObserver covers content reflow (panel resize, hide/show toggles);
@@ -1037,6 +1086,9 @@ function releaseFrmCache() {
 }
 onDeactivated(releaseFrmCache);
 onBeforeUnmount(releaseFrmCache);
+// The host polls (bake, octree, render) stop on unmount; they deliberately keep running across a
+// keep-alive deactivate (see opGuard above).
+onBeforeUnmount(() => { activation.clear(); stopHostPolls(); });
 
 function sampleOf(r: any) { return r.operation_id?.sample_id; }
 
@@ -1264,6 +1316,9 @@ async function selectOp(row: any) {
 // clear frmLoading while the newer one is still downloading.
 const frmToken = createLoadToken();
 async function loadFrm() {
+	// Deactivated: releaseFrmCache() just emptied frmCache, and a figure fetched now would be cached
+	// again with nobody to release it. Reload on return (it reads the then-current op).
+	if (!activation.active) { activation.whenActive(() => { void loadFrm(); }); return; }
 	const mine = frmToken.next();
 	const d = detail.value;
 	if (!d) { frmUrl.value = null; frmLoading.value = false; return; }
@@ -1829,7 +1884,7 @@ function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam:
 // (see fetchRadialCache); 'rpm'/'vc' modes are closed-form in elapsed time alone and never do.
 // The radial second X-axis is always on now (its old 'none'/'radial' picker is gone). It used to
 // default to 'none' because turning it on fetches a multi-MB cache asset, which wanted to be an
-// explicit user action -- that fetch is still lazy (measuredRadialPath below only calls
+// explicit user action -- that fetch is still lazy (measuredRadialSpan below only calls
 // fetchRadialCache when the LRU misses, and Lite mode has usually already put it there), it just
 // no longer waits for a click.
 const radialFetchBusy = ref(false);
@@ -1845,12 +1900,13 @@ async function fetchRadialCache() {
 	finally { radialFetchBusy.value = false; }
 }
 // Memoized once per (op, geometry, crop, cache-arrival) rather than recomputed per axis per
-// render: chartsFor() calls radialValuesFor() once per open axis (+ RPM), and buildPath() over
-// the raw cache is O(N) with a cos/sin per point (N up to ~250k+) — without this, dragging the
-// mouse (hoverIndex re-renders every open chart, see the Phase-1.3 rAF fix) would re-run that
-// O(N) work 3-4x per animation frame. rho is axis-independent (a function of time only), so one
-// path serves every axis + RPM chart in the panel.
-const measuredRadialPath = computed(() => {
+// render: chartsFor() calls radialValuesFor() once per open axis (+ RPM), so without this,
+// dragging the mouse (hoverIndex re-renders every open chart, see the Phase-1.3 rAF fix) would
+// re-run the O(N) scan 3-4x per animation frame. rho is axis-independent (a function of time
+// only), so one span serves every axis + RPM chart in the panel. It is a span (where the spiral
+// starts and stops), not a built path: buildPath() allocated ~100 MB at 5M points on every
+// crop-handle drag only for alignRhoToBuckets to read rho back out of it (review 3.10).
+const measuredRadialSpan = computed(() => {
 	if (speedMode.value !== 'measured') return null;
 	const d = detail.value;
 	const cropStart = activeCrop.value?.start;
@@ -1862,7 +1918,7 @@ const measuredRadialPath = computed(() => {
 		kind: 'turning_spiral', feed: editFeed.value, diam: editDiam.value, innerDiam: editInnerDiam.value,
 		speedMode: 'measured', rpm: editRpm.value, vc: editVc.value, timeScale: timeScale.value, ppr: editPpr.value,
 	};
-	return { c, path: buildPath(c, p, { cropStartSec: cropStart, cropEndSec: c.t[c.N - 1], stride: 1 }) };
+	return { c, span: measuredRhoSpan(c, p, cropStart) };
 });
 // bucketT: the chart's own x-axis time array (d.series[a].t) — a full-range, uncropped envelope,
 // same as what cropStart/cropEnd shade a sub-window of. Radial position is only meaningful from
@@ -1875,9 +1931,9 @@ function radialValuesFor(bucketT: number[] | Float32Array | undefined): Float32A
 	const rho0 = editDiam.value / 2;
 	const innerR = Math.max(0, (editInnerDiam.value || 0) / 2);
 	if (speedMode.value === 'measured') {
-		const m = measuredRadialPath.value;
-		if (!m?.path) { const out = new Float32Array(bucketT.length); out.fill(NaN); return out; }
-		return alignRhoToBuckets(m.path, m.c, bucketT);
+		const m = measuredRadialSpan.value;
+		if (!m?.span) { const out = new Float32Array(bucketT.length); out.fill(NaN); return out; }
+		return alignMeasuredRho(m.span, m.c, bucketT);
 	}
 	const out = new Float32Array(bucketT.length);
 	if (speedMode.value === 'rpm') {
@@ -1924,31 +1980,36 @@ const timeScale = computed(() => (editRate.value > 0 ? cacheFs / editRate.value 
 async function processFullRes() {
 	const d = detail.value;
 	if (!d?.id || rendering.value) return;
+	const live = opGuard.begin(d.id);
 	rendering.value = true;
 	renderMsg.value = 'Requesting host render…';
 	try {
 		await api.patch(`/items/machining_force_analysis/${d.id}`, {
 			status: 'pending', live_render_points: Math.max(1, Math.round(renderPoints.value)),
 		});
+		if (!live()) return;
 		renderMsg.value = 'Queued — waiting for the host crawler…';
-		await pollRender(d.id, d.live_cache_file);
+		await pollRender(d.id, d.live_cache_file, live);
 	} catch (e: any) {
+		if (!live()) return;
 		renderMsg.value = e?.response?.status === 403
 			? 'Not permitted (admin only) to request a host render.'
 			: (e?.message || 'render request failed');
 	} finally {
-		rendering.value = false;
+		if (live()) rendering.value = false;
 	}
 }
-async function pollRender(id: string, prevCacheId: string | null) {
+async function pollRender(id: string, prevCacheId: string | null, live: () => boolean) {
 	const deadline = Date.now() + 5 * 60 * 1000;         // give the host up to 5 min
 	while (Date.now() < deadline) {
 		await new Promise((r) => setTimeout(r, 2500));
+		if (!live()) return;
 		let row: any = null;
 		try {
 			const res = await api.get(`/items/machining_force_analysis/${id}`, { params: { fields: ['status', 'live_cache_file', 'live_render_points', 'error_message'] } });
 			row = res.data?.data;
 		} catch { /* transient */ }
+		if (!live()) return;
 		if (!row) continue;
 		if (row.status === 'error') { renderMsg.value = `Host render failed: ${row.error_message || 'unknown error'}`; return; }
 		if (row.status === 'done' && !row.live_render_points) {

@@ -9,6 +9,7 @@
 // its spatial step on the framed region at full resolution (see SpatialPanel.vue). The bake is
 // the existing diag_status='pending' PATCH flow, emitted upward.
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { listen } from './listen';
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import SpatialPanel from './SpatialPanel.vue';
 import SignalPanel from './SignalPanel.vue';
@@ -413,6 +414,7 @@ const displayLayout = computed({
 });
 
 let gridRO: ResizeObserver | undefined;
+let offDocClick: (() => void) | null = null;   // the add-menu's click-away handler, removed on unmount
 onMounted(() => {
 	gridRO = new ResizeObserver(measureGrid);
 	if (gridEl.value) gridRO.observe(gridEl.value);
@@ -420,7 +422,7 @@ onMounted(() => {
 	checkNarrow();
 	window.addEventListener('resize', measureGrid);
 	window.addEventListener('resize', checkNarrow);
-	document.addEventListener('click', () => { addOpen.value = false; });
+	offDocClick = listen(document, 'click', () => { addOpen.value = false; });
 });
 
 const multiMaskNote = computed(() =>
@@ -497,6 +499,7 @@ onBeforeUnmount(() => {
 	gridRO?.disconnect();
 	window.removeEventListener('resize', measureGrid);
 	window.removeEventListener('resize', checkNarrow);
+	offDocClick?.(); offDocClick = null;
 	publishState.cancel();
 	sync?.close();
 	sync = null;
