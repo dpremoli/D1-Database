@@ -41,6 +41,11 @@ make bootstrap-minio        # create d1-files + d1-backups buckets (once)
 make migrate && make seed   # apply schema + reference data
 ```
 
+`make migrate`, `migrate-down`, `migrate-status` and `reset-db` run dbmate in a container on the
+compose network and reach Postgres as `postgres:5432` (a `localhost` host in `DATABASE_URL` is
+rewritten for you), so they need the stack's Postgres running (`make up` first). `make seed`,
+`make schema-test` and the other `psql` targets run on the host and use `DATABASE_URL` as written.
+
 **Network exposure.** Every published port (Directus, proxy, Postgres, MinIO, the
 workers, llm-text-to-sql, Ollama) binds to `D1_BIND_ADDR`, default `127.0.0.1`. Leave the
 default: on `d1-server` Tailscale Serve forwards to `localhost`, so the tailnet reaches the
