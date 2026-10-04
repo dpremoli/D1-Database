@@ -175,7 +175,7 @@ each stream into `ccr-c5556a5a-jxwm8s`.
 |---|---|---|---|
 | A | 1 | `stream-a` (branch `worktree-stream-a`) | merged (`de1b41f`); Flow secret header added in `06cde35` |
 | B | 1 | `agent-a87e02935fb18bd77` | merged (`338b8fe`), reviewed; runbook follow-up `1dc94d3`; B+C schema suites green, 129 migrations up/down clean |
-| D | 1 | `agent-a919838a2c96882aa` | in progress (1.1–1.7, 1.11 committed; resumed after usage limit) |
+| D | 1 | `agent-a919838a2c96882aa` | merged (`62bfdf0`), reviewed; guard docs follow-up committed |
 | H | 1 | `agent-a9501193950e18778` | merged (`8ec7a6e`), reviewed |
 | C | 2 | `stream-c` (branch `worktree-stream-c`) | merged, reviewed; CI purge + docs follow-up committed |
 | E | 2 | `stream-e` (branch `worktree-stream-e`) | in progress (2.1 committed; resumed after usage limit) |
