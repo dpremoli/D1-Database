@@ -8,7 +8,7 @@ import { perKeyComputed } from './perKeyComputed';
 import LoadingOverlay from './LoadingOverlay.vue';
 import { sameStage, stageInfo, type LoadStage, type StageInfo } from './loadStage';
 import { createLoadToken } from './loadToken';
-import { createOpGuard } from './opGuard';
+import { createActivationQueue, createOpGuard } from './opGuard';
 import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
@@ -232,10 +232,14 @@ const octreeAvailable = computed(() => detail.value?.octree_status === 'done' &&
 const octreeOn = computed(() => frmMode.value === 'full' && octreeAvailable.value);
 // Every long host poll below (octree, grid, bake, clear-bake, full-res render) runs under this
 // guard. A poll belongs to the op that started it: it stops, and writes nothing, once another op
-// is open, the page is deactivated (#24 keep-alive) or the dashboard unmounts. cancelAll() is
-// called from the op-change watcher and the lifecycle hooks, which also reset the busy flags and
-// status messages the stopped polls would otherwise leave behind.
+// is open or the dashboard unmounts. cancelAll() is called from the op-change watcher and on
+// unmount, which also reset the busy flags and status messages the stopped polls would otherwise
+// leave behind. Leaving the page (#24 keep-alive deactivate) does NOT stop them: the dashboard's
+// state survives, so a bake started before a visit to the Record page is applied when it finishes.
+// Only what needs the GL viewers (the figure reload, switching to Full) waits in `activation`
+// until the page is back.
 const opGuard = createOpGuard(() => detail.value?.id);
+const activation = createActivationQueue();
 function stopHostPolls() {
 	opGuard.cancelAll();
 	buildingOctree.value = false; octreeMsg.value = null;
@@ -261,7 +265,9 @@ async function buildOctree() {
 			const row = res.data?.data;
 			if (row?.octree_status === 'done' && row.octree_path) {
 				detail.value = { ...detail.value, octree_status: 'done', octree_path: row.octree_path, octree_points: row.octree_points };
-				octreeMsg.value = null; chooseMode('full'); return;
+				octreeMsg.value = null;
+				activation.whenActive(() => { if (live()) chooseMode('full'); });   // mounts FrmOctree: not while deactivated
+				return;
 			}
 			if (row?.octree_status === 'error') { octreeMsg.value = `Build failed: ${row.octree_error || 'unknown'}`; return; }
 		}
@@ -886,7 +892,8 @@ function measureLayout() {
 // the stale/default measurements -- e.g. the FRM panel claiming the Signals column's width too --
 // then snaps to the correct layout a moment later once the observer catches up. onActivated forces
 // an immediate remeasure instead of waiting on that.
-onActivated(() => { measureLayout(); nextTick(measureLayout); });
+onActivated(() => { measureLayout(); nextTick(measureLayout); activation.activate(); });
+onDeactivated(() => activation.deactivate());
 let layoutRO: ResizeObserver | undefined;
 onMounted(() => {
 	// ResizeObserver covers content reflow (panel resize, hide/show toggles);
@@ -1079,9 +1086,9 @@ function releaseFrmCache() {
 }
 onDeactivated(releaseFrmCache);
 onBeforeUnmount(releaseFrmCache);
-// The host polls (bake, octree, render) also stop when the page is left (#24 keep-alive) or torn down.
-onDeactivated(stopHostPolls);
-onBeforeUnmount(stopHostPolls);
+// The host polls (bake, octree, render) stop on unmount; they deliberately keep running across a
+// keep-alive deactivate (see opGuard above).
+onBeforeUnmount(() => { activation.clear(); stopHostPolls(); });
 
 function sampleOf(r: any) { return r.operation_id?.sample_id; }
 
@@ -1309,6 +1316,9 @@ async function selectOp(row: any) {
 // clear frmLoading while the newer one is still downloading.
 const frmToken = createLoadToken();
 async function loadFrm() {
+	// Deactivated: releaseFrmCache() just emptied frmCache, and a figure fetched now would be cached
+	// again with nobody to release it. Reload on return (it reads the then-current op).
+	if (!activation.active) { activation.whenActive(() => { void loadFrm(); }); return; }
 	const mine = frmToken.next();
 	const d = detail.value;
 	if (!d) { frmUrl.value = null; frmLoading.value = false; return; }

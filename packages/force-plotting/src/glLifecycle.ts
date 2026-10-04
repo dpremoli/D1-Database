@@ -7,6 +7,11 @@
 // context (to release it), and getContext() on the same canvas never hands a lost context back, so
 // a new renderer there would report "WebGL unavailable".
 //
+// Only the GL side is suspended. The host's non-GL state (ForceDashboard's bake / octree polls and
+// their detail updates) keeps running across a deactivation; whatever it needs a GL viewer for is
+// deferred to activation (opGuard.ts createActivationQueue), and a viewer's own load requests are
+// ignored while `suspended` and replayed by start().
+//
 //   teardown()    release everything GPU-side and stop every loop/timer/in-flight load
 //   replaceCanvas() give the template a new <canvas> (bump its :key)
 //   start()       set up the renderer and (re)load; called after the new canvas is in the DOM
