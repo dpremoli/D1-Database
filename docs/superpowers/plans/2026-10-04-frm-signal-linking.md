@@ -11,7 +11,7 @@
 | C — octree (FrmOctree.vue) | `.claude/worktrees/agent-a35ad8aa3b3a5f987` | `worktree-agent-a35ad8aa3b3a5f987` | reviewed, merged |
 | D — charts (ForceChart.vue) | `.claude/worktrees/agent-a6a66bb9a4070ea27` | `worktree-agent-a6a66bb9a4070ea27` | reviewed, merged |
 | E — dashboard wiring + docs | `.claude/worktrees/agent-aec03ca06d8f2455a` | `worktree-agent-aec03ca06d8f2455a` | reviewed, merged |
-| Simplify / review / verify | coordinator | `ccr-37b6f575-4lu7ni` | simplify done (A–D); review next |
+| Simplify / review / verify | coordinator | `ccr-37b6f575-4lu7ni` | simplify done; Opus review done — fixes in progress (Sonnet worker) |
 | PR + merge | coordinator | — | not started |
 
 ## Worker agent definition (local-only — recreate at `.claude/agents/force-plotting-implementer.md` if the container was reclaimed)
