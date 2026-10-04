@@ -52,7 +52,7 @@ left for CI to discover):
 make help          # list targets
 make setup         # install pre-commit hooks (needs python + pre-commit)
 make test          # run the current smoke/integration tests
-make compose-check # validate docker-compose.yml
+make compose-check # validate docker-compose.yml (dummy secrets; no .env needed)
 ```
 
 `make` is optional (Linux/WSL/CI); on Windows you can run the underlying

@@ -52,8 +52,15 @@ traceability-test: ## Run Phase 7 traceability tests (requires DATABASE_URL or r
 ai-test: ## Run Phase 6 AI-readiness tests (requires DATABASE_URL; superuser, to create roles)
 	DATABASE_URL="$(DATABASE_URL)" bash tests/phase6_text_to_sql.sh
 
-compose-check: ## Validate docker-compose.yml is well-formed
-	docker compose config -q && echo "docker-compose.yml OK"
+# Required secrets use ${VAR:?} in compose, so a plain `docker compose config` fails on a fresh
+# clone with no .env. Validate against a throwaway env file of dummy values instead (never .env).
+COMPOSE_REQUIRED_VARS := POSTGRES_PASSWORD MINIO_ROOT_PASSWORD DIRECTUS_KEY DIRECTUS_SECRET \
+                         DIRECTUS_ADMIN_PASSWORD WORKER_WEBHOOK_SECRET REDIS_PASSWORD
+
+compose-check: ## Validate docker-compose.yml is well-formed (works without a .env)
+	@tmp=$$(mktemp) && trap 'rm -f "$$tmp"' EXIT && \
+		for v in $(COMPOSE_REQUIRED_VARS); do echo "$$v=compose-check-dummy" >> "$$tmp"; done && \
+		docker compose --env-file "$$tmp" config -q && echo "docker-compose.yml OK"
 
 lint: ## Run all pre-commit hooks across the repo
 	pre-commit run --all-files
