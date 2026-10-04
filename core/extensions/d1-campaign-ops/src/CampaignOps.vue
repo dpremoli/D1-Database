@@ -5,7 +5,7 @@
  * machining operations), directly addressing "pre-filter available operations based
  * on the campaign type". Add/remove sets the operation's campaign_id.
  */
-import { computed, inject, onMounted, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 
 const props = defineProps<{ primaryKey?: string | number | null }>();
@@ -26,13 +26,30 @@ const category = computed(() => (campaignType.value ? CATEGORY_FOR_TYPE[campaign
 
 const isNew = computed(() => props.primaryKey == null || props.primaryKey === '+');
 
+function errMsg(e: any): string {
+	return e?.response?.data?.errors?.[0]?.message || e?.message || 'request failed';
+}
+// Latest-request-wins: a slow earlier response must not overwrite a newer one, and nothing is
+// written after the component is gone.
+let unmounted = false;
+let linkedGen = 0;
+let searchGen = 0;
+const error = ref<string | null>(null);   // last failed load / add / remove, shown above the chips
+const busyId = ref<string | null>(null);  // operation currently being added or removed
+
 const linked = ref<any[]>([]);
 async function loadLinked() {
+	const gen = ++linkedGen;
 	if (isNew.value) { linked.value = []; return; }
-	const res = await api.get('/items/manufacturing_operations', {
-		params: { filter: { campaign_id: { _eq: props.primaryKey } }, fields: ['operation_id', 'pass_code', 'process_category'], sort: ['pass_code'], limit: -1 },
-	});
-	linked.value = res.data?.data ?? [];
+	try {
+		const res = await api.get('/items/manufacturing_operations', {
+			params: { filter: { campaign_id: { _eq: props.primaryKey } }, fields: ['operation_id', 'pass_code', 'process_category'], sort: ['pass_code'], limit: -1 },
+		});
+		if (gen !== linkedGen || unmounted) return;
+		linked.value = res.data?.data ?? [];
+	} catch (e) {
+		if (gen === linkedGen && !unmounted) error.value = `Could not load the campaign's operations: ${errMsg(e)}`;
+	}
 }
 onMounted(loadLinked);
 watch(() => props.primaryKey, loadLinked);
@@ -44,9 +61,11 @@ const searching = ref(false);
 let timer: any;
 watch(search, () => { clearTimeout(timer); timer = setTimeout(runSearch, 250); });
 watch(category, runSearch);
+onBeforeUnmount(() => { unmounted = true; clearTimeout(timer); linkedGen++; searchGen++; });
 
 async function runSearch() {
 	if (isNew.value) return;
+	const gen = ++searchGen;
 	searching.value = true;
 	try {
 		const filter: any = { _and: [{ campaign_id: { _null: true } }] };
@@ -55,17 +74,40 @@ async function runSearch() {
 		const res = await api.get('/items/manufacturing_operations', {
 			params: { filter, fields: ['operation_id', 'pass_code', 'process_category', 'sample_id.sample_code'], sort: ['pass_code'], limit: 25 },
 		});
+		if (gen !== searchGen || unmounted) return;
 		results.value = res.data?.data ?? [];
-	} catch { results.value = []; } finally { searching.value = false; }
+	} catch (e) {
+		if (gen !== searchGen || unmounted) return;
+		results.value = [];
+		error.value = `Search failed: ${errMsg(e)}`;
+	} finally { if (gen === searchGen) searching.value = false; }
 }
 
+// A failed add/remove is shown and leaves the lists as the server has them (we reload either way),
+// instead of an unhandled rejection that looks like nothing happened.
 async function add(op: any) {
-	await api.patch(`/items/manufacturing_operations/${op.operation_id}`, { campaign_id: props.primaryKey });
-	results.value = results.value.filter((r) => r.operation_id !== op.operation_id);
+	if (busyId.value) return;
+	busyId.value = op.operation_id; error.value = null;
+	try {
+		await api.patch(`/items/manufacturing_operations/${op.operation_id}`, { campaign_id: props.primaryKey });
+		results.value = results.value.filter((r) => r.operation_id !== op.operation_id);
+	} catch (e) {
+		error.value = `Could not add ${op.pass_code || 'the operation'}: ${errMsg(e)}`;
+	} finally {
+		busyId.value = null;
+	}
 	await loadLinked();
 }
 async function remove(op: any) {
-	await api.patch(`/items/manufacturing_operations/${op.operation_id}`, { campaign_id: null });
+	if (busyId.value) return;
+	busyId.value = op.operation_id; error.value = null;
+	try {
+		await api.patch(`/items/manufacturing_operations/${op.operation_id}`, { campaign_id: null });
+	} catch (e) {
+		error.value = `Could not remove ${op.pass_code || 'the operation'}: ${errMsg(e)}`;
+	} finally {
+		busyId.value = null;
+	}
 	await loadLinked();
 	runSearch();
 }
@@ -75,10 +117,11 @@ async function remove(op: any) {
 	<div class="co">
 		<div v-if="isNew" class="co-msg">Save the campaign first, then add operations here.</div>
 		<template v-else>
+			<div v-if="error" class="co-msg co-err">{{ error }}</div>
 			<div class="co-linked">
 				<div v-for="op in linked" :key="op.operation_id" class="co-chip">
 					<span class="mono">{{ op.pass_code || '—' }}</span>
-					<button class="x" title="Remove from campaign" @click="remove(op)"><v-icon name="close" x-small /></button>
+					<button class="x" title="Remove from campaign" :disabled="!!busyId" @click="remove(op)"><v-icon name="close" x-small /></button>
 				</div>
 				<span v-if="!linked.length" class="co-empty">No operations in this campaign yet.</span>
 			</div>
@@ -91,7 +134,7 @@ async function remove(op: any) {
 				</div>
 				<div v-if="searching" class="co-msg sm"><v-progress-circular indeterminate x-small /> searching…</div>
 				<div v-else-if="results.length" class="co-results">
-					<button v-for="op in results" :key="op.operation_id" class="co-result" @click="add(op)">
+					<button v-for="op in results" :key="op.operation_id" class="co-result" :disabled="!!busyId" @click="add(op)">
 						<span class="mono">{{ op.pass_code || '—' }}</span>
 						<span class="co-sub">{{ op.sample_id?.sample_code || op.process_category }}</span>
 						<v-icon name="add_circle" x-small />
@@ -106,6 +149,7 @@ async function remove(op: any) {
 <style scoped>
 .co { font-size: 13px; }
 .co-msg { color: var(--theme--foreground-subdued, #6b7684); padding: 8px 2px; display: flex; align-items: center; gap: 6px; } .co-msg.sm { font-size: 12px; padding: 5px 2px; }
+.co-err { color: #b91c1c; }
 .co-linked { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 .co-chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--theme--border-color-subdued, #e7ebf0); background: var(--theme--background-subdued, #f7f9fb); border-radius: 8px; padding: 4px 6px 4px 10px; }
 .co-chip .x { border: 0; background: transparent; cursor: pointer; color: var(--theme--foreground-subdued, #94a3b8); border-radius: 5px; display: inline-flex; }
