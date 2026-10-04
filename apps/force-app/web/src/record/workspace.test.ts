@@ -323,3 +323,47 @@ describe('workspace.pickReplayCut() (2.7)', () => {
 		expect(w.errMsg.value).toBeNull();
 	});
 });
+
+// ---- the amp goes back to RESET once a long finalize ends, not while the recorder is busy ----
+describe('workspace.stop() returns the amp to RESET after finalize', () => {
+	beforeEach(() => { labampMock.setMode.mockClear(); localStorage.setItem('force-app.source', 'nidaq'); });
+	const resets = () => labampMock.setMode.mock.calls.filter((c) => c[0] === 'RESET').length;
+
+	async function stopping(state: string) {
+		replies['/record/stop'] = { body: { state, id: 'cap-a' } };
+		replies['/captures/cap-a/summary'] = { body: {} };
+		const w = await make();
+		w.setSource('nidaq');
+		labampMock.setMode.mockClear();
+		w.st.state = 'recording'; w.st.captureId = 'cap-a';
+		await w.stop();
+		return w;
+	}
+
+	it('while finalizing sends nothing yet, then one RESET when it reaches done', async () => {
+		const w = await stopping('finalizing');
+		expect(resets()).toBe(0);
+		w.st.state = 'done';
+		expect(resets()).toBe(1);
+		w.st.state = 'idle'; w.st.state = 'done';
+		expect(resets()).toBe(1);
+	});
+
+	it('also resets when the finalize ends in error', async () => {
+		const w = await stopping('finalizing');
+		w.st.state = 'error';
+		expect(resets()).toBe(1);
+	});
+
+	it('does not reset if a new recording started meanwhile', async () => {
+		const w = await stopping('finalizing');
+		w.st.state = 'recording'; w.st.captureId = 'cap-b';
+		w.st.state = 'done';
+		expect(resets()).toBe(0);
+	});
+
+	it('an already-settled stop resets straight away', async () => {
+		await stopping('done');
+		expect(resets()).toBe(1);
+	});
+});

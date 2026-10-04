@@ -365,6 +365,7 @@ export function createWorkspace() {
 		// double-click used to start a second start() while the first waited on them, which reset
 		// state under the first and then got a 409 (review 2.5). Cleared in the finally below.
 		busy.value = true;
+		cancelAmpReset?.();
 		try {
 			if (!(await checkAlarmsBeforeStart())) return;
 			if (!(await checkDiskBeforeStart())) return;
@@ -428,11 +429,30 @@ export function createWorkspace() {
 			await loadFinished();
 		} finally {
 			busy.value = false;
-			// The amp should only ever be in MEASURE while a cut is actually running — left in MEASURE
-			// between cuts it keeps integrating charge drift for no reason. Best-effort: an unreachable
-			// amp shouldn't block the UI from settling after stop.
-			if (source.value === 'nidaq') labamp.setMode('RESET').catch(() => {});
+			if (source.value === 'nidaq') resetAmpWhenSettled();
 		}
+	}
+
+	// The amp should only ever be in MEASURE while a cut is actually running — left in MEASURE
+	// between cuts it keeps integrating charge drift for no reason. The recorder refuses amp writes
+	// (409) while it is busy, and that includes `finalizing`, which can last a long time on a big
+	// cut: so RESET goes out once the run has settled (done/error), not right after the stop
+	// request. Best-effort — an unreachable amp must not block the UI. A new recording starting
+	// meanwhile (or a different capture) cancels it: start() does its own RESET -> MEASURE.
+	let cancelAmpReset: (() => void) | null = null;
+	function resetAmpWhenSettled() {
+		cancelAmpReset?.();
+		const sendReset = () => { labamp.setMode('RESET').catch(() => {}); };
+		const state = st.state;
+		if (state === 'recording') return;                 // the stop did not take: still running
+		if (state !== 'finalizing') { sendReset(); return; }
+		const id = st.captureId;
+		const stopWatch = watch(() => [st.state, st.captureId] as const, ([s, cid]) => {
+			if (s === 'finalizing' && cid === id) return;
+			cancelAmpReset?.();
+			if (cid === id && (s === 'done' || s === 'error')) sendReset();
+		}, { flush: 'sync' });
+		cancelAmpReset = () => { stopWatch(); cancelAmpReset = null; };
 	}
 
 	async function loadFinished() {
