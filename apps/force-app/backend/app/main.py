@@ -39,7 +39,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from . import backup as backup_mod
@@ -1850,16 +1850,25 @@ async def record_start_replay(
     except json.JSONDecodeError:
         meta = {}
     n, fs = h["n"], (h["fs"] or 1000.0)
-    cfg = RecordConfig(
-        sample_name=sample_name,
-        axis=axis if axis in ("Fx", "Fy", "Fz") else "Fz",
-        feed=max(1e-6, h["feed"]),
-        diam=max(1e-6, h["diam"]),
-        sample_rate=fs,
-        duration_sec=max(0.1, n / fs),
-        ppr=max(1, ppr),
-        extra_metadata=meta,
-    )
+    # RecordConfig.duration_sec is capped at 600 s because it sizes a SIMULATED run. A replay is
+    # sized by the cache itself (ReplaySource streams every sample), so a cut longer than 10 min
+    # must not be refused (it used to raise ValidationError -> a bare 500). Validate with the cap,
+    # then record the true duration.
+    duration = max(0.1, n / fs)
+    try:
+        cfg = RecordConfig(
+            sample_name=sample_name,
+            axis=axis if axis in ("Fx", "Fy", "Fz") else "Fz",
+            feed=max(1e-6, h["feed"]),
+            diam=max(1e-6, h["diam"]),
+            sample_rate=fs,
+            duration_sec=min(duration, 600.0),
+            ppr=max(1, ppr),
+            extra_metadata=meta,
+        )
+    except ValidationError as e:
+        raise HTTPException(422, f"cannot replay this cache: {e.errors()[0]['msg']}") from e
+    cfg.duration_sec = duration
     source = ReplaySource(cache_bytes, ppr=cfg.ppr, realtime=True, speed=speed)
     # `await file.read()` above yielded to the loop; re-check with no await before assigning.
     if _busy():
