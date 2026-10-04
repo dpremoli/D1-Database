@@ -106,18 +106,22 @@ export function pickRadius(pointSize: number | undefined, fallback = 1.5): numbe
 }
 
 /**
- * Tells a right-click from a right-drag (the map views pan on right-drag, and the browser fires
- * `contextmenu` on release either way): record the press, then ask on `contextmenu`.
+ * Tells a right-click from a right-drag (the map views pan on right-drag): record the right press
+ * with `down`, and ask on the right-button release with `up`. The menu opens from the release, not
+ * from `contextmenu`: that event fires on button RELEASE only on Windows, while macOS and Linux
+ * fire it on press, when a click and a drag can't be told apart yet.
  */
 export function createClickTracker(slopPx = 4) {
 	let x = NaN, y = NaN;
+	const isRight = (ev: PointerEvent) => ev.pointerType === 'mouse' && ev.button === 2;
 	return {
-		down(ev: PointerEvent) { if (ev.pointerType === 'mouse' && ev.button === 2) { x = ev.clientX; y = ev.clientY; } },
-		/** true unless the right button moved more than slopPx since its press (resets the press). */
-		isClick(ev: MouseEvent): boolean {
-			const moved = Math.hypot(ev.clientX - x, ev.clientY - y) > slopPx;
+		down(ev: PointerEvent) { if (isRight(ev)) { x = ev.clientX; y = ev.clientY; } },
+		/** true for a right-button release within slopPx of its press (and forgets the press). */
+		up(ev: PointerEvent): boolean {
+			if (!isRight(ev) || Number.isNaN(x)) return false;   // not a right release, or no press seen (it began outside the canvas)
+			const click = Math.hypot(ev.clientX - x, ev.clientY - y) <= slopPx;
 			x = y = NaN;
-			return !moved;
+			return click;
 		},
 	};
 }

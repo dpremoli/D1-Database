@@ -40,6 +40,11 @@ decimated caches (compare, filtered) keep the true `t`. The dashboard holds one 
   the sample (within one cache sample when the cache was decimated above 5M samples). This needs
   the live cache; without it the time items are disabled. In a gridded octree the pick means
   "nearest sample to this spot".
+- **Right-click vs right-drag.** Right-drag pans the map (2D Lite as before, Full and 3D through
+  OrbitControls), so the menu must only open for a press that doesn't move. `contextmenu` can't
+  say (Windows fires it on release, macOS and Linux on press), so the views only `preventDefault()`
+  it and open the menu from the right-button `pointerup` when it is within a few pixels of its
+  `pointerdown` (`createClickTracker`). Touch long-press therefore no longer opens a menu.
 - **Host-agnostic.** The new `ContextMenu.vue` lives in `force-plotting` (invariant 10). No new
   panel type and no change to `RIGHT_KEY` (invariant 11).
 

@@ -153,16 +153,24 @@ describe('displayedKeep', () => {
 });
 
 describe('createClickTracker', () => {
-	const ev = (x: number, y: number, button = 2) => ({ clientX: x, clientY: y, button, pointerType: 'mouse' }) as PointerEvent;
-	it('tells a click from a drag', () => {
+	const ev = (x: number, y: number, button = 2, pointerType = 'mouse') => ({ clientX: x, clientY: y, button, pointerType }) as PointerEvent;
+	it('tells a click from a drag on the right-button release', () => {
 		const t = createClickTracker();
-		t.down(ev(10, 10)); expect(t.isClick(ev(12, 11))).toBe(true);
-		t.down(ev(10, 10)); expect(t.isClick(ev(30, 10))).toBe(false);
+		t.down(ev(10, 10)); expect(t.up(ev(12, 11))).toBe(true);
+		t.down(ev(10, 10)); expect(t.up(ev(30, 10))).toBe(false);
 	});
-	it('treats a contextmenu with no recorded right press (menu key, long-press) as a click', () => {
+	it('forgets the press after the release', () => {
 		const t = createClickTracker();
-		t.down(ev(10, 10, 0));   // a left press is not recorded
-		expect(t.isClick(ev(90, 90))).toBe(true);
+		t.down(ev(10, 10)); t.up(ev(10, 10));
+		expect(t.up(ev(10, 10))).toBe(false);
+	});
+	it('ignores other buttons and touch', () => {
+		const t = createClickTracker();
+		t.down(ev(10, 10, 0)); expect(t.up(ev(10, 10, 0))).toBe(false);
+		t.down(ev(10, 10, 2, 'touch')); expect(t.up(ev(10, 10, 2, 'touch'))).toBe(false);
+	});
+	it('does not open for a release with no recorded press', () => {
+		expect(createClickTracker().up(ev(10, 10))).toBe(false);
 	});
 });
 

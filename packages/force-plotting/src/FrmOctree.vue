@@ -360,8 +360,8 @@ const zPointers = new Map<number, number>();   // pointerId -> clientY
 let zBaseY = 0;
 function avgVals(m: Map<number, number>): number { let s = 0; for (const v of m.values()) s += v; return s / (m.size || 1); }
 function onPtrDown(ev: PointerEvent) {
-	// OrbitControls pans on right-drag (2D and 3D), and the browser still fires `contextmenu` on
-	// release, so remember where the button went down to tell a click from a pan.
+	// OrbitControls pans on right-drag (2D and 3D): remember where the button went down so the
+	// release can tell a click (opens the menu) from a pan.
 	rightClick.down(ev);
 	if (ev.pointerType !== 'touch') return;
 	zPointers.set(ev.pointerId, ev.clientY);
@@ -379,6 +379,7 @@ function onPtrMove(ev: PointerEvent) {
 	}
 }
 function onPtrUp(ev: PointerEvent) {
+	if (rightClick.up(ev)) pickAt(ev.clientX, ev.clientY);
 	zPointers.delete(ev.pointerId);
 	if (zPointers.size < 3 && controls) controls.enabled = true;
 }
@@ -413,10 +414,14 @@ function toScreen(v: THREE.Vector3, out: { px: number; py: number }): boolean {
 	return true;
 }
 
-function onContextMenu(ev: MouseEvent) {
-	ev.preventDefault();
-	if (!rightClick.isClick(ev) || !canvasEl.value || !camera) return;
-	const base = { clientX: ev.clientX, clientY: ev.clientY };
+// `contextmenu` only suppresses the browser's menu: macOS/Linux fire it on press, when a click and
+// a right-drag pan can't be told apart yet, so the pick runs from the right-button pointerup
+// (onPtrUp). OrbitControls adds its own pointerup listener on the same element without stopping
+// propagation, so ours still sees the release.
+function onContextMenu(ev: MouseEvent) { ev.preventDefault(); }
+function pickAt(clientX: number, clientY: number) {
+	if (!canvasEl.value || !camera) return;
+	const base = { clientX, clientY };
 	const c = props.sampleCache;
 	const g = c && octreeGeometry(c);
 	const path = c && g ? buildPath(c, g.path, g.window) : null;
@@ -428,7 +433,7 @@ function onContextMenu(ev: MouseEvent) {
 	const k = pickNearest(path.count, (j) => {
 		_v.set(path.pos[3 * j], path.pos[3 * j + 1], z ? shaderZ(z.series[path.idx[j]], z.r0, z.r1, z.scale) : 0);
 		return toScreen(_v, _pt) ? _pt : null;
-	}, ev.clientX - r.left, ev.clientY - r.top, pickRadius(props.pointSize), displayedKeep(c[props.axis], path.idx, props.colorScale));
+	}, clientX - r.left, clientY - r.top, pickRadius(props.pointSize), displayedKeep(c[props.axis], path.idx, props.colorScale));
 	if (k === null) { emit('pointmenu', { ...base, point: null }); return; }
 	emit('pointmenu', { ...base, point: pointInfo(c, path.idx[k], path.pos[3 * k], path.pos[3 * k + 1], path.rho?.[k]) });
 }

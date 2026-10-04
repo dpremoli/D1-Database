@@ -651,21 +651,22 @@ function pickSource(): PickSource | null {
 	return null;
 }
 
-// Right button: the 2D handlers must not pan on it (it opens the menu), but a drag with it is
-// still a pan in 3D (OrbitControls), so contextmenu has to tell a click from a drag.
+// Right button: a drag with it pans (the 2D handlers below, OrbitControls in 3D), a click opens the
+// menu. `contextmenu` can't tell them apart (macOS/Linux fire it on PRESS), so it only suppresses
+// the browser's menu and the pick runs from the right-button pointerup (onUp) when the tracker says
+// the button stayed put.
 const rightClick = createClickTracker();
-function onContextMenu(ev: MouseEvent) {
-	ev.preventDefault();
-	if (!rightClick.isClick(ev)) return;
+function onContextMenu(ev: MouseEvent) { ev.preventDefault(); }
+function pickAt(clientX: number, clientY: number) {
 	const c = cache.value;
 	if (!c || !ready || !camera) return;
-	const base = { clientX: ev.clientX, clientY: ev.clientY };
+	const base = { clientX, clientY };
 	const src = pickSource();
 	if (!src) { emit('pointmenu', { ...base, point: null, reason: 'gridded' }); return; }
 	syncPickCamera();
 	const r = canvasEl.value!.getBoundingClientRect();
 	const k = pickNearest(src.count, (j) => projectPx(src.m, src.pos[j * 3], src.pos[j * 3 + 1], src.pos[j * 3 + 2]),
-		ev.clientX - r.left, ev.clientY - r.top, pickRadius(props.pointSize, 1.4),
+		clientX - r.left, clientY - r.top, pickRadius(props.pointSize, 1.4),
 		displayedKeep(c[effChannel.value], src.idx, props.colorScale));
 	if (k == null) { emit('pointmenu', { ...base, point: null }); return; }
 	emit('pointmenu', { ...base, point: pointInfo(c, src.idx[k], src.pos[k * 3], src.pos[k * 3 + 1], src.rho?.[k]) });
@@ -957,8 +958,7 @@ let zGestureY: number | null = null;
 function avgPy(): number { let s = 0; for (const p of pointers.values()) s += p.py; return s / (pointers.size || 1); }
 
 function onDown(ev: PointerEvent) {
-	rightClick.down(ev);
-	if (ev.pointerType === 'mouse' && ev.button === 2 && !is3D.value) return;   // 2D: the right button opens the menu, it doesn't pan
+	rightClick.down(ev);   // the right button still pans (2D here, 3D via OrbitControls); a release in place opens the menu (onUp)
 	if (!cache.value) return;
 	const { px, py } = localXY(ev);
 	(ev.currentTarget as Element).setPointerCapture(ev.pointerId);
@@ -1021,6 +1021,9 @@ function onMove(ev: PointerEvent) {
 	}
 }
 function onUp(ev: PointerEvent) {
+	// before the 3D early return below: OrbitControls leaves its own pointerup alone, so a right
+	// release reaches us in both modes
+	if (rightClick.up(ev)) pickAt(ev.clientX, ev.clientY);
 	try { (ev.currentTarget as Element).releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
 	pointers.delete(ev.pointerId);
 	if (is3D.value) {
