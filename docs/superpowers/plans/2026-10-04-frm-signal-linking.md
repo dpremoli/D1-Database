@@ -13,7 +13,7 @@
 | E — dashboard wiring + docs | `.claude/worktrees/agent-aec03ca06d8f2455a` | `worktree-agent-aec03ca06d8f2455a` | reviewed, merged |
 | Simplify / review / verify | `.claude/worktrees/agent-ab75e0c33d96a43f3` (review fixes) | `worktree-agent-ab75e0c33d96a43f3` | simplify done; Opus review done; fixes merged; smoke test all green |
 | Verify harness (`plot_link_smoke.mjs`) | `.claude/worktrees/agent-a054ddb396e4deccc` | `worktree-agent-a054ddb396e4deccc` | merged; all assertions pass after the fixes |
-| PR + merge | coordinator | — | not started |
+| PR + merge | coordinator | PR #121 | open, waiting on CI |
 
 ## Worker agent definition (local-only — recreate at `.claude/agents/force-plotting-implementer.md` if the container was reclaimed)
 
