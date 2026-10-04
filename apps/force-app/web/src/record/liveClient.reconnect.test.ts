@@ -206,3 +206,65 @@ describe('RecordClient.stop()', () => {
 		expect(c.status.captureId).toBe('cap-9');
 	});
 });
+
+describe('reconcile relays what it adopts to pop-outs', () => {
+	// A pop-out has its own RecordClient and only hears what the opener relays.
+	function withPopout() {
+		const opener = new RecordClient();
+		const popout = new RecordClient();
+		const sent: unknown[] = [];
+		(opener as any).relay = { postMessage: (m: unknown) => { sent.push(m); }, close() {} };
+		opener.onPeerMessage({ type: 'sync-request', id: 'p1', retainSec: 60 });
+		sent.length = 0;
+		(popout as any).relay = { postMessage() {}, close() {} };
+		const deliver = () => {
+			for (const m of sent as any[]) {
+				if (m?.txt) (popout as any).onControl(JSON.parse(m.txt));
+				else if (m?.type === 'snapshot') popout.applySnapshot(structuredClone(m));
+			}
+		};
+		return { opener, popout, sent, deliver };
+	}
+
+	it('a done adopted from /record/status reaches the pop-out with its summary', async () => {
+		reply('/record/status', { body: { state: 'done', id: 'cap-1' } });
+		reply('/captures/cap-1/summary', { body: { mat_written: true } });
+		const { opener, popout, deliver } = withPopout();
+		opener.status.state = 'recording'; opener.status.captureId = 'cap-1';
+		popout.status.state = 'recording'; popout.status.captureId = 'cap-1';
+		await opener.reconcile();
+		deliver();
+		expect(popout.status.state).toBe('done');
+		expect(popout.status.summary).toEqual({ mat_written: true });
+	});
+
+	it('a recorder restart (error) reaches the pop-out', async () => {
+		reply('/record/status', { body: { state: 'idle' } });
+		const { opener, popout, deliver } = withPopout();
+		opener.status.state = 'recording'; opener.status.captureId = 'cap-3';
+		popout.status.state = 'recording'; popout.status.captureId = 'cap-3';
+		await opener.reconcile();
+		deliver();
+		expect(popout.status.state).toBe('error');
+		expect(popout.status.error).toMatch(/restarted/);
+	});
+
+	it('a recording adopted onto an idle client reaches the pop-out', async () => {
+		reply('/record/status', { body: { state: 'finalizing', id: 'cap-2', n_total: 5 } });
+		const { opener, popout, deliver } = withPopout();
+		await opener.reconcile();
+		deliver();
+		expect(popout.status.state).toBe('finalizing');
+		expect(popout.status.captureId).toBe('cap-2');
+	});
+
+	it('relays nothing when no pop-out is listening', async () => {
+		reply('/record/status', { body: { state: 'idle' } });
+		const opener = new RecordClient();
+		const post = vi.fn();
+		(opener as any).relay = { postMessage: post, close() {} };
+		opener.status.state = 'recording';
+		await opener.reconcile();
+		expect(post).not.toHaveBeenCalled();
+	});
+});
