@@ -23,13 +23,15 @@ const reportType = computed(() => {
 	if (props.report && props.report !== 'auto') return props.report;
 	if (props.collection === 'manufacturing_operations') return 'operation';
 	if (props.collection === 'test_sessions') return 'test';
-	return 'sample';
+	if (props.collection === 'physical_samples') return 'sample';
+	return null; // no report for this collection: show nothing rather than a wrong one
 });
 
 const url = computed(() => `/d1-report/${reportType.value}/${props.primaryKey}`);
+const canReport = computed(() => !isNew.value && reportType.value !== null);
 
 function open() {
-	if (!isNew.value) window.open(url.value, '_blank', 'noopener');
+	if (canReport.value) window.open(url.value, '_blank', 'noopener');
 }
 
 // "View Force Analysis" — only offered for a saved machining_operations record
@@ -82,7 +84,7 @@ function openFastAnalysis() {
 <template>
 	<!-- Only offered once the record exists (nothing to report on a brand-new item). -->
 	<div v-if="!isNew" class="d1-report-button">
-		<v-button @click="open">
+		<v-button v-if="reportType" @click="open">
 			<v-icon name="picture_as_pdf" left />
 			{{ label }}
 		</v-button>

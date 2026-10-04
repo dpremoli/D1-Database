@@ -162,6 +162,7 @@ $rpt_up
 SELECT 'up_idempotent:' || count(*) FROM directus_fields WHERE field='report_button';
 $rpt_down
 SELECT 'down_rows:' || count(*) FROM directus_fields WHERE field='report_button';
+SELECT 'down_kept_manual:' || sort FROM directus_fields WHERE collection='test_sessions' AND field='report_button';
 ROLLBACK;
 SQL
 )
@@ -169,7 +170,8 @@ rpt_check() { grep -qx "$1" <<<"$rpt_out" && ok "$2" || bad "$2 (psql output: $r
 rpt_check "up_rows:manufacturing_operations=Generate operation PDF,physical_samples=Generate sample PDF,test_sessions=-" "up: buttons added on samples and operations, hand-added test button kept"
 rpt_check "up_kept_manual:99" "up: an existing button keeps its sort (not overwritten)"
 rpt_check "up_idempotent:3" "up: re-running adds no duplicates"
-rpt_check "down_rows:0" "down: buttons removed"
+rpt_check "down_rows:1" "down: the buttons the up added are removed"
+rpt_check "down_kept_manual:99" "down: a hand-added button is left alone"
 
 echo "== Natural ordering of ID codes (#115) =="
 # The code columns use the ICU numeric collation natural_sort, so ORDER BY (and a Directus

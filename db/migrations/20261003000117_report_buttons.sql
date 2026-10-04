@@ -19,7 +19,10 @@ WHERE NOT EXISTS (
 );
 
 -- migrate:down
+-- Only the rows the up created (matched by their generated label); a hand-made button that the
+-- up skipped is left alone.
 DELETE FROM directus_fields
 WHERE field = 'report_button'
   AND interface = 'd1-report-button'
-  AND collection IN ('physical_samples', 'manufacturing_operations', 'test_sessions');
+  AND collection IN ('physical_samples', 'manufacturing_operations', 'test_sessions')
+  AND options::jsonb ->> 'label' IN ('Generate sample PDF', 'Generate operation PDF', 'Generate test PDF');
