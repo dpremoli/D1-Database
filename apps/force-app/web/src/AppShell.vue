@@ -10,6 +10,7 @@ import { alarmController } from './record/alarms';
 import { appUrl } from './appUrl';
 import { getConfig } from './config';
 import { formatDuration } from './format';
+import { bannerRunFromStatus, type BannerRun } from './record/recordingBanner';
 import OfflineSessionBanner from './OfflineSessionBanner.vue';
 
 const router = useRouter();
@@ -24,12 +25,7 @@ onMounted(() => alarmController.reset());
 // torn down on navigation away from /record (onBeforeUnmount there explicitly clears hwStatus and
 // disconnects the websocket) — recording itself is server-side and keeps running regardless, so
 // this polls the backend directly, independent of whether RecordPage is even mounted.
-const recording = ref<{
-	id: string;
-	sampleName: string;
-	samples: number;
-	peakN: number;
-} | null>(null);
+const recording = ref<BannerRun | null>(null);
 // #22: elapsedSec above only refreshes once per 5s poll, so displaying it directly made the
 // banner's clock visibly jump in 5-second steps instead of ticking live. elapsedBase/-At snapshot
 // each poll's value and the moment it arrived; displayedElapsedSec (below) extrapolates from that
@@ -41,6 +37,8 @@ const tick = ref(0);
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 const displayedElapsedSec = computed(() => {
 	void tick.value;
+	// A run that is only being saved has stopped: its clock is final.
+	if (recording.value?.phase === 'finalizing') return elapsedBaseSec;
 	return elapsedBaseSec + (performance.now() - elapsedBaseAt) / 1000;
 });
 const bannerDismissedFor = ref<string | null>(null);
@@ -51,19 +49,14 @@ async function pollRecordingStatus() {
 		const res = await fetch(`${base}/record/status`);
 		if (!res.ok) { recording.value = null; return; }
 		const data = await res.json();
-		if (data.state === 'recording') {
-			const p = data.peaks ?? {};
-			elapsedBaseSec = Number(data.elapsed_sec ?? 0);
+		const run = bannerRunFromStatus(data);
+		if (run) {
+			elapsedBaseSec = run.elapsedSec;
 			elapsedBaseAt = performance.now();
-			if (!tickTimer) tickTimer = setInterval(() => { tick.value++; }, 250);
-			recording.value = {
-				id: data.id,
-				sampleName: data.config?.sample_name || data.id,
-				samples: Number(data.n_total ?? 0),
-				// One headline number rather than three: the banner is a reassurance strip on
-				// another page, not the Record page's readout.
-				peakN: Math.max(Math.abs(p.Fx ?? 0), Math.abs(p.Fy ?? 0), Math.abs(p.Fz ?? 0)),
-			};
+			if (run.phase === 'recording') {
+				if (!tickTimer) tickTimer = setInterval(() => { tick.value++; }, 250);
+			} else if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+			recording.value = run;
 		} else {
 			recording.value = null;
 			if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
@@ -199,7 +192,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 			<OfflineSessionBanner />
 			<div v-if="showBanner" class="rec-banner">
 				<span class="rec-banner-dot"></span>
-				<span class="rec-banner-name">Recording — {{ recording!.sampleName }}</span>
+				<span class="rec-banner-name">{{ recording!.phase === 'finalizing' ? 'Saving' : 'Recording' }} — {{ recording!.sampleName }}</span>
 				<span class="rec-banner-stats">
 					<span class="rec-stat"><b>{{ formatDuration(displayedElapsedSec) }}</b> elapsed</span>
 					<span class="rec-stat"><b>{{ fmtSamples(recording!.samples) }}</b> samples</span>

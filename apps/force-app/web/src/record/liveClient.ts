@@ -263,29 +263,49 @@ export class RecordClient {
 				this.status.tSec = Number(data.elapsed_sec ?? 0);
 				const p = data.peaks ?? {};
 				this.status.peaks = { Fx: Number(p.Fx ?? 0), Fy: Number(p.Fy ?? 0), Fz: Number(p.Fz ?? 0) };
+				// No WebSocket message carries this transition, so a pop-out would never learn it.
+				if (this.hasRelayPeer) this.sendSnapshot(true);
 			}
 		} else if ((srv === 'done' || srv === 'error') && live) {
 			const id: string | null = data.id ?? this.status.captureId;
 			let summary: any = null;
 			if (srv === 'done' && id) {
-				try {
-					const r = await fetch(`${this.base}/captures/${id}/summary`);
-					if (r.ok) summary = await r.json();
-				} catch { /* the dialog still works from live_cache.bin; summary only adds extras */ }
-				if (!unchanged()) return;
+				// One retry: a blip here left summary null, which uploads read as "a .mat exists".
+				for (let attempt = 0; attempt < 2 && summary === null; attempt++) {
+					try {
+						const r = await fetch(`${this.base}/captures/${id}/summary`);
+						if (r.ok) summary = await r.json();
+					} catch { /* the dialog still works from live_cache.bin; summary only adds extras */ }
+					if (!unchanged()) return;
+				}
 			}
 			this.status.captureId = id;
 			this.status.error = data.error ?? null;
 			this.status.errorKind = data.error_kind ?? null;
 			this.status.summary = summary;
 			this.status.state = srv;
+			this.relayDone();
 		} else if (live && (srv === 'idle' || srv == null)) {
 			// The recorder has no such session any more: it restarted mid-cut. Whatever it had
 			// written is on disk (raw.d1raw), recoverable from the banner.
 			this.status.error = 'The recorder restarted while this recording was running. What was captured so far is on disk: use "Recover" in the banner at the top of this page.';
 			this.status.errorKind = 'acquisition';
 			this.status.state = 'error';
+			this.relayDone();
 		}
+	}
+
+	/**
+	 * Pop-outs have their own RecordClient and only learn terminal state from the `done` control
+	 * message the opener relays off its WebSocket. A reconcile that adopts one itself (missed
+	 * message, recorder restart) relays the same message, so they converge too.
+	 */
+	private relayDone() {
+		if (!this.hasRelayPeer) return;
+		const s = this.status;
+		this.relay?.postMessage({ txt: JSON.stringify({
+			type: 'done', id: s.captureId, state: s.state, error: s.error, error_kind: s.errorKind, summary: s.summary,
+		}) });
 	}
 
 	// Opener side: a pop-out spoke. Public for tests; the relay is its only real caller.

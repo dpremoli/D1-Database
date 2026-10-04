@@ -202,6 +202,35 @@ describe('workspace.uploadCutToDatabase() resume (2.2)', () => {
 	});
 });
 
+describe('workspace.uploadCutToDatabase() with an unknown summary', () => {
+	beforeEach(() => {
+		fileN = 0; dx.get.mockResolvedValue({ data: { data: [] } });
+		dx.post.mockImplementation(async (url: string) => {
+			if (url === '/items/manufacturing_operations') return { data: { data: { operation_id: 'op-s' } } };
+			if (url === '/files') return { data: { data: { id: `file-${++fileN}` } } };
+			return { data: { data: {} } };
+		});
+		replies['/captures/cap-up/live_cache.bin'] = { body: null };
+	});
+	const noSummary = async () => { const w = await uploadable(); w.st.summary = null; return w; };
+
+	it('asks the recorder and skips the capture.mat of an over-size cut', async () => {
+		replies['/captures/cap-up/summary'] = { body: { mat_written: false } };
+		const w = await noSummary();
+		await expect(w.uploadCutToDatabase()).resolves.toBe('op-s');
+		expect(calls).not.toContain('GET /captures/cap-up/capture.mat');
+		expect(posts('/files')).toBe(1);
+		expect(dx.post.mock.calls.find((c) => c[0] === '/items/machining_force_analysis')![1].directus_files_id).toBeNull();
+	});
+
+	it('fails retryably, without logging a run, when the summary cannot be read', async () => {
+		replies['/captures/cap-up/summary'] = { ok: false, status: 503 };
+		const w = await noSummary();
+		await expect(w.uploadCutToDatabase()).rejects.toThrow(/capture summary/);
+		expect(posts('/items/manufacturing_operations')).toBe(0);
+	});
+});
+
 // ---- 2.5: Start is one-shot from the first click, not from the request ----
 describe('workspace.start() (2.5)', () => {
 	beforeEach(() => { alarmController.testedSinceStart.value = false; });
@@ -321,5 +350,49 @@ describe('workspace.pickReplayCut() (2.7)', () => {
 		first.reject(new Error('network'));
 		await a;
 		expect(w.errMsg.value).toBeNull();
+	});
+});
+
+// ---- the amp goes back to RESET once a long finalize ends, not while the recorder is busy ----
+describe('workspace.stop() returns the amp to RESET after finalize', () => {
+	beforeEach(() => { labampMock.setMode.mockClear(); localStorage.setItem('force-app.source', 'nidaq'); });
+	const resets = () => labampMock.setMode.mock.calls.filter((c) => c[0] === 'RESET').length;
+
+	async function stopping(state: string) {
+		replies['/record/stop'] = { body: { state, id: 'cap-a' } };
+		replies['/captures/cap-a/summary'] = { body: {} };
+		const w = await make();
+		w.setSource('nidaq');
+		labampMock.setMode.mockClear();
+		w.st.state = 'recording'; w.st.captureId = 'cap-a';
+		await w.stop();
+		return w;
+	}
+
+	it('while finalizing sends nothing yet, then one RESET when it reaches done', async () => {
+		const w = await stopping('finalizing');
+		expect(resets()).toBe(0);
+		w.st.state = 'done';
+		expect(resets()).toBe(1);
+		w.st.state = 'idle'; w.st.state = 'done';
+		expect(resets()).toBe(1);
+	});
+
+	it('also resets when the finalize ends in error', async () => {
+		const w = await stopping('finalizing');
+		w.st.state = 'error';
+		expect(resets()).toBe(1);
+	});
+
+	it('does not reset if a new recording started meanwhile', async () => {
+		const w = await stopping('finalizing');
+		w.st.state = 'recording'; w.st.captureId = 'cap-b';
+		w.st.state = 'done';
+		expect(resets()).toBe(0);
+	});
+
+	it('an already-settled stop resets straight away', async () => {
+		await stopping('done');
+		expect(resets()).toBe(1);
 	});
 });
