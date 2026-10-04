@@ -75,10 +75,21 @@ on a fresh deployment.
 
 ---
 
-## 3. Configuring the Directus Flow
+## 3. Configuring the Directus Flows
 
-The Directus Flow fires whenever a `test_sessions` record is created and POSTs
-to the worker webhook. Configure it once after Directus first starts.
+**Required on every install, new or existing.** Two Flows call the workers, and both must send
+the `X-Worker-Secret` header: the workers reject every request without it (401, or 503 if the
+worker itself has no secret). On a new install create them once after Directus first starts. On
+an existing install that predates the 2026-10 hardening, add the header to the Flows you
+already have; see [`upgrade-2026-10-hardening.md`](./upgrade-2026-10-hardening.md).
+
+Both Flows fire whenever a `test_sessions` record is created, and both POST the item to a
+worker webhook. They are independent: the heavy-data worker computes statistics and plots
+(`processed`), the analysis worker computes the FFT metrics (`analysed`). Directus resolves
+`{{$env.WORKER_WEBHOOK_SECRET}}` only because compose sets
+`FLOWS_ENV_ALLOW_LIST=WORKER_WEBHOOK_SECRET`.
+
+### 3.1 Heavy-data Flow (`heavy-data-session-webhook`)
 
 1. Open the Directus admin UI (default: `http://localhost:8055`) and log in as
    an Administrator.
@@ -102,10 +113,7 @@ to the worker webhook. Configure it once after Directus first starts.
    - **Request Body:** Enable "Include Payload" (this sends the full item
      payload, including `file_storage_pointer`, in the POST body).
    - **Headers:** add `X-Worker-Secret` with the value
-     `{{$env.WORKER_WEBHOOK_SECRET}}`. The worker rejects every request without it
-     (401, or 503 if the worker itself has no secret), and Directus only resolves
-     `$env.WORKER_WEBHOOK_SECRET` because compose sets
-     `FLOWS_ENV_ALLOW_LIST=WORKER_WEBHOOK_SECRET`. Content-Type: application/json
+     `{{$env.WORKER_WEBHOOK_SECRET}}`. Content-Type: application/json
      is set automatically.
 
 5. Click **Save** on the operation, then **Save** the flow.
@@ -113,9 +121,22 @@ to the worker webhook. Configure it once after Directus first starts.
 6. Verify the flow is active: its row in the Flows list should show a green
    status indicator.
 
-> The worker URL uses the Docker Compose service name `heavy-data-worker` and
-> is only reachable within the `d1net` Docker network. It is not exposed to the
-> host machine directly.
+### 3.2 Analysis Flow (`analysis-session-webhook`)
+
+Same steps as 3.1, with these differences:
+
+- **Name:** `analysis-session-webhook`
+- **URL:** `http://analysis-worker:8081/api/webhook/session`
+- **Headers:** the same `X-Worker-Secret: {{$env.WORKER_WEBHOOK_SECRET}}`
+
+The analysis worker reads the same `file_storage_pointer` from the payload, enqueues on its own
+`analysis` queue and sets `analysing`, then `analysed`. It never regresses a better status
+(a late `processed` does not overwrite `analysed`). A session with no file pointer is skipped
+with HTTP 200 by both workers, so a Flow that fires on every create does not log failures.
+
+> The worker URLs use the Docker Compose service names and are only reachable within the
+> `d1net` Docker network. The host ports (8080, 8081) are bound to `D1_BIND_ADDR` and are for
+> health checks and tests.
 
 ---
 

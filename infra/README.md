@@ -2,6 +2,12 @@
 
 Everything needed to bring the stack up from a clean machine and keep it safe.
 
+> **Upgrading a running deployment?** Read
+> [`docs/runbooks/upgrade-2026-10-hardening.md`](../docs/runbooks/upgrade-2026-10-hardening.md)
+> first. Compose now refuses to start (even `down`/`ps`) without new secrets, the workers reject
+> requests without `X-Worker-Secret`, and the Directus Flows must be edited. A plain `git pull` and
+> `docker compose up` breaks an existing install.
+
 - `../docker-compose.yml` — single-command stack (Phase 2: healthchecks, restart
   policies, Caddy reverse proxy, MinIO bucket bootstrap), plus the plugin and
   force-app services added since.
