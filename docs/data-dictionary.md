@@ -149,6 +149,13 @@ The central entity. Everything else points to or from here.
 **Code generation:** `generate_sample_code(seq, alloy_code, method_code, date)`
 → `{seq}-{alloy}-{method}-{YYYY-MM-DD}`
 
+**Numbers are assigned by the database** (migrations `…126`, `…127`). The Directus
+interfaces send a code whose number part is the literal placeholder `{seq}` (and, for
+sintering pass codes, `{mf}`); a BEFORE trigger replaces it with the next free number
+under an advisory lock, so concurrent registrations never collide. A code without a
+placeholder is stored as given. `manufacturing_operations.operation_sequence` is filled
+the same way when it is NULL.
+
 ---
 
 ### `manufacturing_operations`
@@ -191,6 +198,11 @@ inline columns instead, prefixed by process and shown according to
 `process_category`: `machining_*`, `sintering_*`, `ht_*` (heat treatment),
 `deform_*` and `am_*` (additive). The `method_parameters` registry that described
 the JSONB keys was dropped in `20260626000039`.
+
+`process_category` comes from `manufacturing_methods.process_category` (migration
+`…129`): a BEFORE trigger fills it on insert, or when the method changes, if the write
+does not set it. Applying a prep recipe (`prep_recipe_id` on a Sample Preparation
+operation) copies its steps in an AFTER trigger in the same transaction.
 
 ---
 
@@ -261,6 +273,12 @@ Append-only; every core-table mutation produces one row. Protected by
 | `row_after` | JSONB | Full row after mutation (NULL for DELETE) |
 | `changed_fields` | JSONB | For UPDATE: `{col: {old: ..., new: ...}}` |
 
+Since migration `…121` every business table is audited and `record_id` is the table's
+own primary key (composite keys joined with `:`). `audit_logs` also refuses `TRUNCATE`
+(`…120`). When a Directus API write could not set `d1.actor_identity` in its own
+transaction, the actor is recorded from `directus_activity` into `audit_log_actors`
+(`…128`); query **`v_audit_logs_with_actor`** for "who made this change".
+
 ---
 
 ### `semantic_embeddings`
@@ -323,8 +341,8 @@ WHERE  sample_id  = '<uuid>'
   session start, picked up by the audit trigger.
 - Passwords must never be stored in this schema (use Directus or separate auth).
 - **Text-to-SQL read surface (Phase 6):** the `d1_llm_readonly` role is granted
-  `SELECT` on the allow-listed `v_*` views **only** — never base tables and never
-  `audit_logs`. It is `default_transaction_read_only` with a statement timeout.
+  `SELECT` on an explicit allow-list of lab tables and `v_*` views (migration `…117`) —
+  never `audit_logs`, `people` or any `directus_*` table. It is `default_transaction_read_only` with a statement timeout.
   LLM-generated SQL is additionally validated by the plugin's SQL guard before it
   runs (ADR-0009, `docs/runbooks/text-to-sql.md`). The login role used by the
   plugin must inherit `d1_llm_readonly` and never be the superuser.

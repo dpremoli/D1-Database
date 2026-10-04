@@ -213,7 +213,6 @@ else
               operator_name:$operator, operation_date:$op_date, pass_code:$pass_code,
               recorded_metadata:{"test":true}}')
         op_response=$(api POST "/items/manufacturing_operations" \
-            -H "X-Actor-Identity: phase3_test_script" \
             -d "$op_payload" 2>/dev/null || true)
         TEST_OP_ID=$(echo "$op_response" | jq -r '.data.operation_id // empty')
         run "POST /items/manufacturing_operations → operation created" "$TEST_OP_ID"
@@ -259,6 +258,21 @@ else
         ok "audit UPDATE has row_before populated"
     else
         bad "audit UPDATE row_before is null or missing"
+    fi
+
+    # The PATCH is attributed to the signed-in admin (actor-identity hook, or the
+    # directus_activity fallback of migration 128). v_audit_logs_with_actor is not exposed through
+    # the API, so this needs direct database access; it is skipped without DATABASE_URL.
+    if [[ -n "${DATABASE_URL:-}" ]] && command -v psql >/dev/null; then
+        admin_id=$(api GET "/users/me?fields=id" 2>/dev/null | jq -r '.data.id // empty')
+        update_actor=$(psql "$DATABASE_URL" -tAc \
+            "SELECT actor_identity FROM v_audit_logs_with_actor
+             WHERE table_name = 'physical_samples' AND action_type = 'UPDATE'
+               AND record_id = '$TEST_SAMPLE_ID'
+             ORDER BY log_id DESC LIMIT 1" 2>/dev/null || true)
+        run_eq "audit UPDATE attributed to the signed-in user" "$update_actor" "$admin_id"
+    else
+        printf '  \033[33mSKIP\033[0m audit actor check (needs DATABASE_URL and psql)\n'
     fi
 
     # Check row_after is populated on UPDATE
