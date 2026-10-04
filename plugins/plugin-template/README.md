@@ -75,7 +75,9 @@ Declares the Flask application. `app.before_request(check_secret)` enforces the
 shared-secret header on every endpoint except `GET /health`. `GET /health`
 returns `{"status": "ok"}` with HTTP 200. `POST /api/webhook/session` extracts
 `session_id` and `object_key` from the Directus webhook payload, validates the
-key, enqueues your job function, and returns HTTP 202. The queue name is read
+key, enqueues your job function, and returns HTTP 202. A session with no
+`file_storage_pointer` (or one into another store) is answered `200 {"status": "skipped"}`
+without enqueueing, so a Flow that fires on every create logs no failures. The queue name is read
 from the `QUEUE_NAME` env var (default `plugin`); import your job function in
 place of `example_job`.
 
@@ -279,20 +281,20 @@ the `image` tag and host port as needed.
       minio:
         condition: service_healthy
     environment:
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379/0
       REDIS_HOST: redis
       REDIS_PORT: 6379
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change_me_too}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
       MINIO_BUCKET: ${MINIO_BUCKET:-d1-files}
       DIRECTUS_URL: http://directus:8055
       WORKER_DIRECTUS_TOKEN: ${YOUR_PLUGIN_DIRECTUS_TOKEN:-}
       WORKER_MEMORY_LIMIT_MB: ${WORKER_MEMORY_LIMIT_MB:-256}
       WORKER_HTTP_PORT: "8080"
-      WORKER_WEBHOOK_SECRET: ${WORKER_WEBHOOK_SECRET:?set WORKER_WEBHOOK_SECRET}
+      WORKER_WEBHOOK_SECRET: ${WORKER_WEBHOOK_SECRET:?Set WORKER_WEBHOOK_SECRET in .env}
     ports:
-      - "${YOUR_PLUGIN_HTTP_PORT:-8081}:8080"
+      - "${D1_BIND_ADDR:-127.0.0.1}:${YOUR_PLUGIN_HTTP_PORT:-8081}:8080"
     healthcheck:
       test:
         - "CMD"
@@ -309,6 +311,10 @@ Notes:
 
 - Use a different host-side port (e.g., `8081`, `8082`) for each plugin so
   they do not conflict on the host. The container-side port is always `8080`.
+- Always bind the published port to `${D1_BIND_ADDR:-127.0.0.1}:` (loopback unless the operator
+  sets it) and keep the secrets `${VAR:?}`-required, as the other services do: a default such as
+  `:-change_me_too` is a password that works when nobody set one. Every request except
+  `GET /health` must carry `X-Worker-Secret` (the template's `check_secret` enforces it).
 - Name the token variable `${YOUR_PLUGIN_DIRECTUS_TOKEN:-}` (matching the
   service name) so multiple plugins can each have their own machine token in
   `.env` without colliding.

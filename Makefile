@@ -20,6 +20,15 @@ POSTGRES_DB   ?= d1_database
 DATABASE_URL  ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 # Database name taken from DATABASE_URL (what reset-db will actually drop), not POSTGRES_DB.
 DB_NAME       := $(notdir $(firstword $(subst ?, ,$(DATABASE_URL))))
+# dbmate runs in a container, where `localhost` is the container itself, not the host. So it joins
+# the compose network and reaches Postgres as `postgres:5432` (a localhost/127.0.0.1 DSN host on
+# POSTGRES_PORT is rewritten; any other host is used as given). `make up` creates the network.
+# Override DBMATE_DATABASE_URL (or COMPOSE_NETWORK if your compose project is not named
+# d1-database) for an unusual setup.
+COMPOSE_NETWORK ?= d1-database_d1net
+DBMATE_DATABASE_URL ?= $(subst @127.0.0.1:$(POSTGRES_PORT)/,@postgres:5432/,$(subst @localhost:$(POSTGRES_PORT)/,@postgres:5432/,$(DATABASE_URL)))
+DBMATE_RUN    := docker run --rm --network $(COMPOSE_NETWORK) -e DATABASE_URL="$(DBMATE_DATABASE_URL)" \
+		-v "$(CURDIR)/db:/db" $(DBMATE_IMAGE)
 # prune-backups keeps this many of the newest backups, regardless of age.
 KEEP          ?= 7
 
@@ -52,8 +61,15 @@ traceability-test: ## Run Phase 7 traceability tests (requires DATABASE_URL or r
 ai-test: ## Run Phase 6 AI-readiness tests (requires DATABASE_URL; superuser, to create roles)
 	DATABASE_URL="$(DATABASE_URL)" bash tests/phase6_text_to_sql.sh
 
-compose-check: ## Validate docker-compose.yml is well-formed
-	docker compose config -q && echo "docker-compose.yml OK"
+# Required secrets use ${VAR:?} in compose, so a plain `docker compose config` fails on a fresh
+# clone with no .env. Validate against a throwaway env file of dummy values instead (never .env).
+COMPOSE_REQUIRED_VARS := POSTGRES_PASSWORD MINIO_ROOT_PASSWORD DIRECTUS_KEY DIRECTUS_SECRET \
+                         DIRECTUS_ADMIN_PASSWORD WORKER_WEBHOOK_SECRET REDIS_PASSWORD
+
+compose-check: ## Validate docker-compose.yml is well-formed (works without a .env)
+	@tmp=$$(mktemp) && trap 'rm -f "$$tmp"' EXIT && \
+		for v in $(COMPOSE_REQUIRED_VARS); do echo "$$v=compose-check-dummy" >> "$$tmp"; done && \
+		docker compose --env-file "$$tmp" config -q && echo "docker-compose.yml OK"
 
 lint: ## Run all pre-commit hooks across the repo
 	pre-commit run --all-files
@@ -67,30 +83,21 @@ down: ## Stop the Docker stack
 logs: ## Tail stack logs
 	docker compose logs -f
 
-migrate: ## Apply all pending migrations (requires DATABASE_URL)
-	docker run --rm \
-		-e DATABASE_URL="$(DATABASE_URL)" \
-		-v "$(CURDIR)/db:/db" \
-		$(DBMATE_IMAGE) --no-dump-schema up
+migrate: ## Apply all pending migrations (requires DATABASE_URL and the stack's Postgres running)
+	$(DBMATE_RUN) --no-dump-schema up
 
 migrate-down: ## Roll back the latest migration (requires DATABASE_URL)
-	docker run --rm \
-		-e DATABASE_URL="$(DATABASE_URL)" \
-		-v "$(CURDIR)/db:/db" \
-		$(DBMATE_IMAGE) --no-dump-schema down
+	$(DBMATE_RUN) --no-dump-schema down
 
 migrate-status: ## Show migration status (requires DATABASE_URL)
-	docker run --rm \
-		-e DATABASE_URL="$(DATABASE_URL)" \
-		-v "$(CURDIR)/db:/db" \
-		$(DBMATE_IMAGE) status
+	$(DBMATE_RUN) status
 
 seed: ## Load reference seed data (requires DATABASE_URL and psql in PATH)
 	psql "$(DATABASE_URL)" -f db/seeds/001_reference_data.sql
 
 bootstrap-minio: ## Create MinIO buckets after first `make up` (idempotent)
 	docker run --rm \
-		--network d1-database_d1net \
+		--network $(COMPOSE_NETWORK) \
 		-e MC_HOST_local="http://$(MINIO_ROOT_USER):$(MINIO_ROOT_PASSWORD)@minio:9000" \
 		minio/mc:latest \
 		sh -c "mc mb --ignore-existing local/d1-files \
@@ -120,7 +127,7 @@ worker-test: worker-build ## Run heavy-data worker unit tests inside Docker
 worker-logs: ## Tail heavy-data worker container logs
 	docker compose logs -f heavy-data-worker
 
-phase4-test: ## Phase 4 integration test (requires running stack + MACHINE_TOKEN)
+phase4-test: ## Phase 4 integration test (requires running stack, MACHINE_TOKEN and WORKER_WEBHOOK_SECRET)
 	bash tests/phase4_heavy_data.sh
 
 analysis-build: ## Build the FFT analysis worker Docker image
@@ -163,12 +170,6 @@ reset-db: ## Drop all tables and re-apply migrations + seed (DESTRUCTIVE — dev
 		read -r -p "Type the database name ($(DB_NAME)) to confirm: " ans; \
 		[ "$$ans" = "$(DB_NAME)" ] || { echo "Aborted."; exit 1; }; \
 	fi
-	docker run --rm \
-		-e DATABASE_URL="$(DATABASE_URL)" \
-		-v "$(CURDIR)/db:/db" \
-		$(DBMATE_IMAGE) --no-dump-schema drop || true
-	docker run --rm \
-		-e DATABASE_URL="$(DATABASE_URL)" \
-		-v "$(CURDIR)/db:/db" \
-		$(DBMATE_IMAGE) --no-dump-schema up
+	$(DBMATE_RUN) --no-dump-schema drop || true
+	$(DBMATE_RUN) --no-dump-schema up
 	$(MAKE) seed

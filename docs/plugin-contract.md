@@ -116,23 +116,25 @@ touches the file contents at this stage.
 ```
 POST /api/presign-upload
 Content-Type: application/json
-Authorization: Bearer <WORKER_DIRECTUS_TOKEN>
+X-Worker-Secret: <WORKER_WEBHOOK_SECRET>
 ```
+
+These endpoints authenticate with the shared webhook secret (section 2.3), not a Directus token.
 
 Request body:
 
 ```json
 {
   "object_key": "10-AA-MF-2024-03-15/F1/10-AA-MF-2024-03-15-F1.d1f",
-  "n_parts": 12,
+  "file_size_bytes": 12884901888,
   "content_type": "application/octet-stream"
 }
 ```
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `object_key` | string | yes | Destination key in the configured MinIO bucket. Must follow the naming convention in §7. |
-| `n_parts` | integer | yes | Number of parts. Each part except the last must be at least 5 MB. |
+| `object_key` | string | yes | Destination key in the configured MinIO bucket. Letters, digits, `.`, `_`, `-` and `/` only, no `..`. Should follow the naming convention in §7. |
+| `file_size_bytes` | integer | yes | Size of the file. Must be above 0 and at most `MAX_UPLOAD_BYTES` (default 200 GiB), else `400`. The plugin derives the part count from it (`ceil(file_size_bytes / UPLOAD_PART_SIZE_BYTES)`, default part size 100 MiB, at least one part). |
 | `content_type` | string | no | MIME type. Defaults to `application/octet-stream`. |
 
 Response (`200 OK`):
@@ -140,7 +142,8 @@ Response (`200 OK`):
 ```json
 {
   "upload_id": "VXBsb2FkIElE...",
-  "presigned_urls": [
+  "object_key": "10-AA-MF-2024-03-15/F1/10-AA-MF-2024-03-15-F1.d1f",
+  "parts": [
     {
       "part_number": 1,
       "url": "http://minio:9000/d1-data/10-AA-MF-2024-03-15/F1/10-AA-MF-2024-03-15-F1.d1f?partNumber=1&uploadId=VXBsb2FkIElE...&X-Amz-Signature=..."
@@ -149,32 +152,31 @@ Response (`200 OK`):
       "part_number": 2,
       "url": "http://minio:9000/d1-data/..."
     }
-  ],
-  "expires_at": "2026-06-18T14:00:00Z"
+  ]
 }
 ```
 
-The client PUTs each part to the corresponding `url`. The server returns an
-`ETag` header in each part response; the client must collect these for the
-complete-upload call.
+The client PUTs part `n` to `parts[n-1].url`, each part exactly `UPLOAD_PART_SIZE_BYTES` long except
+the last. MinIO returns an `ETag` header in each part response; the client must collect these for
+the complete-upload call. An invalid `object_key` or size returns `400 {"error": "..."}`.
 
 ### 4.2 Complete multipart upload
 
 ```
 POST /api/complete-upload
 Content-Type: application/json
-Authorization: Bearer <WORKER_DIRECTUS_TOKEN>
+X-Worker-Secret: <WORKER_WEBHOOK_SECRET>
 ```
 
-Request body:
+Request body (the S3 field names, capitalised):
 
 ```json
 {
   "object_key": "10-AA-MF-2024-03-15/F1/10-AA-MF-2024-03-15-F1.d1f",
   "upload_id": "VXBsb2FkIElE...",
   "parts": [
-    { "part_number": 1, "etag": "\"d8e8fca2dc0f896fd7cb4cb0031ba249\"" },
-    { "part_number": 2, "etag": "\"58e53d1324eef6265fdb97b08ed9aadf\"" }
+    { "PartNumber": 1, "ETag": "\"d8e8fca2dc0f896fd7cb4cb0031ba249\"" },
+    { "PartNumber": 2, "ETag": "\"58e53d1324eef6265fdb97b08ed9aadf\"" }
   ]
 }
 ```
@@ -183,26 +185,18 @@ Request body:
 |---|---|---|---|
 | `object_key` | string | yes | Must match the key used in presign-upload. |
 | `upload_id` | string | yes | The `upload_id` returned by presign-upload. |
-| `parts` | array | yes | Ordered list of `{part_number, etag}` objects. ETags are the values returned by MinIO in the `ETag` response header for each part PUT. |
+| `parts` | array | yes | Ordered list of `{PartNumber, ETag}` objects, passed straight to S3 `CompleteMultipartUpload`. ETags are the values returned by MinIO in the `ETag` response header for each part PUT. |
 
 Response (`200 OK`):
 
 ```json
 {
-  "object_key": "10-AA-MF-2024-03-15/F1/10-AA-MF-2024-03-15-F1.d1f",
-  "size_bytes": 12884901888,
-  "etag": "\"abc123-12\""
+  "file_storage_pointer": "minio://d1-data/10-AA-MF-2024-03-15/F1/10-AA-MF-2024-03-15-F1.d1f"
 }
 ```
 
-On error the plugin returns a standard JSON error body:
-
-```json
-{
-  "error": "UPLOAD_ASSEMBLY_FAILED",
-  "message": "MinIO returned 400 for CompleteMultipartUpload: EntityTooSmall"
-}
-```
+Store that value in `test_sessions.file_storage_pointer` (section 7). An invalid `object_key`
+returns `400 {"error": "..."}`.
 
 ---
 
@@ -245,9 +239,13 @@ Content-Type: application/json
 { "queued": true, "session_id": "<session_id>" }
 ```
 
-If the `file_storage_pointer` is absent or does not begin with `minio://`, the
-handler logs a warning and returns 200 without enqueuing (the session does not
-have a heavy-data file to process).
+If the `file_storage_pointer` is absent or empty, or is a URL into another store (it contains
+`://` but does not begin with `minio://<bucket>/`), the handler returns `200` with
+`{"status": "skipped", "reason": "..."}` and does not enqueue: the Flow fires on every
+`test_sessions` create, and most sessions have no file for this worker, so answering `400` would
+log a failed Flow run each time. A bare object key (no `://`) is accepted as the object key. A
+missing `key` / `session_id`, or an unsafe object key (characters outside `A-Za-z0-9._/-`, or
+`..`), is still `400`.
 
 ---
 

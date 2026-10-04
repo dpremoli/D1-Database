@@ -74,6 +74,10 @@ docker compose --profile llm up -d
 Requires Docker (Desktop/WSL2 on Windows) and `pre-commit`. Run `make help` for
 all targets.
 
+> **Upgrading an existing deployment?** Do not just `git pull` and `docker compose up`: follow
+> [`docs/runbooks/upgrade-2026-10-hardening.md`](./docs/runbooks/upgrade-2026-10-hardening.md)
+> (new required secrets, worker Flow headers, migrations, a Directus restart).
+
 ## Tech stack
 
 PostgreSQL 15+ (with `pgvector`) · Directus · MinIO (S3-compatible) · Redis ·
