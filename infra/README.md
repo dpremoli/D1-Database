@@ -42,10 +42,13 @@ make migrate && make seed   # apply schema + reference data
 ```
 
 **Network exposure.** Every published port (Directus, proxy, Postgres, MinIO, the
-workers, llm-text-to-sql) binds to `D1_BIND_ADDR`, default `127.0.0.1`. To reach the
-stack from other tailnet machines set `D1_BIND_ADDR` in `.env` to the host's tailnet IP
-(`tailscale ip -4`) and `make up` again; never `0.0.0.0`. Redis is not published at all
-(use `docker compose exec redis redis-cli`, which is already authenticated).
+workers, llm-text-to-sql, Ollama) binds to `D1_BIND_ADDR`, default `127.0.0.1`. Leave the
+default: on `d1-server` Tailscale Serve forwards to `localhost`, so the tailnet reaches the
+stack through it and nothing else is exposed. Set `D1_BIND_ADDR` to the host's tailnet IP
+(`tailscale ip -4`) **only** if clients must reach the ports directly, and know the cost: a
+`localhost` Tailscale Serve target stops working, and the containers fail to start if
+Tailscale is not up yet when Docker brings them up. Never `0.0.0.0`. Redis is not published at
+all (use `docker compose exec redis redis-cli`, which is already authenticated).
 
 **Backup / restore:**
 
