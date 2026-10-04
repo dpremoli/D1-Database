@@ -403,7 +403,7 @@ interface OctreeGeo { c: Cache; innerDiam: number; ppr: number; path: TurningSpi
 let geo: OctreeGeo | null = null;
 function octreeGeometry(): OctreeGeo | null {
 	const c = props.sampleCache;
-	if (!c || !c.N) return null;
+	if (!c || !c.N) { geo = null; return null; }   // never keep a dropped cache (100+ MB) reachable
 	const innerDiam = props.innerDiam ?? 0, ppr = props.ppr ?? 1;
 	if (geo && geo.c === c && geo.innerDiam === innerDiam && geo.ppr === ppr) return geo;
 	const g = octreePathParams(c, innerDiam, ppr);
@@ -416,7 +416,7 @@ function octreeGeometry(): OctreeGeo | null {
 // The vertex shader's Z for this frame (flat, or the series, range and scale it reads), read from
 // the uniforms into one reused object: it runs per frame for the rings.
 const zMap = { on: false, series: null as Float32Array | null, r0: 0, r1: 1, scale: 0 };
-function readZ(c: Cache): typeof zMap {
+function readZ(c: Cache): void {
 	const u = material?.uniforms;
 	const zAxis = u ? (u.uZAxis.value as number) : -1;
 	zMap.on = !!u && zAxis >= 0;
@@ -425,7 +425,6 @@ function readZ(c: Cache): typeof zMap {
 		zMap.series = zAxis === 0 ? c.Fx : zAxis === 1 ? c.Fy : c.Fz;
 		zMap.r0 = r.x; zMap.r1 = r.y; zMap.scale = u!.uZScale.value as number;
 	}
-	return zMap;
 }
 const zAt = (i: number) => (zMap.on ? shaderZ(zMap.series![i], zMap.r0, zMap.r1, zMap.scale) : 0);
 

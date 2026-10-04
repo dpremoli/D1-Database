@@ -139,11 +139,11 @@ export function displayedKeep(
 	vals: ArrayLike<number> | undefined, idx: Int32Array,
 	s: { dispMin: number; dispMax: number; greyOutOfRange?: boolean },
 ): ((k: number) => boolean) | undefined {
-	if (s.greyOutOfRange || !vals) return undefined;
-	return (k) => { const v = vals[idx[k]]; return v >= s.dispMin && v <= s.dispMax; };
+	const keep = displayedKeepIndex(vals, s);
+	return keep && ((k) => keep(idx[k]));
 }
 
-/** displayedKeep for a caller that walks cache indices directly instead of a path's idx array. */
+/** The same rule for a caller that walks cache indices directly (no path idx array). */
 export function displayedKeepIndex(
 	vals: ArrayLike<number> | undefined,
 	s: { dispMin: number; dispMax: number; greyOutOfRange?: boolean },

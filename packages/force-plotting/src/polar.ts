@@ -1,6 +1,6 @@
 // Radius/angle pairs for the polar-plot panel. See
 // docs/superpowers/specs/2026-09-07-milling-path-models-and-polar-design.md §6.
-import { type Cache, idxOfTime } from './liveCache';
+import { type Cache, idxOfTime, normStride } from './liveCache';
 import { spindleAngle, type AngleParams } from './angle';
 import type { PathWindow } from './path';
 
@@ -31,7 +31,7 @@ export function buildPolar(c: Cache, p: PolarParams): PolarResult | null {
 
 	const cs = idxOfTime(t, p.window.cropStartSec);
 	if (cs < 0) return null;
-	const stride = Math.max(1, Math.round(p.window.stride) || 1);
+	const stride = normStride(p.window.stride);
 
 	const idxAll: number[] = [];
 	for (let i = cs; i < c.N; i += stride) {

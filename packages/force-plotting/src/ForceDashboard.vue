@@ -1941,10 +1941,6 @@ const octreeSampleCache = computed<Cache | null>(() => {
 });
 // A reveal for a map that is still loading is queued inside the map component itself (it applies
 // it after its first draw with content), so the dashboard only handles a definite "no such point".
-function tryReveal(t: number): boolean {
-	const ref = octreeOn.value ? frmOctreeRef : frmCloudRef;
-	return !!ref.value?.revealTime?.(t);
-}
 watch(selectedRowId, () => { markTime.value = null; menu.value = null; });
 function onLinkKey(e: KeyboardEvent) {
 	// defaultPrevented: the open ContextMenu consumed this Escape (it closes itself and preventDefaults),
@@ -2037,7 +2033,8 @@ async function showOnMap(t: number) {
 	if (!octreeOn.value && !liveOn.value) chooseMode('lite');   // the Figure PNG can't show a ring
 	await nextTick();
 	// false = no drawn sample for t (a map still loading queues the reveal itself and says true)
-	if (!tryReveal(t)) flashLinkMsg('No mapped point at this time');
+	const map = (octreeOn.value ? frmOctreeRef : frmCloudRef).value;
+	if (!map?.revealTime?.(t)) flashLinkMsg('No mapped point at this time');
 }
 // Memoized once per (op, geometry, crop, cache-arrival) rather than recomputed per axis per
 // render: chartsFor() calls radialValuesFor() once per open axis (+ RPM), so without this,
@@ -2655,7 +2652,7 @@ function fmtDateTime(v: string | null | undefined) {
 									:overlay="(chartMode === 'fft' && filtersOpen && c.kind === 'line' && c.key === axis) ? filterFftOverlay : null"
 									:view-start="zoomStart" :view-end="zoomEnd" :zoom-tool="rectZoomTool" @zoom="onChartZoom"
 									@update:crop-start="onCropEdit('start', $event)" @update:crop-end="onCropEdit('end', $event)"
-									:mark-x="c.kind === 'env' && chartMode === 'force' ? markTime : null" @chartmenu="openChartMenu" />
+									:mark-x="c.kind === 'env' && chartMode === 'force' ? markTime : null" menu @chartmenu="openChartMenu" />
 							</div>
 						</div>
 

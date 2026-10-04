@@ -644,12 +644,11 @@ function syncPickCamera() {
 //    case that still allocates ~20 B per sample; it is rare (a gridded, non-spiral path) and has no
 //    closed-form position to stream.
 //  - gridded 3D: null, the cells aren't samples and the height is unrelated to any one of them.
-interface PickSource { pos: Float32Array; idx: Int32Array; count: number; rho?: Float32Array; m: THREE.Matrix4 | null }
-function cloudSource(): PickSource | null {
-	if (props.gridding) {
-		const c = cache.value;
-		const p = !is3D.value && c ? buildPath(c, effPath.value, { cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec, stride: props.stride }) : null;
-		return p ? { pos: p.pos, idx: p.idx, count: p.count, rho: p.rho, m: null } : null;
+interface PickSource { pos: Float32Array; idx: Int32Array; count: number; m: THREE.Matrix4 | null }
+function cloudSource(c: Cache): PickSource | null {
+	if (props.gridding) {   // 2D only: pickAt has already turned gridded 3D away
+		const p = buildPath(c, effPath.value, { cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec, stride: props.stride });
+		return p ? { pos: p.pos, idx: p.idx, count: p.count, m: null } : null;
 	}
 	if (cloud?.idx && pointsObj) return { pos: cloud.pos, idx: cloud.idx, count: cloud.count, m: pointsObj.matrixWorld };
 	return null;
@@ -675,23 +674,27 @@ function pickAt(clientX: number, clientY: number) {
 		emit('pointmenu', { ...base, point: hit ? pointInfo(c, hit.i, hit.x, hit.y, hit.rho) : null });
 		return;
 	}
-	const src = cloudSource();
-	if (!src) { emit('pointmenu', { ...base, point: null, ...(props.gridding && is3D.value ? { reason: 'gridded' as const } : {}) }); return; }
+	if (props.gridding && is3D.value) { emit('pointmenu', { ...base, point: null, reason: 'gridded' }); return; }
+	const src = cloudSource(c);
+	if (!src) { emit('pointmenu', { ...base, point: null }); return; }
 	const k = pickNearest(src.count, (j) => projectPx(src.m, src.pos[j * 3], src.pos[j * 3 + 1], src.pos[j * 3 + 2]),
 		px, py, radius, displayedKeep(c[effChannel.value], src.idx, props.colorScale));
 	if (k == null) { emit('pointmenu', { ...base, point: null }); return; }
 	const x = src.pos[k * 3], y = src.pos[k * 3 + 1];
 	// rho is the distance from the part axis, which only a turning spiral (3D here) is centred on
-	const rho = src.rho?.[k] ?? (pp.kind === 'turning_spiral' ? Math.hypot(x, y) : undefined);
+	const rho = pp.kind === 'turning_spiral' ? Math.hypot(x, y) : undefined;
 	emit('pointmenu', { ...base, point: pointInfo(c, src.idx[k], x, y, rho) });
 }
 
 // World position (mm, after the cloud's matrix) of the sample at `time`, into `out`; false when
 // the time is outside the crop or the recording, or the point isn't drawn.
+// Whether `time` is inside both the crop and the recording: outside it there is no drawn sample.
+function inWindow(c: Cache, time: number): boolean {
+	return time >= props.cropStartSec && time <= props.cropEndSec && time >= c.t[0] && time <= c.t[c.N - 1];
+}
 function timeToWorld(time: number | null | undefined, out: THREE.Vector3): boolean {
 	const c = cache.value;
-	if (time == null || !c || !c.N) return false;
-	if (time < props.cropStartSec || time > props.cropEndSec || time < c.t[0] || time > c.t[c.N - 1]) return false;
+	if (time == null || !c || !c.N || !inWindow(c, time)) return false;
 	const i = nearestIndex(c.t, time);
 	const pp = effPath.value;
 	if (pp.kind === 'turning_spiral' && !is3D.value) {
@@ -747,7 +750,7 @@ watch(() => props.hoverTime, () => { syncPickCamera(); hoverPos.value = ringAt(p
 let pendingReveal: number | null = null;
 function revealTime(t: number): boolean {
 	const c = cache.value;
-	if (c && c.N && (t < props.cropStartSec || t > props.cropEndSec || t < c.t[0] || t > c.t[c.N - 1])) { pendingReveal = null; return false; }
+	if (c && c.N && !inWindow(c, t)) { pendingReveal = null; return false; }
 	if (is3D.value && props.gridding) { pendingReveal = null; return false; }   // cells aren't samples
 	const hasContent = usesGpuPath.value ? gpuUploaded : !!cloud;
 	if (!ready || !camera || !c || !hasContent || pendingRebuild) { pendingReveal = t; return true; }

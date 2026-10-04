@@ -20,7 +20,7 @@
 //      sequential `break` exactly, without needing cross-vertex ordering in the shader.
 // If a future cache with a genuinely noisy/decelerating tacho breaks assumption 1, the symptom
 // is a scattering of points beyond where the CPU path would have stopped; re-run the probe.
-import { type Cache, idxOfTime } from './liveCache';
+import { type Cache, idxOfTime, normStride } from './liveCache';
 import type { SpeedMode, CloudChannel } from './liveCloud';
 
 export const SPEED_MODE_CODE: Record<SpeedMode, number> = { measured: 0, rpm: 1, vc: 2 };
@@ -169,7 +169,6 @@ export function spiralPositionInto(
 }
 
 // The stride buildStaticAttributes applies (and so the one a pick must replay).
-export function normStride(stride: number): number { return Math.max(1, Math.round(stride) || 1); }
 
 // The samples the GPU draws for a crop window, as a run of phase-0 indices i = (k0 + j) * stride,
 // j < n: every stride-th cache sample from index 0 (buildStaticAttributes) whose t lies in
@@ -225,8 +224,8 @@ export function buildStaticAttributes(
 // so TURNING_SPIRAL_VERT above only ever needed the one addition: the uDisp/uGreyOOR branch.
 
 // Where cache sample i sits on a turning spiral cropped to [cropStart, cropEnd] -- exactly where
-// the shader draws it -- in O(1) after the O(log N) anchor. FrmCloud's ring and reveal use it, and
-// so does FrmOctree's (with octreePathParams), so neither has to build and hold a full path.
+// the shader draws it -- in O(1) after the O(log N) anchor. FrmCloud's ring and reveal use it, so
+// they never build and hold a full path (FrmOctree caches the uniforms and calls spiralPositionInto).
 export function spiralPointAt(
 	c: Cache, p: Omit<SpiralUniformParams, 'tCs' | 'revsCs'>, cropStart: number, cropEnd: number, i: number,
 	anchor = spiralAnchor(c, cropStart),
