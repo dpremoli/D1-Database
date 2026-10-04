@@ -8,6 +8,7 @@ import { getWorkspace, WORKSPACE } from './workspace';
 import { startSync } from './directusSync';
 import { hwStatus } from './hwStatus';
 import { labamp } from './labampApi';
+import { IntervalGate, shouldPollBackup, shouldPollDisk } from './recordPolling';
 import PanelFrame from './panels/PanelFrame.vue';
 import { PLOT_MODES, type PlotMode } from './plotModes';
 import { PlotModeFlyout } from '@d1/force-plotting';
@@ -173,7 +174,6 @@ watch(() => st.state, async (s, prev) => {
 
 // Periodic disk space check during recording (every 30s)
 const diskInfo = reactive<{ free_gb: number; total_gb: number; used_pct: number; checking: boolean }>({ free_gb: -1, total_gb: 0, used_pct: 0, checking: false });
-let diskTimer: ReturnType<typeof setInterval> | null = null;
 async function checkDisk() {
 	try {
 		diskInfo.checking = true;
@@ -189,16 +189,11 @@ async function checkDisk() {
 }
 // Guarded to record mode: play() marks status 'recording' too (see playback/engine.ts), and
 // polling disk/backup status for an archived cut that writes nothing would be pure noise —
-// playback's only backend traffic is its own throttled /dsp/spectrum call.
-watch(() => st.state, (s) => {
-	if (w.mode.value === 'record' && s === 'recording' && !diskTimer) {
-		checkDisk();
-		diskTimer = setInterval(checkDisk, 30_000);
-	} else if ((s !== 'recording' || w.mode.value !== 'record') && diskTimer) {
-		clearInterval(diskTimer);
-		diskTimer = null;
-	}
-});
+// playback's only backend traffic is its own throttled /dsp/spectrum call. `immediate`: the page
+// may mount (or the reconcile may adopt a cut) while already recording, with no state change left
+// to trigger the watcher (review 2.6).
+const diskGate = new IntervalGate(checkDisk, 30_000);
+watch([() => st.state, () => w.mode.value], ([s, m]) => diskGate.set(shouldPollDisk(m, s)), { immediate: true });
 
 // ---- Live backup status ----
 const backupStatus = reactive<{ enabled: boolean; state: string; progress: number; connected: boolean; error: string | null }>({
@@ -222,17 +217,12 @@ async function checkBackup() {
 		}
 	} catch { /* ignore */ }
 }
-let backupTimer: ReturnType<typeof setInterval> | null = null;
-watch(() => st.state, (s) => {
-	if (w.mode.value === 'record' && s === 'recording' && !backupTimer && backupStatus.enabled) {
-		checkBackup();
-		backupTimer = setInterval(checkBackup, 5_000);
-	} else if ((s !== 'recording' || w.mode.value !== 'record') && backupTimer) {
-		clearInterval(backupTimer);
-		backupTimer = null;
-		checkBackup();
-	}
-});
+// One last read when polling stops, so the chip shows the final state.
+const backupGate = new IntervalGate(checkBackup, 5_000, () => { void checkBackup(); });
+// backupStatus.enabled is only known after the first reply, which on a remount arrives after the
+// state is already 'recording' — so it is a source too.
+watch([() => st.state, () => w.mode.value, () => backupStatus.enabled],
+	([s, m, en]) => backupGate.set(shouldPollBackup(m, s, en)), { immediate: true });
 
 // Mirror this page's local status state into the shared singleton AppShell's sidebar reads from,
 // since the sidebar is mounted on every route (not just Record) and has no access to this instance.
@@ -474,8 +464,8 @@ onBeforeUnmount(() => {
 	// Suspend, never tear down: `w` is the app-lifetime workspace singleton (#25), so anything
 	// destroyed here is destroyed for the rest of the session -- see PlaybackEngine.suspend().
 	w.playback.suspend();
-	if (diskTimer) clearInterval(diskTimer);
-	if (backupTimer) clearInterval(backupTimer);
+	diskGate.stop();
+	backupGate.stop();
 	if (recoveryTickTimer) clearInterval(recoveryTickTimer);
 	gridRO?.disconnect();
 	window.removeEventListener('resize', measureGrid);
