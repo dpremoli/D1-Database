@@ -926,6 +926,22 @@ async def health_doctor(request: Request) -> dict:
         # actually uses (passed in the request body, same pattern as filter_url/octree_url below); only
         # fall back to the backend's own env var for setups that still rely on it.
         directus_url = body.get("directus_url") or os.environ.get("DIRECTUS_URL", "")
+        if body.get("directus_url"):
+            # Client-supplied, and the probe below resolves and connects to it: same SSRF guard as
+            # the filter/octree URLs. (The env var is operator-controlled, so not checked.)
+            try:
+                _validate_outbound_url(str(body["directus_url"]), "Directus URL")
+            except HTTPException as e:
+                findings.append(
+                    {
+                        "service": "Directus",
+                        "status": "fail",
+                        "message": str(e.detail),
+                        "diagnosis": "The configured Directus URL is invalid or not allowed.",
+                        "fix": "Check the Directus URL in Settings > Connectivity.",
+                    }
+                )
+                return
         if directus_url:
             parsed = urlparse(directus_url)
             host = parsed.hostname or ""
@@ -2436,6 +2452,14 @@ async def labamp_post_config(body: dict) -> dict:
         raise HTTPException(409, _LABAMP_BUSY_MSG)
     if "base_url" in body:
         body["base_url"] = _validate_outbound_url(str(body["base_url"]), "amp URL")
+    # Validate before persisting anything: a bad value saved here is re-read at every startup and
+    # then breaks every /labamp/* call (int(...) of garbage, an unknown mode silently meaning real).
+    if "channels" in body:
+        ch = body["channels"]
+        if isinstance(ch, bool) or not isinstance(ch, int) or not 1 <= ch <= 64:
+            raise HTTPException(400, "channels must be an integer from 1 to 64")
+    if "mode" in body and body["mode"] not in ("mock", "real"):
+        raise HTTPException(400, 'mode must be "mock" or "real"')
     for k in (
         "base_url",
         "channels",
