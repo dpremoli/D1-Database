@@ -2,7 +2,7 @@
 // Extracted so the geometry that used to be hardwired into buildCloud() (a turning
 // spiral) is one of three interchangeable models. See
 // docs/superpowers/specs/2026-09-07-milling-path-models-and-polar-design.md §1.
-import { type Cache, idxOfTime } from './liveCache';
+import { type Cache, idxOfTime, normStride } from './liveCache';
 
 export type PathKind = 'turning_spiral' | 'linear_feed' | 'machine_xyz';
 export type SpeedMode = 'measured' | 'rpm' | 'vc';
@@ -70,7 +70,7 @@ export function buildPath(c: Cache, p: PathParams, w: PathWindow): PathResult | 
 	if (!t || t.length === 0 || c.N === 0) return null;
 	const cs = idxOfTime(t, w.cropStartSec);
 	if (cs < 0) return null;
-	const stride = Math.max(1, Math.round(w.stride) || 1);
+	const stride = normStride(w.stride);
 
 	if (p.kind === 'turning_spiral') return buildTurningSpiral(c, p, w, cs, stride);
 	if (p.kind === 'linear_feed') return buildLinearFeed(c, p, w, cs, stride);

@@ -30,6 +30,16 @@ python3 .claude/skills/force-app-verify/scripts/sim_record.py
 node .claude/skills/force-app-verify/scripts/ui_smoke.mjs --route /record --record
 ```
 
+**Plot page linking** (`scripts/plot_link_smoke.mjs`): proves the FRM map <-> Signals linking
+(right-click menus, pinned marker and ring, hover ring, crop items, Escape, right-drag) on the
+Plot dashboard. It records a 4 s sim cut (or takes `--capture <id>`), serves that capture's
+`live_cache.bin` as the stubbed `/assets/<id>`, builds the analysis row's `series` envelope from it
+and stubs the rest of Directus (one sample, one operation). Needs the backend and Vite up as above,
+then `node .claude/skills/force-app-verify/scripts/plot_link_smoke.mjs`. It asserts, prints
+PASS/FAIL per check, exits 1 on any failure and writes `/tmp/fa/shots/plot-link-*.png`. The
+right-drag check synthesizes Windows event ordering, because Chromium on Linux/macOS fires
+`contextmenu` on press; the native drag is reported as INFO only.
+
 Then **look at the screenshots** with the Read tool. A run with no console errors that shows a
 blank panel is a failure. Extend the scripts, or write a one-off next to them, to exercise the
 specific thing you changed: a new panel, a channel, a settings field. Assert on it rather than
@@ -43,7 +53,8 @@ process).
 | `backend/app/*` (record, finalize, channels, formats) | `pytest` in `apps/force-app/backend` + `sim_record.py`, with `--json` covering the changed path |
 | `web/src/record/*`, live panels, playback | `npm test -w force-app-web` + `ui_smoke.mjs --record` + screenshots of the affected panel |
 | `packages/force-plotting/*` used live | `npm test -w @d1/force-plotting` + `ui_smoke.mjs --record` |
-| Plot page / Diagnostics (Directus data) | unit tests + **say it needs a real Directus**: the stub returns no rows |
+| Plot page linking (map <-> charts) | `npm test -w @d1/force-plotting` + `plot_link_smoke.mjs` |
+| Plot page / Diagnostics (other Directus data) | unit tests + **say it needs a real Directus**: the stub returns no rows |
 | `desktop/*` (Electron shell) | `npm test -w force-app-desktop`. Packaging and `test:e2e` need the Windows release runner |
 
 ## Gotchas

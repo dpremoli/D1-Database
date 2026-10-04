@@ -22,6 +22,7 @@ export const CHANGELOG: ChangelogEntry[] = [
 			'Plot page: a filter bake or point-cloud build that finishes after you switch operation no longer lands on the wrong operation, hovering a zoomed chart marks the right sample, the FRM views come back correctly after visiting another page, and polar plots handle negative values.',
 			'Settings > Connectivity: Save keeps only what you changed, and Reset returns to the app\'s own settings.',
 			'Replays of cuts longer than ten minutes work, and the live backup keeps its data if a session is registered twice.',
+			'Plot page: right-click a point on the FRM map to show when it happened on the force charts (and to set the crop there); hovering or right-clicking the charts shows the spot on the map, in the Lite and Full views.',
 		],
 	},
 	{

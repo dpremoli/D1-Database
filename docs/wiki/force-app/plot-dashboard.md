@@ -88,6 +88,9 @@ charts share the zoom and the hover cursor.
 used for statistics and the FRM map. In *Lite* FRM mode a **Save crop** chip then appears in the
 panel title. It asks *Save as official crop?* and writes the window to the operation.
 
+To see where a point on the FRM map falls on these charts, see
+[Linking the map and the signals](#linking-the-map-and-the-signals).
+
 ### Comparing cuts
 
 In *Force* mode, **Compare → + Add cut** overlays other cuts from the current list as dashed
@@ -112,6 +115,49 @@ height driven by a force series; drag to rotate, and the slider sets the Z exagg
 
 The download button saves the current view (at its current zoom) as a PNG. Badges in the title
 show the fidelity of a gridded view, and whether filters are applied or baked.
+
+Right-click a point to find it on the Signals charts: see
+[Linking the map and the signals](#linking-the-map-and-the-signals).
+
+## Linking the map and the signals
+
+Every point on the FRM map is one sample of the recording, so it also has a moment on the force
+charts. The two panels are linked through that time, in both directions. It works in **Lite**,
+**Full** and **Gridded** views. The **Figure** view is a static image, so it has no points to pick.
+
+**From the map to the charts.** Right-click a point on the map. The menu offers:
+
+| Item | What it does |
+|---|---|
+| **Show position in time** | pins a marker, a vertical line labelled with the time, on every Force chart, and puts a ring on the picked point. If the charts are showing a spectrum, they switch back to *Force*. If the charts are zoomed and the marker is outside the window, the window recentres on it and keeps its width. |
+| **Clear marker** | removes the marker and the ring (only shown while one is pinned) |
+| **Copy point info** | copies the sample's time, position and forces as tab-separated text |
+| **Set crop start here** / **Set crop end here** | moves that crop edge to the point's time. It is the same edit as dragging the crop handle, so it waits for **Save changes**. An edge that would cross the other one is greyed out. |
+
+Items that need a point are greyed out, with a reason, when there is none under the cursor.
+
+![The map's right-click menu](../images/force-app/plot-point-menu.png)
+
+**From the charts to the map.** Hover a Force chart and a hollow ring follows the matching sample
+on the map. Right-click a chart for **Show position on map**, which pins the marker and the ring
+and pans the map to the point if it is out of view. The menu also has **Clear marker** and the two
+**Set crop … here** items. In Lite the time must be inside the cropped window; if the cut is
+showing as a Figure, the menu switches it to Lite first.
+
+![The chart's right-click menu](../images/force-app/plot-chart-menu.png)
+
+> These two screenshots are of a simulated cut on a test database, so the signal and the spiral are
+> artificial. The hollow ring at the right of the map in the second one follows the chart cursor.
+
+Things to know:
+
+- **Full and Gridded** views have no time stored in their points. They are matched by position
+  against the cut's live cache, so the cut needs one (the same cache Lite uses). Without it the
+  time items are greyed out.
+- **Gridded** views average samples into cells, so a right-click picks the *nearest sample to the
+  spot*, not the cell. A gridded Lite view in 3D can't be picked at all; use the 2D view.
+- Right-drag still pans the map. Only a right-click that doesn't move opens the menu.
+- **Escape**, or switching to another operation, clears the marker. The marker is never saved.
 
 ## Display
 

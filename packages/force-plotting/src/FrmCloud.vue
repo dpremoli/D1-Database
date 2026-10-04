@@ -15,6 +15,12 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { type Cache, cacheGet, cachePut, idxOfTime, parseCache } from './liveCache';
 import { type Axis, type Cloud, type CloudChannel, type SpeedMode, axisAutoLimits, buildCloud } from './liveCloud';
 import { buildPath, type PathParams } from './path';
+import {
+	createClickTracker, displayedKeep, displayedKeepIndex, findNearestPathIndex, pickNearest, pickRadius, pickSpiral,
+	pointInfo, settleRing,
+	type PointMenuEvent,
+} from './cloudPick';
+import { nearestIndex } from './hoverIndex';
 import { exportFrmFigure } from './frmExport';
 import { buildScaleLUT, colorizeValues, lutKey, type ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
@@ -26,7 +32,7 @@ import { createGlLifecycle } from './glLifecycle';
 import { sameStage, stageInfo, type LoadStage, type StageInfo } from './loadStage';
 import {
 	buildStaticAttributes, spiralUniformValues,
-	TURNING_SPIRAL_FRAG, TURNING_SPIRAL_VERT,
+	spiralAnchor, spiralPointAt, TURNING_SPIRAL_FRAG, TURNING_SPIRAL_VERT,
 } from './frmCloudShader';
 
 const props = defineProps<{
@@ -59,6 +65,10 @@ const props = defineProps<{
 	sharedView?: { cx: number; cy: number; span: number; active: boolean };
 	cacheOverride?: Cache | null;
 	paneLabel?: string;
+	// Linking with the Signals charts (cloudPick.ts): a pinned moment and the chart's hover moment,
+	// both in seconds on the chart's time axis, drawn as rings over the map.
+	markTime?: number | null;
+	hoverTime?: number | null;
 }>();
 const emit = defineEmits<{
 	(e: 'loaded', meta: { csSec: number; ceSec: number; feed: number; diam: number; rpm: number; Fs: number; N: number }): void;
@@ -66,6 +76,7 @@ const emit = defineEmits<{
 	(e: 'histogram', v: Histogram): void;   // value distribution over the same auto-limits window, for ColorScaleEditor.vue's strip
 	(e: 'points', n: number): void;   // rendered point count (for the resolution readout)
 	(e: 'zscale', v: number): void;   // 3-finger vertical swipe adjusts the Z exaggeration
+	(e: 'pointmenu', v: PointMenuEvent): void;   // right-click (not drag) on the map: nearest sample, or why there is none
 	(e: 'stage', v: StageInfo | null): void;   // what the view is busy with (null = idle), for the host's busy mark (#102)
 }>();
 
@@ -474,9 +485,7 @@ function updateGpuCropUniforms() {
 	const c = cache.value;
 	const pp = effPath.value;
 	if (pp.kind !== 'turning_spiral') return;
-	const cs = idxOfTime(c.t, props.cropStartSec);
-	const tCs = cs >= 0 ? c.t[cs] : 0, revsCs = cs >= 0 ? c.revs[cs] : 0;
-	const u = spiralUniformValues({ ...pp, tCs, revsCs });
+	const u = spiralUniformValues({ ...pp, ...spiralAnchor(c, props.cropStartSec) });
 	const uni = gpuMat.uniforms;
 	uni.uFeed.value = u.uFeed; uni.uRho0.value = u.uRho0; uni.uInnerR.value = u.uInnerR;
 	uni.uSpeedMode.value = u.uSpeedMode; uni.uRevPerSec.value = u.uRevPerSec; uni.uTimeScale.value = u.uTimeScale;
@@ -562,6 +571,7 @@ function draw() {
 		// background instead of whatever was left in the (preserveDrawingBuffer) buffer before.
 		renderer.clear();
 		scaleBar.value = null;
+		pinPos.value = null; hoverPos.value = null;
 		return;
 	}
 	if (is3D.value) {
@@ -569,8 +579,25 @@ function draw() {
 		if (pointsMat) pointsMat.size = Math.max(1, props.pointSize || 1.4);
 		renderer.render(scene, camera);
 		scaleBar.value = null;   // a rotated view has no single mm-per-px
+		updateRings();
+		applyPendingReveal();
 		return;
 	}
+	applyCamera2D();
+	if (pointsMat) pointsMat.size = Math.max(1, props.pointSize || 1.4);
+	if (gpuMat) gpuMat.uniforms.uPointSize.value = Math.max(1, props.pointSize || 1.4);
+	renderer.render(scene, camera);
+
+	updateScaleBar();
+	updateRings();
+	applyPendingReveal();
+}
+// The 2D orthographic camera from the effective view. Split out of draw() so picking and the
+// rings can bring the camera up to date themselves: a pan/zoom sets the view immediately but the
+// render only happens next frame, and a right-click or a hover in between must not project
+// through the previous frame's camera.
+function applyCamera2D() {
+	if (!camera) return;
 	const v = effView();
 	// scaleFor maps world→NDC as ndc = (world-centre)*s; the ortho half-extents are
 	// therefore 1/s, so the camera frustum reproduces the exact same mapping the pointer
@@ -580,11 +607,182 @@ function draw() {
 	camera.top = 1 / sy; camera.bottom = -1 / sy;
 	camera.position.set(v.cx, v.cy, 10);
 	camera.updateProjectionMatrix();
-	if (pointsMat) pointsMat.size = Math.max(1, props.pointSize || 1.4);
-	if (gpuMat) gpuMat.uniforms.uPointSize.value = Math.max(1, props.pointSize || 1.4);
-	renderer.render(scene, camera);
+}
 
-	updateScaleBar();
+// ---- linking with the Signals charts: picking, rings, reveal ----
+// Everything here works from the live cache's sample index, the same key the charts use via
+// time (cloudPick.ts). Project through the camera exactly as the renderer does, so a pick
+// lands on what is drawn.
+const tmpV = new THREE.Vector3();
+const projOut = { px: 0, py: 0 };
+// World (mm) point -> CSS px relative to the canvas, or null when it is off the clip volume (or
+// NaN). Returns a shared object: pickNearest consumes it immediately, and it runs ~3M times.
+function projectPx(m: THREE.Matrix4 | null, x: number, y: number, z: number) {
+	tmpV.set(x, y, z);
+	if (m) tmpV.applyMatrix4(m);
+	tmpV.project(camera!);
+	if (!(Math.abs(tmpV.x) <= 1 && Math.abs(tmpV.y) <= 1)) return null;
+	projOut.px = (tmpV.x + 1) / 2 * cssW; projOut.py = (1 - tmpV.y) / 2 * cssH;
+	return projOut;
+}
+// Make the camera (and the cloud's matrixWorld, which carries the 3D Z scale) current: a pan/zoom
+// sets the view immediately but the render only happens next frame.
+function syncPickCamera() {
+	if (!camera) return;
+	if (!is3D.value) applyCamera2D();
+	camera.updateMatrixWorld();
+	pointsObj?.updateMatrixWorld();
+}
+
+// How a pick resolves samples, by what the view draws:
+//  - 2D turning spiral (GPU path, and gridded 2D): stream the GPU's own phase-0 samples through
+//    the shader's maths (pickSpiral). The GPU never holds positions on the CPU, and a gridded cloud's
+//    points are cell centres with no single sample, so "the nearest sample to the spot" is the
+//    meaning in both. Nothing is built, so a right-click allocates nothing proportional to N.
+//  - 3D and ungridded CPU clouds: scan the cloud's own positions (cloud.idx maps them to samples).
+//  - 2D gridded linear_feed/machine_xyz: buildPath for this one pick and drop it. This is the one
+//    case that still allocates ~20 B per sample; it is rare (a gridded, non-spiral path) and has no
+//    closed-form position to stream.
+//  - gridded 3D: null, the cells aren't samples and the height is unrelated to any one of them.
+interface PickSource { pos: Float32Array; idx: Int32Array; count: number; m: THREE.Matrix4 | null }
+function cloudSource(c: Cache): PickSource | null {
+	if (props.gridding) {   // 2D only: pickAt has already turned gridded 3D away
+		const p = buildPath(c, effPath.value, { cropStartSec: props.cropStartSec, cropEndSec: props.cropEndSec, stride: props.stride });
+		return p ? { pos: p.pos, idx: p.idx, count: p.count, m: null } : null;
+	}
+	if (cloud?.idx && pointsObj) return { pos: cloud.pos, idx: cloud.idx, count: cloud.count, m: pointsObj.matrixWorld };
+	return null;
+}
+
+// Right button: a drag with it pans (the 2D handlers below, OrbitControls in 3D), a click opens the
+// menu. `contextmenu` can't tell them apart (macOS/Linux fire it on PRESS), so it only suppresses
+// the browser's menu and the pick runs from the right-button pointerup (onUp) when the tracker says
+// the button stayed put.
+const rightClick = createClickTracker();
+function onContextMenu(ev: MouseEvent) { ev.preventDefault(); }
+function pickAt(clientX: number, clientY: number) {
+	const c = cache.value;
+	if (!c || !ready || !camera) return;
+	const base = { clientX, clientY };
+	syncPickCamera();
+	const r = canvasEl.value!.getBoundingClientRect();
+	const px = clientX - r.left, py = clientY - r.top, radius = pickRadius(props.pointSize, 1.4);
+	const pp = effPath.value;
+	if (!is3D.value && pp.kind === 'turning_spiral') {
+		const hit = pickSpiral(c, pp, props.cropStartSec, props.cropEndSec, props.stride,
+			(x, y) => projectPx(null, x, y, 0), px, py, radius, displayedKeepIndex(c[effChannel.value], props.colorScale));
+		emit('pointmenu', { ...base, point: hit ? pointInfo(c, hit.i, hit.x, hit.y, hit.rho) : null });
+		return;
+	}
+	if (props.gridding && is3D.value) { emit('pointmenu', { ...base, point: null, reason: 'gridded' }); return; }
+	const src = cloudSource(c);
+	if (!src) { emit('pointmenu', { ...base, point: null }); return; }
+	const k = pickNearest(src.count, (j) => projectPx(src.m, src.pos[j * 3], src.pos[j * 3 + 1], src.pos[j * 3 + 2]),
+		px, py, radius, displayedKeep(c[effChannel.value], src.idx, props.colorScale));
+	if (k == null) { emit('pointmenu', { ...base, point: null }); return; }
+	const x = src.pos[k * 3], y = src.pos[k * 3 + 1];
+	// rho is the distance from the part axis, which only a turning spiral (3D here) is centred on
+	const rho = pp.kind === 'turning_spiral' ? Math.hypot(x, y) : undefined;
+	emit('pointmenu', { ...base, point: pointInfo(c, src.idx[k], x, y, rho) });
+}
+
+// World position (mm, after the cloud's matrix) of the sample at `time`, into `out`; false when
+// the time is outside the crop or the recording, or the point isn't drawn.
+// Whether `time` is inside both the crop and the recording: outside it there is no drawn sample.
+function inWindow(c: Cache, time: number): boolean {
+	return time >= props.cropStartSec && time <= props.cropEndSec && time >= c.t[0] && time <= c.t[c.N - 1];
+}
+function timeToWorld(time: number | null | undefined, out: THREE.Vector3): boolean {
+	const c = cache.value;
+	if (time == null || !c || !c.N || !inWindow(c, time)) return false;
+	const i = nearestIndex(c.t, time);
+	const pp = effPath.value;
+	if (pp.kind === 'turning_spiral' && !is3D.value) {
+		// The shader's own maths (frmCloudShader.ts), so the ring sits on the drawn point in every
+		// 2D turning-spiral mode for O(log N), with no path to build.
+		const v = spiralPointAt(c, pp, props.cropStartSec, props.cropEndSec, i);
+		if (!v.visible) return false;
+		out.set(v.x, v.y, 0);
+		return true;
+	}
+	// 3D (Z comes from the cloud) and linear_feed/machine_xyz: find the sample in the built cloud.
+	if (!cloud?.idx || !pointsObj || !cloud.count) return false;
+	// The ring snaps to the nearest DRAWN sample, so a time beyond the ends of what was drawn (the
+	// crop's inner-diameter cut-out, or the crop edge falling between strided samples) has no point
+	// to sit on, and clamping to the last one would put a ring where nothing corresponds.
+	if (time < c.t[cloud.idx[0]] || time > c.t[cloud.idx[cloud.count - 1]]) return false;
+	const k = findNearestPathIndex(cloud.idx, cloud.count, i);
+	if (k < 0) return false;
+	out.set(cloud.pos[k * 3], cloud.pos[k * 3 + 1], cloud.pos[k * 3 + 2]).applyMatrix4(pointsObj.matrixWorld);
+	return true;
+}
+
+// Ring overlays are HTML (like the scale bar) so a hover moving over the charts only touches
+// these two refs: no GL render, no rebuild.
+const pinPos = ref<{ x: number; y: number } | null>(null);
+const hoverPos = ref<{ x: number; y: number } | null>(null);
+const ringV = new THREE.Vector3();
+function ringAt(time: number | null | undefined, cur: { x: number; y: number } | null) {
+	// No renderer/camera (WebGL unavailable, context lost, torn down on deactivate): projectPx would
+	// dereference the null camera on the first chart hover.
+	if (!ready || !camera) return null;
+	if (!timeToWorld(time, ringV)) return null;
+	const p = projectPx(null, ringV.x, ringV.y, ringV.z);
+	return p ? settleRing(cur, p.px, p.py) : null;
+}
+function updateRings() {
+	if (!ready || !camera) return;
+	pinPos.value = ringAt(props.markTime, pinPos.value);
+	hoverPos.value = ringAt(props.hoverTime, hoverPos.value);
+}
+// Between draws the camera may be a frame behind the view (draw() syncs it itself).
+watch(() => props.markTime, () => { syncPickCamera(); pinPos.value = ringAt(props.markTime, pinPos.value); });
+watch(() => props.hoverTime, () => { syncPickCamera(); hoverPos.value = ringAt(props.hoverTime, hoverPos.value); });
+
+// Pan the view so the sample at `t` is on screen (the chart's "show on map"). Leaves the view
+// alone if it already is. In compare mode `view` is the shared object, so both panes follow.
+//
+// Returns false only when there is definitely no drawn sample for `t` (outside the crop or the
+// recording, gridded 3D, past the inner cut-out). When the view just isn't ready (no renderer or
+// camera, cache or geometry still loading) the request is kept in `pendingReveal` and applied
+// after the first draw with content, and true is returned: the host asked in good faith and has
+// nothing to retry.
+let pendingReveal: number | null = null;
+function revealTime(t: number): boolean {
+	const c = cache.value;
+	if (c && c.N && !inWindow(c, t)) { pendingReveal = null; return false; }
+	if (is3D.value && props.gridding) { pendingReveal = null; return false; }   // cells aren't samples
+	const hasContent = usesGpuPath.value ? gpuUploaded : !!cloud;
+	if (!ready || !camera || !c || !hasContent || pendingRebuild) { pendingReveal = t; return true; }
+	pendingReveal = null;
+	return revealNow(t);
+}
+// Runs at the end of draw(), once the geometry the reveal needs exists.
+function applyPendingReveal() {
+	const t = pendingReveal;
+	if (t == null) return;
+	pendingReveal = null;
+	revealNow(t);
+}
+// A different cache is a different cut: a reveal asked for the old one means nothing. (Not when the
+// cache goes from none to some: that is the load the pending reveal was waiting for.)
+watch(cache, (_n, old) => { if (old) pendingReveal = null; });
+function revealNow(t: number): boolean {
+	if (!ready || !camera || !timeToWorld(t, ringV)) return false;
+	syncPickCamera();
+	if (projectPx(null, ringV.x, ringV.y, ringV.z)) return true;
+	if (is3D.value) {
+		if (!controls) return false;
+		// move target and eye together so the orbit angle and distance are unchanged
+		const d = ringV.clone().sub(controls.target);
+		controls.target.add(d); camera.position.add(d);
+		controls.update();
+	} else {
+		seedView();
+		view.cx = ringV.x; view.cy = ringV.y;
+	}
+	scheduleDraw();
+	return true;
 }
 
 let pendingRecolor = false;
@@ -638,7 +836,7 @@ function exportViewport(filename: string, subtitle?: string) {
 		axis: effChannel.value, subtitle, filename,
 	});
 }
-defineExpose({ currentBounds, exportViewport });
+defineExpose({ currentBounds, exportViewport, revealTime });
 
 let ro: ResizeObserver | undefined;
 onMounted(() => {
@@ -809,6 +1007,7 @@ let zGestureY: number | null = null;
 function avgPy(): number { let s = 0; for (const p of pointers.values()) s += p.py; return s / (pointers.size || 1); }
 
 function onDown(ev: PointerEvent) {
+	rightClick.down(ev);   // the right button still pans (2D here, 3D via OrbitControls); a release in place opens the menu (onUp)
 	if (!cache.value) return;
 	const { px, py } = localXY(ev);
 	(ev.currentTarget as Element).setPointerCapture(ev.pointerId);
@@ -871,6 +1070,9 @@ function onMove(ev: PointerEvent) {
 	}
 }
 function onUp(ev: PointerEvent) {
+	// before the 3D early return below: OrbitControls leaves its own pointerup alone, so a right
+	// release reaches us in both modes
+	if (rightClick.up(ev)) pickAt(ev.clientX, ev.clientY);
 	try { (ev.currentTarget as Element).releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
 	pointers.delete(ev.pointerId);
 	if (is3D.value) {
@@ -899,10 +1101,14 @@ function onUp(ev: PointerEvent) {
 		<div v-else-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
 		<canvas :key="canvasKey" v-show="!loading && !error" ref="canvasEl"
 			:class="{ rect: rectTool }"
-			@wheel="onWheel" @pointerdown="onDown" @pointermove="onMove" @pointerup="onUp" @pointercancel="onUp"></canvas>
+			@wheel="onWheel" @contextmenu="onContextMenu" @pointerdown="onDown" @pointermove="onMove" @pointerup="onUp" @pointercancel="onUp"></canvas>
 
 		<!-- rubber-band zoom rectangle -->
 		<div v-if="rectSel" class="fc-rect" :style="{ left: rectSel.x + 'px', top: rectSel.y + 'px', width: rectSel.w + 'px', height: rectSel.h + 'px' }"></div>
+
+		<!-- linked-moment rings: pinned (solid) and chart-hover (hollow); positions come from updateRings() -->
+		<div v-if="pinPos && !loading && !error" class="fc-ring pin" :style="{ left: pinPos.x + 'px', top: pinPos.y + 'px' }"></div>
+		<div v-if="hoverPos && !loading && !error" class="fc-ring hover" :style="{ left: hoverPos.x + 'px', top: hoverPos.y + 'px' }"></div>
 
 		<!-- colorbar (force -> colour); the editor's "Show colour bar on render" drives barVisible -->
 		<div v-if="climits && colorScale.barVisible && !loading && !error" class="fc-cbar">
@@ -948,6 +1154,10 @@ function onUp(ev: PointerEvent) {
 .fc-pane { position: absolute; left: 6px; top: 4px; font-size: var(--fs-xs, 11px); font-weight: 600; color: var(--text-dim, rgba(255,255,255,0.75)); letter-spacing: 0.01em; }
 
 .fc-rect { position: absolute; border: 1px solid var(--accent, #38bdf8); background: color-mix(in srgb, var(--accent, #38bdf8) 14%, transparent); pointer-events: none; border-radius: 2px; }
+
+.fc-ring { position: absolute; border-radius: 50%; box-sizing: border-box; pointer-events: none; transform: translate(-50%, -50%); }
+.fc-ring.pin { width: 12px; height: 12px; background: var(--accent, #38bdf8); border: 2px solid var(--text, #fff); box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
+.fc-ring.hover { width: 10px; height: 10px; border: 1.5px solid var(--accent, #38bdf8); opacity: 0.8; box-shadow: 0 0 0 1px rgba(0,0,0,0.4); }
 
 .fc-cbar { position: absolute; top: 10px; right: 8px; display: flex; flex-direction: column; align-items: center; gap: 3px; pointer-events: none; }
 .fc-ramp { width: 10px; height: 96px; border-radius: 3px; border: 1px solid var(--border-2, rgba(255,255,255,0.25)); }
