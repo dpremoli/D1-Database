@@ -426,8 +426,9 @@ grep -qx 'shadow:0' <<<"$sp_out" && grep -qx 'real:1' <<<"$sp_out" \
 
 echo "== Audit coverage: every business table, keyed by its primary key (review 5.3) =="
 # Tables deliberately NOT audited: the log itself, dbmate bookkeeping, Directus system tables,
-# derived caches (project_rollup, semantic_embeddings) and the crawler's heartbeat row.
-AUDIT_EXCLUDED="'audit_logs','schema_migrations','project_rollup','semantic_embeddings','force_crawler_state'"
+# derived caches (project_rollup, semantic_embeddings), the crawler's heartbeat row and
+# audit_log_actors (the actor side-table of the log itself).
+AUDIT_EXCLUDED="'audit_logs','audit_log_actors','schema_migrations','project_rollup','semantic_embeddings','force_crawler_state'"
 run_eq "every business table has an audit trigger (missing: none)" \
     "SELECT coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '')
      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -886,6 +887,67 @@ sc_na=${sc_a%%-*}; sc_nb=${sc_b%%-*}
     || bad "concurrent registrations collided (A='$sc_a', B='$sc_b')"
 rm -rf "$sc_dir"
 $PSQL -q -c "DELETE FROM physical_samples WHERE sample_id::text LIKE 'c0000000-0000-4000-8000-0000000006__';" >/dev/null 2>&1 || true
+
+echo "== Audit actor fallback from directus_activity (review 4.9) =="
+# The actor-identity hook's set_config may not reach the write's transaction for PATCH/DELETE (see
+# migration 20261003000128). Directus then still writes a directus_activity row in that transaction;
+# the trigger on it attributes the audit rows. directus_activity is not a CI stub, so the test
+# creates a minimal one inside the rolled-back transaction and installs the trigger with the
+# migration's own DO block.
+act_do=$(sed -n '/^-- migrate:up/,/^-- migrate:down/p' db/migrations/20261003000128_audit_actor_from_directus_activity.sql \
+    | awk '/^DO \$\$/{f=1} f{print} f && /^\$\$;/{exit}')
+[[ -n "$act_do" ]] && ok "found the migration's trigger-install block" || bad "could not extract the trigger-install block"
+act_out=$($PSQL -q 2>&1 <<SQL
+BEGIN;
+CREATE TABLE IF NOT EXISTS directus_activity (
+    id serial PRIMARY KEY, action varchar(45), "user" uuid, collection varchar(64), item varchar(255),
+    "timestamp" timestamptz DEFAULT now());
+DROP TRIGGER IF EXISTS audit_actor_from_activity ON directus_activity;
+$act_do
+SELECT 'trigger:' || count(*) FROM pg_trigger WHERE tgname = 'audit_actor_from_activity' AND NOT tgisinternal;
+-- 1. API-style write: no GUC (the hook could not reach this transaction), then Directus' activity rows
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000711', 'TI-ACT-1');
+INSERT INTO directus_activity (action, "user", collection, item)
+VALUES ('create', 'c0000000-0000-4000-8000-000000000799', 'physical_samples', 'c0000000-0000-4000-8000-000000000711');
+UPDATE physical_samples SET nickname = 'renamed' WHERE sample_id = 'c0000000-0000-4000-8000-000000000711';
+INSERT INTO directus_activity (action, "user", collection, item)
+VALUES ('update', 'c0000000-0000-4000-8000-000000000799', 'physical_samples', 'c0000000-0000-4000-8000-000000000711');
+SELECT 'raw_actor_null:' || count(*) FROM audit_logs
+  WHERE record_id = 'c0000000-0000-4000-8000-000000000711' AND actor_identity IS NULL;
+SELECT 'attributed:' || string_agg(action_type || '=' || actor_identity || '/' || actor_from_directus_activity, ',' ORDER BY log_id)
+  FROM v_audit_logs_with_actor WHERE record_id = 'c0000000-0000-4000-8000-000000000711';
+SELECT 'actor_rows:' || count(*) FROM audit_log_actors a JOIN audit_logs l USING (log_id)
+  WHERE l.record_id = 'c0000000-0000-4000-8000-000000000711';
+-- 2. an unauthenticated write is recorded as 'public'
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000712', 'TI-ACT-2');
+INSERT INTO directus_activity (action, "user", collection, item)
+VALUES ('create', NULL, 'physical_samples', 'c0000000-0000-4000-8000-000000000712');
+SELECT 'public:' || actor_identity FROM v_audit_logs_with_actor WHERE record_id = 'c0000000-0000-4000-8000-000000000712';
+-- 3. an audit row from an earlier transaction is never re-attributed
+INSERT INTO audit_logs (table_name, record_id, action_type, event_timestamp)
+VALUES ('physical_samples', 'TI-ACT-OLD', 'UPDATE', now() - interval '1 hour');
+INSERT INTO directus_activity (action, "user", collection, item)
+VALUES ('update', 'c0000000-0000-4000-8000-000000000799', 'physical_samples', 'TI-ACT-OLD');
+SELECT 'old_rows:' || count(*) FROM audit_log_actors a JOIN audit_logs l USING (log_id) WHERE l.record_id = 'TI-ACT-OLD';
+-- 4. a GUC-supplied actor wins and is not duplicated in the side table
+SELECT set_config('d1.actor_identity', 'guc-user', true) \gset
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-000000000713', 'TI-ACT-3');
+INSERT INTO directus_activity (action, "user", collection, item)
+VALUES ('create', 'c0000000-0000-4000-8000-000000000799', 'physical_samples', 'c0000000-0000-4000-8000-000000000713');
+SELECT 'guc:' || actor_identity || '/' || actor_from_directus_activity FROM v_audit_logs_with_actor WHERE record_id = 'c0000000-0000-4000-8000-000000000713';
+SELECT 'guc_rows:' || count(*) FROM audit_log_actors a JOIN audit_logs l USING (log_id) WHERE l.record_id = 'c0000000-0000-4000-8000-000000000713';
+ROLLBACK;
+SQL
+)
+act_check() { grep -qx "$1" <<<"$act_out" && ok "$2" || bad "$2 (psql output: $act_out)"; }
+act_check "trigger:1" "the migration's block installs the directus_activity trigger"
+act_check "raw_actor_null:2" "setup: the audit rows carried no actor (the hook could not reach the transaction)"
+act_check "attributed:INSERT=c0000000-0000-4000-8000-000000000799/true,UPDATE=c0000000-0000-4000-8000-000000000799/true" "INSERT and UPDATE audit rows are attributed to the Directus user"
+act_check "actor_rows:2" "one side-table row per attributed audit row, no duplicates"
+act_check "public:public" "an unauthenticated write is attributed to 'public'"
+act_check "old_rows:0" "an audit row from an earlier transaction is not re-attributed"
+act_check "guc:guc-user/false" "an actor set through the GUC wins over the fallback"
+act_check "guc_rows:0" "a GUC-attributed row gets no side-table row"
 
 echo "== Cleanup test rows =="
 $PSQL -c "
