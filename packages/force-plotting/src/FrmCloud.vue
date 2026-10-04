@@ -580,6 +580,7 @@ function draw() {
 		renderer.render(scene, camera);
 		scaleBar.value = null;   // a rotated view has no single mm-per-px
 		updateRings();
+		applyPendingReveal();
 		return;
 	}
 	applyCamera2D();
@@ -589,6 +590,7 @@ function draw() {
 
 	updateScaleBar();
 	updateRings();
+	applyPendingReveal();
 }
 // The 2D orthographic camera from the effective view. Split out of draw() so picking and the
 // rings can bring the camera up to date themselves: a pan/zoom sets the view immediately but the
@@ -735,9 +737,34 @@ watch(() => props.markTime, () => { syncPickCamera(); pinPos.value = ringAt(prop
 watch(() => props.hoverTime, () => { syncPickCamera(); hoverPos.value = ringAt(props.hoverTime, hoverPos.value); });
 
 // Pan the view so the sample at `t` is on screen (the chart's "show on map"). Leaves the view
-// alone if it already is. Returns false when there is no such drawn point (outside the crop, no
-// cache). In compare mode `view` is the shared object, so both panes follow.
+// alone if it already is. In compare mode `view` is the shared object, so both panes follow.
+//
+// Returns false only when there is definitely no drawn sample for `t` (outside the crop or the
+// recording, gridded 3D, past the inner cut-out). When the view just isn't ready (no renderer or
+// camera, cache or geometry still loading) the request is kept in `pendingReveal` and applied
+// after the first draw with content, and true is returned: the host asked in good faith and has
+// nothing to retry.
+let pendingReveal: number | null = null;
 function revealTime(t: number): boolean {
+	const c = cache.value;
+	if (c && c.N && (t < props.cropStartSec || t > props.cropEndSec || t < c.t[0] || t > c.t[c.N - 1])) { pendingReveal = null; return false; }
+	if (is3D.value && props.gridding) { pendingReveal = null; return false; }   // cells aren't samples
+	const hasContent = usesGpuPath.value ? gpuUploaded : !!cloud;
+	if (!ready || !camera || !c || !hasContent || pendingRebuild) { pendingReveal = t; return true; }
+	pendingReveal = null;
+	return revealNow(t);
+}
+// Runs at the end of draw(), once the geometry the reveal needs exists.
+function applyPendingReveal() {
+	const t = pendingReveal;
+	if (t == null) return;
+	pendingReveal = null;
+	revealNow(t);
+}
+// A different cache is a different cut: a reveal asked for the old one means nothing. (Not when the
+// cache goes from none to some: that is the load the pending reveal was waiting for.)
+watch(cache, (_n, old) => { if (old) pendingReveal = null; });
+function revealNow(t: number): boolean {
 	if (!ready || !camera || !timeToWorld(t, ringV)) return false;
 	syncPickCamera();
 	if (projectPx(null, ringV.x, ringV.y, ringV.z)) return true;
