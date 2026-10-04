@@ -15,6 +15,15 @@
 --    old FOR UPDATE on insert_types is dropped: it serialised the same intakes but also blocked
 --    unrelated edits of the type row.
 --
+-- 3. It was not idempotent. The function is now also called by the intake_tool_boxes trigger
+--    (migration 125), while the deleted box-intake Directus hook stays loaded until Directus is
+--    restarted (no auto-reload on the Windows bind mount), so during a deploy the hook calls it a
+--    second time for a box the trigger has already expanded: box 1 was renamed again and a second
+--    set of boxes, inserts and edges was created. The function now returns without doing anything
+--    unless the box still carries its 'TMP-' placeholder code (migration 022's default), which the
+--    first expansion overwrites. The comparison uses COLLATE "C": the code columns use the
+--    natural_sort collation since migration 116.
+--
 -- Everything else is unchanged: clone boxes get package_quantity = 0 (the no-re-expansion
 -- sentinel), codes follow {short_code}-{box_seq}-{insert_pos}{edge_letter}, at most 20 edges.
 CREATE OR REPLACE FUNCTION expand_tool_box_intake(p_first_box_id UUID)
@@ -44,6 +53,11 @@ BEGIN
     SELECT * INTO v_box FROM tool_boxes WHERE tool_box_id = p_first_box_id;
     IF NOT FOUND OR v_box.insert_type_id IS NULL THEN
         RETURN;  -- nothing to expand without an insert type
+    END IF;
+    -- Idempotence: an expanded box no longer has its placeholder code, so a second call (the old
+    -- hook after the trigger, a retry) is a no-op. See the header comment, point 3.
+    IF left(v_box.tool_box_code COLLATE "C", 4) IS DISTINCT FROM 'TMP-' THEN
+        RETURN;
     END IF;
 
     SELECT * INTO v_it
@@ -144,6 +158,7 @@ COMMENT ON FUNCTION expand_tool_box_intake(UUID) IS
     'cutting_inserts and insert_edges, with codes {short_code}-{box_seq}-{insert_pos}{edge_letter}. '
     'Box numbers continue from the highest existing {short_code}-<n> code under an advisory lock. '
     'Cloned boxes, inserts and edges inherit the first box''s owner_person_id and owner. '
+    'Idempotent: does nothing unless the box still has its TMP- placeholder code. '
     'Clone boxes receive package_quantity=0 to prevent recursive re-expansion.';
 
 -- migrate:down

@@ -51,6 +51,7 @@ COMMENT ON FUNCTION expand_tool_box_intake(UUID) IS
     'cutting_inserts and insert_edges, with codes {short_code}-{box_seq}-{insert_pos}{edge_letter}. '
     'Box numbers continue from the highest existing {short_code}-<n> code under an advisory lock. '
     'Cloned boxes, inserts and edges inherit the first box''s owner_person_id and owner. '
+    'Idempotent: does nothing unless the box still has its TMP- placeholder code. '
     'Called by the intake_tool_boxes trigger on tool_boxes. '
     'Clone boxes receive package_quantity=0 to prevent recursive re-expansion.';
 
@@ -63,6 +64,7 @@ COMMENT ON FUNCTION expand_tool_box_intake(UUID) IS
     'cutting_inserts and insert_edges, with codes {short_code}-{box_seq}-{insert_pos}{edge_letter}. '
     'Box numbers continue from the highest existing {short_code}-<n> code under an advisory lock. '
     'Cloned boxes, inserts and edges inherit the first box''s owner_person_id and owner. '
+    'Idempotent: does nothing unless the box still has its TMP- placeholder code. '
     'Clone boxes receive package_quantity=0 to prevent recursive re-expansion.';
 -- The Directus box-intake hook is restored by reverting this commit's removal of
 -- core/extensions/box-intake/ (git history); the schema carries nothing for it.

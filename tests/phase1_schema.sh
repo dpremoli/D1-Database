@@ -678,6 +678,14 @@ SELECT 'edges:' || count(*) FROM insert_edges e JOIN cutting_inserts i USING (in
 SELECT 'clone_sentinel:' || string_agg(DISTINCT package_quantity::text, ',') FROM tool_boxes WHERE insert_type_id = 'c0000000-0000-4000-8000-000000000211' AND tool_box_id <> 'c0000000-0000-4000-8000-000000000221';
 SELECT 'owned_edges:' || count(*) FROM insert_edges e JOIN cutting_inserts i USING (insert_id)
   WHERE i.insert_type_id = 'c0000000-0000-4000-8000-000000000211' AND e.owner_person_id = 'c0000000-0000-4000-8000-000000000201';
+-- The deleted box-intake hook stays loaded until Directus restarts and calls the function again
+-- after the trigger already ran: the second call (on the renamed box 1 and on a clone) is a no-op.
+SELECT expand_tool_box_intake('c0000000-0000-4000-8000-000000000221');
+SELECT expand_tool_box_intake(tool_box_id) FROM tool_boxes
+  WHERE insert_type_id = 'c0000000-0000-4000-8000-000000000211' AND tool_box_id <> 'c0000000-0000-4000-8000-000000000221';
+SELECT 'boxes_second_call:' || string_agg(tool_box_code, ',' ORDER BY tool_box_code) FROM tool_boxes WHERE insert_type_id = 'c0000000-0000-4000-8000-000000000211';
+SELECT 'inserts_second_call:' || count(*) FROM cutting_inserts WHERE insert_type_id = 'c0000000-0000-4000-8000-000000000211';
+SELECT 'edges_second_call:' || count(*) FROM insert_edges e JOIN cutting_inserts i USING (insert_id) WHERE i.insert_type_id = 'c0000000-0000-4000-8000-000000000211';
 -- Writers that must NOT trigger an expansion: explicit code, NULL quantity, zero quantity, no insert type.
 INSERT INTO tool_boxes (tool_box_code, insert_type_id, package_quantity) VALUES ('TEST-INTAKE-LEGACY', 'c0000000-0000-4000-8000-000000000211', 5);
 INSERT INTO tool_boxes (insert_type_id) VALUES ('c0000000-0000-4000-8000-000000000211');
@@ -695,6 +703,9 @@ bt_check "inserts:4" "2 boxes x 2 inserts are created"
 bt_check "edges:8" "4 inserts x 2 edges are created"
 bt_check "clone_sentinel:0" "clone boxes carry package_quantity = 0 (no re-expansion)"
 bt_check "owned_edges:8" "owner_person_id reaches every edge through the trigger path"
+bt_check "boxes_second_call:TST5-1,TST5-2" "a second expand_tool_box_intake() call creates no boxes and renames nothing"
+bt_check "inserts_second_call:4" "a second call creates no inserts"
+bt_check "edges_second_call:8" "a second call creates no edges"
 bt_check "untouched_boxes:5" "explicit code, NULL, 0 quantity and typeless boxes are not expanded"
 bt_check "legacy_code_kept:1" "a box with an explicit code and a quantity (legacy import) keeps both"
 bt_check "no_type_box:1" "a quantity without an insert type is left alone, no error"
