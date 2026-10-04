@@ -32,6 +32,7 @@ vi.mock('../ui/spotlight', () => ({ spotlight: vi.fn() }));
 
 import { createWorkspace } from './workspace';
 import { clearUploadProgress } from './uploadResume';
+import { alarmController } from './alarms';
 
 type Reply = { ok?: boolean; status?: number; body?: unknown; text?: string };
 let replies: Record<string, Reply | (() => Reply | Promise<Reply>)>;
@@ -198,5 +199,35 @@ describe('workspace.uploadCutToDatabase() resume (2.2)', () => {
 		await expect(w.uploadCutToDatabase()).rejects.toThrow(/linking/);
 		await expect(w.uploadCutToDatabase()).resolves.toBe('op-3');
 		expect(posts('/items/machining_force_analysis')).toBe(1);
+	});
+});
+
+// ---- 2.5: Start is one-shot from the first click, not from the request ----
+describe('workspace.start() (2.5)', () => {
+	beforeEach(() => { alarmController.testedSinceStart.value = false; });
+
+	it('a double click during the pre-flight prompt runs one start, and busy is held until it finishes', async () => {
+		let answer!: (v: boolean) => void;
+		confirmMock.confirmAction.mockImplementationOnce(() => new Promise<boolean>((r) => { answer = r; }));
+		replies['/record/start'] = { body: { id: 'cap-s' } };
+		const w = await make();
+		const first = w.start();
+		await Promise.resolve();
+		expect(w.busy.value).toBe(true);        // set before the alarm prompt resolves
+		await w.start();                         // the second click is ignored
+		expect(calls.filter((c) => c === 'POST /record/start')).toHaveLength(0);
+		answer(false);                           // "Start without testing"
+		await first;
+		expect(calls.filter((c) => c === 'POST /record/start')).toHaveLength(1);
+		expect(w.busy.value).toBe(false);
+		expect(w.st.state).toBe('recording');
+	});
+
+	it('clears busy when the operator declines the pre-flight', async () => {
+		confirmMock.confirmAction.mockResolvedValueOnce(true);   // "Test alarms now": start is aborted
+		const w = await make();
+		await w.start();
+		expect(w.busy.value).toBe(false);
+		expect(calls.filter((c) => c === 'POST /record/start')).toHaveLength(0);
 	});
 });

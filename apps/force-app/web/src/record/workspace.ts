@@ -361,13 +361,17 @@ export function createWorkspace() {
 
 	async function start() {
 		if (busy.value) return;
-		if (!(await checkAlarmsBeforeStart())) return;
-		if (!(await checkDiskBeforeStart())) return;
-		busy.value = true; errMsg.value = null; finishedCache.value = null;
-		alarms.reset();
-		// Replay is played, not recorded (it throws below): it keeps stamping lazily in metaObj().
-		if (source.value !== 'replay') recordedStamp.value = recorderFields(currentRecorder(), new Date().toISOString());
+		// Held across the pre-flight prompts and fetches too (not only the request itself): a
+		// double-click used to start a second start() while the first waited on them, which reset
+		// state under the first and then got a 409 (review 2.5). Cleared in the finally below.
+		busy.value = true;
 		try {
+			if (!(await checkAlarmsBeforeStart())) return;
+			if (!(await checkDiskBeforeStart())) return;
+			errMsg.value = null; finishedCache.value = null;
+			alarms.reset();
+			// Replay is played, not recorded (it throws below): it keeps stamping lazily in metaObj().
+			if (source.value !== 'replay') recordedStamp.value = recorderFields(currentRecorder(), new Date().toISOString());
 			if (source.value === 'replay') {
 				// Playback is driven by the transport bar, not by start(). Reaching here means a
 				// caller bypassed the mode switch.
