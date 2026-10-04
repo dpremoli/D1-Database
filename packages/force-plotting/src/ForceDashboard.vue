@@ -12,6 +12,8 @@ import { createActivationQueue, createOpGuard } from './opGuard';
 import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
+import ContextMenu, { type ContextMenuItem } from './ContextMenu.vue';
+import { formatPointInfo, recentreWindow, type PointInfo, type PointMenuEvent } from './cloudPick';
 import WearTrend from './WearTrend.vue';
 import type { SpeedMode } from './liveCloud';
 import { axisAutoLimits } from './liveCloud';
@@ -1877,6 +1879,7 @@ function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam:
 	// the cache's feed/diam/rate are the "source" for the modified-highlight in Live
 	srcCut.feed = editFeed.value; srcCut.diam = editDiam.value; srcCut.rate = editRate.value;
 	cacheEpoch.value++;   // the cache just landed in the LRU — let radialValuesFor() see it
+	retryPendingReveal();
 }
 
 // ---- Second X-axis (radial tool position) on the time-series charts ------------------------
@@ -1898,6 +1901,133 @@ async function fetchRadialCache() {
 		cacheEpoch.value++;
 	} catch { /* leave the second axis blank until the user retries (e.g. reselecting the field) */ }
 	finally { radialFetchBusy.value = false; }
+}
+// ---- Linking the FRM map and the Signals charts -------------------------------------------------
+// Time is the shared key: the charts plot envelope buckets of detail.series[a].t, the maps plot
+// cache samples, and idxOfTime() converts between them (see cloudPick.ts). markTime is the pinned
+// sample (marker line on the charts + ring on the map); hoverTime is the transient chart hover.
+// Neither is persisted, and there is no new panel type (RIGHT_KEY and saved layouts untouched).
+const markTime = ref<number | null>(null);
+const menu = ref<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+const linkMsg = ref('');
+let linkMsgTimer = 0;
+function flashLinkMsg(m: string) {
+	linkMsg.value = m;
+	clearTimeout(linkMsgTimer);
+	linkMsgTimer = window.setTimeout(() => { linkMsg.value = ''; }, 2500);
+}
+// The shared time base of the envelope charts (every axis has the same bucket times).
+const envTimes = computed<ArrayLike<number> | null>(() => {
+	const s = detail.value?.series;
+	const t = (s?.[axis.value] ?? s?.Fz ?? s?.Fx ?? s?.Fy)?.t;
+	return t && t.length ? t : null;
+});
+// hoverIndex is a bucket index into the env series in Force mode only (in FFT it is a frequency bin).
+const hoverTime = computed<number | null>(() => {
+	const i = hoverIndex.value;
+	const t = envTimes.value;
+	if (i == null || chartMode.value !== 'force' || !t || i < 0 || i >= t.length) return null;
+	return t[i];
+});
+// The octree has no time attribute, so it is picked by position against the live cache's own path
+// (cloudPick.ts). Reuses the lazy loader of the measured-mode radial axis, so in practice the
+// cache is already in the LRU from Lite.
+const octreeSampleCache = computed<Cache | null>(() => {
+	void cacheEpoch.value;
+	const id = detail.value?.live_cache_file;
+	if (!id || !octreeOn.value) return null;
+	const c = cacheGet(id);
+	if (!c) fetchRadialCache();
+	return c ?? null;
+});
+// A reveal asked for while the target map was still loading; retried when it reports ready.
+let pendingReveal: number | null = null;
+function tryReveal(t: number): boolean {
+	const ref = octreeOn.value ? frmOctreeRef : frmCloudRef;
+	return !!ref.value?.revealTime?.(t);
+}
+function retryPendingReveal() {
+	const t = pendingReveal;
+	if (t == null) return;
+	nextTick(() => { if (pendingReveal === t && tryReveal(t)) pendingReveal = null; });
+}
+watch(octreeSampleCache, (c) => { if (c) retryPendingReveal(); });
+watch(selectedRowId, () => { markTime.value = null; menu.value = null; pendingReveal = null; });
+function onLinkKey(e: KeyboardEvent) {
+	if (e.key !== 'Escape' || menu.value || markTime.value == null) return;
+	const el = document.activeElement as HTMLElement | null;
+	if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+	markTime.value = null;
+	pendingReveal = null;
+}
+onMounted(() => window.addEventListener('keydown', onLinkKey));
+onBeforeUnmount(() => { window.removeEventListener('keydown', onLinkKey); clearTimeout(linkMsgTimer); });
+
+function openMenu(x: number, y: number, items: ContextMenuItem[]) { menu.value = { x, y, items }; }
+function clearMarkItem(): ContextMenuItem[] {
+	return markTime.value != null ? [{ label: 'Clear marker', run: () => { markTime.value = null; pendingReveal = null; } }] : [];
+}
+// Crop edges go through onCropEdit, so they batch into Save changes like a handle drag; refuse an
+// edge that would cross the other one.
+function cropItems(t: number | null): ContextMenuItem[] {
+	const noT = t == null;
+	const startCross = !noT && cropEndSec.value > 0 && t >= cropEndSec.value;
+	const endCross = !noT && t <= cropStartSec.value;
+	return [
+		{ label: 'Set crop start here', disabled: noT || startCross, hint: startCross ? 'Would cross the crop end' : undefined,
+			run: () => { if (t != null) onCropEdit('start', t); } },
+		{ label: 'Set crop end here', disabled: noT || endCross, hint: endCross ? 'Would cross the crop start' : undefined,
+			run: () => { if (t != null) onCropEdit('end', t); } },
+	];
+}
+function openPointMenu(e: PointMenuEvent) {
+	const p = e.point;
+	const hint = p ? undefined
+		: e.reason === 'gridded' ? 'Gridded 3D view averages samples'
+		: e.reason === 'no-cache' ? 'Needs this cut’s live cache'
+		: 'No point under the cursor';
+	const items: ContextMenuItem[] = [
+		{ label: 'Show position in time', disabled: !p, hint, run: () => { if (p) showInTime(p.t); } },
+		...clearMarkItem(),
+		{ label: 'Copy point info', disabled: !p, hint, run: () => { if (p) copyPointInfo(p); } },
+		...cropItems(p ? p.t : null).map((it) => (p ? it : { ...it, hint })),
+	];
+	openMenu(e.clientX, e.clientY, items);
+}
+async function showInTime(t: number) {
+	if (chartMode.value !== 'force') chartMode.value = 'force';   // the existing watch resets the zoom
+	markTime.value = t;
+	await nextTick();
+	const ts = envTimes.value;
+	if (!ts) return;
+	const w = recentreWindow(zoomStart.value, zoomEnd.value, t, ts[0], ts[ts.length - 1]);
+	if (w) onChartZoom(w);
+}
+async function copyPointInfo(p: PointInfo) {
+	try {
+		if (!navigator.clipboard?.writeText) throw new Error('no clipboard');
+		await navigator.clipboard.writeText(formatPointInfo(p));
+		flashLinkMsg('Point info copied');
+	} catch { flashLinkMsg('Copy failed — clipboard unavailable'); }
+}
+function openChartMenu(e: { clientX: number; clientY: number; x: number }) {
+	const t = e.x;
+	let hint: string | undefined;
+	if (octreeOn.value) { if (!detail.value?.live_cache_file) hint = 'Needs this cut’s live cache'; }
+	else if (liveAvailable.value) { if (t < cropStartSec.value || t > cropEndSec.value) hint = 'Outside the cropped window'; }
+	else hint = 'No interactive map for this cut';
+	openMenu(e.clientX, e.clientY, [
+		{ label: 'Show position on map', disabled: !!hint, hint, run: () => showOnMap(t) },
+		...clearMarkItem(),
+		...cropItems(t),
+	]);
+}
+async function showOnMap(t: number) {
+	markTime.value = t;
+	if (!octreeOn.value && !liveOn.value) chooseMode('lite');   // the Figure PNG can't show a ring
+	await nextTick();
+	// false while the view is still loading its cache: retried from onCloudLoaded / the octree cache watch
+	if (!tryReveal(t)) pendingReveal = t;
 }
 // Memoized once per (op, geometry, crop, cache-arrival) rather than recomputed per axis per
 // render: chartsFor() calls radialValuesFor() once per open axis (+ RPM), so without this,
@@ -2464,6 +2594,7 @@ function fmtDateTime(v: string | null | undefined) {
 										</span>
 										<span v-if="cropSavedMsg" class="crop-msg">{{ cropSavedMsg }}</span>
 									</template>
+									<span v-if="linkMsg" class="crop-msg">{{ linkMsg }}</span>
 								</span>
 								<div class="toggle pg-tools">
 									<button class="tbtn icobtn" :class="{ on: rectZoomTool }" title="Rectangular zoom — drag a box on any graph"
@@ -2718,6 +2849,8 @@ function fmtDateTime(v: string | null | undefined) {
 					</div>
 				</div>
 			</div>
+			<!-- Map / chart right-click menu (position:fixed, so it can sit at the dashboard root). -->
+			<ContextMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menu.items" @close="menu = null" />
 		</div>
 	</private-view>
 </template>
