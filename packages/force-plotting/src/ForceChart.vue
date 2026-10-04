@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
+import { computed, getCurrentInstance, onMounted, onBeforeUnmount, ref } from 'vue';
 import { hoverIndexAt } from './hoverIndex';
 import { markInView, markTagText } from './chartMark';
 
@@ -348,9 +348,14 @@ const mark = computed(() => {
 // Right-click on an env chart: report the nearest bucket's time (same mapping as emitHover) so
 // the host can offer "show position on map". Other charts keep the browser's own menu. A right
 // drag is not a gesture here (the pointerdown handlers ignore button 2), so no drag guard.
+// Only intercepted when the host listens for `chartmenu`: SignalPanel (Diagnostics) renders env
+// charts too but has no menu, and swallowing the browser's menu there would leave the right-click
+// doing nothing at all. Vue records a parent's `@chartmenu` as an `onChartmenu` vnode prop.
+const inst = getCurrentInstance();
+const wantsMenu = () => !!inst?.vnode.props?.onChartmenu;
 function onContextMenu(ev: MouseEvent) {
 	const g = geom.value;
-	if (props.kind !== 'env' || !g) return;
+	if (props.kind !== 'env' || !g || !wantsMenu()) return;
 	ev.preventDefault();
 	const i = bucketAt(ev);
 	if (i != null) emit('chartmenu', { clientX: ev.clientX, clientY: ev.clientY, x: g.xs[i] });
