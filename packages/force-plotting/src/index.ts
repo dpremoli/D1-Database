@@ -31,6 +31,12 @@ export type { Histogram, HistogramAccumulator } from './histogram';
 export { default as ColorBar } from './ColorBar.vue';
 export { default as ColorScaleEditor } from './ColorScaleEditor.vue';
 export { default as PlotModeFlyout } from './PlotModeFlyout.vue';
+export { default as ContextMenu } from './ContextMenu.vue';
+export {
+	pickNearest, pointInfo, formatPointInfo, recentreWindow, findPathIndex, findNearestPathIndex,
+	octreePathParams,
+} from './cloudPick';
+export type { PointInfo, PointMenuEvent } from './cloudPick';
 export { buildPath, alignRhoToBuckets, alignMeasuredRho, measuredRhoSpan } from './path';
 export type {
 	PathKind, PathParams, PathWindow, PathBounds, PathResult,
