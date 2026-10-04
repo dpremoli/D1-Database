@@ -154,10 +154,9 @@ rpt_down=$(awk '/-- migrate:down/{f=1;next}f' "$RPT")
 rpt_out=$($PSQL 2>&1 <<SQL
 BEGIN;
 DELETE FROM directus_fields WHERE field = 'report_button';
-INSERT INTO directus_fields (collection, field, special, interface, sort) VALUES ('test_sessions','report_button','alias,no-data','d1-report-button',99);
+INSERT INTO directus_fields (collection, field, interface, sort) VALUES ('test_sessions','report_button','d1-report-button',99);
 $rpt_up
-SELECT 'up_rows:' || count(*) FROM directus_fields WHERE field='report_button' AND interface='d1-report-button' AND special='alias,no-data' AND collection IN ('physical_samples','manufacturing_operations','test_sessions');
-SELECT 'up_types:' || string_agg(collection || '=' || ((options::jsonb)->>'report'), ',' ORDER BY collection) FROM directus_fields WHERE field='report_button' AND options IS NOT NULL;
+SELECT 'up_rows:' || string_agg(collection || '=' || coalesce(options::jsonb->>'label', '-'), ',' ORDER BY collection) FROM directus_fields WHERE field='report_button';
 SELECT 'up_kept_manual:' || sort FROM directus_fields WHERE collection='test_sessions' AND field='report_button';
 $rpt_up
 SELECT 'up_idempotent:' || count(*) FROM directus_fields WHERE field='report_button';
@@ -167,9 +166,8 @@ ROLLBACK;
 SQL
 )
 rpt_check() { grep -qx "$1" <<<"$rpt_out" && ok "$2" || bad "$2 (psql output: $rpt_out)"; }
-rpt_check "up_rows:3" "up: button registered on samples, operations and tests"
-rpt_check "up_types:manufacturing_operations=operation,physical_samples=sample" "up: each button points at its own report"
-rpt_check "up_kept_manual:99" "up: an existing button is left alone"
+rpt_check "up_rows:manufacturing_operations=Generate operation PDF,physical_samples=Generate sample PDF,test_sessions=-" "up: buttons added on samples and operations, hand-added test button kept"
+rpt_check "up_kept_manual:99" "up: an existing button keeps its sort (not overwritten)"
 rpt_check "up_idempotent:3" "up: re-running adds no duplicates"
 rpt_check "down_rows:0" "down: buttons removed"
 

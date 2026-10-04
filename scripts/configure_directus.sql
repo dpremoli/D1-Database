@@ -314,7 +314,7 @@ INSERT INTO directus_fields (collection, field, special, interface, options, dis
 ('physical_samples','location',           NULL,'input',NULL,'raw',NULL,false,false,20,'half',false,'[{"language":"en-US","translation":"Location"}]'),
 ('physical_samples','gauge_length_mm',  NULL,'input','{"step":0.001,"suffix":"mm"}','raw',NULL,false,false,12,'half',false,'[{"language":"en-US","translation":"Gauge length"}]'),
 ('physical_samples','gauge_width_mm',   NULL,'input','{"step":0.001,"suffix":"mm"}','raw',NULL,false,false,13,'half',false,'[{"language":"en-US","translation":"Gauge width"}]'),
-('physical_samples','report_button','alias,no-data','d1-report-button','{"label":"Generate sample PDF","report":"sample"}',NULL,NULL,false,false,0,'full',false,'[{"language":"en-US","translation":"Report"}]'),
+('physical_samples','report_button','alias,no-data','d1-report-button','{"label":"Generate sample PDF"}',NULL,NULL,false,false,0,'full',false,'[{"language":"en-US","translation":"Report"}]'),
 ('physical_samples','geometry_preview', 'alias,no-data','d1-geometry-preview',NULL,NULL,NULL,false,false,20,'half',false,'[{"language":"en-US","translation":"Shape Preview"}]'),
 ('physical_samples','owner',     'm2o','select-dropdown-m2o','{"template":"{{first_name}} {{last_name}}"}','user',NULL,false,false,21,'half',false,'[{"language":"en-US","translation":"Owner"}]'),
 ('physical_samples','co_owners', 'm2m','list-m2m','{"template":"{{user_id.first_name}} {{user_id.last_name}}","junction_field":"user_id"}','related-values','{"template":"{{user_id.first_name}} {{user_id.last_name}}"}',false,false,22,'full',false,'[{"language":"en-US","translation":"Co-owners"}]'),
@@ -484,7 +484,7 @@ INSERT INTO directus_fields (collection, field, special, interface, options, dis
 ('manufacturing_operations','gcode_file',            'file','file',NULL,'file',NULL,false,true,18,'full',false,'[{"language":"en-US","translation":"G-code / NC Program File"}]'),
 -- Linked Data Files: native M2M file picker → browse the SMB archive in the File Library and attach files
 ('manufacturing_operations','data_files',             'm2m','files','{"template":"{{directus_files_id.filename_download}}"}','related-values','{"template":"{{directus_files_id.filename_download}}"}',false,true,19,'full',false,'[{"language":"en-US","translation":"Linked Data Files"}]'),
-('manufacturing_operations','report_button','alias,no-data','d1-report-button','{"label":"Generate operation PDF","report":"operation"}',NULL,NULL,false,false,0,'full',false,'[{"language":"en-US","translation":"Report"}]'),
+('manufacturing_operations','report_button','alias,no-data','d1-report-button','{"label":"Generate operation PDF"}',NULL,NULL,false,false,0,'full',false,'[{"language":"en-US","translation":"Report"}]'),
 ('manufacturing_operations','data_files_open',        'alias,no-data','d1-archive-links','{"relationField":"data_files"}',NULL,NULL,false,false,20,'full',false,'[{"language":"en-US","translation":"Open / Copy Linked Files"}]'),
 -- (Typed process-parameter fields are inline on this table — see configure_inline_params.sql)
 -- Legacy / unused duplicate columns — registered hidden so they don't clutter the form
@@ -586,7 +586,7 @@ INSERT INTO directus_fields (collection, field, special, interface, options, dis
 ('test_sessions','plot_uris',            'cast-json','input-code','{"language":"json"}','raw',NULL,true,false,21,'full',false,'[{"language":"en-US","translation":"Plot URIs (auto)"}]'),
 -- (Typed test-parameter fields are inline on this table — see configure_inline_params.sql)
 ('test_sessions','data_files','m2m','files','{"template":"{{directus_files_id.filename_download}}"}','related-values','{"template":"{{directus_files_id.filename_download}}"}',false,false,31,'full',false,'[{"language":"en-US","translation":"Linked Data Files"}]'),
-('test_sessions','report_button','alias,no-data','d1-report-button','{"label":"Generate test PDF","report":"test"}',NULL,NULL,false,false,0,'full',false,'[{"language":"en-US","translation":"Report"}]'),
+('test_sessions','report_button','alias,no-data','d1-report-button','{"label":"Generate test PDF"}',NULL,NULL,false,false,0,'full',false,'[{"language":"en-US","translation":"Report"}]'),
 ('test_sessions','data_files_open','alias,no-data','d1-archive-links','{"relationField":"data_files"}',NULL,NULL,false,false,32,'full',false,'[{"language":"en-US","translation":"Open / Copy Linked Files"}]'),
 ('test_sessions','created_at','date-created','datetime',NULL,'datetime',NULL,true,true,35,'half',false,NULL),
 ('test_sessions','updated_at','date-updated','datetime',NULL,'datetime',NULL,true,true,36,'half',false,NULL),
