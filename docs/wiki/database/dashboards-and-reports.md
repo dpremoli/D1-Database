@@ -90,7 +90,8 @@ after applying it so the form metadata is reloaded), or directly at:
 | Test datasheet | `/d1-report/test/<session id>` |
 
 **Save as PDF** at the top prints the report. The checkboxes beside it choose what to include.
-Each report carries a QR code that links back to the record.
+Each report carries a QR code that links back to the record. Labels for the physical samples are
+in the next section.
 
 | Sample overview | Operation datasheet | Test datasheet |
 |---|---|---|
@@ -103,6 +104,46 @@ Each report carries a QR code that links back to the record.
   spectrum plots per axis, plus RPM. *Plots* chooses which plots to include.
 - The **test datasheet** has the test's type-specific parameters and results, e.g. hardness scale,
   load, dwell, number of indents, mean, standard deviation, min and max.
+
+## Sample labels and QR codes
+
+The same `d1-report` endpoint prints sample labels: the sample code in large type, a QR code,
+the material, the date (the manufactured date, else the entry date) and the owner's initials.
+Two layouts:
+
+| Layout | `layout=` | Use |
+|---|---|---|
+| A4 sheet of 21 labels, 63.5 x 38.1 mm (3 x 7, the common "L7160" size) | `a4-21` (default) | label sheets in a laser/inkjet printer |
+| Single label, 50 x 25 mm | `single-50x25` | a label-printer or roll, one label per page |
+
+**Print labels for one sample.** Open the sample and press **Print label** at the top of the form.
+
+**Print labels for several samples.** Directus 11 does not let an extension add a "do this to the
+selected rows" action to a list, so there is no button in the samples list itself. Instead:
+
+1. Press **Print several labels** at the top of any sample form, or the **Print labels** tile on
+   **Home**, or open `/d1-report/labels` directly. A new tab opens (it uses your Directus sign-in).
+2. Paste sample codes (separated by commas, spaces or new lines) and/or tick samples in the list
+   (newest first; **Search** narrows it by code; the box in the header ticks all shown).
+3. Choose the layout. On a part-used A4 sheet, set **Start at position** (1 to 21, row by row from
+   the top left) so the used labels are skipped.
+4. **Open label sheet**, then **Print labels**. Print at 100 % scale ("Actual size", not "Fit to
+   page"), with margins set to None, or the labels drift off the die-cuts.
+
+You can change layout and start position on the label page and press **Update**. Up to 200 samples
+per sheet. Samples you may not read, or that do not exist, simply get no label (the page says so);
+material and owner initials appear only if your role can read those collections.
+
+Direct URL: `/d1-report/label?ids=<uuid,uuid,...>` (and/or `&codes=<sample code,...>`),
+`&layout=a4-21|single-50x25`, `&start=<1-based position>`. It needs a signed-in session, like the
+reports; without one it answers 401. Bad ids, layouts or counts answer 400.
+
+**Scan to open.** The QR code encodes `<PUBLIC_URL>/admin/content/physical_samples/<sample id>`.
+Scanning it with a phone opens that record in the Directus app, which is usable on a small
+screen. A phone that is not signed in is sent to the sign-in page and then to the record. The QR
+carries only the link: no sample data is public, and what the person sees is limited by their
+role's permissions. `PUBLIC_URL` must be the address phones can reach (the same value the
+reports' QR codes use).
 
 ## Insights
 
