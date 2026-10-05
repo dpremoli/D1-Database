@@ -1,0 +1,37 @@
+/** Pure helpers for the "Download CSV" answer action (RFC 4180, UTF-8 BOM for Excel). */
+
+/** One cell as text: null, undefined and NaN/Infinity become empty; objects become JSON. */
+export function csvCell(value: unknown): string {
+	if (value === null || value === undefined) return '';
+	if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+	if (typeof value === 'bigint') return value.toString();
+	if (value instanceof Date) return Number.isNaN(value.getTime()) ? '' : value.toISOString();
+	if (typeof value === 'object') return JSON.stringify(value);
+	return String(value);
+}
+
+/** Quote a field only when it has to be: a comma, a double quote, CR or LF. */
+export function csvField(text: string): string {
+	return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/** The whole file body: header row, then one CRLF-terminated line per row, after a BOM. */
+export function toCsv(columns: string[], rows: Record<string, unknown>[]): string {
+	const lines = [columns.map((c) => csvField(c)).join(',')];
+	for (const row of rows) lines.push(columns.map((c) => csvField(csvCell(row[c]))).join(','));
+	return '﻿' + lines.join('\r\n') + '\r\n';
+}
+
+/** `ask-<question slug>-<yyyy-mm-dd>.csv`; the slug is capped so the name stays short. */
+export function csvFilename(question: string, date: Date = new Date()): string {
+	const slug =
+		question
+			.normalize('NFKD')
+			.replace(/[̀-ͯ]/g, '')
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-+|-+$/g, '')
+			.slice(0, 50)
+			.replace(/-+$/, '') || 'answer';
+	return `ask-${slug}-${date.toISOString().slice(0, 10)}.csv`;
+}

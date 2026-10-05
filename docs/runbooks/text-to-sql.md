@@ -226,6 +226,17 @@ with **Plotly charts**. Two extensions in `core/extensions/`:
   was truncated, and failures (guard rejection, 401/403, 502, 504) show a plain-language
   message instead of the raw error.
 
+  Each answer has **Download CSV** (RFC 4180, UTF-8 BOM, `ask-<question>-<date>.csv`, built in
+  the browser from the rows shown, so at most the 200-row cap), **Copy SQL** (falls back to
+  `execCommand` on plain-http hosts, where `navigator.clipboard` is unavailable) and **Save
+  question**. The empty chat also lists history, all client-side in `localStorage`: key
+  `d1-ask-db:history` holds the last 20 asked questions (deduplicated, newest first) and
+  `d1-ask-db:saved` holds saved questions (not trimmed). Only question text and a timestamp are
+  stored, never result rows. Nothing is synced between browsers.
+
+  Thumbs-up/down feedback on answers is deliberately **out of scope** until there is a place to
+  store it (owner decision); do not add it to the module without one.
+
 Setup:
 
 ```bash
@@ -244,5 +255,6 @@ Unsafe/off-menu SQL is still rejected by the guard (surfaced as a note), never r
 The chart the model proposes is validated against the returned columns by
 `app/lib/charts.py`; anything malformed or off-menu falls back to the table.
 
-Tests: `make llm-test` (backend, incl. `/api/chat` + chart validation) and
+Tests: `make llm-test` (backend, incl. `/api/chat` + chart validation),
+`cd core/extensions/d1-ask-db && npm test` (CSV and history helpers) and
 `cd tests/ui && npx playwright test 08-ask-db-chat` (UI + endpoint auth).
