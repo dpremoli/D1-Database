@@ -51,8 +51,9 @@ storage, per user profile, and is not sent anywhere.
 
 **Clear setup**, at the bottom of the panel, puts every field back to blank or its default and
 forgets the remembered copy. Choosing **Replay file** clears Sample, Machine and Operation type
-for the replay search as before, but does not erase the remembered setup: it is back when you
-return to Simulated or NI-DAQ, and the next launch.
+for the replay search as before, but does not erase the remembered setup: it is put back in the
+form as soon as you return to Simulated or NI-DAQ (whatever a replayed cut filled in is dropped),
+and it is there at the next launch.
 
 ## 3. Recording behaviour toggles
 
