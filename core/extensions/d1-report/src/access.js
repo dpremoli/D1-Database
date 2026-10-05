@@ -38,14 +38,15 @@ export function createAccess({ ItemsService, accountability, schema }) {
 		}
 	}
 
-	// Every row matching a filter that the caller may read; [] when none or forbidden.
-	async function list(collection, filter, fields = ['*'], sort) {
+	// Every row matching a filter that the caller may read (at most `limit`; -1 = all);
+	// [] when none or forbidden.
+	async function list(collection, filter, fields = ['*'], sort, limit = -1) {
 		try {
 			return (
 				(await svc(collection).readByQuery({
 					filter,
 					fields,
-					limit: -1,
+					limit,
 					...(sort ? { sort } : {}),
 				})) ?? []
 			);

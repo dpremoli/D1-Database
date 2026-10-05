@@ -1,5 +1,9 @@
 // Directus endpoint: d1-report (mounted at /d1-report)
 //
+// GET /d1-report/label?ids=<uuid,...>[&codes=<sample code,...>][&layout=a4-21|single-50x25][&start=n]
+//   -> print-ready sample labels (code, QR to the record, material, date, owner initials).
+// GET /d1-report/labels -> the picker page behind "Print labels" (paste codes / tick samples).
+//
 // GET /d1-report/sample/:id  -> a print-ready (A4, ≤2 page) HTML "Sample Overview"
 // document assembling the sample's details, genealogy (parents AND children),
 // manufacturing operations and tests, with a locally-generated QR code linking to
@@ -12,6 +16,19 @@ import { defineEndpoint } from '@directus/extensions-sdk';
 import QRCode from 'qrcode';
 import { renderSampleReport, renderOperationReport, renderTestReport } from './render.js';
 import { createAccess } from './access.js';
+import {
+	LABEL_JS,
+	MAX_LABELS,
+	initials,
+	labelDate,
+	orderRows,
+	parseSelection,
+	parseStart,
+	renderLabelPicker,
+	renderLabelSheet,
+	resolveLayout,
+	sampleRecordUrl,
+} from './label.js';
 
 // Report pages are our own self-contained HTML. Directus's global CSP blocks inline
 // scripts/handlers, so we (a) serve the toggle/print JS as a same-origin file and
@@ -182,6 +199,101 @@ export default defineEndpoint({
 		// Same-origin toggle/print script (keeps us within Directus's script-src 'self').
 		router.get('/report.js', (_req, res) => {
 			res.set('Content-Type', 'application/javascript; charset=utf-8').send(REPORT_JS);
+		});
+
+		// Sample labels. Same auth model as the reports: a signed-in user, and every row is
+		// read through ItemsService with the CALLER's accountability, so a sample they cannot
+		// read simply gets no label. The QR encodes the record's admin URL: scanning it
+		// opens the Directus app, which asks for sign-in; nothing public is exposed.
+		router.get('/label.js', (_req, res) => {
+			res.set('Content-Type', 'application/javascript; charset=utf-8').send(LABEL_JS);
+		});
+
+		router.get('/label', async (req, res) => {
+			if (!req.accountability?.user) return res.status(401).send('Authentication required.');
+
+			const sel = parseSelection(req.query);
+			if (sel.error) return res.status(400).send(sel.error);
+			const lay = resolveLayout(req.query.layout);
+			if (!lay) return res.status(400).send('Unknown layout. Use a4-21 or single-50x25.');
+			const start = parseStart(req.query.start, lay.layout);
+			if (start.error) return res.status(400).send(start.error);
+
+			try {
+				const a = await accessFor(req);
+				const clauses = [];
+				if (sel.ids.length) clauses.push({ sample_id: { _in: sel.ids } });
+				if (sel.codes.length) clauses.push({ sample_code: { _in: sel.codes } });
+				const rows = orderRows(
+					await a.list('physical_samples', clauses.length === 1 ? clauses[0] : { _or: clauses }),
+					sel
+				);
+				// Same body whether the samples are missing or not permitted.
+				if (!rows.length) return notFound(res, 'Sample');
+
+				// Material and owner are shown only when the caller can read those collections.
+				const related = (collection, pk, key) => {
+					const ids = [...new Set(rows.map((r) => r[key]).filter(Boolean))];
+					return ids.length ? a.list(collection, { [pk]: { _in: ids } }) : [];
+				};
+				const [materials, people] = await Promise.all([
+					related('materials', 'material_id', 'material_id'),
+					related('people', 'person_id', 'owner_person_id'),
+				]);
+				const matById = new Map(materials.map((m) => [String(m.material_id), m]));
+				const personById = new Map(people.map((p) => [String(p.person_id), p]));
+
+				const haveIds = new Set(rows.map((r) => String(r.sample_id).toLowerCase()));
+				const haveCodes = new Set(rows.map((r) => String(r.sample_code)));
+				const missing = sel.ids.some((i) => !haveIds.has(i)) || sel.codes.some((c) => !haveCodes.has(c));
+
+				const publicUrl = String(env.PUBLIC_URL || '').replace(/\/+$/, '');
+				const labels = await Promise.all(
+					rows.map(async (r) => {
+						const m = matById.get(String(r.material_id));
+						return {
+							code: r.sample_code,
+							material: m ? m.common_name || m.alloy_code : '',
+							date: labelDate(r.manufactured_date, r.created_at),
+							owner: initials(personById.get(String(r.owner_person_id))?.full_name),
+							qrSvg: await QRCode.toString(sampleRecordUrl(publicUrl, r.sample_id), {
+								type: 'svg',
+								margin: 1,
+								errorCorrectionLevel: lay.layout.style.qrEcc,
+							}),
+						};
+					})
+				);
+
+				res.set('Content-Security-Policy', REPORT_CSP);
+				res.set('Content-Type', 'text/html; charset=utf-8').send(
+					renderLabelSheet({
+						labels,
+						layoutKey: lay.key,
+						skip: start.skip,
+						query: req.query,
+						notice: missing ? 'Some samples were not found or you may not read them; they have no label.' : '',
+					})
+				);
+			} catch (err) {
+				logger.error(`d1-report label failed: ${err.stack || err.message}`);
+				res.status(500).send('Label generation failed.');
+			}
+		});
+
+		router.get('/labels', async (req, res) => {
+			if (!req.accountability?.user) return res.status(401).send('Authentication required.');
+			const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 64) : '';
+			try {
+				const a = await accessFor(req);
+				const filter = q ? { sample_code: { _icontains: q } } : {};
+				const rows = await a.list('physical_samples', filter, ['sample_id', 'sample_code'], ['-created_at'], MAX_LABELS);
+				res.set('Content-Security-Policy', REPORT_CSP);
+				res.set('Content-Type', 'text/html; charset=utf-8').send(renderLabelPicker({ rows, q }));
+			} catch (err) {
+				logger.error(`d1-report label picker failed: ${err.stack || err.message}`);
+				res.status(500).send('Could not list samples.');
+			}
 		});
 
 		router.get('/sample/:id', async (req, res) => {

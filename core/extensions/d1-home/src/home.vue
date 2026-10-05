@@ -54,6 +54,7 @@ const actions: Action[] = [
 	{ label: 'Force Analysis', sub: 'Machining force & FRM plots', icon: 'insights', color: '#0369a1', to: '/d1-force-dashboard' },
 	{ label: 'FAST Analysis', sub: 'Sintering traces & plots', icon: 'whatshot', color: '#ea580c', to: '/d1-fast-dashboard' },
 	{ label: 'Force Crawler', sub: '.mat processing queue', icon: 'dns', color: '#65a30d', to: '/d1-force-crawler' },
+	{ label: 'Print labels', sub: 'Sample labels with QR codes', icon: 'label', color: '#475569', to: '/d1-report/labels' },
 ];
 
 const stats = ref([
@@ -73,8 +74,11 @@ const KIND_COLOR: Record<Kind, string> = { sample: '#2563eb', operation: '#0d948
 const recent = ref<Activity[]>([]);
 
 function go(to: string) {
-	// The Directus app router base is already /admin — push the bare path.
-	router.push(to);
+	// /d1-report/* is an API endpoint page (printable HTML), not an app route: open it in a
+	// new tab, same session. Everything else: the Directus app router base is already
+	// /admin, so push the bare path.
+	if (to.startsWith('/d1-report/')) window.open(to, '_blank', 'noopener');
+	else router.push(to);
 }
 
 function fmtDate(v: string) {
