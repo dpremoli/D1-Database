@@ -39,6 +39,14 @@
 			<div v-if="!selectedOp" class="d1-empty">Select a FAST run</div>
 			<div v-else class="d1-detail">
 				<div class="d1-detail-section">
+					<router-link class="d1-open" :to="`/content/manufacturing_operations/${selectedOp.operation_id}`">
+						<v-icon name="open_in_new" small />Open run in Directus
+					</router-link>
+					<router-link v-if="selectedOp.sample_id?.sample_id" class="d1-open" :to="`/content/physical_samples/${selectedOp.sample_id.sample_id}`">
+						<v-icon name="open_in_new" small />Open sample in Directus
+					</router-link>
+				</div>
+				<div class="d1-detail-section">
 					<h4>Identity</h4>
 					<div class="d1-kv">
 						<span>Code</span><span>{{ selectedOp.pass_code ?? '—' }}</span>
@@ -102,7 +110,7 @@ async function fetchOps() {
 	try {
 		const params: Record<string, unknown> = {
 			'filter[process_category][_eq]': 'sintering',
-			'fields[]': ['*', 'sample_id.sample_code', 'equipment_id.equipment_name'],
+			'fields[]': ['*', 'sample_id.sample_id', 'sample_id.sample_code', 'equipment_id.equipment_name'],
 			'sort[]': '-operation_date',
 			limit: 300,
 		};
@@ -189,6 +197,20 @@ onBeforeUnmount(() => {
 .d1-empty { padding: 24px; text-align: center; color: var(--theme--foreground-subdued, #64748b); font-size: 13px; }
 .d1-loading { display: flex; justify-content: center; padding: 24px; }
 .d1-detail { overflow-y: auto; flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.d1-open {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	width: fit-content;
+	font-size: 12px;
+	color: var(--theme--primary, #2563eb);
+	text-decoration: none;
+}
+
+.d1-open:hover {
+	text-decoration: underline;
+}
+
 .d1-detail-section h4 {
 	font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
 	color: var(--theme--foreground-subdued, #64748b); margin: 0 0 6px;

@@ -62,12 +62,20 @@
 			<div v-if="!selectedOp" class="d1-empty">Select an operation</div>
 			<div v-else class="d1-detail">
 				<div class="d1-detail-section">
+					<router-link class="d1-open" :to="`/content/manufacturing_operations/${selectedOp.operation_id}`">
+						<v-icon name="open_in_new" small />Open operation in Directus
+					</router-link>
+				</div>
+				<div class="d1-detail-section">
 					<h4>Sample</h4>
 					<div class="d1-kv">
 						<span>Code</span><span>{{ selectedOp.sample_id?.sample_code ?? '—' }}</span>
 						<span>Nickname</span><span>{{ selectedOp.sample_id?.nickname ?? '—' }}</span>
 						<span>Material</span><span>{{ selectedOp.sample_id?.material_id?.common_name ?? '—' }}</span>
 					</div>
+					<router-link v-if="selectedOp.sample_id?.sample_id" class="d1-open" :to="`/content/physical_samples/${selectedOp.sample_id.sample_id}`">
+						<v-icon name="open_in_new" small />Open sample in Directus
+					</router-link>
 				</div>
 				<div class="d1-detail-section">
 					<h4>Tooling</h4>
@@ -166,6 +174,7 @@ async function selectEquipment(eq: any) {
 			'filter[equipment_id][_eq]': eq.equipment_id,
 			'fields[]': [
 				'*',
+				'sample_id.sample_id',
 				'sample_id.sample_code',
 				'sample_id.nickname',
 				'sample_id.material_id.common_name',
@@ -329,6 +338,20 @@ function formatDate(d: string | null): string {
 	display: flex;
 	flex-direction: column;
 	gap: 12px;
+}
+
+.d1-open {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	width: fit-content;
+	font-size: 12px;
+	color: var(--theme--primary, #2563eb);
+	text-decoration: none;
+}
+
+.d1-open:hover {
+	text-decoration: underline;
 }
 
 .d1-detail-section h4 {

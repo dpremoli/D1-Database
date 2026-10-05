@@ -149,6 +149,33 @@ bf_check "lg:TEST-LG-002=block" "Rectangular -> block (case-insensitive)"
 bf_check "lg:TEST-LG-003=disc" "current values are left alone (disc)"
 bf_check "lg:TEST-LG-004=round_bar" "current values are left alone (round_bar)"
 
+echo "== Lab Member can save a cut from the Force App =="
+# directus_permissions is a stub in CI: run the migration's up then down in a rolled-back
+# transaction, with an unrelated Lab Member row and the same row on another policy seeded to prove
+# the down removes only what the up added.
+FAS=db/migrations/20261005000133_lab_member_force_app_save.sql
+fas_up=$(awk '/-- migrate:up/{f=1;next}/-- migrate:down/{f=0}f' "$FAS")
+fas_down=$(awk '/-- migrate:down/{f=1;next}f' "$FAS")
+fas_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+DELETE FROM directus_permissions WHERE collection IN ('directus_files','machining_force_analysis');
+INSERT INTO directus_permissions (policy, collection, action, permissions, validation, fields) VALUES
+  ('20000002-0000-0000-0000-000000000002','machining_force_analysis','update','{}','{}','*'),
+  ('20000002-0000-0000-0000-000000000001','directus_files','read','{}','{}','*');
+$fas_up
+SELECT 'up:' || string_agg(collection || '.' || action, ',' ORDER BY collection, action) FROM directus_permissions WHERE policy='20000002-0000-0000-0000-000000000002' AND collection IN ('directus_files','machining_force_analysis');
+$fas_up
+SELECT 'up_idempotent:' || count(*) FROM directus_permissions WHERE policy='20000002-0000-0000-0000-000000000002' AND collection IN ('directus_files','machining_force_analysis');
+$fas_down
+SELECT 'down:' || string_agg(collection || '.' || action, ',' ORDER BY collection, action) FROM directus_permissions WHERE collection IN ('directus_files','machining_force_analysis');
+ROLLBACK;
+SQL
+)
+fas_check() { grep -qx "$1" <<<"$fas_out" && ok "$2" || bad "$2 (psql output: $fas_out)"; }
+fas_check "up:directus_files.create,directus_files.read,machining_force_analysis.create,machining_force_analysis.update" "up: Lab Member gets file create+read and force-analysis create (update kept)"
+fas_check "up_idempotent:4" "up is idempotent"
+fas_check "down:directus_files.read,machining_force_analysis.update" "down: removes only the added grants (update and other policies kept)"
+
 echo "== Report (Generate PDF) buttons =="
 # The d1-report-button field must be registered on the sample, operation and test forms.
 # directus_fields is an empty stub in CI, so run the migration's up then down in a rolled-back
@@ -967,6 +994,9 @@ SELECT 'renumber:' || sample_code FROM physical_samples WHERE sample_id = 'c0000
 -- an unrelated update leaves the code alone
 UPDATE physical_samples SET nickname = 'x' WHERE sample_id = 'c0000000-0000-4000-8000-000000000611';
 SELECT 'untouched:' || sample_code FROM physical_samples WHERE sample_id = 'c0000000-0000-4000-8000-000000000611';
+-- the preview function (d1-next-number endpoint) follows the same rule as the trigger
+SELECT 'preview:' || next_sample_code_number();
+SELECT 'preview_excl:' || next_sample_code_number('c0000000-0000-4000-8000-000000000615');
 ROLLBACK;
 SQL
 )
@@ -979,6 +1009,8 @@ sc_check "code:0614:$((sc_base + 500))-TI-OLD-2020-1-1" "an explicit number is s
 sc_check "code:0615:$((sc_base + 501))-TI-MF-2026-10-5" "a later placeholder continues after the highest number in use"
 sc_check "renumber:$((sc_base + 501))-TI-MF-2026-10-5" "renumbering excludes the row's own number"
 sc_check "untouched:$((sc_base + 1))-TI-MF-2026-10-4" "an unrelated update does not renumber"
+sc_check "preview:$((sc_base + 502))" "next_sample_code_number() previews max+1 over every sample"
+sc_check "preview_excl:$((sc_base + 501))" "next_sample_code_number(id) ignores that sample's own number"
 
 # Deploy-order guard: a placeholder that survives the trigger is rejected (NOT VALID checks).
 ph_s=$($PSQL -q 2>&1 -c "INSERT INTO physical_samples (sample_code) VALUES ('TI-{seq}-MIDDLE')")
