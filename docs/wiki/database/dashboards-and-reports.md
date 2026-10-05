@@ -47,12 +47,14 @@ explore outward from it. Each exploration adds to the graph; âœ• clears it and â
 
 ![Ask the Database](../images/database/ask.png)
 
-1. Type a question, e.g. *"How many operations are there per process category?"*, and press
-   **Ask**.
+1. Click one of the example questions on the empty page, or type your own, e.g. *"How many
+   operations are there per process category?"*, and press **Ask**.
 2. A **self-hosted** language model (Ollama, running on d1-server) writes a SQL query. The query
    is shown under **SQL** so you can check what was actually asked.
 3. The query runs, and the answer comes back as a table, with a chart when the result suits one.
 4. Follow-up questions refine the previous one (*"only for Ti-6Al-4V"*).
+5. At most 200 rows are shown. When a result is longer, the page says *"Showing the first N
+   rows"*: ask for something more specific (a filter or a count) to see the rest.
 
 The model is **never trusted**. Its SQL goes through two independent guards before it touches
 data:
@@ -64,7 +66,9 @@ data:
 - a **read-only Postgres role**, so even a query that got past the guard could not change
   anything.
 
-A question the guard rejects comes back with the reason and the SQL, so you can rephrase it. No
+A question the guard rejects comes back with a plain explanation, the reason and the SQL, plus
+the example questions, so you can rephrase it. If the page says the service could not be reached
+or timed out, the language model may be starting up: try again shortly. No
 data leaves the server. See [ADR-0009](../../adr/0009-text-to-sql-guarded-readonly.md) and the
 [text-to-SQL runbook](../../runbooks/text-to-sql.md).
 

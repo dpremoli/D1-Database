@@ -2,6 +2,7 @@
 import { nextTick, ref } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 import ChartPanel from './chart-panel.vue';
+import ExampleChips from './example-chips.vue';
 
 interface ChartSpec {
 	type: 'bar' | 'line' | 'scatter' | 'histogram' | 'pie';
@@ -16,15 +17,60 @@ interface Turn {
 	sql?: string;
 	columns?: string[];
 	rows?: Record<string, unknown>[];
+	rowCount?: number;
+	truncated?: boolean;
 	chart?: ChartSpec | null;
 	reply?: string | null;
 	error?: string;
+	/** The raw reason behind a rejected or failed query, shown under the message. */
+	detail?: string;
+	/** Offer the example chips, because rephrasing may help. */
+	suggest?: boolean;
 }
 
 const api = useApi();
 const input = ref('');
 const turns = ref<Turn[]>([]);
 const scroller = ref<HTMLDivElement | null>(null);
+
+/** A plain-language message for a failed /d1-ask/chat call. */
+function explainError(status: number | undefined, d: any, fallback: string) {
+	if (status === 422 && d?.error === 'generated SQL rejected') {
+		return {
+			message:
+				'That question could not be turned into a safe, read-only query, so nothing was run. Try rephrasing it, or start from one of these examples:',
+			detail: d.reason,
+			suggest: true,
+		};
+	}
+	if (status === 422 && d?.error && d?.reason) {
+		return {
+			message:
+				'The query written for that question could not run. Try asking it more specifically, or start from one of these examples:',
+			detail: d.reason,
+			suggest: true,
+		};
+	}
+	if (status === 401 || status === 403) {
+		return {
+			message:
+				'You are not allowed to use Ask the Database. Sign in again, or ask an administrator for access.',
+		};
+	}
+	if (status === 502) {
+		return {
+			message:
+				'The text-to-SQL service could not be reached. The language model may still be starting; try again in a minute, and tell an administrator if it keeps happening.',
+		};
+	}
+	if (status === 504) {
+		return {
+			message:
+				'The question took too long to answer. Try a simpler or more specific question.',
+		};
+	}
+	return { message: d?.error || fallback };
+}
 
 const busy = () => turns.value.some((t) => t.status === 'pending');
 
@@ -44,8 +90,8 @@ async function scrollToEnd() {
 	scroller.value?.scrollTo({ top: scroller.value.scrollHeight, behavior: 'smooth' });
 }
 
-async function submit() {
-	const question = input.value.trim();
+async function submit(text?: string) {
+	const question = (text ?? input.value).trim();
 	if (!question || busy()) return;
 
 	const messages = [...history(), { role: 'user', content: question }];
@@ -59,19 +105,24 @@ async function submit() {
 		turn.reply = data.reply ?? null;
 		turn.sql = data.sql;
 		turn.columns = data.columns ?? [];
-		turn.rows = data.rows ?? [];
+		const rows = data.rows ?? [];
+		turn.rows = rows;
+		turn.rowCount = data.row_count ?? rows.length;
+		turn.truncated = data.truncated === true;
 		turn.chart = data.chart ?? null;
 		turn.status = 'done';
 	} catch (err: any) {
 		const d = err?.response?.data;
 		turn.status = 'error';
 		if (d?.sql) turn.sql = d.sql;
-		if (d?.error && d?.reason) {
-			// Guard rejection or a query that couldn't run — show why + the SQL.
-			turn.error = `${d.error}: ${d.reason}. Try rephrasing.`;
-		} else {
-			turn.error = d?.error || err?.message || 'The request failed.';
-		}
+		const e = explainError(
+			err?.response?.status,
+			d,
+			err?.message || 'The request failed.',
+		);
+		turn.error = e.message;
+		turn.detail = e.detail;
+		turn.suggest = e.suggest;
 	}
 	await scrollToEnd();
 }
@@ -87,12 +138,14 @@ function cell(value: unknown): string {
 	<private-view title="Ask the Database">
 		<div class="ask-db">
 			<div ref="scroller" class="transcript">
-				<p v-if="turns.length === 0" class="hint">
-					Ask a question about your lab data in plain English — for example
-					“how many samples per material?” or “average tensile strength by
-					alloy”. Answers run as guarded, read-only queries; follow-up questions
-					refine the previous one.
-				</p>
+				<div v-if="turns.length === 0">
+					<p class="hint">
+						Ask a question about your lab data in plain English. Answers run as
+						guarded, read-only queries; follow-up questions refine the previous
+						one. Click an example to try it:
+					</p>
+					<ExampleChips :disabled="busy()" @pick="submit" />
+				</div>
 
 				<div v-for="(turn, i) in turns" :key="i" class="turn">
 					<div class="question">{{ turn.question }}</div>
@@ -101,6 +154,10 @@ function cell(value: unknown): string {
 
 					<div v-else-if="turn.status === 'error'" class="answer error">
 						<p>{{ turn.error }}</p>
+						<p v-if="turn.detail" class="detail" data-test="ask-detail">
+							{{ turn.detail }}
+						</p>
+						<ExampleChips v-if="turn.suggest" :disabled="busy()" @pick="submit" />
 						<details v-if="turn.sql" data-test="ask-sql">
 							<summary>Rejected SQL</summary>
 							<pre>{{ turn.sql }}</pre>
@@ -143,11 +200,15 @@ function cell(value: unknown): string {
 								</tbody>
 							</table>
 						</div>
+						<p v-if="turn.truncated" class="hint truncated" data-test="ask-truncated">
+							Showing the first {{ turn.rowCount }} rows. Ask for something more
+							specific (a filter or a count) to see the rest.
+						</p>
 					</div>
 				</div>
 			</div>
 
-			<form class="composer" @submit.prevent="submit">
+			<form class="composer" @submit.prevent="submit()">
 				<input
 					v-model="input"
 					data-test="ask-input"
@@ -195,6 +256,14 @@ function cell(value: unknown): string {
 }
 .answer.error p {
 	color: var(--theme--danger, #e35169);
+}
+.answer.error p.detail {
+	color: var(--theme--foreground-subdued, #6c7789);
+	font-size: 13px;
+}
+.truncated {
+	margin-top: 8px;
+	font-size: 13px;
 }
 .sql summary {
 	cursor: pointer;

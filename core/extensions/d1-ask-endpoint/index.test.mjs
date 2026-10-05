@@ -81,6 +81,43 @@ test('only messages are forwarded; row_limit and extra keys are dropped', async 
     assert.deepEqual(forwarded.messages, goodBody.messages);
 });
 
+test('row_count and truncated are relayed unchanged', async () => {
+    const payload = {
+        sql: 'SELECT 1',
+        columns: ['a'],
+        rows: [{ a: 1 }],
+        row_count: 1,
+        truncated: true,
+        chart: null,
+    };
+    const h = mount(
+        ENV,
+        async () => new Response(JSON.stringify(payload), { status: 200 }),
+    );
+    const r = await call(h, { user: 'u', app: true }, goodBody);
+    assert.equal(r.status, 200);
+    assert.deepEqual(JSON.parse(r.body), payload);
+});
+
+test('plugin 422 guard rejections are relayed with their status', async () => {
+    const payload = { error: 'generated SQL rejected', reason: 'nope', sql: 'DROP' };
+    const h = mount(
+        ENV,
+        async () => new Response(JSON.stringify(payload), { status: 422 }),
+    );
+    const r = await call(h, { user: 'u', app: true }, goodBody);
+    assert.equal(r.status, 422);
+    assert.deepEqual(JSON.parse(r.body), payload);
+});
+
+test('unreachable plugin is 502', async () => {
+    const h = mount(ENV, async () => {
+        throw new TypeError('fetch failed');
+    });
+    const r = await call(h, { user: 'u', app: true }, goodBody);
+    assert.equal(r.status, 502);
+});
+
 test('timeout is 504', async () => {
     const h = mount(ENV, async () => {
         throw new DOMException('timed out', 'TimeoutError');

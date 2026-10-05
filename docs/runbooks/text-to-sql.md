@@ -113,9 +113,15 @@ Response:
 {
   "sql": "SELECT sample_code, mass_grams FROM v_complete_sample_history WHERE mass_grams > 50",
   "columns": ["sample_code", "mass_grams"],
-  "rows": [ ... ]
+  "rows": [ ... ],
+  "row_count": 42,
+  "truncated": false
 }
 ```
+
+Results are capped at `row_limit` rows (default 200, max 1000). The query fetches one
+extra row to find out whether more existed: `truncated` is `true` when it did, and `rows`
+then holds exactly `row_limit` rows. `/api/chat` returns the same two fields.
 
 If the model emits unsafe or off-menu SQL the API returns **422** with the
 rejection reason and the offending SQL — it is never executed. See ADR-0009 and
@@ -214,7 +220,11 @@ with **Plotly charts**. Two extensions in `core/extensions/`:
   `WORKER_WEBHOOK_SECRET` so the browser never sees it. The plugin stays on the
   internal network — no host port needed.
 - `d1-ask-db` — the module (sidebar entry **Ask the Database**). Multi-turn chat;
-  each answer shows the generated SQL, a table, and a chart when one fits.
+  each answer shows the generated SQL, a table, and a chart when one fits. The empty
+  chat offers example-question chips (bundled in `src/examples.ts`, picked from
+  `eval/questions.json`), a "Showing the first N rows" note appears when the result
+  was truncated, and failures (guard rejection, 401/403, 502, 504) show a plain-language
+  message instead of the raw error.
 
 Setup:
 
