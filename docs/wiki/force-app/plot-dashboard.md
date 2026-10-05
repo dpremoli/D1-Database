@@ -217,6 +217,18 @@ the filtered spectrum is drawn dashed over the active axis:
   It is heavier, needs the force orchestrator, and is **admin-only**.
 - **Clear** removes an applied chain.
 
+## Sharing a view
+
+The address bar always describes the view you are looking at, so you can copy it into a message
+and the recipient lands on the same thing. **Copy link** in the header copies the full URL. The
+link carries the cut (`operation`), the Signals mode (`m`) and axis (`ax`), the zoom window (`z`),
+the Compare set (`cmp`, with `ref` and `diff` for the difference view), the FRM view (`fm`) and
+Z series (`zs`), an unsaved crop preview (`crop`) and a locked colour-scale range (`cs`). Anything
+a link names that the cut cannot show (for example Lite on a cut with no live cache) is ignored
+and the default is used. The address updates a moment after each change without adding browser
+history entries; the Compare set only includes cuts from your own list, so a recipient who cannot
+see one of them simply does not get it. It works the same in the Directus *Force Analysis* module.
+
 ## Adding panels
 
 **+ Add** in the header adds a panel: another **Signals** or **FRM map** panel, a **Wear trend**

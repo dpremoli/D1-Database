@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import ForceChart from './ForceChart.vue';
 import { pickMode, type FrmMode } from './frmMode';
 import { perKeyComputed } from './perKeyComputed';
@@ -31,10 +31,13 @@ import { statsCsvColumns } from './statsCsv';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
 import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
+import { debounce } from './debounce';
+import { decodeViewState, encodeViewState, VIEW_QUERY_KEYS, type ViewState } from './viewState';
 
 const host = useForceHost();
 const api = host.api;
 const route = useRoute();
+const router = useRouter();
 
 // Roles that see every sample/operation regardless of ownership (Administrator,
 // Lab Admin). Everyone else (e.g. Lab Member) only sees analyses whose sample
@@ -1075,14 +1078,19 @@ onMounted(async () => {
 		// Deep-link: /d1-force-dashboard?operation=<operation_id>, e.g. from the
 		// "View Force Analysis" button on the operation form. Falls back to the last
 		// selection (persisted) so navigating away and back restores the view.
-		const opParam = typeof route.query.operation === 'string'
-			? route.query.operation
-			: (() => { try { return localStorage.getItem(LAST_OP_KEY) || undefined; } catch { return undefined; } })();
+		// The rest of the query (mode, axes, zoom, compare set ...) is applied once the op has loaded.
+		const initialView = decodeViewState(route.query);
+		const opParam = initialView.operation
+			?? (() => { try { return localStorage.getItem(LAST_OP_KEY) || undefined; } catch { return undefined; } })();
 		if (opParam) {
 			const match = rows.value.find((r) => r.operation_id?.operation_id === opParam);
-			if (match) await selectOp(match);
+			if (match) {
+				await selectOp(match);
+				await applyViewState(initialView);
+			}
 		}
 	} finally {
+		viewReady = true;   // from here on the address bar follows the view
 		loading.value = false;
 		// .layout swaps from hidden to visible here; re-measure in case the
 		// spinner-to-content swap shifted anything (defensive, cheap).
@@ -1854,6 +1862,85 @@ function clearCompare() { compareIds.value = []; }
 // whole point), but one that is now the primary must not also be drawn as a comparison.
 watch(selectedRowId, (id) => { if (id) compareIds.value = compareIds.value.filter((x) => x !== id); });
 
+// ---- Shareable view (viewState.ts) ----------------------------------------------------------
+// The address bar mirrors the view so any URL is a link back to it. Both hosts run vue-router, so
+// router.replace works unchanged in the standalone app and the Directus module. Writing waits for
+// the initial query to be applied (viewReady), or the first change would erase what a pasted link
+// asked for. The component is kept alive (#24), so a write is also skipped while another route is
+// showing: the router is shared, and replacing its query then would corrupt that page's URL.
+const viewPath = route.path;
+let viewReady = false;
+let pendingCrop: [number, number] | null = null;
+const currentOperationId = computed<string | undefined>(
+	() => rows.value.find((r) => r.id === selectedRowId.value)?.operation_id?.operation_id || undefined,
+);
+const viewState = computed<Partial<ViewState>>(() => ({
+	operation: currentOperationId.value,
+	mode: chartMode.value,
+	axis: axis.value,
+	zoom: zoomStart.value != null && zoomEnd.value != null ? [zoomStart.value, zoomEnd.value] : undefined,
+	crop: liveOn.value && cropDirty.value ? [cropStartSec.value, cropEndSec.value] : undefined,
+	compare: compareIds.value,
+	frm: frmMode.value,
+	zSeries: zSeries.value,
+	scale: locked.value
+		? [colorScale.value.baseMin ?? colorScale.value.satMin, colorScale.value.baseMax ?? colorScale.value.satMax]
+		: undefined,
+}));
+const viewQuery = computed(() => encodeViewState(viewState.value));
+function mergedQuery(): Record<string, any> {
+	const q: Record<string, any> = { ...route.query };
+	for (const k of VIEW_QUERY_KEYS) delete q[k];
+	return { ...q, ...viewQuery.value };
+}
+const writeViewQuery = debounce(() => {
+	if (!viewReady || !activation.active || route.path !== viewPath) return;
+	const q = mergedQuery();
+	if (JSON.stringify(q) === JSON.stringify(route.query)) return;
+	router.replace({ path: route.path, query: q, hash: route.hash }).catch(() => { /* a superseded navigation */ });
+}, 400);
+watch(viewQuery, () => writeViewQuery());
+onDeactivated(() => writeViewQuery.cancel());
+onBeforeUnmount(() => writeViewQuery.cancel());
+
+function viewUrl(): string {
+	return new URL(router.resolve({ path: route.path, query: mergedQuery(), hash: route.hash }).href, window.location.href).href;
+}
+const { copied: linkCopied, failed: linkCopyFailed, copy: copyViewLink } = useCopyFeedback(viewUrl);
+
+// Apply a decoded view on top of the freshly loaded op. Each field is re-checked against what this
+// op can actually show (a link can name a mode its cut has no cache for), and none can throw.
+async function applyViewState(v: Partial<ViewState>) {
+	await nextTick();   // let the op-change watchers (default mode, zoom/colour resets) settle first
+	if (v.frm && (v.frm !== 'lite' || liveAvailable.value) && (v.frm !== 'full' || octreeAvailable.value)) chooseMode(v.frm);
+	if (v.mode) chartMode.value = v.mode;
+	if (v.axis) axis.value = v.axis;
+	if (v.zSeries) zSeries.value = v.zSeries;
+	if (v.compare) {
+		for (const id of v.compare) {
+			const row = rows.value.find((r) => r.id === id);
+			if (row && id !== selectedRowId.value) await addCompare(row);
+		}
+	}
+	await nextTick();   // chartMode/op changes reset the zoom; set it after
+	if (v.zoom) { zoomStart.value = v.zoom[0]; zoomEnd.value = v.zoom[1]; }
+	if (v.scale) {
+		colorScale.value = withAutoRange(colorScale.value, v.scale[0], v.scale[1]);
+		locked.value = true;
+	}
+	if (v.crop) {
+		// The crop handles are re-seeded from the cache when it parses (onCloudLoaded), which may
+		// land after this; keep the request and apply it there too.
+		pendingCrop = v.crop;
+		applyPendingCrop();
+	}
+}
+function applyPendingCrop() {
+	if (!pendingCrop) return;
+	cropStartSec.value = pendingCrop[0]; cropEndSec.value = pendingCrop[1];
+	pendingCrop = null;
+}
+
 // Selected axes for a panel (spectral views render one SpectrumView per axis, like the force plot).
 function axesFor(item: RPanel): Axis[] {
 	const sel = (item.channels && item.channels.length ? item.channels : AXES) as readonly Axis[];
@@ -1880,6 +1967,7 @@ function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam:
 	// the diameter below. Absent an override, the cache's crop is the best available.
 	if (savedCropSec.value) { cropStartSec.value = savedCropSec.value.start; cropEndSec.value = savedCropSec.value.end; }
 	else { cropStartSec.value = meta.csSec; cropEndSec.value = meta.ceSec; }
+	applyPendingCrop();   // a shared link's crop preview beats the cache's own window
 	editFeed.value = cleanFloat(meta.feed);
 	editDiam.value = cleanFloat(meta.diam);
 	const od = Number(detail.value?.outer_diameter);
@@ -2247,6 +2335,9 @@ function fmtDateTime(v: string | null | undefined) {
 						</div>
 					</div>
 					<button class="pt-chip" title="Reset panel layout" @click="resetRightLayout"><v-icon name="grid_view" x-small /></button>
+					<button class="pt-chip" title="Copy a link that reopens this view (cut, mode, axes, zoom, compare set)" :disabled="!selectedRowId" @click="copyViewLink">
+						<v-icon name="link" x-small /> {{ linkCopied ? 'Copied' : linkCopyFailed ? 'Copy failed' : 'Copy link' }}
+					</button>
 				</div>
 			</section>
 
