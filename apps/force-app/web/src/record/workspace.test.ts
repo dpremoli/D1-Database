@@ -564,6 +564,26 @@ describe('workspace.newRun() (R3)', () => {
 		expect(w.meta.notes).toBe('kept');
 	});
 
+	it('clears a pass code that is the auto-composed Cut ID, but not free text', async () => {
+		const w = await make();
+		w.link.sampleLabel = 'S-1'; w.meta.op_type = 'MT-F'; w.machining.operation_sequence = '4';
+		w.meta.operation = 'S-1-MT4';   // what the Cut ID "use" button copies in
+		w.newRun();
+		expect(w.meta.operation).toBe('');
+		expect(w.machining.operation_sequence).toBe('5');
+		w.meta.operation = 'hand-typed';
+		w.newRun();
+		expect(w.meta.operation).toBe('hand-typed');
+	});
+
+	it('keeps the composed pass code when the cut is discarded (same cut)', async () => {
+		const w = await make();
+		w.link.sampleLabel = 'S-1'; w.meta.op_type = 'MT-F'; w.machining.operation_sequence = '4';
+		w.meta.operation = 'S-1-MT4';
+		w.newRun(false);
+		expect(w.meta.operation).toBe('S-1-MT4');
+	});
+
 	it('leaves a blank or non-numeric sequence alone', async () => {
 		const w = await make();
 		w.newRun();

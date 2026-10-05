@@ -48,6 +48,17 @@ export function opTypeCategory(opType: string): 'turning' | 'milling' | null {
 	return null;
 }
 
+/** The Cut ID the Metadata panel shows and its "use" button copies into the pass code:
+ *  {sample code}-{first two alphanumerics of the operation type, upper-case}{sequence}. */
+export function composeCutId(
+	link: { sampleLabel: string }, meta: Record<string, string>, machining: { operation_sequence: string },
+): string {
+	const code = (link.sampleLabel || meta.sample_code || meta.sample_name || '').trim();
+	const type = (meta.op_type || '').trim().replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 2);
+	const seq = String(machining.operation_sequence ?? '').trim();
+	return [code, `${type}${seq}`].filter(Boolean).join('-');
+}
+
 export function createWorkspace() {
 	const client = new RecordClient();
 	const SOURCE_LS_KEY = 'force-app.source';
@@ -542,8 +553,11 @@ export function createWorkspace() {
 		if (!nextCut) return;
 		// R3: the next cut is a new pass. Step the sequence when it is a whole number (a blank or
 		// free-text one is left alone), so the Cut ID {sample}-{TYPE}{seq} does not repeat, and drop
-		// the previous cut's chips and new-edge marks. The typed pass code (meta.operation) is free
-		// text and is not touched.
+		// the previous cut's chips and new-edge marks. Free-text pass codes are not touched.
+		// A pass code that is just the auto-composed Cut ID (the Metadata panel's "use" button) belongs
+		// to the cut that just ended, so it is cleared and the panel composes the next one; free text
+		// the operator typed is left alone.
+		if (meta.operation.trim() && meta.operation.trim() === composeCutId(link, meta, machining)) meta.operation = '';
 		const seq = machining.operation_sequence.trim();
 		if (/^\d+$/.test(seq)) machining.operation_sequence = String(Number(seq) + 1);
 		machining.chips_ref = ''; machining.chips_collected = false; machining.new_edge = false;
