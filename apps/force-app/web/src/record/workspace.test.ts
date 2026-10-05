@@ -573,6 +573,17 @@ describe('workspace.newRun() (R3)', () => {
 		expect(w.machining.operation_sequence).toBe('2b');
 	});
 
+	it('closing a failed start keeps the sequence, chips and new-edge mark (nothing was captured)', async () => {
+		const w = await make();
+		w.machining.operation_sequence = '4'; w.machining.chips_ref = 'CH-4'; w.machining.new_edge = true;
+		w.saveOpen.value = true;
+		w.dismissFailedStart();
+		expect(w.saveOpen.value).toBe(false);
+		expect(w.machining.operation_sequence).toBe('4');
+		expect(w.machining.chips_ref).toBe('CH-4');
+		expect(w.machining.new_edge).toBe(true);
+	});
+
 	it('a discarded cut keeps the sequence and the per-cut marks (the retake is the same cut)', async () => {
 		const w = await make();
 		w.machining.operation_sequence = '4'; w.machining.chips_ref = 'CH-4'; w.machining.new_edge = true;
