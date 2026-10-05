@@ -99,6 +99,14 @@ chip removes it and **Clear** removes all:
 
 ![Comparing two cuts](../images/force-app/plot-compare.png)
 
+**Difference vs a reference.** Click **ref** on one chip to make it the reference, then turn on
+**Difference**. A small trace appears under the Compare bar showing the selected axis (the one
+highlighted for the FRM map) of the current cut minus the reference, with the mean and RMS of the
+difference in newtons. What the two passes share (tool and machine signature) cancels, so what is
+left points at material or wear. It uses the force envelopes already loaded for Compare, aligned in
+time over the stretch both cuts cover; if they do not overlap you get a note instead. Removing the
+reference chip turns Difference off.
+
 ## FRM map panel
 
 | View | What it is |

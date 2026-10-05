@@ -32,6 +32,7 @@ import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltere
 import { useForceHost } from './host';
 import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
 import { debounce } from './debounce';
+import { diffEnvelopes } from './compare';
 import { decodeViewState, encodeViewState, VIEW_QUERY_KEYS, type ViewState } from './viewState';
 
 const host = useForceHost();
@@ -1858,6 +1859,48 @@ async function addCompare(row: any) {
 }
 function removeCompare(id: string) { compareIds.value = compareIds.value.filter((x) => x !== id); }
 function clearCompare() { compareIds.value = []; }
+
+// ---- Difference vs a reference pass (compare.ts) ----------------------------------------------
+// One chip can be marked as the reference; Difference then shows (this cut - reference) for the
+// selected axis, from the envelopes Compare already loaded (no extra fetch), with its mean and RMS.
+const compareRefId = ref<string | null>(null);
+const diffOn = ref(false);
+function toggleCompareRef(id: string) {
+	compareRefId.value = compareRefId.value === id ? null : id;
+	if (!compareRefId.value) diffOn.value = false;
+}
+// A removed chip can no longer be the reference.
+watch(compareIds, (ids) => {
+	if (compareRefId.value && !ids.includes(compareRefId.value)) { compareRefId.value = null; diffOn.value = false; }
+});
+const compareRefLabel = computed(() => (compareRefId.value && compareData.value[compareRefId.value]?.label) || '');
+const diffResult = computed(() => {
+	if (!diffOn.value || !compareRefId.value) return null;
+	return diffEnvelopes(detail.value?.series?.[axis.value], compareData.value[compareRefId.value]?.series?.[axis.value]);
+});
+const DIFF_W = 260, DIFF_H = 44;
+// Polyline of the difference, min/max-binned to the sparkline width so a spike is never averaged
+// away; the zero line is drawn separately.
+const diffSpark = computed(() => {
+	const r = diffResult.value;
+	if (!r) return null;
+	const n = r.diff.length;
+	let lo = 0, hi = 0;
+	for (let i = 0; i < n; i++) { if (r.diff[i] < lo) lo = r.diff[i]; if (r.diff[i] > hi) hi = r.diff[i]; }
+	const span = (hi - lo) || 1;
+	const y = (v: number) => (DIFF_H - 3 - ((v - lo) / span) * (DIFF_H - 6)).toFixed(1);
+	const bins = Math.min(n, DIFF_W);
+	let d = '';
+	for (let b = 0; b < bins; b++) {
+		const i0 = Math.floor((b * n) / bins), i1 = Math.max(i0 + 1, Math.floor(((b + 1) * n) / bins));
+		let bl = Infinity, bh = -Infinity;
+		for (let i = i0; i < i1; i++) { if (r.diff[i] < bl) bl = r.diff[i]; if (r.diff[i] > bh) bh = r.diff[i]; }
+		const x = ((b / Math.max(1, bins - 1)) * DIFF_W).toFixed(1);
+		d += `${b ? 'L' : 'M'}${x},${y(bl)} L${x},${y(bh)} `;
+	}
+	return { d, zeroY: y(0), t0: r.t[0], t1: r.t[r.t.length - 1] };
+});
+const fmtDelta = (v: number) => `${v >= 0 ? '+' : '\u2212'}${Math.abs(v).toPrecision(3)}`;
 // Selecting a different primary cut keeps the comparisons (comparing a series of passes is the
 // whole point), but one that is now the primary must not also be drawn as a comparison.
 watch(selectedRowId, (id) => { if (id) compareIds.value = compareIds.value.filter((x) => x !== id); });
@@ -1881,6 +1924,8 @@ const viewState = computed<Partial<ViewState>>(() => ({
 	zoom: zoomStart.value != null && zoomEnd.value != null ? [zoomStart.value, zoomEnd.value] : undefined,
 	crop: liveOn.value && cropDirty.value ? [cropStartSec.value, cropEndSec.value] : undefined,
 	compare: compareIds.value,
+	reference: compareRefId.value ?? undefined,
+	diff: diffOn.value,
 	frm: frmMode.value,
 	zSeries: zSeries.value,
 	scale: locked.value
@@ -1922,6 +1967,7 @@ async function applyViewState(v: Partial<ViewState>) {
 			if (row && id !== selectedRowId.value) await addCompare(row);
 		}
 	}
+	if (v.reference && compareIds.value.includes(v.reference)) { compareRefId.value = v.reference; diffOn.value = !!v.diff; }
 	await nextTick();   // chartMode/op changes reset the zoom; set it after
 	if (v.zoom) { zoomStart.value = v.zoom[0]; zoomEnd.value = v.zoom[1]; }
 	if (v.scale) {
@@ -2733,6 +2779,9 @@ function fmtDateTime(v: string | null | undefined) {
 								<span class="cmp-label"><v-icon name="stacked_line_chart" x-small /> Compare</span>
 								<span v-for="c in compareItems" :key="c.id" class="cmp-chip" :style="{ borderColor: c.color, color: c.color }">
 									{{ c.label }}
+									<button class="cmp-ref" :class="{ on: compareRefId === c.id }" :aria-pressed="compareRefId === c.id"
+										:title="compareRefId === c.id ? 'Reference for Difference (click to unset)' : 'Use as the reference for Difference'"
+										@click="toggleCompareRef(c.id)">ref</button>
 									<button class="cmp-x" title="Remove from comparison" @click="removeCompare(c.id)">×</button>
 								</span>
 								<span v-if="compareBusy" class="cmp-hint">loading…</span>
@@ -2748,6 +2797,23 @@ function fmtDateTime(v: string | null | undefined) {
 									</div>
 								</div>
 								<button v-if="compareItems.length" class="tbtn" title="Clear all comparisons" @click="clearCompare">Clear</button>
+								<button v-if="compareItems.length" class="tbtn" :class="{ on: diffOn }" :style="diffOn ? { background: 'var(--theme--primary, #6644ff)', borderColor: 'var(--theme--primary, #6644ff)' } : {}" :disabled="!compareRefId" :aria-pressed="diffOn"
+									:title="compareRefId ? `Show ${axis} of this cut minus ${compareRefLabel}` : 'Mark a cut as ref first'"
+									@click="diffOn = !diffOn">Difference</button>
+							</div>
+							<div v-if="diffOn && compareRefId" class="cmp-diff">
+								<template v-if="diffResult && diffSpark">
+									<svg :viewBox="`0 0 ${DIFF_W} ${DIFF_H}`" :width="DIFF_W" :height="DIFF_H" role="img"
+										:aria-label="`${axis} difference versus ${compareRefLabel}`">
+										<line x1="0" :x2="DIFF_W" :y1="diffSpark.zeroY" :y2="diffSpark.zeroY" class="cmp-diff-zero" />
+										<path :d="diffSpark.d" fill="none" class="cmp-diff-line" />
+									</svg>
+									<span class="cmp-diff-read">
+										<b>{{ axis }}</b> − {{ compareRefLabel }}, {{ diffSpark.t0.toFixed(1) }}–{{ diffSpark.t1.toFixed(1) }} s:
+										mean {{ fmtDelta(diffResult.mean) }} N · RMS {{ diffResult.rms.toPrecision(3) }} N
+									</span>
+								</template>
+								<span v-else class="cmp-hint">No overlapping time range with the reference for {{ axis }}.</span>
 							</div>
 							<div v-if="!detail" class="empty">Select an operation to view its signals</div>
 							<div v-else-if="isSpectral" class="charts-col">
@@ -3160,6 +3226,14 @@ function fmtDateTime(v: string | null | undefined) {
 	padding: 1px 4px 1px 8px; border: 1px solid; border-radius: 99px; }
 .cmp-x { border: 0; background: none; cursor: pointer; color: inherit; font-size: var(--fs-md, 13px); line-height: 1; padding: 0 3px; }
 .cmp-hint { font-size: var(--fs-xs, 11px); color: var(--theme--foreground-subdued, #98a2b3); }
+.cmp-ref { border: 1px solid currentColor; background: none; cursor: pointer; color: inherit; font-size: 9px; font-weight: 700;
+	line-height: 1.4; padding: 0 4px; border-radius: 4px; opacity: 0.6; text-transform: uppercase; }
+.cmp-ref.on { opacity: 1; box-shadow: inset 0 0 0 1px currentColor; }
+.cmp-diff { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 2px 4px 6px; font-size: var(--fs-xs, 11px); }
+.cmp-diff svg { flex: none; max-width: 100%; border: 1px solid var(--theme--border-color-subdued, #e4eaf1); border-radius: 4px; background: var(--plot-bg, transparent); }
+.cmp-diff-zero { stroke: var(--theme--foreground-subdued, #98a2b3); stroke-width: 1; stroke-dasharray: 3 3; }
+.cmp-diff-line { stroke: var(--theme--primary, #6644ff); stroke-width: 1.2; }
+.cmp-diff-read { font-variant-numeric: tabular-nums; }
 .cmp-add { position: relative; }
 .cmp-menu { position: absolute; top: 24px; left: 0; z-index: 40; min-width: 200px; max-height: 280px;
 	overflow: auto; padding: 4px; background: var(--theme--background, #fff);
