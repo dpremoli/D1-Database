@@ -37,14 +37,16 @@ describe('safeFilePart', () => {
 describe('copyText fallback', () => {
 	afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 	function fakeDoc(execResult: boolean | 'throw') {
-		const ta: any = { value: '', style: {}, setAttribute: () => {}, select: vi.fn(), remove: vi.fn() };
+		const ta: any = { value: '', style: {}, setAttribute: () => {}, focus: vi.fn(), select: vi.fn(), remove: vi.fn() };
+		const button = { focus: vi.fn() };
 		const doc = {
+			activeElement: button,
 			createElement: vi.fn(() => ta),
 			body: { appendChild: vi.fn() },
 			execCommand: vi.fn(() => { if (execResult === 'throw') throw new Error('no'); return execResult; }),
 		};
 		vi.stubGlobal('document', doc);
-		return { ta, doc };
+		return { ta, doc, button };
 	}
 
 	it('uses navigator.clipboard when it exists', async () => {
@@ -56,11 +58,12 @@ describe('copyText fallback', () => {
 
 	it('falls back to execCommand when navigator.clipboard is undefined (http host)', async () => {
 		vi.stubGlobal('navigator', {});
-		const { ta, doc } = fakeDoc(true);
+		const { ta, doc, button } = fakeDoc(true);
 		expect(await copyText('a,b')).toBe(true);
 		expect(ta.value).toBe('a,b');
 		expect(doc.execCommand).toHaveBeenCalledWith('copy');
 		expect(ta.remove).toHaveBeenCalled();
+		expect(button.focus).toHaveBeenCalled();   // focus handed back, not left on <body>
 	});
 
 	it('falls back when the async API rejects', async () => {
