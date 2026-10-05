@@ -466,6 +466,62 @@ describe('remembered setup (R1)', () => {
 		expect(stored().meta.op_type).toBe('MT-F');
 	});
 
+	const SETUP = {
+		cfg: { rpm: 900 },
+		link: { sampleId: 's1', sampleLabel: 'S-1', equipmentId: 'e1', equipmentLabel: 'Lathe', operatorId: 'p1', operatorLabel: 'Pat' },
+		meta: { sample_name: 'S-1', sample_code: 'S-1', op_type: 'MT-F', coolant: 'flood' },
+	};
+
+	it('Replay then straight back to Simulated keeps the remembered setup, in storage and in the form', async () => {
+		seed(SETUP);
+		const w = await make();
+		w.setSource('replay');
+		w.setSource('sim');
+		await nextTick();
+		pageHide();
+		expect(stored().link.sampleId).toBe('s1');
+		expect(stored().link.equipmentId).toBe('e1');
+		expect(stored().meta.op_type).toBe('MT-F');
+		expect(w.link).toMatchObject({ sampleId: 's1', equipmentId: 'e1', operatorId: 'p1' });
+		expect(w.meta).toMatchObject({ sample_name: 'S-1', op_type: 'MT-F', coolant: 'flood' });
+	});
+
+	it('a cut picked in Replay does not become the setup when switching to NI-DAQ', async () => {
+		seed(SETUP);
+		dx.get.mockResolvedValueOnce({ data: new ArrayBuffer(8) }).mockResolvedValueOnce({ data: { data: {
+			sample_id: { sample_id: 'arch-s', sample_code: 'ARCH' },
+			operator_person_id: { person_id: 'arch-p', full_name: 'Archie' },
+			equipment_id: { equipment_id: 'arch-e', equipment_name: 'Mill 9' },
+			machining_operation_subtype: 'MM-S', machining_axial_depth_of_cut_mm: 3,
+			recorded_metadata: { sample_name: 'ARCH', coolant: 'dry' },
+		} } });
+		const w = await make();
+		vi.spyOn(w.playback, 'load').mockImplementation(() => {});
+		w.setSource('replay');
+		await w.pickReplayCut({ label: 'c', cacheId: 'cache-c', opId: 'c', operationId: 'op-c', ppr: null, outerDiam: null, innerDiam: null, sampleRate: null, cropStartSec: null });
+		expect(w.link.sampleId).toBe('arch-s');   // hydrated for playback
+		w.setSource('nidaq');
+		await nextTick();
+		pageHide();
+		expect(stored().link).toMatchObject({ sampleId: 's1', operatorId: 'p1', equipmentId: 'e1' });
+		expect(stored().meta).toMatchObject({ op_type: 'MT-F', coolant: 'flood', sample_name: 'S-1' });
+		expect(stored().machining.axial_doc).toBe('');
+		expect(w.link).toMatchObject({ sampleId: 's1', operatorId: 'p1', equipmentId: 'e1' });
+		expect(w.meta).toMatchObject({ sample_name: 'S-1', op_type: 'MT-F', coolant: 'flood' });
+		expect(w.machining.axial_doc).toBe('');
+	});
+
+	it('an edit made just before entering Replay is stored, and not lost to the clearing', async () => {
+		seed(SETUP);
+		const w = await make();
+		w.cfg.rpm = 1500;
+		w.setSource('replay');   // synchronously after the edit: the watcher has not run yet
+		await nextTick();
+		pageHide();
+		expect(stored().cfg.rpm).toBe(1500);
+		expect(stored().link.sampleId).toBe('s1');
+	});
+
 	it('a launch that opens straight into Replay does not bring Sample/Machine/type back', async () => {
 		localStorage.setItem('force-app.source', 'replay');
 		seed({ link: { sampleId: 's1', sampleLabel: 'S-1', equipmentId: 'e1', equipmentLabel: 'Lathe', operatorId: 'p1', operatorLabel: 'Pat' }, meta: { op_type: 'MT-F', sample_name: 'S-1' } });

@@ -64,6 +64,15 @@ export function createWorkspace() {
 	// auto-detect re-reads localStorage fresh (not a value captured before the click) right before
 	// it would apply, closing the race regardless of which finishes first.
 	function setSource(s: 'sim' | 'replay' | 'nidaq') {
+		const prev = source.value;
+		// Entering Replay: store the setup as it is NOW, synchronously, and drop any pending push.
+		// Replay clears and then hydrates Sample/Machine/type from the archived cut, and the
+		// "don't save in Replay" decision is made when a value is pushed (the setup watcher), not
+		// when the debounce fires, so nothing pending can carry that state to storage later.
+		if (s === 'replay' && prev !== 'replay') {
+			setupSaver.cancel();
+			saveSetupPrefs(snapshotSetup());
+		}
 		// Entering Replay fresh (no cut loaded yet): Sample/Machine left over from an earlier
 		// Sim/NI-DAQ setup in this same session would otherwise silently AND-narrow searchCuts to
 		// that exact sample+machine and return zero rows — "no matches" on every search, with no
@@ -76,6 +85,9 @@ export function createWorkspace() {
 		}
 		source.value = s;
 		localStorage.setItem(SOURCE_LS_KEY, s);
+		// Leaving Replay: the form holds the cleared / archived-cut values, not the operator's
+		// setup. Put the stored one back (setup fields only; per-cut fields are not touched).
+		if (prev === 'replay' && s !== 'replay') restoreSetup(loadSetupPrefs());
 	}
 	const NIDAQ_LS_KEY = 'force-app.nidaq.channels';
 	const defaultChannels = ['cDAQ1Mod1/ai0', 'cDAQ1Mod1/ai1', 'cDAQ1Mod1/ai2', 'cDAQ1Mod1/ai3',
@@ -177,7 +189,7 @@ export function createWorkspace() {
 	// type on entering it (they would AND-narrow the cut search to nothing), so a launch that opens
 	// straight into Replay must not bring them back either, and nothing is written while in Replay
 	// (the cleared or replay-hydrated values are not the operator's setup; the stored one stays for
-	// the next Record launch). Leaving Replay pushes whatever the form then shows.
+	// the next Record launch). Leaving Replay restores the stored setup into the form.
 	function restoreSetup(s: SetupPrefs) {
 		Object.assign(cfg, s.cfg);
 		Object.assign(machining, s.machining);
@@ -191,10 +203,11 @@ export function createWorkspace() {
 	}
 	const snapshotSetup = () => pickSetup({ cfg, link, meta, machining });
 	restoreSetup(loadSetupPrefs());
-	// Same debounce/flush shape as plotSaver above.
-	const setupSaver = debouncePublish<SetupPrefs>((p) => { if (source.value !== 'replay') saveSetupPrefs(p); }, 250);
-	watch([cfg, meta, machining, link], () => setupSaver.push(snapshotSetup()), { deep: true });
-	watch(source, (s, prev) => { if (prev === 'replay' && s !== 'replay') setupSaver.push(snapshotSetup()); });
+	// Same debounce/flush shape as plotSaver above. Whether to save is decided when a value is
+	// PUSHED (never while in Replay), not when the debounce fires; setSource() stores the setup on
+	// the way into Replay and restores it on the way out.
+	const setupSaver = debouncePublish<SetupPrefs>(saveSetupPrefs, 250);
+	watch([cfg, meta, machining, link], () => { if (source.value !== 'replay') setupSaver.push(snapshotSetup()); }, { deep: true });
 	if (typeof window !== 'undefined') {
 		window.addEventListener('pagehide', setupSaver.flush);
 		window.addEventListener('beforeunload', setupSaver.flush);
