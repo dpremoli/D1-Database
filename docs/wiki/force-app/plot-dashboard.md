@@ -109,7 +109,9 @@ chip removes it and **Clear** removes all:
 | **Gridded** | an interpolated, filled-surface grid octree, also built on the host |
 
 **Fx / Fy / Fz** chooses the coloured axis. **2D / Z = Fx / Fy / Fz** lifts the map into 3D, with
-height driven by a force series; drag to rotate, and the slider sets the Z exaggeration:
+height driven by a force series (in Lite, each point is lifted by its force, so peaks stand out
+and the right-click pick and the linked marker follow the lifted points); drag to rotate, and the
+slider sets the Z exaggeration:
 
 ![The FRM map in 3D](../images/force-app/plot-frm-3d.png)
 
@@ -183,6 +185,9 @@ Computed in the browser from the live cache:
 - **Rail hits lo/hi %:** how often the signal sat at the amplifier's limits. Sustained rail hits
   (flagged **clip**) mean the channel was over-ranged and the data is clipped.
 - **RPM (window):** mean ± spread of spindle speed over the crop window.
+- **Download CSV / Copy:** next to the window range, saves (or copies) the table as CSV, one row
+  per axis, with units in the column names (`mean_N`, `rms_N`, `rpm_mean`…). The file is named
+  `signal_stats_<pass code>.csv`.
 
 > The demo cut in these screenshots shows *clip* on every axis. That is an artefact of the
 > simulated signal, not something a real recording would normally show.
@@ -227,7 +232,9 @@ Plot page resets without asking first.
 
 - **Wear trend** plots a force statistic across successive cuts on the same **edge** (or sample),
   against pass number or cumulative cutting length. It needs at least two completed operations
-  on the edge. Record the insert and edge on every cut to get a useful trend.
+  on the edge. Record the insert and edge on every cut to get a useful trend. **Download CSV**
+  or **Copy** exports every pass in the trend (pass code, pass number or cumulative cutting
+  length, peak Fx/Fy/Fz in N) as `wear_trend_<edge or sample>.csv`.
 - **Metadata doctor** checks the selected operation (**This op**), or every operation (**All**),
   for places where the two records of a cut disagree: the metadata the `.mat` file itself carries
   and the D1 operation record. Each finding offers a fix where one exists:

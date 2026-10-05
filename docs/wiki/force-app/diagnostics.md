@@ -61,7 +61,7 @@ a recipe stays reusable.
 | **Spatial view** | the full-resolution cloud, coloured by any channel the recipe produces (residual, Gi*, significance, cluster id, GLOSH, envelope band…). You can have several side by side. |
 | **Pipeline** | the recipe editor, with a live preview of any step over a framed region |
 | **Signal** | the anomaly signal along the cut, per force channel in the workpiece frame (Fp / Fc / Ff chips, or *All channels* to compare them) |
-| **Clusters** | a per-cluster summary table |
+| **Clusters** | a per-cluster summary table; **Download CSV** / **Copy** exports every row (`cluster_id`, `points`, `fraction_of_cut`, `mean_abs_resid_z`, `max_gi_star`, `r_min_mm`, `r_max_mm`) |
 | **Selection inspector** | statistics for the points you have selected |
 
 The workbench can also pop out into its own window (`/diag-panel/<analysis id>`) for a second
