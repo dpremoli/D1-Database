@@ -15,14 +15,14 @@ def _user(text="x"):
     return {"role": "user", "content": text}
 
 
-def _chat_with(client, body):
+def _chat_with(client, body, rows=None):
     with (
         patch("app.api.schema_context.build_system_prompt", return_value="prompt"),
         patch(
             "app.api.ollama_client.generate_sql_chat",
             return_value="SELECT sample_code FROM v_complete_sample_history",
         ),
-        patch("app.api.db.run_select", return_value=[]) as mock_run,
+        patch("app.api.db.run_select", return_value=rows or []) as mock_run,
         patch("app.api.ollama_client.suggest_chart", return_value=None),
     ):
         resp = client.post("/api/chat", json=body)
@@ -32,14 +32,71 @@ def _chat_with(client, body):
 def test_row_limit_is_clamped_to_the_maximum():
     resp, mock_run = _chat_with(_client(), {"messages": [_user()], "row_limit": 10**9})
     assert resp.status_code == 200
-    assert mock_run.call_args.args[0].strip().endswith(f"LIMIT {MAX_ROW_LIMIT}")
+    # The query fetches one probe row beyond the (clamped) limit.
+    assert mock_run.call_args.args[0].strip().endswith(f"LIMIT {MAX_ROW_LIMIT + 1}")
 
 
 def test_row_limit_default_and_explicit_value():
     _, mock_run = _chat_with(_client(), {"messages": [_user()]})
-    assert mock_run.call_args.args[0].strip().endswith("LIMIT 200")
+    assert mock_run.call_args.args[0].strip().endswith("LIMIT 201")
     _, mock_run = _chat_with(_client(), {"messages": [_user()], "row_limit": 7})
-    assert mock_run.call_args.args[0].strip().endswith("LIMIT 7")
+    assert mock_run.call_args.args[0].strip().endswith("LIMIT 8")
+
+
+def _rows(n):
+    return [{"sample_code": f"S{i}"} for i in range(n)]
+
+
+def test_chat_below_the_limit_is_not_truncated():
+    resp, _ = _chat_with(
+        _client(), {"messages": [_user()], "row_limit": 5}, rows=_rows(3)
+    )
+    body = resp.get_json()
+    assert body["row_count"] == 3
+    assert body["truncated"] is False
+    assert len(body["rows"]) == 3
+
+
+def test_chat_at_the_limit_is_not_truncated():
+    resp, _ = _chat_with(
+        _client(), {"messages": [_user()], "row_limit": 5}, rows=_rows(5)
+    )
+    body = resp.get_json()
+    assert body["row_count"] == 5
+    assert body["truncated"] is False
+    assert len(body["rows"]) == 5
+
+
+def test_chat_above_the_limit_is_truncated_to_exactly_the_limit():
+    # The probe query returns limit + 1 rows; one of them must be dropped.
+    resp, _ = _chat_with(
+        _client(), {"messages": [_user()], "row_limit": 5}, rows=_rows(6)
+    )
+    body = resp.get_json()
+    assert body["row_count"] == 5
+    assert body["truncated"] is True
+    assert body["rows"] == _rows(5)
+    assert body["columns"] == ["sample_code"]
+
+
+def test_ask_reports_row_count_and_truncated():
+    client = _client()
+    for returned, truncated in ((2, False), (3, False), (4, True)):
+        with (
+            patch("app.api.schema_context.build_system_prompt", return_value="prompt"),
+            patch(
+                "app.api.ollama_client.generate_sql",
+                return_value="SELECT sample_code FROM v_complete_sample_history",
+            ),
+            patch("app.api.db.run_select", return_value=_rows(returned)),
+        ):
+            resp = client.post(
+                "/api/ask", json={"question": "list samples", "row_limit": 3}
+            )
+        body = resp.get_json()
+        assert body["row_count"] == min(returned, 3)
+        assert len(body["rows"]) == body["row_count"]
+        assert body["truncated"] is truncated
 
 
 def test_bad_row_limit_is_422_and_nothing_runs():

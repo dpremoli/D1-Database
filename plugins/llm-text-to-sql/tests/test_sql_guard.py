@@ -136,6 +136,11 @@ def test_guard_wraps_with_limit():
     assert "v_complete_sample_history" in wrapped
 
 
+def test_guard_probe_fetches_one_extra_row():
+    wrapped = guard("SELECT * FROM v_complete_sample_history", row_limit=50, probe=True)
+    assert wrapped.strip().endswith("LIMIT 51")
+
+
 def test_guard_default_limit():
     wrapped = guard("SELECT * FROM v_test_sessions_full")
     assert f"LIMIT {DEFAULT_ROW_LIMIT}" in wrapped
