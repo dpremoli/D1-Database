@@ -75,3 +75,59 @@ export function alignAndDiff(
 
 	return { rev, aAligned, bAligned, diff };
 }
+
+// ---- Difference of two stored force envelopes -------------------------------------------------
+// The Plot page keeps each cut's force as a min/max envelope ({ t, min, max }) on the analysis row,
+// which is what Compare already has loaded for every chip. Differencing works on its mid-line,
+// aligned on the overlapping stretch of the two time bases (the "rev" argument of alignAndDiff is
+// just a monotone x; seconds here).
+
+export interface EnvelopeSeries { t: ArrayLike<number>; min: ArrayLike<number>; max: ArrayLike<number> }
+
+export interface EnvelopeDiff {
+	/** Shared x (seconds) the difference is sampled on. */
+	t: Float32Array;
+	/** current - reference. */
+	diff: Float32Array;
+	mean: number;
+	rms: number;
+}
+
+const MAX_DIFF_POINTS = 4000;
+
+function midLine(s: EnvelopeSeries): { x: Float32Array; y: Float32Array } | null {
+	const n = Math.min(s.t?.length ?? 0, s.min?.length ?? 0, s.max?.length ?? 0);
+	if (n < 2) return null;
+	const x = new Float32Array(n), y = new Float32Array(n);
+	for (let i = 0; i < n; i++) { x[i] = s.t[i]; y[i] = (s.min[i] + s.max[i]) / 2; }
+	return x[n - 1] > x[0] ? { x, y } : null;
+}
+
+/** Mean and root-mean-square of a difference trace. */
+export function diffStats(diff: ArrayLike<number>): { mean: number; rms: number } {
+	let sum = 0, sq = 0;
+	for (let i = 0; i < diff.length; i++) { sum += diff[i]; sq += diff[i] * diff[i]; }
+	const n = diff.length || 1;
+	return { mean: sum / n, rms: Math.sqrt(sq / n) };
+}
+
+/**
+ * current - reference over the time range both envelopes cover, or null when either is unusable or
+ * they do not overlap. Never throws: this feeds a live readout, and a bad cut should just show
+ * "no overlap" rather than break the panel.
+ */
+export function diffEnvelopes(current: EnvelopeSeries | null | undefined, reference: EnvelopeSeries | null | undefined): EnvelopeDiff | null {
+	if (!current || !reference) return null;
+	const a = midLine(current), b = midLine(reference);
+	if (!a || !b) return null;
+	const lo = Math.max(a.x[0], b.x[0]);
+	const hi = Math.min(a.x[a.x.length - 1], b.x[b.x.length - 1]);
+	if (!(hi > lo)) return null;
+	// Resolve the denser of the two traces, bounded so a long recording stays cheap to redraw.
+	const density = Math.max(a.x.length / (a.x[a.x.length - 1] - a.x[0]), b.x.length / (b.x[b.x.length - 1] - b.x[0]));
+	const spr = Math.min(density, MAX_DIFF_POINTS / (hi - lo));
+	try {
+		const r = alignAndDiff(a.x, a.y, b.x, b.y, spr);
+		return { t: r.rev, diff: r.diff, ...diffStats(r.diff) };
+	} catch { return null; }
+}
