@@ -11,8 +11,9 @@ Items already tracked as open issues (#108, #100, #97, #90, #86, #81, #80, #67, 
 Items marked *(idea)* are judgement calls the reviewers did not confirm in code. Sizes are S, M
 or L. Paths are relative to the repo root.
 
-**Status:** the "Fix first" items and the "Small, high-value" batch are being worked in
-[`docs/superpowers/plans/2026-10-05-ux-fixes-and-quick-wins.md`](../superpowers/plans/2026-10-05-ux-fixes-and-quick-wins.md).
+**Status:** the "Fix first" items and the "Small, high-value" batch shipped in PR #123 (merged
+2026-10-05); its description lists what changed. The "Next" tier (P3, P4, R4, R5, D4, D3) is in
+[`docs/superpowers/plans/2026-10-06-ux-next-tier.md`](../superpowers/plans/2026-10-06-ux-next-tier.md).
 Everything else is backlog.
 
 ## Fix first — broken or risky, not new features
