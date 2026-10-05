@@ -466,6 +466,62 @@ describe('remembered setup (R1)', () => {
 		expect(stored().meta.op_type).toBe('MT-F');
 	});
 
+	const SETUP = {
+		cfg: { rpm: 900 },
+		link: { sampleId: 's1', sampleLabel: 'S-1', equipmentId: 'e1', equipmentLabel: 'Lathe', operatorId: 'p1', operatorLabel: 'Pat' },
+		meta: { sample_name: 'S-1', sample_code: 'S-1', op_type: 'MT-F', coolant: 'flood' },
+	};
+
+	it('Replay then straight back to Simulated keeps the remembered setup, in storage and in the form', async () => {
+		seed(SETUP);
+		const w = await make();
+		w.setSource('replay');
+		w.setSource('sim');
+		await nextTick();
+		pageHide();
+		expect(stored().link.sampleId).toBe('s1');
+		expect(stored().link.equipmentId).toBe('e1');
+		expect(stored().meta.op_type).toBe('MT-F');
+		expect(w.link).toMatchObject({ sampleId: 's1', equipmentId: 'e1', operatorId: 'p1' });
+		expect(w.meta).toMatchObject({ sample_name: 'S-1', op_type: 'MT-F', coolant: 'flood' });
+	});
+
+	it('a cut picked in Replay does not become the setup when switching to NI-DAQ', async () => {
+		seed(SETUP);
+		dx.get.mockResolvedValueOnce({ data: new ArrayBuffer(8) }).mockResolvedValueOnce({ data: { data: {
+			sample_id: { sample_id: 'arch-s', sample_code: 'ARCH' },
+			operator_person_id: { person_id: 'arch-p', full_name: 'Archie' },
+			equipment_id: { equipment_id: 'arch-e', equipment_name: 'Mill 9' },
+			machining_operation_subtype: 'MM-S', machining_axial_depth_of_cut_mm: 3,
+			recorded_metadata: { sample_name: 'ARCH', coolant: 'dry' },
+		} } });
+		const w = await make();
+		vi.spyOn(w.playback, 'load').mockImplementation(() => {});
+		w.setSource('replay');
+		await w.pickReplayCut({ label: 'c', cacheId: 'cache-c', opId: 'c', operationId: 'op-c', ppr: null, outerDiam: null, innerDiam: null, sampleRate: null, cropStartSec: null });
+		expect(w.link.sampleId).toBe('arch-s');   // hydrated for playback
+		w.setSource('nidaq');
+		await nextTick();
+		pageHide();
+		expect(stored().link).toMatchObject({ sampleId: 's1', operatorId: 'p1', equipmentId: 'e1' });
+		expect(stored().meta).toMatchObject({ op_type: 'MT-F', coolant: 'flood', sample_name: 'S-1' });
+		expect(stored().machining.axial_doc).toBe('');
+		expect(w.link).toMatchObject({ sampleId: 's1', operatorId: 'p1', equipmentId: 'e1' });
+		expect(w.meta).toMatchObject({ sample_name: 'S-1', op_type: 'MT-F', coolant: 'flood' });
+		expect(w.machining.axial_doc).toBe('');
+	});
+
+	it('an edit made just before entering Replay is stored, and not lost to the clearing', async () => {
+		seed(SETUP);
+		const w = await make();
+		w.cfg.rpm = 1500;
+		w.setSource('replay');   // synchronously after the edit: the watcher has not run yet
+		await nextTick();
+		pageHide();
+		expect(stored().cfg.rpm).toBe(1500);
+		expect(stored().link.sampleId).toBe('s1');
+	});
+
 	it('a launch that opens straight into Replay does not bring Sample/Machine/type back', async () => {
 		localStorage.setItem('force-app.source', 'replay');
 		seed({ link: { sampleId: 's1', sampleLabel: 'S-1', equipmentId: 'e1', equipmentLabel: 'Lathe', operatorId: 'p1', operatorLabel: 'Pat' }, meta: { op_type: 'MT-F', sample_name: 'S-1' } });
@@ -479,12 +535,13 @@ describe('remembered setup (R1)', () => {
 	it('Clear setup resets the form and forgets the stored copy', async () => {
 		seed({ cfg: { rpm: 900 }, link: { sampleId: 's1' } });
 		const w = await make();
-		w.meta.notes = 'n'; w.machining.chips_ref = 'c'; w.link.toolId = 't';
+		w.meta.notes = 'n'; w.meta.tool = 'T'; w.meta.insert = 'I'; w.meta.edge_id = 'E'; w.machining.chips_ref = 'c'; w.link.toolId = 't';
 		w.clearSetup();
 		expect(w.cfg.rpm).toBe(1200);
 		expect(w.link.sampleId).toBe('');
 		expect(w.link.toolId).toBe('');
 		expect(w.meta.notes).toBe(''); expect(w.machining.chips_ref).toBe('');
+		expect(w.meta.tool || '').toBe(''); expect(w.meta.insert).toBe(''); expect(w.meta.edge_id).toBe('');
 		expect(localStorage.getItem(KEY)).toBeNull();
 		await nextTick();
 		pageHide();
@@ -507,6 +564,26 @@ describe('workspace.newRun() (R3)', () => {
 		expect(w.meta.notes).toBe('kept');
 	});
 
+	it('clears a pass code that is the auto-composed Cut ID, but not free text', async () => {
+		const w = await make();
+		w.link.sampleLabel = 'S-1'; w.meta.op_type = 'MT-F'; w.machining.operation_sequence = '4';
+		w.meta.operation = 'S-1-MT4';   // what the Cut ID "use" button copies in
+		w.newRun();
+		expect(w.meta.operation).toBe('');
+		expect(w.machining.operation_sequence).toBe('5');
+		w.meta.operation = 'hand-typed';
+		w.newRun();
+		expect(w.meta.operation).toBe('hand-typed');
+	});
+
+	it('keeps the composed pass code when the cut is discarded (same cut)', async () => {
+		const w = await make();
+		w.link.sampleLabel = 'S-1'; w.meta.op_type = 'MT-F'; w.machining.operation_sequence = '4';
+		w.meta.operation = 'S-1-MT4';
+		w.newRun(false);
+		expect(w.meta.operation).toBe('S-1-MT4');
+	});
+
 	it('leaves a blank or non-numeric sequence alone', async () => {
 		const w = await make();
 		w.newRun();
@@ -514,6 +591,17 @@ describe('workspace.newRun() (R3)', () => {
 		w.machining.operation_sequence = '2b';
 		w.newRun();
 		expect(w.machining.operation_sequence).toBe('2b');
+	});
+
+	it('closing a failed start keeps the sequence, chips and new-edge mark (nothing was captured)', async () => {
+		const w = await make();
+		w.machining.operation_sequence = '4'; w.machining.chips_ref = 'CH-4'; w.machining.new_edge = true;
+		w.saveOpen.value = true;
+		w.dismissFailedStart();
+		expect(w.saveOpen.value).toBe(false);
+		expect(w.machining.operation_sequence).toBe('4');
+		expect(w.machining.chips_ref).toBe('CH-4');
+		expect(w.machining.new_edge).toBe(true);
 	});
 
 	it('a discarded cut keeps the sequence and the per-cut marks (the retake is the same cut)', async () => {

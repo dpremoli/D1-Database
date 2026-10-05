@@ -45,20 +45,43 @@ export function downloadText(filename: string, text: string, mime = 'text/csv;ch
 	downloadBlob(new Blob([bom + text], { type: mime }), filename);
 }
 
-/** Copy text to the clipboard; resolves false when the browser refuses (no permission, no HTTPS). */
-export async function copyText(text: string): Promise<boolean> {
-	try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
+/** Copy via a hidden textarea and `document.execCommand('copy')`: the only route on an http host,
+ *  where `navigator.clipboard` does not exist (it needs a secure context). */
+function legacyCopy(text: string): boolean {
+	try {
+		const ta = document.createElement('textarea');
+		ta.value = text;
+		ta.setAttribute('readonly', '');
+		ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+		document.body.appendChild(ta);
+		ta.select();
+		const ok = document.execCommand('copy');
+		ta.remove();
+		return ok;
+	} catch { return false; }
 }
 
-/** A "Copy" button's action plus a `copied` flag that reads true for 1.5 s after a successful copy.
+/** Copy text to the clipboard; resolves false when both the async Clipboard API and the
+ *  `execCommand` fallback fail. */
+export async function copyText(text: string): Promise<boolean> {
+	try {
+		if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; }
+	} catch { /* refused (permission): try the fallback */ }
+	return legacyCopy(text);
+}
+
+/** A "Copy" button's action plus `copied` (true for 1.5 s after a successful copy) and `failed`
+ *  (true for 1.5 s after both copy routes failed, so the button can say "Copy failed").
  *  Nothing is copied when `text()` is empty. */
 export function useCopyFeedback(text: () => string) {
 	const copied = ref(false);
+	const failed = ref(false);
 	async function copy() {
 		const t = text();
-		if (!t || !(await copyText(t))) return;
-		copied.value = true;
-		setTimeout(() => { copied.value = false; }, 1500);
+		if (!t) return;
+		const ok = await copyText(t);
+		copied.value = ok; failed.value = !ok;
+		setTimeout(() => { copied.value = false; failed.value = false; }, 1500);
 	}
-	return { copied, copy };
+	return { copied, failed, copy };
 }

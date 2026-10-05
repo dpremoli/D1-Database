@@ -17,7 +17,7 @@ export interface SetupPrefs {
 		sampleId: string; sampleLabel: string; operatorId: string; operatorLabel: string;
 		equipmentId: string; equipmentLabel: string;
 	};
-	meta: { sample_name: string; sample_code: string; op_type: string; insert: string; edge_id: string; coolant: string };
+	meta: { sample_name: string; sample_code: string; op_type: string; coolant: string };
 	machining: { axial_doc: string; radial_doc: string; cutting_length: string; coolant_pressure: string };
 }
 
@@ -27,7 +27,7 @@ export function defaultSetupPrefs(): SetupPrefs {
 	return {
 		cfg: { rpm: 1200, feed: 0.05, diam: 80, inner_diam: 0, sample_rate: 25000, ppr: 1 },
 		link: { sampleId: '', sampleLabel: '', operatorId: '', operatorLabel: '', equipmentId: '', equipmentLabel: '' },
-		meta: { sample_name: '', sample_code: '', op_type: '', insert: '', edge_id: '', coolant: '' },
+		meta: { sample_name: '', sample_code: '', op_type: '', coolant: '' },
 		machining: { axial_doc: '', radial_doc: '', cutting_length: '', coolant_pressure: '' },
 	};
 }

@@ -27,6 +27,7 @@ import { alignMeasuredRho, measuredRhoSpan, type TurningSpiralParams } from './p
 import { computeAutoCode } from './operationCode';
 import { activeFindings, diagnose, worstSeverity, type Finding } from './metadataDoctor';
 import { computeSignalStats, resolveStatsWindow, type SignalStats } from './signalStats';
+import { statsCsvColumns } from './statsCsv';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
 import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
@@ -483,29 +484,8 @@ function fmtStat(v: number): string {
 	return v.toFixed(2);
 }
 
-// CSV of the statistics table: one row per force axis, RPM columns repeated on each row so the
-// file stays a flat table. Units are in the header names.
-type StatsCsvRow = { axis: string } & SignalStats['axes']['Fx'];
-const STATS_COLS: CsvColumn<StatsCsvRow>[] = [
-	{ header: 'axis', value: (r) => r.axis },
-	{ header: 'window_start_s', value: () => sigStats.value?.windowSec[0] },
-	{ header: 'window_end_s', value: () => sigStats.value?.windowSec[1] },
-	{ header: 'n_samples', value: (r) => r.n },
-	{ header: 'mean_N', value: (r) => r.mean },
-	{ header: 'rms_N', value: (r) => r.rms },
-	{ header: 'std_N', value: (r) => r.std },
-	{ header: 'min_N', value: (r) => r.min },
-	{ header: 'max_N', value: (r) => r.max },
-	{ header: 'p2p_N', value: (r) => r.p2p },
-	{ header: 'dyn_range_bits', value: (r) => r.effBits },
-	{ header: 'rail_lo_pct', value: (r) => r.railLoPct },
-	{ header: 'rail_hi_pct', value: (r) => r.railHiPct },
-	{ header: 'clipped', value: (r) => r.clipped },
-	{ header: 'rpm_mean', value: () => sigStats.value?.rpm.mean },
-	{ header: 'rpm_std', value: () => sigStats.value?.rpm.std },
-	{ header: 'rpm_min', value: () => sigStats.value?.rpm.min },
-	{ header: 'rpm_max', value: () => sigStats.value?.rpm.max },
-];
+// CSV of the statistics table (columns in statsCsv.ts).
+const STATS_COLS = statsCsvColumns(() => sigStats.value);
 function statsCsv(): string {
 	const st = sigStats.value;
 	return st ? toCsv(STATS_COLS, STAT_AXES.map((a) => ({ axis: a, ...st.axes[a] }))) : '';
@@ -514,7 +494,7 @@ function downloadStatsCsv() {
 	const text = statsCsv();
 	if (text) downloadText(`signal_stats_${safeFilePart(opLabel.value) || 'op'}.csv`, text);
 }
-const { copied: statsCopied, copy: copyStatsCsv } = useCopyFeedback(statsCsv);
+const { copied: statsCopied, failed: statsCopyFailed, copy: copyStatsCsv } = useCopyFeedback(statsCsv);
 
 // ---- Signal-filter suite -----------------------------------------------------------
 // Interactive: the working chain is previewed by the host filter-service on the live
@@ -2519,7 +2499,7 @@ function fmtDateTime(v: string | null | undefined) {
 							</span>
 							<span v-if="sigStats" class="stats-win mono">{{ sigStats.windowSec[0].toFixed(1) }}–{{ sigStats.windowSec[1].toFixed(1) }} s
 								<button class="linkbtn" title="Download these statistics as CSV" @click="downloadStatsCsv">Download CSV</button>
-								<button class="linkbtn" title="Copy these statistics to the clipboard as CSV" @click="copyStatsCsv">{{ statsCopied ? 'Copied' : 'Copy' }}</button>
+								<button class="linkbtn" title="Copy these statistics to the clipboard as CSV" @click="copyStatsCsv">{{ statsCopied ? 'Copied' : statsCopyFailed ? 'Copy failed' : 'Copy' }}</button>
 							</span>
 						</div>
 						<template v-if="statsOpen">
@@ -2540,7 +2520,7 @@ function fmtDateTime(v: string | null | undefined) {
 										</td></tr>
 									</tbody>
 								</table>
-								<p class="setting-note">Force stats over the crop window; bits + rails over the whole cached signal. Dyn. range = log2(signal span ÷ noise floor); a clean full-range 12-bit capture sits near ~12–13, well below = under-ranged. Sustained rail hits = clipped / over-ranged.</p>
+								<p class="setting-note">Force stats over the crop window; bits + rails over the whole cached signal (CSV columns ending _whole). Dyn. range = log2(signal span ÷ noise floor); a clean full-range 12-bit capture sits near ~12–13, well below = under-ranged. Sustained rail hits = clipped / over-ranged.</p>
 								<div class="kv stats-rpm"><span>RPM (window)</span><span>{{ fmtStat(sigStats.rpm.mean) }} ± {{ fmtStat(sigStats.rpm.std) }} <span class="u">({{ fmtStat(sigStats.rpm.min) }}–{{ fmtStat(sigStats.rpm.max) }})</span></span></div>
 							</template>
 							<button v-else class="processbtn stats-compute" :disabled="statsBusy" @click="computeStats">

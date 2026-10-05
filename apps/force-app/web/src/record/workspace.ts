@@ -48,6 +48,17 @@ export function opTypeCategory(opType: string): 'turning' | 'milling' | null {
 	return null;
 }
 
+/** The Cut ID the Metadata panel shows and its "use" button copies into the pass code:
+ *  {sample code}-{first two alphanumerics of the operation type, upper-case}{sequence}. */
+export function composeCutId(
+	link: { sampleLabel: string }, meta: Record<string, string>, machining: { operation_sequence: string },
+): string {
+	const code = (link.sampleLabel || meta.sample_code || meta.sample_name || '').trim();
+	const type = (meta.op_type || '').trim().replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 2);
+	const seq = String(machining.operation_sequence ?? '').trim();
+	return [code, `${type}${seq}`].filter(Boolean).join('-');
+}
+
 export function createWorkspace() {
 	const client = new RecordClient();
 	const SOURCE_LS_KEY = 'force-app.source';
@@ -64,6 +75,15 @@ export function createWorkspace() {
 	// auto-detect re-reads localStorage fresh (not a value captured before the click) right before
 	// it would apply, closing the race regardless of which finishes first.
 	function setSource(s: 'sim' | 'replay' | 'nidaq') {
+		const prev = source.value;
+		// Entering Replay: store the setup as it is NOW, synchronously, and drop any pending push.
+		// Replay clears and then hydrates Sample/Machine/type from the archived cut, and the
+		// "don't save in Replay" decision is made when a value is pushed (the setup watcher), not
+		// when the debounce fires, so nothing pending can carry that state to storage later.
+		if (s === 'replay' && prev !== 'replay') {
+			setupSaver.cancel();
+			saveSetupPrefs(snapshotSetup());
+		}
 		// Entering Replay fresh (no cut loaded yet): Sample/Machine left over from an earlier
 		// Sim/NI-DAQ setup in this same session would otherwise silently AND-narrow searchCuts to
 		// that exact sample+machine and return zero rows — "no matches" on every search, with no
@@ -76,6 +96,9 @@ export function createWorkspace() {
 		}
 		source.value = s;
 		localStorage.setItem(SOURCE_LS_KEY, s);
+		// Leaving Replay: the form holds the cleared / archived-cut values, not the operator's
+		// setup. Put the stored one back (setup fields only; per-cut fields are not touched).
+		if (prev === 'replay' && s !== 'replay') restoreSetup(loadSetupPrefs());
 	}
 	const NIDAQ_LS_KEY = 'force-app.nidaq.channels';
 	const defaultChannels = ['cDAQ1Mod1/ai0', 'cDAQ1Mod1/ai1', 'cDAQ1Mod1/ai2', 'cDAQ1Mod1/ai3',
@@ -177,7 +200,7 @@ export function createWorkspace() {
 	// type on entering it (they would AND-narrow the cut search to nothing), so a launch that opens
 	// straight into Replay must not bring them back either, and nothing is written while in Replay
 	// (the cleared or replay-hydrated values are not the operator's setup; the stored one stays for
-	// the next Record launch). Leaving Replay pushes whatever the form then shows.
+	// the next Record launch). Leaving Replay restores the stored setup into the form.
 	function restoreSetup(s: SetupPrefs) {
 		Object.assign(cfg, s.cfg);
 		Object.assign(machining, s.machining);
@@ -191,10 +214,11 @@ export function createWorkspace() {
 	}
 	const snapshotSetup = () => pickSetup({ cfg, link, meta, machining });
 	restoreSetup(loadSetupPrefs());
-	// Same debounce/flush shape as plotSaver above.
-	const setupSaver = debouncePublish<SetupPrefs>((p) => { if (source.value !== 'replay') saveSetupPrefs(p); }, 250);
-	watch([cfg, meta, machining, link], () => setupSaver.push(snapshotSetup()), { deep: true });
-	watch(source, (s, prev) => { if (prev === 'replay' && s !== 'replay') setupSaver.push(snapshotSetup()); });
+	// Same debounce/flush shape as plotSaver above. Whether to save is decided when a value is
+	// PUSHED (never while in Replay), not when the debounce fires; setSource() stores the setup on
+	// the way into Replay and restores it on the way out.
+	const setupSaver = debouncePublish<SetupPrefs>(saveSetupPrefs, 250);
+	watch([cfg, meta, machining, link], () => { if (source.value !== 'replay') setupSaver.push(snapshotSetup()); }, { deep: true });
 	if (typeof window !== 'undefined') {
 		window.addEventListener('pagehide', setupSaver.flush);
 		window.addEventListener('beforeunload', setupSaver.flush);
@@ -202,7 +226,7 @@ export function createWorkspace() {
 	// "Clear setup": every setup AND per-cut field back to its default, and the stored copy removed.
 	function clearSetup() {
 		restoreSetup(defaultSetupPrefs());
-		meta.operation = ''; meta.notes = '';
+		meta.operation = ''; meta.notes = ''; meta.insert = ''; meta.edge_id = ''; meta.tool = '';
 		machining.operation_sequence = ''; machining.chips_ref = '';
 		machining.new_edge = false; machining.chips_collected = false;
 		link.insertId = ''; link.insertLabel = ''; link.edgeId = ''; link.edgeLabel = ''; link.toolId = ''; link.toolLabel = '';
@@ -529,12 +553,20 @@ export function createWorkspace() {
 		if (!nextCut) return;
 		// R3: the next cut is a new pass. Step the sequence when it is a whole number (a blank or
 		// free-text one is left alone), so the Cut ID {sample}-{TYPE}{seq} does not repeat, and drop
-		// the previous cut's chips and new-edge marks. The typed pass code (meta.operation) is free
-		// text and is not touched.
+		// the previous cut's chips and new-edge marks. Free-text pass codes are not touched.
+		// A pass code that is just the auto-composed Cut ID (the Metadata panel's "use" button) belongs
+		// to the cut that just ended, so it is cleared and the panel composes the next one; free text
+		// the operator typed is left alone.
+		if (meta.operation.trim() && meta.operation.trim() === composeCutId(link, meta, machining)) meta.operation = '';
 		const seq = machining.operation_sequence.trim();
 		if (/^\d+$/.test(seq)) machining.operation_sequence = String(Number(seq) + 1);
 		machining.chips_ref = ''; machining.chips_collected = false; machining.new_edge = false;
 	}
+
+	// The save dialog's failed-start state (nothing captured, nothing kept): Close and "Show me the
+	// setting" land here. The retake is the same cut, so the sequence and per-cut marks stay, like a
+	// discard. (startNew() in SaveCutDialog is also this Close, so it must not step the sequence.)
+	function dismissFailedStart() { saveOpen.value = false; newRun(false); }
 
 	// End-of-cut save/upload: pushes the manufacturing_operations row (bypassing the offline queue,
 	// since we need its operation_id back synchronously to link machining_force_analysis), then
@@ -911,7 +943,7 @@ export function createWorkspace() {
 		editCutStartSec, editCutEndSec,
 		isIdle, isRecording, isFinalizing, isDone, locked, sampleRateBlocker, saveOpen,
 		mode, playback, rpmTarget,
-		start, stop, newRun, clearSetup, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
+		start, stop, newRun, dismissFailedStart, clearSetup, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
 		// 2d: Directus links + run write-back
 		link, logged, onSelectSample, logRunNow, syncStatus,
 		searchSamples, searchOperators, searchEquipment, searchToolsForOp, searchEquipmentForOp, searchInserts, searchEdges,

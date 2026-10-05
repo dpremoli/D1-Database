@@ -6,7 +6,8 @@
 // change and no heavy data (peaks are scalar columns, not the series payload).
 import { computed, ref, watch } from 'vue';
 import { useForceHost } from './host';
-import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
+import { downloadText, safeFilePart, toCsv, useCopyFeedback } from './csvExport';
+import { wearCsvColumns } from './wearCsv';
 
 const props = defineProps<{
 	/** The currently-selected analysis row; the trend is drawn for the edge/sample it belongs to. */
@@ -24,6 +25,8 @@ interface Point {
 	id: string;
 	label: string;
 	x: number;
+	/** The operation's own sequence number (null when it has none); x falls back to the row index. */
+	seq: number | null;
 	peaks: Record<Axis, number | null>;
 	isCurrent: boolean;
 }
@@ -98,6 +101,7 @@ const points = computed<Point[]>(() => {
 			label: r.operation_id?.pass_code || `#${i + 1}`,
 			// Cumulative length is what wears an edge; a per-pass value would just be noise.
 			x: xMode.value === 'length' ? cum : (Number.isFinite(seq) ? seq : i + 1),
+			seq: r.operation_id?.operation_sequence != null && Number.isFinite(seq) ? seq : null,
 			peaks: {
 				Fx: r.peak_fx == null ? null : Number(r.peak_fx),
 				Fy: r.peak_fy == null ? null : Number(r.peak_fy),
@@ -163,20 +167,13 @@ const trend = computed(() => {
 
 // CSV of the plotted points: every pass of the edge/sample, all three axes regardless of which
 // are shown. `x` follows the Pass / Length toggle.
-const CSV_COLS = computed<CsvColumn<Point>[]>(() => [
-	{ header: 'pass_code', value: (p) => p.label },
-	{ header: xMode.value === 'length' ? 'cumulative_cutting_length_mm' : 'pass_sequence', value: (p) => p.x },
-	{ header: 'peak_fx_N', value: (p) => p.peaks.Fx },
-	{ header: 'peak_fy_N', value: (p) => p.peaks.Fy },
-	{ header: 'peak_fz_N', value: (p) => p.peaks.Fz },
-	{ header: 'selected', value: (p) => p.isCurrent },
-]);
+const CSV_COLS = computed(() => wearCsvColumns(xMode.value));
 const csvTag = computed(() => safeFilePart(
 	groupBy.value === 'edge' ? edgeId.value : sampleId.value) || safeFilePart(props.detail?.operation_id?.pass_code) || 'op');
 const csvReady = computed(() => !loading.value && !error.value && groupAvailable.value && points.value.length > 0);
 function csvText() { return toCsv(CSV_COLS.value, points.value); }
 function downloadCsv() { downloadText(`wear_trend_${groupBy.value}_${csvTag.value}.csv`, csvText()); }
-const { copied, copy: copyCsv } = useCopyFeedback(csvText);
+const { copied, failed, copy: copyCsv } = useCopyFeedback(csvText);
 
 function toggleAxis(a: Axis) {
 	const on = AXES.filter((x) => visAxes.value[x]);
@@ -203,7 +200,7 @@ function toggleAxis(a: Axis) {
 				@click="xMode = 'length'">Length</button>
 			<span class="wt-sep"></span>
 			<button class="tbtn" :disabled="!csvReady" title="Download the plotted passes as CSV" @click="downloadCsv">Download CSV</button>
-			<button class="tbtn" :disabled="!csvReady" title="Copy the plotted passes to the clipboard as CSV" @click="copyCsv">{{ copied ? 'Copied' : 'Copy' }}</button>
+			<button class="tbtn" :disabled="!csvReady" title="Copy the plotted passes to the clipboard as CSV" @click="copyCsv">{{ copied ? 'Copied' : failed ? 'Copy failed' : 'Copy' }}</button>
 		</div>
 
 		<div v-if="!detail" class="wt-empty">Select an operation to see its wear trend</div>
