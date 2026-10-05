@@ -994,6 +994,9 @@ SELECT 'renumber:' || sample_code FROM physical_samples WHERE sample_id = 'c0000
 -- an unrelated update leaves the code alone
 UPDATE physical_samples SET nickname = 'x' WHERE sample_id = 'c0000000-0000-4000-8000-000000000611';
 SELECT 'untouched:' || sample_code FROM physical_samples WHERE sample_id = 'c0000000-0000-4000-8000-000000000611';
+-- the preview function (d1-next-number endpoint) follows the same rule as the trigger
+SELECT 'preview:' || next_sample_code_number();
+SELECT 'preview_excl:' || next_sample_code_number('c0000000-0000-4000-8000-000000000615');
 ROLLBACK;
 SQL
 )
@@ -1006,6 +1009,8 @@ sc_check "code:0614:$((sc_base + 500))-TI-OLD-2020-1-1" "an explicit number is s
 sc_check "code:0615:$((sc_base + 501))-TI-MF-2026-10-5" "a later placeholder continues after the highest number in use"
 sc_check "renumber:$((sc_base + 501))-TI-MF-2026-10-5" "renumbering excludes the row's own number"
 sc_check "untouched:$((sc_base + 1))-TI-MF-2026-10-4" "an unrelated update does not renumber"
+sc_check "preview:$((sc_base + 502))" "next_sample_code_number() previews max+1 over every sample"
+sc_check "preview_excl:$((sc_base + 501))" "next_sample_code_number(id) ignores that sample's own number"
 
 # Deploy-order guard: a placeholder that survives the trigger is rejected (NOT VALID checks).
 ph_s=$($PSQL -q 2>&1 -c "INSERT INTO physical_samples (sample_code) VALUES ('TI-{seq}-MIDDLE')")

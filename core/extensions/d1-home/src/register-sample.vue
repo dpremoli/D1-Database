@@ -70,18 +70,16 @@ const codePreview = computed(() => codeWith(seq.value != null ? String(seq.value
 
 const canSubmit = computed(() => !!f.value.material_id && !!f.value.primary_method_id && !!codeTemplate.value);
 
+// Preview only: /d1-next-number/sample asks the database (the same rule as the save-time trigger).
 async function nextSequence(): Promise<number | null> {
 	try {
-		const res = await api.get('/items/physical_samples', { params: { fields: ['sample_code'], limit: -1 } });
-		let max = 0;
-		for (const r of res?.data?.data ?? []) {
-			const m = /^(\d+)-/.exec(r.sample_code ?? '');
-			if (m) max = Math.max(max, parseInt(m[1], 10));
-		}
+		const res = await api.get('/d1-next-number/sample');
+		const n = Number(res?.data?.next);
+		if (!Number.isFinite(n)) throw new Error('no number returned');
 		seqError.value = '';
-		return max + 1;
+		return n;
 	} catch {
-		seqError.value = 'Could not read the existing sample numbers, so no preview is available. The database still assigns the number when you save.';
+		seqError.value = 'Could not read the next sample number, so no preview is available. The database still assigns the number when you save.';
 		return null;
 	}
 }
