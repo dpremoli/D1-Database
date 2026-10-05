@@ -535,12 +535,13 @@ describe('remembered setup (R1)', () => {
 	it('Clear setup resets the form and forgets the stored copy', async () => {
 		seed({ cfg: { rpm: 900 }, link: { sampleId: 's1' } });
 		const w = await make();
-		w.meta.notes = 'n'; w.machining.chips_ref = 'c'; w.link.toolId = 't';
+		w.meta.notes = 'n'; w.meta.tool = 'T'; w.meta.insert = 'I'; w.meta.edge_id = 'E'; w.machining.chips_ref = 'c'; w.link.toolId = 't';
 		w.clearSetup();
 		expect(w.cfg.rpm).toBe(1200);
 		expect(w.link.sampleId).toBe('');
 		expect(w.link.toolId).toBe('');
 		expect(w.meta.notes).toBe(''); expect(w.machining.chips_ref).toBe('');
+		expect(w.meta.tool || '').toBe(''); expect(w.meta.insert).toBe(''); expect(w.meta.edge_id).toBe('');
 		expect(localStorage.getItem(KEY)).toBeNull();
 		await nextTick();
 		pageHide();

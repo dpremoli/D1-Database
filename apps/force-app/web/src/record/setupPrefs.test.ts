@@ -14,7 +14,7 @@ describe('parseSetupPrefs (R1)', () => {
 		const p = {
 			cfg: { rpm: 900, feed: 0.2, diam: 40, inner_diam: 5, sample_rate: 10000, ppr: 2 },
 			link: { sampleId: 's1', sampleLabel: 'S-1', operatorId: 'p1', operatorLabel: 'Pat', equipmentId: 'e1', equipmentLabel: 'Lathe' },
-			meta: { sample_name: 'S-1', sample_code: 'S-1', op_type: 'MT-F', insert: 'I', edge_id: 'E', coolant: 'flood' },
+			meta: { sample_name: 'S-1', sample_code: 'S-1', op_type: 'MT-F', coolant: 'flood' },
 			machining: { axial_doc: '1', radial_doc: '2', cutting_length: '30', coolant_pressure: '4' },
 		};
 		expect(parseSetupPrefs(JSON.stringify(p))).toEqual(p);
@@ -38,6 +38,12 @@ describe('parseSetupPrefs (R1)', () => {
 		const p = parseSetupPrefs('{"cfg":{"rpm":null,"feed":null}}');
 		expect(p.cfg.rpm).toBe(defaultSetupPrefs().cfg.rpm);
 		expect(p.cfg.feed).toBe(defaultSetupPrefs().cfg.feed);
+	});
+
+	it('does not remember insert, edge or tool (they turn over every cut)', () => {
+		const p = parseSetupPrefs(JSON.stringify({ meta: { insert: 'I', edge_id: 'E', tool: 'T', coolant: 'flood' } }));
+		expect(p.meta).toEqual({ ...defaultSetupPrefs().meta, coolant: 'flood' });
+		expect(JSON.stringify(defaultSetupPrefs())).not.toMatch(/insert|edge_id|tool/);
 	});
 
 	it('never reads per-cut fields, or unknown keys, even if they are stored', () => {

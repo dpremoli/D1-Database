@@ -215,7 +215,7 @@ export function createWorkspace() {
 	// "Clear setup": every setup AND per-cut field back to its default, and the stored copy removed.
 	function clearSetup() {
 		restoreSetup(defaultSetupPrefs());
-		meta.operation = ''; meta.notes = '';
+		meta.operation = ''; meta.notes = ''; meta.insert = ''; meta.edge_id = ''; meta.tool = '';
 		machining.operation_sequence = ''; machining.chips_ref = '';
 		machining.new_edge = false; machining.chips_collected = false;
 		link.insertId = ''; link.insertLabel = ''; link.edgeId = ''; link.edgeLabel = ''; link.toolId = ''; link.toolLabel = '';
