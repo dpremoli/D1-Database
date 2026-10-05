@@ -2,6 +2,7 @@
 import { nextTick, ref } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 import ChartPanel from './chart-panel.vue';
+import ExampleChips from './example-chips.vue';
 
 interface ChartSpec {
 	type: 'bar' | 'line' | 'scatter' | 'histogram' | 'pie';
@@ -44,8 +45,8 @@ async function scrollToEnd() {
 	scroller.value?.scrollTo({ top: scroller.value.scrollHeight, behavior: 'smooth' });
 }
 
-async function submit() {
-	const question = input.value.trim();
+async function submit(text?: string) {
+	const question = (text ?? input.value).trim();
 	if (!question || busy()) return;
 
 	const messages = [...history(), { role: 'user', content: question }];
@@ -87,12 +88,14 @@ function cell(value: unknown): string {
 	<private-view title="Ask the Database">
 		<div class="ask-db">
 			<div ref="scroller" class="transcript">
-				<p v-if="turns.length === 0" class="hint">
-					Ask a question about your lab data in plain English — for example
-					“how many samples per material?” or “average tensile strength by
-					alloy”. Answers run as guarded, read-only queries; follow-up questions
-					refine the previous one.
-				</p>
+				<div v-if="turns.length === 0">
+					<p class="hint">
+						Ask a question about your lab data in plain English. Answers run as
+						guarded, read-only queries; follow-up questions refine the previous
+						one. Click an example to try it:
+					</p>
+					<ExampleChips :disabled="busy()" @pick="submit" />
+				</div>
 
 				<div v-for="(turn, i) in turns" :key="i" class="turn">
 					<div class="question">{{ turn.question }}</div>
@@ -147,7 +150,7 @@ function cell(value: unknown): string {
 				</div>
 			</div>
 
-			<form class="composer" @submit.prevent="submit">
+			<form class="composer" @submit.prevent="submit()">
 				<input
 					v-model="input"
 					data-test="ask-input"
