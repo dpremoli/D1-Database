@@ -89,7 +89,7 @@ const failed = computed(() => w.st.state === 'error' && !w.finishedCache.value);
 const failure = computed(() => describeRecordingFailure(w.st.error, w.st.errorKind, w.st.nTotal));
 function fixField() {
 	const field = failure.value.field;
-	w.dismissFailedStart();
+	w.dismissFailure(failure.value.rawKept);
 	if (field === 'sample_rate') setTimeout(() => spotlight('sample-rate'), 0);
 }
 
@@ -270,7 +270,7 @@ function startNew() {
 				<div class="scd-actions">
 					<div class="scd-spacer"></div>
 					<button v-if="failure.field" class="btn" @click="fixField">Show me the setting</button>
-					<button class="btn primary" @click="w.dismissFailedStart()">Close</button>
+					<button class="btn primary" @click="w.dismissFailure(failure.rawKept)">Close</button>
 				</div>
 			</template>
 

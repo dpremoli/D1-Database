@@ -634,11 +634,22 @@ describe('workspace.newRun() (R3)', () => {
 		const w = await make();
 		w.machining.operation_sequence = '4'; w.machining.chips_ref = 'CH-4'; w.machining.new_edge = true;
 		w.saveOpen.value = true;
-		w.dismissFailedStart();
+		w.dismissFailure(false);
 		expect(w.saveOpen.value).toBe(false);
 		expect(w.machining.operation_sequence).toBe('4');
 		expect(w.machining.chips_ref).toBe('CH-4');
 		expect(w.machining.new_edge).toBe(true);
+	});
+
+	it('closing a failed capture that kept the raw steps the sequence (it was a real pass)', async () => {
+		const w = await make();
+		w.machining.operation_sequence = '4'; w.machining.chips_ref = 'CH-4'; w.machining.new_edge = true;
+		w.saveOpen.value = true;
+		w.dismissFailure(true);
+		expect(w.saveOpen.value).toBe(false);
+		expect(w.machining.operation_sequence).toBe('5');
+		expect(w.machining.chips_ref).toBe('');
+		expect(w.machining.new_edge).toBe(false);
 	});
 
 	it('a discarded cut keeps the sequence and the per-cut marks (the retake is the same cut)', async () => {

@@ -590,10 +590,11 @@ export function createWorkspace() {
 		machining.chips_ref = ''; machining.chips_collected = false; machining.new_edge = false;
 	}
 
-	// The save dialog's failed-start state (nothing captured, nothing kept): Close and "Show me the
-	// setting" land here. The retake is the same cut, so the sequence and per-cut marks stay, like a
-	// discard. (startNew() in SaveCutDialog is also this Close, so it must not step the sequence.)
-	function dismissFailedStart() { saveOpen.value = false; newRun(false); }
+	// The save dialog's failed state: Close and "Show me the setting" land here. A start that captured
+	// nothing is retaken as the same cut, so the sequence and per-cut marks stay, like a discard. An
+	// acquisition or finalize failure that kept the raw (`rawKept`) was a real pass, recoverable from
+	// Local Captures under this sequence number, so the next cut steps on as after a save.
+	function dismissFailure(rawKept: boolean) { saveOpen.value = false; newRun(rawKept); }
 
 	// End-of-cut save/upload: pushes the manufacturing_operations row (bypassing the offline queue,
 	// since we need its operation_id back synchronously to link machining_force_analysis), then
@@ -970,7 +971,7 @@ export function createWorkspace() {
 		editCutStartSec, editCutEndSec,
 		isIdle, isRecording, isFinalizing, isDone, locked, sampleRateBlocker, saveOpen,
 		mode, playback, rpmTarget,
-		start, stop, newRun, dismissFailedStart, clearSetup, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
+		start, stop, newRun, dismissFailure, clearSetup, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
 		// 2d: Directus links + run write-back
 		link, logged, onSelectSample, logRunNow, syncStatus,
 		searchSamples, searchOperators, searchEquipment, searchToolsForOp, searchEquipmentForOp, searchInserts, searchEdges,
