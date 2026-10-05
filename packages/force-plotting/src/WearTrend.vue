@@ -6,7 +6,7 @@
 // change and no heavy data (peaks are scalar columns, not the series payload).
 import { computed, ref, watch } from 'vue';
 import { useForceHost } from './host';
-import { copyText, downloadText, safeFilePart, toCsv, type CsvColumn } from './csvExport';
+import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
 
 const props = defineProps<{
 	/** The currently-selected analysis row; the trend is drawn for the edge/sample it belongs to. */
@@ -176,12 +176,7 @@ const csvTag = computed(() => safeFilePart(
 const csvReady = computed(() => !loading.value && !error.value && groupAvailable.value && points.value.length > 0);
 function csvText() { return toCsv(CSV_COLS.value, points.value); }
 function downloadCsv() { downloadText(`wear_trend_${groupBy.value}_${csvTag.value}.csv`, csvText()); }
-const copied = ref(false);
-async function copyCsv() {
-	if (!(await copyText(csvText()))) return;
-	copied.value = true;
-	setTimeout(() => { copied.value = false; }, 1500);
-}
+const { copied, copy: copyCsv } = useCopyFeedback(csvText);
 
 function toggleAxis(a: Axis) {
 	const on = AXES.filter((x) => visAxes.value[x]);

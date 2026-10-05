@@ -3,7 +3,7 @@
 // the colour chip matches DiagScatter's cluster overlay. Clicking a row selects that cluster
 // across the workbench (emit 'select'); clicking the active row again clears it.
 import { clusterColorCss } from './clusterPalette';
-import { copyText, downloadText, safeFilePart, toCsv, type CsvColumn } from './csvExport';
+import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
 import type { ClusterRow } from './selection';
 
 import { computed, ref } from 'vue';
@@ -46,12 +46,7 @@ const CSV_COLS: CsvColumn<ClusterRow>[] = [
 ];
 const csv = () => toCsv(CSV_COLS, props.rows);
 function downloadCsv() { downloadText(`clusters_${safeFilePart(props.opTag) || 'cut'}.csv`, csv()); }
-const copied = ref(false);
-async function copyCsv() {
-	if (!(await copyText(csv()))) return;
-	copied.value = true;
-	setTimeout(() => { copied.value = false; }, 1500);
-}
+const { copied, copy: copyCsv } = useCopyFeedback(csv);
 
 function onRow(id: number) {
 	emit('select', props.activeId === id ? null : id);

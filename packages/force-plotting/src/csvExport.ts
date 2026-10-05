@@ -1,6 +1,7 @@
 // CSV export helpers shared by the Plot dashboard's tables (signal statistics, wear trend,
 // diagnostics clusters) and the FRM PNG export. Pure text building plus one browser download
 // path; the table views own their column lists, so units live in the header names (mean_fx_N).
+import { ref } from 'vue';
 
 export interface CsvColumn<T> {
 	/** Header cell, units included (e.g. `mean_fx_N`). */
@@ -47,4 +48,17 @@ export function downloadText(filename: string, text: string, mime = 'text/csv;ch
 /** Copy text to the clipboard; resolves false when the browser refuses (no permission, no HTTPS). */
 export async function copyText(text: string): Promise<boolean> {
 	try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
+}
+
+/** A "Copy" button's action plus a `copied` flag that reads true for 1.5 s after a successful copy.
+ *  Nothing is copied when `text()` is empty. */
+export function useCopyFeedback(text: () => string) {
+	const copied = ref(false);
+	async function copy() {
+		const t = text();
+		if (!t || !(await copyText(t))) return;
+		copied.value = true;
+		setTimeout(() => { copied.value = false; }, 1500);
+	}
+	return { copied, copy };
 }

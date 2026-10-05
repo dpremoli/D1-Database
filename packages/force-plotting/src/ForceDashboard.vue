@@ -29,7 +29,7 @@ import { activeFindings, diagnose, worstSeverity, type Finding } from './metadat
 import { computeSignalStats, resolveStatsWindow, type SignalStats } from './signalStats';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
-import { copyText, downloadText, safeFilePart, toCsv, type CsvColumn } from './csvExport';
+import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
 
 const host = useForceHost();
 const api = host.api;
@@ -514,13 +514,7 @@ function downloadStatsCsv() {
 	const text = statsCsv();
 	if (text) downloadText(`signal_stats_${safeFilePart(opLabel.value) || 'op'}.csv`, text);
 }
-const statsCopied = ref(false);
-async function copyStatsCsv() {
-	const text = statsCsv();
-	if (!text || !(await copyText(text))) return;
-	statsCopied.value = true;
-	setTimeout(() => { statsCopied.value = false; }, 1500);
-}
+const { copied: statsCopied, copy: copyStatsCsv } = useCopyFeedback(statsCsv);
 
 // ---- Signal-filter suite -----------------------------------------------------------
 // Interactive: the working chain is previewed by the host filter-service on the live
