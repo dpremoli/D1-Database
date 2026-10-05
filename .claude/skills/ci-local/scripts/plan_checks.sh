@@ -24,6 +24,8 @@ has '^(core/extensions/(d1-geometry-preview|d1-home|d1-report)/|scripts/sync_geo
   echo "bash scripts/sync_geometry.sh --check"
   echo "node --experimental-strip-types --test core/extensions/d1-geometry-preview/test/geometry.test.ts"
 }
+has '^core/extensions/[^/]+/(index\.js|index\.test\.mjs)' && \
+  echo "node --test core/extensions/*/index.test.mjs"
 has '^(db/|tests/phase(1|6|7)_)' && \
   echo "bash .claude/skills/db-migration/scripts/verify_migration.sh   # needs a scratch DATABASE_URL"
 
