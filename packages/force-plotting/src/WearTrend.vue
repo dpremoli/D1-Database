@@ -176,7 +176,7 @@ const csvTag = computed(() => safeFilePart(
 const csvReady = computed(() => !loading.value && !error.value && groupAvailable.value && points.value.length > 0);
 function csvText() { return toCsv(CSV_COLS.value, points.value); }
 function downloadCsv() { downloadText(`wear_trend_${groupBy.value}_${csvTag.value}.csv`, csvText()); }
-const { copied, copy: copyCsv } = useCopyFeedback(csvText);
+const { copied, failed, copy: copyCsv } = useCopyFeedback(csvText);
 
 function toggleAxis(a: Axis) {
 	const on = AXES.filter((x) => visAxes.value[x]);
@@ -203,7 +203,7 @@ function toggleAxis(a: Axis) {
 				@click="xMode = 'length'">Length</button>
 			<span class="wt-sep"></span>
 			<button class="tbtn" :disabled="!csvReady" title="Download the plotted passes as CSV" @click="downloadCsv">Download CSV</button>
-			<button class="tbtn" :disabled="!csvReady" title="Copy the plotted passes to the clipboard as CSV" @click="copyCsv">{{ copied ? 'Copied' : 'Copy' }}</button>
+			<button class="tbtn" :disabled="!csvReady" title="Copy the plotted passes to the clipboard as CSV" @click="copyCsv">{{ copied ? 'Copied' : failed ? 'Copy failed' : 'Copy' }}</button>
 		</div>
 
 		<div v-if="!detail" class="wt-empty">Select an operation to see its wear trend</div>

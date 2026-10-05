@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { toCsv, safeFilePart, type CsvColumn } from './csvExport';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { copyText, toCsv, safeFilePart, useCopyFeedback, type CsvColumn } from './csvExport';
 
 interface R { a: string | number | null | undefined; b?: number }
 const cols: CsvColumn<R>[] = [
@@ -31,5 +31,64 @@ describe('safeFilePart', () => {
 	it('replaces unsafe runs and trims', () => {
 		expect(safeFilePart(' Op/12 A ')).toBe('Op_12_A');
 		expect(safeFilePart(null)).toBe('');
+	});
+});
+
+describe('copyText fallback', () => {
+	afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+	function fakeDoc(execResult: boolean | 'throw') {
+		const ta: any = { value: '', style: {}, setAttribute: () => {}, select: vi.fn(), remove: vi.fn() };
+		const doc = {
+			createElement: vi.fn(() => ta),
+			body: { appendChild: vi.fn() },
+			execCommand: vi.fn(() => { if (execResult === 'throw') throw new Error('no'); return execResult; }),
+		};
+		vi.stubGlobal('document', doc);
+		return { ta, doc };
+	}
+
+	it('uses navigator.clipboard when it exists', async () => {
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		vi.stubGlobal('navigator', { clipboard: { writeText } });
+		expect(await copyText('x')).toBe(true);
+		expect(writeText).toHaveBeenCalledWith('x');
+	});
+
+	it('falls back to execCommand when navigator.clipboard is undefined (http host)', async () => {
+		vi.stubGlobal('navigator', {});
+		const { ta, doc } = fakeDoc(true);
+		expect(await copyText('a,b')).toBe(true);
+		expect(ta.value).toBe('a,b');
+		expect(doc.execCommand).toHaveBeenCalledWith('copy');
+		expect(ta.remove).toHaveBeenCalled();
+	});
+
+	it('falls back when the async API rejects', async () => {
+		vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } });
+		const { doc } = fakeDoc(true);
+		expect(await copyText('x')).toBe(true);
+		expect(doc.execCommand).toHaveBeenCalled();
+	});
+
+	it('is false when both routes fail', async () => {
+		vi.stubGlobal('navigator', {});
+		fakeDoc(false);
+		expect(await copyText('x')).toBe(false);
+		fakeDoc('throw');
+		expect(await copyText('x')).toBe(false);
+	});
+
+	it('useCopyFeedback flags copied on success and failed when both routes fail, then resets', async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal('navigator', {});
+		fakeDoc(false);
+		const f = useCopyFeedback(() => 'data');
+		await f.copy();
+		expect(f.failed.value).toBe(true); expect(f.copied.value).toBe(false);
+		vi.advanceTimersByTime(1600);
+		expect(f.failed.value).toBe(false);
+		fakeDoc(true);
+		await f.copy();
+		expect(f.copied.value).toBe(true); expect(f.failed.value).toBe(false);
 	});
 });

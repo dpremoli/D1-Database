@@ -46,7 +46,7 @@ const CSV_COLS: CsvColumn<ClusterRow>[] = [
 ];
 const csv = () => toCsv(CSV_COLS, props.rows);
 function downloadCsv() { downloadText(`clusters_${safeFilePart(props.opTag) || 'cut'}.csv`, csv()); }
-const { copied, copy: copyCsv } = useCopyFeedback(csv);
+const { copied, failed, copy: copyCsv } = useCopyFeedback(csv);
 
 function onRow(id: number) {
 	emit('select', props.activeId === id ? null : id);
@@ -61,7 +61,7 @@ function onRow(id: number) {
 			<strong>{{ realCount.toLocaleString() }}</strong> cluster{{ realCount === 1 ? '' : 's' }}
 			<template v-if="caption"> · {{ caption }}</template> · click a row to isolate it
 			<button class="ct-csv" title="Download all cluster rows as CSV" @click="downloadCsv">Download CSV</button>
-			<button class="ct-csv" title="Copy all cluster rows to the clipboard as CSV" @click="copyCsv">{{ copied ? 'Copied' : 'Copy' }}</button>
+			<button class="ct-csv" title="Copy all cluster rows to the clipboard as CSV" @click="copyCsv">{{ copied ? 'Copied' : failed ? 'Copy failed' : 'Copy' }}</button>
 		</p>
 		<p v-if="realCount > HEAD" class="ct-hint">
 			HDBSCAN finds as many clusters as the data supports — it has no target count.

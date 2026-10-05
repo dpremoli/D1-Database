@@ -514,7 +514,7 @@ function downloadStatsCsv() {
 	const text = statsCsv();
 	if (text) downloadText(`signal_stats_${safeFilePart(opLabel.value) || 'op'}.csv`, text);
 }
-const { copied: statsCopied, copy: copyStatsCsv } = useCopyFeedback(statsCsv);
+const { copied: statsCopied, failed: statsCopyFailed, copy: copyStatsCsv } = useCopyFeedback(statsCsv);
 
 // ---- Signal-filter suite -----------------------------------------------------------
 // Interactive: the working chain is previewed by the host filter-service on the live
@@ -2519,7 +2519,7 @@ function fmtDateTime(v: string | null | undefined) {
 							</span>
 							<span v-if="sigStats" class="stats-win mono">{{ sigStats.windowSec[0].toFixed(1) }}–{{ sigStats.windowSec[1].toFixed(1) }} s
 								<button class="linkbtn" title="Download these statistics as CSV" @click="downloadStatsCsv">Download CSV</button>
-								<button class="linkbtn" title="Copy these statistics to the clipboard as CSV" @click="copyStatsCsv">{{ statsCopied ? 'Copied' : 'Copy' }}</button>
+								<button class="linkbtn" title="Copy these statistics to the clipboard as CSV" @click="copyStatsCsv">{{ statsCopied ? 'Copied' : statsCopyFailed ? 'Copy failed' : 'Copy' }}</button>
 							</span>
 						</div>
 						<template v-if="statsOpen">
