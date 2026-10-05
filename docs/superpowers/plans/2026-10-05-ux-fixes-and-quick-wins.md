@@ -26,8 +26,8 @@ interrupted work" in `CLAUDE.md`). Each stream runs in its own worktree under
 | B — Record page | R1, R3, X4 | `agent-ac917adcb6fa3ab1d` | merged (`6e72287`) |
 | C — Ask-DB | D1, D2 | `agent-a70084c335c3236ae` | merged; coordinator dropped the export-controlled example chip |
 | D — Directus data entry | X2, D7, D9 | `agent-a5e617bc0453549e7` | merged; migrations 133, 134 proven up/down/up on Postgres 16; new endpoint `d1-next-number` |
-| /simplify (Opus) | all | — | in progress |
-| /code-review high (Opus) | all | — | not started |
+| /simplify (Opus) | all | main checkout | done (`919c226`, `be49e5f`) |
+| /code-review high (Opus) | all | read-only reviewers | in progress |
 
 ## A. force-plotting — X1, P1
 
