@@ -27,7 +27,7 @@ interrupted work" in `CLAUDE.md`). Each stream runs in its own worktree under
 | C — Ask-DB | D1, D2 | `agent-a70084c335c3236ae` | merged; coordinator dropped the export-controlled example chip |
 | D — Directus data entry | X2, D7, D9 | `agent-a5e617bc0453549e7` | merged; migrations 133, 134 proven up/down/up on Postgres 16; new endpoint `d1-next-number` |
 | /simplify (Opus) | all | main checkout | done (`919c226`, `be49e5f`) |
-| /code-review high (Opus) | all | read-only reviewers | in progress |
+| /code-review high (Opus) | all | read-only reviewers | done: force-app 1 blocker (Replay overwrote the remembered setup) + 3 should-fix + 4 nits, fixed in worktree `agent-a722afb90ca2eecfc` (merged `6afe18b`) and `344413f`; Directus/db 0 blockers, 4 should-fix + nits fixed `dd2cf75`..`302cd23`. Opus re-review of the fixes in progress |
 
 ## A. force-plotting — X1, P1
 
