@@ -57,6 +57,12 @@ function explainError(status: number | undefined, d: any, fallback: string) {
 				'You are not allowed to use Ask the Database. Sign in again, or ask an administrator for access.',
 		};
 	}
+	if (status === 502 && d?.code === 'upstream_auth') {
+		// A server-side fault (the endpoint's secret was refused), not something the user can fix.
+		return {
+			message: `${d.error}. Tell an administrator; signing in again will not help.`,
+		};
+	}
 	if (status === 502) {
 		return {
 			message:

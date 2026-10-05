@@ -19,6 +19,8 @@ const PLUGIN_URL = (env) =>
 export const MAX_MESSAGES = 20;
 export const MAX_CONTENT_CHARS = 4000;
 export const UPSTREAM_TIMEOUT_MS = 60_000;
+export const UPSTREAM_AUTH_ERROR =
+    "text-to-SQL service rejected the server's credentials (misconfigured secret)";
 const ALLOWED_ROLES = new Set(['user', 'assistant']);
 
 // Validate the client body and rebuild it: only `messages` is ever forwarded
@@ -84,6 +86,20 @@ export default {
                     body: JSON.stringify({ messages }),
                     signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
                 });
+
+                // The plugin answering 401/403 means the server's own WORKER_WEBHOOK_SECRET was
+                // refused: that is a deployment fault, not the signed-in user's, so do not relay
+                // it as 401/403 (the UI would tell the user to sign in again).
+                if (upstream.status === 401 || upstream.status === 403) {
+                    logger.error(
+                        `d1-ask: text-to-SQL service answered ${upstream.status}; ` +
+                            'check that WORKER_WEBHOOK_SECRET matches the plugin',
+                    );
+                    return res.status(502).json({
+                        error: UPSTREAM_AUTH_ERROR,
+                        code: 'upstream_auth',
+                    });
+                }
 
                 // Relay the plugin's status and JSON verbatim (including its 422
                 // "generated SQL rejected" responses, so the UI can explain them).
