@@ -48,17 +48,21 @@ export function downloadText(filename: string, text: string, mime = 'text/csv;ch
 /** Copy via a hidden textarea and `document.execCommand('copy')`: the only route on an http host,
  *  where `navigator.clipboard` does not exist (it needs a secure context). */
 function legacyCopy(text: string): boolean {
+	// Selecting the textarea moves focus to it; hand focus back to the Copy button afterwards so
+	// keyboard users are not dropped onto <body>.
+	const prevFocus = document.activeElement as HTMLElement | null;
+	const ta = document.createElement('textarea');
 	try {
-		const ta = document.createElement('textarea');
 		ta.value = text;
 		ta.setAttribute('readonly', '');
 		ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
 		document.body.appendChild(ta);
-		ta.select();
-		const ok = document.execCommand('copy');
+		ta.focus(); ta.select();
+		return document.execCommand('copy');
+	} catch { return false; } finally {
 		ta.remove();
-		return ok;
-	} catch { return false; }
+		prevFocus?.focus?.();
+	}
 }
 
 /** Copy text to the clipboard; resolves false when both the async Clipboard API and the
