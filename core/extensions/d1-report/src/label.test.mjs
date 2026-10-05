@@ -18,6 +18,7 @@ import {
 	parseStart,
 	renderLabelSheet,
 	resolveLayout,
+	sampleRecordUrl,
 	slotPosition,
 } from './label.js';
 
@@ -136,6 +137,25 @@ test('orderRows: requested order, ids then codes, one label per sample', () => {
 	];
 	const out = orderRows(rows, { ids: [uuid(3), uuid(1)], codes: ['B', 'C', 'ZZ'] });
 	assert.deepEqual(out.map((r) => r.sample_code), ['C', 'A', 'B']);
+});
+
+test('sampleRecordUrl: the QR opens the app record (sign-in required), never a public route', () => {
+	assert.equal(
+		sampleRecordUrl('https://lims.example.org/', uuid(1)),
+		`https://lims.example.org/admin/content/physical_samples/${uuid(1)}`
+	);
+	assert.equal(sampleRecordUrl('https://lims.example.org', 'a/b'), 'https://lims.example.org/admin/content/physical_samples/a%2Fb');
+	assert.ok(!/d1-report|\/items\//.test(sampleRecordUrl('https://x', uuid(1))));
+});
+
+test('label: the QR encodes the record URL, not the report route', async () => {
+	const { default: QRCode } = await import('qrcode');
+	const { routes } = harness({ physical_samples: true });
+	const out = await get(routes, '/label', { ids: S2, layout: 'a4-21' }, user);
+	const expected = await QRCode.toString(sampleRecordUrl('https://lims.example.org/', S2), { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
+	assert.ok(out.body.includes(expected));
+	const other = await QRCode.toString(`https://lims.example.org/d1-report/sample/${S2}`, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' });
+	assert.ok(!out.body.includes(other));
 });
 
 test('renderLabelSheet: one sheet per page, escapes text, sets the page size', () => {

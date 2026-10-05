@@ -27,6 +27,7 @@ import {
 	renderLabelPicker,
 	renderLabelSheet,
 	resolveLayout,
+	sampleRecordUrl,
 } from './label.js';
 
 // Report pages are our own self-contained HTML. Directus's global CSP blocks inline
@@ -255,7 +256,7 @@ export default defineEndpoint({
 							material: m ? m.common_name || m.alloy_code : '',
 							date: labelDate(r.manufactured_date, r.created_at),
 							owner: initials(personById.get(String(r.owner_person_id))?.full_name),
-							qrSvg: await QRCode.toString(`${publicUrl}/admin/content/physical_samples/${r.sample_id}`, {
+							qrSvg: await QRCode.toString(sampleRecordUrl(publicUrl, r.sample_id), {
 								type: 'svg',
 								margin: 1,
 								errorCorrectionLevel: lay.layout.style.qrEcc,

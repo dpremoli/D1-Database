@@ -117,6 +117,16 @@ export function codeFontPt(code, widthMm, maxPt, minPt = 7) {
 	return round2(Math.max(minPt, Math.min(maxPt, pt)));
 }
 
+// ---- scan-to-open ---------------------------------------------------------------------
+
+// What a label's QR code encodes: the sample's record in the Directus app. That page is
+// behind sign-in (the app sends a signed-out phone to its login page and back to the
+// record afterwards), is responsive on a phone, and shows only what the signed-in user's
+// permissions allow. No data is encoded in the QR beyond the id, and no public route exists.
+export function sampleRecordUrl(publicUrl, sampleId) {
+	return `${String(publicUrl || '').replace(/\/+$/, '')}/admin/content/physical_samples/${encodeURIComponent(String(sampleId))}`;
+}
+
 // ---- request validation ---------------------------------------------------------------
 
 // Query values may be a string ("a,b c"), repeated params (['a', 'b']) or absent.
