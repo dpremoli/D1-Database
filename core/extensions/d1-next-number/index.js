@@ -15,10 +15,18 @@ export default {
     handler: (router, { database, logger }) => {
         router.get('/sample', async (req, res) => {
             const acc = req.accountability;
-            if (!acc?.user || !(acc.admin || acc.app)) {
+            if (!acc?.user) {
                 return res.status(401).json({ error: 'authentication required' });
             }
-            const exclude = typeof req.query.exclude === 'string' ? req.query.exclude : null;
+            if (!(acc.admin || acc.app)) {
+                return res.status(403).json({ error: 'forbidden' });
+            }
+            // ?exclude=a&exclude=b arrives as an array: reject it rather than ignore it.
+            const raw = req.query.exclude;
+            if (raw !== undefined && typeof raw !== 'string') {
+                return res.status(400).json({ error: 'exclude must be a single sample_id (uuid)' });
+            }
+            const exclude = raw ?? null;
             if (exclude !== null && !UUID.test(exclude)) {
                 return res.status(400).json({ error: 'exclude must be a sample_id (uuid)' });
             }
