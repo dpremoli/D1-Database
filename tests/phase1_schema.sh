@@ -149,6 +149,33 @@ bf_check "lg:TEST-LG-002=block" "Rectangular -> block (case-insensitive)"
 bf_check "lg:TEST-LG-003=disc" "current values are left alone (disc)"
 bf_check "lg:TEST-LG-004=round_bar" "current values are left alone (round_bar)"
 
+echo "== Lab Member can save a cut from the Force App =="
+# directus_permissions is a stub in CI: run the migration's up then down in a rolled-back
+# transaction, with an unrelated Lab Member row and the same row on another policy seeded to prove
+# the down removes only what the up added.
+FAS=db/migrations/20261005000133_lab_member_force_app_save.sql
+fas_up=$(awk '/-- migrate:up/{f=1;next}/-- migrate:down/{f=0}f' "$FAS")
+fas_down=$(awk '/-- migrate:down/{f=1;next}f' "$FAS")
+fas_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+DELETE FROM directus_permissions WHERE collection IN ('directus_files','machining_force_analysis');
+INSERT INTO directus_permissions (policy, collection, action, permissions, validation, fields) VALUES
+  ('20000002-0000-0000-0000-000000000002','machining_force_analysis','update','{}','{}','*'),
+  ('20000002-0000-0000-0000-000000000001','directus_files','read','{}','{}','*');
+$fas_up
+SELECT 'up:' || string_agg(collection || '.' || action, ',' ORDER BY collection, action) FROM directus_permissions WHERE policy='20000002-0000-0000-0000-000000000002' AND collection IN ('directus_files','machining_force_analysis');
+$fas_up
+SELECT 'up_idempotent:' || count(*) FROM directus_permissions WHERE policy='20000002-0000-0000-0000-000000000002' AND collection IN ('directus_files','machining_force_analysis');
+$fas_down
+SELECT 'down:' || string_agg(collection || '.' || action, ',' ORDER BY collection, action) FROM directus_permissions WHERE collection IN ('directus_files','machining_force_analysis');
+ROLLBACK;
+SQL
+)
+fas_check() { grep -qx "$1" <<<"$fas_out" && ok "$2" || bad "$2 (psql output: $fas_out)"; }
+fas_check "up:directus_files.create,directus_files.read,machining_force_analysis.create,machining_force_analysis.update" "up: Lab Member gets file create+read and force-analysis create (update kept)"
+fas_check "up_idempotent:4" "up is idempotent"
+fas_check "down:directus_files.read,machining_force_analysis.update" "down: removes only the added grants (update and other policies kept)"
+
 echo "== Report (Generate PDF) buttons =="
 # The d1-report-button field must be registered on the sample, operation and test forms.
 # directus_fields is an empty stub in CI, so run the migration's up then down in a rolled-back
