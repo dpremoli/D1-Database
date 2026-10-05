@@ -511,6 +511,43 @@ describe('remembered setup (R1)', () => {
 		expect(w.machining.axial_doc).toBe('');
 	});
 
+	it("a cut picked in Replay leaves none of its per-cut fields or tooling in the form after leaving Replay", async () => {
+		seed(SETUP);
+		dx.get.mockResolvedValueOnce({ data: new ArrayBuffer(8) }).mockResolvedValueOnce({ data: { data: {
+			sample_id: { sample_id: 'arch-s', sample_code: 'ARCH' },
+			tool_id: { tool_id: 'arch-t', tool_name: 'Old holder' },
+			insert_edge_id: { edge_id: 'arch-edge', edge_code: 'E9', insert_id: { insert_id: 'arch-i', insert_code: 'I9' } },
+			operation_sequence: 7, machining_chips_ref_code: 'CH-7', machining_new_edge: true, machining_chips_collected: true,
+			outcome_notes: 'archived note',
+		} } });
+		const w = await make();
+		vi.spyOn(w.playback, 'load').mockImplementation(() => {});
+		w.link.edgeId = 'my-edge'; w.link.edgeLabel = 'E1'; w.meta.notes = 'my note'; w.machining.operation_sequence = '3';
+		w.setSource('replay');
+		await w.pickReplayCut({ label: 'c', cacheId: 'cache-c', opId: 'c', operationId: 'op-c', ppr: null, outerDiam: null, innerDiam: null, sampleRate: null, cropStartSec: null });
+		expect(w.link.edgeId).toBe('arch-edge');   // hydrated for playback
+		w.setSource('nidaq');
+		expect(w.link).toMatchObject({ edgeId: 'my-edge', edgeLabel: 'E1', insertId: '', toolId: '' });
+		expect(w.meta.notes).toBe('my note');
+		expect(w.machining).toMatchObject({ operation_sequence: '3', chips_ref: '', new_edge: false, chips_collected: false });
+	});
+
+	it("a launch straight into Replay leaves the hydrated cut's per-cut fields blank on leaving", async () => {
+		localStorage.setItem('force-app.source', 'replay');
+		seed(SETUP);
+		dx.get.mockResolvedValueOnce({ data: new ArrayBuffer(8) }).mockResolvedValueOnce({ data: { data: {
+			insert_edge_id: { edge_id: 'arch-edge', edge_code: 'E9', insert_id: { insert_id: 'arch-i', insert_code: 'I9' } },
+			operation_sequence: 7, outcome_notes: 'archived note',
+		} } });
+		const w = await make();
+		vi.spyOn(w.playback, 'load').mockImplementation(() => {});
+		await w.pickReplayCut({ label: 'c', cacheId: 'cache-c', opId: 'c', operationId: 'op-c', ppr: null, outerDiam: null, innerDiam: null, sampleRate: null, cropStartSec: null });
+		w.setSource('sim');
+		expect(w.link).toMatchObject({ edgeId: '', insertId: '' });
+		expect(w.meta.notes).toBe('');
+		expect(w.machining.operation_sequence).toBe('');
+	});
+
 	it('an edit made just before entering Replay is stored, and not lost to the clearing', async () => {
 		seed(SETUP);
 		const w = await make();

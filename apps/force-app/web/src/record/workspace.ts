@@ -74,8 +74,21 @@ export function createWorkspace() {
 	// setSource() below writes to localStorage unconditionally and synchronously, and the
 	// auto-detect re-reads localStorage fresh (not a value captured before the click) right before
 	// it would apply, closing the race regardless of which finishes first.
+	// Per-cut fields and the insert/edge/tool picks are not part of the remembered setup, but a cut
+	// picked in Replay overwrites them too. They are put aside on entering Replay and put back on
+	// leaving it, so the next real cut is not linked to the archived cut's edge, sequence or notes.
+	let perCutAside: { meta: Record<string, string>; machining: typeof machining; link: Record<string, string> } | null = null;
+	const PER_CUT_META = ['operation', 'notes', 'insert', 'edge_id', 'tool'] as const;
+	const PER_CUT_LINK = ['insertId', 'insertLabel', 'edgeId', 'edgeLabel', 'toolId', 'toolLabel'] as const;
 	function setSource(s: 'sim' | 'replay' | 'nidaq') {
 		const prev = source.value;
+		if (s === 'replay' && prev !== 'replay') {
+			perCutAside = {
+				meta: Object.fromEntries(PER_CUT_META.map((k) => [k, meta[k] ?? ''])),
+				machining: { ...machining },
+				link: Object.fromEntries(PER_CUT_LINK.map((k) => [k, link[k]])),
+			};
+		}
 		// Entering Replay: store the setup as it is NOW, synchronously, and drop any pending push.
 		// Replay clears and then hydrates Sample/Machine/type from the archived cut, and the
 		// "don't save in Replay" decision is made when a value is pushed (the setup watcher), not
@@ -98,7 +111,21 @@ export function createWorkspace() {
 		localStorage.setItem(SOURCE_LS_KEY, s);
 		// Leaving Replay: the form holds the cleared / archived-cut values, not the operator's
 		// setup. Put the stored one back (setup fields only; per-cut fields are not touched).
-		if (prev === 'replay' && s !== 'replay') restoreSetup(loadSetupPrefs());
+		if (prev === 'replay' && s !== 'replay') {
+			restoreSetup(loadSetupPrefs());
+			// A launch straight into Replay has nothing put aside: those fields start blank instead.
+			const aside = perCutAside ?? {
+				meta: Object.fromEntries(PER_CUT_META.map((k) => [k, ''])),
+				machining: { ...machining, operation_sequence: '', chips_ref: '', new_edge: false, chips_collected: false },
+				link: Object.fromEntries(PER_CUT_LINK.map((k) => [k, ''])),
+			};
+			Object.assign(meta, aside.meta);
+			// The setup half of machining was just restored; only the per-cut half comes back here.
+			const { operation_sequence, chips_ref, new_edge, chips_collected } = aside.machining;
+			Object.assign(machining, { operation_sequence, chips_ref, new_edge, chips_collected });
+			Object.assign(link, aside.link);
+			perCutAside = null;
+		}
 	}
 	const NIDAQ_LS_KEY = 'force-app.nidaq.channels';
 	const defaultChannels = ['cDAQ1Mod1/ai0', 'cDAQ1Mod1/ai1', 'cDAQ1Mod1/ai2', 'cDAQ1Mod1/ai3',

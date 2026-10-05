@@ -53,7 +53,9 @@ storage, per user profile, and is not sent anywhere.
 forgets the remembered copy. Choosing **Replay file** clears Sample, Machine and Operation type
 for the replay search as before, but does not erase the remembered setup: it is put back in the
 form as soon as you return to Simulated or NI-DAQ (whatever a replayed cut filled in is dropped),
-and it is there at the next launch.
+and it is there at the next launch. The same goes for the per-cut fields and the insert, edge and
+tool picks: they come back as they were before you opened Replay, so the next cut is never linked
+to the archived cut's edge, sequence or notes.
 
 ## 3. Recording behaviour toggles
 
