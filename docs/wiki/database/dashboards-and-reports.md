@@ -55,6 +55,16 @@ explore outward from it. Each exploration adds to the graph; ✕ clears it and �
 4. Follow-up questions refine the previous one (*"only for Ti-6Al-4V"*).
 5. At most 200 rows are shown. When a result is longer, the page says *"Showing the first N
    rows"*: ask for something more specific (a filter or a count) to see the rest.
+6. Above each answer, **Download CSV** saves the table as a spreadsheet-ready file (named after
+   the question and the date), **Copy SQL** copies the query, and **Save question** pins the
+   question to the **Saved** list.
+7. The empty page lists your **Saved** questions and your last 20 **Recent questions**, each with
+   **Run again** and **×** to remove it. They are kept in your own browser only (not on the
+   server, and not shared with colleagues); only the question text is stored, never the answers.
+   Clearing the site data or using a private window empties them.
+
+There is no thumbs-up/down feedback on answers yet: it needs somewhere to store it, which is a
+separate decision.
 
 The model is **never trusted**. Its SQL goes through two independent guards before it touches
 data:
