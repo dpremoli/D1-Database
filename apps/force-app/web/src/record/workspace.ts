@@ -74,57 +74,69 @@ export function createWorkspace() {
 	// setSource() below writes to localStorage unconditionally and synchronously, and the
 	// auto-detect re-reads localStorage fresh (not a value captured before the click) right before
 	// it would apply, closing the race regardless of which finishes first.
-	// Per-cut fields and the insert/edge/tool picks are not part of the remembered setup, but a cut
-	// picked in Replay overwrites them too. They are put aside on entering Replay and put back on
-	// leaving it, so the next real cut is not linked to the archived cut's edge, sequence or notes.
-	let perCutAside: { meta: Record<string, string>; machining: typeof machining; link: Record<string, string> } | null = null;
+	// Replay and recording each keep their own copy of the form. A cut picked in Replay fills in
+	// Sample/Machine/type, the per-cut fields and the insert/edge/tool picks for playback; none of
+	// that may reach the next real cut, and the operator's setup must come back exactly as it was.
+	// So entering Replay puts the recording form aside (and stores its setup half), and leaving it
+	// puts the Replay form aside for the next visit (the loaded cut stays loaded) and brings the
+	// recording form back from memory, which also survives a storage write that failed.
+	interface FormCopy { setup: SetupPrefs; meta: Record<string, string>; machining: typeof machining; link: Record<string, string> }
 	const PER_CUT_META = ['operation', 'notes', 'insert', 'edge_id', 'tool'] as const;
 	const PER_CUT_LINK = ['insertId', 'insertLabel', 'edgeId', 'edgeLabel', 'toolId', 'toolLabel'] as const;
+	let recordForm: FormCopy | null = null;
+	let replayForm: FormCopy | null = null;
+	function takeForm(): FormCopy {
+		return {
+			setup: snapshotSetup(),
+			meta: Object.fromEntries(PER_CUT_META.map((k) => [k, meta[k] ?? ''])),
+			machining: { ...machining },
+			link: Object.fromEntries(PER_CUT_LINK.map((k) => [k, link[k]])),
+		};
+	}
+	function putForm(f: FormCopy) {
+		Object.assign(cfg, f.setup.cfg); Object.assign(link, f.setup.link);
+		Object.assign(meta, f.setup.meta, f.meta);
+		Object.assign(machining, f.setup.machining);
+		const { operation_sequence, chips_ref, new_edge, chips_collected } = f.machining;
+		Object.assign(machining, { operation_sequence, chips_ref, new_edge, chips_collected });
+		Object.assign(link, f.link);
+	}
 	function setSource(s: 'sim' | 'replay' | 'nidaq') {
 		const prev = source.value;
 		if (s === 'replay' && prev !== 'replay') {
-			perCutAside = {
-				meta: Object.fromEntries(PER_CUT_META.map((k) => [k, meta[k] ?? ''])),
-				machining: { ...machining },
-				link: Object.fromEntries(PER_CUT_LINK.map((k) => [k, link[k]])),
-			};
-		}
-		// Entering Replay: store the setup as it is NOW, synchronously, and drop any pending push.
-		// Replay clears and then hydrates Sample/Machine/type from the archived cut, and the
-		// "don't save in Replay" decision is made when a value is pushed (the setup watcher), not
-		// when the debounce fires, so nothing pending can carry that state to storage later.
-		if (s === 'replay' && prev !== 'replay') {
+			// Store the setup as it is NOW, synchronously, and drop any pending push: the "don't save
+			// in Replay" decision is made when a value is pushed (the setup watcher), not when the
+			// debounce fires, so nothing pending can carry Replay state to storage later.
+			recordForm = takeForm();
 			setupSaver.cancel();
-			saveSetupPrefs(snapshotSetup());
-		}
-		// Entering Replay fresh (no cut loaded yet): Sample/Machine left over from an earlier
-		// Sim/NI-DAQ setup in this same session would otherwise silently AND-narrow searchCuts to
-		// that exact sample+machine and return zero rows — "no matches" on every search, with no
-		// visible reason why. CutPicker's own `change()` already clears this for a manual reselect;
-		// this covers the same failure mode on first switch into Replay.
-		if (s === 'replay' && source.value !== 'replay' && !replay.cacheId) {
-			link.sampleId = ''; link.sampleLabel = '';
-			link.equipmentId = ''; link.equipmentLabel = '';
-			meta.op_type = '';
+			saveSetupPrefs(recordForm.setup);
+			if (replayForm && replay.cacheId) {
+				putForm(replayForm);
+			} else {
+				// Entering Replay fresh (no cut loaded yet): Sample/Machine left over from the Sim/NI-DAQ
+				// setup would otherwise silently AND-narrow searchCuts to that exact sample+machine and
+				// return zero rows — "no matches" on every search, with no visible reason why.
+				// CutPicker's own `change()` already clears this for a manual reselect.
+				link.sampleId = ''; link.sampleLabel = '';
+				link.equipmentId = ''; link.equipmentLabel = '';
+				meta.op_type = '';
+			}
 		}
 		source.value = s;
-		localStorage.setItem(SOURCE_LS_KEY, s);
-		// Leaving Replay: the form holds the cleared / archived-cut values, not the operator's
-		// setup. Put the stored one back (setup fields only; per-cut fields are not touched).
+		try { localStorage.setItem(SOURCE_LS_KEY, s); } catch { /* blocked storage: the choice still holds for this session */ }
 		if (prev === 'replay' && s !== 'replay') {
-			restoreSetup(loadSetupPrefs());
-			// A launch straight into Replay has nothing put aside: those fields start blank instead.
-			const aside = perCutAside ?? {
-				meta: Object.fromEntries(PER_CUT_META.map((k) => [k, ''])),
-				machining: { ...machining, operation_sequence: '', chips_ref: '', new_edge: false, chips_collected: false },
-				link: Object.fromEntries(PER_CUT_LINK.map((k) => [k, ''])),
-			};
-			Object.assign(meta, aside.meta);
-			// The setup half of machining was just restored; only the per-cut half comes back here.
-			const { operation_sequence, chips_ref, new_edge, chips_collected } = aside.machining;
-			Object.assign(machining, { operation_sequence, chips_ref, new_edge, chips_collected });
-			Object.assign(link, aside.link);
-			perCutAside = null;
+			replayForm = takeForm();
+			if (recordForm) {
+				putForm(recordForm);
+			} else {
+				// A launch straight into Replay has no recording form in memory: the stored setup,
+				// with the per-cut fields and insert/edge/tool picks blank.
+				restoreSetup(loadSetupPrefs());
+				for (const k of PER_CUT_META) meta[k] = '';
+				for (const k of PER_CUT_LINK) link[k] = '';
+				Object.assign(machining, { operation_sequence: '', chips_ref: '', new_edge: false, chips_collected: false });
+			}
+			recordForm = null;
 		}
 	}
 	const NIDAQ_LS_KEY = 'force-app.nidaq.channels';
@@ -257,6 +269,7 @@ export function createWorkspace() {
 		machining.operation_sequence = ''; machining.chips_ref = '';
 		machining.new_edge = false; machining.chips_collected = false;
 		link.insertId = ''; link.insertLabel = ''; link.edgeId = ''; link.edgeLabel = ''; link.toolId = ''; link.toolLabel = '';
+		recordForm = null;
 		clearSetupPrefs();
 	}
 

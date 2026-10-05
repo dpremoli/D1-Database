@@ -548,6 +548,39 @@ describe('remembered setup (R1)', () => {
 		expect(w.machining.operation_sequence).toBe('');
 	});
 
+	it('re-entering Replay with a cut still loaded shows that cut again, not the recording setup', async () => {
+		seed(SETUP);
+		dx.get.mockResolvedValueOnce({ data: new ArrayBuffer(8) }).mockResolvedValueOnce({ data: { data: {
+			sample_id: { sample_id: 'arch-s', sample_code: 'ARCH' },
+			equipment_id: { equipment_id: 'arch-e', equipment_name: 'Mill 9' },
+			machining_operation_subtype: 'MM-S',
+			insert_edge_id: { edge_id: 'arch-edge', edge_code: 'E9', insert_id: { insert_id: 'arch-i', insert_code: 'I9' } },
+		} } });
+		const w = await make();
+		vi.spyOn(w.playback, 'load').mockImplementation(() => {});
+		w.setSource('replay');
+		await w.pickReplayCut({ label: 'c', cacheId: 'cache-c', opId: 'c', operationId: 'op-c', ppr: null, outerDiam: null, innerDiam: null, sampleRate: null, cropStartSec: null });
+		w.setSource('sim');
+		expect(w.link).toMatchObject({ sampleId: 's1', equipmentId: 'e1', edgeId: '' });
+		w.setSource('replay');
+		expect(w.link).toMatchObject({ sampleId: 'arch-s', equipmentId: 'arch-e', edgeId: 'arch-edge' });
+		expect(w.meta.op_type).toBe('MM-S');
+		w.setSource('sim');
+		expect(w.link).toMatchObject({ sampleId: 's1', equipmentId: 'e1', edgeId: '' });
+	});
+
+	it('leaving Replay brings back the setup from memory even when storage refused the write', async () => {
+		seed(SETUP);
+		const w = await make();
+		w.cfg.rpm = 1500;
+		const spy = vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+		w.setSource('replay');
+		w.setSource('sim');
+		spy.mockRestore();
+		expect(w.cfg.rpm).toBe(1500);
+		expect(w.link.sampleId).toBe('s1');
+	});
+
 	it('an edit made just before entering Replay is stored, and not lost to the clearing', async () => {
 		seed(SETUP);
 		const w = await make();
