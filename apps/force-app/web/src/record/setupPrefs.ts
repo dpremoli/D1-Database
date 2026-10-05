@@ -66,6 +66,15 @@ export function parseSetupPrefs(raw: string | null): SetupPrefs {
 	};
 }
 
+/** The setup half of the Record form's live state: each section's keys come from the defaults, so
+ *  per-cut fields on the same objects are never picked up. */
+export function pickSetup(src: Record<keyof SetupPrefs, object>): SetupPrefs {
+	const d = defaultSetupPrefs();
+	const pick = <T extends object>(o: object, shape: T): T =>
+		Object.fromEntries(Object.keys(shape).map((k) => [k, (o as Record<string, unknown>)[k]])) as T;
+	return { cfg: pick(src.cfg, d.cfg), link: pick(src.link, d.link), meta: pick(src.meta, d.meta), machining: pick(src.machining, d.machining) };
+}
+
 export function loadSetupPrefs(): SetupPrefs {
 	try { return parseSetupPrefs(localStorage.getItem(SETUP_PREFS_KEY)); } catch { return defaultSetupPrefs(); }
 }
@@ -73,8 +82,9 @@ export function loadSetupPrefs(): SetupPrefs {
 /** Writes the setup, or removes the entry when it is all defaults (so "Clear setup" leaves nothing behind). */
 export function saveSetupPrefs(p: SetupPrefs): void {
 	try {
-		if (JSON.stringify(p) === JSON.stringify(defaultSetupPrefs())) localStorage.removeItem(SETUP_PREFS_KEY);
-		else localStorage.setItem(SETUP_PREFS_KEY, JSON.stringify(p));
+		const json = JSON.stringify(p);
+		if (json === JSON.stringify(defaultSetupPrefs())) localStorage.removeItem(SETUP_PREFS_KEY);
+		else localStorage.setItem(SETUP_PREFS_KEY, json);
 	} catch { /* storage full or blocked: not worth an error */ }
 }
 

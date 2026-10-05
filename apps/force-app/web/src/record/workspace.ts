@@ -12,7 +12,7 @@ import { recordingPrefs } from './recordingPrefs';
 import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
 import { loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
-import { clearSetupPrefs, defaultSetupPrefs, loadSetupPrefs, saveSetupPrefs, type SetupPrefs } from './setupPrefs';
+import { clearSetupPrefs, defaultSetupPrefs, loadSetupPrefs, pickSetup, saveSetupPrefs, type SetupPrefs } from './setupPrefs';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
 import { analysisAlreadyLinked, ensureOperation, needsBlobs, uploadProgress } from './uploadResume';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
@@ -189,23 +189,7 @@ export function createWorkspace() {
 			meta.op_type = ''; meta.sample_name = ''; meta.sample_code = '';
 		}
 	}
-	function snapshotSetup(): SetupPrefs {
-		return {
-			cfg: { rpm: cfg.rpm, feed: cfg.feed, diam: cfg.diam, inner_diam: cfg.inner_diam, sample_rate: cfg.sample_rate, ppr: cfg.ppr },
-			link: {
-				sampleId: link.sampleId, sampleLabel: link.sampleLabel, operatorId: link.operatorId, operatorLabel: link.operatorLabel,
-				equipmentId: link.equipmentId, equipmentLabel: link.equipmentLabel,
-			},
-			meta: {
-				sample_name: meta.sample_name, sample_code: meta.sample_code, op_type: meta.op_type,
-				insert: meta.insert, edge_id: meta.edge_id, coolant: meta.coolant,
-			},
-			machining: {
-				axial_doc: machining.axial_doc, radial_doc: machining.radial_doc,
-				cutting_length: machining.cutting_length, coolant_pressure: machining.coolant_pressure,
-			},
-		};
-	}
+	const snapshotSetup = () => pickSetup({ cfg, link, meta, machining });
 	restoreSetup(loadSetupPrefs());
 	// Same debounce/flush shape as plotSaver above.
 	const setupSaver = debouncePublish<SetupPrefs>((p) => { if (source.value !== 'replay') saveSetupPrefs(p); }, 250);
@@ -217,8 +201,7 @@ export function createWorkspace() {
 	}
 	// "Clear setup": every setup AND per-cut field back to its default, and the stored copy removed.
 	function clearSetup() {
-		const d = defaultSetupPrefs();
-		restoreSetup(d);
+		restoreSetup(defaultSetupPrefs());
 		meta.operation = ''; meta.notes = '';
 		machining.operation_sequence = ''; machining.chips_ref = '';
 		machining.new_edge = false; machining.chips_collected = false;

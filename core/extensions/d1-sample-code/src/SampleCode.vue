@@ -82,7 +82,7 @@ async function lookup(collection: string, id: string, field: string): Promise<st
 async function nextSequence(): Promise<number | null> {
 	try {
 		const pk = props.primaryKey;
-		const exclude = pk !== undefined && pk !== null && pk !== '+' ? String(pk) : undefined;
+		const exclude = pk != null && pk !== '+' ? String(pk) : undefined;
 		const res = await api.get('/d1-next-number/sample', { params: exclude ? { exclude } : {} });
 		const n = Number(res?.data?.next);
 		if (!Number.isFinite(n)) throw new Error('no number returned');
