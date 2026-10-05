@@ -537,10 +537,20 @@ export function createWorkspace() {
 		}
 	}
 
-	function newRun() {
+	// `nextCut` is false when the finished cut is being DISCARDED: nothing was kept, so the retake
+	// is the same cut and its sequence number / chips / new-edge flag stay as they were.
+	function newRun(nextCut = true) {
 		client.reset(); finishedCache.value = null; errMsg.value = null; logged.value = false; saveOpen.value = false;
 		recordedStamp.value = null;
 		editCutStartSec.value = null; editCutEndSec.value = null;
+		if (!nextCut) return;
+		// R3: the next cut is a new pass. Step the sequence when it is a whole number (a blank or
+		// free-text one is left alone), so the Cut ID {sample}-{TYPE}{seq} does not repeat, and drop
+		// the previous cut's chips and new-edge marks. The typed pass code (meta.operation) is free
+		// text and is not touched.
+		const seq = machining.operation_sequence.trim();
+		if (/^\d+$/.test(seq)) machining.operation_sequence = String(Number(seq) + 1);
+		machining.chips_ref = ''; machining.chips_collected = false; machining.new_edge = false;
 	}
 
 	// End-of-cut save/upload: pushes the manufacturing_operations row (bypassing the offline queue,

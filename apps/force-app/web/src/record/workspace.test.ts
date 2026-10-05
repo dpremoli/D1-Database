@@ -491,3 +491,37 @@ describe('remembered setup (R1)', () => {
 		expect(localStorage.getItem(KEY)).toBeNull(); // an all-default setup is never written back
 	});
 });
+
+describe('workspace.newRun() (R3)', () => {
+	it('steps a numeric operation sequence and clears chips ref, chips collected and new edge', async () => {
+		const w = await make();
+		w.machining.operation_sequence = '4'; w.machining.chips_ref = 'CH-4';
+		w.machining.chips_collected = true; w.machining.new_edge = true;
+		w.meta.operation = 'typed-pass'; w.meta.notes = 'kept';
+		w.newRun();
+		expect(w.machining.operation_sequence).toBe('5');
+		expect(w.machining.chips_ref).toBe('');
+		expect(w.machining.chips_collected).toBe(false);
+		expect(w.machining.new_edge).toBe(false);
+		expect(w.meta.operation).toBe('typed-pass');   // free text: not derived from the sequence
+		expect(w.meta.notes).toBe('kept');
+	});
+
+	it('leaves a blank or non-numeric sequence alone', async () => {
+		const w = await make();
+		w.newRun();
+		expect(w.machining.operation_sequence).toBe('');
+		w.machining.operation_sequence = '2b';
+		w.newRun();
+		expect(w.machining.operation_sequence).toBe('2b');
+	});
+
+	it('a discarded cut keeps the sequence and the per-cut marks (the retake is the same cut)', async () => {
+		const w = await make();
+		w.machining.operation_sequence = '4'; w.machining.chips_ref = 'CH-4'; w.machining.new_edge = true;
+		w.newRun(false);
+		expect(w.machining.operation_sequence).toBe('4');
+		expect(w.machining.chips_ref).toBe('CH-4');
+		expect(w.machining.new_edge).toBe(true);
+	});
+});
