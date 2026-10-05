@@ -12,6 +12,7 @@ import { recordingPrefs } from './recordingPrefs';
 import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
 import { loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
+import { clearSetupPrefs, defaultSetupPrefs, loadSetupPrefs, saveSetupPrefs, type SetupPrefs } from './setupPrefs';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
 import { analysisAlreadyLinked, ensureOperation, needsBlobs, uploadProgress } from './uploadResume';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
@@ -82,12 +83,18 @@ export function createWorkspace() {
 	const nidaqChannels = ref(localStorage.getItem(NIDAQ_LS_KEY) || defaultChannels);
 	watch(nidaqChannels, (v) => localStorage.setItem(NIDAQ_LS_KEY, v));
 
+	// The setup half of cfg/meta/machining/link is remembered across launches (R1, setupPrefs.ts) and
+	// filled in by restoreSetup() below once `link` exists. `duration_sec` is not part of it: no
+	// input edits it any more, it only feeds the pre-Start disk estimate.
 	const cfg = reactive({
 		rpm: 1200, feed: 0.05, diam: 80, inner_diam: 0,
 		sample_rate: 25000, duration_sec: 8, ppr: 1,
 	});
+	// No default sample name: it used to be the fake 'SIM-CUT-001', which NI-DAQ recordings archived
+	// as a real name. Empty is left out of the capture (metaObj), and the recorder falls back to its
+	// own "SIM-CUT" label.
 	const meta = reactive<Record<string, string>>({
-		sample_name: 'SIM-CUT-001', sample_code: '', operation: '', op_type: '',
+		sample_name: '', sample_code: '', operation: '', op_type: '',
 		insert: '', edge_id: '', coolant: '', notes: '',
 	});
 	// Extra machining fields mirroring the Directus manufacturing_operations form (folded section).
@@ -165,6 +172,59 @@ export function createWorkspace() {
 		edgeId: '', edgeLabel: '', toolId: '', toolLabel: '',
 	});
 	const logged = ref(false);
+
+	// Remembered setup (R1). Replay is the exception: setSource() clears Sample/Machine/Operation
+	// type on entering it (they would AND-narrow the cut search to nothing), so a launch that opens
+	// straight into Replay must not bring them back either, and nothing is written while in Replay
+	// (the cleared or replay-hydrated values are not the operator's setup; the stored one stays for
+	// the next Record launch). Leaving Replay pushes whatever the form then shows.
+	function restoreSetup(s: SetupPrefs) {
+		Object.assign(cfg, s.cfg);
+		Object.assign(machining, s.machining);
+		Object.assign(meta, s.meta);
+		Object.assign(link, s.link);
+		if (source.value === 'replay') {
+			link.sampleId = ''; link.sampleLabel = '';
+			link.equipmentId = ''; link.equipmentLabel = '';
+			meta.op_type = ''; meta.sample_name = ''; meta.sample_code = '';
+		}
+	}
+	function snapshotSetup(): SetupPrefs {
+		return {
+			cfg: { rpm: cfg.rpm, feed: cfg.feed, diam: cfg.diam, inner_diam: cfg.inner_diam, sample_rate: cfg.sample_rate, ppr: cfg.ppr },
+			link: {
+				sampleId: link.sampleId, sampleLabel: link.sampleLabel, operatorId: link.operatorId, operatorLabel: link.operatorLabel,
+				equipmentId: link.equipmentId, equipmentLabel: link.equipmentLabel,
+			},
+			meta: {
+				sample_name: meta.sample_name, sample_code: meta.sample_code, op_type: meta.op_type,
+				insert: meta.insert, edge_id: meta.edge_id, coolant: meta.coolant,
+			},
+			machining: {
+				axial_doc: machining.axial_doc, radial_doc: machining.radial_doc,
+				cutting_length: machining.cutting_length, coolant_pressure: machining.coolant_pressure,
+			},
+		};
+	}
+	restoreSetup(loadSetupPrefs());
+	// Same debounce/flush shape as plotSaver above.
+	const setupSaver = debouncePublish<SetupPrefs>((p) => { if (source.value !== 'replay') saveSetupPrefs(p); }, 250);
+	watch([cfg, meta, machining, link], () => setupSaver.push(snapshotSetup()), { deep: true });
+	watch(source, (s, prev) => { if (prev === 'replay' && s !== 'replay') setupSaver.push(snapshotSetup()); });
+	if (typeof window !== 'undefined') {
+		window.addEventListener('pagehide', setupSaver.flush);
+		window.addEventListener('beforeunload', setupSaver.flush);
+	}
+	// "Clear setup": every setup AND per-cut field back to its default, and the stored copy removed.
+	function clearSetup() {
+		const d = defaultSetupPrefs();
+		restoreSetup(d);
+		meta.operation = ''; meta.notes = '';
+		machining.operation_sequence = ''; machining.chips_ref = '';
+		machining.new_edge = false; machining.chips_collected = false;
+		link.insertId = ''; link.insertLabel = ''; link.edgeId = ''; link.edgeLabel = ''; link.toolId = ''; link.toolLabel = '';
+		clearSetupPrefs();
+	}
 
 	// Safety alarms (2e) — the app-wide controller (config lives in Settings > Alarms), evaluated
 	// here on every live frame while recording.
@@ -477,10 +537,20 @@ export function createWorkspace() {
 		}
 	}
 
-	function newRun() {
+	// `nextCut` is false when the finished cut is being DISCARDED: nothing was kept, so the retake
+	// is the same cut and its sequence number / chips / new-edge flag stay as they were.
+	function newRun(nextCut = true) {
 		client.reset(); finishedCache.value = null; errMsg.value = null; logged.value = false; saveOpen.value = false;
 		recordedStamp.value = null;
 		editCutStartSec.value = null; editCutEndSec.value = null;
+		if (!nextCut) return;
+		// R3: the next cut is a new pass. Step the sequence when it is a whole number (a blank or
+		// free-text one is left alone), so the Cut ID {sample}-{TYPE}{seq} does not repeat, and drop
+		// the previous cut's chips and new-edge marks. The typed pass code (meta.operation) is free
+		// text and is not touched.
+		const seq = machining.operation_sequence.trim();
+		if (/^\d+$/.test(seq)) machining.operation_sequence = String(Number(seq) + 1);
+		machining.chips_ref = ''; machining.chips_collected = false; machining.new_edge = false;
 	}
 
 	// End-of-cut save/upload: pushes the manufacturing_operations row (bypassing the offline queue,
@@ -858,7 +928,7 @@ export function createWorkspace() {
 		editCutStartSec, editCutEndSec,
 		isIdle, isRecording, isFinalizing, isDone, locked, sampleRateBlocker, saveOpen,
 		mode, playback, rpmTarget,
-		start, stop, newRun, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
+		start, stop, newRun, clearSetup, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
 		// 2d: Directus links + run write-back
 		link, logged, onSelectSample, logRunNow, syncStatus,
 		searchSamples, searchOperators, searchEquipment, searchToolsForOp, searchEquipmentForOp, searchInserts, searchEdges,

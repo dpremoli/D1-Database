@@ -39,6 +39,21 @@ Depth of cut, coolant, cutting length, operation sequence, chips reference and n
 folded sections further down the panel. You can also fill them in or correct them after the cut
 on the [Plot dashboard](plot-dashboard.md#correcting-an-operations-metadata).
 
+### The setup is remembered
+
+The app remembers the setup between launches, so you do not re-pick the same sample, machine and
+operator every morning: the spindle, feed, diameter, sample rate and pulses/rev values, the
+**Sample**, **Machine**, **Operator** and **Operation type** picks, and the depth, coolant and
+cutting-length fields. Insert, edge and tool are not remembered across launches (they change
+cut to cut), and neither are the per-cut fields: notes, pass code, operation sequence, chips
+reference, chips collected and the new-edge mark. The setup is kept in this computer's app
+storage, per user profile, and is not sent anywhere.
+
+**Clear setup**, at the bottom of the panel, puts every field back to blank or its default and
+forgets the remembered copy. Choosing **Replay file** clears Sample, Machine and Operation type
+for the replay search as before, but does not erase the remembered setup: it is back when you
+return to Simulated or NI-DAQ, and the next launch.
+
 ## 3. Recording behaviour toggles
 
 Three toggles sit at the bottom of the panel, just above **Start**, so they are checked right
@@ -127,15 +142,25 @@ indexed from the archive share, so it does not run on a cut saved this way. See
 
 ## Starting the next cut
 
-After saving or discarding, press **New** (or **Start new run** in the dialog) to clear the plots.
-The sample, machine, operator and tooling stay filled in. Only per-cut values need changing.
+After saving, press **New** (or **Start new run** in the dialog) to clear the plots. The sample,
+machine, operator and tooling stay filled in. The per-cut values reset: if the **operation
+sequence** is a whole number it goes up by one (so the Cut ID `{sample}-{TYPE}{seq}` does not
+repeat), and **chips reference**, **chips collected** and the **new edge** mark are cleared. A
+typed pass code and the notes are left as they are, so change them if they no longer apply.
+
+**Discarding** a cut does not step the sequence or clear those fields: the retake is the same cut.
 
 ## Leaving the page mid-cut
 
 Recording runs in the backend, not the page. You can switch to Plot or Settings while a cut runs.
 A banner on every other page shows its progress (see [Getting started](getting-started.md#while-a-recording-is-running)).
 
-Stay on the Record page for the end of the cut if you can. The save dialog opens when the page
-*sees* the recording finish. If the cut ends while you are elsewhere, the capture is still
-finalized on disk and is listed in [Settings → Local Captures](captures-and-recovery.md#local-captures),
-which is where an un-uploaded capture gets uploaded later.
+You do not have to be on the Record page when the cut ends. The page checks with the recorder
+whenever you come back to it, and if the cut finished (or is still being saved) while you were
+away, the save dialog opens then. The capture is finalized on disk either way and is listed in
+[Settings → Local Captures](captures-and-recovery.md#local-captures), which is where an
+un-uploaded capture gets uploaded later.
+
+One case is not offered again: if you **reload or restart the app** and the cut has already finished,
+the page starts with no memory of it and does not open the dialog. A cut that is still being saved
+at that point is offered. Either way, find the finished cut in Local Captures.
