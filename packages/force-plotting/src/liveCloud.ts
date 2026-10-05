@@ -261,3 +261,12 @@ export const COLORMAP_LABELS: Record<string, string> = {
 	bwr: 'Blue → White → Red',
 };
 export function colormapLabel(key: string): string { return COLORMAP_LABELS[key] ?? key; }
+
+// Bake the force-as-height overlay (`zv`) into `pos` z, in place. buildCloud leaves pos z = 0 when
+// a Z series drives height; the renderer draws, picks and rings from `pos`, so height has to live
+// there for all three to agree. No-op without an overlay.
+export function withHeight(cloud: Cloud): Cloud {
+	const zv = cloud.zv;
+	if (zv) for (let k = 0; k < cloud.count; k++) cloud.pos[k * 3 + 2] = zv[k];
+	return cloud;
+}

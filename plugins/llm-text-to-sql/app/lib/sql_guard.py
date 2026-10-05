@@ -665,20 +665,22 @@ def message_only(sql: str) -> str | None:
     return None
 
 
-def guard(sql: str, row_limit: int = DEFAULT_ROW_LIMIT) -> str:
+def guard(sql: str, row_limit: int = DEFAULT_ROW_LIMIT, *, probe: bool = False) -> str:
     """Validate *sql* and return an execution-safe, row-limited version.
 
     The validated, comment-free query is wrapped in an outer ``SELECT ... LIMIT``
     so a result set is always bounded regardless of any (or no) inner LIMIT, and
     the wrapped statement is validated again. ``row_limit`` must be an integer;
-    it is clamped to ``MAX_ROW_LIMIT``. Raises :class:`SqlGuardError` if
-    validation fails.
+    it is clamped to ``MAX_ROW_LIMIT``. With ``probe`` the query fetches one row
+    beyond that limit so the caller can tell whether the result was cut short.
+    Raises :class:`SqlGuardError` if validation fails.
     """
     validate(sql)
     limit = min(int(row_limit), MAX_ROW_LIMIT)
     if limit < 1:
         raise SqlGuardError("row_limit must be a positive integer")
     inner = normalise(sql)
-    wrapped = f"SELECT * FROM (\n{inner}\n) AS _guarded LIMIT {limit}"
+    fetch = limit + 1 if probe else limit
+    wrapped = f"SELECT * FROM (\n{inner}\n) AS _guarded LIMIT {fetch}"
     validate(wrapped)
     return wrapped

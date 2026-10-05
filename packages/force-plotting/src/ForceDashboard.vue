@@ -27,8 +27,10 @@ import { alignMeasuredRho, measuredRhoSpan, type TurningSpiralParams } from './p
 import { computeAutoCode } from './operationCode';
 import { activeFindings, diagnose, worstSeverity, type Finding } from './metadataDoctor';
 import { computeSignalStats, resolveStatsWindow, type SignalStats } from './signalStats';
+import { statsCsvColumns } from './statsCsv';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
+import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
 
 const host = useForceHost();
 const api = host.api;
@@ -481,6 +483,18 @@ function fmtStat(v: number): string {
 	if (a >= 10) return v.toFixed(1);
 	return v.toFixed(2);
 }
+
+// CSV of the statistics table (columns in statsCsv.ts).
+const STATS_COLS = statsCsvColumns(() => sigStats.value);
+function statsCsv(): string {
+	const st = sigStats.value;
+	return st ? toCsv(STATS_COLS, STAT_AXES.map((a) => ({ axis: a, ...st.axes[a] }))) : '';
+}
+function downloadStatsCsv() {
+	const text = statsCsv();
+	if (text) downloadText(`signal_stats_${safeFilePart(opLabel.value) || 'op'}.csv`, text);
+}
+const { copied: statsCopied, failed: statsCopyFailed, copy: copyStatsCsv } = useCopyFeedback(statsCsv);
 
 // ---- Signal-filter suite -----------------------------------------------------------
 // Interactive: the working chain is previewed by the host filter-service on the live
@@ -2483,7 +2497,10 @@ function fmtDateTime(v: string | null | undefined) {
 								<button class="chevbtn" title="Collapse/expand" @click="togglePanel('stats')"><v-icon :name="statsOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
 								<v-icon name="query_stats" x-small /> Signal statistics
 							</span>
-							<span v-if="sigStats" class="stats-win mono">{{ sigStats.windowSec[0].toFixed(1) }}–{{ sigStats.windowSec[1].toFixed(1) }} s</span>
+							<span v-if="sigStats" class="stats-win mono">{{ sigStats.windowSec[0].toFixed(1) }}–{{ sigStats.windowSec[1].toFixed(1) }} s
+								<button class="linkbtn" title="Download these statistics as CSV" @click="downloadStatsCsv">Download CSV</button>
+								<button class="linkbtn" title="Copy these statistics to the clipboard as CSV" @click="copyStatsCsv">{{ statsCopied ? 'Copied' : statsCopyFailed ? 'Copy failed' : 'Copy' }}</button>
+							</span>
 						</div>
 						<template v-if="statsOpen">
 							<div v-if="!detail.live_cache_file" class="empty sm">No signal cache — reprocess this op to enable statistics</div>
@@ -2503,7 +2520,7 @@ function fmtDateTime(v: string | null | undefined) {
 										</td></tr>
 									</tbody>
 								</table>
-								<p class="setting-note">Force stats over the crop window; bits + rails over the whole cached signal. Dyn. range = log2(signal span ÷ noise floor); a clean full-range 12-bit capture sits near ~12–13, well below = under-ranged. Sustained rail hits = clipped / over-ranged.</p>
+								<p class="setting-note">Force stats over the crop window; bits + rails over the whole cached signal (CSV columns ending _whole). Dyn. range = log2(signal span ÷ noise floor); a clean full-range 12-bit capture sits near ~12–13, well below = under-ranged. Sustained rail hits = clipped / over-ranged.</p>
 								<div class="kv stats-rpm"><span>RPM (window)</span><span>{{ fmtStat(sigStats.rpm.mean) }} ± {{ fmtStat(sigStats.rpm.std) }} <span class="u">({{ fmtStat(sigStats.rpm.min) }}–{{ fmtStat(sigStats.rpm.max) }})</span></span></div>
 							</template>
 							<button v-else class="processbtn stats-compute" :disabled="statsBusy" @click="computeStats">
@@ -3218,6 +3235,7 @@ function fmtDateTime(v: string | null | undefined) {
 .stats-table td:first-child { text-align: left; color: var(--theme--foreground-subdued, #6b7684); font-weight: 600; white-space: nowrap; }
 .stat-bad { color: #dc2626; font-weight: 700; }
 .stats-win { font-size: var(--fs-xs, 11px); color: var(--theme--foreground-subdued, #98a2b3); }
+.stats-win .linkbtn { float: none; margin-left: 8px; }
 .stats-rpm { margin-top: 2px; }
 .stats-compute { margin-top: 4px; }
 .acc-head {

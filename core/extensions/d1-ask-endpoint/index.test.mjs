@@ -2,7 +2,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import ext, { MAX_CONTENT_CHARS, MAX_MESSAGES, sanitiseMessages } from './index.js';
+import ext, {
+    MAX_CONTENT_CHARS,
+    MAX_MESSAGES,
+    UPSTREAM_AUTH_ERROR,
+    sanitiseMessages,
+} from './index.js';
 
 function mount(env, fetchImpl) {
     let handler;
@@ -79,6 +84,56 @@ test('only messages are forwarded; row_limit and extra keys are dropped', async 
     const forwarded = JSON.parse(r.body).echoed;
     assert.deepEqual(Object.keys(forwarded), ['messages']);
     assert.deepEqual(forwarded.messages, goodBody.messages);
+});
+
+test('row_count and truncated are relayed unchanged', async () => {
+    const payload = {
+        sql: 'SELECT 1',
+        columns: ['a'],
+        rows: [{ a: 1 }],
+        row_count: 1,
+        truncated: true,
+        chart: null,
+    };
+    const h = mount(
+        ENV,
+        async () => new Response(JSON.stringify(payload), { status: 200 }),
+    );
+    const r = await call(h, { user: 'u', app: true }, goodBody);
+    assert.equal(r.status, 200);
+    assert.deepEqual(JSON.parse(r.body), payload);
+});
+
+test('plugin 422 guard rejections are relayed with their status', async () => {
+    const payload = { error: 'generated SQL rejected', reason: 'nope', sql: 'DROP' };
+    const h = mount(
+        ENV,
+        async () => new Response(JSON.stringify(payload), { status: 422 }),
+    );
+    const r = await call(h, { user: 'u', app: true }, goodBody);
+    assert.equal(r.status, 422);
+    assert.deepEqual(JSON.parse(r.body), payload);
+});
+
+for (const status of [401, 403]) {
+    test(`plugin ${status} (bad server secret) is 502, not the user's fault`, async () => {
+        const h = mount(
+            ENV,
+            async () => new Response(JSON.stringify({ error: 'bad secret' }), { status }),
+        );
+        const r = await call(h, { user: 'u', app: true }, goodBody);
+        assert.equal(r.status, 502);
+        assert.equal(r.body.error, UPSTREAM_AUTH_ERROR);
+        assert.equal(r.body.code, 'upstream_auth');
+    });
+}
+
+test('unreachable plugin is 502', async () => {
+    const h = mount(ENV, async () => {
+        throw new TypeError('fetch failed');
+    });
+    const r = await call(h, { user: 'u', app: true }, goodBody);
+    assert.equal(r.status, 502);
 });
 
 test('timeout is 504', async () => {

@@ -61,6 +61,9 @@
 						<span>Form</span><span>{{ selectedSample.form ?? '—' }}</span>
 						<span>Location</span><span>{{ selectedSample.location ?? '—' }}</span>
 					</div>
+					<router-link class="d1-open" :to="`/content/physical_samples/${selectedSample.sample_id}`">
+						<v-icon name="open_in_new" small />Open sample in Directus
+					</router-link>
 				</div>
 
 				<div class="d1-detail-section">
@@ -88,6 +91,7 @@
 								<th>Machine</th>
 								<th>Edge</th>
 								<th>Outcome</th>
+								<th></th>
 							</tr>
 						</thead>
 						<tbody>
@@ -102,6 +106,11 @@
 								<td>{{ op.equipment_id?.equipment_name ?? '—' }}</td>
 								<td>{{ op.insert_edge_id?.edge_code ?? '—' }}</td>
 								<td>{{ op.outcome ?? '—' }}</td>
+								<td>
+									<router-link class="d1-open" title="Open in Directus" :to="`/content/manufacturing_operations/${op.operation_id}`" @click.stop>
+										<v-icon name="open_in_new" small />
+									</router-link>
+								</td>
 							</tr>
 						</tbody>
 					</table>
@@ -133,6 +142,9 @@
 					</span>
 					<span class="d1-secondary">{{ ts.equipment_id?.equipment_name ?? '—' }}</span>
 					<span class="d1-date">{{ formatDate(ts.session_date) }}</span>
+					<router-link class="d1-open" :to="`/content/test_sessions/${ts.session_id}`" @click.stop>
+						<v-icon name="open_in_new" small />Open in Directus
+					</router-link>
 				</div>
 				<div v-if="testSessions.length === 0" class="d1-empty">No test sessions</div>
 			</div>
@@ -435,6 +447,20 @@ onBeforeUnmount(() => {
 	text-align: center;
 	color: var(--theme--foreground-subdued, #64748b);
 	font-size: 13px;
+}
+
+.d1-open {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	width: fit-content;
+	font-size: 12px;
+	color: var(--theme--primary, #2563eb);
+	text-decoration: none;
+}
+
+.d1-open:hover {
+	text-decoration: underline;
 }
 
 .d1-empty-inline {

@@ -76,25 +76,20 @@ async function lookup(collection: string, id: string, field: string): Promise<st
 	}
 }
 
-// PREVIEW of the next free sequence number = max leading integer across OTHER samples + 1, as far
-// as this user can see (read permissions may hide samples, which is exactly why the database
-// decides). Excludes this sample's own current code. Returns null and sets previewError on failure.
+// PREVIEW of the next free sequence number, asked of the database: /d1-next-number/sample runs the
+// same rule as the trigger that assigns it on save, over every sample whatever this user can read.
+// Excludes this sample's own row when renumbering. Returns null and sets previewError on failure.
 async function nextSequence(): Promise<number | null> {
 	try {
-		const own = props.value ?? '';
-		const res = await api.get('/items/physical_samples', {
-			params: { fields: ['sample_code'], limit: -1 },
-		});
-		let max = 0;
-		for (const r of res?.data?.data ?? []) {
-			if ((r.sample_code ?? '') === own) continue; // never count ourselves
-			const m = /^(\d+)-/.exec(r.sample_code ?? '');
-			if (m) max = Math.max(max, parseInt(m[1], 10));
-		}
+		const pk = props.primaryKey;
+		const exclude = pk != null && pk !== '+' ? String(pk) : undefined;
+		const res = await api.get('/d1-next-number/sample', { params: exclude ? { exclude } : {} });
+		const n = Number(res?.data?.next);
+		if (!Number.isFinite(n)) throw new Error('no number returned');
 		previewError.value = '';
-		return max + 1;
+		return n;
 	} catch {
-		previewError.value = 'Could not read the existing sample numbers, so no preview is available. The database still assigns the number when you save.';
+		previewError.value = 'Could not read the next sample number, so no preview is available. The database still assigns the number when you save.';
 		return null;
 	}
 }

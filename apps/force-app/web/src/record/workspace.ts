@@ -12,6 +12,7 @@ import { recordingPrefs } from './recordingPrefs';
 import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
 import { loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
+import { clearSetupPrefs, defaultSetupPrefs, loadSetupPrefs, pickSetup, saveSetupPrefs, type SetupPrefs } from './setupPrefs';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
 import { analysisAlreadyLinked, ensureOperation, needsBlobs, uploadProgress } from './uploadResume';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
@@ -47,6 +48,17 @@ export function opTypeCategory(opType: string): 'turning' | 'milling' | null {
 	return null;
 }
 
+/** The Cut ID the Metadata panel shows and its "use" button copies into the pass code:
+ *  {sample code}-{first two alphanumerics of the operation type, upper-case}{sequence}. */
+export function composeCutId(
+	link: { sampleLabel: string }, meta: Record<string, string>, machining: { operation_sequence: string },
+): string {
+	const code = (link.sampleLabel || meta.sample_code || meta.sample_name || '').trim();
+	const type = (meta.op_type || '').trim().replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 2);
+	const seq = String(machining.operation_sequence ?? '').trim();
+	return [code, `${type}${seq}`].filter(Boolean).join('-');
+}
+
 export function createWorkspace() {
 	const client = new RecordClient();
 	const SOURCE_LS_KEY = 'force-app.source';
@@ -62,19 +74,70 @@ export function createWorkspace() {
 	// setSource() below writes to localStorage unconditionally and synchronously, and the
 	// auto-detect re-reads localStorage fresh (not a value captured before the click) right before
 	// it would apply, closing the race regardless of which finishes first.
+	// Replay and recording each keep their own copy of the form. A cut picked in Replay fills in
+	// Sample/Machine/type, the per-cut fields and the insert/edge/tool picks for playback; none of
+	// that may reach the next real cut, and the operator's setup must come back exactly as it was.
+	// So entering Replay puts the recording form aside (and stores its setup half), and leaving it
+	// puts the Replay form aside for the next visit (the loaded cut stays loaded) and brings the
+	// recording form back from memory, which also survives a storage write that failed.
+	interface FormCopy { setup: SetupPrefs; meta: Record<string, string>; machining: typeof machining; link: Record<string, string> }
+	const PER_CUT_META = ['operation', 'notes', 'insert', 'edge_id', 'tool'] as const;
+	const PER_CUT_LINK = ['insertId', 'insertLabel', 'edgeId', 'edgeLabel', 'toolId', 'toolLabel'] as const;
+	let recordForm: FormCopy | null = null;
+	let replayForm: FormCopy | null = null;
+	function takeForm(): FormCopy {
+		return {
+			setup: snapshotSetup(),
+			meta: Object.fromEntries(PER_CUT_META.map((k) => [k, meta[k] ?? ''])),
+			machining: { ...machining },
+			link: Object.fromEntries(PER_CUT_LINK.map((k) => [k, link[k]])),
+		};
+	}
+	function putForm(f: FormCopy) {
+		Object.assign(cfg, f.setup.cfg); Object.assign(link, f.setup.link);
+		Object.assign(meta, f.setup.meta, f.meta);
+		Object.assign(machining, f.setup.machining);
+		const { operation_sequence, chips_ref, new_edge, chips_collected } = f.machining;
+		Object.assign(machining, { operation_sequence, chips_ref, new_edge, chips_collected });
+		Object.assign(link, f.link);
+	}
 	function setSource(s: 'sim' | 'replay' | 'nidaq') {
-		// Entering Replay fresh (no cut loaded yet): Sample/Machine left over from an earlier
-		// Sim/NI-DAQ setup in this same session would otherwise silently AND-narrow searchCuts to
-		// that exact sample+machine and return zero rows — "no matches" on every search, with no
-		// visible reason why. CutPicker's own `change()` already clears this for a manual reselect;
-		// this covers the same failure mode on first switch into Replay.
-		if (s === 'replay' && source.value !== 'replay' && !replay.cacheId) {
-			link.sampleId = ''; link.sampleLabel = '';
-			link.equipmentId = ''; link.equipmentLabel = '';
-			meta.op_type = '';
+		const prev = source.value;
+		if (s === 'replay' && prev !== 'replay') {
+			// Store the setup as it is NOW, synchronously, and drop any pending push: the "don't save
+			// in Replay" decision is made when a value is pushed (the setup watcher), not when the
+			// debounce fires, so nothing pending can carry Replay state to storage later.
+			recordForm = takeForm();
+			setupSaver.cancel();
+			saveSetupPrefs(recordForm.setup);
+			if (replayForm && replay.cacheId) {
+				putForm(replayForm);
+			} else {
+				// Entering Replay fresh (no cut loaded yet): Sample/Machine left over from the Sim/NI-DAQ
+				// setup would otherwise silently AND-narrow searchCuts to that exact sample+machine and
+				// return zero rows — "no matches" on every search, with no visible reason why.
+				// CutPicker's own `change()` already clears this for a manual reselect.
+				link.sampleId = ''; link.sampleLabel = '';
+				link.equipmentId = ''; link.equipmentLabel = '';
+				meta.op_type = '';
+			}
 		}
 		source.value = s;
-		localStorage.setItem(SOURCE_LS_KEY, s);
+		try { localStorage.setItem(SOURCE_LS_KEY, s); } catch { /* blocked storage: the choice still holds for this session */ }
+		if (prev === 'replay' && s !== 'replay') {
+			replayForm = takeForm();
+			if (recordForm) {
+				putForm(recordForm);
+			} else {
+				// A launch straight into Replay has no recording form in memory: the stored setup,
+				// with the per-cut fields and insert/edge/tool picks blank.
+				restoreSetup(loadSetupPrefs());
+				for (const k of PER_CUT_META) meta[k] = '';
+				for (const k of PER_CUT_LINK) link[k] = '';
+				Object.assign(machining, { operation_sequence: '', chips_ref: '', new_edge: false, chips_collected: false });
+			}
+			recordForm = null;
+		}
 	}
 	const NIDAQ_LS_KEY = 'force-app.nidaq.channels';
 	const defaultChannels = ['cDAQ1Mod1/ai0', 'cDAQ1Mod1/ai1', 'cDAQ1Mod1/ai2', 'cDAQ1Mod1/ai3',
@@ -82,12 +145,18 @@ export function createWorkspace() {
 	const nidaqChannels = ref(localStorage.getItem(NIDAQ_LS_KEY) || defaultChannels);
 	watch(nidaqChannels, (v) => localStorage.setItem(NIDAQ_LS_KEY, v));
 
+	// The setup half of cfg/meta/machining/link is remembered across launches (R1, setupPrefs.ts) and
+	// filled in by restoreSetup() below once `link` exists. `duration_sec` is not part of it: no
+	// input edits it any more, it only feeds the pre-Start disk estimate.
 	const cfg = reactive({
 		rpm: 1200, feed: 0.05, diam: 80, inner_diam: 0,
 		sample_rate: 25000, duration_sec: 8, ppr: 1,
 	});
+	// No default sample name: it used to be the fake 'SIM-CUT-001', which NI-DAQ recordings archived
+	// as a real name. Empty is left out of the capture (metaObj), and the recorder falls back to its
+	// own "SIM-CUT" label.
 	const meta = reactive<Record<string, string>>({
-		sample_name: 'SIM-CUT-001', sample_code: '', operation: '', op_type: '',
+		sample_name: '', sample_code: '', operation: '', op_type: '',
 		insert: '', edge_id: '', coolant: '', notes: '',
 	});
 	// Extra machining fields mirroring the Directus manufacturing_operations form (folded section).
@@ -165,6 +234,44 @@ export function createWorkspace() {
 		edgeId: '', edgeLabel: '', toolId: '', toolLabel: '',
 	});
 	const logged = ref(false);
+
+	// Remembered setup (R1). Replay is the exception: setSource() clears Sample/Machine/Operation
+	// type on entering it (they would AND-narrow the cut search to nothing), so a launch that opens
+	// straight into Replay must not bring them back either, and nothing is written while in Replay
+	// (the cleared or replay-hydrated values are not the operator's setup; the stored one stays for
+	// the next Record launch). Leaving Replay restores the stored setup into the form.
+	function restoreSetup(s: SetupPrefs) {
+		Object.assign(cfg, s.cfg);
+		Object.assign(machining, s.machining);
+		Object.assign(meta, s.meta);
+		Object.assign(link, s.link);
+		if (source.value === 'replay') {
+			link.sampleId = ''; link.sampleLabel = '';
+			link.equipmentId = ''; link.equipmentLabel = '';
+			meta.op_type = ''; meta.sample_name = ''; meta.sample_code = '';
+		}
+	}
+	const snapshotSetup = () => pickSetup({ cfg, link, meta, machining });
+	restoreSetup(loadSetupPrefs());
+	// Same debounce/flush shape as plotSaver above. Whether to save is decided when a value is
+	// PUSHED (never while in Replay), not when the debounce fires; setSource() stores the setup on
+	// the way into Replay and restores it on the way out.
+	const setupSaver = debouncePublish<SetupPrefs>(saveSetupPrefs, 250);
+	watch([cfg, meta, machining, link], () => { if (source.value !== 'replay') setupSaver.push(snapshotSetup()); }, { deep: true });
+	if (typeof window !== 'undefined') {
+		window.addEventListener('pagehide', setupSaver.flush);
+		window.addEventListener('beforeunload', setupSaver.flush);
+	}
+	// "Clear setup": every setup AND per-cut field back to its default, and the stored copy removed.
+	function clearSetup() {
+		restoreSetup(defaultSetupPrefs());
+		meta.operation = ''; meta.notes = ''; meta.insert = ''; meta.edge_id = ''; meta.tool = '';
+		machining.operation_sequence = ''; machining.chips_ref = '';
+		machining.new_edge = false; machining.chips_collected = false;
+		link.insertId = ''; link.insertLabel = ''; link.edgeId = ''; link.edgeLabel = ''; link.toolId = ''; link.toolLabel = '';
+		recordForm = null;
+		clearSetupPrefs();
+	}
 
 	// Safety alarms (2e) — the app-wide controller (config lives in Settings > Alarms), evaluated
 	// here on every live frame while recording.
@@ -477,11 +584,30 @@ export function createWorkspace() {
 		}
 	}
 
-	function newRun() {
+	// `nextCut` is false when the finished cut is being DISCARDED: nothing was kept, so the retake
+	// is the same cut and its sequence number / chips / new-edge flag stay as they were.
+	function newRun(nextCut = true) {
 		client.reset(); finishedCache.value = null; errMsg.value = null; logged.value = false; saveOpen.value = false;
 		recordedStamp.value = null;
 		editCutStartSec.value = null; editCutEndSec.value = null;
+		if (!nextCut) return;
+		// R3: the next cut is a new pass. Step the sequence when it is a whole number (a blank or
+		// free-text one is left alone), so the Cut ID {sample}-{TYPE}{seq} does not repeat, and drop
+		// the previous cut's chips and new-edge marks. Free-text pass codes are not touched.
+		// A pass code that is just the auto-composed Cut ID (the Metadata panel's "use" button) belongs
+		// to the cut that just ended, so it is cleared and the panel composes the next one; free text
+		// the operator typed is left alone.
+		if (meta.operation.trim() && meta.operation.trim() === composeCutId(link, meta, machining)) meta.operation = '';
+		const seq = machining.operation_sequence.trim();
+		if (/^\d+$/.test(seq)) machining.operation_sequence = String(Number(seq) + 1);
+		machining.chips_ref = ''; machining.chips_collected = false; machining.new_edge = false;
 	}
+
+	// The save dialog's failed state: Close and "Show me the setting" land here. A start that captured
+	// nothing is retaken as the same cut, so the sequence and per-cut marks stay, like a discard. An
+	// acquisition or finalize failure that kept the raw (`rawKept`) was a real pass, recoverable from
+	// Local Captures under this sequence number, so the next cut steps on as after a save.
+	function dismissFailure(rawKept: boolean) { saveOpen.value = false; newRun(rawKept); }
 
 	// End-of-cut save/upload: pushes the manufacturing_operations row (bypassing the offline queue,
 	// since we need its operation_id back synchronously to link machining_force_analysis), then
@@ -858,7 +984,7 @@ export function createWorkspace() {
 		editCutStartSec, editCutEndSec,
 		isIdle, isRecording, isFinalizing, isDone, locked, sampleRateBlocker, saveOpen,
 		mode, playback, rpmTarget,
-		start, stop, newRun, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
+		start, stop, newRun, dismissFailure, clearSetup, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
 		// 2d: Directus links + run write-back
 		link, logged, onSelectSample, logRunNow, syncStatus,
 		searchSamples, searchOperators, searchEquipment, searchToolsForOp, searchEquipmentForOp, searchInserts, searchEdges,

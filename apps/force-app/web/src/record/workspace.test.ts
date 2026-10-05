@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { nextTick } from 'vue';
 
 // createWorkspace() start/stop/upload paths (stream-2 review 2.1, 2.2, 2.5, 2.7). Everything the
 // workspace talks to (Directus, the recorder, dialogs) is faked at the module boundary.
@@ -14,7 +15,16 @@ const auth = vi.hoisted(() => ({
 vi.mock('../authStore', () => ({ authStore: auth }));
 vi.mock('@d1/force-plotting', () => ({
 	buildSeriesEnvelope: vi.fn(() => ({ series: true })),
-	debouncePublish: () => ({ push: () => {}, flush: () => {} }),
+	// Holds the last pushed value until flush() (the 250 ms timer is not simulated): enough to
+	// drive the "flushed on page hide" path in the setup-persistence tests below.
+	debouncePublish: <T,>(publish: (v: T) => void) => {
+		let pending: { v: T } | null = null;
+		return {
+			push: (v: T) => { pending = { v }; },
+			flush: () => { if (pending) { const { v } = pending; pending = null; publish(v); } },
+			cancel: () => { pending = null; },
+		};
+	},
 	parseCache: vi.fn(() => ({ csSec: 0, ceSec: 1 })),
 }));
 vi.mock('./directusLookups', () => ({
@@ -394,5 +404,293 @@ describe('workspace.stop() returns the amp to RESET after finalize', () => {
 	it('an already-settled stop resets straight away', async () => {
 		await stopping('done');
 		expect(resets()).toBe(1);
+	});
+});
+
+describe('remembered setup (R1)', () => {
+	const KEY = 'force-app.record.setup.v1';
+	const hide: Array<() => void> = [];
+	beforeEach(() => {
+		hide.length = 0;
+		vi.stubGlobal('window', {
+			addEventListener: (ev: string, fn: () => void) => { if (ev === 'pagehide') hide.push(fn); },
+			removeEventListener: () => {},
+		});
+	});
+	const pageHide = () => hide.forEach((f) => f());
+	const stored = () => JSON.parse(localStorage.getItem(KEY) || 'null');
+	const seed = (o: unknown) => localStorage.setItem(KEY, JSON.stringify(o));
+
+	it('starts from the defaults (and no fake sample name) with nothing stored', async () => {
+		const w = await make();
+		expect(w.cfg.rpm).toBe(1200);
+		expect(w.meta.sample_name).toBe('');
+		expect(w.link.sampleId).toBe('');
+	});
+
+	it('restores a stored setup, never the per-cut fields', async () => {
+		seed({
+			cfg: { rpm: 900, feed: 0.2, diam: 40, inner_diam: 5, sample_rate: 10000, ppr: 2 },
+			link: { sampleId: 's1', sampleLabel: 'S-1', operatorId: 'p1', operatorLabel: 'Pat', equipmentId: 'e1', equipmentLabel: 'Lathe' },
+			meta: { sample_name: 'S-1', op_type: 'MT-F', coolant: 'flood', notes: 'stale', operation: 'stale' },
+			machining: { axial_doc: '1.5', operation_sequence: '7', chips_ref: 'X', new_edge: true, chips_collected: true },
+		});
+		const w = await make();
+		expect(w.cfg).toMatchObject({ rpm: 900, feed: 0.2, diam: 40, inner_diam: 5, sample_rate: 10000, ppr: 2 });
+		expect(w.link).toMatchObject({ sampleId: 's1', operatorLabel: 'Pat', equipmentId: 'e1' });
+		expect(w.meta).toMatchObject({ sample_name: 'S-1', op_type: 'MT-F', coolant: 'flood', notes: '', operation: '' });
+		expect(w.machining).toMatchObject({ axial_doc: '1.5', operation_sequence: '', chips_ref: '', new_edge: false, chips_collected: false });
+	});
+
+	it('writes on page hide, without per-cut fields', async () => {
+		const w = await make();
+		w.cfg.rpm = 1500; w.link.sampleId = 's9'; w.link.sampleLabel = 'S-9';
+		w.meta.notes = 'only this cut'; w.machining.chips_ref = 'CH-1'; w.machining.operation_sequence = '3';
+		await nextTick();
+		pageHide();
+		const o = stored();
+		expect(o.cfg.rpm).toBe(1500);
+		expect(o.link.sampleId).toBe('s9');
+		expect(JSON.stringify(o)).not.toMatch(/only this cut|CH-1|operation_sequence|chips|notes/);
+	});
+
+	it('a restored link does not fight Replay: entering Replay clears it and the clearing is not stored', async () => {
+		seed({ link: { sampleId: 's1', sampleLabel: 'S-1', equipmentId: 'e1', equipmentLabel: 'Lathe', operatorId: 'p1', operatorLabel: 'Pat' }, meta: { op_type: 'MT-F' } });
+		const w = await make();
+		expect(w.link.sampleId).toBe('s1');
+		w.setSource('replay');
+		expect(w.link.sampleId).toBe(''); expect(w.link.equipmentId).toBe(''); expect(w.meta.op_type).toBe('');
+		await nextTick();
+		pageHide();
+		expect(stored().link.sampleId).toBe('s1');   // the remembered setup is still there for the next Record launch
+		expect(stored().meta.op_type).toBe('MT-F');
+	});
+
+	const SETUP = {
+		cfg: { rpm: 900 },
+		link: { sampleId: 's1', sampleLabel: 'S-1', equipmentId: 'e1', equipmentLabel: 'Lathe', operatorId: 'p1', operatorLabel: 'Pat' },
+		meta: { sample_name: 'S-1', sample_code: 'S-1', op_type: 'MT-F', coolant: 'flood' },
+	};
+
+	it('Replay then straight back to Simulated keeps the remembered setup, in storage and in the form', async () => {
+		seed(SETUP);
+		const w = await make();
+		w.setSource('replay');
+		w.setSource('sim');
+		await nextTick();
+		pageHide();
+		expect(stored().link.sampleId).toBe('s1');
+		expect(stored().link.equipmentId).toBe('e1');
+		expect(stored().meta.op_type).toBe('MT-F');
+		expect(w.link).toMatchObject({ sampleId: 's1', equipmentId: 'e1', operatorId: 'p1' });
+		expect(w.meta).toMatchObject({ sample_name: 'S-1', op_type: 'MT-F', coolant: 'flood' });
+	});
+
+	it('a cut picked in Replay does not become the setup when switching to NI-DAQ', async () => {
+		seed(SETUP);
+		dx.get.mockResolvedValueOnce({ data: new ArrayBuffer(8) }).mockResolvedValueOnce({ data: { data: {
+			sample_id: { sample_id: 'arch-s', sample_code: 'ARCH' },
+			operator_person_id: { person_id: 'arch-p', full_name: 'Archie' },
+			equipment_id: { equipment_id: 'arch-e', equipment_name: 'Mill 9' },
+			machining_operation_subtype: 'MM-S', machining_axial_depth_of_cut_mm: 3,
+			recorded_metadata: { sample_name: 'ARCH', coolant: 'dry' },
+		} } });
+		const w = await make();
+		vi.spyOn(w.playback, 'load').mockImplementation(() => {});
+		w.setSource('replay');
+		await w.pickReplayCut({ label: 'c', cacheId: 'cache-c', opId: 'c', operationId: 'op-c', ppr: null, outerDiam: null, innerDiam: null, sampleRate: null, cropStartSec: null });
+		expect(w.link.sampleId).toBe('arch-s');   // hydrated for playback
+		w.setSource('nidaq');
+		await nextTick();
+		pageHide();
+		expect(stored().link).toMatchObject({ sampleId: 's1', operatorId: 'p1', equipmentId: 'e1' });
+		expect(stored().meta).toMatchObject({ op_type: 'MT-F', coolant: 'flood', sample_name: 'S-1' });
+		expect(stored().machining.axial_doc).toBe('');
+		expect(w.link).toMatchObject({ sampleId: 's1', operatorId: 'p1', equipmentId: 'e1' });
+		expect(w.meta).toMatchObject({ sample_name: 'S-1', op_type: 'MT-F', coolant: 'flood' });
+		expect(w.machining.axial_doc).toBe('');
+	});
+
+	it("a cut picked in Replay leaves none of its per-cut fields or tooling in the form after leaving Replay", async () => {
+		seed(SETUP);
+		dx.get.mockResolvedValueOnce({ data: new ArrayBuffer(8) }).mockResolvedValueOnce({ data: { data: {
+			sample_id: { sample_id: 'arch-s', sample_code: 'ARCH' },
+			tool_id: { tool_id: 'arch-t', tool_name: 'Old holder' },
+			insert_edge_id: { edge_id: 'arch-edge', edge_code: 'E9', insert_id: { insert_id: 'arch-i', insert_code: 'I9' } },
+			operation_sequence: 7, machining_chips_ref_code: 'CH-7', machining_new_edge: true, machining_chips_collected: true,
+			outcome_notes: 'archived note',
+		} } });
+		const w = await make();
+		vi.spyOn(w.playback, 'load').mockImplementation(() => {});
+		w.link.edgeId = 'my-edge'; w.link.edgeLabel = 'E1'; w.meta.notes = 'my note'; w.machining.operation_sequence = '3';
+		w.setSource('replay');
+		await w.pickReplayCut({ label: 'c', cacheId: 'cache-c', opId: 'c', operationId: 'op-c', ppr: null, outerDiam: null, innerDiam: null, sampleRate: null, cropStartSec: null });
+		expect(w.link.edgeId).toBe('arch-edge');   // hydrated for playback
+		w.setSource('nidaq');
+		expect(w.link).toMatchObject({ edgeId: 'my-edge', edgeLabel: 'E1', insertId: '', toolId: '' });
+		expect(w.meta.notes).toBe('my note');
+		expect(w.machining).toMatchObject({ operation_sequence: '3', chips_ref: '', new_edge: false, chips_collected: false });
+	});
+
+	it("a launch straight into Replay leaves the hydrated cut's per-cut fields blank on leaving", async () => {
+		localStorage.setItem('force-app.source', 'replay');
+		seed(SETUP);
+		dx.get.mockResolvedValueOnce({ data: new ArrayBuffer(8) }).mockResolvedValueOnce({ data: { data: {
+			insert_edge_id: { edge_id: 'arch-edge', edge_code: 'E9', insert_id: { insert_id: 'arch-i', insert_code: 'I9' } },
+			operation_sequence: 7, outcome_notes: 'archived note',
+		} } });
+		const w = await make();
+		vi.spyOn(w.playback, 'load').mockImplementation(() => {});
+		await w.pickReplayCut({ label: 'c', cacheId: 'cache-c', opId: 'c', operationId: 'op-c', ppr: null, outerDiam: null, innerDiam: null, sampleRate: null, cropStartSec: null });
+		w.setSource('sim');
+		expect(w.link).toMatchObject({ edgeId: '', insertId: '' });
+		expect(w.meta.notes).toBe('');
+		expect(w.machining.operation_sequence).toBe('');
+	});
+
+	it('re-entering Replay with a cut still loaded shows that cut again, not the recording setup', async () => {
+		seed(SETUP);
+		dx.get.mockResolvedValueOnce({ data: new ArrayBuffer(8) }).mockResolvedValueOnce({ data: { data: {
+			sample_id: { sample_id: 'arch-s', sample_code: 'ARCH' },
+			equipment_id: { equipment_id: 'arch-e', equipment_name: 'Mill 9' },
+			machining_operation_subtype: 'MM-S',
+			insert_edge_id: { edge_id: 'arch-edge', edge_code: 'E9', insert_id: { insert_id: 'arch-i', insert_code: 'I9' } },
+		} } });
+		const w = await make();
+		vi.spyOn(w.playback, 'load').mockImplementation(() => {});
+		w.setSource('replay');
+		await w.pickReplayCut({ label: 'c', cacheId: 'cache-c', opId: 'c', operationId: 'op-c', ppr: null, outerDiam: null, innerDiam: null, sampleRate: null, cropStartSec: null });
+		w.setSource('sim');
+		expect(w.link).toMatchObject({ sampleId: 's1', equipmentId: 'e1', edgeId: '' });
+		w.setSource('replay');
+		expect(w.link).toMatchObject({ sampleId: 'arch-s', equipmentId: 'arch-e', edgeId: 'arch-edge' });
+		expect(w.meta.op_type).toBe('MM-S');
+		w.setSource('sim');
+		expect(w.link).toMatchObject({ sampleId: 's1', equipmentId: 'e1', edgeId: '' });
+	});
+
+	it('leaving Replay brings back the setup from memory even when storage refused the write', async () => {
+		seed(SETUP);
+		const w = await make();
+		w.cfg.rpm = 1500;
+		const spy = vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+		w.setSource('replay');
+		w.setSource('sim');
+		spy.mockRestore();
+		expect(w.cfg.rpm).toBe(1500);
+		expect(w.link.sampleId).toBe('s1');
+	});
+
+	it('an edit made just before entering Replay is stored, and not lost to the clearing', async () => {
+		seed(SETUP);
+		const w = await make();
+		w.cfg.rpm = 1500;
+		w.setSource('replay');   // synchronously after the edit: the watcher has not run yet
+		await nextTick();
+		pageHide();
+		expect(stored().cfg.rpm).toBe(1500);
+		expect(stored().link.sampleId).toBe('s1');
+	});
+
+	it('a launch that opens straight into Replay does not bring Sample/Machine/type back', async () => {
+		localStorage.setItem('force-app.source', 'replay');
+		seed({ link: { sampleId: 's1', sampleLabel: 'S-1', equipmentId: 'e1', equipmentLabel: 'Lathe', operatorId: 'p1', operatorLabel: 'Pat' }, meta: { op_type: 'MT-F', sample_name: 'S-1' } });
+		const w = await make();
+		expect(w.source.value).toBe('replay');
+		expect(w.link.sampleId).toBe(''); expect(w.link.equipmentId).toBe('');
+		expect(w.meta.op_type).toBe(''); expect(w.meta.sample_name).toBe('');
+		expect(w.link.operatorId).toBe('p1'); // Operator never narrowed the cut search
+	});
+
+	it('Clear setup resets the form and forgets the stored copy', async () => {
+		seed({ cfg: { rpm: 900 }, link: { sampleId: 's1' } });
+		const w = await make();
+		w.meta.notes = 'n'; w.meta.tool = 'T'; w.meta.insert = 'I'; w.meta.edge_id = 'E'; w.machining.chips_ref = 'c'; w.link.toolId = 't';
+		w.clearSetup();
+		expect(w.cfg.rpm).toBe(1200);
+		expect(w.link.sampleId).toBe('');
+		expect(w.link.toolId).toBe('');
+		expect(w.meta.notes).toBe(''); expect(w.machining.chips_ref).toBe('');
+		expect(w.meta.tool || '').toBe(''); expect(w.meta.insert).toBe(''); expect(w.meta.edge_id).toBe('');
+		expect(localStorage.getItem(KEY)).toBeNull();
+		await nextTick();
+		pageHide();
+		expect(localStorage.getItem(KEY)).toBeNull(); // an all-default setup is never written back
+	});
+});
+
+describe('workspace.newRun() (R3)', () => {
+	it('steps a numeric operation sequence and clears chips ref, chips collected and new edge', async () => {
+		const w = await make();
+		w.machining.operation_sequence = '4'; w.machining.chips_ref = 'CH-4';
+		w.machining.chips_collected = true; w.machining.new_edge = true;
+		w.meta.operation = 'typed-pass'; w.meta.notes = 'kept';
+		w.newRun();
+		expect(w.machining.operation_sequence).toBe('5');
+		expect(w.machining.chips_ref).toBe('');
+		expect(w.machining.chips_collected).toBe(false);
+		expect(w.machining.new_edge).toBe(false);
+		expect(w.meta.operation).toBe('typed-pass');   // free text: not derived from the sequence
+		expect(w.meta.notes).toBe('kept');
+	});
+
+	it('clears a pass code that is the auto-composed Cut ID, but not free text', async () => {
+		const w = await make();
+		w.link.sampleLabel = 'S-1'; w.meta.op_type = 'MT-F'; w.machining.operation_sequence = '4';
+		w.meta.operation = 'S-1-MT4';   // what the Cut ID "use" button copies in
+		w.newRun();
+		expect(w.meta.operation).toBe('');
+		expect(w.machining.operation_sequence).toBe('5');
+		w.meta.operation = 'hand-typed';
+		w.newRun();
+		expect(w.meta.operation).toBe('hand-typed');
+	});
+
+	it('keeps the composed pass code when the cut is discarded (same cut)', async () => {
+		const w = await make();
+		w.link.sampleLabel = 'S-1'; w.meta.op_type = 'MT-F'; w.machining.operation_sequence = '4';
+		w.meta.operation = 'S-1-MT4';
+		w.newRun(false);
+		expect(w.meta.operation).toBe('S-1-MT4');
+	});
+
+	it('leaves a blank or non-numeric sequence alone', async () => {
+		const w = await make();
+		w.newRun();
+		expect(w.machining.operation_sequence).toBe('');
+		w.machining.operation_sequence = '2b';
+		w.newRun();
+		expect(w.machining.operation_sequence).toBe('2b');
+	});
+
+	it('closing a failed start keeps the sequence, chips and new-edge mark (nothing was captured)', async () => {
+		const w = await make();
+		w.machining.operation_sequence = '4'; w.machining.chips_ref = 'CH-4'; w.machining.new_edge = true;
+		w.saveOpen.value = true;
+		w.dismissFailure(false);
+		expect(w.saveOpen.value).toBe(false);
+		expect(w.machining.operation_sequence).toBe('4');
+		expect(w.machining.chips_ref).toBe('CH-4');
+		expect(w.machining.new_edge).toBe(true);
+	});
+
+	it('closing a failed capture that kept the raw steps the sequence (it was a real pass)', async () => {
+		const w = await make();
+		w.machining.operation_sequence = '4'; w.machining.chips_ref = 'CH-4'; w.machining.new_edge = true;
+		w.saveOpen.value = true;
+		w.dismissFailure(true);
+		expect(w.saveOpen.value).toBe(false);
+		expect(w.machining.operation_sequence).toBe('5');
+		expect(w.machining.chips_ref).toBe('');
+		expect(w.machining.new_edge).toBe(false);
+	});
+
+	it('a discarded cut keeps the sequence and the per-cut marks (the retake is the same cut)', async () => {
+		const w = await make();
+		w.machining.operation_sequence = '4'; w.machining.chips_ref = 'CH-4'; w.machining.new_edge = true;
+		w.newRun(false);
+		expect(w.machining.operation_sequence).toBe('4');
+		expect(w.machining.chips_ref).toBe('CH-4');
+		expect(w.machining.new_edge).toBe(true);
 	});
 });

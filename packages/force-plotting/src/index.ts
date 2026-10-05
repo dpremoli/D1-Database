@@ -10,6 +10,8 @@ export { default as SpectrumView } from './SpectrumView.vue';
 export { computeSignalStats } from './signalStats';
 export type { SignalStats } from './signalStats';
 export * from './frmExport';
+export { toCsv, downloadText, copyText, safeFilePart } from './csvExport';
+export type { CsvColumn } from './csvExport';
 
 export { default as FrmCloud } from './FrmCloud.vue';
 export { default as FrmOctree } from './FrmOctree.vue';

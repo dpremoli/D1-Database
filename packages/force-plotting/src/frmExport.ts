@@ -4,6 +4,7 @@
 // a title + operation subtitle. Instant and offline — no host round-trip — so "Download this
 // FRM image" respects the current viewport without losing the report styling.
 import { colorizeValues, type ColorScale } from './colorScale';
+import { downloadBlob } from './csvExport';
 
 // "Nice" round tick positions across [lo, hi] (~`target` of them). Exported for ColorBar.vue's
 // tick labels too -- it's the same "nice" rounding either way, no reason for a second copy just
@@ -28,14 +29,7 @@ export function fmt(v: number): string {
 	return v.toFixed(0);
 }
 function download(cv: HTMLCanvasElement, filename: string) {
-	cv.toBlob((blob) => {
-		if (!blob) return;
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement('a');
-		a.href = url; a.download = filename;
-		document.body.appendChild(a); a.click(); a.remove();
-		setTimeout(() => URL.revokeObjectURL(url), 1000);
-	}, 'image/png');
+	cv.toBlob((blob) => { if (blob) downloadBlob(blob, filename); }, 'image/png');
 }
 
 export interface FrmFigureOpts {

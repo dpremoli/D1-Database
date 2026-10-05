@@ -18,7 +18,7 @@ resolution, denied relations, enforced LIMIT) and a read-only Postgres role with
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | Liveness probe (no auth). |
-| POST | `/api/ask` | `{question}` → `{sql, columns, rows}`. Unsafe SQL → 422, not executed. |
+| POST | `/api/ask` | `{question}` → `{sql, columns, rows, row_count, truncated}`. Unsafe SQL → 422, not executed. |
 | POST | `/api/search` | `{query, limit?}` → note rows ranked by cosine similarity. |
 | POST | `/api/embed/backfill` | (Re)embed all note text into `semantic_embeddings`. |
 

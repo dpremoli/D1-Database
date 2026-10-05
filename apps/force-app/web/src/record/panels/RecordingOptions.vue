@@ -307,6 +307,14 @@ onBeforeUnmount(() => {
 		<label class="wide">Notes
 			<textarea v-model="w.meta.notes" rows="2" :disabled="w.locked.value"></textarea>
 		</label>
+
+		<!-- R1: the setup above is remembered across launches; this puts it all back to blank and
+			 forgets the stored copy. Not offered in Replay, where the form shows an archived cut. -->
+		<button v-if="w.source.value !== 'replay'" type="button" class="btn sm clear-setup" :disabled="w.locked.value"
+			title="Reset Sample, Machine, Operator, tooling, cut parameters and notes to blank, and forget the remembered setup"
+			@click="w.clearSetup()">
+			<span class="material-symbols-rounded">restart_alt</span>Clear setup
+		</button>
 	</div>
 </template>
 
@@ -361,6 +369,7 @@ input:disabled, textarea:disabled, select:disabled { opacity: 0.55; }
 /* Two lookups side by side (Machine|Operator, Insert|Edge) to save vertical space. Each LookupField
    is position:relative with its own absolute dropdown, so the grid columns don't clip the menus. */
 .links.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.clear-setup { align-self: flex-start; }
 .chks { display: flex; gap: 16px; margin-top: 4px; }
 .chk { display: flex; align-items: center; gap: 6px; font-size: var(--fs-md); color: var(--text); cursor: pointer; }
 .chk input { accent-color: var(--accent); }

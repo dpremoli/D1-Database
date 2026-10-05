@@ -33,6 +33,8 @@ jobs:
         run: bash scripts/sync_geometry.sh --check
       - name: Unit tests
         run: node --experimental-strip-types --test core/extensions/d1-geometry-preview/test/geometry.test.ts
+      - name: Extension endpoint tests
+        run: node --test core/extensions/*/index.test.mjs
 
   foundation:
     name: Foundation smoke test

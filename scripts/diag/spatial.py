@@ -185,6 +185,46 @@ def grid_reduce(
     return xr, yr, vr, cell_id.astype(np.int64)
 
 
+_mst_sort_pinned = False
+
+
+def _pin_hdbscan_mst_order() -> None:
+    """Make scikit-learn's HDBSCAN independent of the CPU's argsort tie order.
+
+    HDBSCAN sorts the minimum-spanning-tree edges by distance with a bare `np.argsort`
+    (sklearn.cluster._hdbscan.hdbscan._process_mst), and on gridded data many edges tie
+    exactly (mutual-reachability distances collapse onto a core distance). NumPy >= 2 sorts
+    float64 with x86-simd-sort on CPUs with AVX-512 and with introsort elsewhere; neither is
+    stable, and they order tied edges differently. Which tied edge is merged first can change
+    the condensed tree, so identical input gave different cluster_id / glosh on an AVX-512 host
+    and on a host without it (GitHub's ubuntu-latest runners are a mix of both; 22/9984
+    cluster_id elements differ in the diag goldens). Same inputs, same pins, different hardware.
+
+    The ties are broken here by edge position, last edge first. That is an arbitrary but fixed
+    rule; it is the one that reproduces the frozen goldens (captured on an AVX-512 host), so
+    nothing moves. Only the sort is replaced: `make_single_linkage` is sklearn's own.
+    Idempotent, and a no-op (with the old behaviour) if sklearn's private layout differs.
+    """
+    global _mst_sort_pinned
+    if _mst_sort_pinned:
+        return
+    try:
+        from sklearn.cluster._hdbscan import hdbscan as _h
+        from sklearn.cluster._hdbscan._linkage import make_single_linkage
+    except ImportError:
+        return
+    if not hasattr(_h, "_process_mst"):
+        return
+
+    def _process_mst(min_spanning_tree):
+        dist = min_spanning_tree["distance"]
+        order = np.lexsort((-np.arange(dist.size), dist))
+        return make_single_linkage(min_spanning_tree[order])
+
+    _h._process_mst = _process_mst
+    _mst_sort_pinned = True
+
+
 def cluster_hdbscan(
     xr: np.ndarray, yr: np.ndarray, vr: np.ndarray, min_cluster_size: int = 10
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -195,6 +235,7 @@ def cluster_hdbscan(
     """
     from sklearn.cluster import HDBSCAN
 
+    _pin_hdbscan_mst_order()
     xr = np.asarray(xr, dtype=np.float64)
     yr = np.asarray(yr, dtype=np.float64)
     vr = np.asarray(vr, dtype=np.float64)
