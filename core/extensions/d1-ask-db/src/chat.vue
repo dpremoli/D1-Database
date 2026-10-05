@@ -5,6 +5,17 @@ import ChartPanel from './chart-panel.vue';
 import ExampleChips from './example-chips.vue';
 import { copyText } from './clipboard';
 import { csvFilename, toCsv } from './csv';
+import QuestionList from './question-list.vue';
+import {
+	HISTORY_KEY,
+	HISTORY_LIMIT,
+	SAVED_KEY,
+	addQuestion,
+	hasQuestion,
+	loadList,
+	removeQuestion,
+	saveList,
+} from './history';
 
 interface ChartSpec {
 	type: 'bar' | 'line' | 'scatter' | 'histogram' | 'pie';
@@ -36,6 +47,31 @@ const api = useApi();
 const input = ref('');
 const turns = ref<Turn[]>([]);
 const scroller = ref<HTMLDivElement | null>(null);
+/** Last 20 asked questions and the pinned ones, per browser. Question text only, never rows. */
+const asked = ref(loadList(HISTORY_KEY));
+const saved = ref(loadList(SAVED_KEY));
+
+function remember(question: string) {
+	asked.value = addQuestion(asked.value, question, Date.now(), HISTORY_LIMIT);
+	saveList(HISTORY_KEY, asked.value);
+}
+
+function forget(question: string) {
+	asked.value = removeQuestion(asked.value, question);
+	saveList(HISTORY_KEY, asked.value);
+}
+
+function toggleSaved(question: string) {
+	saved.value = hasQuestion(saved.value, question)
+		? removeQuestion(saved.value, question)
+		: addQuestion(saved.value, question, Date.now());
+	saveList(SAVED_KEY, saved.value);
+}
+
+function unsave(question: string) {
+	saved.value = removeQuestion(saved.value, question);
+	saveList(SAVED_KEY, saved.value);
+}
 
 /** A plain-language message for a failed /d1-ask/chat call. */
 function explainError(status: number | undefined, d: any, fallback: string) {
@@ -107,6 +143,7 @@ async function submit(text?: string) {
 	const messages = [...history(), { role: 'user', content: question }];
 	const turn = ref<Turn>({ question, status: 'pending' }).value;
 	turns.value.push(turn);
+	remember(question);
 	input.value = '';
 	await scrollToEnd();
 
@@ -176,6 +213,22 @@ function cell(value: unknown): string {
 						one. Click an example to try it:
 					</p>
 					<ExampleChips :disabled="busy()" @pick="submit" />
+					<QuestionList
+						title="Saved"
+						test-id="ask-saved"
+						:items="saved"
+						:disabled="busy()"
+						@run="submit"
+						@remove="unsave"
+					/>
+					<QuestionList
+						title="Recent questions"
+						test-id="ask-history"
+						:items="asked"
+						:disabled="busy()"
+						@run="submit"
+						@remove="forget"
+					/>
 				</div>
 
 				<div v-for="(turn, i) in turns" :key="i" class="turn">
@@ -225,6 +278,15 @@ function cell(value: unknown): string {
 											? 'Copy failed'
 											: 'Copy SQL'
 								}}
+							</button>
+							<button
+								type="button"
+								class="action"
+								data-test="ask-save-question"
+								:aria-pressed="hasQuestion(saved, turn.question)"
+								@click="toggleSaved(turn.question)"
+							>
+								{{ hasQuestion(saved, turn.question) ? 'Saved' : 'Save question' }}
 							</button>
 						</div>
 
