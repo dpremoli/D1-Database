@@ -47,6 +47,8 @@ import {
 const props = withDefaults(defineProps<{
 	diagPath: string;
 	analysisId: string;
+	/** Operation tag / pass code, used in exported filenames; falls back to the analysis id. */
+	opTag?: string;
 	diagMetrics: Record<string, unknown> | null;
 	initialRecipe?: Recipe | null;
 	bakedRecipe?: Recipe | null;
@@ -592,7 +594,7 @@ onBeforeUnmount(() => {
 						<template v-else-if="item.type === 'clusters'">
 							<ClusterTable
 								v-if="clustersLive"
-								:rows="clusters" :caption="clusterCaption"
+								:rows="clusters" :caption="clusterCaption" :op-tag="opTag || analysisId"
 								:active-id="selection?.kind === 'cluster' ? selection.id : null"
 								@select="onClusterSelect"
 							/>
