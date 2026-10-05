@@ -1,7 +1,7 @@
 # FRM ↔ Signals linking
 
 **Date:** 2026-10-04
-**Status:** Implemented on branch `ccr-37b6f575-4lu7ni`, pending merge.
+**Status:** Implemented (PR #121).
 **Scope decision:** the Plot dashboard (`ForceDashboard`), which is both the Force App's Plot page
 and Directus *Force Analysis*. Lite and Full/Gridded (octree) maps. The Record page is deferred.
 
