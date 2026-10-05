@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { nextTick } from 'vue';
 
 // createWorkspace() start/stop/upload paths (stream-2 review 2.1, 2.2, 2.5, 2.7). Everything the
 // workspace talks to (Directus, the recorder, dialogs) is faked at the module boundary.
@@ -14,7 +15,16 @@ const auth = vi.hoisted(() => ({
 vi.mock('../authStore', () => ({ authStore: auth }));
 vi.mock('@d1/force-plotting', () => ({
 	buildSeriesEnvelope: vi.fn(() => ({ series: true })),
-	debouncePublish: () => ({ push: () => {}, flush: () => {} }),
+	// Holds the last pushed value until flush() (the 250 ms timer is not simulated): enough to
+	// drive the "flushed on page hide" path in the setup-persistence tests below.
+	debouncePublish: <T,>(publish: (v: T) => void) => {
+		let pending: { v: T } | null = null;
+		return {
+			push: (v: T) => { pending = { v }; },
+			flush: () => { if (pending) { const { v } = pending; pending = null; publish(v); } },
+			cancel: () => { pending = null; },
+		};
+	},
 	parseCache: vi.fn(() => ({ csSec: 0, ceSec: 1 })),
 }));
 vi.mock('./directusLookups', () => ({
@@ -394,5 +404,90 @@ describe('workspace.stop() returns the amp to RESET after finalize', () => {
 	it('an already-settled stop resets straight away', async () => {
 		await stopping('done');
 		expect(resets()).toBe(1);
+	});
+});
+
+describe('remembered setup (R1)', () => {
+	const KEY = 'force-app.record.setup.v1';
+	const hide: Array<() => void> = [];
+	beforeEach(() => {
+		hide.length = 0;
+		vi.stubGlobal('window', {
+			addEventListener: (ev: string, fn: () => void) => { if (ev === 'pagehide') hide.push(fn); },
+			removeEventListener: () => {},
+		});
+	});
+	const pageHide = () => hide.forEach((f) => f());
+	const stored = () => JSON.parse(localStorage.getItem(KEY) || 'null');
+	const seed = (o: unknown) => localStorage.setItem(KEY, JSON.stringify(o));
+
+	it('starts from the defaults (and no fake sample name) with nothing stored', async () => {
+		const w = await make();
+		expect(w.cfg.rpm).toBe(1200);
+		expect(w.meta.sample_name).toBe('');
+		expect(w.link.sampleId).toBe('');
+	});
+
+	it('restores a stored setup, never the per-cut fields', async () => {
+		seed({
+			cfg: { rpm: 900, feed: 0.2, diam: 40, inner_diam: 5, sample_rate: 10000, ppr: 2 },
+			link: { sampleId: 's1', sampleLabel: 'S-1', operatorId: 'p1', operatorLabel: 'Pat', equipmentId: 'e1', equipmentLabel: 'Lathe' },
+			meta: { sample_name: 'S-1', op_type: 'MT-F', coolant: 'flood', notes: 'stale', operation: 'stale' },
+			machining: { axial_doc: '1.5', operation_sequence: '7', chips_ref: 'X', new_edge: true, chips_collected: true },
+		});
+		const w = await make();
+		expect(w.cfg).toMatchObject({ rpm: 900, feed: 0.2, diam: 40, inner_diam: 5, sample_rate: 10000, ppr: 2 });
+		expect(w.link).toMatchObject({ sampleId: 's1', operatorLabel: 'Pat', equipmentId: 'e1' });
+		expect(w.meta).toMatchObject({ sample_name: 'S-1', op_type: 'MT-F', coolant: 'flood', notes: '', operation: '' });
+		expect(w.machining).toMatchObject({ axial_doc: '1.5', operation_sequence: '', chips_ref: '', new_edge: false, chips_collected: false });
+	});
+
+	it('writes on page hide, without per-cut fields', async () => {
+		const w = await make();
+		w.cfg.rpm = 1500; w.link.sampleId = 's9'; w.link.sampleLabel = 'S-9';
+		w.meta.notes = 'only this cut'; w.machining.chips_ref = 'CH-1'; w.machining.operation_sequence = '3';
+		await nextTick();
+		pageHide();
+		const o = stored();
+		expect(o.cfg.rpm).toBe(1500);
+		expect(o.link.sampleId).toBe('s9');
+		expect(JSON.stringify(o)).not.toMatch(/only this cut|CH-1|operation_sequence|chips|notes/);
+	});
+
+	it('a restored link does not fight Replay: entering Replay clears it and the clearing is not stored', async () => {
+		seed({ link: { sampleId: 's1', sampleLabel: 'S-1', equipmentId: 'e1', equipmentLabel: 'Lathe', operatorId: 'p1', operatorLabel: 'Pat' }, meta: { op_type: 'MT-F' } });
+		const w = await make();
+		expect(w.link.sampleId).toBe('s1');
+		w.setSource('replay');
+		expect(w.link.sampleId).toBe(''); expect(w.link.equipmentId).toBe(''); expect(w.meta.op_type).toBe('');
+		await nextTick();
+		pageHide();
+		expect(stored().link.sampleId).toBe('s1');   // the remembered setup is still there for the next Record launch
+		expect(stored().meta.op_type).toBe('MT-F');
+	});
+
+	it('a launch that opens straight into Replay does not bring Sample/Machine/type back', async () => {
+		localStorage.setItem('force-app.source', 'replay');
+		seed({ link: { sampleId: 's1', sampleLabel: 'S-1', equipmentId: 'e1', equipmentLabel: 'Lathe', operatorId: 'p1', operatorLabel: 'Pat' }, meta: { op_type: 'MT-F', sample_name: 'S-1' } });
+		const w = await make();
+		expect(w.source.value).toBe('replay');
+		expect(w.link.sampleId).toBe(''); expect(w.link.equipmentId).toBe('');
+		expect(w.meta.op_type).toBe(''); expect(w.meta.sample_name).toBe('');
+		expect(w.link.operatorId).toBe('p1'); // Operator never narrowed the cut search
+	});
+
+	it('Clear setup resets the form and forgets the stored copy', async () => {
+		seed({ cfg: { rpm: 900 }, link: { sampleId: 's1' } });
+		const w = await make();
+		w.meta.notes = 'n'; w.machining.chips_ref = 'c'; w.link.toolId = 't';
+		w.clearSetup();
+		expect(w.cfg.rpm).toBe(1200);
+		expect(w.link.sampleId).toBe('');
+		expect(w.link.toolId).toBe('');
+		expect(w.meta.notes).toBe(''); expect(w.machining.chips_ref).toBe('');
+		expect(localStorage.getItem(KEY)).toBeNull();
+		await nextTick();
+		pageHide();
+		expect(localStorage.getItem(KEY)).toBeNull(); // an all-default setup is never written back
 	});
 });
