@@ -57,6 +57,11 @@ Lab Member cannot update or delete files, so a file cannot be replaced or remove
 (use a Lab Admin). Before that migration, saving a cut failed at the upload step and left the
 operation row behind.
 
+**The `directus_files` read grant is unfiltered.** Any Lab Member can read any file, and
+`/assets/<id>` serves the bytes. **Phase 9 follow-up:** when the export-control row filter on
+`physical_samples` lands ([ADR-0005](../../adr/0005-directus-rbac-structure.md)), file reads must be
+filtered the same way, or `/assets/<id>` bypasses it.
+
 The production server may have been adjusted in the UI. If a rebuild loses a permission you rely
 on, record it in a migration.
 

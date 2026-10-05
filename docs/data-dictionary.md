@@ -149,7 +149,7 @@ The central entity. Everything else points to or from here.
 **Code generation:** `generate_sample_code(seq, alloy_code, method_code, date)`
 → `{seq}-{alloy}-{method}-{YYYY-MM-DD}`
 
-**Numbers are assigned by the database** (migrations `…126`, `…127`). The Directus
+**Numbers are assigned by the database** (migrations `…126`, `…127`; `next_sample_code_number()` is the read-only preview function the Register sample page uses, served by the `d1-next-number` endpoint). The Directus
 interfaces send a code whose number part is the literal placeholder `{seq}` (and, for
 sintering pass codes, `{mf}`); a BEFORE trigger replaces it with the next free number
 under a lock (an advisory lock for sample and MF numbers, a row lock on the sample for
