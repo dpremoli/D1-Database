@@ -22,7 +22,7 @@ interrupted work" in `CLAUDE.md`). Each stream runs in its own worktree under
 
 | Stream | Items | Worktree / branch | State |
 |---|---|---|---|
-| A — force-plotting | X1, P1 | `agent-aa316adf0059bce0c` | in progress |
+| A — force-plotting | X1, P1 | `agent-aa316adf0059bce0c` | merged (`6d185f6`); follow-up: pass `opTag` to `DiagnosticsWorkbench` from the web app |
 | B — Record page | R1, R3, X4 | `agent-ac917adcb6fa3ab1d` | in progress |
 | C — Ask-DB | D1, D2 | `agent-a70084c335c3236ae` | in progress |
 | D — Directus data entry | X2, D7, D9 | `agent-a5e617bc0453549e7` | in progress |
