@@ -24,3 +24,5 @@ Shared, checked-in notes from earlier force-app reviews. One dated line per less
 - 2026-10-05: R1 hotspot — `pickReplayCut` hydrates link/meta/machining from the archived op; any "persist on leaving Replay" path stores that cut's sample/operator/machine. Debounced publishers that check state at fire time (not push time) have this class of bug.
 - 2026-10-05: X1 `withHeight` mutating `pos` is safe (fresh cloud each build, GPU path off when zSeries set). Supersedes the 2026-10-04 zv-flat note.
 - 2026-10-05: `SaveCutDialog.startNew()` is also the failed-state Close; check any `newRun` semantics against it.
+- 2026-10-05: `replay.cacheId` is never reset, so setSource's `!replay.cacheId` guard skips the Replay-entry clear on every re-entry after a first pick; any leave-Replay restore makes the re-entered form disagree with the loaded cut. Check re-entry, not just first entry.
+- 2026-10-05: SaveCutDialog's `failed` state covers start AND acquisition/finalize failures (`describeRecordingFailure().rawKept`); sequence-step decisions there must branch on rawKept. Re-review 79eda2e..HEAD: web 417, plotting 491 tests + both typechecks green.
