@@ -13,7 +13,7 @@ import { useForceHost } from './host';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { type Cache, cacheGet, cachePut, idxOfTime, parseCache } from './liveCache';
-import { type Axis, type Cloud, type CloudChannel, type SpeedMode, axisAutoLimits, buildCloud } from './liveCloud';
+import { type Axis, type Cloud, type CloudChannel, type SpeedMode, axisAutoLimits, buildCloud, withHeight } from './liveCloud';
 import { buildPath, type PathParams } from './path';
 import {
 	createClickTracker, displayedKeep, displayedKeepIndex, findNearestPathIndex, pickNearest, pickRadius, pickSpiral,
@@ -425,6 +425,7 @@ function rebuild() {
 		cmin: s.satMin, cmax: s.satMax,   // no colormap: colour comes from colorizeValues below
 		zSeries: props.zSeries || 'none',
 	});
+	if (cloud) withHeight(cloud);   // Z = Fx/Fy/Fz: height lives in pos so draw, pick and rings agree
 	pointCount.value = cloud?.count ?? 0;
 	emit('points', pointCount.value);
 	if (!cloud) { scaleBar.value = null; return; }
@@ -433,7 +434,7 @@ function rebuild() {
 	fitCx = (cloud.bounds.minX + cloud.bounds.maxX) / 2; fitCy = (cloud.bounds.minY + cloud.bounds.maxY) / 2;
 	fitSpan = Math.max(cloud.bounds.maxX - cloud.bounds.minX, cloud.bounds.maxY - cloud.bounds.minY) || 1;
 
-	// upload ONCE per rebuild. cloud.pos is already stride-3 (buildPath emits x,y,z directly).
+	// upload ONCE per rebuild. cloud.pos is already stride-3 (x,y,z; z carries the force height after withHeight).
 	// Colour is RGBA from colorizeValues (the full colour scale: steps, log, displayed range), and
 	// a colour-only change recolours this buffer in place (recolorCpu) rather than rebuilding.
 	const n = cloud.count;

@@ -71,9 +71,10 @@ Modules: `cloudPick.ts` (contract and pure helpers), `octreePick.ts`, `chartMark
 
 ## Pre-existing, found during review
 
-Since 5e3876a FrmCloud never reads `Cloud.zv` (`buildCloud` writes z = 0 when a Z series is set),
-so the Lite 3D view renders flat. The 3D pick and ring read `cloud.pos`, so they match what is
-drawn today. If `zv` is wired back, it has to go into `pos` so they stay aligned.
+Fixed. Since 5e3876a FrmCloud never read `Cloud.zv` (`buildCloud` writes z = 0 when a Z series is
+set), so the Lite 3D view rendered flat. `FrmCloud.rebuild` now calls `withHeight` (liveCloud.ts),
+which bakes `zv` into `pos` z. The 3D pick, the hover/selection rings and the map ↔ signals marker
+all read `cloud.pos` through the same model matrix, so they stay aligned with the displaced points.
 
 ## Side finding
 

@@ -29,6 +29,7 @@ import { activeFindings, diagnose, worstSeverity, type Finding } from './metadat
 import { computeSignalStats, resolveStatsWindow, type SignalStats } from './signalStats';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
+import { copyText, downloadText, safeFilePart, toCsv, type CsvColumn } from './csvExport';
 
 const host = useForceHost();
 const api = host.api;
@@ -480,6 +481,45 @@ function fmtStat(v: number): string {
 	if (a >= 1000) return (v / 1000).toFixed(2) + 'k';
 	if (a >= 10) return v.toFixed(1);
 	return v.toFixed(2);
+}
+
+// CSV of the statistics table: one row per force axis, RPM columns repeated on each row so the
+// file stays a flat table. Units are in the header names.
+type StatsCsvRow = { axis: string } & SignalStats['axes']['Fx'];
+const STATS_COLS: CsvColumn<StatsCsvRow>[] = [
+	{ header: 'axis', value: (r) => r.axis },
+	{ header: 'window_start_s', value: () => sigStats.value?.windowSec[0] },
+	{ header: 'window_end_s', value: () => sigStats.value?.windowSec[1] },
+	{ header: 'n_samples', value: (r) => r.n },
+	{ header: 'mean_N', value: (r) => r.mean },
+	{ header: 'rms_N', value: (r) => r.rms },
+	{ header: 'std_N', value: (r) => r.std },
+	{ header: 'min_N', value: (r) => r.min },
+	{ header: 'max_N', value: (r) => r.max },
+	{ header: 'p2p_N', value: (r) => r.p2p },
+	{ header: 'dyn_range_bits', value: (r) => r.effBits },
+	{ header: 'rail_lo_pct', value: (r) => r.railLoPct },
+	{ header: 'rail_hi_pct', value: (r) => r.railHiPct },
+	{ header: 'clipped', value: (r) => r.clipped },
+	{ header: 'rpm_mean', value: () => sigStats.value?.rpm.mean },
+	{ header: 'rpm_std', value: () => sigStats.value?.rpm.std },
+	{ header: 'rpm_min', value: () => sigStats.value?.rpm.min },
+	{ header: 'rpm_max', value: () => sigStats.value?.rpm.max },
+];
+function statsCsv(): string {
+	const st = sigStats.value;
+	return st ? toCsv(STATS_COLS, STAT_AXES.map((a) => ({ axis: a, ...st.axes[a] }))) : '';
+}
+function downloadStatsCsv() {
+	const text = statsCsv();
+	if (text) downloadText(`signal_stats_${safeFilePart(opLabel.value) || 'op'}.csv`, text);
+}
+const statsCopied = ref(false);
+async function copyStatsCsv() {
+	const text = statsCsv();
+	if (!text || !(await copyText(text))) return;
+	statsCopied.value = true;
+	setTimeout(() => { statsCopied.value = false; }, 1500);
 }
 
 // ---- Signal-filter suite -----------------------------------------------------------
@@ -2483,7 +2523,10 @@ function fmtDateTime(v: string | null | undefined) {
 								<button class="chevbtn" title="Collapse/expand" @click="togglePanel('stats')"><v-icon :name="statsOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
 								<v-icon name="query_stats" x-small /> Signal statistics
 							</span>
-							<span v-if="sigStats" class="stats-win mono">{{ sigStats.windowSec[0].toFixed(1) }}–{{ sigStats.windowSec[1].toFixed(1) }} s</span>
+							<span v-if="sigStats" class="stats-win mono">{{ sigStats.windowSec[0].toFixed(1) }}–{{ sigStats.windowSec[1].toFixed(1) }} s
+								<button class="linkbtn" title="Download these statistics as CSV" @click="downloadStatsCsv">Download CSV</button>
+								<button class="linkbtn" title="Copy these statistics to the clipboard as CSV" @click="copyStatsCsv">{{ statsCopied ? 'Copied' : 'Copy' }}</button>
+							</span>
 						</div>
 						<template v-if="statsOpen">
 							<div v-if="!detail.live_cache_file" class="empty sm">No signal cache — reprocess this op to enable statistics</div>
@@ -3218,6 +3261,7 @@ function fmtDateTime(v: string | null | undefined) {
 .stats-table td:first-child { text-align: left; color: var(--theme--foreground-subdued, #6b7684); font-weight: 600; white-space: nowrap; }
 .stat-bad { color: #dc2626; font-weight: 700; }
 .stats-win { font-size: var(--fs-xs, 11px); color: var(--theme--foreground-subdued, #98a2b3); }
+.stats-win .linkbtn { float: none; margin-left: 8px; }
 .stats-rpm { margin-top: 2px; }
 .stats-compute { margin-top: 4px; }
 .acc-head {
