@@ -16,7 +16,7 @@ harness has created worktrees on a stale base before).
 
 | Stream | Items | Worktree / branch | State |
 |---|---|---|---|
-| E — Plot links and difference | P3, P4 | `agent-a599320b98cdd16e4` | in progress |
+| E — Plot links and difference | P3, P4 | `agent-a599320b98cdd16e4` | merged; difference is time-aligned (envelopes have no rev axis); kept-alive page reads the query only on first mount |
 | F — Record pre-flight and clipping | R4, R5 | `agent-ac8631645146fa4c6` | in progress |
 | G — Sample labels and QR | D4 | `agent-ae33f229aecfe9f8c` | in progress |
 | H — Ask-DB export and history | D3 | `agent-a1b0b9664f0489c4f` | in progress |
