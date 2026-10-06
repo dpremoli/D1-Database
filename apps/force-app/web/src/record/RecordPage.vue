@@ -657,11 +657,14 @@ onBeforeUnmount(() => {
    window size. A block formatting context keeps that margin inside. */
 .rec-wrap { min-height: 100vh; display: flow-root; background: radial-gradient(1200px 600px at 50% -10%, var(--bg-2), var(--bg)); padding-bottom: 24px; }
 /* z-index 290: the topmost surface except the confirm prompt (300, launched from this banner's
-   Acknowledge button) and the offline banner (1000). It must sit above every dialog backdrop
-   (save 200, edit-metadata 250, virtual-channel builder 260): stop-on-alarm opens the save dialog
-   while the tone is still looping, and the operator has to be able to click Acknowledge.
-   z-order.test.ts pins this ordering. */
-.alarm-overlay { --banner: #dc2626; position: fixed; top: 0; left: 0; right: 0; z-index: 290; display: flex; align-items: center; gap: 14px; padding: 12px 20px;
+   Acknowledge button) and the offline banner (App.vue, fixed top, 1000). It must sit above every
+   dialog backdrop (save 200, edit-metadata 250, virtual-channel builder 260): stop-on-alarm opens
+   the save dialog while the tone is still looping, and the operator has to be able to click
+   Acknowledge. The offline banner would cover it, so `top` is pushed down by --offline-banner-h
+   (App.vue publishes the measured banner height on <html> while offline, 0px otherwise): the
+   offline banner stays the topmost strip and the alarm sits directly under it, both readable and
+   both clickable. z-order.test.ts pins the ordering and the offset. */
+.alarm-overlay { --banner: #dc2626; position: fixed; top: var(--offline-banner-h, 0px); left: 0; right: 0; z-index: 290; display: flex; align-items: center; gap: 14px; padding: 12px 20px;
 	color: #fff; background: #dc2626; box-shadow: 0 6px 24px rgba(220,38,38,0.5); animation: alarmpulse 0.9s ease-in-out infinite; }
 @keyframes alarmpulse { 0%,100% { background: #dc2626; } 50% { background: #991b1b; } }
 .alarm-overlay > .material-symbols-rounded { font-size: var(--icon-2xl); }
@@ -669,7 +672,7 @@ onBeforeUnmount(() => {
 .ao-text b { font-size: var(--fs-lg); letter-spacing: 0.04em; }
 .ao-item { font-size: var(--fs-md); font-variant-numeric: tabular-nums; background: rgba(0,0,0,0.2); padding: 2px 8px; border-radius: 6px; }
 .ao-ack { margin-left: auto; }
-.top-overlays { position: fixed; top: 0; left: 0; right: 0; z-index: 90; display: flex; flex-direction: column; max-height: 60vh; overflow-y: auto; }
+.top-overlays { position: fixed; top: var(--offline-banner-h, 0px); left: 0; right: 0; z-index: 90; display: flex; flex-direction: column; max-height: 60vh; overflow-y: auto; }
 .disk-action-banner { display: flex; align-items: center; gap: 12px; padding: 10px 18px; font-size: var(--fs-md); color: #fff; flex: none; }
 .disk-action-banner.backup_started { background: #2563eb; }
 .disk-action-banner.backup_unavailable { background: #b45309; }

@@ -225,7 +225,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 	transition: width 0.16s ease, height 0.16s ease, border-radius 0.16s ease, top 0.16s ease, transform 0.16s ease, padding 0.16s ease;
 }
 .sidebar.expanded {
-	top: 0; transform: translateY(0); width: 96px; height: 100vh; padding: 8px; border-radius: 0; overflow: hidden;
+	top: var(--offline-banner-h, 0px); transform: translateY(0); width: 96px; height: calc(100vh - var(--offline-banner-h, 0px)); padding: 8px; border-radius: 0; overflow: hidden;
 	background: var(--bg-2); border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
 	box-shadow: 8px 0 28px rgba(0,0,0,0.28);
 }

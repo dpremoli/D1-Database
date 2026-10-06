@@ -24,4 +24,10 @@ describe('overlay stacking', () => {
 	it('the confirm prompt it launches (Silence) is still above the banner', () => {
 		expect(z('./ui/ConfirmDialog.vue', '.cd-backdrop')).toBeGreaterThan(alarm);
 	});
+	it('the offline banner stays above the alarm banner, which is pushed below it', () => {
+		const read = (f: string) => readFileSync(fileURLToPath(new URL(f, import.meta.url)), 'utf8');
+		expect(z('./App.vue', '.offline-banner')).toBeGreaterThan(alarm);
+		expect(read('./record/RecordPage.vue')).toMatch(/\.alarm-overlay\s*\{[^}]*top:\s*var\(--offline-banner-h/);
+		expect(read('./App.vue')).toContain("setProperty('--offline-banner-h'");
+	});
 });

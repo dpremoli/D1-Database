@@ -370,7 +370,7 @@ function startNew() {
 </template>
 
 <style scoped>
-.scd-backdrop { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); backdrop-filter: blur(2px); padding: 24px; }
+.scd-backdrop { position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.55); backdrop-filter: blur(2px); padding: calc(24px + var(--offline-banner-h, 0px)) 24px 24px; }
 .scd-modal { width: min(880px, 100%); max-height: 92vh; overflow: auto; display: flex; flex-direction: column; gap: 14px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: 0 30px 80px rgba(0,0,0,0.45); }
 .scd-head { display: flex; align-items: center; gap: 12px; }
 .scd-head > .material-symbols-rounded { font-size: var(--icon-xl); color: var(--ok); }
