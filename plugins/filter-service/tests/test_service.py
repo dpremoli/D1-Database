@@ -256,3 +256,32 @@ def test_uuid_cache_file_id_builds_the_canonical_url(monkeypatch):
     )
     assert r.status_code == 404  # Directus (fake) said so; the id was accepted
     assert _FakeAsyncClient.urls == [f"{m.DIRECTUS_URL}/assets/{GOOD_ID}"]
+
+
+def test_fft_overlay_is_rms_amplitude_in_newtons():
+    """/fft must read in the same unit as the main spectrum (sqrt of MATLAB pspectrum power = N rms),
+    not the N/sqrt(Hz) of a welch density: a sine of amplitude A peaks at A/sqrt(2)."""
+    amp, f0, n = (
+        50.0,
+        1000.0,
+        1 << 14,
+    )  # 1000 Hz sits exactly on a bin (25600/16384 Hz apart)
+    t = np.arange(n) / FS
+    z = np.zeros(n, np.float32)
+    c = Cache(
+        FS,
+        0.1,
+        10.0,
+        0.0,
+        float(t[-1]),
+        t.astype(np.float32),
+        z.copy(),
+        z.copy(),
+        (amp * np.sin(2 * np.pi * f0 * t)).astype(np.float32),
+        np.full(n, 1500.0, np.float32),
+        np.arange(n, dtype=np.float32) / 100,
+    )
+    out = m._fft_compute(c, {}, "Fz")
+    peak = int(np.argmax(out["amp"]))
+    assert out["f"][peak] == pytest.approx(f0, abs=2.0)
+    assert out["amp"][peak] == pytest.approx(amp / np.sqrt(2), rel=0.02)

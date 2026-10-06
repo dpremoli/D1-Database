@@ -287,6 +287,23 @@ export function createWorkspace() {
 	// Safety alarms (2e) — the app-wide controller (config lives in Settings > Alarms), evaluated
 	// here on every live frame while recording.
 	const alarms = alarmController;
+	// R6 (opt-in): a tripped force alarm stops the recording through the normal stop path, so the
+	// save dialog and finalize behave exactly as after a manual Stop. The controller calls this once
+	// per trip; the state check keeps a late call from stopping anything that is not recording.
+	// The controller calls this once per trip, so a call that lands while start()/stop() holds `busy`
+	// (stop() would return early) is remembered and retried when busy clears, or the trip's stop
+	// would be lost for good. The retry re-checks the state, so a stop already under way is a no-op.
+	let stopPendingOnTrip = false;
+	alarms.onForceTrip = () => {
+		if (mode.value !== 'record' || st.state !== 'recording') return;
+		if (busy.value) { stopPendingOnTrip = true; return; }
+		void stop();
+	};
+	watch(busy, (b) => {
+		if (b || !stopPendingOnTrip) return;
+		stopPendingOnTrip = false;
+		if (mode.value === 'record' && st.state === 'recording') void stop();
+	});
 	// Record mode only: an archived cut must never trip a safety alarm on a machine that is not
 	// cutting. Playback drove this with RPM that was also wrong by the decimation stride, so every
 	// replay raised the full-screen overlay.
@@ -405,6 +422,10 @@ export function createWorkspace() {
 	const sampleRateBlocker = computed(() => (source.value === 'nidaq'
 		? sampleRateIssue(cfg.sample_rate, nidaqHardware.maxRateHz)
 		: null));
+	// The footer's Start / Stop buttons are disabled when these are true; the R10 keyboard shortcuts
+	// read the same two so a key can never do what the button can't.
+	const startDisabled = computed(() => busy.value || !st.connected || !!sampleRateBlocker.value);
+	const stopDisabled = computed(() => busy.value || isFinalizing.value);
 
 	// The resolved Sample/Operator/Machine/Tool/Insert/Edge picks (`link.*`) and the folded
 	// machining-details section (`machining.*`) used to reach Directus ONLY via buildRunPayload()'s
@@ -653,6 +674,9 @@ export function createWorkspace() {
 		client.reset(); finishedCache.value = null; errMsg.value = null; logged.value = false; saveOpen.value = false;
 		recordedStamp.value = null;
 		editCutStartSec.value = null; editCutEndSec.value = null;
+		// The early-warning banner belongs to the cut that just ended. Warnings only: reset() would
+		// also clear an alarm the operator has not acknowledged.
+		alarms.resetWarnings();
 		if (!nextCut) return;
 		// R3: the next cut is a new pass. Step the sequence when it is a whole number (a blank or
 		// free-text one is left alone), so the Cut ID {sample}-{TYPE}{seq} does not repeat, and drop
@@ -1045,7 +1069,7 @@ export function createWorkspace() {
 	return {
 		client, source, setSource, nidaqChannels, cfg, meta, machining, plot, replay, st, busy, errMsg, finishedCache,
 		editCutStartSec, editCutEndSec,
-		isIdle, isRecording, isFinalizing, isDone, locked, sampleRateBlocker, saveOpen,
+		isIdle, isRecording, isFinalizing, isDone, locked, sampleRateBlocker, startDisabled, stopDisabled, saveOpen,
 		mode, playback, rpmTarget,
 		start, stop, newRun, dismissFailure, clearSetup, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
 		// 2d: Directus links + run write-back

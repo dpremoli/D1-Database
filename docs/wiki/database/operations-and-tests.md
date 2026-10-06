@@ -6,7 +6,9 @@
 
 A **manufacturing operation** is one process step performed on a sample: a machining pass, a
 FAST sinter, a heat treatment, a preparation for metallography. Operations are listed under
-**Manufacturing Operations**, with shortcuts to the **FAST** and **Machining** subsets.
+**Manufacturing Operations**, with shortcuts to the **FAST** and **Machining** subsets and to
+**My operations**, **FAST runs, last 7 days** and **Missing outcome**
+([Saved views](getting-started.md#saved-views)).
 
 ![The operations list](../images/database/operations-list.png)
 
@@ -61,7 +63,9 @@ parameter is corrected (see the [Force App wiki](../force-app/plot-dashboard.md#
 
 ## Test sessions
 
-A **test session** is one test or measurement: under **Test Sessions**.
+A **test session** is one test or measurement: under **Test Sessions**, where the **Failed** and
+**Needs analysis** saved views ([Saved views](getting-started.md#saved-views)) list the sessions
+that need attention.
 
 ![A test session](../images/database/test-session.png)
 

@@ -212,7 +212,13 @@ def _run_compute(c: Cache, chain: dict, target: int) -> Response:
 
 @app.post("/fft")
 async def filter_fft(req: Request):
-    """Amplitude spectrum of ONE filtered axis (for the dashed FFT-chart overlay)."""
+    """Amplitude spectrum of ONE filtered axis (for the dashed FFT-chart overlay).
+
+    `amp` is RMS amplitude in N (scaling="spectrum": a sine of amplitude A peaks at A/sqrt(2)),
+    the same unit as the dashboard's main FFT trace, which process_force.m builds as
+    sqrt(pspectrum power). It is NOT a density (N/sqrt(Hz)): the overlay shares the main trace's
+    axis, so the two must agree.
+    """
     body = await req.json()
     file_id = body.get("cache_file_id")
     axis = str(body.get("axis") or "Fz")
@@ -232,7 +238,7 @@ def _fft_compute(c: Cache, chain: dict, axis: str) -> dict:
             fs = _effective_fs(c)
             y = {"Fx": fc.fx, "Fy": fc.fy, "Fz": fc.fz}[axis].astype(np.float64)
             nper = min(y.size, 1 << 14)
-            f, p = ssig.welch(y, fs=fs, nperseg=nper)
+            f, p = ssig.welch(y, fs=fs, nperseg=nper, scaling="spectrum")
     except ChainError as e:
         raise HTTPException(422, str(e)) from e
     amp = np.sqrt(p)

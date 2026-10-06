@@ -2,7 +2,8 @@
 // Start/Stop (sim/nidaq) or the TransportBar (replay) — split out of RecordingOptions.vue so
 // RecordPage.vue can hand it to PanelFrame's #footer slot and pin it to the bottom of the panel,
 // always visible without scrolling past the metadata form.
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
+import { isMacPlatform, shortcutHints } from '../shortcuts';
 import { useRouter } from 'vue-router';
 import { useWorkspace } from '../workspace';
 import { attentionItems, type PreflightItem, type PreflightLevel } from '../preflight';
@@ -11,6 +12,12 @@ import { describeRecordingFailure, FIELD_FOCUS } from '../recordingErrors';
 import { spotlight } from '../../ui/spotlight';
 
 const w = useWorkspace();
+
+// R10: the shortcut list under Start. Cmd on a Mac, Ctrl elsewhere.
+const hints = shortcutHints(isMacPlatform());
+const startKeys = hints[0].keys;
+const stopKeys = hints[1].keys;
+const hintsOpen = ref(false);
 
 // #84: a rate the assigned NI-DAQ modules can't do is caught here, before Start, instead of as a
 // driver error after a session (and a capture directory) already exists. Start stays disabled
@@ -58,15 +65,22 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
 				</button>
 			</div>
 			<div class="actions">
-				<button v-if="!w.locked.value" class="btn success start" :disabled="w.busy.value || !w.st.connected || !!w.sampleRateBlocker.value"
-					:title="w.sampleRateBlocker.value || ''" @click="w.requestStart()">
+				<button v-if="!w.locked.value" class="btn success start" :disabled="w.startDisabled.value"
+					:title="w.sampleRateBlocker.value || `Start (${startKeys})`" @click="w.requestStart()">
 					<span class="material-symbols-rounded">fiber_manual_record</span> Start
 				</button>
-				<button v-else class="btn danger stop" :disabled="w.busy.value || w.isFinalizing.value" @click="w.stop()">
+				<button v-else class="btn danger stop" :disabled="w.stopDisabled.value" :title="`Stop (${stopKeys})`" @click="w.stop()">
 					<span class="material-symbols-rounded">stop</span> {{ w.isFinalizing.value ? 'Finalizing…' : 'Stop' }}
 				</button>
 				<button v-if="w.isDone.value" class="btn" @click="w.newRun()">New</button>
 			</div>
+		</div>
+		<div v-if="w.mode.value !== 'playback'" class="kbd-hint">
+			<button type="button" class="linkbtn" :aria-expanded="hintsOpen" aria-controls="kbd-list" data-testid="shortcuts-toggle" @click="hintsOpen = !hintsOpen">Keyboard shortcuts</button>
+			<span v-if="!hintsOpen" class="kbd-short">{{ startKeys }} start, {{ stopKeys }} stop</span>
+			<ul v-if="hintsOpen" id="kbd-list" class="kbd-list" data-testid="shortcuts-list">
+				<li v-for="h in hints" :key="h.keys + h.label"><kbd>{{ h.keys }}</kbd> {{ h.label }}</li>
+			</ul>
 		</div>
 		<div v-if="w.mode.value !== 'playback' && w.source.value !== 'replay'" class="proc-notes">
 			<p v-if="w.recordingPrefs.convergeEnabled && w.source.value !== 'nidaq'" class="hint">Applies live only with the NI-DAQ source; on sim/replay it just previews the recommendation.</p>
@@ -112,6 +126,10 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
 .segproc button.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .segproc button:disabled { opacity: 0.5; cursor: not-allowed; }
 .segproc .material-symbols-rounded { font-size: var(--icon-sm); }
+.kbd-hint { margin-top: 2px; font-size: var(--fs-xs); color: var(--text-dim); display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.kbd-hint .linkbtn { font-size: var(--fs-xs); }
+.kbd-list { flex-basis: 100%; margin: 2px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.kbd-hint kbd { display: inline-block; min-width: 1.4em; padding: 0 5px; font: inherit; font-weight: 600; text-align: center; color: var(--text); background: var(--bg-3); border: 1px solid var(--border); border-radius: 4px; }
 .proc-notes { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
 .hint { font-size: var(--fs-sm); color: var(--text-dim); margin: 0; }
 .sync { display: flex; align-items: center; gap: 5px; font-size: var(--fs-sm); margin: 0; }

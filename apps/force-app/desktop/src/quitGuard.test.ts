@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { confirmQuit, fetchBusySession, quitDialogOptions } from './quitGuard';
+import { confirmQuit, fetchBusySession, fetchRecorderActivity, quitDialogOptions } from './quitGuard';
 
 const status = (body: unknown, ok = true) => async () => ({ ok, json: async () => body }) as unknown as Response;
 
@@ -23,6 +23,19 @@ describe('fetchBusySession', () => {
     expect(await fetchBusySession(async () => { throw new Error('ECONNREFUSED'); })).toBeNull();
     expect(await fetchBusySession(async () => null)).toBeNull();
     expect(await fetchBusySession(status({}, false))).toBeNull();
+  });
+});
+
+describe('fetchRecorderActivity', () => {
+  it('tells idle apart from "could not ask"', async () => {
+    expect(await fetchRecorderActivity(status({ state: 'idle' }))).toEqual({ status: 'idle' });
+    expect(await fetchRecorderActivity(async () => { throw new Error('timeout'); })).toEqual({ status: 'unknown' });
+    expect(await fetchRecorderActivity(async () => null)).toEqual({ status: 'unknown' });
+    expect(await fetchRecorderActivity(status({}, false))).toEqual({ status: 'unknown' });
+  });
+  it('reports a busy session', async () => {
+    const a = await fetchRecorderActivity(status({ state: 'recording', elapsed_sec: 5, n_total: 9, config: { sample_name: 'S-2' } }));
+    expect(a).toEqual({ status: 'busy', session: { kind: 'recording', sample: 'S-2', elapsed: 5, samples: 9 } });
   });
 });
 

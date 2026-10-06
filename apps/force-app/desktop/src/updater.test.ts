@@ -108,3 +108,76 @@ describe('updater recording gate', () => {
     expect(await h.handlers.get('update:install')!(APP)).toMatchObject({ ok: false, reason: 'no update downloaded yet' });
   });
 });
+
+describe('startUpdateCheck before the updater is initialized', () => {
+  it('says updates will be available once the recorder has started, while it is still starting', async () => {
+    vi.resetModules();
+    h.handlers.clear();
+    h.updater.checkForUpdates.mockClear();
+    const { startUpdateCheck } = await import('./updater');
+    const r = startUpdateCheck();
+    expect(r.ok).toBe(false);
+    expect(r.message).toBe('Updates will be available once the recorder has started.');
+    expect(r.reason).toBe(r.message);
+    expect(h.updater.checkForUpdates).not.toHaveBeenCalled();
+  });
+
+  it('says updates are unavailable once the recorder is known to have failed to start', async () => {
+    vi.resetModules();
+    h.handlers.clear();
+    h.updater.checkForUpdates.mockClear();
+    const { startUpdateCheck, markRecorderStartFailed } = await import('./updater');
+    markRecorderStartFailed();
+    const r = startUpdateCheck();
+    expect(r.ok).toBe(false);
+    expect(r.message).toBe("Updates unavailable: the recorder didn't start.");
+    expect(r.reason).toBe(r.message);
+    expect(h.updater.checkForUpdates).not.toHaveBeenCalled();
+  });
+
+  it('starts the check once initAutoUpdater has run', async () => {
+    vi.resetModules();
+    h.handlers.clear();
+    const { initAutoUpdater, startUpdateCheck } = await import('./updater');
+    initAutoUpdater(() => null, async () => false);
+    h.updater.checkForUpdates.mockClear();
+    expect(startUpdateCheck()).toEqual({ ok: true });
+    expect(h.updater.checkForUpdates).toHaveBeenCalledOnce();
+  });
+});
+
+describe('update-downloaded dialog release notes (R13)', () => {
+  async function dialogDetail(releaseNotes: unknown): Promise<string> {
+    await boot(async () => false);
+    h.showMessageBox.mockResolvedValue({ response: 1 });
+    h.updater.emit('update-downloaded', { version: '2.0.0', releaseNotes });
+    await vi.advanceTimersByTimeAsync(0);
+    return h.showMessageBox.mock.calls[0][0].detail as string;
+  }
+
+  it('shows the notes, as plain text, above the usual hint', async () => {
+    const detail = await dialogDetail('<ul><li>Fixed flat forces</li><li>Faster &amp; safer</li></ul>');
+    expect(detail).toContain("What's new:");
+    expect(detail).toContain('- Fixed flat forces');
+    expect(detail).toContain('- Faster & safer');
+    expect(detail).not.toContain('<li>');
+    expect(detail).toContain('Not now');
+  });
+
+  it('accepts the array form', async () => {
+    const detail = await dialogDetail([{ version: '2.0.0', note: '<p>Only this</p>' }]);
+    expect(detail).toContain('Only this');
+  });
+
+  it('keeps the old text when there are no notes', async () => {
+    const detail = await dialogDetail(undefined);
+    expect(detail).not.toContain("What's new");
+    expect(detail).toContain('Not now');
+  });
+
+  it('trims very long notes', async () => {
+    const detail = await dialogDetail('x '.repeat(5000));
+    expect(detail.length).toBeLessThan(2000);
+    expect(detail).toContain('full notes: https://github.com/dpremoli/D1-Database/releases');
+  });
+});

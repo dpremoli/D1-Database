@@ -22,7 +22,8 @@ import PolarPanel from './panels/PolarPanel.vue';
 import RpmPanel from './panels/RpmPanel.vue';
 import OverviewPanel from './panels/OverviewPanel.vue';
 import SaveCutDialog from './panels/SaveCutDialog.vue';
-import { confirmAction } from '../ui/confirm';
+import { confirmAction, confirmState } from '../ui/confirm';
+import { resolveShortcut, type ShortcutContext } from './shortcuts';
 
 
 // #25: getWorkspace() returns a lazily-built module-level singleton (see workspace.ts) so its
@@ -450,7 +451,38 @@ function onVisibilityChange() {
 	}
 }
 
+// R10: keyboard shortcuts. One listener for the page's lifetime; shortcuts.ts decides what a key
+// means, and each action calls what the matching button calls, so every gate still applies (pre-flight
+// "Start anyway", the alarm test, the disk prompt, the sample-rate block, the silence confirmation).
+function shortcutContext(): ShortcutContext {
+	return {
+		record: w.mode.value === 'record',
+		// The Start / Stop buttons' own conditions (RecordingActions.vue), plus no save dialog in front.
+		canStart: !w.locked.value && !w.startDisabled.value && !w.saveOpen.value,
+		canStop: w.locked.value && !w.stopDisabled.value,
+		alarmShowing: w.alarms.tripped,
+		canNew: w.isDone.value && !w.saveOpen.value,
+		saveDialogOpen: w.saveOpen.value,
+		modalOpen: confirmState.current != null,
+	};
+}
+function onShortcutKey(e: KeyboardEvent) {
+	const t = e.target as (HTMLElement & { type?: string }) | null;
+	const action = resolveShortcut({
+		key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey, repeat: e.repeat, isComposing: e.isComposing,
+		target: t && { tagName: t.tagName, type: t.type, isContentEditable: t.isContentEditable },
+	}, shortcutContext());
+	if (!action) return;
+	e.preventDefault(); // Ctrl+N would otherwise open a browser window
+	if (action === 'start') void w.requestStart();
+	else if (action === 'stop') void w.stop();
+	else if (action === 'new') w.newRun();
+	else if (action === 'acknowledge') void ackAlarm();
+	else document.querySelector<HTMLButtonElement>('[data-save-primary]:not([disabled])')?.click();
+}
+
 onMounted(() => {
+	window.addEventListener('keydown', onShortcutKey);
 	// Reconcile with the recorder on entry and on every stream (re)open: a cut that ended while this
 	// page was away, or a backend that restarted, is never announced over the stream (#2.1). The
 	// stream also reconnects by itself, so a restart that leaves this route unchanged recovers too.
@@ -468,6 +500,7 @@ onMounted(() => {
 	document.addEventListener('visibilitychange', onVisibilityChange);
 });
 onBeforeUnmount(() => {
+	window.removeEventListener('keydown', onShortcutKey);
 	document.removeEventListener('visibilitychange', onVisibilityChange);
 	w.client.onStreamOpen = null;
 	w.client.disconnect();
@@ -501,12 +534,22 @@ onBeforeUnmount(() => {
 		<div class="top-overlays">
 			<!-- Disk-full protection: the backend watches free space during a recording independently of
 				 this page's own polling, and reports what (if anything) it had to do about it. -->
-			<div v-if="st.diskAction" class="disk-action-banner" :class="st.diskAction.action">
+			<div v-if="st.diskAction" class="disk-action-banner" :class="st.diskAction.action" role="status">
 				<span class="material-symbols-rounded">{{ st.diskAction.action === 'forced_stop' ? 'dangerous' : st.diskAction.action === 'backup_started' ? 'cloud_upload' : 'warning' }}</span>
 				<span v-if="st.diskAction.action === 'backup_started'">Disk space is low ({{ st.diskAction.freeGb.toFixed(1) }} GB free) — remote backup was switched on automatically to protect this recording.</span>
 				<span v-else-if="st.diskAction.action === 'forced_stop'">Recording was stopped automatically — disk space ran critically low ({{ st.diskAction.freeGb.toFixed(1) }} GB free). The data captured so far is safe.</span>
 				<span v-else>Disk space is low ({{ st.diskAction.freeGb.toFixed(1) }} GB free) and no remote backup is configured — free up space or configure a backup server soon.</span>
 				<button class="btn sm inverse disk-action-ack" @click="st.diskAction = null">Dismiss</button>
+			</div>
+
+			<!-- R6: early warning. Amber, non-modal, silent: a force axis reached the warning share of the
+				 limit. Not an alarm (nothing latches, nothing to acknowledge); Dismiss hides it for the cut. -->
+			<div v-if="w.mode.value === 'record' && w.alarms.warnings.length" class="warn-banner" role="status" aria-live="polite" data-testid="force-warning">
+				<span class="material-symbols-rounded">warning</span>
+				<span>Approaching the force limit:
+					<template v-for="(wn, i) in w.alarms.warnings" :key="wn.key">{{ i ? ', ' : ' ' }}{{ wn.axis }} {{ wn.value.toFixed(0) }} N</template>
+					(warning at {{ w.alarms.warnLevel?.toFixed(0) }} N, alarm at {{ w.alarms.config.forceThreshold }} N)</span>
+				<button class="btn sm inverse disk-action-ack" @click="w.alarms.dismissWarnings()">Dismiss</button>
 			</div>
 
 			<!-- R5: a sensor channel hit full scale this cut. Once per cut: Dismiss keeps it away until
@@ -555,7 +598,7 @@ onBeforeUnmount(() => {
 		</div>
 
 		<!-- Global safety-alarm overlay (2e): prominent, blocks nothing but demands acknowledgement. -->
-		<div v-if="w.alarms.tripped" class="alarm-overlay">
+		<div v-if="w.alarms.tripped" class="alarm-overlay" role="alert" aria-live="assertive">
 			<span class="material-symbols-rounded">warning</span>
 			<div class="ao-text">
 				<b>SAFETY ALARM</b>
@@ -613,7 +656,15 @@ onBeforeUnmount(() => {
    100vh -- guaranteeing exactly 8px of overflow, and a scrollbar, on the default layout at every
    window size. A block formatting context keeps that margin inside. */
 .rec-wrap { min-height: 100vh; display: flow-root; background: radial-gradient(1200px 600px at 50% -10%, var(--bg-2), var(--bg)); padding-bottom: 24px; }
-.alarm-overlay { --banner: #dc2626; position: fixed; top: 0; left: 0; right: 0; z-index: 100; display: flex; align-items: center; gap: 14px; padding: 12px 20px;
+/* z-index 290: the topmost surface except the confirm prompt (300, launched from this banner's
+   Acknowledge button) and the offline banner (App.vue, fixed top, 1000). It must sit above every
+   dialog backdrop (save 200, edit-metadata 250, virtual-channel builder 260): stop-on-alarm opens
+   the save dialog while the tone is still looping, and the operator has to be able to click
+   Acknowledge. The offline banner would cover it, so `top` is pushed down by --offline-banner-h
+   (App.vue publishes the measured banner height on <html> while offline, 0px otherwise): the
+   offline banner stays the topmost strip and the alarm sits directly under it, both readable and
+   both clickable. z-order.test.ts pins the ordering and the offset. */
+.alarm-overlay { --banner: #dc2626; position: fixed; top: var(--offline-banner-h, 0px); left: 0; right: 0; z-index: 290; display: flex; align-items: center; gap: 14px; padding: 12px 20px;
 	color: #fff; background: #dc2626; box-shadow: 0 6px 24px rgba(220,38,38,0.5); animation: alarmpulse 0.9s ease-in-out infinite; }
 @keyframes alarmpulse { 0%,100% { background: #dc2626; } 50% { background: #991b1b; } }
 .alarm-overlay > .material-symbols-rounded { font-size: var(--icon-2xl); }
@@ -621,13 +672,15 @@ onBeforeUnmount(() => {
 .ao-text b { font-size: var(--fs-lg); letter-spacing: 0.04em; }
 .ao-item { font-size: var(--fs-md); font-variant-numeric: tabular-nums; background: rgba(0,0,0,0.2); padding: 2px 8px; border-radius: 6px; }
 .ao-ack { margin-left: auto; }
-.top-overlays { position: fixed; top: 0; left: 0; right: 0; z-index: 90; display: flex; flex-direction: column; max-height: 60vh; overflow-y: auto; }
+.top-overlays { position: fixed; top: var(--offline-banner-h, 0px); left: 0; right: 0; z-index: 90; display: flex; flex-direction: column; max-height: 60vh; overflow-y: auto; }
 .disk-action-banner { display: flex; align-items: center; gap: 12px; padding: 10px 18px; font-size: var(--fs-md); color: #fff; flex: none; }
 .disk-action-banner.backup_started { background: #2563eb; }
 .disk-action-banner.backup_unavailable { background: #b45309; }
 .disk-action-banner.forced_stop { background: #dc2626; }
 .disk-action-banner .material-symbols-rounded { font-size: var(--icon-lg); }
 .disk-action-ack { margin-left: auto; }
+.warn-banner { display: flex; align-items: center; gap: 12px; padding: 10px 18px; font-size: var(--fs-md); color: #fff; background: #b45309; flex: none; }
+.warn-banner .material-symbols-rounded { font-size: var(--icon-lg); }
 .rail-banner { display: flex; align-items: center; gap: 12px; padding: 10px 18px; font-size: var(--fs-md); color: #fff; background: #dc2626; flex: none; }
 .rail-banner .material-symbols-rounded { font-size: var(--icon-lg); }
 /* The shared icon button, see-through while it floats over the panels until pointed at. */

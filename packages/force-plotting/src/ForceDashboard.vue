@@ -13,6 +13,7 @@ import SpectrumView from './SpectrumView.vue';
 import FrmCloud from './FrmCloud.vue';
 import FrmOctree from './FrmOctree.vue';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu.vue';
+import PlotHelp from './PlotHelp.vue';
 import { formatPointInfo, recentreWindow, type PointInfo, type PointMenuEvent } from './cloudPick';
 import WearTrend from './WearTrend.vue';
 import type { SpeedMode } from './liveCloud';
@@ -30,6 +31,7 @@ import { computeSignalStats, resolveStatsWindow, type SignalStats } from './sign
 import { statsCsvColumns } from './statsCsv';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
+import { saveChartImage, type ChartSnapshot } from './chartExport';
 import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
 import { debounce } from './debounce';
 import { cropWindowSec, diffEnvelopes, diffWindow } from './compare';
@@ -1799,7 +1801,7 @@ function buildChartsFor(item: RPanel) {
 				cropStart: activeCrop.value?.start, cropEnd: activeCrop.value?.end, peak: d?.[PEAK_FIELD[a]],
 				compare: compareSeriesFor(a),
 				secondXValues: radialValuesFor(d?.series?.[a]?.t), secondXLabel }
-			: { key: a, title: `${a} · spectrum`, kind: 'line' as const, data: d?.fft?.[a], color: AXIS_COLOR[a], xUnit: 'Hz', yUnit: '', logY: true }
+			: { key: a, title: `${a} · spectrum`, kind: 'line' as const, data: d?.fft?.[a], color: AXIS_COLOR[a], xUnit: 'Hz', yUnit: 'N', logY: true }
 	));
 	if (effectiveMode.value === 'force' && item.rpm) {
 		base.push({ key: 'RPM', title: 'RPM', kind: 'env', data: detail.value?.series?.RPM, color: '#a855f7', xUnit: 's', yUnit: 'rpm',
@@ -2099,6 +2101,7 @@ async function fetchRadialCache() {
 // Neither is persisted, and there is no new panel type (RIGHT_KEY and saved layouts untouched).
 const markTime = ref<number | null>(null);
 const menu = ref<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+const helpOpen = ref(false);
 const linkMsg = ref('');
 let linkMsgTimer = 0;
 function flashLinkMsg(m: string) {
@@ -2198,8 +2201,23 @@ async function copyPointInfo(p: PointInfo) {
 		flashLinkMsg('Point info copied');
 	} catch { flashLinkMsg('Copy failed — clipboard unavailable'); }
 }
-function openChartMenu(e: { clientX: number; clientY: number; x: number }) {
+function chartImageItems(snap: () => ChartSnapshot): ContextMenuItem[] {
+	const save = async (format: 'png' | 'svg') => {
+		const s = snap();
+		const modeLabel = CHART_MODES.find((m) => m.key === chartMode.value)?.label ?? chartMode.value;
+		const ok = await saveChartImage({ ...s, opLabel: opLabel.value, subtitle: `${modeLabel} mode` }, format,
+			`${safeFilePart(opLabel.value) || 'op'}_${safeFilePart(s.title) || 'chart'}`);
+		flashLinkMsg(ok ? `Chart saved as ${format.toUpperCase()}` : `Could not save the chart as ${format.toUpperCase()}`);
+	};
+	return [
+		{ label: 'Save chart as PNG', run: () => { void save('png'); } },
+		{ label: 'Save chart as SVG', run: () => { void save('svg'); } },
+	];
+}
+function openChartMenu(e: { clientX: number; clientY: number; x: number | null; snapshot: () => ChartSnapshot }) {
+	const images = chartImageItems(e.snapshot);
 	const t = e.x;
+	if (t == null) { openMenu(e.clientX, e.clientY, images); return; }   // a spectrum: no map position
 	let hint: string | undefined;
 	if (octreeOn.value) {
 		const c = octreeSampleCache.value;
@@ -2217,6 +2235,7 @@ function openChartMenu(e: { clientX: number; clientY: number; x: number }) {
 		{ label: 'Show position on map', disabled: !!hint, hint, run: () => showOnMap(t) },
 		...clearMarkItem(),
 		...cropItems(t),
+		...images,
 	]);
 }
 async function showOnMap(t: number) {
@@ -2425,6 +2444,7 @@ function fmtDateTime(v: string | null | undefined) {
 						</div>
 					</div>
 					<button class="pt-chip" title="Reset panel layout" @click="resetRightLayout"><v-icon name="grid_view" x-small /></button>
+					<button class="pt-chip" title="Gestures and shortcuts" aria-label="Help: gestures and shortcuts" aria-haspopup="dialog" @click="helpOpen = true">?</button>
 					<button class="pt-chip" title="Copy a link that reopens this view (cut, mode, axes, zoom, compare set)" :disabled="!selectedRowId" @click="copyViewLink">
 						<v-icon name="link" x-small /> {{ linkCopied ? 'Copied' : linkCopyFailed ? 'Copy failed' : 'Copy link' }}
 					</button>
@@ -3077,6 +3097,7 @@ function fmtDateTime(v: string | null | undefined) {
 					</div>
 				</div>
 			</div>
+			<PlotHelp v-if="helpOpen" @close="helpOpen = false" />
 			<!-- Map / chart right-click menu (position:fixed, so it can sit at the dashboard root). -->
 			<ContextMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menu.items" @close="menu = null" />
 		</div>

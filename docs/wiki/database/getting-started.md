@@ -65,6 +65,29 @@ recent activity.
   [audit log](roles-and-permissions.md#the-audit-log).
 - **Comments** are for notes to colleagues about a record.
 - **Export** a list from the sidebar's *Import / Export* (CSV, JSON, XLSX).
+- **Saved views** (bookmarks) sit under the collection in the navigation panel. Click one to
+  open the list already filtered. They are shared by everyone, and you can change the filter on
+  screen without altering the saved view. See [Saved views](#saved-views) below.
+
+## Saved views
+
+Ready-made filtered lists, one click away in the navigation panel:
+
+| Collection | View | Shows |
+|---|---|---|
+| Manufacturing Operations | **My operations** | operations whose owner is you, newest first |
+| Manufacturing Operations | **FAST runs, last 7 days** | FAST (`MF`) operations dated in the last 7 days |
+| Manufacturing Operations | **Missing outcome** | operations with no outcome notes yet |
+| Manufacturing Operations | **Machining**, **FAST** | all operations of that family |
+| Test Sessions | **Failed** | tests whose pipeline status is `failed` |
+| Test Sessions | **Needs analysis** | tests whose status is `processed`: the data is processed and analysis has not started |
+| Items (samples) | **My samples** | samples whose owner is you |
+| Items (samples) | **No location** | samples with no storage location recorded |
+
+*My* views match the **Owner** picker on the record against the person linked to your login
+(the person's *user id* field, the linked app login, in the *People* list). If no person is linked
+to your login, they are empty: ask an administrator to link yours. A view you change in the sidebar is not saved
+for anyone else. To keep your own, use the bookmark button next to the collection title.
 
 ## Codes you will see everywhere
 

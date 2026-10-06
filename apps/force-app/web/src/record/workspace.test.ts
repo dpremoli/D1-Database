@@ -728,7 +728,63 @@ describe('remembered setup (R1)', () => {
 	});
 });
 
+describe('stop on force alarm while busy', () => {
+	afterEach(() => {
+		alarmController.reset();
+		alarmController.config.audioEnabled = true; alarmController.config.stopOnForceAlarm = false;
+	});
+
+	it('a trip that lands while busy stops the recording once busy clears', async () => {
+		replies['/record/stop'] = { body: {} };
+		replies['/record/status'] = { body: { state: 'done', id: 'cap-t' } };
+		replies['/captures/cap-t/summary'] = { body: { duration_sec: 3 } };
+		replies['/captures/cap-t/live_cache.bin'] = { body: null };
+		const w = await make();
+		w.st.state = 'recording'; w.st.captureId = 'cap-t';
+		w.busy.value = true;                 // e.g. start() is still finishing
+		alarmController.reset();
+		alarmController.config.audioEnabled = false;
+		alarmController.config.stopOnForceAlarm = true;
+		alarmController.evaluate({ Fx: 410, Fy: 0, Fz: 0 }, 0, 1200);
+		await nextTick();
+		expect(calls).not.toContain('POST /record/stop');
+		w.busy.value = false;
+		await nextTick(); await Promise.resolve();
+		expect(calls).toContain('POST /record/stop');
+		expect(w.saveOpen.value).toBe(true);
+	});
+
+	it('does not stop again later when the cut ended while busy', async () => {
+		const w = await make();
+		w.st.state = 'recording';
+		w.busy.value = true;
+		alarmController.reset();
+		alarmController.config.audioEnabled = false;
+		alarmController.config.stopOnForceAlarm = true;
+		alarmController.evaluate({ Fx: 410, Fy: 0, Fz: 0 }, 0, 1200);
+		w.st.state = 'done';
+		w.busy.value = false;
+		await nextTick(); await Promise.resolve();
+		expect(calls).not.toContain('POST /record/stop');
+	});
+});
+
 describe('workspace.newRun() (R3)', () => {
+	it('clears the early-warning banner but not an unacknowledged alarm', async () => {
+		const w = await make();
+		alarmController.reset();
+		const audio = alarmController.config.audioEnabled;
+		alarmController.config.audioEnabled = false; // no Web Audio in the test environment
+		alarmController.evaluate({ Fx: 330, Fy: 0, Fz: 0 }, 0, 1200); // warning at 320 N (default 400 N limit)
+		alarmController.evaluate({ Fx: 0, Fy: 410, Fz: 0 }, 0, 1200);
+		expect(alarmController.warnings).toHaveLength(1);
+		w.newRun();
+		expect(alarmController.warnings).toHaveLength(0);
+		expect(alarmController.tripped).toBe(true);
+		alarmController.reset();
+		alarmController.config.audioEnabled = audio;
+	});
+
 	it('steps a numeric operation sequence and clears chips ref, chips collected and new edge', async () => {
 		const w = await make();
 		w.machining.operation_sequence = '4'; w.machining.chips_ref = 'CH-4';

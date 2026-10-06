@@ -32,3 +32,7 @@ Shared, checked-in notes from earlier force-app reviews. One dated line per less
 - 2026-10-06: kept-alive Plot ignored route.query on reactivation (read only in onMounted); in-app /plot?operation= pushes (SaveCutDialog, LocalCaptureView) need the activation path to apply incoming view keys before any write-back.
 - 2026-10-06: Record nidaqChannels is the autoassigned model list on real rigs (first boot), never the default; "custom list" logic must compare against the model, not the default.
 - 2026-10-06: Directus container has no TZ by default (UTC); extensions format dates with an explicit D1_TIMEZONE.
+- 2026-10-06: desktop restart's manualRestart flag must only wrap supervisor.restart() (it suppresses crash dialogs/navigation); dialogs from IPC need the sender window as parent.
+- 2026-10-06: App.vue offline banner (fixed top, z 1000) vs Record alarm overlay (z 290): top-anchored overlays must account for it.
+- 2026-10-06: filter-service /fft has one consumer (filterChain.ts -> ForceDashboard overlay); spectra are "N rms" via displayUnit().
+- 2026-10-06: chartExport tick labels come from tickLabels.ts (step-based decimals); ranges <= 3e-7 still collapse because niceTicks rounds to 6 decimals.

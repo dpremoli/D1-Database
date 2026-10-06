@@ -83,6 +83,8 @@ Metallographic preparation is logged as an operation with the **MP – Sample Pr
 
 - The Items list's search box matches codes and nicknames. **Filter** in the sidebar narrows by
   any field (material, project, status, owner…).
+- The **My samples** and **No location** saved views (under Items in the navigation panel) list
+  your own samples and the ones nobody has shelved ([Saved views](getting-started.md#saved-views)).
 - The [Lab Dashboard](dashboards-and-reports.md#lab-dashboard)'s **Samples** tab shows a sample
   with its operations and tests side by side.
 - [Ask the Database](dashboards-and-reports.md#ask-the-database) answers questions like *"which

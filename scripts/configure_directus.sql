@@ -211,7 +211,15 @@ WHERE NOT EXISTS (
 DELETE FROM directus_presets
 WHERE collection IN ('physical_samples','manufacturing_operations')
   AND "user" IS NULL AND role IS NULL AND bookmark IS NOT NULL
-  AND NOT (collection = 'physical_samples' AND bookmark = 'Samples');
+  AND NOT (collection = 'physical_samples' AND bookmark = 'Samples')
+  -- the saved filters below (migration 135) are kept as they are, not recreated
+  AND (collection, bookmark) NOT IN (
+      ('manufacturing_operations', 'My operations'),
+      ('manufacturing_operations', 'FAST runs, last 7 days'),
+      ('manufacturing_operations', 'Missing outcome'),
+      ('physical_samples', 'My samples'),
+      ('physical_samples', 'No location')
+  );
 INSERT INTO directus_presets (bookmark, "user", role, collection, filter, layout, layout_query, icon, color) VALUES
 ('Machining', NULL, NULL, 'manufacturing_operations', '{"process_category":{"_eq":"machining"}}', 'tabular', '{"tabular":{"sort":["pass_code"]}}', 'precision_manufacturing', '#FF9800'),
 ('FAST',      NULL, NULL, 'manufacturing_operations', '{"method_id":{"method_code":{"_eq":"MF"}}}', 'tabular', '{"tabular":{"sort":["pass_code"]}}', 'local_fire_department',   '#F44336');
@@ -233,6 +241,41 @@ SELECT 'Samples', NULL, NULL, 'physical_samples', 'tabular', '{"tabular":{"sort"
 WHERE NOT EXISTS (
     SELECT 1 FROM directus_presets AS p
     WHERE p.collection = 'physical_samples' AND p.bookmark = 'Samples'
+      AND p."user" IS NULL AND p.role IS NULL
+);
+
+-- Saved filters (migration 135): "mine" goes through the person record
+-- (owner_person_id -> people.user_id = $CURRENT_USER). Each is inserted only when missing, so a
+-- filter or columns curated in the UI survive a re-run, like "Samples" above. The clean-up
+-- DELETE above spares these names; the test_sessions ones are never touched by it.
+INSERT INTO directus_presets (bookmark, "user", role, collection, filter, layout, layout_query, icon, color)
+SELECT v.bookmark, NULL, NULL, v.collection, v.filter::json, 'tabular', v.layout_query::json, v.icon, v.color
+FROM (VALUES
+    ('manufacturing_operations', 'My operations',
+     '{"_and":[{"owner_person_id":{"user_id":{"_eq":"$CURRENT_USER"}}}]}',
+     '{"tabular":{"sort":["-operation_date"]}}', 'person', '#2196F3'),
+    ('manufacturing_operations', 'FAST runs, last 7 days',
+     '{"_and":[{"method_id":{"method_code":{"_eq":"MF"}}},{"operation_date":{"_gte":"$NOW(-7 days)"}}]}',
+     '{"tabular":{"sort":["-operation_date"]}}', 'date_range', '#F44336'),
+    ('manufacturing_operations', 'Missing outcome',
+     '{"_and":[{"outcome_notes":{"_empty":true}}]}',
+     '{"tabular":{"sort":["pass_code"]}}', 'rule', '#FFC107'),
+    ('test_sessions', 'Failed',
+     '{"_and":[{"status":{"_eq":"failed"}}]}',
+     '{"tabular":{"sort":["-session_date"]}}', 'error', '#F44336'),
+    ('test_sessions', 'Needs analysis',
+     '{"_and":[{"status":{"_eq":"processed"}}]}',
+     '{"tabular":{"sort":["-session_date"]}}', 'query_stats', '#FF9800'),
+    ('physical_samples', 'My samples',
+     '{"_and":[{"owner_person_id":{"user_id":{"_eq":"$CURRENT_USER"}}}]}',
+     '{"tabular":{"sort":["sample_code"]}}', 'person', '#2196F3'),
+    ('physical_samples', 'No location',
+     '{"_and":[{"location":{"_empty":true}}]}',
+     '{"tabular":{"sort":["sample_code"]}}', 'location_off', '#9E9E9E')
+) AS v(collection, bookmark, filter, layout_query, icon, color)
+WHERE NOT EXISTS (
+    SELECT 1 FROM directus_presets AS p
+    WHERE p.collection = v.collection AND p.bookmark = v.bookmark
       AND p."user" IS NULL AND p.role IS NULL
 );
 
