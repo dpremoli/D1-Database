@@ -59,9 +59,10 @@ explore outward from it. Each exploration adds to the graph; ✕ clears it and �
    the question and the date), **Copy SQL** copies the query, and **Save question** pins the
    question to the **Saved** list.
 7. The empty page lists your **Saved** questions and your last 20 **Recent questions**, each with
-   **Run again** and **×** to remove it. They are kept in your own browser only (not on the
-   server, and not shared with colleagues); only the question text is stored, never the answers.
-   Clearing the site data or using a private window empties them.
+   **Run again** and **×** to remove it. They are kept in this browser only, for your account
+   (not on the server, and not visible to colleagues, even on a shared computer); only the
+   question text is stored, never the answers. Clearing the site data or using a private window
+   empties them.
 
 There is no thumbs-up/down feedback on answers yet: it needs somewhere to store it, which is a
 separate decision.

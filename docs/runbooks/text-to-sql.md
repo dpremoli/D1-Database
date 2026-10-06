@@ -230,9 +230,13 @@ with **Plotly charts**. Two extensions in `core/extensions/`:
   the browser from the rows shown, so at most the 200-row cap), **Copy SQL** (falls back to
   `execCommand` on plain-http hosts, where `navigator.clipboard` is unavailable) and **Save
   question**. The empty chat also lists history, all client-side in `localStorage`: key
-  `d1-ask-db:history` holds the last 20 asked questions (deduplicated, newest first) and
-  `d1-ask-db:saved` holds saved questions (not trimmed). Only question text and a timestamp are
-  stored, never result rows. Nothing is synced between browsers.
+  `d1-ask-db:history:<user id>` holds the last 20 asked questions (deduplicated, newest first) and
+  `d1-ask-db:saved:<user id>` holds saved questions (capped at 100), so users who share a browser
+  keep separate lists (the bare keys are used only if no user id is available; lists written by
+  older versions under the bare keys move to the first user who opens the module, then are
+  deleted). Every change re-reads the stored list first, so two tabs merge instead of overwriting
+  each other. Only question text and a timestamp are stored, never result rows. Nothing is synced
+  between browsers.
 
   Thumbs-up/down feedback on answers is deliberately **out of scope** until there is a place to
   store it (owner decision); do not add it to the module without one.

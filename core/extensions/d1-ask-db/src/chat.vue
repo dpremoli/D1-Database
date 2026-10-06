@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue';
-import { useApi } from '@directus/extensions-sdk';
+import { nextTick, ref } from 'vue';
+import { useApi, useStores } from '@directus/extensions-sdk';
 import ChartPanel from './chart-panel.vue';
 import ExampleChips from './example-chips.vue';
 import { copyText } from './clipboard';
@@ -10,11 +10,14 @@ import {
 	HISTORY_KEY,
 	HISTORY_LIMIT,
 	SAVED_KEY,
+	SAVED_LIMIT,
 	addQuestion,
 	hasQuestion,
 	loadList,
+	migrateLegacy,
 	removeQuestion,
-	saveList,
+	scopedKey,
+	updateList,
 } from './history';
 
 interface ChartSpec {
@@ -47,29 +50,35 @@ const api = useApi();
 const input = ref('');
 const turns = ref<Turn[]>([]);
 const scroller = ref<HTMLDivElement | null>(null);
-/** Last 20 asked questions and the pinned ones, per browser. Question text only, never rows. */
-const asked = ref(loadList(HISTORY_KEY));
-const saved = ref(loadList(SAVED_KEY));
+/**
+ * Last 20 asked questions and the pinned ones, per browser AND per Directus user (users sharing
+ * one browser keep separate lists). Question text only, never rows.
+ */
+const { useUserStore } = useStores();
+const userId: string | null = (useUserStore().currentUser as any)?.id ?? null;
+const historyKey = scopedKey(HISTORY_KEY, userId);
+const savedKey = scopedKey(SAVED_KEY, userId);
+migrateLegacy(userId);
+const asked = ref(loadList(historyKey));
+const saved = ref(loadList(savedKey));
 
-watch(asked, (list) => saveList(HISTORY_KEY, list));
-watch(saved, (list) => saveList(SAVED_KEY, list));
-
+// Every change re-reads storage first, so a second tab's additions are merged, not overwritten.
 function remember(question: string) {
-	asked.value = addQuestion(asked.value, question, Date.now(), HISTORY_LIMIT);
+	asked.value = updateList(historyKey, asked.value, (l) => addQuestion(l, question, Date.now(), HISTORY_LIMIT));
 }
 
 function forget(question: string) {
-	asked.value = removeQuestion(asked.value, question);
+	asked.value = updateList(historyKey, asked.value, (l) => removeQuestion(l, question));
 }
 
 function toggleSaved(question: string) {
-	saved.value = hasQuestion(saved.value, question)
-		? removeQuestion(saved.value, question)
-		: addQuestion(saved.value, question, Date.now());
+	saved.value = updateList(savedKey, saved.value, (l) =>
+		hasQuestion(l, question) ? removeQuestion(l, question) : addQuestion(l, question, Date.now(), SAVED_LIMIT),
+	);
 }
 
 function unsave(question: string) {
-	saved.value = removeQuestion(saved.value, question);
+	saved.value = updateList(savedKey, saved.value, (l) => removeQuestion(l, question));
 }
 
 /** A plain-language message for a failed /d1-ask/chat call. */
