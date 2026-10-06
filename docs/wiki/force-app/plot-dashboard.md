@@ -125,8 +125,12 @@ these two items in their menu.
 
 The **?** button in the header opens a list of the gestures that are not visible on screen
 (right-click menus, crop handles, rectangular zoom, linking the map and charts, compare chips and
-Difference, Copy link, exports). **Escape** or **×** closes it. Every chart has a y-axis title with
-its unit, and the statistics, wear-trend and cluster tables carry units in their labels.
+Difference, Copy link, exports). **Escape** or **×** closes it. The force, RPM and spectrum charts
+have a y-axis title with its unit. The compact spectrogram, PSD and waterfall panels have no axis
+title: each names what it draws and its unit in a label in its top-left corner (for example
+*spectrogram · Hz vs s · colour dB*), and the waterfall has no numeric y-axis at all, because its
+vertical offset shows recency, not a value. The statistics, wear-trend and cluster tables carry
+units in their labels.
 
 ## FRM map panel
 
