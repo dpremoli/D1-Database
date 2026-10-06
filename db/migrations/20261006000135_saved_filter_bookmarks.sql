@@ -55,6 +55,7 @@ WHERE NOT EXISTS (
 );
 
 -- migrate:down
+-- Matches on collection + name, so a copy of one of these bookmarks curated in the UI goes too.
 DELETE FROM directus_presets
 WHERE "user" IS NULL AND role IS NULL
   AND (collection, bookmark) IN (
