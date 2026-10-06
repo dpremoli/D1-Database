@@ -194,7 +194,9 @@ export default defineEndpoint({
 
 		// Same body whether the row is missing or the caller may not read it, so the
 		// endpoints cannot be used to probe which sample codes / ids exist.
-		const notFound = (res, what) => res.status(404).send(`${what} not found.`);
+		// Plain-text error body: never HTML, so nothing a caller put in the query can render.
+		const plain = (res, status, text) => res.status(status).type('text/plain').send(text);
+		const notFound = (res, what) => plain(res, 404, `${what} not found.`);
 
 		// Same-origin toggle/print script (keeps us within Directus's script-src 'self').
 		router.get('/report.js', (_req, res) => {
@@ -210,14 +212,14 @@ export default defineEndpoint({
 		});
 
 		router.get('/label', async (req, res) => {
-			if (!req.accountability?.user) return res.status(401).send('Authentication required.');
+			if (!req.accountability?.user) return plain(res, 401, 'Authentication required.');
 
 			const sel = parseSelection(req.query);
-			if (sel.error) return res.status(400).send(sel.error);
+			if (sel.error) return plain(res, 400, sel.error);
 			const lay = resolveLayout(req.query.layout);
-			if (!lay) return res.status(400).send('Unknown layout. Use a4-21 or single-50x25.');
+			if (!lay) return plain(res, 400, 'Unknown layout. Use a4-21 or single-50x25.');
 			const start = parseStart(req.query.start, lay.layout);
-			if (start.error) return res.status(400).send(start.error);
+			if (start.error) return plain(res, 400, start.error);
 
 			try {
 				const a = await accessFor(req);
@@ -276,12 +278,12 @@ export default defineEndpoint({
 				);
 			} catch (err) {
 				logger.error(`d1-report label failed: ${err.stack || err.message}`);
-				res.status(500).send('Label generation failed.');
+				plain(res, 500, 'Label generation failed.');
 			}
 		});
 
 		router.get('/labels', async (req, res) => {
-			if (!req.accountability?.user) return res.status(401).send('Authentication required.');
+			if (!req.accountability?.user) return plain(res, 401, 'Authentication required.');
 			const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 64) : '';
 			try {
 				const a = await accessFor(req);
@@ -291,7 +293,7 @@ export default defineEndpoint({
 				res.set('Content-Type', 'text/html; charset=utf-8').send(renderLabelPicker({ rows, q }));
 			} catch (err) {
 				logger.error(`d1-report label picker failed: ${err.stack || err.message}`);
-				res.status(500).send('Could not list samples.');
+				plain(res, 500, 'Could not list samples.');
 			}
 		});
 

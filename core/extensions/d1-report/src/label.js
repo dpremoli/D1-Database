@@ -21,6 +21,10 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // Sample codes look like 10-AA-MF-2023-06-03; accept letters, digits and . _ - / only.
 const CODE_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$/;
 
+// A short, harmless hint of a rejected token for an error message: only characters a valid
+// id / code could hold survive, everything else (markup, quotes) becomes '?'.
+const hint = (t) => t.slice(0, 40).replace(/[^A-Za-z0-9._/-]/g, '?');
+
 const round2 = (n) => Math.round(n * 100) / 100;
 
 // ---- layouts --------------------------------------------------------------------------
@@ -147,9 +151,9 @@ export function parseSelection(query = {}) {
 	if (idTokens.length + codeTokens.length > MAX_LABELS * 4) return { error: `At most ${MAX_LABELS} samples per sheet.` };
 
 	const bad = idTokens.find((t) => !UUID_RE.test(t));
-	if (bad !== undefined) return { error: `Not a valid sample id: ${bad.slice(0, 40)}` };
+	if (bad !== undefined) return { error: `Not a valid sample id: ${hint(bad)}` };
 	const badCode = codeTokens.find((t) => !CODE_RE.test(t));
-	if (badCode !== undefined) return { error: `Not a valid sample code: ${badCode.slice(0, 40)}` };
+	if (badCode !== undefined) return { error: `Not a valid sample code: ${hint(badCode)}` };
 
 	const ids = [...new Set(idTokens.map((t) => t.toLowerCase()))];
 	const codes = [...new Set(codeTokens)];

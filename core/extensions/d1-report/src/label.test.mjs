@@ -242,6 +242,10 @@ async function get(routes, route, query, accountability) {
 			out.headers[k] = v;
 			return res;
 		},
+		type(t) {
+			out.headers['Content-Type'] = t.includes('/') ? `${t}; charset=utf-8` : t;
+			return res;
+		},
 		send(b) {
 			out.body = b;
 			return res;
@@ -268,6 +272,35 @@ test('label: bad input is 400 and nothing is read', async () => {
 	assert.equal((await get(routes, '/label', { ids: S1, layout: 'huge' }, user)).status, 400);
 	assert.equal((await get(routes, '/label', { ids: S1, start: '99' }, user)).status, 400);
 	assert.equal(queries.length, 0);
+});
+
+test('parseSelection: a rejected token is not echoed back as markup', () => {
+	const evil = '<a/href=//evil.example>Session_expired</a>';
+	for (const q of [{ ids: evil }, { codes: evil }, { ids: `${uuid(1)},"><img src=x onerror=alert(1)>` }]) {
+		const { error } = parseSelection(q);
+		assert.ok(error, JSON.stringify(q));
+		assert.ok(!/[<>"']/.test(error), error);
+	}
+});
+
+test('label routes: every error response is text/plain, never HTML', async () => {
+	const { routes } = harness({ physical_samples: true });
+	const evil = '<a/href=//evil.example>Session_expired</a>';
+	const cases = [
+		['/label', { ids: evil }, user, 400],
+		['/label', { codes: evil }, user, 400],
+		['/label', { ids: S1, layout: evil }, user, 400],
+		['/label', { ids: S1, start: evil }, user, 400],
+		['/label', { ids: uuid(9) }, user, 404],
+		['/label', { ids: S1 }, undefined, 401],
+		['/labels', {}, undefined, 401],
+	];
+	for (const [r, q, acc, status] of cases) {
+		const out = await get(routes, r, q, acc);
+		assert.equal(out.status, status, r + JSON.stringify(q));
+		assert.match(out.headers['Content-Type'], /^text\/plain/, r + JSON.stringify(q));
+		assert.ok(!out.body.includes('<a/href'), out.body);
+	}
 });
 
 test('label: renders code, QR to the admin record URL, material, date and owner initials', async () => {
