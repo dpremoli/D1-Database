@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	beginUploadItem, bulkDeleteBlockReason, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
+	beginUploadItem, bulkDeleteBlockReason, canUploadCapture, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
 	isBulkSelectable, isClientFilter, isCleanupCandidate, matchesFilter, needsMorePages, planBulkDelete,
 	pruneSelection, requestUploadCancel, rowState, selectableIds, serverStatusFor, shouldStopUploads,
 	startUploadProgress, summarizeCleanup, summarizeDeleteResults, toggleAll, toggleId, uploadProgressText,
@@ -255,5 +255,25 @@ describe('partial upload (orphan operation row)', () => {
 		const plan = planBulkDelete(new Set(['orphan']), [cap('orphan')], f);
 		expect(plan.items[0]).toMatchObject({ state: 'partial', onlyCopy: true });
 		expect(plan.onlyCopyCount).toBe(1);
+	});
+});
+
+describe('canUploadCapture', () => {
+	it('is on offer for a not-uploaded and for a partially uploaded capture', () => {
+		expect(canUploadCapture(cap('n'), facts())).toBe(true);
+		expect(canUploadCapture(cap('orphan'), facts({ partial: { orphan: true } }))).toBe(true);
+	});
+
+	it('is off once uploaded, queued, incomplete, or with an unknown upload state', () => {
+		expect(canUploadCapture(cap('up'), facts({ uploaded: { up: true } }))).toBe(false);
+		expect(canUploadCapture(cap('q'), facts({ queuedIds: new Set(['q']) }))).toBe(false);
+		expect(canUploadCapture(cap('i', { finalized: false }), facts())).toBe(false);
+		expect(canUploadCapture(cap('n'), facts({ uploadedKnown: false }))).toBe(false);
+	});
+
+	it('is off while an upload (or delete) is already running for the row, so Upload all skips it', () => {
+		const f = facts({ busyIds: new Set(['n']) });
+		expect(canUploadCapture(cap('n'), f)).toBe(false);
+		expect(canUploadCapture(cap('other'), f)).toBe(true);
 	});
 });

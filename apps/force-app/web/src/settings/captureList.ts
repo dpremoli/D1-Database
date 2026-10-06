@@ -26,6 +26,8 @@ export interface RowFacts {
 	uploaded: Record<string, boolean>;
 	/** An operation row exists but the upload never finished. Still the only copy. */
 	partial?: Record<string, boolean>;
+	/** Captures with an upload, delete or recover in flight from this page. */
+	busyIds?: ReadonlySet<string>;
 	/** Captures whose database record is still waiting in the offline queue. */
 	queuedIds: ReadonlySet<string>;
 	/** Ids with a complete copy on the remote backup server; null when that is unknown. */
@@ -49,6 +51,13 @@ export function rowState(c: ListCapture, f: RowFacts): RowState {
 	if (f.queuedIds.has(c.id)) return 'queued';
 	if (f.partial?.[c.id]) return 'partial';
 	return 'not_uploaded';
+}
+
+/** Whether a row's Upload action is on offer. Uploading twice creates a second operation row, so
+ * it needs a positively known state, no queued copy, and nothing already running for the row. */
+export function canUploadCapture(c: ListCapture, f: RowFacts): boolean {
+	return c.finalized && f.uploadedKnown && !f.uploaded[c.id] && !f.queuedIds.has(c.id)
+		&& !f.busyIds?.has(c.id) && !c.recording && !c.discarding && !c.recovering;
 }
 
 // ---- Filter ----

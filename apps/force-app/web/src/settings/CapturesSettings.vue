@@ -19,7 +19,7 @@ import { remoteCopyLabel } from './backupLabels';
 import { fetchRemoteBackupStates } from '../recorderHttp';
 import { formatMegabytes } from '../format';
 import {
-	beginUploadItem, bulkDeleteBlockReason, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
+	beginUploadItem, bulkDeleteBlockReason, canUploadCapture, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
 	isBulkSelectable, isCleanupCandidate, isClientFilter, matchesFilter, needsMorePages, planBulkDelete,
 	pruneSelection, requestUploadCancel, rowState, serverStatusFor, shouldStopUploads, startUploadProgress,
 	sumMb, summarizeCleanup, summarizeDeleteResults, toggleAll, toggleId, uploadProgressText,
@@ -238,6 +238,7 @@ const facts = computed<RowFacts>(() => ({
 	uploadedKnown: uploadedKnown.value,
 	uploaded: uploaded.value,
 	partial: partial.value,
+	busyIds: new Set(Object.keys(busy.value)),
 	queuedIds: queuedCaptureIds.value as Set<string>,
 	remoteComplete: remoteIds.value
 		? new Set([...remoteIds.value].filter(([, st]) => st === 'complete').map(([id]) => id))
@@ -520,6 +521,7 @@ async function onMetadataSaved() {
 }
 
 async function upload(c: Capture): Promise<UploadOutcome> {
+	if (busy.value[c.id] || !canUpload(c)) return 'skipped';   // never two uploads of one capture
 	// Before any prompt: an offline session can't upload, so don't ask the user to confirm something
 	// that cannot run.
 	if (!hasServerSession()) { rowMsg.value[c.id] = OFFLINE_SESSION_UPLOAD_MESSAGE; return 'failed'; }
@@ -632,9 +634,10 @@ function refreshQueue() { queue.value = listQueue(); }
 const queuedCaptureIds = computed(
 	() => new Set(queue.value.map((q) => q.payload?.recorded_metadata?.capture_id).filter(Boolean)),
 );
+// Also false while anything is already running for the row, so Upload all cannot start a second
+// upload of a capture whose own Upload button was just pressed (that would make a second run).
 function canUpload(c: Capture): boolean {
-	return c.finalized && uploadedKnown.value
-		&& !uploaded.value[c.id] && !queuedCaptureIds.value.has(c.id);
+	return canUploadCapture(c, facts.value);
 }
 const unsynced = computed(() => captures.value.filter(canUpload));
 
@@ -943,7 +946,7 @@ onMounted(async () => {
 					<span class="material-symbols-rounded" :class="{ spin: busy[c.id] === 'recovering' }">{{ busy[c.id] === 'recovering' ? 'progress_activity' : 'healing' }}</span>
 					{{ busy[c.id] === 'recovering' ? 'Recovering…' : 'Recover' }}
 				</button>
-				<button v-if="canUpload(c)" class="btn sm" :disabled="!!busy[c.id]" @click="upload(c)">
+				<button v-if="canUpload(c) || busy[c.id] === 'uploading'" class="btn sm" :disabled="!!busy[c.id] || uploadingAll" :title="uploadingAll ? 'Upload all is running' : ''" @click="upload(c)">
 					<span class="material-symbols-rounded">{{ busy[c.id] === 'uploading' ? 'hourglass_top' : 'cloud_upload' }}</span>
 					{{ busy[c.id] === 'uploading' ? 'Uploading…' : 'Upload' }}
 				</button>
