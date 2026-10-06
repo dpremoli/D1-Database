@@ -32,3 +32,9 @@ export function railBannerText(idx: readonly number[]): string | null {
 	if (!names.length) return null;
 	return `${names.map((n) => `Ch ${n}`).join(', ')} railed - re-range before the next cut`;
 }
+
+/** The railed set the badges show. Record mode only: Playback (and a replayed cut generally) is an
+ *  archived cut that never railed on this rig, so a badge there would be a false alarm. */
+export function shownRailed(mode: 'record' | 'playback', idx: readonly number[]): readonly number[] {
+	return mode === 'record' ? idx : [];
+}

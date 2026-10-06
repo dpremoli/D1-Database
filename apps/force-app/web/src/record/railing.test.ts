@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isRailed, parseRailed, railBannerText, railedNames } from './railing';
+import { isRailed, parseRailed, railBannerText, railedNames, shownRailed } from './railing';
 import { RecordClient } from './liveClient';
 
 describe('parseRailed', () => {
@@ -45,5 +45,12 @@ describe('RecordClient railed status', () => {
 		const c = new RecordClient();
 		(c as any).onControl({ type: 'railed', channels: 'all' });
 		expect(c.status.railed).toEqual([]);
+	});
+});
+
+describe('shownRailed', () => {
+	it('shows the railed set in Record mode and nothing in Playback', () => {
+		expect(shownRailed('record', [2, 5])).toEqual([2, 5]);
+		expect(shownRailed('playback', [2, 5])).toEqual([]);
 	});
 });
