@@ -694,3 +694,44 @@ describe('workspace.newRun() (R3)', () => {
 		expect(w.machining.new_edge).toBe(true);
 	});
 });
+
+// ---- R5: live rail warning ----
+describe('workspace.railBanner (R5)', () => {
+	const railed = (w: Awaited<ReturnType<typeof make>>, ch: number[]) => { w.st.railed = ch; return nextTick(); };
+
+	it('shows nothing until a channel rails, then names it', async () => {
+		const w = await make();
+		expect(w.railBanner.value).toBeNull();
+		await railed(w, [2]);
+		expect(w.railBanner.value).toBe('Ch Fy1 railed - re-range before the next cut');
+	});
+
+	it('appears once per cut: Dismiss keeps it away for the rest of the cut, even as more channels rail', async () => {
+		const w = await make();
+		await railed(w, [2]);
+		w.dismissRailBanner();
+		expect(w.railBanner.value).toBeNull();
+		await railed(w, [2, 5]);          // the backend re-sends the set every couple of seconds
+		await railed(w, [2, 5]);
+		expect(w.railBanner.value).toBeNull();
+	});
+
+	it('comes back for the next cut after New', async () => {
+		const w = await make();
+		await railed(w, [2]);
+		w.dismissRailBanner();
+		w.newRun();                        // client.reset() clears the railed set
+		await nextTick();
+		expect(w.st.railed).toEqual([]);
+		expect(w.railBanner.value).toBeNull();
+		await railed(w, [4]);
+		expect(w.railBanner.value).toBe('Ch Fz1 railed - re-range before the next cut');
+	});
+
+	it('is not shown for a replayed cut', async () => {
+		const w = await make();
+		w.setSource('replay');
+		await railed(w, [2]);
+		expect(w.railBanner.value).toBeNull();
+	});
+});

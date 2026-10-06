@@ -16,6 +16,7 @@ import { channelColor } from '../types';
 import { theme } from '../../theme';
 import { appUrl } from '../../appUrl';
 import type { PlotMode } from '../plotModes';
+import { isRailed } from '../railing';
 import { clampWindowSec, WINDOW_MAX_SEC, WINDOW_MIN_SEC, WINDOW_SLIDER_MAX_SEC } from '../plotWindow';
 
 const props = defineProps<{ inst?: { mode?: PlotMode; channels?: string[]; axes?: string[]; windowSec?: number } }>();
@@ -54,6 +55,8 @@ function toggle(key: string) {
 	setSel(s);
 }
 const subsOpen = ref(false);
+// R5: sensor channels that reached full scale this cut get a red badge on their chip.
+const railedAny = computed(() => w.st.railed.length > 0);
 const subCount = computed(() => selected.value.filter((k) => (SUB_NAMES as readonly string[]).includes(k)).length);
 // #34: each panel has its own time window, stored on its layout entry (so it persists with the
 // layout). A panel that never set one follows the workspace default, w.plot.windowSec. A cleared
@@ -97,11 +100,14 @@ function openLive() {
 			</div>
 			<div class="subwrap">
 				<button class="chip-toggle sub-btn" :class="{ on: subCount > 0 }" @click.stop="subsOpen = !subsOpen">
-					Sub<span v-if="subCount"> · {{ subCount }}</span> <span class="material-symbols-rounded">expand_more</span>
+					Sub<span v-if="subCount"> · {{ subCount }}</span>
+					<span v-if="railedAny" class="rail-dot" title="A channel railed this cut - open for which" aria-label="channel railed"></span>
+					<span class="material-symbols-rounded">expand_more</span>
 				</button>
 				<div v-if="subsOpen" class="subpop" @click.stop>
 					<button v-for="s in SUB_NAMES" :key="s" class="subopt" :class="{ on: selected.includes(s) }" @click="toggle(s)">
 						<span class="dot" :style="{ background: channelColor(s, theme) }"></span>{{ s }}
+						<span v-if="isRailed(w.st.railed, s)" class="rail-badge" :data-testid="`rail-badge-${s}`" title="Railed: reached full scale this cut">railed</span>
 						<span v-if="selected.includes(s)" class="material-symbols-rounded tick">check</span>
 					</button>
 				</div>
@@ -145,6 +151,8 @@ function openLive() {
 .subopt:hover { background: var(--surface-2); }
 .subopt.on { color: var(--text); font-weight: 600; }
 .subopt .dot { width: 9px; height: 9px; border-radius: 50%; }
+.rail-dot { display: inline-block; width: 8px; height: 8px; margin: 0 2px; border-radius: 50%; background: #dc2626; }
+.rail-badge { padding: 0 6px; font-size: var(--fs-xs); font-weight: 700; color: #fff; background: #dc2626; border-radius: 8px; }
 .subopt .tick { margin-left: auto; font-size: var(--icon-xs); color: var(--ok); }
 .mono-hint { font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-dim); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 3px 7px; }
 .tw-row { display: flex; align-items: center; gap: 4px; }

@@ -21,6 +21,7 @@ import { confirmAction } from '../ui/confirm';
 import { spotlight } from '../ui/spotlight';
 import { FIELD_FOCUS, StartRequestError, sampleRateIssue } from './recordingErrors';
 import { nidaqHardware } from './nidaqHardware';
+import { railBannerText } from './railing';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 
@@ -287,6 +288,15 @@ export function createWorkspace() {
 			if (source.value === 'nidaq') alarms.evaluateTacho(st.tachoOk);
 		}
 	});
+
+	// R5: the backend latches which sensor channels railed this cut (st.railed). The banner names
+	// them once per cut: dismissing it keeps it gone until `railed` is empty again, which is what
+	// New and the next Start do (client.reset()). The badges on the channel tiles are not
+	// dismissible, they stay for as long as the cut is on screen.
+	const railDismissed = ref(false);
+	watch(() => st.railed.length, (n) => { if (n === 0) railDismissed.value = false; });
+	const railBanner = computed(() => (railDismissed.value || mode.value !== 'record' ? null : railBannerText(st.railed)));
+	function dismissRailBanner() { railDismissed.value = true; }
 
 	// Converging between-cuts auto-range: after each cut, recommend + apply the next-pass per-channel
 	// ranges from THIS cut's recorded per-channel peaks (summary.channels_ranging). Applying them to
@@ -992,6 +1002,8 @@ export function createWorkspace() {
 		alarms,
 		// converging between-cuts auto-range
 		converge, convergeAfterCut,
+		// R5: live rail warning banner (once per cut)
+		railBanner, dismissRailBanner,
 		// Recording-behaviour toggles (Detect cut start / Drift compensation / Converging auto-range)
 		// and the cut-detect threshold — persisted, shared with Settings > Recording.
 		recordingPrefs,

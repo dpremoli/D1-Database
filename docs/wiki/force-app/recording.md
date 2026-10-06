@@ -86,6 +86,25 @@ While recording, the parameter fields lock and **Start** becomes **Stop**:
 A recording stops when you press **Stop**. It also stops by itself when a simulated run reaches
 its planned length, or when the capture drive runs out of space.
 
+### Railed channels
+
+If a sensor channel reaches full scale while you are cutting, the app tells you during the cut, not
+after it. A railed channel has saturated the Lab Amp's analog output, so its peaks are flattened
+and only a wider range fixes it, which you can only change between cuts.
+
+- A red **Railed** tile appears in the Overview strip naming the channel (`Fy2`, `Fz1`, …).
+- A red dot appears on the Force Plot's **Sub** button, and a red **railed** badge beside the
+  channel in its list.
+- A red banner says *Ch Fy2 railed - re-range before the next cut*. It shows **once per cut**:
+  **Dismiss** keeps it away until the next cut, even if more channels rail. The tile and badges
+  stay until you press **New** or start the next cut.
+
+A channel counts as railed when its peak reaches **99 %** of its full scale (the Lab Amp range for
+that channel). That is the same test the saved capture uses for its per-channel clipping flags,
+which the **Converge** toggle reads to widen the range for the next cut. The live warning only
+works on the NI-DAQ source with per-channel ranges known (Lab Amp reachable at Start). Simulated
+data is already in newtons with no range to compare against, so it never rails.
+
 ## 5. Save or discard
 
 When the recording stops, the **Recording finished** dialog opens. It first works through

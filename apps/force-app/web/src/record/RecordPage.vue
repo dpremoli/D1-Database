@@ -285,7 +285,7 @@ const recoveryBannerShown = computed(() => visibleRecoveryItems.value.length > 0
 // error boundary swallowed it, so the page still rendered -- but dep collection aborted at the
 // throw, leaving this watcher permanently blind to the recovery banner (it kept the diskAction
 // dep, read before the throw, which is why it looked half-working).
-watch([() => !!st.diskAction, () => recoveryBannerShown.value], () => measureGrid(), { flush: 'post' });
+watch([() => !!st.diskAction, () => !!w.railBanner.value, () => recoveryBannerShown.value], () => measureGrid(), { flush: 'post' });
 
 const recoveryBusy = ref<Record<string, boolean>>({});
 // Recover/discard on a crashed session's raw.d1raw can take a while for a large/long-running
@@ -499,6 +499,14 @@ onBeforeUnmount(() => {
 				<button class="btn sm inverse disk-action-ack" @click="st.diskAction = null">Dismiss</button>
 			</div>
 
+			<!-- R5: a sensor channel hit full scale this cut. Once per cut: Dismiss keeps it away until
+				 the next one (workspace.ts railBanner). The red badges on the channel chips stay. -->
+			<div v-if="w.railBanner.value" class="rail-banner" role="alert" data-testid="rail-banner">
+				<span class="material-symbols-rounded">warning</span>
+				<span>{{ w.railBanner.value }}</span>
+				<button class="btn sm inverse disk-action-ack" @click="w.dismissRailBanner()">Dismiss</button>
+			</div>
+
 			<!-- Recovery banner for incomplete recordings found on startup -->
 			<div v-if="recoveryBannerShown" class="recovery-banner">
 				<div v-if="visibleRecoveryItems.length" class="rb-head">
@@ -610,6 +618,8 @@ onBeforeUnmount(() => {
 .disk-action-banner.forced_stop { background: #dc2626; }
 .disk-action-banner .material-symbols-rounded { font-size: var(--icon-lg); }
 .disk-action-ack { margin-left: auto; }
+.rail-banner { display: flex; align-items: center; gap: 12px; padding: 10px 18px; font-size: var(--fs-md); color: #fff; background: #dc2626; flex: none; }
+.rail-banner .material-symbols-rounded { font-size: var(--icon-lg); }
 /* The shared icon button, see-through while it floats over the panels until pointed at. */
 .reset { background: color-mix(in srgb, var(--surface) 55%, transparent); backdrop-filter: blur(4px); opacity: 0.72; transition: background-color 0.14s, opacity 0.14s; }
 .reset:hover { opacity: 1; }
