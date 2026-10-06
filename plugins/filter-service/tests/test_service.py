@@ -261,7 +261,11 @@ def test_uuid_cache_file_id_builds_the_canonical_url(monkeypatch):
 def test_fft_overlay_is_rms_amplitude_in_newtons():
     """/fft must read in the same unit as the main spectrum (sqrt of MATLAB pspectrum power = N rms),
     not the N/sqrt(Hz) of a welch density: a sine of amplitude A peaks at A/sqrt(2)."""
-    amp, f0, n = 50.0, 1000.0, 1 << 14  # 1000 Hz sits exactly on a bin (25600/16384 Hz apart)
+    amp, f0, n = (
+        50.0,
+        1000.0,
+        1 << 14,
+    )  # 1000 Hz sits exactly on a bin (25600/16384 Hz apart)
     t = np.arange(n) / FS
     z = np.zeros(n, np.float32)
     c = Cache(
