@@ -133,6 +133,19 @@ describe('R6 early warning', () => {
 		expect(a.warnings).toHaveLength(1);
 	});
 
+	it('resetWarnings clears the banner and re-arms, but leaves an unacknowledged alarm tripped', () => {
+		const a = makeController();
+		a.evaluate({ Fx: 330, Fy: 0, Fz: 0 }, 0, 1200);
+		a.evaluate({ Fx: 0, Fy: 410, Fz: 0 }, 0, 1200); // Fy alarm, unacknowledged
+		expect(a.warnings).toHaveLength(1);
+		a.resetWarnings();
+		expect(a.warnings).toHaveLength(0);
+		expect(a.tripped).toBe(true);
+		expect(a.active.map((x) => x.key)).toEqual(['force:Fy']);
+		a.evaluate({ Fx: 330, Fy: 0, Fz: 0 }, 0, 1200); // re-armed for the next cut
+		expect(a.warnings.map((w) => w.axis)).toEqual(['Fx']);
+	});
+
 	it('follows the configured percentage and can be switched off', () => {
 		const a = makeController();
 		a.config.warnPercent = 50;

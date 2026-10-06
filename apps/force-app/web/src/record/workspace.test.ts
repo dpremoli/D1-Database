@@ -729,6 +729,21 @@ describe('remembered setup (R1)', () => {
 });
 
 describe('workspace.newRun() (R3)', () => {
+	it('clears the early-warning banner but not an unacknowledged alarm', async () => {
+		const w = await make();
+		alarmController.reset();
+		const audio = alarmController.config.audioEnabled;
+		alarmController.config.audioEnabled = false; // no Web Audio in the test environment
+		alarmController.evaluate({ Fx: 330, Fy: 0, Fz: 0 }, 0, 1200); // warning at 320 N (default 400 N limit)
+		alarmController.evaluate({ Fx: 0, Fy: 410, Fz: 0 }, 0, 1200);
+		expect(alarmController.warnings).toHaveLength(1);
+		w.newRun();
+		expect(alarmController.warnings).toHaveLength(0);
+		expect(alarmController.tripped).toBe(true);
+		alarmController.reset();
+		alarmController.config.audioEnabled = audio;
+	});
+
 	it('steps a numeric operation sequence and clears chips ref, chips collected and new edge', async () => {
 		const w = await make();
 		w.machining.operation_sequence = '4'; w.machining.chips_ref = 'CH-4';

@@ -661,6 +661,9 @@ export function createWorkspace() {
 		client.reset(); finishedCache.value = null; errMsg.value = null; logged.value = false; saveOpen.value = false;
 		recordedStamp.value = null;
 		editCutStartSec.value = null; editCutEndSec.value = null;
+		// The early-warning banner belongs to the cut that just ended. Warnings only: reset() would
+		// also clear an alarm the operator has not acknowledged.
+		alarms.resetWarnings();
 		if (!nextCut) return;
 		// R3: the next cut is a new pass. Step the sequence when it is a whole number (a blank or
 		// free-text one is left alone), so the Cut ID {sample}-{TYPE}{seq} does not repeat, and drop

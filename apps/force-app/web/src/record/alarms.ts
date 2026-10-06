@@ -104,6 +104,10 @@ export class AlarmController {
 		return (c.forceThreshold * c.warnPercent) / 100;
 	}
 	dismissWarnings(): void { this.warnings.splice(0); }
+	/** Clear only the early warnings and re-arm them for the next cut (the New button). Unlike
+	 * reset() this leaves latched alarms, acknowledgements and the tone alone: an alarm the
+	 * operator has not acknowledged must survive pressing New. */
+	resetWarnings(): void { this.warnings.splice(0); this.warned.clear(); }
 
 	get tripped(): boolean { return this.active.some((a) => !this.ackedKeys.has(a.key)); }
 
