@@ -229,9 +229,11 @@ for its formula; a "—" carries the reason (missing feed, depth, diameter, zero
 
 - **Resultant |F|:** mean and peak of √(Fx² + Fy² + Fz²).
 - **Fc / Ff / Fp:** cutting (tangential), feed and passive force, mean and peak, taken from the
-  axes chosen in **Axis mapping**. The mounting of the dynamometer is not recorded, so the default
-  (Fc = Fz, Ff = Fx, Fp = Fy) is an **assumption**; change it if your set-up differs (remembered in
-  this browser).
+  axes chosen in **Axis mapping**. The card shows the mapping in use. The standard is
+  **Fc = Fx, Ff = Fy, Fp = Fz**, but the mapping depends on the workholding and the machining
+  operation, so change it if your set-up differs. The choice is remembered in this browser **per
+  operation type** (MT-F, MT-O, ...). The mounting is not recorded, so the CSV `axis_map` column
+  states the mapping used.
 - **Cutting speed vc** = π·D·n/1000 m/min, with n the measured mean RPM. For **facing, grooving
   and parting** (`MT-F`, `MT-G`, `MT-P`) D is the diameter at the middle of the window, because the
   disc shrinks as the tool spirals in: it starts from the Diameter control at the crop start (the
