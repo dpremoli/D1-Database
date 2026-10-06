@@ -53,7 +53,7 @@ const facts = computed<KeyValue[]>(() => [
 		<div class="drawing">
 			<div v-if="svg" class="canvas" v-html="svg"></div>
 			<p v-else class="no-drawing">No drawing for this form.</p>
-			<span v-if="dimensions" class="caption">{{ sample.form?.replace(/_/g, ' ') }} · {{ dimensions }}</span>
+			<span v-if="dimensions" class="caption"><span class="form">{{ sample.form?.replace(/_/g, ' ') }}</span> · {{ dimensions }}</span>
 		</div>
 
 		<div class="facts">
@@ -105,7 +105,8 @@ const facts = computed<KeyValue[]>(() => [
 .canvas { width: 100%; }
 .canvas :deep(svg) { width: 100%; max-width: 280px; height: auto; display: block; margin: 0 auto; }
 .no-drawing { margin: 0; font-style: italic; font-size: 13px; color: var(--theme--foreground-subdued); }
-.caption { font-size: 11.5px; color: var(--theme--foreground-subdued); text-transform: capitalize; text-align: center; }
+.caption { font-size: 11.5px; color: var(--theme--foreground-subdued); text-align: center; }
+.form { text-transform: capitalize; }
 .facts { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 .mat-label {
 	font-size: 11px;
