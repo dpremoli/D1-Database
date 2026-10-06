@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	beginUploadItem, bulkDeleteBlockReason, bulkDeleteSkipReason, canUploadCapture, cleanupSkipReason, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
+	beginUploadItem, bulkDeleteBlockReason, bulkDeleteSkipReason, canUploadCapture, cleanupSkipReason, idsToLookUp, pageSizeFor, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
 	isBulkSelectable, isClientFilter, isCleanupCandidate, matchesFilter, needsMorePages, planBulkDelete,
 	pruneSelection, requestUploadCancel, rowState, selectableIds, serverStatusFor, shouldStopUploads,
 	startUploadProgress, summarizeCleanup, summarizeDeleteResults, toggleAll, toggleId, uploadProgressText,
@@ -316,5 +316,21 @@ describe('per-item re-check right before a delete', () => {
 		expect(cleanupSkipReason(old, facts({ uploaded: { a: true }, busyIds: new Set(['a']) }), cutoff)).toMatch(/busy/);
 		expect(cleanupSkipReason(null, facts({ uploaded: { a: true } }), cutoff)).toMatch(/no longer on disk/);
 		expect(cleanupSkipReason(old, facts({ uploaded: { a: true } }), cutoff)).toBeNull();
+	});
+});
+
+describe('paging cost with a browser-side chip', () => {
+	it('asks for the largest page for Uploaded / Not uploaded, the normal one otherwise', () => {
+		expect(pageSizeFor('uploaded', 200, 500)).toBe(500);
+		expect(pageSizeFor('not_uploaded', 200, 500)).toBe(500);
+		expect(pageSizeFor('all', 200, 500)).toBe(200);
+		expect(pageSizeFor('incomplete', 200, 500)).toBe(200);
+	});
+
+	it('looks up only the ids that have not been looked up yet', () => {
+		const rows = [cap('a'), cap('b'), cap('c')];
+		expect(idsToLookUp(rows, new Set(['a', 'b'])).map((c) => c.id)).toEqual(['c']);
+		expect(idsToLookUp(rows, new Set()).map((c) => c.id)).toEqual(['a', 'b', 'c']);
+		expect(idsToLookUp(rows, new Set(['a', 'b', 'c']))).toEqual([]);
 	});
 });

@@ -20,7 +20,8 @@ import { fetchRemoteBackupStates } from '../recorderHttp';
 import { formatMegabytes } from '../format';
 import {
 	beginUploadItem, bulkDeleteBlockReason, bulkDeleteSkipReason, canUploadCapture, cleanupCandidates, cleanupCutoff,
-	cleanupSkipReason, finishUploadItem, finishUploads, isBulkSelectable, isClientFilter, matchesFilter, needsMorePages, planBulkDelete,
+	cleanupSkipReason, finishUploadItem, finishUploads, idsToLookUp, isBulkSelectable, isClientFilter, matchesFilter, needsMorePages,
+	pageSizeFor, planBulkDelete,
 	pruneSelection, requestUploadCancel, rowState, serverStatusFor, shouldStopUploads, startUploadProgress,
 	sumMb, summarizeCleanup, summarizeDeleteResults, toggleAll, toggleId, uploadProgressText,
 	type DeleteResult, type RowFacts, type StatusFilter, type UploadOutcome, type UploadProgress,
@@ -53,6 +54,7 @@ interface Capture {
 const base = () => getConfig().recorderUrl;
 
 const PAGE = 200;   // rows per request; the recorder caps a page at 500
+const MAX_PAGE = 500;
 const captures = ref<Capture[]>([]);
 const capturesRoot = ref('');
 // Server-side counts: `total` matches the current search and server filter, `totalAll` is everything
@@ -107,7 +109,7 @@ interface BrowsePage {
 }
 
 async function fetchPage(offset: number, over: { status?: string; sort?: string; q?: string; limit?: number } = {}): Promise<BrowsePage> {
-	const p = new URLSearchParams({ limit: String(over.limit ?? PAGE), offset: String(offset), sort: over.sort ?? sortKey.value });
+	const p = new URLSearchParams({ limit: String(over.limit ?? pageSizeFor(statusFilter.value, PAGE, MAX_PAGE)), offset: String(offset), sort: over.sort ?? sortKey.value });
 	const q = (over.q ?? query.value).trim();
 	if (q) p.set('q', q);
 	const status = over.status ?? serverStatusFor(statusFilter.value);
@@ -131,6 +133,10 @@ async function load() {
 		matchingMb.value = data.matching_size_mb ?? null;
 		disk.value = data.disk || {};
 		selected.value = new Set();
+		// A fresh list starts from nothing known: entries from before (a capture uploaded or
+		// removed elsewhere meanwhile) must not outlive a reload.
+		uploaded.value = {}; partial.value = {}; uploadedOpId.value = {}; checkedIds.clear();
+		uploadedKnown.value = false;
 		void loadRemoteIds();
 		await checkUploaded();
 		await fillForClientFilter(mine);
@@ -220,14 +226,23 @@ function mergeUploaded(rows: Capture[], r: UploadStateResult) {
 	uploaded.value = up;
 	partial.value = part;
 	uploadedOpId.value = ops;
-	uploadedKnown.value = true;
 }
 
+// Ids whose upload state has been looked up since the last reload. Loading another page only asks
+// Directus about the new ids; the rest keep their cached state.
+const checkedIds = new Set<string>();
 async function checkUploaded() {
-	uploadedKnown.value = false;
-	const rows = captures.value.slice();
-	const r = await lookupUploaded(rows);
-	if (r) mergeUploaded(rows, r);
+	const rows = idsToLookUp(captures.value, checkedIds);
+	if (rows.length) {
+		const r = await lookupUploaded(rows);
+		if (r) {
+			mergeUploaded(rows, r);
+			for (const c of rows) checkedIds.add(c.id);
+		}
+	}
+	// Known only when every loaded row has been looked up: a page whose lookup failed leaves its rows
+	// "unknown" (never "not uploaded"), and the safety rules switch to their unknown-state behaviour.
+	uploadedKnown.value = captures.value.every((c) => checkedIds.has(c.id));
 }
 
 // ---- What the list shows ----
@@ -436,14 +451,24 @@ const cleanupPool = ref<Capture[] | null>(null);
 const cleanupScan = ref<{ loaded: number; total: number } | null>(null);
 const cleanupMsg = ref('');
 const cleanupNow = ref(Date.now());
+// The cleanup scan looks up its own pool, so what it may trust is separate from the list's state.
+// null = no successful lookup of the pool: nothing can qualify.
+const cleanupState = ref<UploadStateResult | null>(null);
+const cleanupFacts = computed<RowFacts>(() => ({
+	...facts.value,
+	uploadedKnown: !!cleanupState.value,
+	uploaded: cleanupState.value?.uploaded ?? {},
+	partial: cleanupState.value?.partial ?? {},
+}));
 const cleanupList = computed(() =>
-	cleanupPool.value ? cleanupCandidates(cleanupPool.value, facts.value, cleanupDays.value, cleanupNow.value) : []);
+	cleanupPool.value ? cleanupCandidates(cleanupPool.value, cleanupFacts.value, cleanupDays.value, cleanupNow.value) : []);
 const cleanupSummary = computed(() => summarizeCleanup(cleanupList.value));
 const cleanupLeftOut = computed(() => (cleanupPool.value ? cleanupPool.value.length - cleanupList.value.length : 0));
 const fmtDay = (mtime: number | null) => (mtime ? new Date(mtime * 1000).toLocaleDateString() : '—');
 
 async function previewCleanup() {
 	cleanupPool.value = null;
+	cleanupState.value = null;
 	cleanupMsg.value = '';
 	cleanupNow.value = Date.now();
 	const pool: Capture[] = [];
@@ -460,7 +485,7 @@ async function previewCleanup() {
 			cleanupMsg.value = 'Cannot tell which captures are uploaded because the database could not be reached. Nothing can be selected for cleanup.';
 			return;
 		}
-		mergeUploaded(pool, r);
+		cleanupState.value = r;
 		cleanupPool.value = pool;
 	} catch (e: any) {
 		cleanupMsg.value = describeFetchError(e, 'failed to scan the captures');
@@ -493,20 +518,21 @@ async function runCleanup() {
 		cleanupMsg.value = 'The database stopped answering, so nothing was deleted.';
 		return;
 	}
-	mergeUploaded(items, fresh);
+	cleanupState.value = fresh;
 	const cutoff = cleanupCutoff(cleanupDays.value, Date.now());
 	// Then once more per item, right before its delete: is it still there, is it still fully uploaded
 	// (one analysis-row query for its known operation), and is nothing running for it.
 	const results = await deleteMany(items, async (c) => {
-		const fresh = await freshRow(c);
-		if (!fresh) return cleanupSkipReason(null, facts.value, cutoff);
-		const opId = uploadedOpId.value[c.id];
-		const complete = opId ? await recheckUploaded(opId, fresh.hasMat, getRows) : false;
-		const f = { ...facts.value, uploaded: { ...uploaded.value, [c.id]: complete } };
-		return cleanupSkipReason(fresh.row, f, cutoff);
+		const now = await freshRow(c);
+		if (!now) return cleanupSkipReason(null, cleanupFacts.value, cutoff);
+		const opId = cleanupState.value?.opIds[c.id];
+		const complete = opId ? await recheckUploaded(opId, now.hasMat, getRows) : false;
+		const f = { ...cleanupFacts.value, uploaded: { ...cleanupFacts.value.uploaded, [c.id]: complete } };
+		return cleanupSkipReason(now.row, f, cutoff);
 	});
 	reportDeletes('Cleanup finished', results);
 	cleanupPool.value = null;
+	cleanupState.value = null;
 	await load();   // re-count from the drive (warm: two stats per capture)
 }
 
@@ -990,7 +1016,7 @@ onMounted(async () => {
 			</span>
 			<button v-if="captures.length < total" class="btn sm" :disabled="loadingMore || loading" @click="loadMore">
 				<span class="material-symbols-rounded">{{ loadingMore ? 'hourglass_top' : 'expand_more' }}</span>
-				{{ loadingMore ? 'Loading…' : `Load more (${Math.min(PAGE, total - captures.length)} of ${total - captures.length} left)` }}
+				{{ loadingMore ? 'Loading…' : `Load more (${Math.min(pageSizeFor(statusFilter, PAGE, MAX_PAGE), total - captures.length)} of ${total - captures.length} left)` }}
 			</button>
 		</div>
 

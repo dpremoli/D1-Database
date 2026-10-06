@@ -78,6 +78,17 @@ export function serverStatusFor(filter: StatusFilter): ServerStatus | undefined 
 export const isClientFilter = (filter: StatusFilter): boolean =>
 	filter === 'not_uploaded' || filter === 'uploaded';
 
+/** Rows per request. A browser-side chip scans pages until a screenful matches, and each page costs
+ * the recorder a scan of the whole drive plus a Directus lookup for its ids, so those chips ask for
+ * the largest page the recorder allows instead of many small ones. */
+export const pageSizeFor = (filter: StatusFilter, normal: number, max: number): number =>
+	isClientFilter(filter) ? max : normal;
+
+/** The captures whose upload state has not been looked up yet: only these go to Directus when a
+ * page is appended, the rest keep what they were found to be. */
+export const idsToLookUp = <T extends { id: string }>(rows: T[], checked: ReadonlySet<string>): T[] =>
+	rows.filter((c) => !checked.has(c.id));
+
 /** "Not uploaded" means every finalized capture without a database record, queued ones and ones
  * whose state is unknown included: hiding those would hide the captures most at risk. */
 export function matchesFilter(c: ListCapture, filter: StatusFilter, f: RowFacts): boolean {

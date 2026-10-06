@@ -109,6 +109,25 @@ or `sort` is a 422.
 - "Free up space" panel: delete uploaded captures older than N days, with a preview first.
 - `uploadAllUnsynced` shows "n of m, current item" and a Cancel button that stops between items.
 
+## Cost of the Uploaded / Not uploaded chips
+
+Upload state is Directus's, so these two chips filter in the browser, which makes a page of the
+list cost two things: a recorder scan (the server filter `status=finalized` needs an entry for every
+capture, warm about two stats each) and a Directus lookup for the ids on that page. Trade-offs made:
+
+- **Look up only new ids.** The page keeps the state of every id it has already looked up and asks
+  Directus only about ids loaded since (`idsToLookUp`), instead of re-fetching everything loaded for
+  each extra page. A reload (Refresh, search, chip, sort) clears the cache and looks everything up
+  again, so an entry never outlives the list it was found for. If a lookup fails, its rows stay
+  unknown (never "not uploaded") until the next reload.
+- **One big page.** With one of these chips the page size is the recorder's maximum (500, not 200),
+  so a screenful of matches usually takes one request instead of several.
+- **Not removed:** the operation-row query is still bounded below by `created_at` only (an upload can
+  happen long after the recording, so there is no safe upper bound), so a lookup for older pages
+  scans every operation since that date. Filtering that on the server would need a real
+  `capture_id` column on `manufacturing_operations` (a migration; key 9 of the force-app
+  conventions), which is out of scope here.
+
 ## Delete safety rules
 
 These apply to bulk delete and cleanup. The single-row Delete keeps its present dialog.
