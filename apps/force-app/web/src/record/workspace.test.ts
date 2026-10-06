@@ -819,6 +819,21 @@ describe('workspace.railBanner (R5)', () => {
 		expect(w.railBanner.value).toBe('Ch Fz1 railed - re-range before the next cut');
 	});
 
+	it('a dismissal belongs to its capture: adopting another railed cut shows its banner', async () => {
+		const w = await make();
+		w.st.captureId = 'cap-a';
+		await railed(w, [2]);
+		w.dismissRailBanner();
+		expect(w.railBanner.value).toBeNull();
+		// A reconcile adopts a different railed cut: `railed` never passed through empty.
+		w.st.captureId = 'cap-b';
+		await railed(w, [3]);
+		expect(w.railBanner.value).toBe('Ch Fy2 railed - re-range before the next cut');
+		w.st.captureId = 'cap-a';           // and cap-a stays dismissed if it is shown again
+		await railed(w, [2]);
+		expect(w.railBanner.value).toBeNull();
+	});
+
 	it('is not shown for a replayed cut', async () => {
 		const w = await make();
 		w.setSource('replay');

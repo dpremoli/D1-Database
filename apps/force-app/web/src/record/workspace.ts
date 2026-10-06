@@ -340,13 +340,17 @@ export function createWorkspace() {
 	}
 
 	// R5: the backend latches which sensor channels railed this cut (st.railed). The banner names
-	// them once per cut: dismissing it keeps it gone until `railed` is empty again, which is what
-	// New and the next Start do (client.reset()). The badges on the channel tiles are not
+	// them once per cut: a dismissal is keyed on the capture it was made for, so adopting another
+	// cut (a reconcile) shows that cut's banner, and it also resets when `railed` empties (New and
+	// the next Start do that, via client.reset()). The badges on the channel tiles are not
 	// dismissible, they stay for as long as the cut is on screen.
-	const railDismissed = ref(false);
-	watch(() => st.railed.length, (n) => { if (n === 0) railDismissed.value = false; });
-	const railBanner = computed(() => (railDismissed.value || mode.value !== 'record' ? null : railBannerText(st.railed)));
-	function dismissRailBanner() { railDismissed.value = true; }
+	const railDismissedFor = ref<string | null | undefined>(undefined);   // undefined = not dismissed
+	watch(() => st.railed.length, (n) => { if (n === 0) railDismissedFor.value = undefined; });
+	const railBanner = computed(() => (
+		(railDismissedFor.value !== undefined && railDismissedFor.value === st.captureId) || mode.value !== 'record'
+			? null : railBannerText(st.railed)
+	));
+	function dismissRailBanner() { railDismissedFor.value = st.captureId; }
 
 	// Converging between-cuts auto-range: after each cut, recommend + apply the next-pass per-channel
 	// ranges from THIS cut's recorded per-channel peaks (summary.channels_ranging). Applying them to
