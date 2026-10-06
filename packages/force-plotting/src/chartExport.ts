@@ -2,7 +2,8 @@
 // text out) so it unit-tests without a DOM; the PNG path rasterises that same SVG through an
 // offscreen canvas. Styled like the FRM figure (frmExport.ts): light background, serif text, a
 // framed axis with "nice" ticks, and a title + subtitle, so a chart pasted into a report matches.
-import { fmt, niceTicks } from './frmExport';
+import { niceTicks } from './frmExport';
+import { logTickLabels, tickLabels } from './tickLabels';
 import { downloadBlob } from './csvExport';
 
 /** Envelope series (`kind: 'env'`) carry `t/min/max`; spectra (`kind: 'line'`) carry `f/amp`. */
@@ -192,14 +193,17 @@ export function buildChartSvg(o: ChartSvgOpts): string {
 
 	out.push(`<rect x="${mL}" y="${mT}" width="${pw}" height="${ph}" fill="none" stroke="#000" stroke-width="1.2"/>`);
 	out.push('<g fill="#000" font-size="13" stroke="#000" stroke-width="1">');
-	for (const t of xticks) {
+	// Labels are chosen from the tick step (tickLabels), so a narrow range still reads 12.30, 12.35...
+	const xLabels = tickLabels(xticks);
+	const yLabels = useLog ? logTickLabels(yticks) : tickLabels(yticks);
+	xticks.forEach((t, i) => {
 		out.push(`<line x1="${f1(sx(t))}" x2="${f1(sx(t))}" y1="${mT + ph}" y2="${mT + ph + 5}"/>`
-			+ `<text x="${f1(sx(t))}" y="${mT + ph + 20}" text-anchor="middle" stroke="none">${escapeXml(fmt(t))}</text>`);
-	}
-	for (const t of yticks) {
+			+ `<text x="${f1(sx(t))}" y="${mT + ph + 20}" text-anchor="middle" stroke="none">${escapeXml(xLabels[i])}</text>`);
+	});
+	yticks.forEach((t, i) => {
 		out.push(`<line x1="${mL - 5}" x2="${mL}" y1="${f1(sy(t))}" y2="${f1(sy(t))}"/>`
-			+ `<text x="${mL - 9}" y="${f1(sy(t) + 4)}" text-anchor="end" stroke="none">${escapeXml(fmt(t))}</text>`);
-	}
+			+ `<text x="${mL - 9}" y="${f1(sy(t) + 4)}" text-anchor="end" stroke="none">${escapeXml(yLabels[i])}</text>`);
+	});
 	out.push('</g>');
 
 	// axis titles, with units

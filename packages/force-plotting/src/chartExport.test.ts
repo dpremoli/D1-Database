@@ -65,3 +65,29 @@ describe('buildChartSvg', () => {
 		expect(svg.length).toBeLessThan(40000);
 	});
 });
+
+/** The tick label <text> elements (axis titles and the main title are bigger / italic / bold). */
+const tickTexts = (svg: string) => [...svg.matchAll(/<text [^>]*?stroke="none">([^<]*)<\/text>/g)].map((m) => m[1]);
+
+describe('exported tick labels', () => {
+	const mk = (t0: number, t1: number, lo: number, hi: number, n = 200) => {
+		const t = Array.from({ length: n }, (_, i) => t0 + ((t1 - t0) * i) / (n - 1));
+		return { t, min: t.map((_, i) => lo + ((hi - lo) * i) / (n - 1)), max: t.map((_, i) => lo + ((hi - lo) * i) / (n - 1)) };
+	};
+	it('a 12.30-12.45 s window has distinct time labels', () => {
+		const svg = buildChartSvg({ title: 'Fx', kind: 'env', data: mk(10, 20, -5, 5), viewStart: 12.3, viewEnd: 12.45, xUnit: 's', yUnit: 'N' });
+		const xs = tickTexts(svg).filter((s) => /^12\./.test(s));
+		expect(xs.length).toBeGreaterThan(2);
+		expect(new Set(xs).size).toBe(xs.length);
+	});
+	it('a 1195-1205 rpm y range has distinct labels', () => {
+		const svg = buildChartSvg({ title: 'Spindle', kind: 'env', data: mk(0, 10, 1195, 1205), xUnit: 's', yUnit: 'rpm' });
+		const ys = tickTexts(svg).filter((s) => /^1\d{3}$/.test(s));
+		expect(ys.length).toBeGreaterThan(2);
+		expect(new Set(ys).size).toBe(ys.length);
+	});
+	it('a large range keeps the compact labels', () => {
+		const svg = buildChartSvg({ title: 'Spindle', kind: 'env', data: mk(0, 10, 0, 5000), xUnit: 's', yUnit: 'rpm' });
+		expect(tickTexts(svg)).toEqual(expect.arrayContaining(['1.0k', '2.0k', '5.0k']));
+	});
+});
