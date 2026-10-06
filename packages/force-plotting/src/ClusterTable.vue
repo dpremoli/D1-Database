@@ -69,8 +69,8 @@ function onRow(id: number) {
 		</p>
 		<table>
 			<thead>
-				<tr><th></th><th>cluster</th><th class="num">pts</th><th class="num">% cut</th>
-					<th class="num">mean|z|</th><th class="num">max gi*</th><th class="num">r (mm)</th></tr>
+				<tr><th></th><th>cluster</th><th class="num" title="points in the cluster">pts</th><th class="num" title="share of the cut's points">% cut</th>
+					<th class="num" title="mean absolute residual z-score, in standard deviations">mean|z| (σ)</th><th class="num" title="largest Getis-Ord Gi* z-score in the cluster, in standard deviations">max gi* (σ)</th><th class="num" title="radial range of the cluster">r (mm)</th></tr>
 			</thead>
 			<tbody>
 				<tr v-for="r in shown" :key="r.id"

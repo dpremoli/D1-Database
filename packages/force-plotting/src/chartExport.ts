@@ -71,6 +71,13 @@ function traceOf(kind: 'env' | 'line', d: any, x0: number, x1: number, max: numb
 	return d.f?.length ? decimateTrace(d.f, d.amp, d.amp, x0, x1, max) : null;
 }
 
+/** The y-axis title for a chart: what is plotted and its unit, e.g. "Force (N)". Empty without a unit. */
+export function yAxisTitle(kind: 'env' | 'line', unit: string | undefined, logY = false): string {
+	if (!unit) return '';
+	const name = unit === 'rpm' ? 'Speed' : unit === 'σ' ? 'Residual' : kind === 'env' ? 'Force' : 'Amplitude';
+	return `${name}${logY ? ' (log scale)' : ''} (${unit})`;
+}
+
 const FONT = '"Times New Roman", Georgia, serif';
 
 /** A standalone, report-styled SVG of one chart. Never throws on empty data (returns a figure
@@ -194,9 +201,8 @@ export function buildChartSvg(o: ChartSvgOpts): string {
 
 	// axis titles, with units
 	const xTitle = o.kind === 'env' ? 'Time' : 'Frequency';
-	const yTitle = `${o.kind === 'env' ? 'Force' : 'Amplitude'}${useLog ? ' (log scale)' : ''}`;
 	const xLab = o.xUnit ? `${xTitle} (${o.xUnit})` : xTitle;
-	const yLab = o.yUnit ? `${yTitle} (${o.yUnit})` : yTitle;
+	const yLab = yAxisTitle(o.kind, o.yUnit, useLog) || (o.kind === 'env' ? 'Force' : 'Amplitude');
 	out.push(`<text x="${mL + pw / 2}" y="${mT + ph + 44}" text-anchor="middle" font-size="15" font-style="italic" fill="#000">${escapeXml(xLab)}</text>`);
 	out.push(`<text transform="translate(20 ${mT + ph / 2}) rotate(-90)" text-anchor="middle" font-size="15" font-style="italic" fill="#000">${escapeXml(yLab)}</text>`);
 

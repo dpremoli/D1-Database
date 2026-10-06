@@ -111,6 +111,23 @@ time and the difference uses the same time base, so there is no extra shifting. 
 not overlap you get a note instead. The trace is shown in Force mode only. Removing the reference
 chip turns Difference off.
 
+### Saving a chart as an image
+
+Right-click any Signals chart and choose **Save chart as PNG** or **Save chart as SVG**. The file
+is a report-styled figure, not a screenshot: white background, a title with the operation tag, axis
+and mode, axis titles with units (*Time (s)*, *Force (N)*, *Frequency (Hz)*, *Amplitude (N)*), ticks,
+the trace for the current zoom, the shaded crop window and, if you have cuts in Compare, a legend
+naming each one. The PNG is the same figure drawn at twice the size. Long traces are thinned for
+the file, keeping each stretch's minimum and maximum, so peaks survive. Spectrum charts have only
+these two items in their menu.
+
+### Help and units
+
+The **?** button in the header opens a list of the gestures that are not visible on screen
+(right-click menus, crop handles, rectangular zoom, linking the map and charts, compare chips and
+Difference, Copy link, exports). **Escape** or **×** closes it. Every chart has a y-axis title with
+its unit, and the statistics, wear-trend and cluster tables carry units in their labels.
+
 ## FRM map panel
 
 | View | What it is |

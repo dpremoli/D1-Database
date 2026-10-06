@@ -2,7 +2,7 @@
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { hoverIndexAt } from './hoverIndex';
 import { markInView, markTagText } from './chartMark';
-import type { ChartSnapshot } from './chartExport';
+import { yAxisTitle, type ChartSnapshot } from './chartExport';
 
 // Dependency-free chart. kind='env' → min/max envelope (force or RPM; always
 // includes 0 on the y-axis); kind='line' → FFT amplitude (optional log y).
@@ -58,7 +58,7 @@ const emit = defineEmits<{
 	(e: 'zoom', v: { start: number; end: number } | null): void;   // null = reset to full
 }>();
 
-const ML = 46, MR = 12, MT = 8, MB = 24;
+const ML = 56, MR = 12, MT = 8, MB = 24;
 // A second x-axis needs its own tick/label band above the plot — grow the top margin only
 // when one is actually supplied, so charts without it keep today's exact layout.
 const hasSecondX = computed(() => !!(props.secondXValues && props.secondXValues.length));
@@ -66,6 +66,7 @@ const MT_EFF = computed(() => (hasSecondX.value ? MT + 16 : MT));
 // The y-axis unit shown on screen and in exports. A spectrum is the force amplitude (N); a chart
 // whose host gave no unit shows none rather than a made-up one.
 const yLabelUnit = computed(() => props.yUnit || (props.kind === 'line' ? 'N' : ''));
+const yTitle = computed(() => yAxisTitle(props.kind, yLabelUnit.value));
 const stroke = computed(() => props.color || '#0d9488');
 const peakNum = computed(() => {
 	if (props.peak == null) return null;
@@ -515,6 +516,7 @@ function onWheel(ev: WheelEvent) {
 				<text :x="t.x" :y="geom.Hh - MB + 12" text-anchor="middle" class="tick">{{ t.label }}</text>
 			</g>
 			<text :x="(ML + geom.W - MR) / 2" :y="geom.Hh - 3" text-anchor="middle" class="axis-label">{{ xUnit }}</text>
+			<text v-if="yTitle" :transform="`translate(10 ${(MT_EFF + geom.Hh - MB) / 2}) rotate(-90)`" text-anchor="middle" class="axis-label">{{ yTitle }}</text>
 			<!-- Second x-axis (e.g. radial position) — mirrors the bottom axis (line at the plot's
 			     top edge, ticks extending up into the grown top margin). Its unit label lives in the
 			     chart-head row (chart-peak/chart-unit below), not here — the ~16px top-margin band

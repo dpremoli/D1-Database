@@ -204,7 +204,7 @@ function draw() {
 		ctx.imageSmoothingEnabled = true;
 		ctx.drawImage(off, 0, 0, nT, nF, ML, MT, plotW, plotH);
 		drawAxes(W, H, plotW, plotH, g.t[0], g.t[nT - 1], 0, fMax);
-		label(`${props.axis} spectrogram`, stroke);
+		label(`${props.axis} spectrogram · Hz vs s · colour dB`, stroke);
 		drawHover(W, H);
 		return;
 	}
@@ -221,7 +221,7 @@ function draw() {
 		}
 		ctx.stroke();
 		drawAxes(W, H, plotW, plotH, 0, fMax, -80, 0);
-		label(`${props.axis} power (dB)`, stroke);
+		label(`${props.axis} power (dB) vs Hz`, stroke);
 		drawHover(W, H);
 		return;
 	}
@@ -255,7 +255,7 @@ function draw() {
 		ctx.globalAlpha = 1; ctx.textAlign = 'center'; ctx.fillText(fmtTick(v), x, H - 3);
 	}
 	ctx.textAlign = 'left';
-	label(`${props.axis} waterfall`, stroke);
+	label(`${props.axis} waterfall · Hz, stacked over time`, stroke);
 	drawHover(W, H);
 }
 

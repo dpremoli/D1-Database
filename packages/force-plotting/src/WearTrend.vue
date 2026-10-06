@@ -112,7 +112,7 @@ const points = computed<Point[]>(() => {
 	});
 });
 
-const W = 520, H = 210, ML = 46, MR = 12, MT = 12, MB = 30;
+const W = 520, H = 210, ML = 56, MR = 12, MT = 12, MB = 30;
 const geom = computed(() => {
 	const pts = points.value;
 	const shown = AXES.filter((a) => visAxes.value[a]);
@@ -220,6 +220,7 @@ function toggleAxis(a: Axis) {
 					stroke="currentColor" stroke-opacity="0.12" stroke-width="0.6" />
 				<text v-for="(t, i) in geom.yticks" :key="'yl' + i" :x="ML - 6" :y="t.y + 3" class="tick" text-anchor="end">{{ t.label }}</text>
 				<text v-for="(t, i) in geom.xticks" :key="'xl' + i" :x="t.x" :y="H - MB + 14" class="tick" text-anchor="middle">{{ t.label }}</text>
+				<text :transform="`translate(11 ${(MT + H - MB) / 2}) rotate(-90)`" class="axis-label" text-anchor="middle">Peak force (N)</text>
 				<text :x="(ML + W - MR) / 2" :y="H - 3" class="axis-label" text-anchor="middle">
 					{{ xMode === 'length' ? 'Cumulative cutting length (mm)' : 'Pass' }}
 				</text>

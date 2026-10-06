@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { buildChartSvg, decimateTrace, escapeXml } from './chartExport';
+import { buildChartSvg, decimateTrace, escapeXml, yAxisTitle } from './chartExport';
+
+describe('yAxisTitle', () => {
+	it('names the quantity and the unit, with no made-up fallback', () => {
+		expect(yAxisTitle('env', 'N')).toBe('Force (N)');
+		expect(yAxisTitle('env', 'rpm')).toBe('Speed (rpm)');
+		expect(yAxisTitle('env', 'σ')).toBe('Residual (σ)');
+		expect(yAxisTitle('line', 'N', true)).toBe('Amplitude (log scale) (N)');
+		expect(yAxisTitle('line', '')).toBe('');
+	});
+});
 
 const env = (n: number) => {
 	const t = Array.from({ length: n }, (_, i) => i * 0.1);
