@@ -12,7 +12,7 @@ need the rig or a live Directus go into `docs/runbooks/physical-test-backlog.md`
 
 | Stream | Items | Worktree / branch | State |
 |---|---|---|---|
-| Q — Axis map | P6 follow-up | `agent-a1be65656a21052ac` / `worktree-agent-a1be65656a21052ac` | in progress (Sonnet) |
+| Q — Axis map | P6 follow-up | `agent-a1be65656a21052ac` / `worktree-agent-a1be65656a21052ac` | merged (0cfc4e3) |
 | R — Genealogy functions | f_trace_* rewrite | `agent-a5e569554167ef559` / `worktree-agent-a5e569554167ef559` | in progress (Sonnet) |
 | /simplify (Opus) | all | — | not started |
 | /code-review high (Opus) | all | — | not started |
