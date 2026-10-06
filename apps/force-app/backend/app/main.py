@@ -283,7 +283,7 @@ _DEFAULT_ANALOG_FULLSCALE_V = 10.0
 
 def _valid_fullscale_v(v: object) -> bool:
     """A usable analog full-scale voltage: a real number (not a bool), finite and above zero."""
-    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0
+    return isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v) and v > 0
 
 
 def _analog_fullscale_v() -> float:
