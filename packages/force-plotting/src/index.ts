@@ -41,6 +41,8 @@ export {
 	octreePathParams,
 } from './cloudPick';
 export type { PointInfo, PointMenuEvent } from './cloudPick';
+export { parseOctreeBuild, mappableWindow, cacheCoversBuild } from './octreeBuild';
+export type { OctreeBuild } from './octreeBuild';
 export { buildPath, alignRhoToBuckets, alignMeasuredRho, measuredRhoSpan } from './path';
 export type {
 	PathKind, PathParams, PathWindow, PathBounds, PathResult,

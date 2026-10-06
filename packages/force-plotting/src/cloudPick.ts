@@ -17,6 +17,7 @@
 import type { Cache } from './liveCache';
 import type { PathParams, PathWindow } from './path';
 import { nearestIndex } from './hoverIndex';
+import type { OctreeBuild } from './octreeBuild';
 import {
 	phase0Samples, spiralAnchor, spiralPlaceInto, spiralPositionInto, spiralRadiusInto, spiralUniformValues,
 	type SpiralPos, type SpiralUniformParams,
@@ -34,7 +35,7 @@ export interface PointInfo {
 export interface PointMenuEvent {
 	clientX: number; clientY: number;
 	point: PointInfo | null;   // null: nothing under the cursor, or the pick can't resolve a sample
-	reason?: 'gridded' | 'no-cache' | 'outside-crop';   // why the time items are unavailable
+	reason?: 'gridded' | 'no-cache' | 'outside-crop' | 'outside-cache';   // why the time items are unavailable
 }
 
 /**
@@ -199,23 +200,33 @@ export function settleRing(
 
 /**
  * The path and window that reproduce the octree's own geometry from a live cache: measured
- * tacho speed, the feed and diameter the cache header carries (the same values the octree was
- * built with), and the whole cache as the window. `rpm` is unused by measured mode; it is set to
- * the last sample's for completeness.
+ * tacho speed, and the feed, diameters and ppr the octree was built with.
  *
- * Window: the live cache IS the octree's window by construction (write_live_cache keeps only the
- * auto-cut samples), so the window is the cache's own first and last `t`. It is NOT csSec/ceSec:
- * those are (cutstart-1)/Fs and (cutend-1)/Fs, which equal t[0]/t[N-1] only while the cache's Time
- * column is exactly (n-1)/Fs; any other Time base would move the spiral's r = 0 anchor off the
- * first sample, and every ring and pick would sit off the octree's points.
+ * With the build manifest (`build`, d1_build.json) those come from it, and the window is its
+ * [cut_start_sec, cut_end_sec]: the cut the host actually integrated, which differs from the cache's
+ * whenever the official crop changed after the live cache was written, or inner diameter / ppr were
+ * edited after the build. The caller checks cacheCoversBuild(): a cut start before the cache's first
+ * sample has no anchor in the cache.
+ *
+ * Without it (an octree built before the manifest existed) the cache's header feed and diameter, the
+ * given innerDiam and ppr, and the whole cache as the window: the live cache IS the octree's window
+ * by construction (write_live_cache keeps only the auto-cut samples), so the window is the cache's own
+ * first and last `t`. It is NOT csSec/ceSec: those are (cutstart-1)/Fs and (cutend-1)/Fs, which equal
+ * t[0]/t[N-1] only while the cache's Time column is exactly (n-1)/Fs; any other Time base would move
+ * the spiral's r = 0 anchor off the first sample, and every ring and pick would sit off the octree's
+ * points. `rpm` is unused by measured mode; it is set to the last sample's for completeness.
  */
-export function octreePathParams(c: Cache, innerDiam: number, ppr: number): { path: PathParams; window: PathWindow } {
+export function octreePathParams(
+	c: Cache, innerDiam: number, ppr: number, build?: OctreeBuild | null,
+): { path: PathParams; window: PathWindow } {
 	const rpm = c.rpm && c.rpm.length ? c.rpm[c.rpm.length - 1] : 0;
-	return {
-		path: {
-			kind: 'turning_spiral', feed: c.feed, diam: c.diam, innerDiam,
-			speedMode: 'measured', rpm, vc: 0, timeScale: 1, ppr,
-		},
-		window: { cropStartSec: c.N ? c.t[0] : 0, cropEndSec: c.N ? c.t[c.N - 1] : 0, stride: 1 },
+	const path: PathParams = {
+		kind: 'turning_spiral', feed: build ? build.feed : c.feed, diam: build ? build.diam : c.diam,
+		innerDiam: build ? build.innerDiam : innerDiam,
+		speedMode: 'measured', rpm, vc: 0, timeScale: 1, ppr: build ? build.ppr : ppr,
 	};
+	const window: PathWindow = build
+		? { cropStartSec: build.cutStartSec, cropEndSec: build.cutEndSec, stride: 1 }
+		: { cropStartSec: c.N ? c.t[0] : 0, cropEndSec: c.N ? c.t[c.N - 1] : 0, stride: 1 };
+	return { path, window };
 }
