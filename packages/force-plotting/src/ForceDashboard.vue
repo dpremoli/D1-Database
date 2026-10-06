@@ -1960,6 +1960,9 @@ const writeViewQuery = debounce(() => {
 }, 400);
 watch(viewQuery, writeViewQuery);
 onDeactivated(() => writeViewQuery.cancel());
+// Another page replaced the shared route while this one was kept alive: put the view's link back
+// (the guard above still applies, and an unchanged query is a no-op).
+onActivated(() => writeViewQuery());
 onBeforeUnmount(() => writeViewQuery.cancel());
 
 function viewUrl(): string {
