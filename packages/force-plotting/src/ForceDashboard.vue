@@ -30,6 +30,7 @@ import { computeSignalStats, resolveStatsWindow, type SignalStats } from './sign
 import { statsCsvColumns } from './statsCsv';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
+import { saveChartImage, type ChartSnapshot } from './chartExport';
 import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
 import { debounce } from './debounce';
 import { cropWindowSec, diffEnvelopes, diffWindow } from './compare';
@@ -1799,7 +1800,7 @@ function buildChartsFor(item: RPanel) {
 				cropStart: activeCrop.value?.start, cropEnd: activeCrop.value?.end, peak: d?.[PEAK_FIELD[a]],
 				compare: compareSeriesFor(a),
 				secondXValues: radialValuesFor(d?.series?.[a]?.t), secondXLabel }
-			: { key: a, title: `${a} · spectrum`, kind: 'line' as const, data: d?.fft?.[a], color: AXIS_COLOR[a], xUnit: 'Hz', yUnit: '', logY: true }
+			: { key: a, title: `${a} · spectrum`, kind: 'line' as const, data: d?.fft?.[a], color: AXIS_COLOR[a], xUnit: 'Hz', yUnit: 'N', logY: true }
 	));
 	if (effectiveMode.value === 'force' && item.rpm) {
 		base.push({ key: 'RPM', title: 'RPM', kind: 'env', data: detail.value?.series?.RPM, color: '#a855f7', xUnit: 's', yUnit: 'rpm',
@@ -2198,8 +2199,23 @@ async function copyPointInfo(p: PointInfo) {
 		flashLinkMsg('Point info copied');
 	} catch { flashLinkMsg('Copy failed — clipboard unavailable'); }
 }
-function openChartMenu(e: { clientX: number; clientY: number; x: number }) {
+function chartImageItems(snap: () => ChartSnapshot): ContextMenuItem[] {
+	const save = async (format: 'png' | 'svg') => {
+		const s = snap();
+		const modeLabel = CHART_MODES.find((m) => m.key === chartMode.value)?.label ?? chartMode.value;
+		const ok = await saveChartImage({ ...s, opLabel: opLabel.value, subtitle: `${modeLabel} mode` }, format,
+			`${safeFilePart(opLabel.value) || 'op'}_${safeFilePart(s.title) || 'chart'}`);
+		flashLinkMsg(ok ? `Chart saved as ${format.toUpperCase()}` : `Could not save the chart as ${format.toUpperCase()}`);
+	};
+	return [
+		{ label: 'Save chart as PNG', run: () => { void save('png'); } },
+		{ label: 'Save chart as SVG', run: () => { void save('svg'); } },
+	];
+}
+function openChartMenu(e: { clientX: number; clientY: number; x: number | null; snapshot: () => ChartSnapshot }) {
+	const images = chartImageItems(e.snapshot);
 	const t = e.x;
+	if (t == null) { openMenu(e.clientX, e.clientY, images); return; }   // a spectrum: no map position
 	let hint: string | undefined;
 	if (octreeOn.value) {
 		const c = octreeSampleCache.value;
@@ -2217,6 +2233,7 @@ function openChartMenu(e: { clientX: number; clientY: number; x: number }) {
 		{ label: 'Show position on map', disabled: !!hint, hint, run: () => showOnMap(t) },
 		...clearMarkItem(),
 		...cropItems(t),
+		...images,
 	]);
 }
 async function showOnMap(t: number) {

@@ -2,6 +2,7 @@
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { hoverIndexAt } from './hoverIndex';
 import { markInView, markTagText } from './chartMark';
+import type { ChartSnapshot } from './chartExport';
 
 // Dependency-free chart. kind='env' → min/max envelope (force or RPM; always
 // includes 0 on the y-axis); kind='line' → FFT amplitude (optional log y).
@@ -48,9 +49,10 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
 	(e: 'hover', i: number | null): void;
-	// Right-click on an env chart: x is the time of the nearest bucket under the cursor. The host
-	// decides what the menu holds; this only reports where.
-	(e: 'chartmenu', v: { clientX: number; clientY: number; x: number }): void;
+	// Right-click on a chart: x is the time of the nearest bucket under the cursor (env charts; null
+	// on a spectrum, where a position means nothing to the map). The host decides what the menu
+	// holds; this only reports where. `snapshot()` returns what "Save chart as PNG/SVG" needs.
+	(e: 'chartmenu', v: { clientX: number; clientY: number; x: number | null; snapshot: () => ChartSnapshot }): void;
 	(e: 'update:cropStart', v: number): void;
 	(e: 'update:cropEnd', v: number): void;
 	(e: 'zoom', v: { start: number; end: number } | null): void;   // null = reset to full
@@ -61,6 +63,9 @@ const ML = 46, MR = 12, MT = 8, MB = 24;
 // when one is actually supplied, so charts without it keep today's exact layout.
 const hasSecondX = computed(() => !!(props.secondXValues && props.secondXValues.length));
 const MT_EFF = computed(() => (hasSecondX.value ? MT + 16 : MT));
+// The y-axis unit shown on screen and in exports. A spectrum is the force amplitude (N); a chart
+// whose host gave no unit shows none rather than a made-up one.
+const yLabelUnit = computed(() => props.yUnit || (props.kind === 'line' ? 'N' : ''));
 const stroke = computed(() => props.color || '#0d9488');
 const peakNum = computed(() => {
 	if (props.peak == null) return null;
@@ -303,7 +308,7 @@ const hoverPt = computed(() => {
 	if (props.kind === 'env') {
 		const mid = (d.min[i] + d.max[i]) / 2;
 		return { px: g.sx(g.xs[i]), py: g.sy(mid),
-			label: `${mid.toFixed(2)} ${props.yUnit || ''}`.trim(), sub: `${niceNum(g.xs[i])} ${props.xUnit || ''}`.trim() };
+			label: `${mid.toFixed(2)} ${yLabelUnit.value}`.trim(), sub: `${niceNum(g.xs[i])} ${props.xUnit || ''}`.trim() };
 	}
 	return { px: g.sx(g.xs[i]), py: g.sy(d.amp[i]),
 		label: `${d.amp[i].toPrecision(3)}`, sub: `${niceNum(g.xs[i])} ${props.xUnit || 'Hz'}`.trim() };
@@ -355,10 +360,20 @@ const mark = computed(() => {
 // nothing at all.
 function onContextMenu(ev: MouseEvent) {
 	const g = geom.value;
-	if (props.kind !== 'env' || !g || !props.menu) return;
+	if (!g || !props.menu) return;
 	ev.preventDefault();
-	const i = bucketAt(ev);
-	if (i != null) emit('chartmenu', { clientX: ev.clientX, clientY: ev.clientY, x: g.xs[i] });
+	const i = props.kind === 'env' ? bucketAt(ev) : null;
+	if (props.kind === 'env' && i == null) return;
+	emit('chartmenu', { clientX: ev.clientX, clientY: ev.clientY, x: i != null ? g.xs[i] : null, snapshot });
+}
+// The chart as the image exporter wants it: the props, not the on-screen geometry, so the file
+// is laid out for a report and not for this panel's pixel size.
+function snapshot(): ChartSnapshot {
+	return {
+		title: props.title, kind: props.kind, data: props.data, color: props.color, xUnit: props.xUnit,
+		yUnit: yLabelUnit.value, logY: props.logY, cropStart: props.cropStart, cropEnd: props.cropEnd,
+		viewStart: props.viewStart, viewEnd: props.viewEnd, compare: props.compare,
+	};
 }
 
 // ---- draggable crop handles (Live mode) ----
@@ -468,8 +483,8 @@ function onWheel(ev: WheelEvent) {
 	<div class="chart" :class="{ active }" :style="active ? { '--accent': stroke } : {}">
 		<div class="chart-head">
 			<span class="chart-title">{{ title }}</span>
-			<span v-if="peakNum != null" class="chart-peak">peak {{ peakNum.toFixed(2) }} {{ yUnit }}<template v-if="hasSecondX && secondXLabel"> · {{ secondXLabel }}</template></span>
-			<span v-else-if="geom" class="chart-unit">{{ logY ? 'log ' : '' }}{{ yUnit || (kind === 'line' ? 'amp' : '') }}<template v-if="hasSecondX && secondXLabel"> · {{ secondXLabel }}</template></span>
+			<span v-if="peakNum != null" class="chart-peak">peak {{ peakNum.toFixed(2) }} {{ yLabelUnit }}<template v-if="hasSecondX && secondXLabel"> · {{ secondXLabel }}</template></span>
+			<span v-else-if="geom" class="chart-unit">{{ logY ? 'log ' : '' }}{{ yLabelUnit }}<template v-if="hasSecondX && secondXLabel"> · {{ secondXLabel }}</template></span>
 		</div>
 		<div ref="bodyEl" class="chart-body">
 		<svg
