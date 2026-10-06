@@ -10,7 +10,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 // @ts-ignore plain JS module, tested with node --test
-import { TEST_STATUS_ORDER, buildOverview, errMsg } from './overview.js';
+import { TEST_STATUS_ORDER, buildOverview, errMsg, isDuplicate, isForbidden } from './overview.js';
 
 const props = defineProps<{ primaryKey: string | number; refreshKey?: number }>();
 const api = useApi();
@@ -26,7 +26,9 @@ const junction = ref<any[]>([]);        // campaign_samples rows (with their own
 const operations = ref<any[]>([]);
 const tests = ref<any[]>([]);
 const analyses = ref<any[]>([]);
-const analysisUnavailable = ref(false);
+const analysisUnavailable = ref(false); // the role may not read machining_force_analysis
+const analysisFailed = ref(false);      // the read failed for another reason (listed in `errors`)
+const noAnalysis = computed(() => analysisUnavailable.value || analysisFailed.value);
 
 const ov = computed(() =>
 	buildOverview({ samples: junction.value, operations: operations.value, tests: tests.value, analyses: analyses.value }),
@@ -80,8 +82,10 @@ async function load() {
 	operations.value = val(o, 'operations');
 	tests.value = val(t, 'test sessions');
 	// No access to the force-analysis table is a normal state for some roles: say so, don't alarm.
-	analysisUnavailable.value = a.status === 'rejected';
-	analyses.value = a.status === 'fulfilled' ? a.value : [];
+	// Any other failure (network, server) is a real error and is listed with the others.
+	analysisUnavailable.value = a.status === 'rejected' && isForbidden(a.reason);
+	analysisFailed.value = a.status === 'rejected' && !analysisUnavailable.value;
+	analyses.value = analysisUnavailable.value ? [] : val(a, 'force-analysis status');
 	errors.value = errs;
 	loading.value = false;
 }
@@ -214,10 +218,11 @@ async function setTestCampaign(id: string, campaign: string | number | null, lab
 					<div class="ov-bar" :title="`${ov.progress.analysed} of ${ov.progress.forceOps} machining operations analysed`"><i :style="{ width: ov.progress.analysedPct + '%' }" /></div>
 					<span class="ov-prog-n">
 						<template v-if="analysisUnavailable">not visible to your role</template>
+						<template v-else-if="analysisFailed">could not load</template>
 						<template v-else>{{ ov.progress.analysed }} / {{ ov.progress.forceOps }}</template>
 					</span>
 				</div>
-				<div v-if="!analysisUnavailable" class="ov-prog-row">
+				<div v-if="!noAnalysis" class="ov-prog-row">
 					<span class="ov-prog-label">Diagnostics built</span>
 					<div class="ov-bar ov-bar--diag"><i :style="{ width: ov.progress.diagBuiltPct + '%' }" /></div>
 					<span class="ov-prog-n">{{ ov.progress.diagBuilt }} / {{ ov.progress.forceOps }}</span>
@@ -274,11 +279,11 @@ async function setTestCampaign(id: string, campaign: string | number | null, lab
 						<td><router-link class="mono" :to="`/content/manufacturing_operations/${o.operation_id}`">{{ o.pass_code || '—' }}</router-link></td>
 						<td>{{ o.sample_code || '—' }}</td>
 						<td>
-							<span v-if="analysisUnavailable" class="ov-sub">—</span>
+							<span v-if="noAnalysis" class="ov-sub">—</span>
 							<span v-else class="ov-pill" :class="stateClass(o.analysis)" :title="o.analysis_error || ''">{{ STATE_LABEL[o.analysis] }}</span>
 						</td>
 						<td>
-							<span v-if="analysisUnavailable || o.diag === 'none'" class="ov-sub">—</span>
+							<span v-if="noAnalysis || o.diag === 'none'" class="ov-sub">—</span>
 							<span v-else class="ov-pill" :class="stateClass(o.diag)" :title="o.diag_error || ''">{{ STATE_LABEL[o.diag] }}</span>
 						</td>
 					</tr>

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { TEST_STATUS_ORDER, analysisState, buildOverview, diagState } from './src/overview.js';
+import { TEST_STATUS_ORDER, analysisState, buildOverview, diagState, isDuplicate, isForbidden } from './src/overview.js';
 
 test('analysisState rolls several files up, worst first', () => {
 	assert.equal(analysisState([]), 'none');
@@ -144,4 +144,21 @@ test('tests complete counts processed and analysed (the migration-0013 vocabular
 	assert.equal(buildOverview({ tests: [{ session_id: 'x', status: 'complete' }] }).progress.testsComplete, 0);
 	// every status of the lifecycle has a chip position
 	assert.deepEqual([...TEST_STATUS_ORDER].sort(), [...statuses].sort());
+});
+
+test('isForbidden is true only for permission failures, not for other errors', () => {
+	const http = (status, code) => ({ response: { status, data: { errors: [{ extensions: { code } }] } } });
+	assert.equal(isForbidden(http(403, 'FORBIDDEN')), true);
+	assert.equal(isForbidden({ response: { status: 403 } }), true);
+	assert.equal(isForbidden(http(200, 'FORBIDDEN')), true);
+	assert.equal(isForbidden(http(500, 'INTERNAL_SERVER_ERROR')), false);
+	assert.equal(isForbidden(http(503)), false);
+	assert.equal(isForbidden(new Error('Network Error')), false);
+	assert.equal(isForbidden(undefined), false);
+});
+
+test('isDuplicate recognises a unique-constraint failure', () => {
+	assert.equal(isDuplicate({ response: { status: 400, data: { errors: [{ extensions: { code: 'RECORD_NOT_UNIQUE' } }] } } }), true);
+	assert.equal(isDuplicate({ response: { status: 400, data: { errors: [{ extensions: { code: 'INVALID_PAYLOAD' } }] } } }), false);
+	assert.equal(isDuplicate(new Error('x')), false);
 });

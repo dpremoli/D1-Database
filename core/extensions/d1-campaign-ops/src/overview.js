@@ -155,3 +155,16 @@ export function buildOverview({ samples = [], operations = [], tests = [], analy
 export function errMsg(e) {
 	return e?.response?.data?.errors?.[0]?.message || e?.message || 'request failed';
 }
+
+const errCode = (e) => e?.response?.data?.errors?.[0]?.extensions?.code;
+
+// An Axios/Directus failure that means "your role may not read this" (as opposed to a network or
+// server error): HTTP 403 or the FORBIDDEN error code.
+export function isForbidden(e) {
+	return e?.response?.status === 403 || errCode(e) === 'FORBIDDEN';
+}
+
+// An Axios/Directus failure for a unique-constraint violation (the row already exists).
+export function isDuplicate(e) {
+	return errCode(e) === 'RECORD_NOT_UNIQUE';
+}
