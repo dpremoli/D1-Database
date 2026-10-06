@@ -34,5 +34,6 @@ open.
 | [FRM ↔ Signals linking](specs/2026-10-04-frm-signal-linking-design.md) | force-app / plotting | Implemented |
 | [Cutting metrics card](specs/2026-10-06-cutting-metrics-design.md) | force plotting | Implemented |
 | [Sample timeline + campaign overview](specs/2026-10-06-sample-timeline-and-campaign-overview-design.md) | Directus extensions | Implemented |
+| [Diagnostics across a campaign](specs/2026-10-06-diagnostics-campaign-design.md) | Diagnostics | Implemented |
 
 Add a row when a new spec lands, and update its Status line (and this table) when it ships.
