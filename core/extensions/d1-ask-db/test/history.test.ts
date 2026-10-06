@@ -10,7 +10,7 @@ import {
 	SAVED_LIMIT,
 	loadList,
 	mergeLists,
-	migrateLegacy,
+	dropLegacy,
 	scopedKey,
 	startsConversation,
 	updateList,
@@ -146,20 +146,18 @@ test('mergeLists: dedupes, newest first, capped', () => {
 	assert.equal(SAVED_LIMIT, 100);
 });
 
-test('migrateLegacy: moves the bare lists to the current user once, then deletes them', () => {
+test('dropLegacy: deletes the bare (pre per-user) lists without giving them to anyone', () => {
 	const store = fakeStorage();
 	store.set(HISTORY_KEY, JSON.stringify([{ question: 'old', at: 1 }]));
 	store.set(SAVED_KEY, JSON.stringify([{ question: 'pinned', at: 1 }]));
 	store.set(scopedKey(HISTORY_KEY, 'u1'), JSON.stringify([{ question: 'new', at: 2 }]));
-	migrateLegacy(null); // no user id: nothing moves
+	dropLegacy(null); // no user id yet: nothing happens
 	assert.ok(store.has(HISTORY_KEY));
-	migrateLegacy('u1');
+	dropLegacy('u1');
 	assert.equal(store.has(HISTORY_KEY), false);
 	assert.equal(store.has(SAVED_KEY), false);
-	assert.deepEqual(loadList(scopedKey(HISTORY_KEY, 'u1')).map((e) => e.question), ['new', 'old']);
-	assert.deepEqual(loadList(scopedKey(SAVED_KEY, 'u1')).map((e) => e.question), ['pinned']);
-	migrateLegacy('u2'); // already gone: u2 gets nothing
-	assert.deepEqual(loadList(scopedKey(HISTORY_KEY, 'u2')), []);
+	assert.deepEqual(loadList(scopedKey(HISTORY_KEY, 'u1')).map((e) => e.question), ['new']);
+	assert.deepEqual(loadList(scopedKey(SAVED_KEY, 'u1')), []);
 	delete (globalThis as any).window;
 });
 

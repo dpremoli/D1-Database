@@ -14,7 +14,7 @@ import {
 	addQuestion,
 	hasQuestion,
 	loadList,
-	migrateLegacy,
+	dropLegacy,
 	removeQuestion,
 	scopedKey,
 	startsConversation,
@@ -59,7 +59,7 @@ const { useUserStore } = useStores();
 const userId: string | null = (useUserStore().currentUser as any)?.id ?? null;
 const historyKey = scopedKey(HISTORY_KEY, userId);
 const savedKey = scopedKey(SAVED_KEY, userId);
-migrateLegacy(userId);
+dropLegacy(userId);
 const asked = ref(loadList(historyKey));
 const saved = ref(loadList(savedKey));
 

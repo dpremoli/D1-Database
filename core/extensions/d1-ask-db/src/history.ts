@@ -118,21 +118,14 @@ export function updateList(
 }
 
 /**
- * Move lists written before keys were per-user (the bare keys) into this user's lists, once,
- * then delete the bare keys. The first user to open the module after the upgrade gets them.
+ * Delete the lists written before keys were per-user (the bare keys). They are not handed to
+ * anyone: on a shared PC that would give one person's questions to whoever opens the module
+ * next. Only runs once a user id is known, so a signed-in session never reads them.
  */
-export function migrateLegacy(userId: string | null | undefined): void {
+export function dropLegacy(userId: string | null | undefined): void {
 	if (!userId) return;
-	const limits: [string, number][] = [
-		[HISTORY_KEY, HISTORY_LIMIT],
-		[SAVED_KEY, SAVED_LIMIT],
-	];
-	for (const [base, limit] of limits) {
+	for (const base of [HISTORY_KEY, SAVED_KEY]) {
 		try {
-			const raw = window.localStorage.getItem(base);
-			if (raw === null) continue;
-			const key = scopedKey(base, userId);
-			saveList(key, mergeLists(parseStored(window.localStorage.getItem(key)), parseStored(raw), limit));
 			window.localStorage.removeItem(base);
 		} catch {
 			// ignore
