@@ -546,6 +546,44 @@ test('more than 500 ancestors are cut to the 500 nearest and flagged', async () 
     assert.equal(b.truncated.ancestors, true);
 });
 
+// 499 depth-1 ancestors (B unreadable, A1 and fillers readable), then D (reached via B at depth 2 and
+// via X at depth 3) and X at depth 2: X is the 501st row and is cut.
+function truncatedAncestors() {
+    const B = id(4000), A1 = id(4001), D = id(4002), X = id(4003);
+    const fillers = Array.from({ length: 497 }, (_, i) => id(4100 + i));
+    const fn = baseFn();
+    fn.f_trace_ancestors = [
+        row(0, ROOT, ROOT),
+        row(1, B, ROOT, B),
+        row(1, A1, ROOT, A1),
+        ...fillers.map((f) => row(1, f, ROOT, f)),
+        row(2, D, ROOT, B, D),
+        row(2, X, ROOT, A1, X),
+        row(3, D, ROOT, A1, X, D),
+    ];
+    fn.f_trace_stock_origins = [{ via_sample_id: X, depth: 2, lot_id: LOT1 }];
+    const tables = baseTables();
+    tables.physical_samples.push(...[B, A1, D, X, ...fillers].map((s, i) => ({ sample_id: s, sample_code: `T${i}`, form: 'bar' })));
+    const readable = new Set([...all, A1, D, X, ...fillers]); // B is not readable
+    return { D, X, ...mount({ readable, fn, tables }) };
+}
+
+test('a truncated ancestors list does not mark a row hidden because a step was cut from the list', async () => {
+    const { handler, D } = truncatedAncestors();
+    const b = (await call(handler, user)).body;
+    assert.equal(b.truncated.ancestors, true);
+    assert.equal(b.hidden.ancestors, 1); // B
+    assert.equal(b.ancestors.length, 499);
+    assert.equal(b.ancestors.find((a) => a.sample_id === D).through_hidden, false);
+});
+
+test('a stock lot via an ancestor that was cut from a truncated list is not marked through_hidden', async () => {
+    const { handler, X } = truncatedAncestors();
+    const b = (await call(handler, user)).body;
+    const lot = b.stock_origins.find((s) => s.via_sample_id === X);
+    assert.equal(lot.through_hidden, false);
+});
+
 test('more than 500 events keep the newest 500 (oldest first), and say so', async () => {
     const opIds = Array.from({ length: 503 }, (_, i) => id(2000 + i));
     const day = (i) => new Date(Date.UTC(2026, 0, 1) + i * 86400000);

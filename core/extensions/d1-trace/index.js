@@ -103,8 +103,10 @@ async function readByPairs(ctx, collection, [fa, fb], pairs) {
 
 // Samples reachable from the root by walking only readable samples. `rows` are the distinct
 // lineage rows ({ sample_id, prev[] }). A listed, readable sample that is NOT in the result can only
-// be reached through an unreadable one, whichever path is taken.
-function reachable(rootId, rows, okSamples) {
+// be reached through an unreadable one, whichever path is taken. When the section was cut at
+// MAX_ROWS (`truncated`), a step that is not among the rows is missing, not unreadable, and nothing
+// is known about it: it is treated as walkable, so a row is never marked hidden because of it.
+function reachable(rootId, rows, okSamples, truncated = false) {
     const next = new Map();
     for (const r of rows) {
         for (const p of r.prev ?? []) {
@@ -114,6 +116,15 @@ function reachable(rootId, rows, okSamples) {
     }
     const seen = new Set([rootId]);
     const queue = [rootId];
+    if (truncated) {
+        const listed = new Set(rows.map((r) => r.sample_id));
+        for (const p of next.keys()) {
+            if (p !== rootId && !listed.has(p)) {
+                seen.add(p);
+                queue.push(p);
+            }
+        }
+    }
     while (queue.length) {
         for (const c of next.get(queue.shift()) ?? []) {
             if (!seen.has(c) && okSamples.has(c)) {
@@ -211,7 +222,7 @@ export default {
                 // to it passes an unreadable sample; the relationship edge (type, fraction) comes from
                 // a readable step, so it is dropped for those rows.
                 const lineage = async (name, rows, edgeFields) => {
-                    const reach = reachable(id, rows, okSamples);
+                    const reach = reachable(id, rows, okSamples, !!truncated[name]);
                     const shown = [];
                     const edges = [];
                     for (const r of rows) {
@@ -250,7 +261,8 @@ export default {
 
                 // A lot reached through an ancestor chain that passes an unreadable sample is marked
                 // the same way, so the UI can say the path is not fully visible.
-                const ancReach = reachable(id, ancestors, okSamples);
+                const ancReach = reachable(id, ancestors, okSamples, !!truncated.ancestors);
+                const ancListed = new Set(ancestors.map((r) => r.sample_id));
                 const readableStock = stockRows.filter((r) => lots.has(r.lot_id));
                 const provenance = await readByPairs(
                     ctx,
@@ -272,7 +284,12 @@ export default {
                         via_sample_id: r.via_sample_id,
                         via_sample_code: via ? val(via.sample_code) : null,
                         depth: Number(r.depth),
-                        through_hidden: !ancReach.has(r.via_sample_id),
+                        // A via sample that was cut from a truncated ancestors list is unknown, not
+                        // hidden: only its own readability counts then.
+                        through_hidden:
+                            truncated.ancestors && r.via_sample_id !== id && !ancListed.has(r.via_sample_id)
+                                ? !okSamples.has(r.via_sample_id)
+                                : !ancReach.has(r.via_sample_id),
                     };
                 });
 
