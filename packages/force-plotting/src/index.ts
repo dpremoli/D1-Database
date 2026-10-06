@@ -10,6 +10,8 @@ export { default as SpectrumView } from './SpectrumView.vue';
 export { computeSignalStats } from './signalStats';
 export type { SignalStats } from './signalStats';
 export * from './frmExport';
+export { buildChartSvg, saveChartImage, svgToPngBlob } from './chartExport';
+export type { ChartSnapshot, ChartSvgOpts } from './chartExport';
 export { toCsv, downloadText, copyText, safeFilePart } from './csvExport';
 export type { CsvColumn } from './csvExport';
 
