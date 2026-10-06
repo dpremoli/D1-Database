@@ -7,6 +7,8 @@
 // Sample ("Start anyway"): an offline cut can be linked to a Sample later, so it is a warning, not
 // a block.
 
+import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS, SUB_NAMES } from './liveClient';
+
 export type PreflightLevel = 'ok' | 'info' | 'warn' | 'fail' | 'skip';
 export type PreflightId = 'sample' | 'auth' | 'amp' | 'tacho' | 'disk' | 'channels';
 
@@ -50,9 +52,6 @@ export interface PreflightInput {
 	channels: ChannelLike[] | null;
 }
 
-/** Columns in a raw row and bytes per value (liveClient RAW_COLUMNS / RAW_BYTES_PER_SAMPLE). */
-export const RAW_ROW_COLUMNS = 10;
-const RAW_BYTES = 4;
 /** The recorder force-stops a cut below this much free space (backend session.DISK_STOP_GB), so
  *  that last gigabyte is not recording room. */
 export const DISK_RESERVE_GB = 1;
@@ -60,11 +59,11 @@ export const RUNWAY_FAIL_MIN = 5;
 export const RUNWAY_WARN_MIN = 30;
 
 /** Minutes of recording the free space holds at this rate, or null when it can't be told. */
-export function diskRunwayMinutes(freeGb: number | null, sampleRate: number, columns = RAW_ROW_COLUMNS): number | null {
+export function diskRunwayMinutes(freeGb: number | null, sampleRate: number, columns = RAW_COLUMNS): number | null {
 	if (freeGb == null || !Number.isFinite(freeGb) || freeGb < 0) return null;
 	if (!Number.isFinite(sampleRate) || sampleRate <= 0) return null;
 	const usableBytes = Math.max(0, freeGb - DISK_RESERVE_GB) * 1e9;
-	return usableBytes / (sampleRate * columns * RAW_BYTES) / 60;
+	return usableBytes / (sampleRate * columns * RAW_BYTES_PER_SAMPLE) / 60;
 }
 
 export function formatRunway(minutes: number): string {
@@ -93,9 +92,8 @@ export function channelConfigIssues(channels: ChannelLike[]): { fail: string[]; 
 		if (first) fail.push(`${c.physical} is wired to both ${first} and ${c.name}`);
 		else seen.set(c.physical, c.name);
 	}
-	const core = ['Fx1', 'Fx2', 'Fy1', 'Fy2', 'Fz1', 'Fz2', 'Fz3', 'Fz4', 'Tacho'];
-	const unbound = core.filter((n) => !channels.find((c) => c.name === n)?.physical);
-	if (unbound.length === core.length) warn.push('no inputs are assigned yet');
+	const unbound = SUB_NAMES.filter((n) => !channels.find((c) => c.name === n)?.physical);
+	if (unbound.length === SUB_NAMES.length) warn.push('no inputs are assigned yet');
 	else if (unbound.length) warn.push(`no input assigned to ${unbound.join(', ')}`);
 	return { fail, warn };
 }
@@ -118,9 +116,8 @@ export function computePreflight(i: PreflightInput): PreflightItem[] {
 		items.push({ id: 'auth', label: 'Signed in', level: 'warn', detail: 'Not signed in. The cut records fine, but it cannot be uploaded until you sign in.' });
 	}
 
-	if (i.source === 'nidaq') items.push(ampItem(i.amp));
-
 	if (i.source === 'nidaq') {
+		items.push(ampItem(i.amp));
 		items.push(i.tachoOk === true
 			? { id: 'tacho', label: 'Tacho', level: 'ok', detail: 'Tacho pulses seen.' }
 			: i.tachoOk === false
@@ -159,7 +156,7 @@ function diskItem(freeGb: number | null, rate: number): PreflightItem {
 	const focus = { id: 'sample-rate' };
 	const minutes = diskRunwayMinutes(freeGb, rate);
 	if (minutes == null) return { id: 'disk', label: 'Disk', level: 'skip', detail: 'Free space not read yet.' };
-	const where = `${(freeGb as number).toFixed(1)} GB free, about ${formatRunway(minutes)} at ${Math.round(rate).toLocaleString()} Hz x ${RAW_ROW_COLUMNS} channels`;
+	const where = `${(freeGb as number).toFixed(1)} GB free, about ${formatRunway(minutes)} at ${Math.round(rate).toLocaleString()} Hz x ${RAW_COLUMNS} channels`;
 	if (minutes < RUNWAY_FAIL_MIN) {
 		return { id: 'disk', label: 'Disk', level: 'fail', focus, detail: `${where}. Free some space or lower the sample rate.` };
 	}

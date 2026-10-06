@@ -195,12 +195,15 @@ async function checkDisk() {
 // may mount (or the reconcile may adopt a cut) while already recording, with no state change left
 // to trigger the watcher (review 2.6).
 const diskGate = new IntervalGate(checkDisk, 30_000);
-// R4: it also runs while waiting to Start (preflight.ts reads hwStatus.diskFreeGb for the runway).
-watch([() => st.state, () => w.mode.value], ([s, m]) => diskGate.set(shouldPollDisk(m, s) || shouldPollPreflight(m, s)), { immediate: true });
-// The checklist's other inputs (amp mode, saved channel list), NI-DAQ only, refreshed on the same
-// terms and whenever the source changes.
+// R4: while waiting to Start, the disk poll also feeds the checklist's runway (preflight.ts reads
+// hwStatus.diskFreeGb), and its other inputs (amp mode, saved channel list, NI-DAQ only) are
+// refreshed on the same terms and whenever the source changes.
 const preflightGate = new IntervalGate(() => { void w.refreshPreflight(); }, 15_000);
-watch([() => st.state, () => w.mode.value], ([s, m]) => preflightGate.set(shouldPollPreflight(m, s)), { immediate: true });
+watch([() => st.state, () => w.mode.value], ([s, m]) => {
+	const preflight = shouldPollPreflight(m, s);
+	diskGate.set(shouldPollDisk(m, s) || preflight);
+	preflightGate.set(preflight);
+}, { immediate: true });
 watch(() => w.source.value, () => { void w.refreshPreflight(); });
 
 // ---- Live backup status ----

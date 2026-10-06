@@ -23,7 +23,7 @@ export function railedNames(idx: readonly number[]): string[] {
 }
 
 export function isRailed(idx: readonly number[], channel: string): boolean {
-	return railedNames(idx).includes(channel);
+	return idx.includes((RAIL_CHANNELS as readonly string[]).indexOf(channel));
 }
 
 /** The banner sentence, or null when nothing has railed. */
