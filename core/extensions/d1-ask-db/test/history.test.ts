@@ -13,6 +13,8 @@ import {
 	dropLegacy,
 	scopedKey,
 	startsConversation,
+	toggleSavedQuestion,
+	SAVED_FULL_MESSAGE,
 	updateList,
 	parseStored,
 	removeQuestion,
@@ -165,4 +167,30 @@ test('startsConversation: only the first question of a conversation is remembere
 	assert.equal(startsConversation(0), true);
 	assert.equal(startsConversation(1), false);
 	assert.equal(startsConversation(5), false);
+});
+
+test('startsConversation takes the context sent: a retry after a first-question error still starts one', () => {
+	// An errored first turn contributes no context messages, so the rephrased retry sends none.
+	assert.equal(startsConversation(0), true);
+	// After a completed question (user + sql) a follow-up carries context and is not recorded.
+	assert.equal(startsConversation(2), false);
+});
+
+test('toggleSavedQuestion: pins, unpins, and refuses a new pin when full instead of dropping the oldest', () => {
+	let l: ReturnType<typeof loadList> = [];
+	for (let i = 0; i < SAVED_LIMIT; i++) {
+		const r = toggleSavedQuestion(l, `q${i}`, i);
+		assert.equal(r.result, 'saved');
+		l = r.list;
+	}
+	assert.equal(l.length, SAVED_LIMIT);
+	const full = toggleSavedQuestion(l, 'one more', 999);
+	assert.equal(full.result, 'full');
+	assert.equal(full.list, l); // untouched: the oldest pin (q0) is still there
+	assert.equal(hasQuestion(full.list, 'q0'), true);
+	assert.match(SAVED_FULL_MESSAGE, /^Saved list is full \(100\) \u2014 remove one first$/);
+	// unpinning works at the limit, and frees room for the new pin
+	const removed = toggleSavedQuestion(l, ' Q0 ', 1000);
+	assert.equal(removed.result, 'removed');
+	assert.equal(toggleSavedQuestion(removed.list, 'one more', 1001).result, 'saved');
 });

@@ -19,9 +19,29 @@ export const SAVED_LIMIT = 100;
 
 /**
  * Only the first question of a conversation goes to Recent: a follow-up ("only aluminium") means
- * nothing without the turns before it, so "Run again" on it would lose its context.
+ * nothing without the turns before it, so "Run again" on it would lose its context. Pass the
+ * number of context messages the request carries (the completed turns), not the transcript
+ * length: a first question that errored left no context, so its rephrased retry still starts the
+ * conversation and is recorded.
  */
-export const startsConversation = (priorTurns: number) => priorTurns === 0;
+export const startsConversation = (contextMessages: number) => contextMessages === 0;
+
+export const SAVED_FULL_MESSAGE = `Saved list is full (${SAVED_LIMIT}) \u2014 remove one first`;
+
+/**
+ * Pin or unpin a question. A full list refuses a new pin rather than silently dropping the
+ * oldest one; unpinning is always allowed.
+ */
+export function toggleSavedQuestion(
+	list: StoredQuestion[],
+	question: string,
+	now: number,
+	limit: number = SAVED_LIMIT,
+): { list: StoredQuestion[]; result: 'saved' | 'removed' | 'full' } {
+	if (hasQuestion(list, question)) return { list: removeQuestion(list, question), result: 'removed' };
+	if (list.length >= limit) return { list, result: 'full' };
+	return { list: addQuestion(list, question, now), result: 'saved' };
+}
 
 /** Storage key for a list, scoped to the user; the bare key only when there is no user id. */
 export const scopedKey = (base: string, userId?: string | null) => (userId ? `${base}:${userId}` : base);

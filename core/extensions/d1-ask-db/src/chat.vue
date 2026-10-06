@@ -9,8 +9,8 @@ import QuestionList from './question-list.vue';
 import {
 	HISTORY_KEY,
 	HISTORY_LIMIT,
+	SAVED_FULL_MESSAGE,
 	SAVED_KEY,
-	SAVED_LIMIT,
 	addQuestion,
 	hasQuestion,
 	loadList,
@@ -18,6 +18,7 @@ import {
 	removeQuestion,
 	scopedKey,
 	startsConversation,
+	toggleSavedQuestion,
 	updateList,
 } from './history';
 
@@ -72,10 +73,20 @@ function forget(question: string) {
 	asked.value = updateList(historyKey, asked.value, (l) => removeQuestion(l, question));
 }
 
+// Shown beside Save question when a pin is refused because the list is full.
+const saveNotice = ref('');
+let saveNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+
 function toggleSaved(question: string) {
-	saved.value = updateList(savedKey, saved.value, (l) =>
-		hasQuestion(l, question) ? removeQuestion(l, question) : addQuestion(l, question, Date.now(), SAVED_LIMIT),
-	);
+	let result: 'saved' | 'removed' | 'full' = 'saved';
+	saved.value = updateList(savedKey, saved.value, (l) => {
+		const r = toggleSavedQuestion(l, question, Date.now());
+		result = r.result;
+		return r.list;
+	});
+	clearTimeout(saveNoticeTimer);
+	saveNotice.value = result === 'full' ? SAVED_FULL_MESSAGE : '';
+	if (result === 'full') saveNoticeTimer = setTimeout(() => (saveNotice.value = ''), 4000);
 }
 
 function unsave(question: string) {
@@ -149,10 +160,12 @@ async function submit(text?: string) {
 	const question = (text ?? input.value).trim();
 	if (!question || busy()) return;
 
-	const messages = [...history(), { role: 'user', content: question }];
+	const context = history();
+	const messages = [...context, { role: 'user', content: question }];
 	const turn = ref<Turn>({ question, status: 'pending' }).value;
 	// Follow-ups are not context-free, so only a conversation's first question goes to Recent.
-	if (startsConversation(turns.value.length)) remember(question);
+	// Judged by the context sent, not the transcript: a retry after a first-question error counts.
+	if (startsConversation(context.length)) remember(question);
 	turns.value.push(turn);
 	input.value = '';
 	await scrollToEnd();
@@ -292,6 +305,7 @@ async function copySql(turn: Turn) {
 							>
 								{{ hasQuestion(saved, turn.question) ? 'Saved' : 'Save question' }}
 							</button>
+							<span v-if="saveNotice" class="save-notice" role="status" data-test="ask-save-notice">{{ saveNotice }}</span>
 						</div>
 
 						<details v-if="turn.sql" class="sql" data-test="ask-sql">
@@ -403,6 +417,11 @@ async function copySql(turn: Turn) {
 .action:hover:not(:disabled) {
 	border-color: var(--theme--primary, #6644ff);
 	color: var(--theme--primary, #6644ff);
+}
+.save-notice {
+	align-self: center;
+	font-size: 13px;
+	color: var(--theme--danger, #e35169);
 }
 .action:disabled {
 	opacity: 0.5;
