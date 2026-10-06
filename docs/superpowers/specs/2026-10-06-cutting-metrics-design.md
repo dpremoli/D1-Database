@@ -1,6 +1,6 @@
 # Cutting metrics card (P6)
 
-**Status:** Design. Implementation: `packages/force-plotting/src/cuttingMetrics.ts`, the "Cutting
+**Status:** Implemented. Implementation: `packages/force-plotting/src/cuttingMetrics.ts`, the "Cutting
 metrics" card in `ForceDashboard.vue` and the extra columns in `statsCsv.ts`.
 
 ## Problem
