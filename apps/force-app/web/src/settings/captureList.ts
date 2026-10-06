@@ -231,6 +231,15 @@ export function bulkDeleteSkipReason(fresh: ListCapture | null, f: RowFacts): st
 	return bulkDeleteBlockReason(f);
 }
 
+/** A single-row delete, re-checked right after its confirm dialog resolves: the dialog can stay open
+ * while Upload all (or a recover) reaches the row, and the answer was given about the state at
+ * click time. Null = go ahead. */
+export function deleteAfterConfirmBlockReason(fresh: ListCapture | null, f: Pick<RowFacts, 'busyIds'>): string | null {
+	if (!fresh) return 'no longer on disk';
+	if (f.busyIds?.has(fresh.id)) return 'busy (an upload or another action is running for it), so it was not deleted';
+	return null;
+}
+
 /** The same for Free up space: the cleanup rule re-applied to fresh state. */
 export function cleanupSkipReason(fresh: ListCapture | null, f: RowFacts, cutoffMs: number): string | null {
 	if (!fresh) return 'no longer on disk';

@@ -20,7 +20,7 @@ import { fetchRemoteBackupStates } from '../recorderHttp';
 import { formatMegabytes } from '../format';
 import {
 	beginUploadItem, bulkDeleteBlockReason, bulkDeleteSkipReason, canUploadCapture, cleanupCandidates, cleanupCutoff,
-	cleanupSkipReason, finishUploadItem, finishUploads, idsToLookUp, isBulkSelectable, isClientFilter, matchesFilter, needsMorePages,
+	cleanupSkipReason, deleteAfterConfirmBlockReason, finishUploadItem, finishUploads, idsToLookUp, isBulkSelectable, isClientFilter, matchesFilter, needsMorePages,
 	pageSizeFor, planBulkDelete,
 	pruneSelection, requestUploadCancel, rowState, serverStatusFor, shouldStopUploads, startUploadProgress,
 	sumMb, summarizeCleanup, summarizeDeleteResults, toggleAll, toggleId, uploadProgressText,
@@ -310,6 +310,10 @@ async function remove(c: Capture) {
 		tone: 'danger',
 	});
 	if (!ok) return;
+	// The dialog may have stayed open while Upload all (or a recover) reached this row: never delete
+	// a capture that is being read or uploaded, and say why nothing happened.
+	const blocked = deleteAfterConfirmBlockReason(captures.value.find((x) => x.id === c.id) ?? null, facts.value);
+	if (blocked) { rowMsg.value[c.id] = blocked; return; }
 	busy.value[c.id] = 'deleting';
 	rowMsg.value[c.id] = '';
 	try {
@@ -649,7 +653,7 @@ async function uploadAllUnsynced() {
 	for (const c of pending) {
 		if (shouldStopUploads(uploadRun.value!)) break;
 		// State may have moved while earlier items uploaded (a queue sync, a delete).
-		if (!canUpload(c)) { uploadRun.value = finishUploadItem(uploadRun.value!, 'skipped'); continue; }
+		if (!captures.value.some((x) => x.id === c.id) || !canUpload(c)) { uploadRun.value = finishUploadItem(uploadRun.value!, 'skipped'); continue; }
 		uploadRun.value = beginUploadItem(uploadRun.value!, c.sample_name || c.id);
 		const outcome = await upload(c);
 		uploadRun.value = finishUploadItem(uploadRun.value!, outcome);

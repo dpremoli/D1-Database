@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	beginUploadItem, bulkDeleteBlockReason, bulkDeleteSkipReason, canUploadCapture, cleanupSkipReason, idsToLookUp, pageSizeFor, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
+	beginUploadItem, bulkDeleteBlockReason, deleteAfterConfirmBlockReason, bulkDeleteSkipReason, canUploadCapture, cleanupSkipReason, idsToLookUp, pageSizeFor, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
 	isBulkSelectable, isClientFilter, isCleanupCandidate, matchesFilter, needsMorePages, planBulkDelete,
 	pruneSelection, requestUploadCancel, rowState, selectableIds, serverStatusFor, shouldStopUploads,
 	startUploadProgress, summarizeCleanup, summarizeDeleteResults, toggleAll, toggleId, uploadProgressText,
@@ -332,5 +332,18 @@ describe('paging cost with a browser-side chip', () => {
 		expect(idsToLookUp(rows, new Set(['a', 'b'])).map((c) => c.id)).toEqual(['c']);
 		expect(idsToLookUp(rows, new Set()).map((c) => c.id)).toEqual(['a', 'b', 'c']);
 		expect(idsToLookUp(rows, new Set(['a', 'b', 'c']))).toEqual([]);
+	});
+});
+
+describe('deleteAfterConfirmBlockReason', () => {
+	const cap = { id: 'a', finalized: true } as any;
+	it('goes ahead for an idle row still on disk', () => {
+		expect(deleteAfterConfirmBlockReason(cap, { busyIds: new Set() })).toBeNull();
+	});
+	it('stops when an upload (Upload all reached the row while the dialog was open) is running for it', () => {
+		expect(deleteAfterConfirmBlockReason(cap, { busyIds: new Set(['a']) })).toMatch(/busy/);
+	});
+	it('stops when the capture is gone', () => {
+		expect(deleteAfterConfirmBlockReason(null, { busyIds: new Set() })).toMatch(/no longer on disk/);
 	});
 });
