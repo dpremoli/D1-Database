@@ -1,7 +1,7 @@
 # Sample timeline and campaign overview
 
 **Date:** 2026-10-06
-**Status:** In progress (stream M of `plans/2026-10-06-ux-larger-items.md`; UX review rows D5 and D11).
+**Status:** Implemented (stream M of the 2026-10-06 larger-UX-items batch; UX review rows D5 and D11). Code: `core/extensions/d1-trace/`, `d1-lab-dashboard/src/views/SampleTimeline.vue`, `d1-campaign-ops/src/CampaignOverview.vue` and `overview.js`.
 **Scope:** `d1-lab-dashboard` (Sample dashboard), a new `d1-trace` endpoint extension, and
 `d1-campaign-ops` (campaign form panel). No schema change.
 
