@@ -215,6 +215,56 @@ sfb_check "up_needs:processed" "up: Needs analysis uses a real status value"
 sfb_check "up_idempotent:7" "up is idempotent"
 sfb_check "down:Machining" "down: removes the seven bookmarks and keeps other bookmarks"
 
+# scripts/configure_directus.sql seeds the same seven bookmarks as the migration (an operator may
+# run either first, and it is re-run after every change), so the two lists must not drift apart.
+CFG=scripts/configure_directus.sql
+sfb_values() { awk '/^FROM \(VALUES/{f=1;next}/^\) AS v\(/{f=0}f' "$1"; }
+sfb_mig_values=$(sfb_values "$SFB")
+sfb_cfg_values=$(sfb_values "$CFG")
+[[ -n "$sfb_mig_values" && "$sfb_mig_values" == "$sfb_cfg_values" ]] \
+    && ok "configure_directus.sql seeds the same bookmark rows as migration 135" \
+    || bad "configure_directus.sql and migration 135 bookmark VALUES differ"
+
+# Run the script's bookmark section (from "Global bookmarks" to the fields section; it needs no
+# temp table, unlike the rest of the script, so it can run twice in one transaction) twice, with a
+# stale bookmark (removed by its clean-up) and a curated "My samples" (kept) seeded. Rolled back.
+cfg_bm=$(awk '/^-- ── Global bookmarks/{f=1}/^-- 2\. FIELDS/{f=0}f' "$CFG")
+cfg_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+DELETE FROM directus_presets WHERE "user" IS NULL AND role IS NULL AND bookmark IS NOT NULL
+  AND collection IN ('manufacturing_operations','test_sessions','physical_samples');
+INSERT INTO directus_presets (bookmark, collection, filter) VALUES
+  ('Stale view','physical_samples','{}'),
+  ('My samples','physical_samples','{"curated":true}');
+$cfg_bm
+SELECT 'run1_saved:' || count(*) FROM directus_presets WHERE "user" IS NULL AND role IS NULL AND (collection, bookmark) IN (
+  ('manufacturing_operations','My operations'), ('manufacturing_operations','FAST runs, last 7 days'),
+  ('manufacturing_operations','Missing outcome'), ('test_sessions','Failed'), ('test_sessions','Needs analysis'),
+  ('physical_samples','My samples'), ('physical_samples','No location'));
+$cfg_bm
+SELECT 'run2_saved:' || count(*) FROM directus_presets WHERE "user" IS NULL AND role IS NULL AND (collection, bookmark) IN (
+  ('manufacturing_operations','My operations'), ('manufacturing_operations','FAST runs, last 7 days'),
+  ('manufacturing_operations','Missing outcome'), ('test_sessions','Failed'), ('test_sessions','Needs analysis'),
+  ('physical_samples','My samples'), ('physical_samples','No location'));
+SELECT 'run2_duplicates:' || count(*) FROM (
+  SELECT 1 FROM directus_presets WHERE "user" IS NULL AND role IS NULL AND bookmark IS NOT NULL
+    AND collection IN ('manufacturing_operations','test_sessions','physical_samples')
+  GROUP BY collection, bookmark HAVING count(*) > 1) d;
+SELECT 'run2_fixed:' || count(*) FROM directus_presets WHERE "user" IS NULL AND role IS NULL AND (collection, bookmark) IN (
+  ('manufacturing_operations','Machining'), ('manufacturing_operations','FAST'), ('physical_samples','Samples'));
+SELECT 'run2_curated_kept:' || (filter::jsonb ->> 'curated') FROM directus_presets WHERE bookmark='My samples' AND collection='physical_samples';
+SELECT 'run2_stale:' || count(*) FROM directus_presets WHERE bookmark='Stale view';
+ROLLBACK;
+SQL
+)
+cfg_check() { grep -qx "$1" <<<"$cfg_out" && ok "$2" || bad "$2 (psql output: $cfg_out)"; }
+cfg_check "run1_saved:7" "configure_directus.sql: seven saved-filter bookmarks after one run"
+cfg_check "run2_saved:7" "configure_directus.sql: still seven, each once, after a second run"
+cfg_check "run2_duplicates:0" "configure_directus.sql: no bookmark is duplicated by a re-run"
+cfg_check "run2_fixed:3" "configure_directus.sql: Machining, FAST and Samples present once each"
+cfg_check "run2_curated_kept:true" "configure_directus.sql: a curated saved filter survives a re-run"
+cfg_check "run2_stale:0" "configure_directus.sql: its clean-up still removes unknown global bookmarks"
+
 echo "== Report (Generate PDF) buttons =="
 # The d1-report-button field must be registered on the sample, operation and test forms.
 # directus_fields is an empty stub in CI, so run the migration's up then down in a rolled-back
