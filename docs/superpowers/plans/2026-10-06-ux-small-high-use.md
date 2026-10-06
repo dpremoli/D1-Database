@@ -17,7 +17,7 @@ fixes, local CI (`pre-commit` included), PR, CI green, merge.
 |---|---|---|---|
 | I — Record alarms and shortcuts | R6, R10 | `agent-ae7cac784059cd934` | in progress |
 | J — Desktop shell | R11, R13 | `agent-a723f791333ed7f88` | merged; e2e (Windows) not run |
-| K — Plot export and help | P2, P11 | `agent-a673fa3d591bdfa1d` | in progress |
+| K — Plot export and help | P2, P11 | `agent-a673fa3d591bdfa1d` | merged; not yet seen in a browser |
 | L — Directus saved filters | D12 | `agent-a8bc7cbd5a4f5506a` | merged; migration 135 proven up/down/up, phase1 212/0 |
 | /simplify (Opus) | all | — | not started |
 | /code-review high (Opus) | all | — | not started |
