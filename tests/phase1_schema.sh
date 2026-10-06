@@ -176,6 +176,45 @@ fas_check "up:directus_files.create,directus_files.read,machining_force_analysis
 fas_check "up_idempotent:4" "up is idempotent"
 fas_check "down:directus_files.read,machining_force_analysis.update" "down: removes only the added grants (update and other policies kept)"
 
+echo "== Saved-filter bookmarks (D12) =="
+# directus_presets is a stub in CI: run the migration's up then down in a rolled-back transaction,
+# with a hand-curated "Failed" bookmark (kept by the up) and an unrelated Machining bookmark
+# (kept by the down) seeded, and any rows from an earlier apply cleared first.
+SFB=db/migrations/20261006000135_saved_filter_bookmarks.sql
+sfb_up=$(awk '/-- migrate:up/{f=1;next}/-- migrate:down/{f=0}f' "$SFB")
+sfb_down=$(awk '/-- migrate:down/{f=1;next}f' "$SFB")
+sfb_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+DELETE FROM directus_presets WHERE "user" IS NULL AND role IS NULL AND bookmark IS NOT NULL
+  AND collection IN ('manufacturing_operations','test_sessions','physical_samples');
+INSERT INTO directus_presets (bookmark, collection, filter) VALUES
+  ('Failed','test_sessions','{"curated":true}'),
+  ('Machining','manufacturing_operations','{"process_category":{"_eq":"machining"}}');
+$sfb_up
+SELECT 'up:' || count(*) FROM directus_presets WHERE "user" IS NULL AND role IS NULL AND bookmark IS NOT NULL
+  AND collection IN ('manufacturing_operations','test_sessions','physical_samples') AND bookmark <> 'Machining';
+SELECT 'up_curated_kept:' || (filter::jsonb ->> 'curated') FROM directus_presets WHERE bookmark='Failed' AND collection='test_sessions';
+SELECT 'up_mine:' || (filter::jsonb #>> '{_and,0,owner_person_id,user_id,_eq}') FROM directus_presets WHERE bookmark='My samples';
+SELECT 'up_fast:' || (filter::jsonb #>> '{_and,1,operation_date,_gte}') FROM directus_presets WHERE bookmark='This week''s FAST runs';
+SELECT 'up_needs:' || (filter::jsonb #>> '{_and,0,status,_eq}') FROM directus_presets WHERE bookmark='Needs analysis';
+$sfb_up
+SELECT 'up_idempotent:' || count(*) FROM directus_presets WHERE "user" IS NULL AND role IS NULL AND bookmark IS NOT NULL
+  AND collection IN ('manufacturing_operations','test_sessions','physical_samples') AND bookmark <> 'Machining';
+$sfb_down
+SELECT 'down:' || string_agg(bookmark, ',' ORDER BY bookmark) FROM directus_presets WHERE bookmark IS NOT NULL
+  AND collection IN ('manufacturing_operations','test_sessions','physical_samples');
+ROLLBACK;
+SQL
+)
+sfb_check() { grep -qx "$1" <<<"$sfb_out" && ok "$2" || bad "$2 (psql output: $sfb_out)"; }
+sfb_check "up:7" "up: seven global bookmarks present"
+sfb_check "up_curated_kept:true" "up: an existing (curated) bookmark is left alone"
+sfb_check 'up_mine:$CURRENT_USER' "up: My samples filters on the owner's linked Directus user"
+sfb_check 'up_fast:$NOW(-7 days)' "up: This week's FAST runs uses a rolling 7-day window"
+sfb_check "up_needs:processed" "up: Needs analysis uses a real status value"
+sfb_check "up_idempotent:7" "up is idempotent"
+sfb_check "down:Machining" "down: removes the seven bookmarks and keeps other bookmarks"
+
 echo "== Report (Generate PDF) buttons =="
 # The d1-report-button field must be registered on the sample, operation and test forms.
 # directus_fields is an empty stub in CI, so run the migration's up then down in a rolled-back
