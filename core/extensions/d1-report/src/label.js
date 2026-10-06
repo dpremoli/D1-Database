@@ -12,7 +12,7 @@
 // Print, like the other d1-report documents. Each label sits at an absolute mm position, so
 // what the browser prints lines up with the die-cut sheet when printed at 100% scale.
 
-import { esc } from './render.js';
+import { adminRecordUrl, esc } from './render.js';
 
 export const MAX_LABELS = 200;
 export const DEFAULT_LAYOUT = 'a4-21';
@@ -125,7 +125,7 @@ export function codeFontPt(code, widthMm, maxPt, minPt = 7) {
 // record afterwards), is responsive on a phone, and shows only what the signed-in user's
 // permissions allow. No data is encoded in the QR beyond the id, and no public route exists.
 export function sampleRecordUrl(publicUrl, sampleId) {
-	return `${String(publicUrl || '').replace(/\/+$/, '')}/admin/content/physical_samples/${encodeURIComponent(String(sampleId))}`;
+	return adminRecordUrl(publicUrl, 'physical_samples', sampleId);
 }
 
 // ---- request validation ---------------------------------------------------------------

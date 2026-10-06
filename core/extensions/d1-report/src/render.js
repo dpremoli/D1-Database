@@ -7,6 +7,12 @@
 
 import { buildGeometry } from './geometry';
 
+// The Directus app page for a record: what report QR codes, label QR codes and in-report links
+// open (sign-in required). `publicUrl` may carry trailing slashes.
+export function adminRecordUrl(publicUrl, collection, id) {
+	return `${String(publicUrl || '').replace(/\/+$/, '')}/admin/content/${collection}/${encodeURIComponent(String(id))}`;
+}
+
 export const esc = (v) =>
 	v === null || v === undefined
 		? ''
@@ -815,7 +821,7 @@ function fastAppendix(fastRun) {
 export function renderOperationReport(d) {
 	const { op: o, qrSvg, recordUrl, publicUrl, fa, fastRun } = d;
 	const shortId = String(o.operation_id).split('-')[0];
-	const sampleUrl = `${publicUrl}/admin/content/physical_samples/${o.sample_id}`;
+	const sampleUrl = adminRecordUrl(publicUrl, 'physical_samples', o.sample_id);
 	const catLabel = CATEGORY_LABEL[o.process_category] || (o.process_category ? esc(o.process_category) : 'Operation');
 
 	const details = [
@@ -860,7 +866,7 @@ export function renderOperationReport(d) {
 export function renderTestReport(d) {
 	const { test: t, qrSvg, recordUrl, publicUrl } = d;
 	const shortId = String(t.session_id).split('-')[0];
-	const sampleUrl = `${publicUrl}/admin/content/physical_samples/${t.sample_id}`;
+	const sampleUrl = adminRecordUrl(publicUrl, 'physical_samples', t.sample_id);
 	const typeLabel = t.test_type ? String(t.test_type).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : 'Test';
 
 	const details = [

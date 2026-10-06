@@ -14,7 +14,7 @@
 // (see access.js): a row the caller cannot read answers exactly like a missing one.
 import { defineEndpoint } from '@directus/extensions-sdk';
 import QRCode from 'qrcode';
-import { renderSampleReport, renderOperationReport, renderTestReport } from './render.js';
+import { adminRecordUrl, renderSampleReport, renderOperationReport, renderTestReport } from './render.js';
 import { createAccess } from './access.js';
 import {
 	LABEL_JS,
@@ -402,7 +402,7 @@ export default defineEndpoint({
 				withCampaign(tests, testRows, 'session_id');
 
 				const publicUrl = String(env.PUBLIC_URL || '').replace(/\/+$/, '');
-				const recordUrl = `${publicUrl}/admin/content/physical_samples/${sid}`;
+				const recordUrl = adminRecordUrl(publicUrl, 'physical_samples', sid);
 				const qrSvg = await QRCode.toString(recordUrl, {
 					type: 'svg',
 					margin: 0,
@@ -487,7 +487,7 @@ export default defineEndpoint({
 						: null;
 
 				const publicUrl = String(env.PUBLIC_URL || '').replace(/\/+$/, '');
-				const recordUrl = `${publicUrl}/admin/content/manufacturing_operations/${id}`;
+				const recordUrl = adminRecordUrl(publicUrl, 'manufacturing_operations', id);
 				const qrSvg = await QRCode.toString(recordUrl, { type: 'svg', margin: 0, errorCorrectionLevel: 'M' });
 
 				res.set('Content-Security-Policy', REPORT_CSP);
@@ -529,7 +529,7 @@ export default defineEndpoint({
 				};
 
 				const publicUrl = String(env.PUBLIC_URL || '').replace(/\/+$/, '');
-				const recordUrl = `${publicUrl}/admin/content/test_sessions/${id}`;
+				const recordUrl = adminRecordUrl(publicUrl, 'test_sessions', id);
 				const qrSvg = await QRCode.toString(recordUrl, { type: 'svg', margin: 0, errorCorrectionLevel: 'M' });
 
 				res.set('Content-Security-Policy', REPORT_CSP);
