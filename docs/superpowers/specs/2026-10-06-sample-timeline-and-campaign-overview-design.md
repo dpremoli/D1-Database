@@ -37,26 +37,42 @@ A new endpoint extension `d1-trace` (same conventions as `d1-next-number`) mount
 2. **Root check.** Read the sample through `ItemsService('physical_samples', { schema,
    accountability: req.accountability })`. Not readable or not present: the same 404, so existence
    is not revealed.
-3. **Run the four functions** with the shared `database` knex (they bypass permissions, which is
-   why step 4 exists). Each list is capped (500 rows) and flagged `truncated` if cut.
-4. **Permission filter.** Collect the ids per collection (`physical_samples` from ancestors and
-   descendants, `manufacturing_operations` and `test_sessions` from the timeline,
-   `raw_stock_lots` from the stock origins) and read each set by primary key through
-   `ItemsService.readByQuery` (filter `pk _in ids`) with the caller's accountability. Directus applies the role's item
-   filters and field rules, so a record comes back only if the caller can read it. Anything not
-   returned is dropped and counted.
+3. **Find the related records.** Four queries over the functions, in one transaction with
+   `SET LOCAL statement_timeout = 8000`, on the shared `database` knex (they bypass permissions,
+   which is why step 4 exists). The functions return one row per *path*, so the queries collapse
+   them in SQL: ancestors and descendants `GROUP BY sample_id` (shallowest depth, plus the distinct
+   steps each sample was reached from), stock origins `GROUP BY (via sample, lot)`, events newest
+   first. Each has `LIMIT 501` and is flagged `truncated` if cut: the 500 *nearest* relatives, the
+   500 *newest* events (undated events are dropped first, and the list is shown oldest first).
+   **Limit:** the recursion inside the functions still enumerates every path (a ladder of N
+   diamonds has 2^N), and a `GROUP BY`/`LIMIT` outside cannot stop that. Measured on Postgres 16
+   with a 24-level ladder: not finished after two minutes and over 10 GB of temp files. The timeout
+   is therefore the guard; a cancelled query is a 503 "too large to trace". Fixing it properly
+   means making the functions walk nodes rather than paths (a new migration, out of scope here).
+4. **Permission filter.** Every value in the response is read through
+   `ItemsService.readByQuery` with the caller's accountability and `fields: ['*']`, never taken from
+   the SQL rows: `physical_samples`, `manufacturing_operations`, `test_sessions` and
+   `raw_stock_lots` by primary key, and `sample_genealogy` (relationship type, fraction) and
+   `sample_stock_provenance` (mass used) by their composite key pairs. Directus applies the role's
+   item filters and field rules, so a record comes back only if the caller can read it, and a field
+   the role cannot read is absent from it (output `null`). (`'*'` rather than an explicit field list
+   because Directus refuses the whole read if a listed field is restricted.) Records not returned
+   are dropped and counted once each; a forbidden `sample_genealogy` or `sample_stock_provenance`
+   just means no relationship type, fraction or mass.
 5. **Response.** `{ sample, stock_origins, ancestors, events, descendants, hidden: {...counts},
-   truncated }`. An ancestor or descendant whose path to the root passes through an unreadable
-   sample is kept (the caller can read it) and marked `through_hidden: true`, so the UI can show a
-   gap marker instead of implying a direct parent-child link. The path arrays are never sent.
+   truncated }`. Each sample appears once however many routes lead to it. An ancestor or
+   descendant is marked `through_hidden: true` only when *every* route from the root passes an
+   unreadable sample (checked by walking the reachable graph over readable samples only), so the UI
+   can show a gap marker instead of implying a direct link; its relationship type and fraction are
+   then `null`, since they would describe an edge to the hidden sample. A stock lot reached through
+   such an ancestor carries `through_hidden` too. Under truncation the marker is conservative (a
+   relative whose route lies beyond the cut may read as hidden). The path arrays are never sent.
+   Errors are Directus-shaped (`{ errors: [{ message, extensions: { code } }] }`) so the panel
+   shows their text: 400, 401, 403, 404, 500 and 503.
 
-What the functions contribute is limited to identifiers, the sample code, form, relationship type,
-fraction, operation pass code and sequence, test type and status, dates, and the lot's code, type,
-supplier and mass used. Operator names and file pointers in `f_sample_timeline.detail` are
-deliberately not passed on. Readability is decided by the primary-key read; a role whose field
-rules hide, say, `sample_code` would still see the code, which we accept for identifier fields.
-The relationship edge itself (`sample_genealogy`) is not separately checked: it is shown only
-between two samples the caller can read.
+What the endpoint passes on is limited to identifiers, the sample code and form, relationship type,
+fraction, operation pass code, sequence and date, test type, status and date, and the lot's code,
+type, supplier and mass used. Operator names and file pointers are never selected or passed on.
 
 **UI.** A "Timeline" tab beside the sample detail on `SampleDashboard.vue` renders: stock lots,
 ancestors (oldest first), this sample, its operations and tests by date, then descendants. Every

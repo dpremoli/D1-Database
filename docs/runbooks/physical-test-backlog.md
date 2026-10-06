@@ -86,7 +86,22 @@ named in the step.
   of that sample's relatives, operations or tests. Expect: the Timeline shows only what the role can
   open, with "N items are not visible to you" lines where something was dropped; no code, id or
   operator of a hidden record appears in the JSON of `/d1-trace/sample/<id>`; a sample the role
-  cannot read gives "not visible to you" (404). Since: this batch (PR TBD).
+  cannot read gives "not visible to you" (404). Field level: give the role a field rule that hides
+  `form` (samples), `pass_code` or `operation_date` (operations), `status` (tests), `supplier_name`
+  (lots), `fraction` or `mass_used_grams` (genealogy, stock provenance): the JSON has `null` for
+  that field and the Timeline shows the record without it. A role with no access to
+  `sample_genealogy` still sees the relatives, just without relationship type or fraction. A raw
+  stock lot reached through a hidden ancestor reads "via a sample you cannot see". Since: this batch
+  (PR TBD).
+- [ ] **D5 — diamond genealogy and a huge genealogy.** On a sample whose ancestors merge (two
+  parents that share a grandparent) each sample appears once in the Timeline and the counts match
+  `SELECT count(DISTINCT sample_id) FROM f_trace_ancestors('<id>')` minus the sample itself. On a
+  real database, time `GET /d1-trace/sample/<id>` for the sample with the largest genealogy: it
+  answers within the 8 s limit, or with "this sample's genealogy is too large to trace" (503)
+  shown in the tab; either way Postgres is not left running the query (`pg_stat_activity`). The
+  functions enumerate paths, so only the 8 s timeout bounds them (the real fix is a migration that
+  walks nodes). With more than 500 ancestors, descendants or events the tab says only the nearest
+  500 relatives / newest 500 operations and tests are shown. Since: this batch (PR TBD).
 - [ ] **D11 — campaign overview counts.** Open a machining trial and a testing campaign that have
   real data. Expect: sample, operation and test-session counts equal a hand count in the
   collection lists; "Force analysed n / m" equals the machining operations whose
