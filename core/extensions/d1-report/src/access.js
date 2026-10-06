@@ -38,19 +38,31 @@ export function createAccess({ ItemsService, accountability, schema }) {
 		}
 	}
 
-	// Every row matching a filter that the caller may read; [] when none or forbidden.
-	async function list(collection, filter, fields = ['*'], sort) {
+	// Every row matching a filter that the caller may read (at most `limit`; -1 = all);
+	// [] when none or forbidden.
+	async function list(collection, filter, fields = ['*'], sort, limit = -1) {
 		try {
 			return (
 				(await svc(collection).readByQuery({
 					filter,
 					fields,
-					limit: -1,
+					limit,
 					...(sort ? { sort } : {}),
 				})) ?? []
 			);
 		} catch (err) {
 			if (isDenied(err)) return [];
+			throw err;
+		}
+	}
+
+	// How many rows match a filter among those the caller may read; 0 when forbidden.
+	async function count(collection, filter) {
+		try {
+			const rows = await svc(collection).readByQuery({ filter, aggregate: { count: ['*'] } });
+			return Number(rows?.[0]?.count) || 0;
+		} catch (err) {
+			if (isDenied(err)) return 0;
 			throw err;
 		}
 	}
@@ -74,5 +86,5 @@ export function createAccess({ ItemsService, accountability, schema }) {
 		return new Set(rows.map((r) => String(r[pk])));
 	}
 
-	return { one, first, list, canRead, readableIds };
+	return { one, first, list, count, canRead, readableIds };
 }

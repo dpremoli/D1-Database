@@ -11,9 +11,10 @@ Items already tracked as open issues (#108, #100, #97, #90, #86, #81, #80, #67, 
 Items marked *(idea)* are judgement calls the reviewers did not confirm in code. Sizes are S, M
 or L. Paths are relative to the repo root.
 
-**Status:** the "Fix first" items and the "Small, high-value" batch are being worked in
-[`docs/superpowers/plans/2026-10-05-ux-fixes-and-quick-wins.md`](../superpowers/plans/2026-10-05-ux-fixes-and-quick-wins.md).
-Everything else is backlog.
+**Status:** the "Fix first" items and the "Small, high-value" batch shipped in PR #123 (merged
+2026-10-05); its description lists what changed. The "Next" tier (P3, P4, R4, R5, D4, D3) is in
+[`docs/superpowers/plans/2026-10-06-ux-next-tier.md`](../superpowers/plans/2026-10-06-ux-next-tier.md).
+See the **Progress checklist** below for item-by-item state; everything not ticked is backlog.
 
 ## Fix first — broken or risky, not new features
 
@@ -80,6 +81,96 @@ Everything else is backlog.
 | D13 | Notifications on processing finish/fail *(idea)* | No Flows beyond the `directus_flows` stub (migration 030). | M |
 | D14 | Note search UI | pgvector `/api/search` has no UI consumer. | S–M |
 | D15 | Phone/tablet layouts *(idea)* | Only four extensions have media queries. | S–M |
+
+## Progress checklist (2026-10-06)
+
+`[x]` done, `[~]` partly done, `[ ]` not started. "#123" shipped in PR #123 (merged 2026-10-05).
+"Next tier" is done on branch `ccr-567582b5-tmq1ec`, reviewed and fixed, **not yet merged**
+(plan: [`2026-10-06-ux-next-tier.md`](../superpowers/plans/2026-10-06-ux-next-tier.md)).
+
+### Fix first
+- [x] **X1** Lite 3D height — #123
+- [x] **X2** Lab Member can save a cut — #123 (migration 133; `configure_users_and_policies.sql` no longer wipes migration grants)
+  - [ ] Retire or port `core/permissions.json` / `core/apply.sh` — owner decision (2026-10-03 review 4.3)
+- [~] **X3** Ask-DB permissions — already fixed by migration 132
+  - [ ] Export-control row filter, which must also cover `directus_files` reads — Phase 9, owner decision (ADR-0005)
+- [x] **X4** Stale "leaving mid-cut" wiki paragraph — #123
+
+### Force app — recording
+- [x] **R1** Remember the setup across launches — #123 (Replay and recording keep separate form copies)
+- [ ] **R2** Named setup presets / "repeat last cut"
+- [x] **R3** "New" steps the sequence and clears per-cut fields — #123
+  - [ ] Auto-generate the chips ref (TODO at `RecordingOptions.vue`) — no documented rule for it
+- [x] **R4** Pre-flight check before Start — next tier ("Start anyway" for a missing Sample)
+  - [ ] Tacho chip shows "not checked": the backend has no pre-Start tacho report
+  - [ ] Amp and channel chips not checked against real NI-DAQ hardware
+- [x] **R5** Live clipping / rail warning — next tier (also fixed the Lab Amp full-scale mismatch that stopped finalize's clipping test firing)
+  - [ ] Not checked on the real rig
+- [ ] **R6** Alarms: early warning, auto-stop, `role="alert"` on the overlay, tone volume
+- [~] **R7** Disk runway — the pre-flight chip shows "~N min at this rate"
+  - [ ] ETA during hardware recording
+  - [ ] The pre-Start disk prompt still uses the hidden 8 s duration
+- [ ] **R8** Fix metadata (sample, notes) inside the save dialog
+- [ ] **R9** Captures list: search, filter, bulk delete, upload progress
+- [ ] **R10** Record keyboard shortcuts
+- [ ] **R11** "Restart recorder" in the packaged app
+- [ ] **R12** Bug report attaches the capture summary/manifest
+- [ ] **R13** Release notes in the update prompt; Help menu items
+- [ ] **R14** First-run checklist *(idea)*
+
+### Force app — Plot dashboard and Diagnostics
+- [x] **P1** CSV export for signal stats, wear trend and cluster table — #123
+  - [ ] Raw force series CSV
+- [ ] **P2** SVG/PNG export of the signal charts
+- [x] **P3** Shareable view link with "Copy link" — next tier
+  - [ ] An already-open (kept-alive) Plot page ignores a new link opened later
+  - [ ] Not checked: Directus page tracking on each address-bar update
+- [x] **P4** Difference vs reference pass — next tier
+  - [ ] It is time-aligned within the crop/zoom window, not per revolution: the stored envelopes have no revolution axis
+- [~] **P5** Wider Compare — the difference adds a mean/RMS delta readout
+  - [ ] Align by revolution or radius
+  - [ ] Compare on the FFT
+- [ ] **P6** Cutting metrics (resultant, Fc/Ff/Fp, power, specific energy)
+- [ ] **P7** Wear trend beyond peak force (mean/RMS stored per cut)
+- [ ] **P8** Saved, named markers per operation
+- [ ] **P9** Polar Plot on the dashboard (tooth-pass lines on the FFT first)
+- [~] **P10** Diagnostics across a campaign — only cluster CSVs are named after the cut
+  - [ ] Batch recipe apply
+  - [ ] Proper dialogs instead of `window.prompt` / `window.confirm`
+  - [ ] Searchable picker
+- [ ] **P11** Gesture help overlay; units everywhere
+- [ ] **P12** Scale the campaign list (pagination, faster pick)
+- [ ] **P13** Filter/diag service batch endpoints *(idea)*
+
+### Directus
+- [x] **D1** Ask-DB example chips — #123 (5 chips; the export-controlled example was dropped)
+- [x] **D2** Truncation notice and clear errors — #123 (a bad plugin secret now shows as a server problem)
+- [x] **D3** CSV download, Copy SQL, per-user history and saved questions — next tier (CSV formula injection guarded)
+  - [ ] Thumbs up/down feedback — needs a place to store it (owner decision)
+- [x] **D4** Label sheets with QR codes — next tier (`/d1-report/label`, the `/d1-report/labels` picker, sample-form buttons, a Home tile)
+  - [ ] A bulk action on the samples list itself: Directus 11 extensions cannot add one
+  - [ ] Scan-to-open not checked on a phone against a live Directus
+  - [ ] Case-insensitive code matching
+- [ ] **D5** Sample timeline view
+- [ ] **D6** Reverse traceability breadcrumbs
+- [x] **D7** "Open in Directus" links on the lab dashboards — #123
+  - [ ] "New operation for this sample": nothing can prefill the operation form yet
+- [ ] **D8** Clone / bulk create / copy-from-last
+- [x] **D9** Next sample number from the database — #123 (`next_sample_code_number()`, `d1-next-number`)
+- [ ] **D10** Per-user home page and "needs attention" tiles
+- [ ] **D11** Campaign overview
+- [ ] **D12** Saved filters / bookmarks
+- [ ] **D13** Notifications on processing finish/fail *(idea)*
+- [ ] **D14** Note search UI
+- [ ] **D15** Phone/tablet layouts *(idea)*
+
+### Fixed along the way (not in the review)
+- [x] A replayed cut's sample, operator, machine, edge, sequence and notes leaked into the next real recording, and into the stored setup
+- [x] `configure_users_and_policies.sql` re-runs dropped Lab Member grants added by migrations 066, 075, 078, 084, 100 and 111
+- [x] CI "Scripts and diagnostics" had been red on `main` since 2026-10-04. Cause: HDBSCAN tie order varied with the CPU (AVX-512); fixed in `scripts/diag/spatial.py`
+- [x] CI never ran the Directus extension endpoint tests, the d1-report tests or the Ask-DB helper tests; it now runs all three
+- [x] The finalize clipping test ignored the Lab Amp full scale (pre-existing; surfaced by R5)
+- [x] Label endpoint hardening: errors are `text/plain` with no echoed markup, and the 200-row cap is counted once
 
 ## Suggested order
 

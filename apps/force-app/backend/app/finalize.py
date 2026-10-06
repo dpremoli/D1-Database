@@ -31,6 +31,7 @@ import numpy as np
 from scipy.io import savemat
 
 from . import virtual_channels
+from .clipping import near_full_scale
 from .config import AXIS_SUM, SIGNAL_CHANNELS, RecordConfig
 from .d1lc import write_d1lc
 from .d1rw import read_header, read_rows, row_count
@@ -219,8 +220,8 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     chan_peaks = [float(p) for p in chan_peaks]
     # Clipping only meaningful with real per-channel gains (nidaq path); sim/replay never rails.
     chan_clipped = [
-        bool(len(gains) >= 8 and chan_ranges[i] > 0 and chan_peaks[i] >= 0.99 * chan_ranges[i])
-        for i in range(8)
+        bool(len(gains) >= 8 and hit)  # same test the live stream applies per block (clipping.py)
+        for hit in near_full_scale(np.array(chan_peaks), np.array(chan_ranges))
     ]
 
     # --- Cut window: first/last time |Fz| exceeds CUT_FRAC of its peak — the active cut ---

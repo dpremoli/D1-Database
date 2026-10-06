@@ -10,6 +10,7 @@ import { RELAY_HEARTBEAT_MS, RelayPeers } from './relayPeers';
 import { createEmitThrottle } from './emitThrottle';
 import { parseStartError } from './recordingErrors';
 import type { TachoKind } from './tachoSignal';
+import { parseRailed } from './railing';
 
 // Playback relays to pop-outs at most this often (see relayTick).
 const RELAY_TICK_MS = 200;
@@ -56,13 +57,16 @@ export interface LiveStatus {
 	summary: any | null;
 	cutStartSec: number | null;   // detected cut start (2f) — null until the cut begins
 	diskAction: { action: 'backup_started' | 'backup_unavailable' | 'forced_stop'; freeGb: number } | null;
+	/** Sensor channels (0-7 = Fx1..Fz4, see railing.ts) that reached full scale this cut. Latched
+	 *  by the backend per cut, cleared by reset(). Always empty without per-channel gains. */
+	railed: number[];
 }
 
 export class RecordClient {
 	status = reactive<LiveStatus>({
 		connected: false, state: 'idle', seq: 0, tSec: 0, rpm: 0, tachoOk: null, tachoKind: 'signal',
 		peaks: { Fx: 0, Fy: 0, Fz: 0 }, nTotal: 0, error: null, errorKind: null, captureId: null, summary: null, cutStartSec: null,
-		diskAction: null,
+		diskAction: null, railed: [],
 	});
 	// bump each frame so widgets can watch cheaply
 	frameSeq = ref(0);
@@ -263,6 +267,7 @@ export class RecordClient {
 				this.status.tSec = Number(data.elapsed_sec ?? 0);
 				const p = data.peaks ?? {};
 				this.status.peaks = { Fx: Number(p.Fx ?? 0), Fy: Number(p.Fy ?? 0), Fz: Number(p.Fz ?? 0) };
+				this.status.railed = parseRailed(data.railed);
 				// No WebSocket message carries this transition, so a pop-out would never learn it.
 				if (this.hasRelayPeer) this.sendSnapshot(true);
 			}
@@ -579,6 +584,9 @@ export class RecordClient {
 			this.status.cutStartSec = msg.t;
 		} else if (msg.type === 'disk_action') {
 			this.status.diskAction = { action: msg.action, freeGb: msg.free_gb };
+		} else if (msg.type === 'railed') {
+			// The backend's latched set, re-sent every couple of seconds while any channel is railed.
+			this.status.railed = parseRailed(msg.channels);
 		} else if (msg.type === 'tacho') {
 			// Sent only on a transition. false => the tacho produced no timable pulse pair, so the
 			// rpm field in the binary frames is 0 because nothing was measured — NOT because the
@@ -689,7 +697,7 @@ export class RecordClient {
 		this.status.state = 'idle'; this.status.error = null; this.status.errorKind = null; this.status.summary = null;
 		this.status.captureId = null; this.status.nTotal = 0; this.status.tSec = 0;
 		this.status.peaks = { Fx: 0, Fy: 0, Fz: 0 }; this.status.cutStartSec = null;
-		this.status.diskAction = null; this.status.tachoKind = 'signal';
+		this.status.diskAction = null; this.status.tachoKind = 'signal'; this.status.railed = [];
 		this.frameSeq.value++;
 	}
 

@@ -134,6 +134,10 @@ async function get(routes, route, id, accountability) {
 			out.headers[k] = v;
 			return res;
 		},
+		type(t) {
+			out.headers['Content-Type'] = t;
+			return res;
+		},
 		send(body) {
 			out.body = body;
 			return res;

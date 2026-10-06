@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { GridLayout, GridItem } from 'grid-layout-plus';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import ForceChart from './ForceChart.vue';
 import { pickMode, type FrmMode } from './frmMode';
 import { perKeyComputed } from './perKeyComputed';
@@ -31,10 +31,18 @@ import { statsCsvColumns } from './statsCsv';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
 import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
+import { debounce } from './debounce';
+import { cropWindowSec, diffEnvelopes, diffWindow } from './compare';
+import { createPendingCrop } from './pendingCrop';
+import {
+	decodeViewState, encodeViewState, incomingViewDecision, VIEW_AXES, VIEW_QUERY_KEYS,
+	type ViewAxis, type ViewChartMode, type ViewState, type ViewZSeries,
+} from './viewState';
 
 const host = useForceHost();
 const api = host.api;
 const route = useRoute();
+const router = useRouter();
 
 // Roles that see every sample/operation regardless of ownership (Administrator,
 // Lab Admin). Everyone else (e.g. Lab Member) only sees analyses whose sample
@@ -52,8 +60,8 @@ const isAdminRole = computed(() => {
 	return ADMIN_ROLE_IDS.has(roleId) || cu?.role?.admin_access === true || cu?.admin_access === true;
 });
 
-const AXES = ['Fx', 'Fy', 'Fz'] as const;
-type Axis = typeof AXES[number];
+const AXES = VIEW_AXES;
+type Axis = ViewAxis;
 const AXIS_COLOR: Record<Axis, string> = { Fx: '#dc2626', Fy: '#16a34a', Fz: '#2563eb' };  // red / green / blue
 
 const loading = ref(true);
@@ -71,7 +79,7 @@ const selectedRowId = ref<string | null>(null);
 const detail = ref<any | null>(null);
 const loadingDetail = ref(false);
 
-const chartMode = ref<'force' | 'fft' | 'psd' | 'spectrogram' | 'waterfall'>('force');
+const chartMode = ref<ViewChartMode>('force');
 // Same set/order the Record page's plot panels offer, picked the same way (from the panel's title).
 // Its first entry is the time-domain view under each page's own name for it ("Force" here, "Time"
 // there -- both stay as they were).
@@ -230,7 +238,7 @@ const gridFull = ref(false);   // "Gridded" sub-toggle, shown only in Full mode
 const buildingOctree = ref(false);
 const octreeMsg = ref<string | null>(null);
 // Z-series: drive the octree's Z axis from a force series for a true 3D view.
-const zSeries = ref<'none' | 'Fx' | 'Fy' | 'Fz'>('none');
+const zSeries = ref<ViewZSeries>('none');
 const zScale = ref(0.35);
 const octreeAvailable = computed(() => detail.value?.octree_status === 'done' && !!detail.value?.octree_path);
 const octreeOn = computed(() => frmMode.value === 'full' && octreeAvailable.value);
@@ -377,6 +385,7 @@ watch(() => detail.value?.id, (id) => {
 	// lines linger until its live cache reloads). A saved override wins over the derived auto-crop;
 	// onCloudLoaded then refines from the cache (but only when there's no override to respect).
 	cropSavePrompt.value = false; cropSavedMsg.value = '';
+	pendingCrop.clear();   // a link's crop request belongs to the op it named
 	const initCrop = savedCropSec.value || cropWindow.value;
 	if (initCrop) { cropStartSec.value = initCrop.start; cropEndSec.value = initCrop.end; }
 	else { cropStartSec.value = 0; cropEndSec.value = 0; }
@@ -470,6 +479,7 @@ watch(() => detail.value?.id, () => { sigStats.value = null; statsErr.value = nu
 function onCropEdit(which: 'start' | 'end', v: number) {
 	if (which === 'start') cropStartSec.value = v; else cropEndSec.value = v;
 	cropTouched.value = true;
+	pendingCrop.clear();   // the user's own edit beats a link's crop request
 	if (frmMode.value !== 'lite' && liveAvailable.value) chooseMode('lite');
 }
 watch(statsOpen, (open) => {
@@ -1075,14 +1085,13 @@ onMounted(async () => {
 		// Deep-link: /d1-force-dashboard?operation=<operation_id>, e.g. from the
 		// "View Force Analysis" button on the operation form. Falls back to the last
 		// selection (persisted) so navigating away and back restores the view.
-		const opParam = typeof route.query.operation === 'string'
-			? route.query.operation
-			: (() => { try { return localStorage.getItem(LAST_OP_KEY) || undefined; } catch { return undefined; } })();
-		if (opParam) {
-			const match = rows.value.find((r) => r.operation_id?.operation_id === opParam);
-			if (match) await selectOp(match);
-		}
+		// The rest of the query (mode, axes, zoom, compare set ...) is applied once the op has loaded.
+		const initialView = decodeViewState(route.query);
+		const opParam = initialView.operation
+			?? (() => { try { return localStorage.getItem(LAST_OP_KEY) || undefined; } catch { return undefined; } })();
+		if (opParam) await showView({ ...initialView, operation: opParam });
 	} finally {
+		viewReady = true;   // from here on the address bar follows the view
 		loading.value = false;
 		// .layout swaps from hidden to visible here; re-measure in case the
 		// spinner-to-content swap shifted anything (defensive, cheap).
@@ -1684,6 +1693,7 @@ async function saveCropAsOfficial() {
 		if (invalidate.octree_status) { d.octree_status = 'pending'; if (frmMode.value === 'full' && !gridFull.value) frmMode.value = pickDefaultMode(); }
 		if (invalidate.grid_octree_status) { d.grid_octree_status = 'pending'; if (frmMode.value === 'full' && gridFull.value) frmMode.value = pickDefaultMode(); }
 		cropTouched.value = false;
+		pendingCrop.clear();   // the saved window is now the truth; a link's crop request must not re-apply
 		cropSavedMsg.value = backToAuto ? 'Reverted to auto crop' : 'Saved as official crop';
 		window.setTimeout(() => { cropSavedMsg.value = ''; }, 2500);
 	} catch (e: any) {
@@ -1835,11 +1845,15 @@ async function addCompare(row: any) {
 	if (compareData.value[row.id]) return;
 	compareBusy.value = true;
 	try {
-		const res = await api.get(`/items/machining_force_analysis/${row.id}`, { params: { fields: ['series'] } });
+		// The crop fields ride along so the Difference can be limited to the cut itself (diffWindow).
+		const res = await api.get(`/items/machining_force_analysis/${row.id}`, {
+			params: { fields: ['series', 'sample_rate', 'cut_start_idx', 'cut_end_idx', 'crop_start_idx_override', 'crop_end_idx_override'] },
+		});
 		compareData.value = {
 			...compareData.value,
 			[row.id]: {
 				series: res.data?.data?.series ?? null,
+				crop: cropWindowSec(res.data?.data),
 				label: row.operation_id?.pass_code || sampleOf(row)?.sample_code || row.id,
 			},
 		};
@@ -1850,9 +1864,171 @@ async function addCompare(row: any) {
 }
 function removeCompare(id: string) { compareIds.value = compareIds.value.filter((x) => x !== id); }
 function clearCompare() { compareIds.value = []; }
+
+// ---- Difference vs a reference pass (compare.ts) ----------------------------------------------
+// One chip can be marked as the reference; Difference then shows (this cut - reference) for the
+// selected axis, from the envelopes Compare already loaded (no extra fetch), with its mean and RMS.
+const compareRefId = ref<string | null>(null);
+const diffOn = ref(false);
+function toggleCompareRef(id: string) {
+	compareRefId.value = compareRefId.value === id ? null : id;
+	if (!compareRefId.value) diffOn.value = false;
+}
+// A removed chip can no longer be the reference.
+watch(compareIds, (ids) => {
+	if (compareRefId.value && !ids.includes(compareRefId.value)) { compareRefId.value = null; diffOn.value = false; }
+});
+const compareRefLabel = computed(() => (compareRefId.value && compareData.value[compareRefId.value]?.label) || '');
+const diffResult = computed(() => {
+	if (!diffOn.value || !compareRefId.value) return null;
+	// Over the cuts themselves, not the whole recording: both crops (lead-in/out air would dominate
+	// the stats), then the zoom. Compare draws each cut at its own recording time, so no shifting.
+	const ref = compareData.value[compareRefId.value];
+	const win = diffWindow(savedCropSec.value || cropWindow.value, ref?.crop, zoomStart.value, zoomEnd.value);
+	return diffEnvelopes(detail.value?.series?.[axis.value], ref?.series?.[axis.value], win);
+});
+const DIFF_W = 260, DIFF_H = 44;
+// Polyline of the difference, min/max-binned to the sparkline width so a spike is never averaged
+// away; the zero line is drawn separately.
+const diffSpark = computed(() => {
+	const r = diffResult.value;
+	if (!r) return null;
+	const n = r.diff.length;
+	let lo = 0, hi = 0;
+	for (let i = 0; i < n; i++) { if (r.diff[i] < lo) lo = r.diff[i]; if (r.diff[i] > hi) hi = r.diff[i]; }
+	const span = (hi - lo) || 1;
+	const y = (v: number) => (DIFF_H - 3 - ((v - lo) / span) * (DIFF_H - 6)).toFixed(1);
+	const bins = Math.min(n, DIFF_W);
+	let d = '';
+	for (let b = 0; b < bins; b++) {
+		const i0 = Math.floor((b * n) / bins), i1 = Math.max(i0 + 1, Math.floor(((b + 1) * n) / bins));
+		let bl = Infinity, bh = -Infinity;
+		for (let i = i0; i < i1; i++) { if (r.diff[i] < bl) bl = r.diff[i]; if (r.diff[i] > bh) bh = r.diff[i]; }
+		const x = ((b / Math.max(1, bins - 1)) * DIFF_W).toFixed(1);
+		d += `${b ? 'L' : 'M'}${x},${y(bl)} L${x},${y(bh)} `;
+	}
+	return { d, zeroY: y(0), t0: r.t[0], t1: r.t[r.t.length - 1] };
+});
+const fmtDelta = (v: number) => `${v >= 0 ? '+' : '\u2212'}${Math.abs(v).toPrecision(3)}`;
 // Selecting a different primary cut keeps the comparisons (comparing a series of passes is the
 // whole point), but one that is now the primary must not also be drawn as a comparison.
 watch(selectedRowId, (id) => { if (id) compareIds.value = compareIds.value.filter((x) => x !== id); });
+
+// ---- Shareable view (viewState.ts) ----------------------------------------------------------
+// The address bar mirrors the view so any URL is a link back to it. Both hosts run vue-router, so
+// router.replace works unchanged in the standalone app and the Directus module. Writing waits for
+// the initial query to be applied (viewReady), or the first change would erase what a pasted link
+// asked for. The component is kept alive (#24), so a write is also skipped while another route is
+// showing: the router is shared, and replacing its query then would corrupt that page's URL.
+const viewPath = route.path;
+let viewReady = false;
+const pendingCrop = createPendingCrop();
+const currentOperationId = computed<string | undefined>(
+	() => rows.value.find((r) => r.id === selectedRowId.value)?.operation_id?.operation_id || undefined,
+);
+const viewState = computed<Partial<ViewState>>(() => ({
+	operation: currentOperationId.value,
+	mode: chartMode.value,
+	axis: axis.value,
+	zoom: zoomStart.value != null && zoomEnd.value != null ? [zoomStart.value, zoomEnd.value] : undefined,
+	crop: liveOn.value && cropDirty.value ? [cropStartSec.value, cropEndSec.value] : undefined,
+	compare: compareIds.value,
+	reference: compareRefId.value ?? undefined,
+	diff: diffOn.value,
+	frm: frmMode.value,
+	zSeries: zSeries.value,
+	scale: locked.value
+		? [colorScale.value.baseMin ?? colorScale.value.satMin, colorScale.value.baseMax ?? colorScale.value.satMax]
+		: undefined,
+}));
+const viewQuery = computed(() => encodeViewState(viewState.value));
+function mergedQuery(): Record<string, any> {
+	const q: Record<string, any> = { ...route.query };
+	for (const k of VIEW_QUERY_KEYS) delete q[k];
+	return { ...q, ...viewQuery.value };
+}
+const writeViewQuery = debounce(() => {
+	if (!viewReady || !activation.active || route.path !== viewPath || applyingIncoming) return;
+	const q = mergedQuery();
+	if (JSON.stringify(q) === JSON.stringify(route.query)) return;
+	lastWrittenView = viewKeysOf(q);
+	router.replace({ path: route.path, query: q, hash: route.hash }).catch(() => { /* a superseded navigation */ });
+}, 400);
+watch(viewQuery, writeViewQuery);
+onDeactivated(() => writeViewQuery.cancel());
+// Select the named op (when it isn't the one shown) and apply the rest of the view on top. Shared
+// by first mount and by an incoming link while this page is kept alive. False if the op isn't in
+// the list (nothing is changed then).
+async function showView(v: Partial<ViewState>): Promise<boolean> {
+	if (v.operation && v.operation !== currentOperationId.value) {
+		const match = rows.value.find((r) => r.operation_id?.operation_id === v.operation);
+		if (!match) return false;
+		await selectOp(match);
+	}
+	await applyViewState(v);
+	return true;
+}
+// This page is kept alive (#24), so route.query is not re-read by onMounted. An in-app push to
+// /plot?operation=X (Save cut, Local capture) while another op is shown must show X, not have the
+// address bar rewritten back to the old view 400 ms later. Only a route that adds nothing new is
+// written over. `lastWrittenView` lets the route change our own write causes pass without being
+// mistaken for an incoming link while the user keeps editing.
+let applyingIncoming = false;
+let lastWrittenView = '';
+const viewKeysOf = (query: Record<string, any>) => JSON.stringify(VIEW_QUERY_KEYS.map((k) => query[k] ?? null));
+async function followRoute() {
+	if (!viewReady || !activation.active || route.path !== viewPath || applyingIncoming) return;
+	if (viewKeysOf(route.query) === lastWrittenView) return;
+	const d = incomingViewDecision(route.query, viewState.value);
+	if (d.action === 'write') { writeViewQuery(); return; }
+	applyingIncoming = true;
+	try { await showView(d.view); }
+	catch { /* a link naming something this op can't show: leave the view as it is */ }
+	finally { applyingIncoming = false; }
+	writeViewQuery();
+}
+onActivated(() => { lastWrittenView = ''; void followRoute(); });
+watch(() => route.query, () => { void followRoute(); });
+onBeforeUnmount(() => writeViewQuery.cancel());
+
+function viewUrl(): string {
+	return new URL(router.resolve({ path: route.path, query: mergedQuery(), hash: route.hash }).href, window.location.href).href;
+}
+const { copied: linkCopied, failed: linkCopyFailed, copy: copyViewLink } = useCopyFeedback(viewUrl);
+
+// Apply a decoded view on top of the freshly loaded op. Each field is re-checked against what this
+// op can actually show (a link can name a mode its cut has no cache for), and none can throw.
+async function applyViewState(v: Partial<ViewState>) {
+	await nextTick();   // let the op-change watchers (default mode, zoom/colour resets) settle first
+	if (v.frm && (v.frm !== 'lite' || liveAvailable.value) && (v.frm !== 'full' || octreeAvailable.value)) chooseMode(v.frm);
+	if (v.mode) chartMode.value = v.mode;
+	if (v.axis) axis.value = v.axis;
+	if (v.zSeries) zSeries.value = v.zSeries;
+	if (v.compare) {
+		for (const id of v.compare) {
+			const row = rows.value.find((r) => r.id === id);
+			if (row && id !== selectedRowId.value) await addCompare(row);
+		}
+	}
+	if (v.reference && compareIds.value.includes(v.reference)) { compareRefId.value = v.reference; diffOn.value = !!v.diff; }
+	await nextTick();   // chartMode/op changes reset the zoom; set it after
+	if (v.zoom) { zoomStart.value = v.zoom[0]; zoomEnd.value = v.zoom[1]; }
+	if (v.scale) {
+		colorScale.value = withAutoRange(colorScale.value, v.scale[0], v.scale[1]);
+		locked.value = true;
+	}
+	const opId = detail.value?.id;
+	if (v.crop && opId) {
+		// The crop handles are re-seeded from the cache when it parses (onCloudLoaded), which may
+		// land after this. Apply now, but keep the request until that op's load has re-applied it.
+		pendingCrop.set(opId, v.crop);
+		applyPendingCrop(pendingCrop.peek(opId));
+	}
+}
+function applyPendingCrop(crop: [number, number] | null) {
+	if (!crop) return;
+	cropStartSec.value = crop[0]; cropEndSec.value = crop[1];
+}
 
 // Selected axes for a panel (spectral views render one SpectrumView per axis, like the force plot).
 function axesFor(item: RPanel): Axis[] {
@@ -1880,6 +2056,7 @@ function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam:
 	// the diameter below. Absent an override, the cache's crop is the best available.
 	if (savedCropSec.value) { cropStartSec.value = savedCropSec.value.start; cropEndSec.value = savedCropSec.value.end; }
 	else { cropStartSec.value = meta.csSec; cropEndSec.value = meta.ceSec; }
+	applyPendingCrop(pendingCrop.take(detail.value?.id));   // a shared link's crop preview beats the cache's own window
 	editFeed.value = cleanFloat(meta.feed);
 	editDiam.value = cleanFloat(meta.diam);
 	const od = Number(detail.value?.outer_diameter);
@@ -2107,6 +2284,7 @@ function radialValuesFor(bucketT: number[] | Float32Array | undefined): Float32A
 
 function resetLive() {
 	const d = detail.value;
+	pendingCrop.clear();   // Reset restores the cache's window; a link's crop request must not re-apply over it
 	if (cropWindow.value) { cropStartSec.value = cropWindow.value.start; cropEndSec.value = cropWindow.value.end; cropTouched.value = true; }
 	if (d) {
 		editFeed.value = Number(d.feed) || editFeed.value;
@@ -2247,6 +2425,9 @@ function fmtDateTime(v: string | null | undefined) {
 						</div>
 					</div>
 					<button class="pt-chip" title="Reset panel layout" @click="resetRightLayout"><v-icon name="grid_view" x-small /></button>
+					<button class="pt-chip" title="Copy a link that reopens this view (cut, mode, axes, zoom, compare set)" :disabled="!selectedRowId" @click="copyViewLink">
+						<v-icon name="link" x-small /> {{ linkCopied ? 'Copied' : linkCopyFailed ? 'Copy failed' : 'Copy link' }}
+					</button>
 				</div>
 			</section>
 
@@ -2642,6 +2823,9 @@ function fmtDateTime(v: string | null | undefined) {
 								<span class="cmp-label"><v-icon name="stacked_line_chart" x-small /> Compare</span>
 								<span v-for="c in compareItems" :key="c.id" class="cmp-chip" :style="{ borderColor: c.color, color: c.color }">
 									{{ c.label }}
+									<button class="cmp-ref" :class="{ on: compareRefId === c.id }" :aria-pressed="compareRefId === c.id"
+										:title="compareRefId === c.id ? 'Reference for Difference (click to unset)' : 'Use as the reference for Difference'"
+										@click="toggleCompareRef(c.id)">ref</button>
 									<button class="cmp-x" title="Remove from comparison" @click="removeCompare(c.id)">×</button>
 								</span>
 								<span v-if="compareBusy" class="cmp-hint">loading…</span>
@@ -2657,6 +2841,23 @@ function fmtDateTime(v: string | null | undefined) {
 									</div>
 								</div>
 								<button v-if="compareItems.length" class="tbtn" title="Clear all comparisons" @click="clearCompare">Clear</button>
+								<button v-if="compareItems.length" class="tbtn" :class="{ on: diffOn }" :style="diffOn ? { background: 'var(--theme--primary, #6644ff)', borderColor: 'var(--theme--primary, #6644ff)' } : {}" :disabled="!compareRefId" :aria-pressed="diffOn"
+									:title="compareRefId ? `Show ${axis} of this cut minus ${compareRefLabel}` : 'Mark a cut as ref first'"
+									@click="diffOn = !diffOn">Difference</button>
+							</div>
+							<div v-if="diffOn && compareRefId && chartMode === 'force'" class="cmp-diff">
+								<template v-if="diffResult && diffSpark">
+									<svg :viewBox="`0 0 ${DIFF_W} ${DIFF_H}`" :width="DIFF_W" :height="DIFF_H" role="img"
+										:aria-label="`${axis} difference versus ${compareRefLabel}`">
+										<line x1="0" :x2="DIFF_W" :y1="diffSpark.zeroY" :y2="diffSpark.zeroY" class="cmp-diff-zero" />
+										<path :d="diffSpark.d" fill="none" class="cmp-diff-line" />
+									</svg>
+									<span class="cmp-diff-read">
+										<b>{{ axis }}</b> − {{ compareRefLabel }}, {{ diffSpark.t0.toFixed(1) }}–{{ diffSpark.t1.toFixed(1) }} s:
+										mean {{ fmtDelta(diffResult.mean) }} N · RMS {{ diffResult.rms.toPrecision(3) }} N
+									</span>
+								</template>
+								<span v-else class="cmp-hint">No overlap with the reference for {{ axis }} within both cuts' crops{{ zoomed ? ' and the zoom' : '' }}.</span>
 							</div>
 							<div v-if="!detail" class="empty">Select an operation to view its signals</div>
 							<div v-else-if="isSpectral" class="charts-col">
@@ -3069,6 +3270,14 @@ function fmtDateTime(v: string | null | undefined) {
 	padding: 1px 4px 1px 8px; border: 1px solid; border-radius: 99px; }
 .cmp-x { border: 0; background: none; cursor: pointer; color: inherit; font-size: var(--fs-md, 13px); line-height: 1; padding: 0 3px; }
 .cmp-hint { font-size: var(--fs-xs, 11px); color: var(--theme--foreground-subdued, #98a2b3); }
+.cmp-ref { border: 1px solid currentColor; background: none; cursor: pointer; color: inherit; font-size: 9px; font-weight: 700;
+	line-height: 1.4; padding: 0 4px; border-radius: 4px; opacity: 0.6; text-transform: uppercase; }
+.cmp-ref.on { opacity: 1; box-shadow: inset 0 0 0 1px currentColor; }
+.cmp-diff { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 2px 4px 6px; font-size: var(--fs-xs, 11px); }
+.cmp-diff svg { flex: none; max-width: 100%; border: 1px solid var(--theme--border-color-subdued, #e4eaf1); border-radius: 4px; background: var(--plot-bg, transparent); }
+.cmp-diff-zero { stroke: var(--theme--foreground-subdued, #98a2b3); stroke-width: 1; stroke-dasharray: 3 3; }
+.cmp-diff-line { stroke: var(--theme--primary, #6644ff); stroke-width: 1.2; }
+.cmp-diff-read { font-variant-numeric: tabular-nums; }
 .cmp-add { position: relative; }
 .cmp-menu { position: absolute; top: 24px; left: 0; z-index: 40; min-width: 200px; max-height: 280px;
 	overflow: auto; padding: 4px; background: var(--theme--background, #fff);

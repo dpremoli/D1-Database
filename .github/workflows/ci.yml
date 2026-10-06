@@ -35,6 +35,11 @@ jobs:
         run: node --experimental-strip-types --test core/extensions/d1-geometry-preview/test/geometry.test.ts
       - name: Extension endpoint tests
         run: node --test core/extensions/*/index.test.mjs
+      - name: Ask-DB helper tests
+        run: node --experimental-strip-types --test core/extensions/d1-ask-db/test/*.test.ts
+      - name: Report and label endpoint tests
+        working-directory: core/extensions/d1-report
+        run: npm ci --no-audit --no-fund && npm test
 
   foundation:
     name: Foundation smoke test

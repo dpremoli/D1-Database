@@ -26,3 +26,9 @@ Shared, checked-in notes from earlier force-app reviews. One dated line per less
 - 2026-10-05: `SaveCutDialog.startNew()` is also the failed-state Close; check any `newRun` semantics against it.
 - 2026-10-05: `replay.cacheId` is never reset, so setSource's `!replay.cacheId` guard skips the Replay-entry clear on every re-entry after a first pick; any leave-Replay restore makes the re-entered form disagree with the loaded cut. Check re-entry, not just first entry.
 - 2026-10-05: SaveCutDialog's `failed` state covers start AND acquisition/finalize failures (`describeRecordingFailure().rawKept`); sequence-step decisions there must branch on rawKept. Re-review 79eda2e..HEAD: web 417, plotting 491 tests + both typechecks green.
+- 2026-10-06: view-link apply in ForceDashboard: anything onCloudLoaded or op-change watchers re-seed later (crop handles, mode) must be re-applied after the async cache parse — check the ordering of async seeding, not just the first apply.
+- 2026-10-06: IntervalGate.set(true) is a no-op when already running; widening a gate's active states drops the immediate check at the original transition.
+- 2026-10-06: cfg.analog_fullscale_v (RecordConfig) is not the Lab Amp analog_fullscale_v the start gains come from; rail/clipping tests depend on it.
+- 2026-10-06: kept-alive Plot ignored route.query on reactivation (read only in onMounted); in-app /plot?operation= pushes (SaveCutDialog, LocalCaptureView) need the activation path to apply incoming view keys before any write-back.
+- 2026-10-06: Record nidaqChannels is the autoassigned model list on real rigs (first boot), never the default; "custom list" logic must compare against the model, not the default.
+- 2026-10-06: Directus container has no TZ by default (UTC); extensions format dates with an explicit D1_TIMEZONE.

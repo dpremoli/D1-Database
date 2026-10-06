@@ -73,6 +73,10 @@ process).
   selectors (see `ui_smoke.mjs`).
 - **A safety prompt gates the first Start** of a session ("Test the alarms first?"). Tests click
   "Start without testing". Don't remove the prompt to make a test simpler.
+- **Start asks "Start anyway" when no Sample is picked** (pre-flight, `data-testid="start-anyway"`).
+  `ui_smoke.mjs` clicks it. The railed-channel warning needs per-channel gains, which the UI can't
+  set: start the run over HTTP with `dyno_gains` (and `analog_fullscale_v`, since sim data is
+  already in newtons) and open the Record page, which adopts the running cut.
 - **Playwright's bundled browser may be missing** in cloud sessions. `ui_smoke.mjs` falls back to
   `/opt/pw-browsers/chromium`; reuse that in any script you write. Never run `playwright install`.
 - **Vite must be on :5180** (Directus CORS lists that origin). If the port is taken, find and stop

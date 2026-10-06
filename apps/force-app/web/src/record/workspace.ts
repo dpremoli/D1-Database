@@ -21,6 +21,11 @@ import { confirmAction } from '../ui/confirm';
 import { spotlight } from '../ui/spotlight';
 import { FIELD_FOCUS, StartRequestError, sampleRateIssue } from './recordingErrors';
 import { nidaqHardware } from './nidaqHardware';
+import { railBannerText } from './railing';
+import { computePreflight, isCustomChannelList, needsSampleConfirm, parseChannelList, type AmpReading, type ChannelLike } from './preflight';
+import { hwStatus } from './hwStatus';
+import { nidaqApi } from '../nidaq/nidaqApi';
+import { authStore } from '../authStore';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 
@@ -140,10 +145,16 @@ export function createWorkspace() {
 		}
 	}
 	const NIDAQ_LS_KEY = 'force-app.nidaq.channels';
-	const defaultChannels = ['cDAQ1Mod1/ai0', 'cDAQ1Mod1/ai1', 'cDAQ1Mod1/ai2', 'cDAQ1Mod1/ai3',
-		'cDAQ1Mod2/ai0', 'cDAQ1Mod2/ai1', 'cDAQ1Mod2/ai2', 'cDAQ1Mod2/ai3', 'cDAQ1Mod3/ai0'].join('\n');
+	const defaultChannelList = ['cDAQ1Mod1/ai0', 'cDAQ1Mod1/ai1', 'cDAQ1Mod1/ai2', 'cDAQ1Mod1/ai3',
+		'cDAQ1Mod2/ai0', 'cDAQ1Mod2/ai1', 'cDAQ1Mod2/ai2', 'cDAQ1Mod2/ai3', 'cDAQ1Mod3/ai0'];
+	const defaultChannels = defaultChannelList.join('\n');
 	const nidaqChannels = ref(localStorage.getItem(NIDAQ_LS_KEY) || defaultChannels);
 	watch(nidaqChannels, (v) => localStorage.setItem(NIDAQ_LS_KEY, v));
+	// What Start sends. The backend takes the NI-DAQ page's saved channel model unless this list is
+	// empty or the default one, so only then does the model decide what records.
+	// First-boot autoassign writes the saved model's own physical list here, which is never the
+	// default on a real rig, so that list counts as the model too (preflight.ts isCustomChannelList).
+	const customChannelList = computed(() => isCustomChannelList(nidaqChannels.value, defaultChannelList, preflightReads.channels));
 
 	// The setup half of cfg/meta/machining/link is remembered across launches (R1, setupPrefs.ts) and
 	// filled in by restoreSetup() below once `link` exists. `duration_sec` is not part of it: no
@@ -287,6 +298,58 @@ export function createWorkspace() {
 			if (source.value === 'nidaq') alarms.evaluateTacho(st.tachoOk);
 		}
 	});
+
+	// R4: pre-flight checklist for Start (preflight.ts). Its inputs are read here: the amp and the
+	// saved channel list by refreshPreflight() (RecordPage polls it while waiting to Start), free
+	// space from the Record page's disk poll via hwStatus, the rest straight from the form.
+	const preflightReads = reactive<{ amp: AmpReading | null; channels: ChannelLike[] | null }>({ amp: null, channels: null });
+	async function refreshPreflight() {
+		if (source.value !== 'nidaq' || locked.value) return;
+		const [amp, chans] = await Promise.allSettled([labamp.status(), nidaqApi.getChannels()]);
+		// An unreadable amp or channel list is "not checked", never "failed": the recorder may just be
+		// starting up, and Start has its own error path for a backend that really is down.
+		preflightReads.amp = amp.status === 'fulfilled' ? { reachable: !!amp.value.reachable, mode: amp.value.mode ?? null, mock: !!amp.value.mock } : null;
+		preflightReads.channels = chans.status === 'fulfilled' ? chans.value.channels : null;
+	}
+	const preflight = computed(() => computePreflight({
+		source: source.value,
+		sampleSet: !!link.sampleId,
+		session: hasServerSession() ? 'server' : authStore.state.offline ? 'offline' : 'none',
+		amp: preflightReads.amp,
+		// The recorder measures the tacho only once samples flow, so there is nothing to report
+		// before Start (st.tachoOk is last cut's value until the next one begins).
+		tachoOk: null,
+		diskFreeGb: hwStatus.diskFreeGb >= 0 ? hwStatus.diskFreeGb : null,
+		sampleRate: cfg.sample_rate,
+		channels: preflightReads.channels,
+		channelsCustom: customChannelList.value,
+	}));
+	// A missing Sample is a warning, not a block: the first Start press shows "Start anyway".
+	const sampleConfirmOpen = ref(false);
+	watch(() => link.sampleId, (id) => { if (id) sampleConfirmOpen.value = false; });
+	watch(source, () => { sampleConfirmOpen.value = false; });
+	async function requestStart() {
+		if (busy.value) return;
+		if (needsSampleConfirm(preflight.value)) { sampleConfirmOpen.value = true; return; }
+		await start();
+	}
+	async function startAnyway() {
+		sampleConfirmOpen.value = false;
+		await start();
+	}
+
+	// R5: the backend latches which sensor channels railed this cut (st.railed). The banner names
+	// them once per cut: a dismissal is keyed on the capture it was made for, so adopting another
+	// cut (a reconcile) shows that cut's banner, and it also resets when `railed` empties (New and
+	// the next Start do that, via client.reset()). The badges on the channel tiles are not
+	// dismissible, they stay for as long as the cut is on screen.
+	const railDismissedFor = ref<string | null | undefined>(undefined);   // undefined = not dismissed
+	watch(() => st.railed.length, (n) => { if (n === 0) railDismissedFor.value = undefined; });
+	const railBanner = computed(() => (
+		(railDismissedFor.value !== undefined && railDismissedFor.value === st.captureId) || mode.value !== 'record'
+			? null : railBannerText(st.railed)
+	));
+	function dismissRailBanner() { railDismissedFor.value = st.captureId; }
 
 	// Converging between-cuts auto-range: after each cut, recommend + apply the next-pass per-channel
 	// ranges from THIS cut's recorded per-channel peaks (summary.channels_ranging). Applying them to
@@ -491,7 +554,7 @@ export function createWorkspace() {
 					await new Promise((r) => setTimeout(r, 500));
 					await labamp.setMode('MEASURE');
 				} catch { /* amp unreachable — proceed anyway, gains were set at last range */ }
-				const chans = nidaqChannels.value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+				const chans = parseChannelList(nidaqChannels.value);
 				await client.start({ ...cfg, ...recordingPrefsPayload(), source: 'nidaq', nidaq_channels: chans, axis: plot.frmAxis, extra_metadata: metaObj() } as any);
 			} else {
 				await client.start({ ...cfg, ...recordingPrefsPayload(), source: 'sim', axis: plot.frmAxis, extra_metadata: metaObj() } as any);
@@ -992,6 +1055,10 @@ export function createWorkspace() {
 		alarms,
 		// converging between-cuts auto-range
 		converge, convergeAfterCut,
+		// R4: pre-flight checklist and the Start flow that honours it
+		preflight, refreshPreflight, requestStart, startAnyway, sampleConfirmOpen,
+		// R5: live rail warning banner (once per cut)
+		railBanner, dismissRailBanner,
 		// Recording-behaviour toggles (Detect cut start / Drift compensation / Converging auto-range)
 		// and the cut-detect threshold — persisted, shared with Settings > Recording.
 		recordingPrefs,

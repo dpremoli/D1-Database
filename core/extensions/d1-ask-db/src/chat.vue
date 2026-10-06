@@ -1,8 +1,26 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue';
-import { useApi } from '@directus/extensions-sdk';
+import { useApi, useStores } from '@directus/extensions-sdk';
 import ChartPanel from './chart-panel.vue';
 import ExampleChips from './example-chips.vue';
+import { copyText } from './clipboard';
+import { csvCell, csvFilename, toCsv } from './csv';
+import QuestionList from './question-list.vue';
+import {
+	HISTORY_KEY,
+	HISTORY_LIMIT,
+	SAVED_FULL_MESSAGE,
+	SAVED_KEY,
+	addQuestion,
+	hasQuestion,
+	loadList,
+	dropLegacy,
+	removeQuestion,
+	scopedKey,
+	startsConversation,
+	toggleSavedQuestion,
+	updateList,
+} from './history';
 
 interface ChartSpec {
 	type: 'bar' | 'line' | 'scatter' | 'histogram' | 'pie';
@@ -26,12 +44,54 @@ interface Turn {
 	detail?: string;
 	/** Offer the example chips, because rephrasing may help. */
 	suggest?: boolean;
+	/** Feedback on the last "Copy SQL" click; cleared after a moment. */
+	copied?: 'ok' | 'fail';
 }
 
 const api = useApi();
 const input = ref('');
 const turns = ref<Turn[]>([]);
 const scroller = ref<HTMLDivElement | null>(null);
+/**
+ * Last 20 asked questions and the pinned ones, per browser AND per Directus user (users sharing
+ * one browser keep separate lists). Question text only, never rows.
+ */
+const { useUserStore } = useStores();
+const userId: string | null = (useUserStore().currentUser as any)?.id ?? null;
+const historyKey = scopedKey(HISTORY_KEY, userId);
+const savedKey = scopedKey(SAVED_KEY, userId);
+dropLegacy(userId);
+const asked = ref(loadList(historyKey));
+const saved = ref(loadList(savedKey));
+
+// Every change re-reads storage first, so a second tab's additions are merged, not overwritten.
+function remember(question: string) {
+	asked.value = updateList(historyKey, asked.value, (l) => addQuestion(l, question, Date.now(), HISTORY_LIMIT));
+}
+
+function forget(question: string) {
+	asked.value = updateList(historyKey, asked.value, (l) => removeQuestion(l, question));
+}
+
+// Shown beside Save question when a pin is refused because the list is full.
+const saveNotice = ref('');
+let saveNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+function toggleSaved(question: string) {
+	let result: 'saved' | 'removed' | 'full' = 'saved';
+	saved.value = updateList(savedKey, saved.value, (l) => {
+		const r = toggleSavedQuestion(l, question, Date.now());
+		result = r.result;
+		return r.list;
+	});
+	clearTimeout(saveNoticeTimer);
+	saveNotice.value = result === 'full' ? SAVED_FULL_MESSAGE : '';
+	if (result === 'full') saveNoticeTimer = setTimeout(() => (saveNotice.value = ''), 4000);
+}
+
+function unsave(question: string) {
+	saved.value = updateList(savedKey, saved.value, (l) => removeQuestion(l, question));
+}
 
 /** A plain-language message for a failed /d1-ask/chat call. */
 function explainError(status: number | undefined, d: any, fallback: string) {
@@ -100,8 +160,12 @@ async function submit(text?: string) {
 	const question = (text ?? input.value).trim();
 	if (!question || busy()) return;
 
-	const messages = [...history(), { role: 'user', content: question }];
+	const context = history();
+	const messages = [...context, { role: 'user', content: question }];
 	const turn = ref<Turn>({ question, status: 'pending' }).value;
+	// Follow-ups are not context-free, so only a conversation's first question goes to Recent.
+	// Judged by the context sent, not the transcript: a retry after a first-question error counts.
+	if (startsConversation(context.length)) remember(question);
 	turns.value.push(turn);
 	input.value = '';
 	await scrollToEnd();
@@ -133,10 +197,25 @@ async function submit(text?: string) {
 	await scrollToEnd();
 }
 
-function cell(value: unknown): string {
-	if (value === null || value === undefined) return '';
-	if (typeof value === 'object') return JSON.stringify(value);
-	return String(value);
+function downloadCsv(turn: Turn) {
+	if (!turn.columns || !turn.rows) return;
+	const blob = new Blob([toCsv(turn.columns, turn.rows)], { type: 'text/csv;charset=utf-8' });
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = csvFilename(turn.question);
+	document.body.appendChild(a);
+	a.click();
+	document.body.removeChild(a);
+	setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function copySql(turn: Turn) {
+	if (!turn.sql) return;
+	turn.copied = (await copyText(turn.sql)) ? 'ok' : 'fail';
+	setTimeout(() => {
+		turn.copied = undefined;
+	}, 2000);
 }
 </script>
 
@@ -151,6 +230,22 @@ function cell(value: unknown): string {
 						one. Click an example to try it:
 					</p>
 					<ExampleChips :disabled="busy()" @pick="submit" />
+					<QuestionList
+						title="Saved"
+						test-id="ask-saved"
+						:items="saved"
+						:disabled="busy()"
+						@run="submit"
+						@remove="unsave"
+					/>
+					<QuestionList
+						title="Recent questions"
+						test-id="ask-history"
+						:items="asked"
+						:disabled="busy()"
+						@run="submit"
+						@remove="forget"
+					/>
 				</div>
 
 				<div v-for="(turn, i) in turns" :key="i" class="turn">
@@ -176,6 +271,43 @@ function cell(value: unknown): string {
 					</div>
 
 					<div v-else class="answer">
+						<div class="actions" data-test="ask-actions">
+							<button
+								type="button"
+								class="action"
+								data-test="ask-csv"
+								:disabled="!turn.rows || turn.rows.length === 0"
+								@click="downloadCsv(turn)"
+							>
+								Download CSV
+							</button>
+							<button
+								v-if="turn.sql"
+								type="button"
+								class="action"
+								data-test="ask-copy-sql"
+								@click="copySql(turn)"
+							>
+								{{
+									turn.copied === 'ok'
+										? 'Copied'
+										: turn.copied === 'fail'
+											? 'Copy failed'
+											: 'Copy SQL'
+								}}
+							</button>
+							<button
+								type="button"
+								class="action"
+								data-test="ask-save-question"
+								:aria-pressed="hasQuestion(saved, turn.question)"
+								@click="toggleSaved(turn.question)"
+							>
+								{{ hasQuestion(saved, turn.question) ? 'Saved' : 'Save question' }}
+							</button>
+							<span v-if="saveNotice" class="save-notice" role="status" data-test="ask-save-notice">{{ saveNotice }}</span>
+						</div>
+
 						<details v-if="turn.sql" class="sql" data-test="ask-sql">
 							<summary>SQL</summary>
 							<pre>{{ turn.sql }}</pre>
@@ -200,7 +332,7 @@ function cell(value: unknown): string {
 								<tbody>
 									<tr v-for="(row, r) in turn.rows" :key="r">
 										<td v-for="col in turn.columns" :key="col">
-											{{ cell(row[col]) }}
+											{{ csvCell(row[col]) }}
 										</td>
 									</tr>
 								</tbody>
@@ -266,6 +398,34 @@ function cell(value: unknown): string {
 .answer.error p.detail {
 	color: var(--theme--foreground-subdued, #6c7789);
 	font-size: 13px;
+}
+.actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+.action {
+	padding: 4px 12px;
+	border: 1px solid var(--theme--border-color, #d3dae4);
+	border-radius: 6px;
+	background: var(--theme--background, #fff);
+	color: var(--theme--foreground, #2f3a4c);
+	font-size: 13px;
+	cursor: pointer;
+}
+.action:hover:not(:disabled) {
+	border-color: var(--theme--primary, #6644ff);
+	color: var(--theme--primary, #6644ff);
+}
+.save-notice {
+	align-self: center;
+	font-size: 13px;
+	color: var(--theme--danger, #e35169);
+}
+.action:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
 }
 .truncated {
 	margin-top: 8px;
