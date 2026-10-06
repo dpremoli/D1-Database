@@ -145,7 +145,7 @@ function ampItem(amp: AmpReading | null): PreflightItem {
 	if (!amp.reachable) {
 		return {
 			id: 'amp', label: 'Lab Amp', level: 'warn', focus,
-			detail: 'The Lab Amp is not reachable. Start still works, using the gains from its last range, but nothing can reset or range it.',
+			detail: 'The Lab Amp is not reachable. Start still works, but without its ranges the cut uses the NI-DAQ channel gains if the channel model has them, and is otherwise recorded in volts, not newtons. Nothing can reset or range the amp.',
 		};
 	}
 	if (amp.mode === 'MEASURE') return { id: 'amp', label: 'Lab Amp', level: 'ok', detail: `Connected, in MEASURE${tag}.` };
