@@ -247,7 +247,6 @@ export default defineEndpoint({
 				const haveCodes = new Set(rows.map((r) => String(r.sample_code)));
 				const missing = sel.ids.some((i) => !haveIds.has(i)) || sel.codes.some((c) => !haveCodes.has(c));
 
-				const publicUrl = String(env.PUBLIC_URL || '').replace(/\/+$/, '');
 				const labels = await Promise.all(
 					rows.map(async (r) => {
 						const m = matById.get(String(r.material_id));
@@ -256,7 +255,7 @@ export default defineEndpoint({
 							material: m ? m.common_name || m.alloy_code : '',
 							date: labelDate(r.manufactured_date, r.created_at),
 							owner: initials(personById.get(String(r.owner_person_id))?.full_name),
-							qrSvg: await QRCode.toString(sampleRecordUrl(publicUrl, r.sample_id), {
+							qrSvg: await QRCode.toString(sampleRecordUrl(env.PUBLIC_URL, r.sample_id), {
 								type: 'svg',
 								margin: 1,
 								errorCorrectionLevel: lay.layout.style.qrEcc,

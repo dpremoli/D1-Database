@@ -12,10 +12,7 @@
 // Print, like the other d1-report documents. Each label sits at an absolute mm position, so
 // what the browser prints lines up with the die-cut sheet when printed at 100% scale.
 
-const esc = (v) =>
-	v === null || v === undefined
-		? ''
-		: String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+import { esc } from './render.js';
 
 export const MAX_LABELS = 200;
 export const DEFAULT_LAYOUT = 'a4-21';
@@ -235,13 +232,13 @@ function labelHtml(l, layout, pos) {
 	const innerW = round2(layout.labelW - 2 * s.padMm);
 	const pt = codeFontPt(l.code, innerW, s.codeMaxPt);
 	const meta = [
-		l.material ? `<div class="mat" style="font-size:${s.metaPt}pt">${esc(l.material)}</div>` : '',
-		l.date ? `<div style="font-size:${s.metaPt}pt"><span class="k">Date</span> ${esc(l.date)}</div>` : '',
-		l.owner ? `<div style="font-size:${s.metaPt}pt"><span class="k">Owner</span> ${esc(l.owner)}</div>` : '',
+		l.material ? `<div class="mat">${esc(l.material)}</div>` : '',
+		l.date ? `<div><span class="k">Date</span> ${esc(l.date)}</div>` : '',
+		l.owner ? `<div><span class="k">Owner</span> ${esc(l.owner)}</div>` : '',
 	].join('');
 	return `<div class="label" style="left:${pos.x}mm;top:${pos.y}mm;width:${layout.labelW}mm;height:${layout.labelH}mm;padding:${s.padMm}mm">
 <div class="code" style="font-size:${pt}pt;margin-bottom:1.2mm">${esc(l.code)}</div>
-<div class="row"><div class="qr" style="width:${s.qrMm}mm;height:${s.qrMm}mm">${l.qrSvg}</div><div class="meta">${meta}</div></div>
+<div class="row"><div class="qr" style="width:${s.qrMm}mm;height:${s.qrMm}mm">${l.qrSvg}</div><div class="meta" style="font-size:${s.metaPt}pt">${meta}</div></div>
 </div>`;
 }
 

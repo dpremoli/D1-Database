@@ -7,7 +7,7 @@
 
 import { buildGeometry } from './geometry';
 
-const esc = (v) =>
+export const esc = (v) =>
 	v === null || v === undefined
 		? ''
 		: String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
