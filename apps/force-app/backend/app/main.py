@@ -2095,16 +2095,17 @@ def _capture_entry(cid: str) -> dict:
         "finalized": False,
         "files": {},
     }
-    total = 0
-    for fname in ("raw.d1raw", "capture.mat", "live_cache.bin", "summary.json"):
+    sizes: dict[str, int] = {}
+    for fname in ("raw.d1raw", "capture.mat", "live_cache.bin"):
         try:
-            n = os.stat(os.path.join(d, fname)).st_size
+            sizes[fname] = os.stat(os.path.join(d, fname)).st_size
         except OSError:
-            continue
-        total += n
-        entry["files"][fname] = round(n / 1e6, 2)
-    entry["size_mb"] = round(total / 1e6, 2)
-    entry["finalized"] = "summary.json" in entry["files"]
+            pass
+    if key is not None:
+        sizes["summary.json"] = key[2]  # already stat'ed above
+    entry["files"] = {k: round(n / 1e6, 2) for k, n in sizes.items()}
+    entry["size_mb"] = round(sum(sizes.values()) / 1e6, 2)
+    entry["finalized"] = key is not None
     entry["mtime"] = dir_ns / 1e9
     if entry["finalized"]:
         try:

@@ -22,7 +22,7 @@ import {
 	beginUploadItem, bulkDeleteBlockReason, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
 	isBulkSelectable, isCleanupCandidate, isClientFilter, matchesFilter, needsMorePages, planBulkDelete,
 	pruneSelection, requestUploadCancel, rowState, serverStatusFor, shouldStopUploads, startUploadProgress,
-	summarizeCleanup, summarizeDeleteResults, toggleAll, toggleId, uploadProgressText,
+	sumMb, summarizeCleanup, summarizeDeleteResults, toggleAll, toggleId, uploadProgressText,
 	type DeleteResult, type RowFacts, type StatusFilter, type UploadOutcome, type UploadProgress,
 } from './captureList';
 import { canRevealPaths, copyText, revealPath } from '../localPaths';
@@ -208,13 +208,16 @@ async function lookupUploaded(ids: string[]): Promise<{ uploaded: Record<string,
 	}
 }
 
-async function checkUploaded() {
-	uploadedKnown.value = false;
-	const r = await lookupUploaded(captures.value.map((c) => c.id));
-	if (!r) return;
+function mergeUploaded(r: { uploaded: Record<string, boolean>; opIds: Record<string, string> }) {
 	uploaded.value = { ...uploaded.value, ...r.uploaded };
 	uploadedOpId.value = { ...uploadedOpId.value, ...r.opIds };
 	uploadedKnown.value = true;
+}
+
+async function checkUploaded() {
+	uploadedKnown.value = false;
+	const r = await lookupUploaded(captures.value.map((c) => c.id));
+	if (r) mergeUploaded(r);
 }
 
 // ---- What the list shows ----
@@ -228,7 +231,7 @@ const facts = computed<RowFacts>(() => ({
 		: null,
 }));
 const visible = computed(() => captures.value.filter((c) => matchesFilter(c, statusFilter.value, facts.value)));
-const loadedMb = computed(() => Number(captures.value.reduce((s, c) => s + c.size_mb, 0).toFixed(2)));
+const loadedMb = computed(() => sumMb(captures.value));
 const FILTERS: { key: StatusFilter; label: string }[] = [
 	{ key: 'all', label: 'All' },
 	{ key: 'not_uploaded', label: 'Not uploaded' },
@@ -246,6 +249,14 @@ function dropRows(rows: Capture[]) {
 	totalAll.value = Math.max(0, totalAll.value - present.length);
 	if (matchingMb.value != null) matchingMb.value = Math.max(0, Number((matchingMb.value - mb).toFixed(2)));
 	selected.value = pruneSelection(selected.value, captures.value);
+}
+
+/** DELETE one capture; resolves to the recorder's answer, throws with its `detail` on failure. */
+async function deleteCapture(id: string): Promise<{ freed_mb?: unknown; detail?: string }> {
+	const res = await fetch(`${base()}/captures/${id}`, { method: 'DELETE' });
+	const body = await res.json().catch(() => ({}));
+	if (!res.ok) throw new Error(body?.detail || `HTTP ${res.status}`);
+	return body;
 }
 
 async function remove(c: Capture) {
@@ -275,8 +286,7 @@ async function remove(c: Capture) {
 	busy.value[c.id] = 'deleting';
 	rowMsg.value[c.id] = '';
 	try {
-		const res = await fetch(`${base()}/captures/${c.id}`, { method: 'DELETE' });
-		if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.detail || `HTTP ${res.status}`);
+		await deleteCapture(c.id);
 		dropRows([c]);
 	} catch (e: any) {
 		rowMsg.value[c.id] = `delete failed: ${e?.message || e}`;
@@ -291,10 +301,11 @@ async function remove(c: Capture) {
 // restore running) are the last gate.
 const selected = ref<Set<string>>(new Set());
 const selectedRows = computed(() => captures.value.filter((c) => selected.value.has(c.id)));
-const selectedMb = computed(() => Number(selectedRows.value.reduce((s, c) => s + c.size_mb, 0).toFixed(2)));
+const selectedMb = computed(() => sumMb(selectedRows.value));
 const bulkBlock = computed(() => bulkDeleteBlockReason(facts.value));
-const selectableCount = computed(() => visible.value.filter(isBulkSelectable).length);
-const allShownSelected = computed(() => selectableCount.value > 0 && visible.value.filter(isBulkSelectable).every((c) => selected.value.has(c.id)));
+const shownSelectable = computed(() => visible.value.filter(isBulkSelectable));
+const selectableCount = computed(() => shownSelectable.value.length);
+const allShownSelected = computed(() => selectableCount.value > 0 && shownSelectable.value.every((c) => selected.value.has(c.id)));
 const bulk = ref<{ done: number; total: number; current: string; cancel: boolean } | null>(null);
 const bulkReport = ref<{ title: string; text: string; problems: string[] } | null>(null);
 const STAT_ROWS = 12;   // items listed in a confirm dialog before "and N more"
@@ -327,9 +338,7 @@ async function deleteMany(items: Capture[], stillOk: (c: Capture) => boolean): P
 		} else {
 			busy.value[c.id] = 'deleting';
 			try {
-				const res = await fetch(`${base()}/captures/${c.id}`, { method: 'DELETE' });
-				if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.detail || `HTTP ${res.status}`);
-				const body = await res.json().catch(() => ({}));
+				const body = await deleteCapture(c.id);
 				results.push({ id: c.id, outcome: 'deleted', freed_mb: typeof body.freed_mb === 'number' ? body.freed_mb : c.size_mb });
 				dropRows([c]);
 			} catch (e: any) {
@@ -421,9 +430,7 @@ async function previewCleanup() {
 			cleanupMsg.value = 'Cannot tell which captures are uploaded because the database could not be reached. Nothing can be selected for cleanup.';
 			return;
 		}
-		uploaded.value = { ...uploaded.value, ...r.uploaded };
-		uploadedOpId.value = { ...uploadedOpId.value, ...r.opIds };
-		uploadedKnown.value = true;
+		mergeUploaded(r);
 		cleanupPool.value = pool;
 	} catch (e: any) {
 		cleanupMsg.value = describeFetchError(e, 'failed to scan the captures');
@@ -559,8 +566,7 @@ async function uploadAllUnsynced() {
 		confirmLabel: 'Upload',
 	});
 	if (!ok) return;
-	let run = startUploadProgress(pending.length);
-	uploadRun.value = run;
+	uploadRun.value = startUploadProgress(pending.length);
 	for (const c of pending) {
 		if (shouldStopUploads(uploadRun.value!)) break;
 		// State may have moved while earlier items uploaded (a queue sync, a delete).
@@ -569,8 +575,7 @@ async function uploadAllUnsynced() {
 		const outcome = await upload(c);
 		uploadRun.value = finishUploadItem(uploadRun.value!, outcome);
 	}
-	run = finishUploads(uploadRun.value!);
-	uploadRun.value = run;
+	uploadRun.value = finishUploads(uploadRun.value!);
 }
 function cancelUploadAll() {
 	if (uploadRun.value && !uploadRun.value.finished) uploadRun.value = requestUploadCancel(uploadRun.value);

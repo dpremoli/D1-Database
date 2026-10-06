@@ -153,7 +153,7 @@ export function planBulkDelete(selected: ReadonlySet<string>, rows: ListCapture[
 	items.sort((a, b) => (a.id < b.id ? 1 : -1));
 	return {
 		items,
-		totalMb: round2(items.reduce((s, i) => s + i.size_mb, 0)),
+		totalMb: sumMb(items),
 		onlyCopyCount: items.filter((i) => i.onlyCopy).length,
 		skipped,
 	};
@@ -190,7 +190,7 @@ export function summarizeCleanup(cands: ListCapture[]): CleanupPreview {
 	const times = cands.map((c) => c.mtime);
 	return {
 		count: cands.length,
-		totalMb: round2(cands.reduce((s, c) => s + c.size_mb, 0)),
+		totalMb: sumMb(cands),
 		oldest: times.length ? Math.min(...times) : null,
 		newest: times.length ? Math.max(...times) : null,
 	};
@@ -265,6 +265,9 @@ export function uploadProgressText(p: UploadProgress): string {
 	const cur = p.current ? `: ${p.current}` : '';
 	return p.cancelRequested ? `${head}${cur}. Cancelling after this one…` : `${head}${cur}`;
 }
+
+/** Total size in MB, rounded to 0.01. */
+export const sumMb = (rows: { size_mb: number }[]): number => round2(rows.reduce((s, r) => s + r.size_mb, 0));
 
 function round2(n: number): number {
 	return Math.round(n * 100) / 100;
