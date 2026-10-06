@@ -58,6 +58,14 @@ export interface RestartDeps {
   lastDetail: () => string | undefined;
 }
 
+/** Is a 'ready' report the end of a crash recovery, i.e. should it be logged and the operator sent
+ * back to Record (where the recovery banner picks up the interrupted session)? Not while the
+ * operator's own "Restart recorder" is under way: start() resets the restart count, but a first
+ * spawn that fails to bind is retried and counts again, and that must not read as a crash. */
+export function isCrashRecovery(state: SidecarState, restartCount: number, manualRestart: boolean): boolean {
+  return state === 'ready' && restartCount > 0 && !manualRestart;
+}
+
 /** Checks, restarts, and reports whether the backend came back. Never throws. */
 export async function restartRecorder(deps: RestartDeps): Promise<RestartResult> {
   if (!deps.restart) return { ok: false, reason: 'The recorder has not been started yet.' };

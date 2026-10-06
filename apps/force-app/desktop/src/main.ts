@@ -5,7 +5,7 @@ import { applyMenuBarMode, buildMenu } from './menu';
 import { findAvailablePort } from './port';
 import { registerAppScheme, handleAppProtocol } from './protocol';
 import { checkRevealTarget } from './reveal';
-import { restartRecorder, unknownStatusDialog } from './restart';
+import { isCrashRecovery, restartRecorder, unknownStatusDialog } from './restart';
 import { watchRenderer } from './rendererWatch';
 import { PopoutTracker } from './popouts';
 import { fetchBusySession, fetchRecorderActivity, confirmQuit, type BusySession } from './quitGuard';
@@ -189,7 +189,7 @@ function onSidecarStateChange(state: SidecarState, detail?: string): void {
   // A restart (not the initial start) means the backend crashed mid-session — route the
   // operator back to Record, where the existing recovery banner (RecordPage.vue) picks up any
   // incomplete session via GET /recovery/check on mount.
-  if (state === 'ready' && supervisor && supervisor.getRestartCount() > 0) {
+  if (supervisor && isCrashRecovery(state, supervisor.getRestartCount(), manualRestart)) {
     logToBackend('WARNING', `recorder backend restarted (${restartCause ?? 'unknown cause'})`);
     mainWindow?.webContents.send('navigate', '/record');
   }

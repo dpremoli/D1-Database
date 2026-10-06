@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { restartDecision, restartRecorder, unknownStatusDialog, type RestartDeps } from './restart';
+import { isCrashRecovery, restartDecision, restartRecorder, unknownStatusDialog, type RestartDeps } from './restart';
 import type { BusySession, RecorderActivity } from './quitGuard';
 import type { SidecarState } from './sidecar';
 
@@ -35,6 +35,20 @@ describe('restartDecision', () => {
   });
   it('restarts without asking when there is no supervisor state', () => {
     expect(restartDecision(unknown, undefined)).toEqual({ action: 'restart' });
+  });
+});
+
+describe('isCrashRecovery', () => {
+  it('is a recovery when the backend comes back after an automatic restart', () => {
+    expect(isCrashRecovery('ready', 1, false)).toBe(true);
+  });
+  it('is not one for the first start or for states other than ready', () => {
+    expect(isCrashRecovery('ready', 0, false)).toBe(false);
+    expect(isCrashRecovery('restarting', 1, false)).toBe(false);
+    expect(isCrashRecovery('starting', 1, false)).toBe(false);
+  });
+  it('is not one while a manual restart is under way, even if its first spawn failed to bind', () => {
+    expect(isCrashRecovery('ready', 1, true)).toBe(false);
   });
 });
 
