@@ -220,9 +220,11 @@ sfb_check "down:Machining" "down: removes the seven bookmarks and keeps other bo
 CFG=scripts/configure_directus.sql
 # Each extraction starts at the file's saved-filters comment block ($2), so a VALUES list elsewhere
 # in the file (configure_directus.sql has several) cannot be picked up instead.
-sfb_values() { awk -v anchor="$2" '$0 ~ anchor{a=1} a&&/^FROM \(VALUES/{f=1;next} f&&/^\) AS v\(/{exit} f' "$1"; }
-sfb_mig_values=$(sfb_values "$SFB" '^-- D12: saved filters')
-sfb_cfg_values=$(sfb_values "$CFG" '^-- Saved filters \(migration 135\)')
+# The anchor is a literal line prefix (index(), not a regex): awk -v processes backslash escapes,
+# and gawk (CI) and mawk disagree on "\(", which once made this test pass locally and fail in CI.
+sfb_values() { awk -v anchor="$2" 'index($0, anchor) == 1 {a=1} a&&/^FROM \(VALUES/{f=1;next} f&&/^\) AS v\(/{exit} f' "$1"; }
+sfb_mig_values=$(sfb_values "$SFB" '-- D12: saved filters')
+sfb_cfg_values=$(sfb_values "$CFG" '-- Saved filters (migration 135)')
 [[ -n "$sfb_mig_values" && "$sfb_mig_values" == "$sfb_cfg_values" ]] \
     && ok "configure_directus.sql seeds the same bookmark rows as migration 135" \
     || bad "configure_directus.sql and migration 135 bookmark VALUES differ"
