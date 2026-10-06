@@ -18,7 +18,16 @@ let getWindow: (() => BrowserWindow | null) | null = null;
 let isRecording: () => Promise<boolean> = async () => false;
 // True once initAutoUpdater() has attached the electron-updater listeners (packaged builds only).
 let initialized = false;
+// initAutoUpdater() only runs once the recorder is up, so "not initialized" is normal during a slow
+// startup. Only a recorder that is known to have failed gets the "unavailable" wording.
+const STARTING = 'Updates will be available once the recorder has started.';
 const UNAVAILABLE = "Updates unavailable: the recorder didn't start.";
+let recorderStartFailed = false;
+
+/** Called when startup gave up on the recorder, so update checks say why they can't run. */
+export function markRecorderStartFailed(): void {
+  recorderStartFailed = true;
+}
 
 function push(next: UpdateStatus): void {
   status = next;
@@ -116,7 +125,10 @@ export function startUpdateCheck(): { ok: boolean; reason?: string; message?: st
   if (!app.isPackaged) return { ok: false, reason: 'not a packaged build', message: 'Updates are only available in the installed app.' };
   // initAutoUpdater() runs only once the recorder is up (createWindow). Before that nothing is
   // listening for the check's progress or result, so it would run and say nothing.
-  if (!initialized) return { ok: false, reason: UNAVAILABLE, message: UNAVAILABLE };
+  if (!initialized) {
+    const message = recorderStartFailed ? UNAVAILABLE : STARTING;
+    return { ok: false, reason: message, message };
+  }
   autoUpdater.checkForUpdates().catch((err) => push({ state: 'error', message: err?.message || String(err) }));
   return { ok: true };
 }

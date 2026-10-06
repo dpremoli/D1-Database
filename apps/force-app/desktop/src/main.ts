@@ -11,7 +11,7 @@ import { PopoutTracker } from './popouts';
 import { fetchBusySession, fetchRecorderActivity, confirmQuit, type BusySession } from './quitGuard';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
-import { initAutoUpdater, startUpdateCheck } from './updater';
+import { initAutoUpdater, markRecorderStartFailed, startUpdateCheck } from './updater';
 import { classifyWindowOpen, guardNavigation, isAppSender, popoutKey } from './windowOpen';
 import { WindowStateStore, isOnSomeDisplay } from './windowState';
 
@@ -430,6 +430,7 @@ async function createWindow(): Promise<void> {
   startupSettled = true;
 
   if (supervisor.getState() !== 'ready') {
+    markRecorderStartFailed();
     dialog.showErrorBox(
       'Recorder backend failed to start',
       supervisor.lastDetail() ?? 'The backend did not become healthy in time.',

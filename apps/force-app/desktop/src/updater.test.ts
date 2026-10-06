@@ -110,11 +110,24 @@ describe('updater recording gate', () => {
 });
 
 describe('startUpdateCheck before the updater is initialized', () => {
-  it('says updates are unavailable instead of starting a check nobody is listening to', async () => {
+  it('says updates will be available once the recorder has started, while it is still starting', async () => {
     vi.resetModules();
     h.handlers.clear();
     h.updater.checkForUpdates.mockClear();
     const { startUpdateCheck } = await import('./updater');
+    const r = startUpdateCheck();
+    expect(r.ok).toBe(false);
+    expect(r.message).toBe('Updates will be available once the recorder has started.');
+    expect(r.reason).toBe(r.message);
+    expect(h.updater.checkForUpdates).not.toHaveBeenCalled();
+  });
+
+  it('says updates are unavailable once the recorder is known to have failed to start', async () => {
+    vi.resetModules();
+    h.handlers.clear();
+    h.updater.checkForUpdates.mockClear();
+    const { startUpdateCheck, markRecorderStartFailed } = await import('./updater');
+    markRecorderStartFailed();
     const r = startUpdateCheck();
     expect(r.ok).toBe(false);
     expect(r.message).toBe("Updates unavailable: the recorder didn't start.");
