@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { ConfigStore } from './config';
-import { buildMenu } from './menu';
+import { applyMenuBarMode, buildMenu } from './menu';
 import { findAvailablePort } from './port';
 import { registerAppScheme, handleAppProtocol } from './protocol';
 import { checkRevealTarget } from './reveal';
@@ -459,17 +459,17 @@ if (gotLock) {
     if (process.platform !== 'darwin') app.quit();
   });
 
-  // The View/Help bar is redundant now — both menu items just navigate to Settings tabs already
-  // reachable from the in-app sidebar. Hiding (not removing) it keeps the Menu registered, so
-  // Reload/Toggle DevTools still work via their normal accelerators; only the visible bar goes
-  // away. Covers every window the app creates, including the "open in a second window" popouts
-  // from AppShell.vue, not just the main one.
+  // The View/Help bar is hidden until Alt is pressed (auto-hide), not removed: Help > Check for
+  // Updates, About and Connectivity Doctor have no accelerator, so Alt is how they are reached.
+  // Keeping the Menu registered also keeps Reload/Toggle DevTools working via their normal
+  // accelerators. Covers every window the app creates, including the "open in a second window"
+  // popouts from AppShell.vue, not just the main one.
   // Every window and pop-out (and any WebContents the app might create later) may only navigate
   // within app://force.
   app.on('web-contents-created', (_event, contents) => guardNavigation(contents));
 
   app.on('browser-window-created', (_event, window) => {
-    window.setMenuBarVisibility(false);
+    applyMenuBarMode(window);
   });
 
   app.on('before-quit', (event) => {

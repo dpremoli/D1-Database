@@ -183,7 +183,8 @@ these need the rig and a human:
       recovery banner picks up the interrupted session.
 - [ ] **Settings > Connectivity > Restart recorder** (R11): with the backend killed, the button
       brings it back and the doctor goes green; during a recording it refuses with a reason.
-- [ ] Help menu (R13): **Check for Updates…** lands on Settings > About and runs the check;
+- [ ] Help menu (R13): the menu bar is hidden; press **Alt** to show it (in the main window and in a
+      pop-out). **Check for Updates…** lands on Settings > About and runs the check;
       **Open Captures Folder** opens the configured capture drive; **Report a Bug…** opens the
       report screen. When an update finishes downloading, the prompt lists what's new.
 - [ ] A second copy of the app focuses the running window instead of opening a second one.

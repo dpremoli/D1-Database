@@ -9,6 +9,16 @@ export interface MenuActions {
   openCapturesFolder?: () => void;
 }
 
+/** Hides a window's menu bar until Alt is pressed. `setMenuBarVisibility(false)` alone removes it
+ * for good on Windows and Linux (no key brings it back), which left Help > Check for Updates,
+ * About and Connectivity Doctor, none of which has an accelerator, unreachable. Auto-hide keeps
+ * the bar out of the way but lets Alt reveal it. Applied to every window, pop-outs included: they
+ * share the application menu, and Alt behaves the same in each. */
+export function applyMenuBarMode(win: Pick<Electron.BrowserWindow, 'setAutoHideMenuBar' | 'setMenuBarVisibility'>): void {
+  win.setAutoHideMenuBar(true);
+  win.setMenuBarVisibility(false);
+}
+
 export function buildMenu(getWindow: () => Electron.BrowserWindow | null, actions: MenuActions = {}): Electron.Menu {
   const navigate = (route: string) => () => {
     getWindow()?.webContents.send('navigate', route);
