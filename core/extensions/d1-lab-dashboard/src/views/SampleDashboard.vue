@@ -47,8 +47,20 @@
 			<div class="d1-panel-header">
 				<v-icon name="info" />
 				<h3>Sample Detail</h3>
+				<div class="d1-tabs" role="tablist">
+					<button
+						v-for="t in tabs"
+						:key="t.value"
+						class="d1-tab"
+						:class="{ active: detailTab === t.value }"
+						role="tab"
+						:aria-selected="detailTab === t.value"
+						@click="detailTab = t.value"
+					>{{ t.text }}</button>
+				</div>
 			</div>
 			<div v-if="!selectedSample" class="d1-empty">Select a sample</div>
+			<SampleTimeline v-else-if="detailTab === 'timeline'" :sample-id="selectedSampleId" />
 			<div v-else class="d1-detail">
 				<div class="d1-detail-section">
 					<h4>Identity</h4>
@@ -166,6 +178,7 @@ import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { useD1Items } from '../composables/useD1Items';
 import { useRequestGate, errorText } from '../composables/useRequestGate';
 import NodeGraph from './NodeGraph.vue';
+import SampleTimeline from './SampleTimeline.vue';
 
 const { getItems } = useD1Items();
 
@@ -185,6 +198,12 @@ const loadingOps = ref(false);
 const testSessions = ref<any[]>([]);
 const loadingTests = ref(false);
 const selectedTestId = ref<string | null>(null);
+
+const detailTab = ref<'detail' | 'timeline'>('detail');
+const tabs = [
+	{ text: 'Detail', value: 'detail' },
+	{ text: 'Timeline', value: 'timeline' },
+] as const;
 
 const graphRef = ref<InstanceType<typeof NodeGraph> | null>(null);
 
@@ -363,6 +382,28 @@ onBeforeUnmount(() => {
 	font-size: 13px;
 	font-weight: 600;
 	flex: 1;
+}
+
+.d1-tabs {
+	display: flex;
+	gap: 2px;
+}
+
+.d1-tab {
+	border: 0;
+	background: transparent;
+	font: inherit;
+	font-size: 12px;
+	padding: 3px 10px;
+	border-radius: 6px;
+	cursor: pointer;
+	color: var(--theme--foreground-subdued, #64748b);
+}
+
+.d1-tab.active {
+	background: var(--theme--primary-background, #eef2ff);
+	color: var(--theme--primary, #1d4ed8);
+	font-weight: 600;
 }
 
 .d1-filter-bar {

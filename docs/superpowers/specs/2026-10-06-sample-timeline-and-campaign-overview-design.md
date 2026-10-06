@@ -42,7 +42,7 @@ A new endpoint extension `d1-trace` (same conventions as `d1-next-number`) mount
 4. **Permission filter.** Collect the ids per collection (`physical_samples` from ancestors and
    descendants, `manufacturing_operations` and `test_sessions` from the timeline,
    `raw_stock_lots` from the stock origins) and read each set by primary key through
-   `ItemsService.readMany` with the caller's accountability. Directus applies the role's item
+   `ItemsService.readByQuery` (filter `pk _in ids`) with the caller's accountability. Directus applies the role's item
    filters and field rules, so a record comes back only if the caller can read it. Anything not
    returned is dropped and counted.
 5. **Response.** `{ sample, stock_origins, ancestors, events, descendants, hidden: {...counts},
