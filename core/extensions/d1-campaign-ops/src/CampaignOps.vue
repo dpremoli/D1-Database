@@ -8,6 +8,8 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 import CampaignOverview from './CampaignOverview.vue';
+// @ts-ignore plain JS module, tested with node --test
+import { errMsg } from './overview.js';
 
 const props = defineProps<{ primaryKey?: string | number | null }>();
 const api = useApi();
@@ -27,9 +29,6 @@ const category = computed(() => (campaignType.value ? CATEGORY_FOR_TYPE[campaign
 
 const isNew = computed(() => props.primaryKey == null || props.primaryKey === '+');
 
-function errMsg(e: any): string {
-	return e?.response?.data?.errors?.[0]?.message || e?.message || 'request failed';
-}
 // Latest-request-wins: a slow earlier response must not overwrite a newer one, and nothing is
 // written after the component is gone.
 let unmounted = false;

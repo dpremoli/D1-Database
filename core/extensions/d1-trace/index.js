@@ -25,10 +25,11 @@ const isDenied = (err) => err?.code === 'FORBIDDEN' || err?.status === 403;
 async function readableIds({ ItemsService, accountability, schema }, collection, pk, ids) {
     const unique = [...new Set(ids.filter(Boolean))];
     const ok = new Set();
+    const items = new ItemsService(collection, { accountability, schema });
     for (let i = 0; i < unique.length; i += CHUNK) {
         const chunk = unique.slice(i, i + CHUNK);
         try {
-            const rows = await new ItemsService(collection, { accountability, schema }).readByQuery({
+            const rows = await items.readByQuery({
                 filter: { [pk]: { _in: chunk } },
                 fields: ['*'],
                 limit: -1,

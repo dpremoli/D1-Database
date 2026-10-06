@@ -6,13 +6,14 @@
 // machining_force_analysis rows of those operations. Design:
 // docs/superpowers/specs/2026-10-06-sample-timeline-and-campaign-overview-design.md
 
+const worst = (s) => ['error', 'processing', 'pending'].find((k) => s.includes(k));
+
 // One operation can have several force files (one machining_force_analysis row each). Roll the rows
 // up to one state, worst first: error > processing > pending > done > skipped, 'none' when no rows.
 export function analysisState(rows) {
 	const s = (rows ?? []).map((r) => r?.status).filter(Boolean);
 	if (!s.length) return 'none';
-	for (const k of ['error', 'processing', 'pending']) if (s.includes(k)) return k;
-	return s.includes('done') ? 'done' : 'skipped';
+	return worst(s) ?? (s.includes('done') ? 'done' : 'skipped');
 }
 
 // Same for the Diagnostics build (`diag_status`, null until someone requests a build). Rows with no
@@ -20,8 +21,7 @@ export function analysisState(rows) {
 export function diagState(rows) {
 	const s = (rows ?? []).map((r) => r?.diag_status).filter(Boolean);
 	if (!s.length) return 'none';
-	for (const k of ['error', 'processing', 'pending']) if (s.includes(k)) return k;
-	return 'done';
+	return worst(s) ?? 'done';
 }
 
 const first = (rows, field) => (rows ?? []).map((r) => r?.[field]).find(Boolean) ?? null;
@@ -95,11 +95,15 @@ export function buildOverview({ samples = [], operations = [], tests = [], analy
 	const forceOps = opRows.filter((o) => o.process_category === 'machining' || o.analysis !== 'none');
 	const countBy = (rows, key) => {
 		const out = {};
-		for (const r of rows) out[r[key] ?? 'unknown'] = (out[r[key] ?? 'unknown'] ?? 0) + 1;
+		for (const r of rows) {
+			const k = r[key] ?? 'unknown';
+			out[k] = (out[k] ?? 0) + 1;
+		}
 		return out;
 	};
 	const analysed = forceOps.filter((o) => o.analysis === 'done').length;
 	const diagBuilt = forceOps.filter((o) => o.diag === 'done').length;
+	const testsComplete = testRows.filter((t) => t.status === 'complete').length;
 	const pct = (n, d) => (d ? Math.round((100 * n) / d) : 0);
 
 	return {
@@ -117,11 +121,16 @@ export function buildOverview({ samples = [], operations = [], tests = [], analy
 			analysedPct: pct(analysed, forceOps.length),
 			diagBuilt,
 			diagBuiltPct: pct(diagBuilt, forceOps.length),
-			testsComplete: testRows.filter((t) => t.status === 'complete').length,
-			testsCompletePct: pct(testRows.filter((t) => t.status === 'complete').length, testRows.length),
+			testsComplete,
+			testsCompletePct: pct(testsComplete, testRows.length),
 		},
 		sampleRows,
 		opRows,
 		testRows,
 	};
+}
+
+// Text for a visible error from an Axios/Directus failure.
+export function errMsg(e) {
+	return e?.response?.data?.errors?.[0]?.message || e?.message || 'request failed';
 }

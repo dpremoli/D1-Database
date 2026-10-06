@@ -10,14 +10,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 // @ts-ignore plain JS module, tested with node --test
-import { buildOverview } from './overview.js';
+import { buildOverview, errMsg } from './overview.js';
 
 const props = defineProps<{ primaryKey: string | number; refreshKey?: number }>();
 const api = useApi();
-
-function errMsg(e: any): string {
-	return e?.response?.data?.errors?.[0]?.message || e?.message || 'request failed';
-}
 
 let unmounted = false;
 let gen = 0;
