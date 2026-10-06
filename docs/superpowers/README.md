@@ -36,5 +36,6 @@ open.
 | [Sample timeline + campaign overview](specs/2026-10-06-sample-timeline-and-campaign-overview-design.md) | Directus extensions | Implemented |
 | [Diagnostics across a campaign](specs/2026-10-06-diagnostics-campaign-design.md) | Diagnostics | Implemented |
 | [Captures list: search, filter, bulk actions](specs/2026-10-06-captures-list-design.md) | force-app | Implemented |
+| [Explorer pages](specs/2026-10-06-explorer-pages-design.md) | Directus extensions | **Design only** |
 
 Add a row when a new spec lands, and update its Status line (and this table) when it ships.

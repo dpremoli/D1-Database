@@ -1,0 +1,259 @@
+# Explorer pages: a custom front end over Directus
+
+**Date:** 2026-10-06
+**Status:** Design only. Plan: [`plans/2026-10-06-explorer-pages.md`](../plans/2026-10-06-explorer-pages.md).
+Access rule: [ADR-0011](../../adr/0011-row-level-visibility.md) (proposed).
+
+## Why
+
+Researchers find the Directus Data Studio heavy: generic list layouts, long forms, and related
+records shown as tables of ids. Custom pages already exist (Home, the lab dashboards, the sample
+timeline, the campaign overview), but each one links straight back into `/content/<collection>/<id>`.
+Two of the best views (campaign overview, project items) also only exist as widgets *inside* the
+Data Studio form. So every click lands the user back in the Data Studio.
+
+Target workflow (maintainer, 2026-10-06):
+
+1. A user logs in and lands on a clean Home that shows **their** work.
+2. They can view projects, campaigns, samples, operations and tests as **formatted pages**, not
+   forms, and move between them without touching the Data Studio.
+3. They see only what they are authorised on (owner, co-owner, or through a project or campaign).
+   That is enforced by permissions (ADR-0011), not by these pages.
+4. Editing reuses the existing Directus forms (no form is rebuilt without a reason), surfaced
+   from the page.
+
+## Goals
+
+- One record page per main entity, all linking to each other: **Projects index, Project, Campaign,
+  Sample, Operation, Test session**.
+- Home becomes "my work": my projects and campaigns, recent samples, and "needs attention" tiles
+  (closes UX review D10).
+- Every link on our custom pages goes to an Explorer page. "Open in Data Studio" stays as a
+  secondary action.
+- Edit from the page in a drawer that renders the collection's normal Directus form, then return to
+  the page.
+- Everything reads through `/items` as the signed-in user, so permissions apply with no new endpoint
+  (one exception: the existing `d1-trace`).
+
+## Non-goals
+
+- Rebuilding create/edit forms. "Register sample" stays the one custom create flow; the rest open
+  the Directus form.
+- Replacing the Force, FAST, Diagnostics or Ask-DB pages. The Explorer links into them.
+- Hiding the Data Studio. Directus 11 has one global module bar and cannot hide a module per
+  role, and taking away `app_access` would also remove the custom pages. The aim is that nobody
+  *needs* the Data Studio.
+- Lab-wide statistics for non-admins once ADR-0011 is live (counts become "yours").
+- Phone layouts (UX review D15). Pages should not break on a tablet, but nothing more is
+  designed for it.
+
+## Architecture
+
+### Where the pages live: the `home` module
+
+The pages are **child routes of the existing `d1-home` module** (`id: 'home'`), not a new module:
+the user has one place to land, and the shared components live in one extension.
+
+| Route (`/admin` + …) | Page |
+|---|---|
+| `/home` | Home: my work, needs attention, quick actions (rework of `home.vue`) |
+| `/home/projects` | Projects index |
+| `/home/projects/:id` | Project |
+| `/home/campaigns/:id` | Campaign |
+| `/home/samples/:id` | Sample |
+| `/home/operations/:id` | Manufacturing operation |
+| `/home/tests/:id` | Test session |
+| `/home/register-sample`, `/home/people` | Unchanged |
+
+The module is added **first** on the module bar (`directus_settings.module_bar`, a migration
+following `20260711000090_fast_module_bar.sql`). The Data Studio (`content`) moves after the
+dashboards. Whether Directus 11 lands a user on the first module after login, or on `/content`,
+is checked in stage 1. If it does not, a small `app.after` redirect is out of scope; document it
+and move on.
+
+### Shared kit: `packages/d1-ui`
+
+There is no shared UI code across extensions today: styles are copied per view, and `geometry.ts`
+is vendored into three extensions with a sync check. A new **workspace package**
+`packages/d1-ui` (same pattern as `@d1/force-plotting`: consumed as source, vitest-tested, listed
+in the root `package.json` workspaces) holds:
+
+- **Pure logic, tested with vitest:**
+  - `recordRoute(collection, id)`: collection → Explorer route, falling back to
+    `/content/<collection>/<id>` for anything without a page;
+  - the campaign roll-up, moved from `d1-campaign-ops/src/overview.js`;
+  - the campaign **matrix builder**;
+  - **activity binning** for sparklines;
+  - status vocabularies and colours (test lifecycle from `20260619000013_status_vocabulary.sql`;
+    force `status` and `diag_status`).
+- **Components:**
+  - `RecordHeader` (code, title, kind chip, status, owner, actions);
+  - `StatTile`, `StatusBadge`, `RecordLink`, `Section` (title, count, collapsible, empty state);
+  - `LoadState` (loading / empty / error with text);
+  - `KeyValueGrid`, `ProgressBar`, `Sparkline`;
+  - `EditDrawer` (below).
+- **Composables:** `useItems` (the `useD1Items` wrapper from `d1-lab-dashboard`, moved) and
+  `useRequestGate` (latest-request-wins, moved).
+
+`d1-home` consumes it first. `d1-lab-dashboard` and `d1-campaign-ops` switch to importing the
+moved code in the same stream, so nothing is duplicated. Their Data Studio widgets stay, as thin
+wrappers. Styling follows Directus theme variables (`--theme--*`) so light and dark both work.
+Chart colours follow the repo's `dataviz` skill palette.
+
+### Editing: `EditDrawer`
+
+"Edit" on a page opens a `v-drawer` rendering Directus's own `v-form` for that collection:
+
+- fields come from the app's fields store (`useStores().useFieldsStore()`);
+- the record is loaded through `/items`, and changed fields are saved with `PATCH /items/<c>/<id>`;
+- the page refreshes on save.
+
+Because `v-form` renders the configured interfaces, the custom field widgets work unchanged: sample
+code, machine picker, material and project inherit, geometry preview. OCC needs no special handling:
+`occ_update_trigger_function()` only increments `version`. The drawer still re-reads `version`
+before saving and warns if someone else saved in between.
+
+**Fallback.** If `v-form` or the fields store turns out not to be usable from a module extension
+(checked first thing in stage 1), "Edit" opens `/content/<c>/<id>` in the same tab. The result is
+then recorded in this spec.
+
+"New" actions (new operation for this sample, new test, new campaign in this project) open
+`/content/<c>/+`. Pre-filling the parent needs a query-to-default mechanism Directus does not
+have, so it is out of scope (UX review D7 note).
+
+## Pages
+
+Each page has a header, then sections; empty sections collapse to one line. Every related record
+is a `RecordLink`. Data is fetched in parallel, scoped to the one parent, and each list caps at 200
+with a "show all" link.
+
+### Home (my work)
+
+- **Greeting and quick actions:** kept, but trimmed to the things a researcher does: register
+  sample, log operation, ask the database, print labels, dashboards.
+- **My work:** projects where I am PI or investigator, campaigns I own, and my 10 most recently
+  updated samples, as cards.
+- **Needs attention:** counts that link to a filtered list:
+  - force analysis in `error` on my operations;
+  - test sessions `failed`;
+  - operations with force files still `pending`;
+  - samples with no owner (admins only).
+- **Recent activity:** kept, now linking to Explorer pages.
+
+"Mine" means `owner_person_id.user_id = $CURRENT_USER` or co-owner. These are explicit filters,
+so Home is personal even before ADR-0011 is live.
+
+### Projects index
+
+A card grid with code, name, PI, status, dates, campaign count and sample count, plus a sparkline
+of operations and tests per week (last 26 weeks, from `aggregate` + `groupBy` on
+`week(operation_date)` / `week(session_date)`). Filters: *my role* (PI / investigator / any)
+and status. Search by code or name.
+
+### Project
+
+- **Header:** code, name, status, dates, PI, investigators, and Edit / Report / Data Studio actions.
+- **Tiles:** samples, operations, tests and campaigns.
+- **Campaigns** as cards, each with type, owner, status and a progress bar (the campaign roll-up's
+  "analysed n / m").
+- **Not in a campaign:** samples, operations and tests with this `project_id` and no campaign.
+- **Activity:** the sparkline at full width.
+- **Equipment used:** distinct equipment from the project's operations.
+
+Reads the real collections (not `project_rollup`, which ADR-0011 restricts).
+
+### Campaign
+
+- **Header:** code, name, type, project breadcrumb, owner, status, dates, default equipment and
+  material.
+- **Tiles and bars:** the current `CampaignOverview` content (moved into `d1-ui`).
+- **Sample × step matrix.** This is the main visual. Rows are the campaign's samples. Columns are
+  the campaign's operations, by `pass_code` / sequence, then test types. Each cell is coloured by
+  state: none, done, force analysed, diagnostics built, error, or skipped. The error text shows on
+  hover and a click opens the record. Wide matrices scroll horizontally with the sample column
+  pinned.
+- **Lists:** samples, operations and tests, plus the existing pickers (add samples / test
+  sessions, assign operations), which are still the right editing tool here.
+
+### Sample
+
+- **Header:**
+  - code, form, status;
+  - project and campaign breadcrumb;
+  - owner and co-owners;
+  - Edit, Print label, Report, QR, Data Studio actions.
+- **Overview card:**
+  - the **geometry drawing** (`geometry.ts`, the copy already vendored in `d1-home`);
+  - material name with the **composition bar**. Its logic moves from `d1-composition-bar` into
+    `d1-ui`, and the form interface keeps using it;
+  - dimensions, mass estimate, condition, manufacturing method.
+- **Life of the sample.** A horizontal timeline strip: stock lot → parents → this sample →
+  operations and tests by date → children. It reuses the `d1-trace` response, laid out
+  left-to-right with the vertical list as the narrow-screen fallback. Below it are a small lineage
+  graph (the `NodeGraph` cytoscape view, read-only) and the "N not visible to you" markers.
+- **Operations and tests** as tables with status badges. Each force-measured operation has
+  "View forces" (`/d1-force-dashboard?operation=`) and FAST ones have "View FAST".
+- **Files:** linked data files and archive paths (the `d1-archive-links` logic).
+
+### Operation
+
+- **Header:** pass code, process category, date, owner, operator, equipment, then the sample
+  (workpiece) and campaign.
+- **Parameters:** the matching `*_params` row as a key–value grid, with units from field notes.
+- **Inputs and outputs:** samples consumed and produced (`produced_by_operations`).
+- **Force analysis:** each file's `status` / `diag_status`, error text, and "View forces" /
+  "Diagnostics". Cutting metrics stay in the Force dashboard.
+- **Files.**
+
+### Test session
+
+- **Header:** test type and category, date, status, owner, operator, equipment, then the sample
+  and campaign.
+- **Parameters:** the matching test params row.
+- **Results:** `summary_stats` rendered as a key–value grid, grouped by the namespaced key each
+  worker writes.
+- **Files.**
+
+## Links
+
+`recordRoute()` is the single mapping. Switched to it:
+
+- `d1-home`;
+- `d1-lab-dashboard` (`d1-open` links, `SampleTimeline`);
+- `d1-campaign-ops` (overview tables, which are still useful inside the form);
+- `d1-project-items` (gains links);
+- the Force and FAST dashboards' `openRecord` host callbacks (`DirectusForceDashboard.vue`,
+  `FastDashboard.vue`).
+
+**QR labels:** `d1-report`'s `adminRecordUrl()` points new labels at `/admin/home/samples/<id>`.
+Printed labels keep working because `/admin/content/...` still exists.
+
+## Error handling
+
+Every page has explicit loading, empty and error states (`LoadState`), with the error text from
+Directus. A missing or forbidden record shows the same "Not found or not visible to you" page
+(matching `d1-trace`), with a link back to Home. Stale responses are dropped through
+`useRequestGate`.
+
+## Testing
+
+- **vitest in `packages/d1-ui`:** `recordRoute`, the campaign roll-up (existing `overview.js`
+  tests move across), the matrix builder (sparse cells, skipped files, several files per
+  operation, error precedence), activity binning, and status mapping.
+- **CI:** add `packages/d1-ui` to the `force-app-js`-style job (vitest + `vue-tsc`), and **build
+  `d1-home`, `d1-lab-dashboard` and `d1-campaign-ops`** in CI. Today only `d1-force-dashboard` is
+  built, so a broken import in the others would not be caught.
+- **Headless check:** pages rendered against a stubbed `/items` in Chromium for screenshots (as
+  `force-app-verify` does for the force app). Live checks go to
+  `docs/runbooks/physical-test-backlog.md`: the edit drawer saves through real interfaces,
+  module-bar landing, a filtered role sees only its records, and QR labels open the sample page.
+
+## Stages
+
+1. **Kit and Sample page:** `packages/d1-ui`, the router children, `recordRoute`, the
+   `EditDrawer` spike, the Sample page, and links switched. Module bar order.
+2. **Campaign page** with the matrix; move `CampaignOverview` into the kit.
+3. **Projects index, Project page, Home as "my work"** (closes D10).
+4. **Operation and Test pages**, `d1-project-items` links, QR target.
+5. ADR-0011 permissions (after the owner answers its open questions); can run in parallel with
+   2–4 because the pages don't depend on it.
