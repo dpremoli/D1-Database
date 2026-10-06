@@ -66,8 +66,8 @@ Tick the operations you want in the list (or *Tick all* for the filtered list), 
 **Apply recipe to N selected…**, choose a library recipe and **Queue**. For each cut the app makes
 the same request as the Bake button, one at a time, and shows progress; *Cancel* stops before the
 next one. The summary lists what was queued, **skipped** (already built with an equivalent
-recipe, or already queued) and **refused** (with the reason: for example, only admins can request
-host builds). Tick *Rebuild cuts already built with this recipe* to force those through.
+recipe, or already queued) and **refused** (with the reason: for example, your role can't request
+builds, which stops the run; Lab Members can, read-only roles can't). Tick *Rebuild cuts already built with this recipe* to force those through.
 "Queued" means waiting for the orchestrator daemon, which analyses them one after another;
 press *Refresh* to watch them turn built. Painted layers are not compared, so a cut whose layers
 changed after its last bake needs the rebuild box.

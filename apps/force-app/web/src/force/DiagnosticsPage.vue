@@ -131,7 +131,7 @@ async function build(recipe?: Recipe) {
 		buildMsg.value = 'Still analysing — check back shortly (is the force orchestrator daemon running?).';
 	} catch (e: any) {
 		buildMsg.value = e?.response?.status === 403
-			? 'Not permitted (admin only) to request a host build.'
+			? "Your role can't request builds."
 			: (e?.message || 'diagnostics request failed');
 	} finally {
 		building.value = false;

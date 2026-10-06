@@ -223,8 +223,9 @@ tool; a test cut on scrap stock is fine.
 - [ ] **P10 — skipped cuts really match.** Apply the same recipe again to the same selection:
   everything is skipped as "already built with this recipe" and `diag_recipe_hash` /
   `updated_at` on those rows do not change. Then tick *Rebuild*: they requeue. Since: this batch (PR TBD).
-- [ ] **P10 — non-admin refusal.** As a non-admin, Apply recipe to selected stops on the first
-  item with "not permitted (admin only)", nothing is queued. Since: this batch (PR TBD).
+- [ ] **P10 — build permissions by role.** As a Lab Member, Apply recipe to selected queues builds
+  (Lab Member can update `machining_force_analysis`, migration 111). As a role with read-only access
+  to analyses, it stops on the first item with "your role can't request builds" and nothing is queued. Since: this batch (PR TBD).
 - [ ] **#80** MATLAB run on the d1-server orchestrator and Directus asset download (held back).
 - [ ] **#10** Figure-mode PNGs re-baked by MATLAB for cuts with a saved crop (held back).
 - [ ] **#97** Tailscale serve, phone access, live-DAQ load (held back; security model is an owner

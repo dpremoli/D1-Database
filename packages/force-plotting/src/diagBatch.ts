@@ -85,13 +85,13 @@ export interface RunBatchArgs {
 
 function refusalReason(e: unknown): { reason: string; fatal: boolean } {
 	const x = e as { response?: { status?: number }; message?: string };
-	if (x?.response?.status === 403) return { reason: 'not permitted (admin only) to request a host build', fatal: true };
+	if (x?.response?.status === 403) return { reason: "your role can't request builds", fatal: true };
 	return { reason: x?.message || 'request failed', fatal: false };
 }
 
 /** Sequential on purpose: the host runs one bake at a time, and a cancel or a 403 should stop
  *  the very next request, not after a burst. A 403 stops the run (every later item would be
- *  refused the same way). */
+ *  refused the same way: the role can't update analysis rows). */
 export async function runBatch(a: RunBatchArgs): Promise<BatchSummary> {
 	const out: BatchSummary = { queued: [], skipped: [], refused: [], notRun: [], cancelled: false };
 	const todo = a.plan.filter((i) => i.action === 'queue');

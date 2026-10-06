@@ -93,11 +93,11 @@ describe('runBatch', () => {
 		expect(s.refused).toEqual([expect.objectContaining({ id: 'a', reason: 'boom' })]);
 		expect(s.queued.map((i) => i.id)).toEqual(['c', 'd']);
 	});
-	it('stops on 403 (admin only) instead of refusing every row separately', async () => {
+	it('stops on 403 (the role cannot request builds) instead of refusing every row separately', async () => {
 		const request = vi.fn(async () => { throw Object.assign(new Error('x'), { response: { status: 403 } }); });
 		const s = await runBatch({ plan: plan(), recipe: DEFAULT_RECIPE, request });
 		expect(request).toHaveBeenCalledTimes(1);
-		expect(s.refused[0].reason).toMatch(/admin only/);
+		expect(s.refused[0].reason).toMatch(/your role can't request builds/);
 		expect(s.notRun.map((i) => i.id)).toEqual(['c', 'd']);
 		expect(s.cancelled).toBe(false);
 	});
