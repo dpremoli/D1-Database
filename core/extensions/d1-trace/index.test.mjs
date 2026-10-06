@@ -1,6 +1,6 @@
 // Run with: node --test core/extensions/d1-trace/index.test.mjs
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 
 import ext from './index.js';
 
@@ -113,6 +113,7 @@ function mount({
     fn = baseFn(),
     dbError = null,
     root = ROOT,
+    onQuery = null,
 } = {}) {
     const reads = [];
     const sqls = [];
@@ -137,6 +138,7 @@ function mount({
         sqls.push(sql);
         if (dbError) throw dbError;
         const m = /FROM (f_\w+)\(/.exec(sql);
+        if (m) onQuery?.(m[1]);
         if (!m) return { rows: [] };
         return { rows: emulate(m[1], fn[m[1]], bindings[0] ?? root) };
     };
@@ -495,13 +497,32 @@ test('every read asks for all readable fields, so a restricted field cannot refu
 test('the SQL is bounded: LIMIT 501 per section, de-duplicated, under a statement timeout', async () => {
     const { handler, sqls } = mount({ readable: all });
     await call(handler, user);
-    assert.match(sqls[0], /SET LOCAL statement_timeout = \d+/);
-    const queries = sqls.slice(1);
+    const queries = sqls.filter((q) => !q.startsWith('SET LOCAL'));
     assert.equal(queries.length, 4);
+    // every statement is preceded by its own SET LOCAL, within the single 8 s budget
+    assert.equal(sqls.filter((q) => /^SET LOCAL statement_timeout = \d+$/.test(q)).length, 4);
+    for (let i = 0; i < sqls.length; i += 2) assert.match(sqls[i], /^SET LOCAL statement_timeout = \d+$/);
     for (const q of queries) assert.match(q, /LIMIT 501/);
     assert.match(queries[0], /GROUP BY sample_id/);
     assert.match(queries[1], /GROUP BY sample_id/);
     assert.match(queries[2], /GROUP BY via_sample_id, lot_id/);
+});
+
+test('the statement timeout is the time left of one 8 s deadline, never per statement', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+    const { handler, sqls } = mount({ readable: all, onQuery: () => t.mock.timers.tick(2500) });
+    await call(handler, user);
+    const timeouts = sqls.filter((q) => q.startsWith('SET LOCAL')).map((q) => Number(q.match(/= (\d+)/)[1]));
+    assert.deepEqual(timeouts, [8000, 5500, 3000, 1000]); // 8000 - 3 x 2500 = 500, floored to 1 s
+});
+
+test('an exhausted deadline stops before the next statement and is a 503', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+    const { handler, sqls } = mount({ readable: all, onQuery: () => t.mock.timers.tick(4500) });
+    const r = await call(handler, user);
+    assert.equal(r.status, 503);
+    assert.match(r.body.errors[0].message, /too large to trace/);
+    assert.equal(sqls.filter((q) => !q.startsWith('SET LOCAL')).length, 2); // the third never ran
 });
 
 test('a genealogy too large to trace within the timeout is a 503 with a readable message', async () => {

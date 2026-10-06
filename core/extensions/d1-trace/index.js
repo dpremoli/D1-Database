@@ -14,7 +14,9 @@
 //
 // The functions enumerate every PATH, not every node: a ladder of N diamonds has 2^N paths. Wrapping
 // them in GROUP BY / LIMIT cannot stop that work (Postgres produces all the paths first), so the
-// queries run in one transaction with a statement_timeout and a too-large genealogy is a 503.
+// queries run in one transaction with a statement_timeout and a too-large genealogy is a 503. The
+// timeout is one deadline for the whole request (TRACE_TIMEOUT_MS), not per statement: each
+// statement gets what is left, so the four of them cannot hold a pooled connection for 4x as long.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -24,7 +26,7 @@ const MAX_ROWS = 500;
 // ids per readByQuery `_in`, to keep the SQL parameter list small; pairs per `_or` filter.
 const CHUNK = 200;
 const PAIR_CHUNK = 100;
-// Upper bound for the path-enumerating functions (see above).
+// Upper bound for ALL the path-enumerating statements of one request together (see above).
 const TRACE_TIMEOUT_MS = 8000;
 
 // One row per distinct sample reached (a diamond A->B, A->C, B->D, C->D has D once, not twice), the
@@ -153,10 +155,17 @@ export default {
                 const rootRow = rootRows.get(id);
                 if (!rootRow) return fail(res, 404, 'ROUTE_NOT_FOUND', 'sample not found');
 
-                // One transaction so the timeout applies to all four (SET LOCAL ends with it).
+                // One transaction (SET LOCAL ends with it) and one deadline: before each statement the
+                // timeout is set to the time left (at least 1 s), and an exhausted budget is the same
+                // 503 as a statement that timed out.
                 const [anc, desc, stock, events] = await database.transaction(async (trx) => {
-                    await trx.raw(`SET LOCAL statement_timeout = ${TRACE_TIMEOUT_MS}`);
-                    const q = async (sql, bindings) => (await trx.raw(sql, bindings))?.rows ?? [];
+                    const deadline = Date.now() + TRACE_TIMEOUT_MS;
+                    const q = async (sql, bindings) => {
+                        const left = deadline - Date.now();
+                        if (left <= 0) throw Object.assign(new Error('trace deadline exhausted'), { code: '57014' });
+                        await trx.raw(`SET LOCAL statement_timeout = ${Math.max(1000, Math.ceil(left))}`);
+                        return (await trx.raw(sql, bindings))?.rows ?? [];
+                    };
                     return [
                         await q(lineageSql('f_trace_ancestors'), [id, id]),
                         await q(lineageSql('f_trace_descendants'), [id, id]),
