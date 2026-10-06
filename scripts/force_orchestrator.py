@@ -61,6 +61,7 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import psycopg2
@@ -673,6 +674,7 @@ def claim_octree(conn, limit: int = 2):
             UPDATE machining_force_analysis a SET octree_status='processing', updated_at=now()
               FROM picked WHERE a.id = picked.id
          RETURNING a.id, a.operation_id, a.pulses_per_rev, a.inner_diameter, a.outer_diameter, a.filter_chain::text AS filter_chain,
+                   a.crop_start_idx_override, a.crop_end_idx_override, a.sample_rate,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
         """,
             [limit],
@@ -789,6 +791,56 @@ def _patch_octree_climits(meta_path: Path, fx, fy, fz) -> None:
         log.warning("[OCTREE] climits patch skipped: %s", e)
 
 
+def _crop_opts(row) -> dict:
+    """MATLAB crop_start_sec/crop_end_sec from the official-crop override columns. The
+    dashboard stores round(sec * Fs) and reads idx / Fs, so idx / sample_rate round-trips.
+    Only set when an override exists and sample_rate is known; octree/grid builds only
+    (process_file keeps the auto window so summary cut_*_idx stays the auto one)."""
+    out = {}
+    fs = row.get("sample_rate")
+    if not fs or float(fs) <= 0:
+        return out
+    for col, key in (
+        ("crop_start_idx_override", "crop_start_sec"),
+        ("crop_end_idx_override", "crop_end_sec"),
+    ):
+        idx = row.get(col)
+        if idx is not None:
+            out[key] = float(idx) / float(fs)
+    return out
+
+
+_BUILD_KEYS = (
+    "speed_mode",
+    "feed",
+    "diam",
+    "inner_diam",
+    "ppr",
+    "cut_start_sec",
+    "cut_end_sec",
+    "crop_source",
+)
+
+
+def _publish_build_manifest(
+    dst: Path, matlab_json: str, kind: str, n_points: int
+) -> bool:
+    """Write d1_build.json (the geometry MATLAB actually integrated, plus schema/kind/
+    n_points/built_at) next to the published metadata.json. Without MATLAB's JSON, publish
+    nothing: the client then falls back to the cache window and row values."""
+    try:
+        m = json.loads(Path(matlab_json).read_text(encoding="utf-8"))
+        manifest = {"schema": 1, "kind": kind}
+        manifest.update({k: m[k] for k in _BUILD_KEYS})
+        manifest["n_points"] = int(n_points)
+        manifest["built_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        (dst / "d1_build.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return True
+    except (OSError, ValueError, KeyError) as e:
+        log.warning("[%s] no d1_build.json (%s: %s)", kind.upper(), type(e).__name__, e)
+        return False
+
+
 def process_octree_row(
     conn, row, exe: str, timeout: int, matlab_opts: dict, potree_exe: str
 ) -> str:
@@ -815,6 +867,7 @@ def process_octree_row(
         fchain = row.get("filter_chain")
         if fchain:
             opts["filter_chain"] = str(fchain)
+        opts.update(_crop_opts(row))
         opts["octree_out"] = binp
         stmt = (
             f"addpath('{mlq(str(MATLAB_SRC))}'); "
@@ -874,6 +927,7 @@ def process_octree_row(
         dst.mkdir(parents=True, exist_ok=True)
         for fn in ("metadata.json", "hierarchy.bin", "octree.bin"):
             shutil.copy2(Path(octmp) / fn, dst / fn)
+        _publish_build_manifest(dst, binp + ".json", "octree", n)
 
         with conn.cursor() as cur:
             cur.execute(
@@ -1364,6 +1418,7 @@ def claim_grid(conn, limit: int = 2):
             UPDATE machining_force_analysis a SET grid_octree_status='processing', updated_at=now()
               FROM picked WHERE a.id = picked.id
          RETURNING a.id, a.operation_id, a.pulses_per_rev, a.inner_diameter, a.outer_diameter, a.filter_chain::text AS filter_chain,
+                   a.crop_start_idx_override, a.crop_end_idx_override, a.sample_rate,
                    (SELECT metadata->>'archive_path' FROM directus_files WHERE id = a.directus_files_id) AS archive_path
         """,
             [limit],
@@ -1407,6 +1462,7 @@ def process_grid_row(
         fchain = row.get("filter_chain")
         if fchain:
             opts["filter_chain"] = str(fchain)
+        opts.update(_crop_opts(row))
         opts["grid_out"] = binp
         opts["grid"] = {
             "n": int(grid_opts["n"]),
@@ -1470,6 +1526,7 @@ def process_grid_row(
         dst.mkdir(parents=True, exist_ok=True)
         for fn in ("metadata.json", "hierarchy.bin", "octree.bin"):
             shutil.copy2(Path(octmp) / fn, dst / fn)
+        _publish_build_manifest(dst, binp + ".json", "grid", n)
 
         with conn.cursor() as cur:
             cur.execute(

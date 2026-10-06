@@ -102,6 +102,46 @@ assert(isequal(tB, tA(1:step2:end)), ...
 
 fprintf('PASS octree_out + live_cache.bin (step=%d): cloud=%d, cache=%d, stride phase verified\n', ...
     step2, octN2, cacheN2);
+
+% ---- build manifest + official crop window (MATLAB is not in CI: run by hand) ----------
+% octree_out writes <octree_out>.json with the geometry used; crop_start_sec/crop_end_sec
+% (seconds on the file's Time axis) replace the auto window and are reported in the JSON.
+bj = jsondecode(fileread([octp '.json']));
+assert(strcmp(bj.crop_source, 'auto'), 'no crop opts -> crop_source auto, got %s', bj.crop_source);
+assert(strcmp(bj.speed_mode, 'measured'), 'speed_mode must be measured');
+assert(bj.feed == 0.1 && bj.diam == 60 && bj.inner_diam == 0 && bj.ppr == 1, 'geometry mismatch');
+assert(bj.cut_end_sec > bj.cut_start_sec, 'cut window must be non-empty');
+
+tmp3 = tempname; mkdir(tmp3);
+octp3 = fullfile(tmp3, 'cloud.bin');
+cs = 0.5; ce = 1.5;
+process_force(matp, tmp3, struct('octree_out', octp3, 'crop_start_sec', cs, 'crop_end_sec', ce));
+b3 = jsondecode(fileread([octp3 '.json']));
+assert(strcmp(b3.crop_source, 'override'), 'crop applied -> crop_source override');
+% t is a sample grid at 1/Fs: start = first t >= cs, end = last t <= ce.
+assert(abs(b3.cut_start_sec - cs) <= 1/Fs, 'cut_start_sec %g not at crop start %g', b3.cut_start_sec, cs);
+assert(b3.cut_end_sec <= ce + eps && b3.cut_end_sec >= b3.cut_start_sec, ...
+    'cut_end_sec %g beyond crop end %g', b3.cut_end_sec, ce);
+n3 = read_bin_n(octp3, hex2dec('44314F43'), 1);
+assert(n3 <= round((ce - cs) * Fs) + 2, 'octree has %d pts, more than the crop window', n3);
+assert(read_bin_n(octp3, hex2dec('44314F43'), 1) < octN, 'crop must shorten the cloud');
+
+% Degenerate window (start past the end of the file): falls back to auto, never empty.
+tmp4 = tempname; mkdir(tmp4);
+octp4 = fullfile(tmp4, 'cloud.bin');
+process_force(matp, tmp4, struct('octree_out', octp4, 'crop_start_sec', 1e6, 'crop_end_sec', 1e6 + 1));
+b4 = jsondecode(fileread([octp4 '.json']));
+assert(strcmp(b4.crop_source, 'auto'), 'degenerate crop must fall back to auto');
+assert(read_bin_n(octp4, hex2dec('44314F43'), 1) == octN, 'degenerate crop must equal the auto cloud');
+
+% grid_out writes the same manifest.
+tmp5 = tempname; mkdir(tmp5);
+grdp = fullfile(tmp5, 'grid.bin');
+process_force(matp, tmp5, struct('grid_out', grdp, 'crop_start_sec', cs, 'crop_end_sec', ce, ...
+    'grid', struct('n', 128)));
+b5 = jsondecode(fileread([grdp '.json']));
+assert(strcmp(b5.crop_source, 'override') && abs(b5.cut_start_sec - cs) <= 1/Fs, 'grid manifest mismatch');
+fprintf('PASS build manifest + crop window (octree %d pts -> %d, grid manifest ok)\n', octN, n3);
 fprintf('ALL OCTREE_OUT TESTS PASSED\n');
 end
 
