@@ -142,6 +142,9 @@ would silently remove them.
 
 - `tests/` integration script (or an extension `node --test` with a stubbed `ItemsService`)
   asserting the generated permission rows match `access_rules`.
+- `physical_samples.co_owners` is both a legacy TEXT column and the M2M alias over
+  `sample_co_owners`. Check on a live Directus that `co_owners._some` in a permission filter
+  resolves to the junction; if it does not, drop or rename the legacy column first.
 - Physical backlog: as user A (owner) and user B (unrelated), each rule above is visible to A,
   invisible to B, and reachable by B after B is added as a co-owner or investigator.
 
