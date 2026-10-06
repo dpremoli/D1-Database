@@ -16,8 +16,8 @@
 |---|---|---|---|
 | A — frontend: 8 + 5 (plotting helpers, FrmCloud, FrmOctree, ForceChart) | `.claude/worktrees/agent-aca1979536c1574bf` | `worktree-agent-aca1979536c1574bf` | reviewed, merged |
 | B — host: 7 + 6 (orchestrator, process_force.m, tests) | `.claude/worktrees/agent-a6cc7b906792cc93b` | `worktree-agent-a6cc7b906792cc93b` | reviewed, merged (MATLAB unexecuted — backlog) |
-| C — frontend: consume `d1_build.json`, dashboard, docs, backlog (after A and B) | `.claude/worktrees/agent-acf389501a9318a9d` | `worktree-agent-acf389501a9318a9d` | in progress (Sonnet worker) |
-| Simplify / Opus review / verify | coordinator | `ccr-37b6f575-4lu7ni` | not started |
+| C — frontend: consume `d1_build.json`, dashboard, docs, backlog (after A and B) | `.claude/worktrees/agent-acf389501a9318a9d` | `worktree-agent-acf389501a9318a9d` | reviewed, merged |
+| Simplify / Opus review / verify | coordinator | `ccr-37b6f575-4lu7ni` | in progress |
 | PR + merge | coordinator | — | not started |
 
 Workers: `.claude/agents/force-plotting-implementer.md` (Sonnet, medium effort — the user's
