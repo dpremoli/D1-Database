@@ -24,6 +24,9 @@ describe('htmlToPlainText entities', () => {
   it('decodes once: &amp;lt; stays &lt;', () => {
     expect(htmlToPlainText('&amp;lt; &amp;#65;')).toBe('&lt; &#65;');
   });
+  it('decodes tab, line feed and carriage return entities to the real characters', () => {
+    expect(htmlToPlainText('a&#10;b&#x0A;c&#9;d&#13;&#10;e&#xD;f')).toBe('a\nb\nc\td\ne\nf');
+  });
   it('leaves unknown, control and out-of-range entities as written', () => {
     expect(htmlToPlainText('&bogus; &#0; &#1114112; &#xD800; &constructor; &valueOf;')).toBe('&bogus; &#0; &#1114112; &#xD800; &constructor; &valueOf;');
   });

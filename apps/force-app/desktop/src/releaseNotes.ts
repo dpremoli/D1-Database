@@ -32,8 +32,9 @@ const NAMED_ENTITIES: Record<string, string> = {
 const ENTITY_RE = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z][a-zA-Z0-9]{1,8}));/g;
 
 /** One entity: numeric (`&#8217;`, `&#x2019;`) or one of the common named ones. Used as a single
- * `replace` pass, so `&amp;lt;` becomes `&lt;`, not `<`. Anything unknown, a control character or
- * an out-of-range code point is left as written. */
+ * `replace` pass, so `&amp;lt;` becomes `&lt;`, not `<`. Tab, line feed and carriage return
+ * (`&#9;`, `&#10;`, `&#13;`) become the real characters; any other control character, anything
+ * unknown or an out-of-range code point is left as written. */
 function decodeEntity(m: string, dec?: string, hex?: string, name?: string): string {
   if (name) {
     const key = Object.hasOwn(NAMED_ENTITIES, name) ? name : name.toLowerCase();
@@ -41,6 +42,7 @@ function decodeEntity(m: string, dec?: string, hex?: string, name?: string): str
   }
   const cp = dec ? Number.parseInt(dec, 10) : Number.parseInt(hex ?? '', 16);
   if (cp === 160) return ' ';
+  if (cp === 9 || cp === 10 || cp === 13) return String.fromCharCode(cp);
   if (cp < 32 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return m;
   return String.fromCodePoint(cp);
 }
@@ -55,6 +57,7 @@ export function htmlToPlainText(html: string): string {
     .replace(/<\s*\/\s*(p|div|h[1-6]|ul|ol|tr|pre|blockquote)\s*>/gi, '\n')
     .replace(/<[^>]*>/g, '')
     .replace(ENTITY_RE, decodeEntity)
+    .replace(/\r\n?/g, '\n')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
