@@ -82,21 +82,19 @@ function showUpdateDialog(version: string, notes: string): void {
 // Set once a downloaded update is deferred because a cut was running when it finished; re-checked
 // on a slow poll rather than wired to a push event, since nothing pushes "recording just stopped"
 // to the main process either.
-let pendingVersion: string | null = null;
-let pendingNotes = '';
+let pending: { version: string; notes: string } | null = null;
 let recheckTimer: ReturnType<typeof setInterval> | null = null;
 
 function deferUntilIdle(version: string, notes: string): void {
-  pendingVersion = version;
-  pendingNotes = notes;
+  pending = { version, notes };
   if (recheckTimer) return;
   recheckTimer = setInterval(async () => {
-    if (pendingVersion && !(await isRecording())) {
+    if (pending && !(await isRecording())) {
       if (recheckTimer) clearInterval(recheckTimer);
       recheckTimer = null;
-      const v = pendingVersion;
-      pendingVersion = null;
-      showUpdateDialog(v, pendingNotes);
+      const p = pending;
+      pending = null;
+      showUpdateDialog(p.version, p.notes);
     }
   }, 60_000);
 }

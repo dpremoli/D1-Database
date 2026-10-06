@@ -221,7 +221,8 @@ function registerShellIpc(): void {
   // backend each time rather than taken from the renderer, since the root can change at runtime.
   ipcMain.handle('shell:reveal', async (event, requested: unknown) => {
     if (!fromApp(event)) return { ok: false, reason: 'not allowed from this page' };
-    return revealInFileBrowser(requested);
+    const root = await currentCapturesRoot();
+    return root ? revealInFileBrowser(requested, root) : NO_BACKEND;
   });
 
   // R11: Settings > Connectivity's "Restart recorder". Goes through the same supervisor as launch
@@ -246,10 +247,10 @@ function registerShellIpc(): void {
   });
 }
 
-/** Opens `requested` in the file browser if it lies inside the backend's captures folder. */
-async function revealInFileBrowser(requested: unknown): Promise<{ ok: boolean; reason?: string }> {
-  const root = await currentCapturesRoot();
-  if (!root) return { ok: false, reason: "can't reach the recording backend" };
+const NO_BACKEND = { ok: false, reason: "can't reach the recording backend" };
+
+/** Opens `requested` in the file browser if it lies inside the captures folder `root`. */
+async function revealInFileBrowser(requested: unknown, root: string): Promise<{ ok: boolean; reason?: string }> {
   const check = checkRevealTarget(requested, root);
   if (!check.ok) return check;
   if (check.isDir) {
@@ -266,7 +267,7 @@ async function revealInFileBrowser(requested: unknown): Promise<{ ok: boolean; r
  * (GET /storage/config), the same root "Show in folder" is confined to. */
 async function openCapturesFolder(): Promise<void> {
   const root = await currentCapturesRoot();
-  const result = root ? await revealInFileBrowser(root) : { ok: false, reason: "can't reach the recording backend" };
+  const result = root ? await revealInFileBrowser(root, root) : NO_BACKEND;
   if (!result.ok) {
     void dialog.showMessageBox({
       type: 'warning',
