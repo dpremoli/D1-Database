@@ -58,13 +58,17 @@ export async function findOperationForCapture(captureId: string): Promise<string
 
 /** The analysis row linked to this operation, or null. Throws when the lookup fails. */
 export async function findAnalysisRow(opId: string): Promise<AnalysisLink | null> {
+	// operation_id is not UNIQUE, so an older race can have left two rows: take the one that
+	// already links the most files rather than whichever the database returns first.
 	const res = await api.get('/items/machining_force_analysis', {
 		params: {
 			filter: { operation_id: { _eq: opId } },
-			fields: ['id', 'live_cache_file', 'directus_files_id'], limit: 1,
+			fields: ['id', 'live_cache_file', 'directus_files_id'], limit: 10,
 		},
 	});
-	return (res.data?.data?.[0] as AnalysisLink | undefined) ?? null;
+	const rows = (res.data?.data ?? []) as AnalysisLink[];
+	const links = (r: AnalysisLink) => Number(!!r.live_cache_file) + Number(!!r.directus_files_id);
+	return rows.reduce<AnalysisLink | null>((best, r) => (!best || links(r) > links(best) ? r : best), null);
 }
 
 /**
@@ -98,12 +102,15 @@ export function needsBlobs(p: UploadProgress, matWritten: boolean): boolean {
  * existed (an earlier attempt, or a reply that was lost) its analysis row may too, with only some
  * of its files linked. What the row already links is adopted as progress, so those files are not
  * uploaded again (they would be orphans), and the row is remembered for analysisAlreadyLinked().
- * An unknown answer (the lookup failed) carries on as "no row", as the post would have anyway.
+ * An unknown answer (the lookup failed) stops the upload: carrying on would post a second analysis
+ * row next to an existing one (operation_id is not UNIQUE). Trying again is safe.
  */
 export async function adoptExistingAnalysis(p: UploadProgress, opId: string, existing: boolean): Promise<void> {
 	if (p.analysisDone || !existing) return;
-	let row: AnalysisLink | null = null;
-	try { row = await findAnalysisRow(opId); } catch { /* unknown: carry on and post */ }
+	let row: AnalysisLink | null;
+	try { row = await findAnalysisRow(opId); } catch (e: any) {
+		throw new Error(`could not check the existing database record for this capture (${e?.message || e}); try again`);
+	}
 	if (!row) return;
 	p.analysisRow = row;
 	if (row.live_cache_file) p.cacheFileId = row.live_cache_file;

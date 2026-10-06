@@ -227,6 +227,31 @@ describe('uploadCaptureColdStart with a partial analysis row already in the data
 		expect(patch).not.toHaveBeenCalled();
 	});
 
+	it('a failed lookup of the existing row stops the upload instead of risking a second row', async () => {
+		get.mockImplementation(async (url: string) => {
+			if (url === '/items/manufacturing_operations') return { data: { data: [{ operation_id: 'op-old', recorded_metadata: { capture_id: 'cap-1' } }] } };
+			if (url === '/items/machining_force_analysis') throw Object.assign(new Error('timeout'), { response: { status: 503 } });
+			return { data: { data: [] } };
+		});
+		await expect(uploadCaptureColdStart(info)).rejects.toThrow(/could not check/);
+		expect(count('/files')).toBe(0);
+		expect(count('/items/machining_force_analysis')).toBe(0);
+	});
+
+	it('with two rows from an older race, adopts the more complete one', async () => {
+		get.mockImplementation(async (url: string) => {
+			if (url === '/items/manufacturing_operations') return { data: { data: [{ operation_id: 'op-old', recorded_metadata: { capture_id: 'cap-1' } }] } };
+			if (url === '/items/machining_force_analysis') return { data: { data: [
+				{ id: 'a-partial', live_cache_file: null, directus_files_id: null },
+				{ id: 'a-full', live_cache_file: 'c', directus_files_id: 'm' },
+			] } };
+			return { data: { data: [] } };
+		});
+		await uploadCaptureColdStart(info);
+		expect(count('/files')).toBe(0);
+		expect(patch).not.toHaveBeenCalled();
+	});
+
 	it('a failed PATCH surfaces as a linking error', async () => {
 		seed({ live_cache_file: 'c', directus_files_id: null });
 		patch.mockRejectedValueOnce(Object.assign(new Error('x'), { response: { status: 500 } }));
