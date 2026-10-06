@@ -23,6 +23,12 @@ const code = computed(() => sample.value?.sample_code ?? 'Sample');
 const studioTo = computed(() => dataStudioRoute('physical_samples', props.id));
 const life = computed(() => (trace.value.data ? buildLife(trace.value.data) : []));
 const notes = computed(() => (trace.value.data ? truncatedNotes(trace.value.data) : []));
+const coOwners = computed(() =>
+	(Array.isArray(sample.value?.co_owners) ? sample.value.co_owners : [])
+		.map((c: any) => [c?.user_id?.first_name, c?.user_id?.last_name].filter(Boolean).join(' '))
+		.filter(Boolean)
+		.join(', '),
+);
 const campaignRows = computed(() => campaigns.value.data.map((c: any) => c.campaign_id).filter((c: any) => c?.campaign_id));
 
 // /d1-report/* are endpoint pages (printable HTML), not app routes: open them in a new tab, same
@@ -64,7 +70,7 @@ const openReportPage = () => openReport(`/d1-report/sample/${encodeURIComponent(
 					<template #status><StatusBadge kind="sample" :value="sample.current_status" /></template>
 					<template #meta>
 						<span v-if="sample.owner_person_id">Owner: {{ sample.owner_person_id.full_name }}</span>
-						<span v-if="sample.co_owners">Co-owners: {{ sample.co_owners }}</span>
+						<span v-if="coOwners">Co-owners: {{ coOwners }}</span>
 						<span v-if="sample.project_id?.project_name">{{ sample.project_id.project_name }}</span>
 						<span v-if="sample.export_controlled" class="export">Export controlled</span>
 					</template>
