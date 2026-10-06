@@ -1,6 +1,6 @@
 # Captures list: search, filter, sort, paging, bulk actions
 
-**Status:** Design. Implementation: `apps/force-app/web/src/settings/CapturesSettings.vue`,
+**Status:** Implemented. Implementation: `apps/force-app/web/src/settings/CapturesSettings.vue`,
 `apps/force-app/web/src/settings/captureList.ts`, `GET /captures/browse` in
 `apps/force-app/backend/app/main.py`. Review item R9 of
 [`docs/reviews/2026-10-05-ux-utility-review.md`](../../reviews/2026-10-05-ux-utility-review.md);

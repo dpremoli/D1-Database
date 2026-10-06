@@ -101,6 +101,34 @@ tool; a test cut on scrap stock is fine.
 - [ ] **Leaving the page mid-cut.** Start a cut, go to Plot, come back after it ends: the save dialog
   offers to save it. Since #123 (doc fix).
 
+### Captures list (thousands of captures on the real drive)
+- [ ] **R9 — browse speed on the real capture drive.** With the capture drive holding about 1,000
+  or more captures (a network drive if that is what the lab uses; copy old captures in if needed),
+  open Settings > Local Captures. Expect the first 200 rows within a few seconds, "Showing 200 of
+  N" with the true N, and Load more adding the next page. Press Refresh again: a warm scan should
+  be clearly faster than the first. Note both times and the drive type here. Since: this batch (PR
+  TBD).
+- [ ] **R9 — search, sort and filters at scale.** Search a sample name, a date (`2026-10-02`) and an
+  id fragment: results match a hand check in File Explorer. Sort by Largest first: the top rows are
+  the biggest folders. The Not uploaded and Uploaded chips keep loading pages and the footer's
+  "checked" count makes sense. Needs a real Directus so the uploaded state is real. Since: this
+  batch (PR TBD).
+- [ ] **R9 — bulk delete frees the space.** Select a handful of uploaded captures and Delete
+  selected: the confirm's space total matches the drive's free space gained (Explorer or the
+  "Free on drive" figure after Refresh), the folders are gone, and the remote backup copy is marked
+  deleted rather than removed. Include one not-uploaded capture: the only-copy warning appears.
+  Cancel mid-run: the rest are untouched. Since: this batch (PR TBD).
+- [ ] **R9 — cleanup never touches unsynced captures.** With real uploaded and not-uploaded
+  captures older than N days, Free up space > Preview lists only captures that have a real
+  `manufacturing_operations` row; cross-check three in Directus. Not-uploaded, incomplete and
+  queued ones are absent at any N. Run it and confirm those are still on disk. Repeat with Directus
+  stopped: the preview must refuse. Since: this batch (PR TBD).
+- [ ] **R9 — upload-all progress and cancel against the real Directus.** With three or more
+  not-uploaded captures, Upload N unsynced: the bar shows "Uploading n of m" and the capture name,
+  Cancel stops after the current one and says how many were not attempted, and each uploaded
+  capture has exactly one operation row (no duplicates after cancelling and running again). Since:
+  this batch (PR TBD).
+
 ### Desktop shell
 - [ ] **R11 — Restart recorder.** Kill the backend (Task Manager): the Doctor's "Restart recorder"
   brings it back and the doctor goes green. While recording: it refuses. With the backend hung
