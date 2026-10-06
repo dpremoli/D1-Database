@@ -7,6 +7,7 @@
  */
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
+import CampaignOverview from './CampaignOverview.vue';
 
 const props = defineProps<{ primaryKey?: string | number | null }>();
 const api = useApi();
@@ -36,6 +37,7 @@ let linkedGen = 0;
 let searchGen = 0;
 const error = ref<string | null>(null);   // last failed load / add / remove, shown above the chips
 const busyId = ref<string | null>(null);  // operation currently being added or removed
+const overviewKey = ref(0);               // bumped after an add/remove so the overview reloads
 
 const linked = ref<any[]>([]);
 async function loadLinked() {
@@ -97,6 +99,7 @@ async function add(op: any) {
 		busyId.value = null;
 	}
 	await loadLinked();
+	overviewKey.value++;
 }
 async function remove(op: any) {
 	if (busyId.value) return;
@@ -109,6 +112,7 @@ async function remove(op: any) {
 		busyId.value = null;
 	}
 	await loadLinked();
+	overviewKey.value++;
 	runSearch();
 }
 </script>
@@ -117,6 +121,8 @@ async function remove(op: any) {
 	<div class="co">
 		<div v-if="isNew" class="co-msg">Save the campaign first, then add operations here.</div>
 		<template v-else>
+			<CampaignOverview :primary-key="primaryKey!" :refresh-key="overviewKey" />
+			<h4 class="co-h">Add or remove operations</h4>
 			<div v-if="error" class="co-msg co-err">{{ error }}</div>
 			<div class="co-linked">
 				<div v-for="op in linked" :key="op.operation_id" class="co-chip">
@@ -148,6 +154,7 @@ async function remove(op: any) {
 
 <style scoped>
 .co { font-size: 13px; }
+.co-h { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--theme--foreground-subdued, #64748b); margin: 16px 0 6px; }
 .co-msg { color: var(--theme--foreground-subdued, #6b7684); padding: 8px 2px; display: flex; align-items: center; gap: 6px; } .co-msg.sm { font-size: 12px; padding: 5px 2px; }
 .co-err { color: #b91c1c; }
 .co-linked { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
