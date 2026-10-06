@@ -129,10 +129,22 @@ These apply to bulk delete and cleanup. The single-row Delete keeps its present 
    N days by its recording time (folder mtime). Not-uploaded, incomplete and unknown never
    qualify. The candidate list is previewed (count, space, oldest and newest) before the
    confirm, and the rules are re-applied to fresh state at the moment of deleting, not to the
-   preview.
+   preview: one lookup of every candidate after the confirm, then again per item right before its
+   delete (see rule 7).
 6. **Per-item results.** Deletion runs one capture at a time and carries on after a failure. The
    summary lists deleted, failed (with the reason) and skipped (became unsafe), plus total space
    actually freed (`freed_mb` from the endpoint).
+
+7. **Three loops share the page, so each checks the others.** Upload all, bulk delete and cleanup
+   can overlap with each other and with the row buttons. A capture with an upload or delete in
+   flight (`busy`) is not selectable, not a cleanup candidate and not offered an Upload; bulk delete,
+   cleanup preview and the row Upload buttons are disabled while Upload all runs, and Upload all
+   and the row buttons are disabled while a bulk delete runs. Per item, right before `DELETE`,
+   the page re-reads the capture from the recorder (`GET /captures/{id}/summary`: still there and
+   finalized) and, for cleanup, re-asks Directus whether its known operation still has a complete
+   analysis row. That fresh state decides; the row the plan was made from does not. A failed
+   re-check skips the item with the reason. The recorder's own refusals (recording, recover in
+   flight) stay the last gate.
 
 ## Data flow
 

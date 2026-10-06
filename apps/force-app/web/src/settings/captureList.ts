@@ -100,8 +100,8 @@ export function needsMorePages(o: { loaded: number; total: number; matched: numb
 
 /** Incomplete captures are never selectable in bulk (recover them, or delete one at a time where
  * the dialog says what is lost), nor is anything being recorded, deleted or recovered. */
-export function isBulkSelectable(c: ListCapture): boolean {
-	return c.finalized && !c.recording && !c.discarding && !c.recovering;
+export function isBulkSelectable(c: ListCapture, f?: Pick<RowFacts, 'busyIds'>): boolean {
+	return c.finalized && !c.recording && !c.discarding && !c.recovering && !f?.busyIds?.has(c.id);
 }
 
 /** Why bulk delete is unavailable, or null. Without a known upload state it cannot tell which
@@ -112,8 +112,8 @@ export function bulkDeleteBlockReason(f: RowFacts): string | null {
 		: 'Bulk delete needs to know which captures are uploaded, and the database could not be reached.';
 }
 
-export function selectableIds(rows: ListCapture[]): string[] {
-	return rows.filter(isBulkSelectable).map((c) => c.id);
+export function selectableIds(rows: ListCapture[], f?: Pick<RowFacts, 'busyIds'>): string[] {
+	return rows.filter((c) => isBulkSelectable(c, f)).map((c) => c.id);
 }
 
 export function toggleId(sel: ReadonlySet<string>, id: string): Set<string> {
@@ -123,8 +123,8 @@ export function toggleId(sel: ReadonlySet<string>, id: string): Set<string> {
 }
 
 /** Select every selectable row in `rows`, or clear them all if they are already all selected. */
-export function toggleAll(sel: ReadonlySet<string>, rows: ListCapture[]): Set<string> {
-	const ids = selectableIds(rows);
+export function toggleAll(sel: ReadonlySet<string>, rows: ListCapture[], f?: Pick<RowFacts, 'busyIds'>): Set<string> {
+	const ids = selectableIds(rows, f);
 	const all = ids.length > 0 && ids.every((id) => sel.has(id));
 	const next = new Set(sel);
 	for (const id of ids) { if (all) next.delete(id); else next.add(id); }
@@ -160,7 +160,7 @@ export function planBulkDelete(selected: ReadonlySet<string>, rows: ListCapture[
 	const byId = new Map(rows.map((c) => [c.id, c]));
 	for (const id of selected) {
 		const c = byId.get(id);
-		if (!c || !isBulkSelectable(c)) { skipped.push(id); continue; }
+		if (!c || !isBulkSelectable(c, f)) { skipped.push(id); continue; }
 		const state = rowState(c, f);
 		items.push({ id, size_mb: c.size_mb, state, onlyCopy: state !== 'uploaded' && !f.remoteComplete?.has(id) });
 	}
@@ -179,7 +179,7 @@ export function planBulkDelete(selected: ReadonlySet<string>, rows: ListCapture[
  * busy, and older than the cutoff by folder mtime. Used for the preview and again at delete time on
  * fresh state. Not uploaded, incomplete and unknown never qualify. */
 export function isCleanupCandidate(c: ListCapture, f: RowFacts, cutoffMs: number): boolean {
-	if (!f.uploadedKnown || !c.finalized) return false;
+	if (!f.uploadedKnown || !c.finalized || f.busyIds?.has(c.id)) return false;
 	if (rowState(c, f) !== 'uploaded' || f.queuedIds.has(c.id)) return false;
 	if (!(c.mtime > 0)) return false;   // unknown age is never "old"
 	return c.mtime * 1000 < cutoffMs;
@@ -208,6 +208,23 @@ export function summarizeCleanup(cands: ListCapture[]): CleanupPreview {
 		oldest: times.length ? Math.min(...times) : null,
 		newest: times.length ? Math.max(...times) : null,
 	};
+}
+
+/** Right before one bulk delete: why this capture must be skipped, judged on a freshly fetched row
+ * and fresh facts rather than the row the plan was made from, or null when it may go. `fresh` is
+ * null when the capture is no longer there. */
+export function bulkDeleteSkipReason(fresh: ListCapture | null, f: RowFacts): string | null {
+	if (!fresh) return 'no longer on disk';
+	if (f.busyIds?.has(fresh.id)) return 'busy (an upload or delete is running for it)';
+	if (!isBulkSelectable(fresh, f)) return 'no longer safe to delete';
+	return bulkDeleteBlockReason(f);
+}
+
+/** The same for Free up space: the cleanup rule re-applied to fresh state. */
+export function cleanupSkipReason(fresh: ListCapture | null, f: RowFacts, cutoffMs: number): string | null {
+	if (!fresh) return 'no longer on disk';
+	if (f.busyIds?.has(fresh.id)) return 'busy (an upload or delete is running for it)';
+	return isCleanupCandidate(fresh, f, cutoffMs) ? null : 'no longer safe to delete';
 }
 
 // ---- Results ----

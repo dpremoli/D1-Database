@@ -99,7 +99,14 @@ export interface UploadStateResult {
 	uploaded: Record<string, boolean>;
 	/** Operation row exists but the upload never finished: still the only copy, still uploadable. */
 	partial: Record<string, boolean>;
+	/** The operation row to use: for an uploaded capture the one whose analysis row is complete. */
 	opIds: Record<string, string>;
+}
+
+/** Whether this one operation's upload is complete right now. A single small query: the fresh
+ * check made right before a delete. Throws when Directus can't be asked. */
+export async function recheckUploaded(opId: string, hasMat: boolean, get: RowGetter): Promise<boolean> {
+	return analysisComplete(await fetchAnalysisRows([opId], get), hasMat);
 }
 
 /** Which of `captures` are fully uploaded, partially uploaded or not at all. Throws on a failed
@@ -121,10 +128,11 @@ export async function lookupUploadState(
 	for (const a of analysis) if (a.operation_id) byOp.set(a.operation_id, [...(byOp.get(a.operation_id) ?? []), a]);
 	const uploaded: Record<string, boolean> = {};
 	const partial: Record<string, boolean> = {};
+	const opIds = { ...linked.opIds };
 	for (const c of captures) {
 		if (!linked.uploaded[c.id]) continue;
-		const rows = (linked.allOpIds[c.id] ?? []).flatMap((op) => byOp.get(op) ?? []);
-		if (analysisComplete(rows, c.hasMat)) uploaded[c.id] = true; else partial[c.id] = true;
+		const done = (linked.allOpIds[c.id] ?? []).find((op) => analysisComplete(byOp.get(op) ?? [], c.hasMat));
+		if (done) { uploaded[c.id] = true; opIds[c.id] = done; } else partial[c.id] = true;
 	}
-	return { uploaded, partial, opIds: linked.opIds };
+	return { uploaded, partial, opIds };
 }

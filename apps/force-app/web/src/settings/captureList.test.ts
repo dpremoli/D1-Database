@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	beginUploadItem, bulkDeleteBlockReason, canUploadCapture, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
+	beginUploadItem, bulkDeleteBlockReason, bulkDeleteSkipReason, canUploadCapture, cleanupSkipReason, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
 	isBulkSelectable, isClientFilter, isCleanupCandidate, matchesFilter, needsMorePages, planBulkDelete,
 	pruneSelection, requestUploadCancel, rowState, selectableIds, serverStatusFor, shouldStopUploads,
 	startUploadProgress, summarizeCleanup, summarizeDeleteResults, toggleAll, toggleId, uploadProgressText,
@@ -275,5 +275,46 @@ describe('canUploadCapture', () => {
 		const f = facts({ busyIds: new Set(['n']) });
 		expect(canUploadCapture(cap('n'), f)).toBe(false);
 		expect(canUploadCapture(cap('other'), f)).toBe(true);
+	});
+});
+
+describe('busy captures (an upload is running for them)', () => {
+	const f = facts({ uploaded: { up: true }, busyIds: new Set(['up']) });
+	const old = cap('up', { mtime: NOW_S - 400 * DAY });
+
+	it('are not selectable and are dropped from the bulk-delete plan', () => {
+		expect(isBulkSelectable(old, f)).toBe(false);
+		expect(isBulkSelectable(old, facts())).toBe(true);
+		expect(selectableIds([old, cap('other')], f)).toEqual(['other']);
+		expect(toggleAll(new Set(), [old, cap('other')], f)).toEqual(new Set(['other']));
+		const plan = planBulkDelete(new Set(['up', 'other']), [old, cap('other')], f);
+		expect(plan.items.map((i) => i.id)).toEqual(['other']);
+		expect(plan.skipped).toEqual(['up']);
+	});
+
+	it('are never cleanup candidates', () => {
+		expect(isCleanupCandidate(old, f, cleanupCutoff(30, NOW_MS))).toBe(false);
+		expect(isCleanupCandidate(old, facts({ uploaded: { up: true } }), cleanupCutoff(30, NOW_MS))).toBe(true);
+	});
+});
+
+describe('per-item re-check right before a delete', () => {
+	const cutoff = cleanupCutoff(30, NOW_MS);
+	const old = cap('a', { mtime: NOW_S - 400 * DAY });
+
+	it('bulk: skips a capture that has gone, one that became busy, and everything when the state is unknown', () => {
+		expect(bulkDeleteSkipReason(null, facts())).toMatch(/no longer on disk/);
+		expect(bulkDeleteSkipReason(old, facts({ busyIds: new Set(['a']) }))).toMatch(/busy/);
+		expect(bulkDeleteSkipReason({ ...old, recovering: true }, facts())).toMatch(/no longer safe/);
+		expect(bulkDeleteSkipReason(old, facts({ uploadedKnown: false }))).toMatch(/could not be reached/);
+		expect(bulkDeleteSkipReason(old, facts())).toBeNull();
+	});
+
+	it('cleanup: judges the fresh upload state, not the preview it was planned from', () => {
+		// The preview said uploaded; fresh facts say the analysis row is gone (or never completed).
+		expect(cleanupSkipReason(old, facts({ uploaded: { a: false } }), cutoff)).toMatch(/no longer safe/);
+		expect(cleanupSkipReason(old, facts({ uploaded: { a: true }, busyIds: new Set(['a']) }), cutoff)).toMatch(/busy/);
+		expect(cleanupSkipReason(null, facts({ uploaded: { a: true } }), cutoff)).toMatch(/no longer on disk/);
+		expect(cleanupSkipReason(old, facts({ uploaded: { a: true } }), cutoff)).toBeNull();
 	});
 });

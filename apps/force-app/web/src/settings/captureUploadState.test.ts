@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analysisComplete, lookupUploadState, matchUploaded, uploadedRowsSince, type RowGetter } from './captureUploadState';
+import { analysisComplete, lookupUploadState, matchUploaded, recheckUploaded, uploadedRowsSince, type RowGetter } from './captureUploadState';
 
 describe('uploadedRowsSince', () => {
 	it('bounds at the earliest capture time, minus two days of slack', () => {
@@ -82,6 +82,7 @@ describe('lookupUploadState', () => {
 		const r = await lookupUploadState([{ id: 'cap-a', hasMat: true }, { id: 'cap-b', hasMat: true }], get);
 		expect(r.uploaded).toEqual({ 'cap-a': true });
 		expect(r.partial).toEqual({});
+		expect(r.opIds['cap-a']).toBe('op-1');   // the complete one, not the orphan
 	});
 
 	it('asks only for the needed analysis fields, by operation id, in chunks', async () => {
@@ -108,5 +109,16 @@ describe('analysisComplete', () => {
 		expect(analysisComplete([{ live_cache_file: 'c' }], false)).toBe(true);
 		expect(analysisComplete([{ live_cache_file: 'c' }], true)).toBe(false);
 		expect(analysisComplete([{ live_cache_file: 'c', directus_files_id: 'm' }], true)).toBe(true);
+	});
+});
+
+describe('recheckUploaded', () => {
+	it('is one analysis query for the operation and reflects the fresh rows', async () => {
+		const calls: [string, any][] = [];
+		const get = (rows: unknown[]): RowGetter => async (c, p) => { calls.push([c, p]); return rows; };
+		expect(await recheckUploaded('op-1', true, get([{ operation_id: 'op-1', live_cache_file: 'c', directus_files_id: 'm' }]))).toBe(true);
+		expect(await recheckUploaded('op-1', true, get([]))).toBe(false);   // analysis row deleted since the preview
+		expect(calls.every(([c, p]) => c === 'machining_force_analysis' && p.filter.operation_id._in[0] === 'op-1')).toBe(true);
+		await expect(recheckUploaded('op-1', true, async () => { throw new Error('offline'); })).rejects.toThrow();
 	});
 });
