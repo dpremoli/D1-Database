@@ -15,10 +15,10 @@ fixes, local CI (`pre-commit` included), PR, CI green, merge.
 
 | Stream | Items | Worktree / branch | State |
 |---|---|---|---|
-| I — Record alarms and shortcuts | R6, R10 | — | not started |
-| J — Desktop shell | R11, R13 | — | not started |
-| K — Plot export and help | P2, P11 | — | not started |
-| L — Directus saved filters | D12 | — | not started |
+| I — Record alarms and shortcuts | R6, R10 | `agent-ae7cac784059cd934` | in progress |
+| J — Desktop shell | R11, R13 | `agent-a723f791333ed7f88` | in progress |
+| K — Plot export and help | P2, P11 | `agent-a673fa3d591bdfa1d` | in progress |
+| L — Directus saved filters | D12 | `agent-a8bc7cbd5a4f5506a` | in progress |
 | /simplify (Opus) | all | — | not started |
 | /code-review high (Opus) | all | — | not started |
 
