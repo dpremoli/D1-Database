@@ -12,11 +12,9 @@
 // read is a 404 (the same as a missing one). Design:
 // docs/superpowers/specs/2026-10-06-sample-timeline-and-campaign-overview-design.md
 //
-// The functions enumerate every PATH, not every node: a ladder of N diamonds has 2^N paths. Wrapping
-// them in GROUP BY / LIMIT cannot stop that work (Postgres produces all the paths first), so the
-// queries run in one transaction with a statement_timeout and a too-large genealogy is a 503. The
-// timeout is one deadline for the whole request (TRACE_TIMEOUT_MS), not per statement: each
-// statement gets what is left, so the four of them cannot hold a pooled connection for 4x as long.
+// f_trace_ancestors / f_trace_descendants return one row per reachable sample, with one shortest
+// path (migration 20261006000136). The statement deadline below stays as defence in depth for
+// pathological data.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -26,18 +24,26 @@ const MAX_ROWS = 500;
 // ids per readByQuery `_in`, to keep the SQL parameter list small; pairs per `_or` filter.
 const CHUNK = 200;
 const PAIR_CHUNK = 100;
-// Upper bound for ALL the path-enumerating statements of one request together (see above).
+// One deadline for all the statements of one request together: each gets what is left of it, so the
+// four of them cannot hold a pooled connection for 4x as long.
 const TRACE_TIMEOUT_MS = 8000;
 
 // One row per distinct sample reached (a diamond A->B, A->C, B->D, C->D has D once, not twice), the
-// shallowest depth it was reached at, and every node it was reached from (`prev`, the step before it
-// on some path from the root) so JS can tell whether any path to it avoids unreadable samples.
-const lineageSql = (fn) => `
-    SELECT sample_id, min(depth) AS depth, array_agg(DISTINCT path[cardinality(path) - 1]) AS prev
-    FROM ${fn}(?::uuid)
-    WHERE sample_id <> ?::uuid
-    GROUP BY sample_id
-    ORDER BY min(depth), sample_id
+// shallowest depth it was reached at, and every reached node it is linked to on the way from the
+// root (`prev`) so JS can tell whether any route to it avoids unreadable samples. The functions
+// return a single shortest path per sample, so `prev` is rebuilt from the genealogy edges between
+// the reached samples instead of from that one path: a sample with a readable alternative route is
+// then not wrongly reported as hidden. `own` is the genealogy column holding the sample itself and
+// `step` the one holding the node it was reached from (child for ancestors, parent for descendants).
+const lineageSql = (fn, own, step) => `
+    WITH reached AS (SELECT sample_id, depth FROM ${fn}(?::uuid))
+    SELECT r.sample_id, r.depth, array_agg(DISTINCT sg.${step}) AS prev
+    FROM reached AS r
+    INNER JOIN sample_genealogy AS sg ON sg.${own} = r.sample_id
+    INNER JOIN reached AS p ON p.sample_id = sg.${step}
+    WHERE r.sample_id <> ?::uuid
+    GROUP BY r.sample_id, r.depth
+    ORDER BY r.depth, r.sample_id
     LIMIT ${MAX_ROWS + 1}`;
 // A lot can reach the sample through several ancestors (and each ancestor through several paths).
 const STOCK_SQL = `
@@ -178,8 +184,8 @@ export default {
                         return (await trx.raw(sql, bindings))?.rows ?? [];
                     };
                     return [
-                        await q(lineageSql('f_trace_ancestors'), [id, id]),
-                        await q(lineageSql('f_trace_descendants'), [id, id]),
+                        await q(lineageSql('f_trace_ancestors', 'parent_sample_id', 'child_sample_id'), [id, id]),
+                        await q(lineageSql('f_trace_descendants', 'child_sample_id', 'parent_sample_id'), [id, id]),
                         await q(STOCK_SQL, [id]),
                         await q(EVENTS_SQL, [id]),
                     ];
