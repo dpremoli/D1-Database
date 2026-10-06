@@ -21,7 +21,7 @@ harness has created worktrees on a stale base before).
 | G — Sample labels and QR | D4 | `agent-ae33f229aecfe9f8c` | merged; d1-report tests now run in CI |
 | H — Ask-DB export and history | D3 | `agent-a1b0b9664f0489c4f` | merged; helper tests now run in CI |
 | /simplify (Opus) | all | main checkout | done (`835a4bf`..`b780840`) |
-| /code-review high (Opus) | all | read-only reviewers | done: 0 blockers; force-app 6 should-fix + nits fixed in `agent-a3844a3523bf72bdf` (merged `c0e26b1`); labels/Ask-DB 4 should-fix + nits fixed `3796142`..`b565eb1`, `b39084e`. Opus re-review of the fixes in progress |
+| /code-review high (Opus) | all | read-only reviewers | done: 0 blockers; force-app 6 should-fix + nits fixed in `agent-a3844a3523bf72bdf` (merged `c0e26b1`); labels/Ask-DB 4 should-fix + nits fixed `3796142`..`b565eb1`, `b39084e`. Opus re-review: 0 blockers, 2 should-fix + 4 nits fixed `bda4fb3`..`63c4309`. Ready for PR. |
 
 ## E. Plot links and pass-to-pass difference — P3, P4
 
