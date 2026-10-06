@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analysisComplete, lookupUploadState, matchUploaded, recheckUploaded, uploadedRowsSince, type RowGetter } from './captureUploadState';
+import { analysisComplete, confirmUploadState, lookupUploadState, matchUploaded, recheckUploaded, uploadedRowsSince, type RowGetter } from './captureUploadState';
 
 describe('uploadedRowsSince', () => {
 	it('bounds at the earliest capture time, minus two days of slack', () => {
@@ -120,5 +120,19 @@ describe('recheckUploaded', () => {
 		expect(await recheckUploaded('op-1', true, get([]))).toBe(false);   // analysis row deleted since the preview
 		expect(calls.every(([c, p]) => c === 'machining_force_analysis' && p.filter.operation_id._in[0] === 'op-1')).toBe(true);
 		await expect(recheckUploaded('op-1', true, async () => { throw new Error('offline'); })).rejects.toThrow();
+	});
+});
+
+describe('confirmUploadState', () => {
+	const rows = (r: unknown[]): RowGetter => async () => r;
+	it('is uploaded only when the fresh analysis row is complete', async () => {
+		expect(await confirmUploadState('op', true, rows([{ operation_id: 'op', live_cache_file: 'c', directus_files_id: 'm' }]))).toBe('uploaded');
+	});
+	it('is partial when the row still lacks a link (or there is none)', async () => {
+		expect(await confirmUploadState('op', true, rows([{ operation_id: 'op', live_cache_file: 'c', directus_files_id: null }]))).toBe('partial');
+		expect(await confirmUploadState('op', true, rows([]))).toBe('partial');
+	});
+	it('is unknown, never uploaded, when Directus cannot be asked', async () => {
+		expect(await confirmUploadState('op', true, async () => { throw new Error('offline'); })).toBe('unknown');
 	});
 });

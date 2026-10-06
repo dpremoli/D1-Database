@@ -14,7 +14,7 @@ import { authStore } from '../authStore';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, hasServerSession, recorderFromExtra } from '../recorder';
 import { confirmAction } from '../ui/confirm';
 import EditCaptureMetadataDialog from './EditCaptureMetadataDialog.vue';
-import { lookupUploadState, recheckUploaded, type RowGetter, type UploadStateResult } from './captureUploadState';
+import { confirmUploadState, lookupUploadState, recheckUploaded, type RowGetter, type UploadStateResult } from './captureUploadState';
 import { remoteCopyLabel } from './backupLabels';
 import { fetchRemoteBackupStates } from '../recorderHttp';
 import { formatMegabytes } from '../format';
@@ -596,7 +596,7 @@ async function upload(c: Capture): Promise<UploadOutcome> {
 			});
 			if (!ok) return 'skipped';
 		}
-		await uploadCaptureColdStart({
+		const opId = await uploadCaptureColdStart({
 			captureId: c.id,
 			matUrl: `${base()}/captures/${c.id}/capture.mat`,
 			cacheUrl: `${base()}/captures/${c.id}/live_cache.bin`,
@@ -604,11 +604,24 @@ async function upload(c: Capture): Promise<UploadOutcome> {
 			peaks: sum.peaks,
 			matWritten: sum.mat_written,
 		});
-		uploaded.value = { ...uploaded.value, [c.id]: true };
-		const { [c.id]: _done, ...stillPartial } = partial.value;
-		partial.value = stillPartial;
-		rowMsg.value[c.id] = 'uploaded';
-		return 'uploaded';
+		// "Uploaded" is the database's answer, not the upload call's: look at the operation's analysis
+		// row again and only then show the capture as redundant locally.
+		const state = await confirmUploadState(opId, hasMat(c), getRows);
+		uploadedOpId.value = { ...uploadedOpId.value, [c.id]: opId };
+		if (state === 'uploaded') {
+			uploaded.value = { ...uploaded.value, [c.id]: true };
+			const { [c.id]: _done, ...stillPartial } = partial.value;
+			partial.value = stillPartial;
+			rowMsg.value[c.id] = 'uploaded';
+			return 'uploaded';
+		}
+		const { [c.id]: _gone, ...notUploaded } = uploaded.value;
+		uploaded.value = notUploaded;
+		partial.value = { ...partial.value, [c.id]: true };
+		rowMsg.value[c.id] = state === 'partial'
+			? 'upload incomplete: the database record is still missing a file - upload again to finish it'
+			: 'upload finished but could not be confirmed (database not reachable) - it still counts as not uploaded';
+		return 'failed';
 	} catch (e: any) {
 		rowMsg.value[c.id] = `upload failed: ${e?.message || e}`;
 		return 'failed';

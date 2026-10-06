@@ -189,6 +189,13 @@ tool; a test cut on scrap stock is fine.
   it runs, Delete selected, Free up space and the row Upload buttons are disabled; click a row's
   Upload just before Upload N unsynced: that capture is still uploaded once. Since:
   this batch (PR TBD).
+- [ ] **R9 — a partial upload is completed, not skipped.** In Directus, clear `directus_files_id`
+  on the `machining_force_analysis` row of a capture that has a `capture.mat` (it then shows
+  "partial upload"). Press its Upload: expect no second operation row, no second analysis row, the
+  `.mat` uploaded once and its link filled in on the same row (the live cache file link and file
+  are untouched), and only then the row shows "Uploaded". Repeat clearing `live_cache_file`
+  instead. Then Upload on a complete one is not offered. Also stop Directus right after an upload
+  returns: the row must not show as uploaded without the check. Since: this batch (PR TBD).
 
 ### Desktop shell
 - [ ] **R11 — Restart recorder.** Kill the backend (Task Manager): the Doctor's "Restart recorder"

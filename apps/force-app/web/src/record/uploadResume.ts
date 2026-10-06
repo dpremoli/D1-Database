@@ -19,8 +19,18 @@ export interface UploadProgress {
 	/** undefined = not uploaded yet; null = nothing to upload (no capture.mat was written). */
 	matFileId?: string | null;
 	cacheFileId?: string;
-	/** The machining_force_analysis row exists. */
+	/** The machining_force_analysis row exists AND carries every file this capture has. */
 	analysisDone?: boolean;
+	/** An analysis row found for the operation (an earlier attempt, or a lost reply), possibly
+	 * lacking a file link: completed with a PATCH instead of a second row. */
+	analysisRow?: AnalysisLink;
+}
+
+/** The link fields of an existing machining_force_analysis row. */
+export interface AnalysisLink {
+	id: string;
+	live_cache_file?: string | null;
+	directus_files_id?: string | null;
 }
 
 const progressByCapture = new Map<string, UploadProgress>();
@@ -46,12 +56,15 @@ export async function findOperationForCapture(captureId: string): Promise<string
 	return matchUploaded(res.data?.data ?? [], [captureId]).opIds[captureId] ?? null;
 }
 
-/** Whether an analysis row already links to this operation. Throws when the lookup fails. */
-export async function hasAnalysisRow(opId: string): Promise<boolean> {
+/** The analysis row linked to this operation, or null. Throws when the lookup fails. */
+export async function findAnalysisRow(opId: string): Promise<AnalysisLink | null> {
 	const res = await api.get('/items/machining_force_analysis', {
-		params: { filter: { operation_id: { _eq: opId } }, fields: ['id'], limit: 1 },
+		params: {
+			filter: { operation_id: { _eq: opId } },
+			fields: ['id', 'live_cache_file', 'directus_files_id'], limit: 1,
+		},
 	});
-	return (res.data?.data?.length ?? 0) > 0;
+	return (res.data?.data?.[0] as AnalysisLink | undefined) ?? null;
 }
 
 /**
@@ -81,12 +94,36 @@ export function needsBlobs(p: UploadProgress, matWritten: boolean): boolean {
 }
 
 /**
- * True when the analysis row must not be posted again: it was created by an earlier attempt, or
- * the operation was an existing one that already has one (a lost reply).
+ * Call after the operation is known and BEFORE any file is uploaded. When the operation already
+ * existed (an earlier attempt, or a reply that was lost) its analysis row may too, with only some
+ * of its files linked. What the row already links is adopted as progress, so those files are not
+ * uploaded again (they would be orphans), and the row is remembered for analysisAlreadyLinked().
+ * An unknown answer (the lookup failed) carries on as "no row", as the post would have anyway.
  */
-export async function analysisAlreadyLinked(p: UploadProgress, opId: string, existing: boolean): Promise<boolean> {
+export async function adoptExistingAnalysis(p: UploadProgress, opId: string, existing: boolean): Promise<void> {
+	if (p.analysisDone || !existing) return;
+	let row: AnalysisLink | null = null;
+	try { row = await findAnalysisRow(opId); } catch { /* unknown: carry on and post */ }
+	if (!row) return;
+	p.analysisRow = row;
+	if (row.live_cache_file) p.cacheFileId = row.live_cache_file;
+	if (row.directus_files_id) p.matFileId = row.directus_files_id;
+}
+
+/**
+ * Call after the files are uploaded. True when the analysis row must not be posted: it already
+ * exists (`analysisRow`, found by adoptExistingAnalysis) or an earlier attempt created it. An
+ * existing row that lacks a file link is completed here by PATCHing only the missing fields (a
+ * link that is already present is never overwritten); this throws if that PATCH fails.
+ */
+export async function analysisAlreadyLinked(p: UploadProgress): Promise<boolean> {
 	if (p.analysisDone) return true;
-	if (!existing) return false;
-	try { p.analysisDone = await hasAnalysisRow(opId); } catch { /* unknown: carry on and post */ }
-	return !!p.analysisDone;
+	const row = p.analysisRow;
+	if (!row) return false;
+	const patch: Record<string, string> = {};
+	if (!row.live_cache_file && p.cacheFileId) patch.live_cache_file = p.cacheFileId;
+	if (!row.directus_files_id && p.matFileId) patch.directus_files_id = p.matFileId;
+	if (Object.keys(patch).length) await api.patch(`/items/machining_force_analysis/${row.id}`, patch);
+	p.analysisDone = true;
+	return true;
 }

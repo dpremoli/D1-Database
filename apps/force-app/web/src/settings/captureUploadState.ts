@@ -109,6 +109,16 @@ export async function recheckUploaded(opId: string, hasMat: boolean, get: RowGet
 	return analysisComplete(await fetchAnalysisRows([opId], get), hasMat);
 }
 
+/**
+ * The state to show right after an upload finished, from a fresh look at the database rather than
+ * from "the upload call returned": 'uploaded' when the operation's analysis row is complete,
+ * 'partial' when the row is still missing a file link, 'unknown' when Directus can't be asked (the
+ * capture then stays the only known copy).
+ */
+export async function confirmUploadState(opId: string, hasMat: boolean, get: RowGetter): Promise<'uploaded' | 'partial' | 'unknown'> {
+	try { return (await recheckUploaded(opId, hasMat, get)) ? 'uploaded' : 'partial'; } catch { return 'unknown'; }
+}
+
 /** Which of `captures` are fully uploaded, partially uploaded or not at all. Throws on a failed
  * lookup (callers treat that as "unknown", never as "not uploaded"). */
 export async function lookupUploadState(

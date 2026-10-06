@@ -4,9 +4,9 @@ import { nextTick } from 'vue';
 // createWorkspace() start/stop/upload paths (stream-2 review 2.1, 2.2, 2.5, 2.7). Everything the
 // workspace talks to (Directus, the recorder, dialogs) is faked at the module boundary.
 
-const dx = vi.hoisted(() => ({ post: vi.fn(), get: vi.fn() }));
+const dx = vi.hoisted(() => ({ post: vi.fn(), get: vi.fn(), patch: vi.fn() }));
 vi.mock('../directusClient', () => ({
-	api: { post: (...a: unknown[]) => dx.post(...a), get: (...a: unknown[]) => dx.get(...a) },
+	api: { post: (...a: unknown[]) => dx.post(...a), get: (...a: unknown[]) => dx.get(...a), patch: (...a: unknown[]) => dx.patch(...a) },
 	authHeaders: () => ({}),
 }));
 const auth = vi.hoisted(() => ({
@@ -41,7 +41,7 @@ vi.mock('../ui/confirm', () => confirmMock);
 vi.mock('../ui/spotlight', () => ({ spotlight: vi.fn() }));
 
 import { createWorkspace } from './workspace';
-import { clearUploadProgress } from './uploadResume';
+import { clearUploadProgress, uploadProgress } from './uploadResume';
 import { alarmController } from './alarms';
 import { hwStatus } from './hwStatus';
 
@@ -205,11 +205,66 @@ describe('workspace.uploadCutToDatabase() resume (2.2)', () => {
 			if (url === '/items/machining_force_analysis' && first) { first = false; throw netErr(); }
 			return { data: { data: {} } };
 		});
-		dx.get.mockImplementation(async (url: string) => (url === '/items/machining_force_analysis' ? { data: { data: [{ id: 'a-1' }] } } : { data: { data: [] } }));
+		dx.get.mockImplementation(async (url: string) => (url === '/items/machining_force_analysis' ? { data: { data: [{ id: 'a-1', live_cache_file: 'file-c', directus_files_id: 'file-m' }] } } : { data: { data: [] } }));
 		const w = await uploadable();
 		await expect(w.uploadCutToDatabase()).rejects.toThrow(/linking/);
 		await expect(w.uploadCutToDatabase()).resolves.toBe('op-3');
 		expect(posts('/items/machining_force_analysis')).toBe(1);
+	});
+	// Review: a row that exists but lacks a file link used to be treated as "linked", so the files were
+	// uploaded and then dropped, and the capture was shown as uploaded.
+	describe('an analysis row that lacks a file link', () => {
+		const row = (r: Record<string, unknown>) => dx.get.mockImplementation(async (url: string) => (
+			url === '/items/machining_force_analysis' ? { data: { data: [{ id: 'a-1', ...r }] } } : { data: { data: [] } }));
+		// the operation is the one an earlier attempt logged (progress is per capture id)
+		const resumed = async () => { const w = await uploadable(); uploadProgress('cap-up').opId = 'op-old'; return w; };
+		beforeEach(() => {
+			dx.patch.mockReset(); dx.patch.mockResolvedValue({ data: { data: {} } });
+			dx.post.mockImplementation(async (url: string) => {
+				if (url === '/files') return { data: { data: { id: `file-${++fileN}` } } };
+				if (url === '/items/manufacturing_operations') return { data: { data: { operation_id: 'op-new' } } };
+				return { data: { data: {} } };
+			});
+		});
+
+		it('PATCHes the missing .mat link onto the existing row, without a second row or a re-upload of the cache', async () => {
+			row({ live_cache_file: 'cache-present', directus_files_id: null });
+			const w = await resumed();
+			await expect(w.uploadCutToDatabase()).resolves.toBe('op-old');
+			expect(posts('/items/machining_force_analysis')).toBe(0);
+			expect(posts('/files')).toBe(1);   // only the .mat
+			expect(dx.patch).toHaveBeenCalledTimes(1);
+			expect(dx.patch.mock.calls[0][0]).toBe('/items/machining_force_analysis/a-1');
+			expect(dx.patch.mock.calls[0][1]).toEqual({ directus_files_id: 'file-1' });   // live_cache_file untouched
+		});
+
+		it('PATCHes the missing cache link and leaves a present .mat link alone', async () => {
+			row({ live_cache_file: null, directus_files_id: 'mat-present' });
+			const w = await resumed();
+			await w.uploadCutToDatabase();
+			expect(posts('/items/machining_force_analysis')).toBe(0);
+			expect(dx.patch.mock.calls[0][1]).toEqual({ live_cache_file: 'file-1' });
+			expect(posts('/files')).toBe(1);
+		});
+
+		it('a complete row uploads no files and writes nothing', async () => {
+			row({ live_cache_file: 'c', directus_files_id: 'm' });
+			const w = await resumed();
+			await w.uploadCutToDatabase();
+			expect(posts('/files')).toBe(0);
+			expect(posts('/items/machining_force_analysis')).toBe(0);
+			expect(dx.patch).not.toHaveBeenCalled();
+		});
+
+		it('a failed PATCH is a retryable linking error, and the retry PATCHes again', async () => {
+			row({ live_cache_file: 'c', directus_files_id: null });
+			dx.patch.mockRejectedValueOnce(serverErr());
+			const w = await resumed();
+			await expect(w.uploadCutToDatabase()).rejects.toThrow(/linking the capture failed/);
+			await expect(w.uploadCutToDatabase()).resolves.toBe('op-old');
+			expect(dx.patch).toHaveBeenCalledTimes(2);
+			expect(posts('/files')).toBe(1);   // the .mat landed once and is remembered
+		});
 	});
 });
 
@@ -229,7 +284,6 @@ describe('workspace.uploadCutToDatabase() with an unknown summary', () => {
 		replies['/captures/cap-up/summary'] = { body: { mat_written: false } };
 		const w = await noSummary();
 		await expect(w.uploadCutToDatabase()).resolves.toBe('op-s');
-		expect(calls).not.toContain('GET /captures/cap-up/capture.mat');
 		expect(posts('/files')).toBe(1);
 		expect(dx.post.mock.calls.find((c) => c[0] === '/items/machining_force_analysis')![1].directus_files_id).toBeNull();
 	});

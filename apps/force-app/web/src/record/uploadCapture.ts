@@ -12,7 +12,7 @@ import { api } from '../directusClient';
 import { resolveMachiningMethodId } from './directusLookups';
 import { buildSeriesEnvelope, parseCache, type Cache } from '@d1/force-plotting';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, hasServerSession, resolveOwnerPersonId, syncerFields } from '../recorder';
-import { analysisAlreadyLinked, ensureOperation, needsBlobs, uploadProgress, type UploadProgress } from './uploadResume';
+import { adoptExistingAnalysis, analysisAlreadyLinked, ensureOperation, needsBlobs, uploadProgress, type UploadProgress } from './uploadResume';
 
 export interface ColdUploadInfo {
 	captureId: string;
@@ -142,7 +142,7 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 	// Local blob reads don't depend on the Directus insert, so run them alongside it; uploads still
 	// wait for it, so a failed insert never leaves orphaned files -- and cancels the reads.
 	const blobReads = new AbortController();
-	const blobs = needsBlobs(progress, matWritten)
+	let blobs = needsBlobs(progress, matWritten)
 		? fetchCaptureBlobs(info.matUrl, info.cacheUrl, matWritten, blobReads.signal)
 		: null;
 	blobs?.catch(() => {});   // surfaced by the await below, not as an unhandled rejection
@@ -166,6 +166,9 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 		blobReads.abort();
 		throw e;
 	}
+	// An existing analysis row may already link some files: don't upload those again.
+	await adoptExistingAnalysis(progress, opId, existing);
+	if (blobs && !needsBlobs(progress, matWritten)) { blobReads.abort(); blobs = null; }
 
 	let cacheBlob: Blob | null = null;
 	if (blobs) {
@@ -173,7 +176,12 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 		cacheBlob = cb;
 		await uploadCaptureFiles(info.captureId, matBlob, cb, progress);
 	}
-	if (await analysisAlreadyLinked(progress, opId, existing)) return opId;
+	try {
+		// Completes an existing but partial analysis row (PATCH of the missing links), else false.
+		if (await analysisAlreadyLinked(progress)) return opId;
+	} catch (e: any) {
+		throw new Error(`linking the capture failed - ${directusErrorMessage(e)} (the run was logged as operation ${opId}, but its existing analysis record could not be completed)`);
+	}
 	const matFileId = progress.matFileId ?? null;
 	const cacheFileId = progress.cacheFileId!;
 
