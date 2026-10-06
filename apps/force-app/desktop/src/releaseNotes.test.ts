@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RELEASE_NOTES_MAX_CHARS, RELEASE_NOTES_TRUNCATED, formatReleaseNotes, htmlToPlainText } from './releaseNotes';
+import { RELEASES_URL, RELEASE_NOTES_MAX_CHARS, RELEASE_NOTES_TRUNCATED, formatReleaseNotes, htmlToPlainText } from './releaseNotes';
 
 describe('htmlToPlainText', () => {
   it('turns lists and paragraphs into lines and drops other tags', () => {
@@ -11,6 +11,24 @@ describe('htmlToPlainText', () => {
   });
   it('decodes the common entities', () => {
     expect(htmlToPlainText('1 &lt; 2 &gt; 0 &quot;x&quot; &#39;y&#39;&nbsp;z')).toBe('1 < 2 > 0 "x" \'y\' z');
+  });
+});
+
+describe('htmlToPlainText entities', () => {
+  it('decodes decimal and hex numeric entities', () => {
+    expect(htmlToPlainText('Don&#8217;t &#x2019;x&#X2019; &#65;&#x41;')).toBe('Don\u2019t \u2019x\u2019 AA');
+  });
+  it('decodes common named entities, including typographic ones', () => {
+    expect(htmlToPlainText('a&hellip; b&mdash;c &ndash; &rsquo;&ldquo;q&rdquo; &copy;')).toBe('a\u2026 b\u2014c \u2013 \u2019\u201cq\u201d \u00a9');
+  });
+  it('decodes once: &amp;lt; stays &lt;', () => {
+    expect(htmlToPlainText('&amp;lt; &amp;#65;')).toBe('&lt; &#65;');
+  });
+  it('leaves unknown, control and out-of-range entities as written', () => {
+    expect(htmlToPlainText('&bogus; &#0; &#1114112; &#xD800; &constructor; &valueOf;')).toBe('&bogus; &#0; &#1114112; &#xD800; &constructor; &valueOf;');
+  });
+  it('does not turn an escaped tag into markup that then gets stripped', () => {
+    expect(htmlToPlainText('use &lt;b&gt; for bold')).toBe('use <b> for bold');
   });
 });
 
@@ -47,6 +65,10 @@ describe('formatReleaseNotes', () => {
     expect(out.length).toBeLessThanOrEqual(RELEASE_NOTES_MAX_CHARS + RELEASE_NOTES_TRUNCATED.length);
     // cut at a word boundary, not mid-word
     expect(out.replace(RELEASE_NOTES_TRUNCATED, '')).toMatch(/word\d+$/);
+  });
+  it('points to the release page, not to a Settings screen that has no full notes', () => {
+    expect(RELEASE_NOTES_TRUNCATED).toContain(RELEASES_URL);
+    expect(RELEASE_NOTES_TRUNCATED).not.toContain('Settings');
   });
   it('leaves notes at the limit untouched', () => {
     const exact = 'a'.repeat(RELEASE_NOTES_MAX_CHARS);

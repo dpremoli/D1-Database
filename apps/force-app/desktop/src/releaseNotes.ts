@@ -4,17 +4,46 @@
 // changelog would push the buttons off screen, so it is flattened and trimmed here.
 
 export const RELEASE_NOTES_MAX_CHARS = 1500;
-export const RELEASE_NOTES_TRUNCATED = '… full notes in Settings → About';
+export const RELEASES_URL = 'https://github.com/dpremoli/D1-Database/releases';
+export const RELEASE_NOTES_TRUNCATED = `… full notes: ${RELEASES_URL}`;
 
-const ENTITIES: Record<string, string> = {
-  '&amp;': '&',
-  '&lt;': '<',
-  '&gt;': '>',
-  '&quot;': '"',
-  '&#39;': "'",
-  '&apos;': "'",
-  '&nbsp;': ' ',
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+  hellip: '…',
+  ndash: '–',
+  mdash: '—',
+  lsquo: '‘',
+  rsquo: '’',
+  ldquo: '“',
+  rdquo: '”',
+  bull: '•',
+  middot: '·',
+  times: '×',
+  copy: '©',
+  rarr: '→',
+  larr: '←',
 };
+
+const ENTITY_RE = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z][a-zA-Z0-9]{1,8}));/g;
+
+/** One entity: numeric (`&#8217;`, `&#x2019;`) or one of the common named ones. Used as a single
+ * `replace` pass, so `&amp;lt;` becomes `&lt;`, not `<`. Anything unknown, a control character or
+ * an out-of-range code point is left as written. */
+function decodeEntity(m: string, dec?: string, hex?: string, name?: string): string {
+  if (name) {
+    const key = Object.hasOwn(NAMED_ENTITIES, name) ? name : name.toLowerCase();
+    return Object.hasOwn(NAMED_ENTITIES, key) ? NAMED_ENTITIES[key] : m;
+  }
+  const cp = dec ? Number.parseInt(dec, 10) : Number.parseInt(hex ?? '', 16);
+  if (cp === 160) return ' ';
+  if (cp < 32 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return m;
+  return String.fromCodePoint(cp);
+}
 
 /** HTML to readable plain text: block ends become line breaks, list items get a dash, the rest of
  * the tags go, and the common entities are decoded. */
@@ -25,7 +54,7 @@ export function htmlToPlainText(html: string): string {
     .replace(/<\s*li\b[^>]*>/gi, '\n- ')
     .replace(/<\s*\/\s*(p|div|h[1-6]|ul|ol|tr|pre|blockquote)\s*>/gi, '\n')
     .replace(/<[^>]*>/g, '')
-    .replace(/&(?:amp|lt|gt|quot|#39|apos|nbsp);/g, (m) => ENTITIES[m])
+    .replace(ENTITY_RE, decodeEntity)
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
