@@ -54,6 +54,12 @@ so batch apply needs **no server change**.
    rows count as Needs build). A searchable list replaces the select, shown 200 rows at a time
    with "Show more" (the list is cheap to filter in memory; the fetch keeps `limit: -1` for now,
    see P12). Each row links to Plot (`/plot?...`) and the Directus item.
+   **Campaigns are optional.** Nothing in the migrations or `configure_users_and_policies.sql`
+   grants Lab Member read on `campaigns`, and a nested `operation_id.campaign_id.*` read on a
+   forbidden collection is a 403 that would empty the whole list. The main query therefore asks
+   only for the foreign key (`operation_id.campaign_id`); the campaign records come from a separate
+   `GET /items/campaigns` that may fail, and `attachCampaigns()` merges them in. If it fails, the
+   rows carry no campaign, the Campaign grouping is hidden and the picker groups by sample.
 3. **Apply recipe to selected.** Multi-select checkboxes in the picker, a recipe chooser from the
    library, then `planBatch()` (pure) classifies each selected row:
    - **skip, already built:** `diag_status = done` and the effective baked recipe

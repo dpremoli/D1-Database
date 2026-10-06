@@ -98,18 +98,37 @@ export function windowGroups(groups: PickerGroup[], limit: number): { groups: Pi
 	return { groups: out, hidden };
 }
 
+export interface CampaignInfo { campaign_id: string; campaign_code?: string | null; name?: string | null }
+
+/** The campaign of each row, as the picker wants it. The operation's `campaign_id` is requested as
+ * the plain foreign key (a nested `campaign_id.*` read is a 403 for a role that cannot read the
+ * campaigns table, which would empty the whole picker), and the campaign records come from a
+ * separate query that is allowed to fail. `campaigns` null = that query failed: every row's
+ * campaign becomes null and the picker falls back to grouping by sample. */
+export function attachCampaigns<T extends { operation_id?: { campaign_id?: unknown } | null }>(
+	rows: T[], campaigns: CampaignInfo[] | null,
+): T[] {
+	const byId = new Map((campaigns ?? []).map((c) => [c.campaign_id, c]));
+	return rows.map((r) => {
+		const op = r.operation_id;
+		if (!op || typeof op.campaign_id !== 'string') return r;
+		return { ...r, operation_id: { ...op, campaign_id: byId.get(op.campaign_id) ?? null } };
+	});
+}
+
 /** Directus nested row -> PickerRow. Tolerates missing relations. */
 export function toPickerRow(r: {
 	id: string; diag_status: DiagState; diag_path: string | null;
 	operation_id?: {
 		operation_id?: string; pass_code?: string;
 		sample_id?: { sample_id?: string; sample_code?: string; nickname?: string } | null;
-		campaign_id?: { campaign_id?: string; campaign_code?: string; name?: string } | null;
+		/** An unresolved foreign key (a string) counts as no campaign: see attachCampaigns. */
+		campaign_id?: { campaign_id?: string; campaign_code?: string | null; name?: string | null } | string | null;
 	} | null;
 }): PickerRow {
 	const op = r.operation_id ?? null;
 	const s = op?.sample_id ?? null;
-	const c = op?.campaign_id ?? null;
+	const c = op?.campaign_id && typeof op.campaign_id === 'object' ? op.campaign_id : null;
 	const sampleLabel = s ? [s.sample_code, s.nickname].filter(Boolean).join(' · ') : '';
 	const campLabel = c ? (c.campaign_code ? `${c.campaign_code} ${c.name ?? ''}`.trim() : c.name ?? '') : '';
 	return {

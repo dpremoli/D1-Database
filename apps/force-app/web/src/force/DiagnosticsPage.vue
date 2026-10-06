@@ -18,7 +18,7 @@
 // process_diag_row, which bakes every per-point statistic into attrs.d1an and the diag octree.
 // The browser only thresholds and highlights what the server already computed.
 import { computed, onMounted, ref } from 'vue';
-import { buildPatch, toPickerRow, type BatchRow, type DiagState, type Recipe } from '@d1/force-plotting';
+import { attachCampaigns, buildPatch, toPickerRow, type BatchRow, type CampaignInfo, type DiagState, type Recipe } from '@d1/force-plotting';
 import { api } from '../directusClient';
 import StandaloneDiagnosticsWorkbench from './StandaloneDiagnosticsWorkbench.vue';
 import DiagPicker from './DiagPicker.vue';
@@ -35,7 +35,8 @@ interface Row {
 	operation_id?: {
 		operation_id?: string; pass_code?: string; operation_date?: string;
 		sample_id?: { sample_id?: string; sample_code?: string; nickname?: string } | null;
-		campaign_id?: { campaign_id?: string; campaign_code?: string; name?: string } | null;
+		/** The foreign key as fetched; attachCampaigns swaps in the campaign record when it is readable. */
+		campaign_id?: string | { campaign_id?: string; campaign_code?: string | null; name?: string | null } | null;
 	} | null;
 }
 
@@ -50,7 +51,9 @@ const DIAG_FIELDS = [
 	'id', 'diag_status', 'diag_path', 'diag_points', 'diag_error', 'diag_metrics', 'diag_recipe',
 	'operation_id.operation_id', 'operation_id.pass_code', 'operation_id.operation_date',
 	'operation_id.sample_id.sample_id', 'operation_id.sample_id.sample_code', 'operation_id.sample_id.nickname',
-	'operation_id.campaign_id.campaign_id', 'operation_id.campaign_id.campaign_code', 'operation_id.campaign_id.name',
+	// The foreign key only: a nested campaign read is a 403 for a role that cannot read campaigns,
+	// which would leave the picker empty. The campaign records are fetched apart (loadCampaigns).
+	'operation_id.campaign_id',
 ];
 
 const selected = computed(() => rows.value.find((r) => r.id === selectedId.value) ?? null);
@@ -59,7 +62,18 @@ const ready = computed(() => selected.value?.diag_status === 'done' && !!selecte
 function label(r: Row): string {
 	return r.operation_id?.pass_code || r.operation_id?.operation_id || r.id;
 }
+// null = the campaigns table could not be read (a role without access): the picker then groups by
+// sample only. Never blocks the list.
+const campaigns = ref<CampaignInfo[] | null>(null);
 const pickerRows = computed(() => rows.value.map(toPickerRow));
+async function loadCampaigns() {
+	try {
+		const res = await api.get('/items/campaigns', { params: { fields: ['campaign_id', 'campaign_code', 'name'], limit: -1 } });
+		campaigns.value = res.data?.data ?? [];
+	} catch {
+		campaigns.value = null;
+	}
+}
 const checked = ref<string[]>([]);
 const batchOpen = ref(false);
 const batchRows = computed<BatchRow[]>(() => {
@@ -82,7 +96,8 @@ async function loadRows() {
 				fields: DIAG_FIELDS,
 			},
 		});
-		rows.value = res.data?.data ?? [];
+		await loadCampaigns();
+		rows.value = attachCampaigns((res.data?.data ?? []) as Row[], campaigns.value);
 		if (!selectedId.value && rows.value.length) {
 			// Prefer something already built, so the window opens on a usable view.
 			selectedId.value = (rows.value.find((r) => r.diag_status === 'done') ?? rows.value[0]).id;
@@ -117,7 +132,7 @@ async function build(recipe?: Recipe) {
 		while (Date.now() < deadline) {
 			await new Promise((res) => setTimeout(res, 3000));
 			const res = await api.get(`/items/machining_force_analysis/${r.id}`, { params: { fields: DIAG_FIELDS } });
-			const row = res.data?.data as Row | undefined;
+			const row = res.data?.data ? attachCampaigns([res.data.data as Row], campaigns.value)[0] : undefined;
 			if (!row) continue;
 			if (row.diag_status === 'done' && row.diag_path) {
 				Object.assign(r, row);
@@ -180,7 +195,7 @@ async function build(recipe?: Recipe) {
 		<div class="diag-body">
 			<DiagPicker
 				:rows="pickerRows" :selected-id="selectedId" v-model:checked="checked"
-				:loading="loading" :disabled="building" @select="(id) => (selectedId = id)"
+				:by-campaign="campaigns !== null" :loading="loading" :disabled="building" @select="(id) => (selectedId = id)"
 			/>
 			<div class="diag-main">
 			<StandaloneDiagnosticsWorkbench

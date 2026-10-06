@@ -23,7 +23,8 @@ displays results. It never computes statistics itself.
    `✓` built, `…` pending or processing, `✗` failed, `·` not built. Type in the search box to
    filter by pass code, sample or campaign, and use the **Needs build / Built / Error** chips to
    narrow it. Each row has **Plot** (opens the cut in the Plot page) and **Directus** (opens the
-   analysis record) links. Long lists show 100 rows at a time; use *Show more*.
+   analysis record) links. If your role cannot read campaigns, *Group by* offers Sample only and the
+   list loads as usual. Long lists show 100 rows at a time; use *Show more*.
 2. **Build.** The app marks the analysis row `diag_status = pending`. The **force orchestrator**
    daemon on d1-server claims it, re-runs MATLAB on the archived `.mat` to emit a dense point
    cloud and live cache, runs the diagnostics **recipe** (below), and publishes a diagnostics

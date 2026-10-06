@@ -110,9 +110,9 @@ export { diagnose, activeFindings, worstSeverity, CROP_COVERAGE_MIN } from './me
 export type { Finding, Dismissal, DoctorSeverity, DoctorFix } from './metadataDoctor';
 
 export {
-	BUCKETS, BUCKET_LABEL, bucketOf, countByBucket, filterRows, groupRows, windowGroups, toPickerRow,
+	BUCKETS, BUCKET_LABEL, attachCampaigns, bucketOf, countByBucket, filterRows, groupRows, windowGroups, toPickerRow,
 } from './diagPicker';
-export type { DiagState, PickerBucket, PickerRow, PickerGroup, GroupBy } from './diagPicker';
+export type { CampaignInfo, DiagState, PickerBucket, PickerRow, PickerGroup, GroupBy } from './diagPicker';
 export { updateRecipe } from './diagRecipes';
 export { useModalFocus } from './modalFocus';
 export { exportRecipeJson, parseRecipeJson, validateRecipe, isModifiedSinceLoaded } from './recipeIo';

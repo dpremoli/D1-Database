@@ -35,6 +35,11 @@ named in the step.
   else `/assets/<id>` exposes (equipment images, admin uploads). Feeds the Phase 9 export-control
   decision (ADR-0005). Since #123.
 
+- [ ] **P10 — Diagnostics picker as a Lab Member.** Sign in to the Force App as a Lab Member and open
+  Diagnostics: the list loads; campaign grouping is shown if the role can read `campaigns`, and
+  otherwise *Group by* offers Sample only (no empty list). Note which it was; if Lab Member cannot
+  read campaigns and the lab wants them, add the read grant by migration. Since: this batch (PR TBD).
+
 ### Sample numbers, dashboards, saved filters
 - [ ] **D9 — next sample number.** `GET /d1-next-number/sample` returns a number when signed in,
   401 signed out, 403 for a user without app access. The Register-sample page and the sample-code
