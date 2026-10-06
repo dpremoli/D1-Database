@@ -18,6 +18,7 @@ import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
 import LoadingOverlay from './LoadingOverlay.vue';
+import LinkRings from './LinkRings.vue';
 import { createLoadToken } from './loadToken';
 import { createGlLifecycle } from './glLifecycle';
 import { sameStage, stageInfo, streamStage, type LoadStage, type StageInfo } from './loadStage';
@@ -632,9 +633,8 @@ defineExpose({ currentBounds, exportViewport, revealTime });
 		<LoadingOverlay v-if="stage" :stage="stage" />
 		<div v-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
 		<canvas :key="canvasKey" v-show="!error" ref="canvasEl"></canvas>
-		<!-- linked-moment rings, same look and positioning as FrmCloud's .fc-ring; placed by updateRings() -->
-		<div v-if="markRing" class="fc-ring pin" :style="{ left: markRing.x + 'px', top: markRing.y + 'px' }"></div>
-		<div v-if="hoverRing" class="fc-ring hover" :style="{ left: hoverRing.x + 'px', top: hoverRing.y + 'px' }"></div>
+		<!-- linked-moment rings (shared with FrmCloud); placed by updateRings() -->
+		<LinkRings :pin="markRing" :hover="hoverRing" />
 		<span v-if="!loading && !error" class="fc-count">{{ pointCount.toLocaleString() }} pts (LOD)</span>
 	</div>
 </template>
@@ -643,10 +643,6 @@ defineExpose({ currentBounds, exportViewport, revealTime });
 .frm-octree { position: relative; width: 100%; height: 100%; min-height: 160px; background: var(--plot-bg, #0b1020); border-radius: 6px; overflow: hidden; }
 .frm-octree canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .frm-octree canvas:active { cursor: grabbing; }
-/* Kept identical to FrmCloud.vue's .fc-ring so a marker looks the same in Lite and Full. */
-.fc-ring { position: absolute; border-radius: 50%; box-sizing: border-box; pointer-events: none; transform: translate(-50%, -50%); }
-.fc-ring.pin { width: 12px; height: 12px; background: var(--accent, #38bdf8); border: 2px solid var(--text, #fff); box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
-.fc-ring.hover { width: 10px; height: 10px; border: 1.5px solid var(--accent, #38bdf8); opacity: 0.8; box-shadow: 0 0 0 1px rgba(0,0,0,0.4); }
 .fc-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim, #94a3b8); }
 .fc-msg.err { color: var(--danger, #fca5a5); font-size: var(--fs-sm, 12px); padding: 12px; text-align: center; }
 .fc-count { position: absolute; right: 6px; bottom: 4px; font-size: var(--fs-xs, 11px); color: var(--text-dim, rgba(255,255,255,0.6)); font-variant-numeric: tabular-nums; }

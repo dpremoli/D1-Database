@@ -27,6 +27,7 @@ import { buildScaleLUT, colorizeValues, lutKey, type ColorScale } from './colorS
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { histogramFrom, type Histogram } from './histogram';
 import LoadingOverlay from './LoadingOverlay.vue';
+import LinkRings from './LinkRings.vue';
 import { createLoadToken } from './loadToken';
 import { createFrameGate, createTrailingThrottle } from './frameScheduling';
 import { createGlLifecycle } from './glLifecycle';
@@ -1107,8 +1108,7 @@ function onUp(ev: PointerEvent) {
 		<div v-if="rectSel" class="fc-rect" :style="{ left: rectSel.x + 'px', top: rectSel.y + 'px', width: rectSel.w + 'px', height: rectSel.h + 'px' }"></div>
 
 		<!-- linked-moment rings: pinned (solid) and chart-hover (hollow); positions come from updateRings() -->
-		<div v-if="pinPos && !loading && !error" class="fc-ring pin" :style="{ left: pinPos.x + 'px', top: pinPos.y + 'px' }"></div>
-		<div v-if="hoverPos && !loading && !error" class="fc-ring hover" :style="{ left: hoverPos.x + 'px', top: hoverPos.y + 'px' }"></div>
+		<LinkRings :pin="loading || error ? null : pinPos" :hover="loading || error ? null : hoverPos" />
 
 		<!-- colorbar (force -> colour); the editor's "Show colour bar on render" drives barVisible -->
 		<div v-if="climits && colorScale.barVisible && !loading && !error" class="fc-cbar">
@@ -1154,10 +1154,6 @@ function onUp(ev: PointerEvent) {
 .fc-pane { position: absolute; left: 6px; top: 4px; font-size: var(--fs-xs, 11px); font-weight: 600; color: var(--text-dim, rgba(255,255,255,0.75)); letter-spacing: 0.01em; }
 
 .fc-rect { position: absolute; border: 1px solid var(--accent, #38bdf8); background: color-mix(in srgb, var(--accent, #38bdf8) 14%, transparent); pointer-events: none; border-radius: 2px; }
-
-.fc-ring { position: absolute; border-radius: 50%; box-sizing: border-box; pointer-events: none; transform: translate(-50%, -50%); }
-.fc-ring.pin { width: 12px; height: 12px; background: var(--accent, #38bdf8); border: 2px solid var(--text, #fff); box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
-.fc-ring.hover { width: 10px; height: 10px; border: 1.5px solid var(--accent, #38bdf8); opacity: 0.8; box-shadow: 0 0 0 1px rgba(0,0,0,0.4); }
 
 .fc-cbar { position: absolute; top: 10px; right: 8px; display: flex; flex-direction: column; align-items: center; gap: 3px; pointer-events: none; }
 .fc-ramp { width: 10px; height: 96px; border-radius: 3px; border: 1px solid var(--border-2, rgba(255,255,255,0.25)); }
