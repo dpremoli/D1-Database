@@ -111,6 +111,17 @@ tool; a test cut on scrap stock is fine.
   Bug, Open Captures Folder (opens the capture drive), About all work; Ctrl+Shift+L/B/O work.
   Since #125.
 
+### Diagnostics page in the packaged app
+- [ ] **P10 — recipe dialogs and import/export.** In the packaged app, Save as (name + notes),
+  Rename and Delete use the in-app dialog (Escape closes, focus returns to the button). Export a
+  recipe, Import it back: it opens in the Save dialog; importing a hand-broken file is refused with
+  a reason. The "modified since loaded" badge appears after editing an applied recipe.
+  Since: this batch (PR TBD).
+- [ ] **P10 — searchable picker on real data.** With the full campaign list, search, the Needs
+  build / Built / Error chips and Group by (sample, campaign) work; campaign names appear for
+  cuts that belong to one; Open in Plot lands on that cut and Directus opens the analysis record.
+  Since: this batch (PR TBD).
+
 ### Plot on real cuts
 - [ ] **X1 — Lite 3D height.** On a real cut, Lite 3D with Z = Fz shows height; picking a point and
   the linked marker land on the raised point. Since #123.
@@ -139,6 +150,15 @@ tool; a test cut on scrap stock is fine.
   which side old results were built on.) Since #123.
 - [ ] **filter-service `/fft` change deployed.** After redeploying the plugin, the Plot overlay reads
   in N rms (see the FFT check above). Since #125.
+- [ ] **P10 — batch diagnostics build on d1-server.** In Diagnostics, tick 3 or more analysed cuts
+  (at least one already built with the default recipe), Apply recipe to selected with a library
+  recipe. Expect: the summary says queued / skipped; the orchestrator daemon processes every
+  queued cut in turn until each shows built; no cut is queued twice. Since: this batch (PR TBD).
+- [ ] **P10 — skipped cuts really match.** Apply the same recipe again to the same selection:
+  everything is skipped as "already built with this recipe" and `diag_recipe_hash` /
+  `updated_at` on those rows do not change. Then tick *Rebuild*: they requeue. Since: this batch (PR TBD).
+- [ ] **P10 — non-admin refusal.** As a non-admin, Apply recipe to selected stops on the first
+  item with "not permitted (admin only)", nothing is queued. Since: this batch (PR TBD).
 - [ ] **#80** MATLAB run on the d1-server orchestrator and Directus asset download (held back).
 - [ ] **#10** Figure-mode PNGs re-baked by MATLAB for cuts with a saved crop (held back).
 - [ ] **#97** Tailscale serve, phone access, live-DAQ load (held back; security model is an owner

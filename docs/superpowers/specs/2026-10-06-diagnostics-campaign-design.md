@@ -1,7 +1,7 @@
 # Diagnostics across a campaign (P10)
 
-**Status:** In progress. Implementation: `packages/force-plotting/src/{RecipeLibrary.vue,recipeIo.ts,diagPicker.ts,diagBatch.ts,diagBuildRequest.ts}`,
-`apps/force-app/web/src/force/DiagnosticsPage.vue`. Plan: `plans/2026-10-06-ux-larger-items.md`, stream N.
+**Status:** Implemented. Code: `packages/force-plotting/src/{RecipeLibrary.vue,RecipeDialog.vue,recipeIo.ts,diagPicker.ts,diagBatch.ts}`,
+`apps/force-app/web/src/force/{DiagnosticsPage,DiagPicker,DiagBatchDialog}.vue`. Plan: `plans/2026-10-06-ux-larger-items.md`, stream N.
 
 ## Problem
 
@@ -58,9 +58,11 @@ so batch apply needs **no server change**.
    - **skip, already built:** `diag_status = done` and the effective baked recipe
      (`diag_recipe ?? DEFAULT_RECIPE`) is `recipesEquivalent` to the chosen one;
    - **skip, already queued:** `pending` / `processing`;
-   - **refuse, with reason:** recipe invalid (`recipeProblems`), or no archive/base analysis;
+   - **refuse, with reason:** recipe invalid (`validateRecipe` / `recipeProblems`); a request the
+     server refuses (403 admin only, which also stops the run) is reported as refused too. A cut
+     with no archive `.mat` is not detected up front: the host marks it `error` as today;
    - **queue:** everything else.
-   The executor sends exactly the Bake PATCH (shared `buildPatch()` helper, now used by the
+   The executor sends exactly the Bake PATCH (shared `buildPatch()` helper in `diagBatch.ts`, now used by the
    single build too) per queued row, sequentially, updates progress, checks a cancel flag between
    items, and ends with a summary (queued / skipped (reason) / refused (reason) / failed (reason,
    403 = admin only)). "Rebuild anyway" is an explicit checkbox that disables the already-built
