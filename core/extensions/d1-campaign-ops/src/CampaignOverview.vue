@@ -140,7 +140,9 @@ async function addSample(id: string, code?: string | null) {
 		await api.post('/items/campaign_samples', { campaign_id: props.primaryKey, sample_id: id });
 		sResults.value = sResults.value.filter((r) => r.sample_id !== id);
 	} catch (e) {
-		actionError.value = `Could not add ${code || 'the sample'}: ${errMsg(e)}`;
+		// Already linked (another tab, or a stale list): not an error, the reload below shows it.
+		if (isDuplicate(e)) sResults.value = sResults.value.filter((r) => r.sample_id !== id);
+		else actionError.value = `Could not add ${code || 'the sample'}: ${errMsg(e)}`;
 	} finally { busy.value = null; }
 	await load();
 }
@@ -184,12 +186,29 @@ async function searchTests() {
 		actionError.value = `Test search failed: ${errMsg(e)}`;
 	} finally { if (g === tGen) tSearching.value = false; }
 }
+// The change is conditional so two people (or two tabs) cannot take the same session: adding only
+// touches a session that is still in no campaign, removing only one that is in this campaign. Directus
+// answers a batch update with the rows it changed, so an empty answer means someone got there first.
 async function setTestCampaign(id: string, campaign: string | number | null, label: string) {
 	if (busy.value) return;
 	busy.value = id; actionError.value = null;
 	try {
-		await api.patch(`/items/test_sessions/${id}`, { campaign_id: campaign });
-		if (campaign) tResults.value = tResults.value.filter((r) => r.session_id !== id);
+		const res = await api.patch('/items/test_sessions', {
+			query: {
+				filter: {
+					session_id: { _eq: id },
+					campaign_id: campaign ? { _null: true } : { _eq: props.primaryKey },
+				},
+			},
+			data: { campaign_id: campaign },
+		});
+		const changed = res.data?.data;
+		if (Array.isArray(changed) && !changed.length) {
+			actionError.value = campaign
+				? `${label} is already in another campaign.`
+				: `${label} is no longer in this campaign.`;
+		}
+		tResults.value = tResults.value.filter((r) => r.session_id !== id);
 	} catch (e) {
 		actionError.value = `Could not ${campaign ? 'add' : 'remove'} ${label}: ${errMsg(e)}`;
 	} finally { busy.value = null; }

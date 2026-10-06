@@ -102,7 +102,12 @@ named in the step.
   campaign: each appears in the overview, the counts rise, and the test session shows the campaign
   in its own form. Remove both again. A sample that only appears through an operation is marked
   "not in list" and its + button adds it. Also add and remove an operation and check the overview
-  reloads. Since: this batch (PR TBD).
+  reloads. Race checks, with the campaign open in two browser tabs: add the same test session in
+  both, the second gives "already in another campaign" (not an error from Directus) and the
+  session stays in the first campaign; add the same sample in both, the second just reloads with no
+  error. The batch `PATCH /items/test_sessions` answer lists the changed row for a role that may
+  read test sessions, so a normal add never shows the "already in another campaign" note. Since:
+  this batch (PR TBD).
 
 ## B. Force rig (NI-DAQ, Lab Amp, packaged Windows app)
 
