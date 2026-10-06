@@ -56,9 +56,12 @@ banner (and optionally a tone) latches on the Record page until someone acknowle
 | **High-RPM alarm** | 0 = automatic | automatic trips at the configured spindle speed × 1.02 |
 | **Low disk space alarm** | 5 GB free | recording also stops cleanly when the drive is actually full, so no data is lost |
 | **Early warning** | on, 80 % of the force limit | an amber banner on the Record page when a force axis reaches that share of the limit. No tone, nothing latches; **Dismiss** hides it for the cut. Change the percentage (1-99) beside it |
-| **Stop the recording when the force alarm trips** | off | stops the cut the same way the **Stop** button does, then the save dialog opens. Only the high-force alarm does this, not RPM, tacho or disk |
+| **Stop the recording when the force alarm trips** | off | stops the cut the same way the **Stop** button does, then the save dialog opens. Only the high-force alarm does this, not RPM, tacho or disk. **It only works while the Record page is open**: the alarms are checked there, so if you switch to another page during a cut the recording keeps going and nothing stops it |
 | **Audible alert** | on | a looping tone alongside the banner |
 | **Set the tone volume** | off | unticked, the app raises the system volume to maximum when an alarm sounds. Ticked, you choose the tone's level (5-100 %) and the system volume is left alone |
+
+The alarm banner stays on top of the save dialog, so a recording stopped by an alarm can still be
+silenced (press **A**, or click **Acknowledge**) while you decide what to save.
 
 The alarm banner is announced to screen readers as an alert; the early-warning and disk banners as
 status messages. Alarms and warnings apply to Record mode only, never to Replay.

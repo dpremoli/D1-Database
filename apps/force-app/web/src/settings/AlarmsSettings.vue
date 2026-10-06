@@ -80,8 +80,8 @@ async function setEnabled(key: ToggleKey, ev: Event) {
 			<label class="chk sub"><input type="checkbox" v-model="a.config.warnEnabled" :disabled="!a.config.forceEnabled" @change="save" /> Early warning</label>
 			<label class="thr">Warn at ≥ <input type="number" min="1" max="99" v-model.number="a.config.warnPercent" :disabled="!a.config.forceEnabled || !a.config.warnEnabled" @change="onWarnPercent" /> % of the limit<span v-if="a.warnLevel != null" class="calc">({{ a.warnLevel.toFixed(0) }} N)</span></label>
 			<p class="hint">An amber banner on the Record page, with no tone, before the alarm itself trips. It does not latch.</p>
-			<label class="chk sub"><input type="checkbox" v-model="a.config.stopOnForceAlarm" :disabled="!a.config.forceEnabled" @change="save" /> Stop the recording when the force alarm trips</label>
-			<p class="hint">Off by default. The recording is stopped the same way as the Stop button, and the save dialog opens.</p>
+			<label class="chk sub"><input type="checkbox" v-model="a.config.stopOnForceAlarm" :disabled="!a.config.forceEnabled" @change="save" /> Stop the recording when the force alarm trips (Record page open)</label>
+			<p class="hint">Off by default. The recording is stopped the same way as the Stop button, and the save dialog opens. The alarm is only checked while the Record page is open, so leaving that page during a cut turns this off for that cut, and so does closing the window. The alarm banner and tone keep going until you acknowledge them (press A, or click Acknowledge).</p>
 		</div>
 
 		<div class="grp">
