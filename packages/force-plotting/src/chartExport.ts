@@ -80,6 +80,30 @@ export function yAxisTitle(kind: 'env' | 'line', unit: string | undefined, logY 
 }
 
 const FONT = '"Times New Roman", Georgia, serif';
+/** Estimated width of one 13 px serif character; a little generous so estimates overshoot. */
+const TICK_CHAR_W = 7;
+/** Left edge of the rotated y-axis title (its baseline x). */
+const Y_TITLE_X = 20;
+
+interface LegendEntry { label: string; color: string; dash: string; x: number }
+
+/** Lay the legend out in rows no wider than `avail` (the plot's width). Each entry's x is relative
+ *  to the plot's left edge. A label longer than a row is clipped with an ellipsis. */
+function legendLayout(first: string, color: string, cmp: { label: string; color: string }[], avail: number): LegendEntry[][] {
+	if (!cmp.length) return [];
+	const maxChars = Math.max(8, Math.floor((avail - 48) / TICK_CHAR_W));
+	const clip = (t: string) => (t.length > maxChars ? `${t.slice(0, maxChars - 1)}…` : t);
+	const entries = [{ label: clip(first), color, dash: '' }, ...cmp.map((c) => ({ label: clip(c.label), color: c.color, dash: ' stroke-dasharray="6 3"' }))];
+	const rows: LegendEntry[][] = [[]];
+	let x = 0;
+	for (const e of entries) {
+		const w = 30 + e.label.length * TICK_CHAR_W + 18;
+		if (x > 0 && x + w - 18 > avail) { rows.push([]); x = 0; }
+		rows[rows.length - 1].push({ ...e, x });
+		x += w;
+	}
+	return rows;
+}
 
 /** A standalone, report-styled SVG of one chart. Never throws on empty data (returns a figure
  *  with the title and "no data"). */
@@ -88,8 +112,7 @@ export function buildChartSvg(o: ChartSvgOpts): string {
 	const max = o.maxPoints ?? 800;
 	const color = o.color || '#0d9488';
 	const cmp = (o.compare ?? []).filter((c) => c.data?.t?.length);
-	const mL = 78, mR = 26, mT = o.subtitle ? 66 : 46, mB = 62 + (cmp.length ? 26 : 0);
-	const pw = W - mL - mR, ph = H - mT - mB;
+	const mR = 26, mT = o.subtitle ? 66 : 46;
 	const title = [o.opLabel, o.title].filter(Boolean).join(' · ');
 	const head = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" font-family='${FONT}'>`
 		+ `<rect width="${W}" height="${H}" fill="#fff"/>`
@@ -124,22 +147,40 @@ export function buildChartSvg(o: ChartSvgOpts): string {
 		if (lo > 0 && lo <= R * 0.5) lo = 0; else if (hi < 0 && -hi <= R * 0.5) hi = 0;
 	}
 
-	const sx = (x: number) => mL + ((x - x0) / (x1 - x0)) * pw;
+	// y ticks first (they do not depend on the plot size): the left margin is sized from their
+	// labels so the rotated y title never touches them (the title sits at x = Y_TITLE_X).
 	const useLog = o.logY === true && o.kind === 'line' && hi > 0;
-	let sy: (y: number) => number;
+	let logFloor = 0, L0 = 0, L1 = 0;
 	let yticks: number[];
 	if (useLog) {
 		let minPos = Infinity;
 		for (const v of main.hi) if (v > 0 && v < minPos) minPos = v;
-		const floor = Math.max(isFinite(minPos) ? minPos : hi / 1e5, hi / 1e5);
-		const L0 = Math.log10(floor), L1 = Math.log10(hi), den = (L1 - L0) || 1;
-		sy = (y) => mT + (1 - (Math.log10(Math.max(y, floor)) - L0) / den) * ph;
+		logFloor = Math.max(isFinite(minPos) ? minPos : hi / 1e5, hi / 1e5);
+		L0 = Math.log10(logFloor); L1 = Math.log10(hi);
 		yticks = [];
 		for (let k = Math.ceil(L0); k <= Math.floor(L1); k++) yticks.push(10 ** k);
-		if (yticks.length < 2) yticks = [floor, hi];
+		if (yticks.length < 2) yticks = [logFloor, hi];
+	} else {
+		yticks = niceTicks(lo, hi, 5);
+	}
+	const yLabels = useLog ? logTickLabels(yticks) : tickLabels(yticks);
+	const yLabelW = Math.max(0, ...yLabels.map((s) => s.length)) * TICK_CHAR_W;
+	const mL = Math.max(78, Math.ceil(Y_TITLE_X + 6 + 8 + yLabelW + 9));
+
+	// Legend layout: wrap onto further rows when the entries do not fit across the plot, and clip a
+	// single long label, so a long operation label or several comparisons cannot run off the figure.
+	const pw = W - mL - mR;
+	const legend = legendLayout(o.opLabel || o.title, color, cmp, pw);
+	const mB = 62 + (legend.length ? 8 + legend.length * 18 : 0);
+	const ph = H - mT - mB;
+
+	const sx = (x: number) => mL + ((x - x0) / (x1 - x0)) * pw;
+	let sy: (y: number) => number;
+	if (useLog) {
+		const den = (L1 - L0) || 1;
+		sy = (y) => mT + (1 - (Math.log10(Math.max(y, logFloor)) - L0) / den) * ph;
 	} else {
 		sy = (y) => mT + (1 - (y - lo) / (hi - lo)) * ph;
-		yticks = niceTicks(lo, hi, 5);
 	}
 	const xticks = niceTicks(x0, x1, Math.max(4, Math.round(pw / 90))).filter((t) => t >= x0 - 1e-9 && t <= x1 + 1e-9);
 
@@ -195,7 +236,6 @@ export function buildChartSvg(o: ChartSvgOpts): string {
 	out.push('<g fill="#000" font-size="13" stroke="#000" stroke-width="1">');
 	// Labels are chosen from the tick step (tickLabels), so a narrow range still reads 12.30, 12.35...
 	const xLabels = tickLabels(xticks);
-	const yLabels = useLog ? logTickLabels(yticks) : tickLabels(yticks);
 	xticks.forEach((t, i) => {
 		out.push(`<line x1="${f1(sx(t))}" x2="${f1(sx(t))}" y1="${mT + ph}" y2="${mT + ph + 5}"/>`
 			+ `<text x="${f1(sx(t))}" y="${mT + ph + 20}" text-anchor="middle" stroke="none">${escapeXml(xLabels[i])}</text>`);
@@ -211,19 +251,16 @@ export function buildChartSvg(o: ChartSvgOpts): string {
 	const xLab = o.xUnit ? `${xTitle} (${o.xUnit})` : xTitle;
 	const yLab = yAxisTitle(o.kind, o.yUnit, useLog) || (o.kind === 'env' ? 'Force' : 'Amplitude');
 	out.push(`<text x="${mL + pw / 2}" y="${mT + ph + 44}" text-anchor="middle" font-size="15" font-style="italic" fill="#000">${escapeXml(xLab)}</text>`);
-	out.push(`<text transform="translate(20 ${mT + ph / 2}) rotate(-90)" text-anchor="middle" font-size="15" font-style="italic" fill="#000">${escapeXml(yLab)}</text>`);
+	out.push(`<text transform="translate(${Y_TITLE_X} ${mT + ph / 2}) rotate(-90)" text-anchor="middle" font-size="15" font-style="italic" fill="#000">${escapeXml(yLab)}</text>`);
 
 	// legend: this cut plus each comparison cut
-	if (cmp.length) {
-		const y = H - 14;
-		let x = mL;
-		const entries = [{ label: o.opLabel || o.title, color, dash: '' }, ...cmp.map((c) => ({ label: c.label, color: c.color, dash: ' stroke-dasharray="6 3"' }))];
-		for (const e of entries) {
-			out.push(`<line x1="${x}" x2="${x + 24}" y1="${y - 4}" y2="${y - 4}" stroke="${escapeXml(e.color)}" stroke-width="2"${e.dash}/>`
-				+ `<text x="${x + 30}" y="${y}" font-size="13" fill="#000">${escapeXml(e.label)}</text>`);
-			x += 30 + e.label.length * 7 + 18;
+	legend.forEach((row, r) => {
+		const y = H - 14 - (legend.length - 1 - r) * 18;
+		for (const e of row) {
+			out.push(`<line x1="${mL + e.x}" x2="${mL + e.x + 24}" y1="${y - 4}" y2="${y - 4}" stroke="${escapeXml(e.color)}" stroke-width="2"${e.dash}/>`
+				+ `<text x="${mL + e.x + 30}" y="${y}" font-size="13" fill="#000">${escapeXml(e.label)}</text>`);
 		}
-	}
+	});
 	out.push('</svg>');
 	return out.join('');
 }
