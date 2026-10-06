@@ -41,3 +41,12 @@ original brief, plus a summary of what is already committed and what is left unc
 - **Local-only config.** `.claude/` is gitignored, so worktrees, local agent definitions and
   local skills there exist only in the current container. Anything that must outlive it goes
   in the repo or gets pushed.
+
+## Physical test backlog
+
+Cloud sessions and CI have no Directus with real data, no NI-DAQ rig and no packaged Windows app.
+Whenever a change can only be confirmed on one of those (anything a PR would list as "not tested
+on real systems"), add the check to [`docs/runbooks/physical-test-backlog.md`](docs/runbooks/physical-test-backlog.md)
+in the same PR, under the right section, with what to do, what to expect and the PR it came from.
+Never remove an unticked item because it is inconvenient; tick it with a date and result once it
+has actually been run.

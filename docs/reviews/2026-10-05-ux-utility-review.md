@@ -11,10 +11,11 @@ Items already tracked as open issues (#108, #100, #97, #90, #86, #81, #80, #67, 
 Items marked *(idea)* are judgement calls the reviewers did not confirm in code. Sizes are S, M
 or L. Paths are relative to the repo root.
 
-**Status:** the "Fix first" items and the "Small, high-value" batch shipped in PR #123, and the
-"Next" tier (P3, P4, R4, R5, D4, D3) in PR #124 (both merged); their descriptions list what
-changed. See the **Progress checklist** below for item-by-item state; everything not ticked is
-backlog.
+**Status:** shipped in three PRs (all merged): #123 ("Fix first" and "Small, high-value"), #124
+(the "Next" tier: P3, P4, R4, R5, D4, D3) and #125 (small high-use: R6, R10, R11, R13, P2, P11,
+D12). Their descriptions list what changed. See the **Progress checklist** below for item-by-item
+state; everything not ticked is backlog. Checks that need the rig or a live Directus are tracked
+in [`docs/runbooks/physical-test-backlog.md`](../runbooks/physical-test-backlog.md).
 
 ## Fix first — broken or risky, not new features
 
@@ -85,7 +86,7 @@ backlog.
 ## Progress checklist (2026-10-06)
 
 `[x]` done, `[~]` partly done, `[ ]` not started. "#123" shipped in PR #123 (merged 2026-10-05).
-"Next tier" shipped in PR #124 (merged 2026-10-06).
+"Next tier" shipped in PR #124 and "small high-use" in PR #125 (both merged 2026-10-06).
 
 ### Fix first
 - [x] **X1** Lite 3D height — #123
@@ -105,22 +106,25 @@ backlog.
   - [ ] Amp and channel chips not checked against real NI-DAQ hardware
 - [x] **R5** Live clipping / rail warning — next tier (also fixed the Lab Amp full-scale mismatch that stopped finalize's clipping test firing)
   - [ ] Not checked on the real rig
-- [ ] **R6** Alarms: early warning, auto-stop, `role="alert"` on the overlay, tone volume
+- [x] **R6** Alarms — #125: early warning (default 80 %), optional stop-on-alarm (Record page open), `role="alert"`, tone volume setting
 - [~] **R7** Disk runway — the pre-flight chip shows "~N min at this rate"
   - [ ] ETA during hardware recording
   - [ ] The pre-Start disk prompt still uses the hidden 8 s duration
 - [ ] **R8** Fix metadata (sample, notes) inside the save dialog
 - [ ] **R9** Captures list: search, filter, bulk delete, upload progress
-- [ ] **R10** Record keyboard shortcuts
-- [ ] **R11** "Restart recorder" in the packaged app
+- [x] **R10** Record keyboard shortcuts — #125 (Ctrl/Cmd+Enter, Ctrl/Cmd+., A, Ctrl/Cmd+N, Enter in the save dialog)
+  - [ ] Not available in pop-out windows; Ctrl+N cannot be overridden in a browser tab (Electron is fine)
+- [x] **R11** "Restart recorder" — #125 (refuses while recording; confirms when the recorder doesn't answer)
+  - [ ] Not exercised in a real Electron window
 - [ ] **R12** Bug report attaches the capture summary/manifest
-- [ ] **R13** Release notes in the update prompt; Help menu items
+- [x] **R13** Release notes in the update prompt; Help menu (Alt shows the menu bar) — #125
 - [ ] **R14** First-run checklist *(idea)*
 
 ### Force app — Plot dashboard and Diagnostics
 - [x] **P1** CSV export for signal stats, wear trend and cluster table — #123
   - [ ] Raw force series CSV
-- [ ] **P2** SVG/PNG export of the signal charts
+- [x] **P2** PNG/SVG export of the signal charts — #125
+  - [ ] PNG export not yet seen in a browser
 - [x] **P3** Shareable view link with "Copy link" — next tier
   - [ ] An already-open (kept-alive) Plot page ignores a new link opened later
   - [ ] Not checked: Directus page tracking on each address-bar update
@@ -137,7 +141,7 @@ backlog.
   - [ ] Batch recipe apply
   - [ ] Proper dialogs instead of `window.prompt` / `window.confirm`
   - [ ] Searchable picker
-- [ ] **P11** Gesture help overlay; units everywhere
+- [x] **P11** Gesture help overlay; units on every signal chart — #125 (spectra are "N rms"; filter-service `/fft` now matches)
 - [ ] **P12** Scale the campaign list (pagination, faster pick)
 - [ ] **P13** Filter/diag service batch endpoints *(idea)*
 
@@ -158,7 +162,7 @@ backlog.
 - [x] **D9** Next sample number from the database — #123 (`next_sample_code_number()`, `d1-next-number`)
 - [ ] **D10** Per-user home page and "needs attention" tiles
 - [ ] **D11** Campaign overview
-- [ ] **D12** Saved filters / bookmarks
+- [x] **D12** Saved filters — #125 (7 global bookmarks, migration 135; kept by `configure_directus.sql` re-runs)
 - [ ] **D13** Notifications on processing finish/fail *(idea)*
 - [ ] **D14** Note search UI
 - [ ] **D15** Phone/tablet layouts *(idea)*
@@ -169,6 +173,8 @@ backlog.
 - [x] CI "Scripts and diagnostics" had been red on `main` since 2026-10-04. Cause: HDBSCAN tie order varied with the CPU (AVX-512); fixed in `scripts/diag/spatial.py`
 - [x] CI never ran the Directus extension endpoint tests, the d1-report tests or the Ask-DB helper tests; it now runs all three
 - [x] The finalize clipping test ignored the Lab Amp full scale (pre-existing; surfaced by R5)
+- [x] The FFT overlay from filter-service was N/√Hz on an N axis (pre-existing; surfaced by P11)
+- [x] The offline banner covered the safety-alarm banner (pre-existing)
 - [x] Label endpoint hardening: errors are `text/plain` with no echoed markup, and the 200-row cap is counted once
 
 ## Suggested order
