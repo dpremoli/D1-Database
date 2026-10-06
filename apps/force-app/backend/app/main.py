@@ -1776,6 +1776,11 @@ async def record_start(cfg: RecordConfig) -> dict:
             raise HTTPException(
                 503, "NI-DAQmx runtime not available on this host — run on the acquisition PC."
             )
+        # The gains below, the live rail detector (session.py) and finalize's clipped flags must all
+        # use the SAME analog full scale: the Lab Amp's (settings or ANALOG_FULLSCALE_V), not
+        # RecordConfig's 10 V default, or a rig on another range never rails.
+        vfs = float(_labamp_cfg.get("analog_fullscale_v", 10.0))
+        cfg.analog_fullscale_v = vfs
         # The NI-DAQ page's channel model is the source of truth for physical channels + per-channel
         # gains. A request may still override with an explicit non-default channel list.
         cc = _channel_config()
@@ -1820,7 +1825,6 @@ async def record_start(cfg: RecordConfig) -> dict:
         # Per-channel volts→N gains from the amp's (auto-ranged) ranges: N/V = range / analog_fs.
         if not cfg.dyno_gains:
             try:
-                vfs = float(_labamp_cfg.get("analog_fullscale_v", 10.0))
                 # Blocking LAN round-trip to the amp — off the event loop so it doesn't stall other
                 # concurrent requests while this one waits on it.
                 rows = sorted(

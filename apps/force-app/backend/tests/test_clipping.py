@@ -167,3 +167,47 @@ def test_session_without_gains_never_reports_railed(tmp_path):
     sess.join_finalize(30)
     assert sess.status()["railed"] == []
     assert not any(isinstance(m, str) and '"railed"' in m for m in bus.messages)
+
+
+# ---- The rail test must use the Lab Amp's full scale, not RecordConfig's default 10 V ----
+
+
+class _RailAtVoltsSource(_RailSource):
+    """Rails channel 3 at 5.0 V: full scale on a 5 V rig, only half scale on a 10 V one."""
+
+    def __init__(self, cfg=None, physical_channels=None, extra_channels=None):
+        super().__init__()
+
+    def read(self):
+        out = super().read()
+        if out is not None:
+            _t, data = out
+            data[data == 10.0] = 5.0
+        return out
+
+
+def test_nidaq_start_uses_the_lab_amp_full_scale_for_railing(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    import app.sources.nidaq as nidaq_mod
+
+    monkeypatch.setattr(nidaq_mod, "nidaq_available", lambda: True)
+    monkeypatch.setattr(nidaq_mod, "NidaqSource", _RailAtVoltsSource)
+    monkeypatch.setattr(main.nidaq_enum, "sample_rate_limits", lambda _c: {})
+    monkeypatch.setattr(main, "CAPTURES_ROOT", str(tmp_path))
+    monkeypatch.setattr(main, "_session", None)
+    monkeypatch.setitem(main._labamp_cfg, "analog_fullscale_v", 5.0)  # Lab Amp settings / env
+    body = {"source": "nidaq", "sample_rate": 1000, "duration_sec": 0.3, "dyno_gains": GAINS}
+    try:
+        with TestClient(main.app) as client:
+            assert client.post("/record/start", json=body).status_code == 200
+            sess = main._session
+            sess._thread.join(15)
+            sess.join_finalize(30)
+            assert sess.cfg.analog_fullscale_v == 5.0
+            assert client.get("/record/status").json()["railed"] == [3]  # live detector
+            assert sess.summary["channels_ranging"]["clipped"][3] is True  # and finalize
+            assert sum(sess.summary["channels_ranging"]["clipped"]) == 1
+    finally:
+        monkeypatch.setattr(main, "_session", None)
