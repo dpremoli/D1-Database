@@ -28,6 +28,29 @@ export interface PreflightItem {
 /** The NI-DAQ page's channel as the checklist needs it (a subset of nidaqApi.Channel). */
 export interface ChannelLike { name: string; role?: string; physical: string | null; source?: string }
 
+/** The Record page's channel text as a list: split on newlines or commas, trimmed, blanks dropped
+ *  (what Start sends as `nidaq_channels`). */
+export function parseChannelList(text: string): string[] {
+	return text.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
+}
+
+/** Whether Start sends a list the backend will take literally, so the saved channel model is NOT
+ *  what the Channels chip should speak for. Not custom: empty, the default placeholder list, or
+ *  the saved model's own physical list (what first-boot autoassign writes into the Record page on
+ *  a real rig, so it never equals the default). Only a hand-edited list is custom. Order counts,
+ *  as it does for the backend: it is the column order. */
+export function isCustomChannelList(text: string, defaults: readonly string[], model: ChannelLike[] | null): boolean {
+	const chans = parseChannelList(text);
+	if (chans.length === 0) return false;
+	const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+	if (same(chans, defaults)) return false;
+	if (model) {
+		const modelList = model.filter((c) => c.physical && c.source !== 'virtual').map((c) => String(c.physical).trim());
+		if (modelList.length > 0 && same(chans, modelList)) return false;
+	}
+	return true;
+}
+
 export interface AmpReading {
 	reachable: boolean;
 	/** The amp's operation mode as reported ('MEASURE', 'RESET', ...), null when it didn't say. */

@@ -22,7 +22,7 @@ import { spotlight } from '../ui/spotlight';
 import { FIELD_FOCUS, StartRequestError, sampleRateIssue } from './recordingErrors';
 import { nidaqHardware } from './nidaqHardware';
 import { railBannerText } from './railing';
-import { computePreflight, needsSampleConfirm, type AmpReading, type ChannelLike } from './preflight';
+import { computePreflight, isCustomChannelList, needsSampleConfirm, parseChannelList, type AmpReading, type ChannelLike } from './preflight';
 import { hwStatus } from './hwStatus';
 import { nidaqApi } from '../nidaq/nidaqApi';
 import { authStore } from '../authStore';
@@ -152,10 +152,9 @@ export function createWorkspace() {
 	watch(nidaqChannels, (v) => localStorage.setItem(NIDAQ_LS_KEY, v));
 	// What Start sends. The backend takes the NI-DAQ page's saved channel model unless this list is
 	// empty or the default one, so only then does the model decide what records.
-	const customChannelList = computed(() => {
-		const chans = nidaqChannels.value.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
-		return chans.length > 0 && chans.join('\n') !== defaultChannelList.join('\n');
-	});
+	// First-boot autoassign writes the saved model's own physical list here, which is never the
+	// default on a real rig, so that list counts as the model too (preflight.ts isCustomChannelList).
+	const customChannelList = computed(() => isCustomChannelList(nidaqChannels.value, defaultChannelList, preflightReads.channels));
 
 	// The setup half of cfg/meta/machining/link is remembered across launches (R1, setupPrefs.ts) and
 	// filled in by restoreSetup() below once `link` exists. `duration_sec` is not part of it: no
@@ -555,7 +554,7 @@ export function createWorkspace() {
 					await new Promise((r) => setTimeout(r, 500));
 					await labamp.setMode('MEASURE');
 				} catch { /* amp unreachable — proceed anyway, gains were set at last range */ }
-				const chans = nidaqChannels.value.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+				const chans = parseChannelList(nidaqChannels.value);
 				await client.start({ ...cfg, ...recordingPrefsPayload(), source: 'nidaq', nidaq_channels: chans, axis: plot.frmAxis, extra_metadata: metaObj() } as any);
 			} else {
 				await client.start({ ...cfg, ...recordingPrefsPayload(), source: 'sim', axis: plot.frmAxis, extra_metadata: metaObj() } as any);

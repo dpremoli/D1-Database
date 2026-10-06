@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	attentionItems, channelConfigIssues, computePreflight, diskRunwayMinutes, formatRunway, needsSampleConfirm,
+	attentionItems, channelConfigIssues, computePreflight, diskRunwayMinutes, formatRunway, isCustomChannelList, needsSampleConfirm,
 	type ChannelLike, type PreflightInput, type PreflightItem,
 } from './preflight';
 
@@ -196,5 +196,36 @@ describe('computePreflight', () => {
 	it('attentionItems lists the warnings and failures only', () => {
 		const items = computePreflight(input({ sampleSet: false, session: 'offline', diskFreeGb: 1.1, amp: null }));
 		expect(attentionItems(items).map((it) => `${it.id}:${it.level}`)).toEqual(['sample:warn', 'disk:fail']);
+	});
+});
+
+describe('isCustomChannelList', () => {
+	const defaults = ['cDAQ1Mod1/ai0', 'cDAQ1Mod1/ai1'];
+	const model = [
+		{ name: 'Fx1', physical: 'Dev1/ai0' }, { name: 'Fx2', physical: 'Dev1/ai1' },
+		{ name: 'Fy1', physical: null }, { name: 'V', physical: null, source: 'virtual' },
+		{ name: 'Tacho', physical: 'Dev1/ai2' },
+	];
+
+	it('empty and the default list are not custom', () => {
+		expect(isCustomChannelList('', defaults, null)).toBe(false);
+		expect(isCustomChannelList(' \n ', defaults, model)).toBe(false);
+		expect(isCustomChannelList('cDAQ1Mod1/ai0\ncDAQ1Mod1/ai1', defaults, null)).toBe(false);
+	});
+
+	it('the saved model\'s physical list is not custom, whatever the whitespace or separator', () => {
+		expect(isCustomChannelList('Dev1/ai0\nDev1/ai1\nDev1/ai2', defaults, model)).toBe(false);
+		expect(isCustomChannelList(' Dev1/ai0, Dev1/ai1 ,Dev1/ai2\n', defaults, model)).toBe(false);
+	});
+
+	it('a hand-edited list is custom, including the model list reordered or extended', () => {
+		expect(isCustomChannelList('Dev1/ai1\nDev1/ai0\nDev1/ai2', defaults, model)).toBe(true);
+		expect(isCustomChannelList('Dev1/ai0\nDev1/ai1\nDev1/ai2\nDev1/ai3', defaults, model)).toBe(true);
+		expect(isCustomChannelList('Dev1/ai0\nDev1/ai1', defaults, model)).toBe(true);
+	});
+
+	it('before the model has been read, anything but the default is custom', () => {
+		expect(isCustomChannelList('Dev1/ai0\nDev1/ai1\nDev1/ai2', defaults, null)).toBe(true);
+		expect(isCustomChannelList('Dev1/ai0', defaults, [])).toBe(true);
 	});
 });

@@ -352,6 +352,24 @@ describe('workspace pre-flight (R4)', () => {
 		expect(item(w, 'channels')?.level).toBe('warn');        // empty: the backend uses the model again
 	});
 
+	it('the model\'s own physical list (first-boot autoassign) is not custom: the chip still checks the model', async () => {
+		labampMock.status.mockResolvedValue({ reachable: true, mode: 'RESET', mock: false });
+		const model = ['Fx1', 'Fx2', 'Fy1', 'Fy2', 'Fz1', 'Fz2', 'Fz3', 'Fz4', 'Tacho'].map((name, i) => ({
+			name, role: name, source: 'hardware', physical: i < 8 ? `Dev1/ai${i}` : 'Dev2/ai0',
+		}));
+		model[3].physical = 'Dev1/ai0';   // a duplicate input: the model check fails
+		replies['/nidaq/channels'] = { body: { channels: model, roles: [], colors: {} } };
+		const w = await make();
+		w.setSource('nidaq');
+		await w.refreshPreflight();
+		w.nidaqChannels.value = model.map((c) => c.physical).join('\n');   // what autoassign writes
+		expect(item(w, 'channels')?.level).toBe('fail');         // checked against the model
+		w.nidaqChannels.value = model.slice(1).map((c) => c.physical).join('\n');
+		expect(item(w, 'channels')?.level).toBe('skip');         // hand-edited (different list)
+		w.nidaqChannels.value = model.map((c) => ` ${c.physical} `).join(',');   // same list, other whitespace/separators
+		expect(item(w, 'channels')?.level).toBe('fail');
+	});
+
 	it('an unreadable amp or channel list is "not checked", not a failure', async () => {
 		const w = await make();
 		w.setSource('nidaq');
