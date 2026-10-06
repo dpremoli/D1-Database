@@ -145,10 +145,17 @@ export function createWorkspace() {
 		}
 	}
 	const NIDAQ_LS_KEY = 'force-app.nidaq.channels';
-	const defaultChannels = ['cDAQ1Mod1/ai0', 'cDAQ1Mod1/ai1', 'cDAQ1Mod1/ai2', 'cDAQ1Mod1/ai3',
-		'cDAQ1Mod2/ai0', 'cDAQ1Mod2/ai1', 'cDAQ1Mod2/ai2', 'cDAQ1Mod2/ai3', 'cDAQ1Mod3/ai0'].join('\n');
+	const defaultChannelList = ['cDAQ1Mod1/ai0', 'cDAQ1Mod1/ai1', 'cDAQ1Mod1/ai2', 'cDAQ1Mod1/ai3',
+		'cDAQ1Mod2/ai0', 'cDAQ1Mod2/ai1', 'cDAQ1Mod2/ai2', 'cDAQ1Mod2/ai3', 'cDAQ1Mod3/ai0'];
+	const defaultChannels = defaultChannelList.join('\n');
 	const nidaqChannels = ref(localStorage.getItem(NIDAQ_LS_KEY) || defaultChannels);
 	watch(nidaqChannels, (v) => localStorage.setItem(NIDAQ_LS_KEY, v));
+	// What Start sends. The backend takes the NI-DAQ page's saved channel model unless this list is
+	// empty or the default one, so only then does the model decide what records.
+	const customChannelList = computed(() => {
+		const chans = nidaqChannels.value.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
+		return chans.length > 0 && chans.join('\n') !== defaultChannelList.join('\n');
+	});
 
 	// The setup half of cfg/meta/machining/link is remembered across launches (R1, setupPrefs.ts) and
 	// filled in by restoreSetup() below once `link` exists. `duration_sec` is not part of it: no
@@ -316,6 +323,7 @@ export function createWorkspace() {
 		diskFreeGb: hwStatus.diskFreeGb >= 0 ? hwStatus.diskFreeGb : null,
 		sampleRate: cfg.sample_rate,
 		channels: preflightReads.channels,
+		channelsCustom: customChannelList.value,
 	}));
 	// A missing Sample is a warning, not a block: the first Start press shows "Start anyway".
 	const sampleConfirmOpen = ref(false);

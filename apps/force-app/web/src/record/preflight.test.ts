@@ -179,6 +179,13 @@ describe('computePreflight', () => {
 			expect(c.level).toBe('fail');
 			expect(c.focus).toEqual({ id: 'nidaq-channels', route: '/nidaq' });
 		});
+		it('a custom Record-page list is not checked against the saved model', () => {
+			const ch = goodChannels();
+			ch[3].physical = ch[2].physical;   // would fail
+			const c = byId(computePreflight(input({ channels: ch, channelsCustom: true })), 'channels');
+			expect(c.level).toBe('skip');
+			expect(c.detail).toMatch(/custom channel list/);
+		});
 		it('an unassigned core channel warns', () => {
 			const ch = goodChannels();
 			ch[0].physical = null;
