@@ -76,6 +76,11 @@ Schema check (`20260628000047_campaigns.sql`, `20260710000087_campaign_redesign.
 - Force-analysis status lives on `machining_force_analysis` (one row per operation file):
   `status` (`pending|processing|done|error|skipped`, the crawler/orchestrator queue) and
   `diag_status` (`null|pending|processing|done|error`, the Diagnostics build).
+- - `test_sessions.status` is the lifecycle from `20260619000013_status_vocabulary.sql`:
+  `registered | pending_processing | processing | processed | analysing | analysed | failed`
+  (the old `complete` no longer exists). **Decision:** a test counts toward "Tests complete" when it
+  is `processed` or `analysed` (its data has been through the heavy-data worker; analysis is an
+  optional later step). The status chips list every status in lifecycle order.
 - There is **no planned count** on `campaigns` (only `status`, dates and notes), so progress is
   shown as "operations with a completed analysis out of operations", not "done vs. planned".
 
@@ -83,7 +88,8 @@ The panel's data comes from the browser via `useApi` (`/items/...`), so the sign
 permissions apply and no new endpoint is needed. Decision: add an **Overview** section above the
 existing operations manager with:
 
-- counts: samples, operations, test sessions, and test sessions by status;
+- counts: samples, operations, test sessions, and test sessions by status, with a "Tests complete"
+  bar (`processed` + `analysed`);
 - a per-sample table: code, operations count, tests count, with links to the sample;
 - a per-operation list: pass code, sample, force-analysis `status` and `diag_status` badges (with
   the error text on hover), and a progress bar "analysed n / m" (`status = done`) with a second

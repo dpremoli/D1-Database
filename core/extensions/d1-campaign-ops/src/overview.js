@@ -6,6 +6,21 @@
 // machining_force_analysis rows of those operations. Design:
 // docs/superpowers/specs/2026-10-06-sample-timeline-and-campaign-overview-design.md
 
+// test_sessions.status is the lifecycle from migration 20260619000013:
+// registered | pending_processing | processing | processed | analysing | analysed | failed.
+// A test counts as complete once its data is processed or analysed ('complete' is the retired
+// pre-0013 value and no longer exists). Chips are listed in lifecycle order.
+export const TEST_DONE_STATUSES = ['processed', 'analysed'];
+export const TEST_STATUS_ORDER = [
+	'registered',
+	'pending_processing',
+	'processing',
+	'processed',
+	'analysing',
+	'analysed',
+	'failed',
+];
+
 const worst = (s) => ['error', 'processing', 'pending'].find((k) => s.includes(k));
 
 // One operation can have several force files (one machining_force_analysis row each). Roll the rows
@@ -103,7 +118,7 @@ export function buildOverview({ samples = [], operations = [], tests = [], analy
 	};
 	const analysed = forceOps.filter((o) => o.analysis === 'done').length;
 	const diagBuilt = forceOps.filter((o) => o.diag === 'done').length;
-	const testsComplete = testRows.filter((t) => t.status === 'complete').length;
+	const testsComplete = testRows.filter((t) => TEST_DONE_STATUSES.includes(t.status)).length;
 	const pct = (n, d) => (d ? Math.round((100 * n) / d) : 0);
 
 	return {

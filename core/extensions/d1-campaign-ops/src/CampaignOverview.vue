@@ -10,7 +10,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 // @ts-ignore plain JS module, tested with node --test
-import { buildOverview, errMsg } from './overview.js';
+import { TEST_STATUS_ORDER, buildOverview, errMsg } from './overview.js';
 
 const props = defineProps<{ primaryKey: string | number; refreshKey?: number }>();
 const api = useApi();
@@ -94,10 +94,9 @@ const STATE_LABEL: Record<string, string> = {
 	done: 'done', error: 'error', processing: 'processing', pending: 'pending', skipped: 'skipped', none: 'not analysed',
 };
 function stateClass(s: string) { return `st-${s}`; }
-const TEST_ORDER = ['registered', 'processing', 'complete', 'failed'];
 const testStatusChips = computed(() => {
 	const by = ov.value.counts.testsByStatus as Record<string, number>;
-	return Object.keys(by).sort((a, b) => TEST_ORDER.indexOf(a) - TEST_ORDER.indexOf(b)).map((k) => ({ k, n: by[k] }));
+	return Object.keys(by).sort((a, b) => TEST_STATUS_ORDER.indexOf(a) - TEST_STATUS_ORDER.indexOf(b)).map((k) => ({ k, n: by[k] }));
 });
 function fmtDate(d: string | null) {
 	return d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
@@ -225,11 +224,11 @@ async function setTestCampaign(id: string, campaign: string | number | null, lab
 				</div>
 				<div class="ov-prog-row">
 					<span class="ov-prog-label">Tests complete</span>
-					<div class="ov-bar ov-bar--test"><i :style="{ width: ov.progress.testsCompletePct + '%' }" /></div>
+					<div class="ov-bar ov-bar--test" title="Test sessions whose data is processed or analysed"><i :style="{ width: ov.progress.testsCompletePct + '%' }" /></div>
 					<span class="ov-prog-n">{{ ov.progress.testsComplete }} / {{ ov.counts.tests }}</span>
 				</div>
 				<div v-if="testStatusChips.length" class="ov-chips">
-					<span v-for="c in testStatusChips" :key="c.k" class="ov-pill" :class="`ts-${c.k}`">{{ c.n }} {{ c.k }}</span>
+					<span v-for="c in testStatusChips" :key="c.k" class="ov-pill" :class="`ts-${c.k}`">{{ c.n }} {{ c.k.replace(/_/g, ' ') }}</span>
 				</div>
 			</div>
 
@@ -296,7 +295,7 @@ async function setTestCampaign(id: string, campaign: string | number | null, lab
 						<td><router-link :to="`/content/test_sessions/${t.session_id}`">{{ t.test_type || '—' }}</router-link></td>
 						<td>{{ t.sample_code || '—' }}</td>
 						<td>{{ fmtDate(t.session_date) }}</td>
-						<td><span class="ov-pill" :class="`ts-${t.status}`">{{ t.status || '—' }}</span></td>
+						<td><span class="ov-pill" :class="`ts-${t.status}`">{{ t.status ? t.status.replace(/_/g, ' ') : '—' }}</span></td>
 						<td class="act"><button class="x" title="Remove from the campaign" :disabled="!!busy" @click="setTestCampaign(t.session_id, null, t.test_type || 'the test session')"><v-icon name="close" x-small /></button></td>
 					</tr>
 				</tbody>
@@ -346,10 +345,10 @@ async function setTestCampaign(id: string, campaign: string | number | null, lab
 .ov-table .x.add:hover { color: #2563eb; background: color-mix(in srgb, #2563eb 10%, transparent); }
 .ov-note { margin-left: 6px; font-size: 10px; color: #b45309; background: #fff7ed; padding: 1px 6px; border-radius: 99px; }
 .ov-pill { font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 99px; background: #eeeeee; color: #616161; white-space: nowrap; }
-.st-done, .ts-complete { background: #e8f5e9; color: #2e7d32; }
+.st-done, .ts-processed, .ts-analysed { background: #e8f5e9; color: #2e7d32; }
 .st-error, .ts-failed { background: #fce4ec; color: #c62828; }
-.st-processing, .ts-processing { background: #e3f2fd; color: #1565c0; }
-.st-pending, .ts-registered { background: #f3e5f5; color: #6a1b9a; }
+.st-processing, .ts-processing, .ts-analysing { background: #e3f2fd; color: #1565c0; }
+.st-pending, .ts-registered, .ts-pending_processing { background: #f3e5f5; color: #6a1b9a; }
 .st-none, .st-skipped { background: #eeeeee; color: #616161; }
 .ov-add { border: 1px dashed var(--theme--border-color, #d1d9e6); border-radius: 10px; padding: 8px 10px; margin-top: 8px; }
 .ov-add-head { display: flex; align-items: center; gap: 6px; }

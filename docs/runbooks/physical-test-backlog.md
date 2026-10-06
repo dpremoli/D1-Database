@@ -93,7 +93,10 @@ named in the step.
   `machining_force_analysis` rows are all `done`; the per-operation force-analysis and diagnostics
   badges match the Force Analysis page, and an `error` badge shows the message on hover. As a role
   that cannot read `machining_force_analysis`, the force columns show "—" and a note, not an error.
-  Since: this batch (PR TBD).
+  "Tests complete n / m" counts test sessions whose status is `processed` or `analysed` (compare
+  with a status filter on the Test Sessions list), and the status chips use the real vocabulary
+  (`registered`, `pending processing`, `processing`, `processed`, `analysing`, `analysed`,
+  `failed`). Since: this batch (PR TBD).
 - [ ] **D11 — pickers.** In a campaign, add a sample by code, then a test session that is in no
   campaign: each appears in the overview, the counts rise, and the test session shows the campaign
   in its own form. Remove both again. A sample that only appears through an operation is marked
