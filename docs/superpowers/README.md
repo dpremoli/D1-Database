@@ -32,5 +32,6 @@ open.
 | [Diagnostics Phase H](specs/2026-09-04-diagnostics-workbench-phase-h-design.md) | Diagnostics | Implemented |
 | [Milling path models + polar plot](specs/2026-09-07-milling-path-models-and-polar-design.md) | force-app / plotting | Implemented |
 | [FRM ↔ Signals linking](specs/2026-10-04-frm-signal-linking-design.md) | force-app / plotting | Implemented |
+| [Diagnostics across a campaign](specs/2026-10-06-diagnostics-campaign-design.md) | Diagnostics | In progress |
 
 Add a row when a new spec lands, and update its Status line (and this table) when it ships.
