@@ -333,7 +333,7 @@ function startNew() {
 					<button class="btn" :disabled="stage === 'saving'" @click="goToPlot">Open in Plot</button>
 					<button v-if="errMsg" class="btn" :disabled="stage === 'saving'" @click="startNew">Start new run</button>
 					<div class="scd-spacer"></div>
-					<button class="btn primary" :disabled="nothingSelected || stage === 'saving'" @click="confirmSave">
+					<button class="btn primary" data-save-primary :disabled="nothingSelected || stage === 'saving'" @click="confirmSave">
 						{{ stage === 'saving' ? 'Saving…' : errMsg ? 'Retry' : 'Save' }}
 					</button>
 				</div>
@@ -359,7 +359,7 @@ function startNew() {
 				<div class="scd-actions">
 					<button class="btn" @click="startNew">Start new run</button>
 					<div class="scd-spacer"></div>
-					<button class="btn primary" @click="goToPlot">
+					<button class="btn primary" data-save-primary @click="goToPlot">
 						Open in Plot
 					</button>
 				</div>

@@ -22,7 +22,8 @@ import PolarPanel from './panels/PolarPanel.vue';
 import RpmPanel from './panels/RpmPanel.vue';
 import OverviewPanel from './panels/OverviewPanel.vue';
 import SaveCutDialog from './panels/SaveCutDialog.vue';
-import { confirmAction } from '../ui/confirm';
+import { confirmAction, confirmState } from '../ui/confirm';
+import { resolveShortcut, type ShortcutContext } from './shortcuts';
 
 
 // #25: getWorkspace() returns a lazily-built module-level singleton (see workspace.ts) so its
@@ -450,7 +451,38 @@ function onVisibilityChange() {
 	}
 }
 
+// R10: keyboard shortcuts. One listener for the page's lifetime; shortcuts.ts decides what a key
+// means, and each action calls what the matching button calls, so every gate still applies (pre-flight
+// "Start anyway", the alarm test, the disk prompt, the sample-rate block, the silence confirmation).
+function shortcutContext(): ShortcutContext {
+	return {
+		record: w.mode.value === 'record',
+		// Same conditions as the Start / Stop / New buttons in RecordingActions.vue.
+		canStart: !w.locked.value && w.st.connected && !w.busy.value && !w.sampleRateBlocker.value && !w.saveOpen.value,
+		canStop: w.locked.value && !w.busy.value && !w.isFinalizing.value,
+		alarmShowing: w.alarms.tripped,
+		canNew: w.isDone.value && !w.saveOpen.value,
+		saveDialogOpen: w.saveOpen.value,
+		modalOpen: confirmState.current != null,
+	};
+}
+function onShortcutKey(e: KeyboardEvent) {
+	const t = e.target as (HTMLElement & { type?: string }) | null;
+	const action = resolveShortcut({
+		key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey, repeat: e.repeat, isComposing: e.isComposing,
+		target: t && { tagName: t.tagName, type: t.type, isContentEditable: t.isContentEditable },
+	}, shortcutContext());
+	if (!action) return;
+	e.preventDefault(); // Ctrl+N would otherwise open a browser window
+	if (action === 'start') void w.requestStart();
+	else if (action === 'stop') void w.stop();
+	else if (action === 'new') w.newRun();
+	else if (action === 'acknowledge') void ackAlarm();
+	else document.querySelector<HTMLButtonElement>('[data-save-primary]:not([disabled])')?.click();
+}
+
 onMounted(() => {
+	window.addEventListener('keydown', onShortcutKey);
 	// Reconcile with the recorder on entry and on every stream (re)open: a cut that ended while this
 	// page was away, or a backend that restarted, is never announced over the stream (#2.1). The
 	// stream also reconnects by itself, so a restart that leaves this route unchanged recovers too.
@@ -468,6 +500,7 @@ onMounted(() => {
 	document.addEventListener('visibilitychange', onVisibilityChange);
 });
 onBeforeUnmount(() => {
+	window.removeEventListener('keydown', onShortcutKey);
 	document.removeEventListener('visibilitychange', onVisibilityChange);
 	w.client.onStreamOpen = null;
 	w.client.disconnect();
