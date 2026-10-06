@@ -290,7 +290,20 @@ export function createWorkspace() {
 	// R6 (opt-in): a tripped force alarm stops the recording through the normal stop path, so the
 	// save dialog and finalize behave exactly as after a manual Stop. The controller calls this once
 	// per trip; the state check keeps a late call from stopping anything that is not recording.
-	alarms.onForceTrip = () => { if (mode.value === 'record' && st.state === 'recording') void stop(); };
+	// The controller calls this once per trip, so a call that lands while start()/stop() holds `busy`
+	// (stop() would return early) is remembered and retried when busy clears, or the trip's stop
+	// would be lost for good. The retry re-checks the state, so a stop already under way is a no-op.
+	let stopPendingOnTrip = false;
+	alarms.onForceTrip = () => {
+		if (mode.value !== 'record' || st.state !== 'recording') return;
+		if (busy.value) { stopPendingOnTrip = true; return; }
+		void stop();
+	};
+	watch(busy, (b) => {
+		if (b || !stopPendingOnTrip) return;
+		stopPendingOnTrip = false;
+		if (mode.value === 'record' && st.state === 'recording') void stop();
+	});
 	// Record mode only: an archived cut must never trip a safety alarm on a machine that is not
 	// cutting. Playback drove this with RPM that was also wrong by the decimation stride, so every
 	// replay raised the full-screen overlay.
