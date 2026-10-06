@@ -18,7 +18,7 @@ import type { Cache } from './liveCache';
 import type { PathParams, PathWindow } from './path';
 import { nearestIndex } from './hoverIndex';
 import {
-	phase0Samples, spiralAnchor, spiralPositionInto, spiralUniformValues,
+	phase0Samples, spiralAnchor, spiralPlaceInto, spiralPositionInto, spiralRadiusInto, spiralUniformValues,
 	type SpiralPos, type SpiralUniformParams,
 } from './frmCloudShader';
 
@@ -158,21 +158,31 @@ export function displayedKeepIndex(
  * `project` map (x, y, cache index) to canvas px (null = not drawn), and return the winner with its
  * position recomputed. This is what both map views use for a right-click: a full path costs ~20 B
  * per sample (about 100 MB at 5M), too much to build and drop on every click.
+ *
+ * `cull` (flat views only: Lite 2D, octree top-down) is the click's world point and a world radius
+ * that covers the pick radius (MapProjector.discAt). A spiral is centred on the origin, so a sample
+ * at radius rho is at least |rho - rhoClick| from the click; one further than `cull.r` can't be
+ * within the pick radius, and is skipped right after the radius step, before the cos/sin, the
+ * projection and the keep() test. Same winner as without it, for a fraction of the work.
  */
 export function pickSpiral(
 	c: Cache, p: Omit<SpiralUniformParams, 'tCs' | 'revsCs'>, cropStart: number, cropEnd: number, stride: number,
 	project: (x: number, y: number, i: number) => { px: number; py: number } | null,
 	px: number, py: number, radiusPx: number, keep?: (i: number) => boolean,
+	cull?: { x: number; y: number; r: number } | null,
 ): { i: number; x: number; y: number; rho: number } | null {
 	const s = phase0Samples(c, cropStart, cropEnd, stride);
 	if (!s.n) return null;
 	const u = spiralUniformValues({ ...p, ...spiralAnchor(c, cropStart) });
 	const out: SpiralPos = { x: 0, y: 0, rho: 0, visible: false };
 	const at = (j: number) => (s.k0 + j) * s.stride;
+	const rhoClick = cull ? Math.hypot(cull.x, cull.y) : 0, rhoReach = cull ? cull.r : 0;
 	const j = pickNearest(s.n, (j) => {
 		const i = at(j);
-		spiralPositionInto(u, c.t[i], c.revs[i], cropStart, cropEnd, out);
-		return out.visible ? project(out.x, out.y, i) : null;
+		const r = spiralRadiusInto(u, c.t[i], c.revs[i], cropStart, cropEnd, out);
+		if (!out.visible || (cull && Math.abs(out.rho - rhoClick) > rhoReach)) return null;
+		spiralPlaceInto(r, out);
+		return project(out.x, out.y, i);
 	}, px, py, radiusPx, keep && ((j) => keep(at(j))));
 	if (j === null) return null;
 	const i = at(j);

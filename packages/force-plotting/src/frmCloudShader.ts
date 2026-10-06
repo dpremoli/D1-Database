@@ -150,6 +150,16 @@ export type SpiralUniforms = ReturnType<typeof spiralUniformValues>;
 export function spiralPositionInto(
 	u: SpiralUniforms, aT: number, aRevs: number, cropStart: number, cropEnd: number, out: SpiralPos,
 ): void {
+	spiralPlaceInto(spiralRadiusInto(u, aT, aRevs, cropStart, cropEnd, out), out);
+}
+
+// The first half of spiralPositionInto: everything up to (not including) the cos/sin. Sets
+// out.rho and out.visible and returns r (revolutions since the crop start), so a pick can reject a
+// sample on its radius alone (cloudPick's cull) before paying for the trig and the projection.
+// spiralPlaceInto finishes the job; the two together ARE the shader's `main()`.
+export function spiralRadiusInto(
+	u: SpiralUniforms, aT: number, aRevs: number, cropStart: number, cropEnd: number, out: SpiralPos,
+): number {
 	let visible = aT >= cropStart && aT <= cropEnd;
 	let rho = u.uRho0, r = 0;
 	if (u.uSpeedMode === 2) {
@@ -164,8 +174,14 @@ export function spiralPositionInto(
 		rho = u.uRho0 - u.uFeed * r;
 		if (rho < u.uInnerR) visible = false;
 	}
+	out.rho = rho; out.visible = visible;
+	return r;
+}
+
+// The second half: x, y from out.rho and r (the shader's theta = 2*PI*r).
+export function spiralPlaceInto(r: number, out: SpiralPos): void {
 	const theta = 2 * Math.PI * r;
-	out.x = rho * Math.cos(theta); out.y = rho * Math.sin(theta); out.rho = rho; out.visible = visible;
+	out.x = out.rho * Math.cos(theta); out.y = out.rho * Math.sin(theta);
 }
 
 // The stride buildStaticAttributes applies (and so the one a pick must replay).

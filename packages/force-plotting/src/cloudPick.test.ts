@@ -5,6 +5,9 @@ import {
 } from './cloudPick';
 import type { Cache } from './liveCache';
 import { buildPath, type PathParams, type TurningSpiralParams } from './path';
+import { createMapProjector } from './mapProjector';
+import { spiralPointAt } from './frmCloudShader';
+import * as THREE from 'three';
 
 describe('pickNearest', () => {
 	const pts = [{ px: 0, py: 0 }, { px: 10, py: 10 }, { px: 12, py: 10 }, { px: 100, py: 100 }];
@@ -227,6 +230,110 @@ describe('pickSpiral', () => {
 		const hit = pickSpiral(c, donut, 0.1, 0.5, 1, project, 400, 400, 1000);
 		expect(hit).not.toBeNull();
 		expect(hit!.rho).toBeGreaterThanOrEqual(39.95 - 1e-3);
+	});
+});
+
+// A long synthetic turning-spiral cache: steady 3 rev/s, so rho winds in from the outer radius.
+function spiralCache(n: number): Cache {
+	const Fs = 5000, t = new Float32Array(n), revs = new Float32Array(n), rpm = new Float32Array(n).fill(180);
+	for (let i = 0; i < n; i++) { t[i] = i / Fs; revs[i] = (3 * i) / Fs; }
+	const z = () => new Float32Array(n);
+	return { N: n, Fs, feed: 0.05, diam: 80, csSec: 0, ceSec: (n - 1) / Fs, t, Fx: z(), Fy: z(), Fz: z(), rpm, revs };
+}
+
+describe('pickSpiral with a radius cull', () => {
+	const W = 800, H = 800;
+	// a flat top-down ortho view over +-45 mm, panned a little
+	function view(zoom = 1, cx = 1.5, cy = -2) {
+		const cam = new THREE.OrthographicCamera(-45, 45, 45, -45, 0.1, 1e6);
+		cam.position.set(cx, cy, 10); cam.zoom = zoom;
+		cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+		const proj = createMapProjector();
+		proj.setup(cam, null, W, H);
+		return proj;
+	}
+	const base: TurningSpiralParams = {
+		kind: 'turning_spiral', feed: 0.05, diam: 80, innerDiam: 0, speedMode: 'measured', rpm: 180, vc: 20, timeScale: 1, ppr: 1,
+	};
+	// clicks just beside drawn samples (so there is a winner), plus a few that land on nothing
+	function onSpiral(c: Cache, path: TurningSpiralParams, proj: ReturnType<typeof createMapProjector>,
+		indices = [50, 4000, 12345, 30001, 39000]): [number, number][] {
+		const out: [number, number][] = [[400, 400], [10, 10]];
+		for (const i of indices) {
+			const v = spiralPointAt(c, path, 0, 8, i);
+			const p = v.visible ? proj.project(v.x, v.y, 0) : null;
+			if (p) out.push([p.px + 1.3, p.py - 0.7]);
+		}
+		return out;
+	}
+
+	for (const mode of ['measured', 'rpm', 'vc'] as const) {
+		for (const stride of [1, 3, 7]) {
+			for (const innerDiam of [0, 39.5]) {
+				it(`returns the unculled winner: ${mode}, stride ${stride}, inner diameter ${innerDiam}`, () => {
+					const c = spiralCache(40000);
+					const path: TurningSpiralParams = { ...base, speedMode: mode, innerDiam };
+					const proj = view();
+					const project = (x: number, y: number) => proj.project(x, y, 0);
+					let hits = 0;
+					for (const [px, py] of onSpiral(c, path, proj)) {
+						const plain = pickSpiral(c, path, 0, 8, stride, project, px, py, 8);
+						const disc = proj.discAt(px, py, 8);
+						expect(disc).not.toBeNull();
+						const culled = pickSpiral(c, path, 0, 8, stride, project, px, py, 8, undefined, disc);
+						expect(culled).toEqual(plain);
+						if (plain) hits++;
+					}
+					expect(hits).toBeGreaterThan(0);   // not vacuous: some clicks land on the spiral
+				});
+			}
+		}
+	}
+
+	it('also agrees when keep() hides samples and the view is zoomed', () => {
+		const c = spiralCache(40000);
+		const proj = view(3, 40, 0);   // panned onto the ring so the zoomed view still sees the spiral
+		const project = (x: number, y: number) => proj.project(x, y, 0);
+		const keep = (i: number) => i % 5 !== 0;
+		let hits = 0;
+		for (const [px, py] of onSpiral(c, base, proj, Array.from({ length: 400 }, (_, k) => k * 97))) {
+			const plain = pickSpiral(c, base, 0, 8, 1, project, px, py, 12, keep);
+			const culled = pickSpiral(c, base, 0, 8, 1, project, px, py, 12, keep, proj.discAt(px, py, 12));
+			expect(culled).toEqual(plain);
+			if (plain) hits++;
+		}
+		expect(hits).toBeGreaterThan(0);
+	});
+
+	it('is faster on a 1M-sample cache (timing is logged, not asserted)', () => {
+		const c = spiralCache(1_000_000);
+		const proj = view();
+		const project = (x: number, y: number) => proj.project(x, y, 0);
+		const px = 430, py = 380;
+		// the pre-fold baseline: per-sample Vector3.project through the camera
+		const cam = new THREE.OrthographicCamera(-45, 45, 45, -45, 0.1, 1e6);
+		cam.position.set(1.5, -2, 10); cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+		const v = new THREE.Vector3(), o = { px: 0, py: 0 };
+		const legacy = (x: number, y: number) => {
+			v.set(x, y, 0).project(cam);
+			if (!(Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1)) return null;
+			o.px = (v.x + 1) / 2 * W; o.py = (1 - v.y) / 2 * H;
+			return o;
+		};
+		const time = (cull: boolean) => {
+			const t0 = performance.now();
+			let r = null;
+			for (let k = 0; k < 3; k++) r = pickSpiral(c, base, 0, 200, 1, project, px, py, 8, undefined, cull ? proj.discAt(px, py, 8) : null);
+			return { ms: (performance.now() - t0) / 3, r };
+		};
+		time(true); time(false);   // warm up
+		const culled = time(true), plain = time(false);
+		const t0 = performance.now();
+		const old = pickSpiral(c, base, 0, 200, 1, legacy, px, py, 8);
+		const oldMs = performance.now() - t0;
+		console.log(`pickSpiral 1M samples: Vector3.project ${oldMs.toFixed(1)} ms, folded ${plain.ms.toFixed(1)} ms, folded + cull ${culled.ms.toFixed(1)} ms`);
+		expect(culled.r).toEqual(plain.r);
+		expect(old).toEqual(plain.r);
 	});
 });
 

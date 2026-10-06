@@ -30,6 +30,7 @@ import {
 } from './cloudPick';
 import { nearestIndex } from './hoverIndex';
 import { createPendingReveal } from './pendingReveal';
+import { createMapProjector } from './mapProjector';
 import { spiralAnchor, spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
 import { shaderZ } from './octreePick';
 
@@ -432,11 +433,14 @@ const zAt = (i: number) => (zMap.on ? shaderZ(zMap.series![i], zMap.r0, zMap.r1,
 
 const _v = new THREE.Vector3();
 const _pt = { px: 0, py: 0 };
-// _v (world) -> CSS px relative to the canvas in `out`; false when outside the view.
+const proj = createMapProjector();
+// _v (world) -> CSS px relative to the canvas in `out`; false when outside the view. For one-off
+// callers (rings, reveal): a pick folds the camera once (proj.setup) and projects per sample.
 function toScreen(v: THREE.Vector3, out: { px: number; py: number }): boolean {
-	v.project(camera!);
-	if (v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1) return false;
-	out.px = (v.x + 1) / 2 * cssW; out.py = (1 - v.y) / 2 * cssH;
+	proj.setup(camera!, null, cssW, cssH);
+	const p = proj.project(v.x, v.y, v.z);
+	if (!p) return false;
+	out.px = p.px; out.py = p.py;
 	return true;
 }
 
@@ -455,10 +459,13 @@ function pickAt(clientX: number, clientY: number) {
 	camera.updateMatrixWorld();   // controls.update() moved it since the last render
 	readZ(c);   // hoisted: read the uniforms once, not per sample
 	// Gridded octrees (`fill`) still pick the nearest SAMPLE to the spot: cells aren't samples.
-	const hit = pickSpiral(c, g.path, g.cs, g.ce, 1, (x, y, i) => {
-		_v.set(x, y, zAt(i));
-		return toScreen(_v, _pt) ? _pt : null;
-	}, clientX - r.left, clientY - r.top, pickRadius(props.pointSize), displayedKeepIndex(c[props.axis], props.colorScale));
+	proj.setup(camera, null, cssW, cssH);
+	const px = clientX - r.left, py = clientY - r.top, radius = pickRadius(props.pointSize);
+	// Only the flat top-down view can skip samples by radius: with a Z series the view tilts and
+	// the height moves points, so a sample's distance from the click isn't its radius difference.
+	const cull = zMap.on ? null : proj.discAt(px, py, radius);
+	const hit = pickSpiral(c, g.path, g.cs, g.ce, 1, (x, y, i) => proj.project(x, y, zAt(i)),
+		px, py, radius, displayedKeepIndex(c[props.axis], props.colorScale), cull);
 	emit('pointmenu', { ...base, point: hit ? pointInfo(c, hit.i, hit.x, hit.y, hit.rho) : null });
 }
 

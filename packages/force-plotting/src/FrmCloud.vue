@@ -22,6 +22,7 @@ import {
 } from './cloudPick';
 import { nearestIndex } from './hoverIndex';
 import { createPendingReveal } from './pendingReveal';
+import { createMapProjector } from './mapProjector';
 import { exportFrmFigure } from './frmExport';
 import { buildScaleLUT, colorizeValues, lutKey, type ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
@@ -616,17 +617,13 @@ function applyCamera2D() {
 // Everything here works from the live cache's sample index, the same key the charts use via
 // time (cloudPick.ts). Project through the camera exactly as the renderer does, so a pick
 // lands on what is drawn.
-const tmpV = new THREE.Vector3();
-const projOut = { px: 0, py: 0 };
+const proj = createMapProjector();
 // World (mm) point -> CSS px relative to the canvas, or null when it is off the clip volume (or
-// NaN). Returns a shared object: pickNearest consumes it immediately, and it runs ~3M times.
-function projectPx(m: THREE.Matrix4 | null, x: number, y: number, z: number) {
-	tmpV.set(x, y, z);
-	if (m) tmpV.applyMatrix4(m);
-	tmpV.project(camera!);
-	if (!(Math.abs(tmpV.x) <= 1 && Math.abs(tmpV.y) <= 1)) return null;
-	projOut.px = (tmpV.x + 1) / 2 * cssW; projOut.py = (1 - tmpV.y) / 2 * cssH;
-	return projOut;
+// NaN), for one-off callers (rings, reveal). A pick calls proj.setup() once and then proj.project()
+// per sample: the matrices are folded per pick, not per point (mapProjector.ts).
+function projectOnce(x: number, y: number, z: number) {
+	proj.setup(camera!, null, cssW, cssH);
+	return proj.project(x, y, z);
 }
 // Make the camera (and the cloud's matrixWorld, which carries the 3D Z scale) current: a pan/zoom
 // sets the view immediately but the render only happens next frame.
@@ -672,15 +669,19 @@ function pickAt(clientX: number, clientY: number) {
 	const px = clientX - r.left, py = clientY - r.top, radius = pickRadius(props.pointSize, 1.4);
 	const pp = effPath.value;
 	if (!is3D.value && pp.kind === 'turning_spiral') {
+		proj.setup(camera, null, cssW, cssH);
+		// the flat top-down view: samples far from the click's radius skip the trig and projection
 		const hit = pickSpiral(c, pp, props.cropStartSec, props.cropEndSec, props.stride,
-			(x, y) => projectPx(null, x, y, 0), px, py, radius, displayedKeepIndex(c[effChannel.value], props.colorScale));
+			(x, y) => proj.project(x, y, 0), px, py, radius, displayedKeepIndex(c[effChannel.value], props.colorScale),
+			proj.discAt(px, py, radius));
 		emit('pointmenu', { ...base, point: hit ? pointInfo(c, hit.i, hit.x, hit.y, hit.rho) : null });
 		return;
 	}
 	if (props.gridding && is3D.value) { emit('pointmenu', { ...base, point: null, reason: 'gridded' }); return; }
 	const src = cloudSource(c);
 	if (!src) { emit('pointmenu', { ...base, point: null }); return; }
-	const k = pickNearest(src.count, (j) => projectPx(src.m, src.pos[j * 3], src.pos[j * 3 + 1], src.pos[j * 3 + 2]),
+	proj.setup(camera, src.m, cssW, cssH);
+	const k = pickNearest(src.count, (j) => proj.project(src.pos[j * 3], src.pos[j * 3 + 1], src.pos[j * 3 + 2]),
 		px, py, radius, displayedKeep(c[effChannel.value], src.idx, props.colorScale));
 	if (k == null) { emit('pointmenu', { ...base, point: null }); return; }
 	const x = src.pos[k * 3], y = src.pos[k * 3 + 1];
@@ -726,11 +727,11 @@ const pinPos = ref<{ x: number; y: number } | null>(null);
 const hoverPos = ref<{ x: number; y: number } | null>(null);
 const ringV = new THREE.Vector3();
 function ringAt(time: number | null | undefined, cur: { x: number; y: number } | null) {
-	// No renderer/camera (WebGL unavailable, context lost, torn down on deactivate): projectPx would
+	// No renderer/camera (WebGL unavailable, context lost, torn down on deactivate): projectOnce would
 	// dereference the null camera on the first chart hover.
 	if (!ready || !camera) return null;
 	if (!timeToWorld(time, ringV)) return null;
-	const p = projectPx(null, ringV.x, ringV.y, ringV.z);
+	const p = projectOnce(ringV.x, ringV.y, ringV.z);
 	return p ? settleRing(cur, p.px, p.py) : null;
 }
 function updateRings() {
@@ -771,7 +772,7 @@ watch(cache, (_n, old) => { if (old) pendingReveal.drop(); });
 function revealNow(t: number): boolean {
 	if (!ready || !camera || !timeToWorld(t, ringV)) return false;
 	syncPickCamera();
-	if (projectPx(null, ringV.x, ringV.y, ringV.z)) return true;
+	if (projectOnce(ringV.x, ringV.y, ringV.z)) return true;
 	if (is3D.value) {
 		if (!controls) return false;
 		// move target and eye together so the orbit angle and distance are unchanged
