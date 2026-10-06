@@ -28,6 +28,7 @@ import {
 	type PointMenuEvent,
 } from './cloudPick';
 import { nearestIndex } from './hoverIndex';
+import { createPendingReveal } from './pendingReveal';
 import { spiralAnchor, spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
 import { shaderZ } from './octreePick';
 
@@ -332,7 +333,7 @@ function setupGL() {
 		controls!.update();
 		if (pco && potree && renderer && camera) {
 			updateRings();   // before the render gate below: the rings follow the camera even on idle frames
-			if (pendingReveal != null) applyPendingReveal();   // moves the camera: next frame's rings follow
+			if (pendingReveal.held) applyPendingReveal();   // moves the camera: next frame's rings follow
 			const r = potree.updatePointClouds([pco], camera, renderer);
 			const n = (r as any)?.numVisiblePoints ?? pointCount.value;
 			if (n !== lastVisibleN) { lastVisibleN = n; needsRender = true; lastChangeAt = performance.now(); }   // nodes streamed in/out
@@ -501,23 +502,22 @@ function updateRings() {
 // the inner cut-out). While the view isn't ready (octree still loading, no sample cache yet) the
 // request is kept in `pendingReveal` and applied by the render loop once both exist, and true is
 // returned: the host asked in good faith and has nothing to retry.
-let pendingReveal: number | null = null;
+const pendingReveal = createPendingReveal();
 function revealTime(t: number): boolean {
 	const g = octreeGeometry();
-	if (g && (t < g.cs || t > g.ce)) { pendingReveal = null; return false; }
-	if (!g || !camera || !controls || !pco || loading.value) { pendingReveal = t; return true; }
-	pendingReveal = null;
+	if (g && (t < g.cs || t > g.ce)) { pendingReveal.drop(); return false; }
+	if (!g || !camera || !controls || !pco || loading.value) { pendingReveal.hold(t); return true; }
+	pendingReveal.drop();
 	return revealNow(t);
 }
 function applyPendingReveal() {
-	const t = pendingReveal;
-	if (t == null || loading.value || !octreeGeometry()) return;
-	pendingReveal = null;
-	revealNow(t);
+	if (!pendingReveal.held || loading.value || !octreeGeometry()) return;   // not ready: keep it for the next frame
+	const t = pendingReveal.take();
+	if (t != null) revealNow(t);
 }
 // A different octree or cache is a different cut: a reveal asked for the old one means nothing.
 // (Not when the cache goes from none to some: that is what the pending reveal waits for.)
-watch(() => props.sampleCache, (_n, old) => { if (old) pendingReveal = null; });
+watch(() => props.sampleCache, (_n, old) => { if (old) pendingReveal.drop(); });
 function revealNow(t: number): boolean {
 	if (!camera || !controls || !timeToWorld(t)) return false;
 	camera.updateMatrixWorld();
@@ -585,7 +585,7 @@ onBeforeUnmount(() => life.unmount());
 onDeactivated(() => life.deactivate());
 onActivated(() => { life.activate(); });
 
-watch(() => props.octreePath, () => { pendingReveal = null; load(); });
+watch(() => props.octreePath, () => { pendingReveal.drop(); load(); });
 watch(() => props.axis, () => { if (material) { material.uniforms.uAxis.value = AXIS_IDX[props.axis] ?? 2; emitAutoRange(); } });
 // LUT bytes resync only when lutKey changes; saturation/displayed-range/grey-vs-hide are uniforms.
 watch(() => props.colorScale, (s) => {

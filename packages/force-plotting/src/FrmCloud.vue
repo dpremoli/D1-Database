@@ -21,6 +21,7 @@ import {
 	type PointMenuEvent,
 } from './cloudPick';
 import { nearestIndex } from './hoverIndex';
+import { createPendingReveal } from './pendingReveal';
 import { exportFrmFigure } from './frmExport';
 import { buildScaleLUT, colorizeValues, lutKey, type ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
@@ -748,26 +749,24 @@ watch(() => props.hoverTime, () => { syncPickCamera(); hoverPos.value = ringAt(p
 // camera, cache or geometry still loading) the request is kept in `pendingReveal` and applied
 // after the first draw with content, and true is returned: the host asked in good faith and has
 // nothing to retry.
-let pendingReveal: number | null = null;
+const pendingReveal = createPendingReveal();
 function revealTime(t: number): boolean {
 	const c = cache.value;
-	if (c && c.N && !inWindow(c, t)) { pendingReveal = null; return false; }
-	if (is3D.value && props.gridding) { pendingReveal = null; return false; }   // cells aren't samples
+	if (c && c.N && !inWindow(c, t)) { pendingReveal.drop(); return false; }
+	if (is3D.value && props.gridding) { pendingReveal.drop(); return false; }   // cells aren't samples
 	const hasContent = usesGpuPath.value ? gpuUploaded : !!cloud;
-	if (!ready || !camera || !c || !hasContent || pendingRebuild) { pendingReveal = t; return true; }
-	pendingReveal = null;
+	if (!ready || !camera || !c || !hasContent || pendingRebuild) { pendingReveal.hold(t); return true; }
+	pendingReveal.drop();
 	return revealNow(t);
 }
 // Runs at the end of draw(), once the geometry the reveal needs exists.
 function applyPendingReveal() {
-	const t = pendingReveal;
-	if (t == null) return;
-	pendingReveal = null;
-	revealNow(t);
+	const t = pendingReveal.take();
+	if (t != null) revealNow(t);
 }
 // A different cache is a different cut: a reveal asked for the old one means nothing. (Not when the
 // cache goes from none to some: that is the load the pending reveal was waiting for.)
-watch(cache, (_n, old) => { if (old) pendingReveal = null; });
+watch(cache, (_n, old) => { if (old) pendingReveal.drop(); });
 function revealNow(t: number): boolean {
 	if (!ready || !camera || !timeToWorld(t, ringV)) return false;
 	syncPickCamera();
