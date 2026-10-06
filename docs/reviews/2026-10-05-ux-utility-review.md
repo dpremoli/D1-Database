@@ -174,7 +174,7 @@ in [`docs/runbooks/physical-test-backlog.md`](../runbooks/physical-test-backlog.
 - [x] The FFT overlay from filter-service was N/√Hz on an N axis (pre-existing; surfaced by P11)
 - [x] The offline banner covered the safety-alarm banner (pre-existing)
 - [x] Re-uploading a partially uploaded capture never completed its analysis row (pre-existing; surfaced by R9)
-- [ ] **Follow-up:** `f_trace_ancestors` / `f_trace_descendants` (migration 014) enumerate paths, not samples, so deep diamond genealogies blow up exponentially; rewrite them in a migration to visit each sample once (`d1-trace` is protected by an 8 s deadline meanwhile)
+- [x] `f_trace_ancestors` / `f_trace_descendants` (migration 014) enumerated paths, not samples, so deep diamond genealogies blew up exponentially; fixed by migration 20261006000136 (breadth-first walk, one row per sample at its minimum depth; `d1-trace` keeps its 8 s deadline as a safety net). Real-database check: physical-test backlog, section A
 - [x] Label endpoint hardening: errors are `text/plain` with no echoed markup, and the 200-row cap is counted once
 
 ## Suggested order

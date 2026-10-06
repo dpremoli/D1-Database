@@ -103,10 +103,21 @@ named in the step.
   `SELECT count(DISTINCT sample_id) FROM f_trace_ancestors('<id>')` minus the sample itself. On a
   real database, time `GET /d1-trace/sample/<id>` for the sample with the largest genealogy: it
   answers within the 8 s limit, or with "this sample's genealogy is too large to trace" (503)
-  shown in the tab; either way Postgres is not left running the query (`pg_stat_activity`). The
-  functions enumerate paths, so only the 8 s timeout bounds them (the real fix is a migration that
-  walks nodes). With more than 500 ancestors, descendants or events the tab says only the nearest
+  shown in the tab; either way Postgres is not left running the query (`pg_stat_activity`). Since
+  migration 136 the functions walk samples, not paths, so the 503 should no longer happen (the 8 s
+  deadline stays as a safety net; see the next item). With more than 500 ancestors, descendants or events the tab says only the nearest
   500 relatives / newest 500 operations and tests are shown. Since: this batch (PR TBD).
+- [ ] **Genealogy functions on the deepest real genealogy (migration 136, f_trace_* visit each
+  sample once).** On the real database find the sample with the largest genealogy (most rows in
+  `f_trace_ancestors` / `f_trace_descendants` by walking `sample_genealogy`, or the deepest chain).
+  Run `SELECT count(*), max(depth) FROM f_trace_ancestors('<id>')` and the descendants one, and
+  `GET /d1-trace/sample/<id>` (and the Timeline tab). Expect: each answers in well under a second
+  with `count(*) = count(DISTINCT sample_id)`. Compare against the old definition: run the
+  `-- migrate:down` SQL of `20261006000136` inside a transaction you roll back (only if the
+  genealogy is small enough for path enumeration, otherwise skip the comparison) and check that
+  `SELECT DISTINCT sample_id` and `min(depth)` per sample are the same. In the Timeline, hidden-item
+  counts for a restricted role are unchanged from before the migration for a sample with a diamond
+  genealogy. Since: this batch (PR TBD).
 - [ ] **D11 — campaign overview counts.** Open a machining trial and a testing campaign that have
   real data. Expect: sample, operation and test-session counts equal a hand count in the
   collection lists; "Force analysed n / m" equals the machining operations whose
