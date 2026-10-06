@@ -66,20 +66,18 @@ const baseFn = () => ({
 function emulate(fn, rows, root, genealogy = []) {
     if (fn === 'f_trace_ancestors' || fn === 'f_trace_descendants') {
         const up = fn === 'f_trace_ancestors';
-        const reached = new Set(rows.map((r) => r.sample_id));
+        const depthOf = new Map(rows.map((r) => [r.sample_id, r.depth]));
         const out = rows
             .filter((r) => r.sample_id !== root)
             .map((r) => ({
                 sample_id: r.sample_id,
                 depth: r.depth,
-                prev: [
-                    ...new Set(
-                        genealogy
-                            .filter((e) => (up ? e.parent_sample_id : e.child_sample_id) === r.sample_id)
-                            .map((e) => (up ? e.child_sample_id : e.parent_sample_id))
-                            .filter((x) => reached.has(x)),
-                    ),
-                ],
+                // shallowest first, then by id, as the SQL's array_agg ORDER BY p.depth, id
+                prev: genealogy
+                    .filter((e) => (up ? e.parent_sample_id : e.child_sample_id) === r.sample_id)
+                    .map((e) => (up ? e.child_sample_id : e.parent_sample_id))
+                    .filter((x) => depthOf.has(x))
+                    .sort((x, y) => depthOf.get(x) - depthOf.get(y) || (x < y ? -1 : 1)),
             }));
         return out.sort((a, b) => a.depth - b.depth || (a.sample_id < b.sample_id ? -1 : 1)).slice(0, 501);
     }
@@ -404,6 +402,33 @@ test('diamond with one branch hidden: through_hidden only when EVERY path is hid
     const b = (await call(both.handler, user, D)).body;
     assert.deepEqual(b.ancestors.map((x) => [x.sample_code, x.through_hidden]), [['D-A', true]]);
     assert.equal(b.hidden.ancestors, 2);
+});
+
+test('a cycle back-edge never supplies the edge shown: the shallowest readable step does', async () => {
+    // A -> B -> D -> E -> B. B's linked reached nodes are A (depth 0) and E (depth 3, a lower id);
+    // the edge shown for B must be A -> B's, not the back-edge E -> B.
+    const E = id(5);
+    const tables = {
+        ...baseTables(),
+        physical_samples: [[A, 'D-A'], [B, 'D-B'], [D, 'D-D'], [E, 'D-E']].map(([sid, code]) => ({ sample_id: sid, sample_code: code, form: 'bar' })),
+        sample_genealogy: [
+            { child_sample_id: B, parent_sample_id: A, relationship_type: 'cut_from', fraction: '0.5' },
+            { child_sample_id: D, parent_sample_id: B, relationship_type: 'cut_from', fraction: null },
+            { child_sample_id: E, parent_sample_id: D, relationship_type: 'cut_from', fraction: null },
+            { child_sample_id: B, parent_sample_id: E, relationship_type: 'derived_from', fraction: null },
+        ],
+        sample_stock_provenance: [],
+        raw_stock_lots: [],
+    };
+    const fn = {
+        f_trace_ancestors: [row(0, A, A)],
+        f_trace_descendants: [row(0, A, A), row(1, B, A, B), row(2, D, A, B, D), row(3, E, A, B, D, E)],
+        f_trace_stock_origins: [],
+        f_sample_timeline: [],
+    };
+    const { handler } = mount({ readable: new Set([A, B, D, E]), tables, fn, root: A });
+    const b = (await call(handler, user, A)).body;
+    assert.deepEqual(b.descendants.map((x) => [x.sample_code, x.relationship_type]), [['D-B', 'cut_from'], ['D-D', 'cut_from'], ['D-E', 'cut_from']]);
 });
 
 test('a hidden sample reached by two paths is counted once', async () => {

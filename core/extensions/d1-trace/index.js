@@ -3,8 +3,9 @@
 // GET /d1-trace/sample/:id  ->  the sample's cradle-to-grave story:
 //   { sample, stock_origins[], ancestors[], events[], descendants[], hidden{}, truncated{} }
 //
-// The four traceability functions (db/migrations/20260619000014_traceability.sql) are plain SQL run
-// as the database owner, so they ignore Directus permissions. This endpoint uses them only to find
+// The four traceability functions (db/migrations/20260619000014_traceability.sql; the two genealogy
+// walks are plpgsql since 20261006000136) run as the database owner, so they ignore Directus
+// permissions. This endpoint uses them only to find
 // WHICH records are related (ids, depth, which node each was reached from). Every value it returns
 // (codes, forms, labels, dates, status, relationship type, fraction, mass) is then read through
 // Directus's ItemsService with req.accountability, so a record the caller cannot read is dropped
@@ -35,9 +36,11 @@ const TRACE_TIMEOUT_MS = 8000;
 // the reached samples instead of from that one path: a sample with a readable alternative route is
 // then not wrongly reported as hidden. `own` is the genealogy column holding the sample itself and
 // `step` the one holding the node it was reached from (child for ancestors, parent for descendants).
+// `prev` is ordered shallowest first, so the edge shown is from the nearest readable step (on cyclic
+// data a back-edge from a deeper node is also in `prev`, but only as a fallback).
 const lineageSql = (fn, own, step) => `
     WITH reached AS (SELECT sample_id, depth FROM ${fn}(?::uuid))
-    SELECT r.sample_id, r.depth, array_agg(DISTINCT sg.${step}) AS prev
+    SELECT r.sample_id, r.depth, array_agg(sg.${step} ORDER BY p.depth, sg.${step}) AS prev
     FROM reached AS r
     INNER JOIN sample_genealogy AS sg ON sg.${own} = r.sample_id
     INNER JOIN reached AS p ON p.sample_id = sg.${step}
@@ -45,7 +48,7 @@ const lineageSql = (fn, own, step) => `
     GROUP BY r.sample_id, r.depth
     ORDER BY r.depth, r.sample_id
     LIMIT ${MAX_ROWS + 1}`;
-// A lot can reach the sample through several ancestors (and each ancestor through several paths).
+// A lot can reach the sample through several ancestors.
 const STOCK_SQL = `
     SELECT via_sample_id, lot_id, min(depth) AS depth
     FROM f_trace_stock_origins(?::uuid)
@@ -237,7 +240,7 @@ export default {
                             continue;
                         }
                         const through = !reach.has(r.sample_id);
-                        const from = through ? null : [...(r.prev ?? [])].sort().find((p) => reach.has(p));
+                        const from = through ? null : (r.prev ?? []).find((p) => reach.has(p));
                         shown.push({ r, through, from });
                         // [fa, fb] order of edgeFields: (child, parent) for the genealogy table
                         if (from) edges.push(name === 'ancestors' ? [from, r.sample_id] : [r.sample_id, from]);

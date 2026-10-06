@@ -127,11 +127,12 @@ run_eq "First timeline event is the manufacturing operation" \
 echo "== Genealogy walks visit each sample once (diamond, cycle, ladder) =="
 # Diamond D-A -> D-B, D-A -> D-C, D-B -> D-D, D-C -> D-D (parent -> child): two paths from A to D.
 # Cycle D-X -> D-Y -> D-Z -> D-X must terminate. Ladder: a top, 30 levels of two samples, a
-# bottom, each level the parent of both samples of the next: 2^31 paths, 62 samples. All inside
+# bottom, each level the parent of both samples of the next: 2^30 paths, 62 samples. Shortcut:
+# D-S1 -> D-S2 -> D-S3 plus D-S1 -> D-S3, so D-S3 is at depth 1 through the direct edge. All inside
 # one DO block (one transaction); the timing check raises when a walk takes 1 s or more.
 if ! diamond_err=$($PSQL -c "
 DO \$\$
-DECLARE a uuid; b uuid; c uuid; d uuid; x uuid; y uuid; z uuid;
+DECLARE a uuid; b uuid; c uuid; d uuid; x uuid; y uuid; z uuid; s1 uuid; s2 uuid; s3 uuid; r record;
         top uuid; bottom uuid; prev uuid[]; cur uuid[]; i int; t0 timestamptz;
 BEGIN
   INSERT INTO physical_samples (sample_code, form) VALUES ('P7-D-A','coupon') RETURNING sample_id INTO a;
@@ -157,6 +158,22 @@ BEGIN
   IF (SELECT fraction FROM f_trace_descendants(a) WHERE sample_id = d)
      IS DISTINCT FROM (SELECT fraction FROM sample_genealogy WHERE parent_sample_id = least(b,c) AND child_sample_id = d)
   THEN RAISE EXCEPTION 'diamond: edge fraction does not match the path'; END IF;
+
+  -- the root row: depth 0, no edge, a one-element path
+  SELECT * INTO r FROM f_trace_descendants(a) WHERE depth = 0;
+  IF r.sample_id <> a OR r.relationship_type IS NOT NULL OR r.fraction IS NOT NULL OR r.path <> ARRAY[a] THEN
+    RAISE EXCEPTION 'root row: want (0, a, NULL, NULL, {a}), got %', r; END IF;
+
+  INSERT INTO physical_samples (sample_code, form) VALUES ('P7-D-S1','coupon') RETURNING sample_id INTO s1;
+  INSERT INTO physical_samples (sample_code, form) VALUES ('P7-D-S2','coupon') RETURNING sample_id INTO s2;
+  INSERT INTO physical_samples (sample_code, form) VALUES ('P7-D-S3','coupon') RETURNING sample_id INTO s3;
+  INSERT INTO sample_genealogy (child_sample_id,parent_sample_id,relationship_type,fraction) VALUES
+    (s2,s1,'cut_from',0.5), (s3,s2,'cut_from',0.4), (s3,s1,'derived_from',0.9);
+  SELECT * INTO r FROM f_trace_descendants(s1) WHERE sample_id = s3;
+  IF r.depth <> 1 OR r.path <> ARRAY[s1, s3] OR r.relationship_type <> 'derived_from' OR r.fraction <> 0.9 THEN
+    RAISE EXCEPTION 'shortcut: want S3 at depth 1 via the direct edge, got %', r; END IF;
+  SELECT * INTO r FROM f_trace_ancestors(s3) WHERE sample_id = s1;
+  IF r.depth <> 1 OR r.path <> ARRAY[s3, s1] THEN RAISE EXCEPTION 'shortcut ancestors: got %', r; END IF;
 
   IF (SELECT count(*) FROM f_trace_ancestors(x)) <> 3 THEN RAISE EXCEPTION 'cycle ancestors: want 3 rows'; END IF;
   IF (SELECT count(*) FROM f_trace_descendants(x)) <> 3 THEN RAISE EXCEPTION 'cycle descendants: want 3 rows'; END IF;
@@ -189,8 +206,9 @@ END \$\$;
     bad "diamond / cycle / ladder checks failed: $diamond_err"
 else
     ok "diamond: A once at depth 2 from D (and D once from A), lowest-id shortest path, edge matches"
+    ok "root row is depth 0 with no edge; a direct shortcut edge wins over a longer route"
     ok "cycle terminates with each sample once, in both directions; unknown sample gives no rows"
-    ok "30-level ladder (2^31 paths): 62 rows in under 1 s, both directions, each sample once"
+    ok "30-level ladder (2^30 paths): 62 rows in under 1 s, both directions, each sample once"
 fi
 
 echo

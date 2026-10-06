@@ -8,8 +8,9 @@
 --
 -- Same signature and output columns, but now a breadth-first walk with a visited set: one row
 -- per reachable sample, at its minimum depth, with one shortest path and the
--- relationship_type / fraction of the edge that reached it on that path. Equal-depth
--- alternatives are broken by the lowest predecessor sample_id, then the lowest genealogy id.
+-- relationship_type / fraction of the edge that reached it on that path. On equal-length routes,
+-- the step before each sample is the lowest sample_id among the samples one level nearer that
+-- link to it (sample_genealogy_pair_unique allows one edge per pair).
 -- Cycles are harmless (a visited sample is never entered again). The functions stay STABLE and
 -- are plain (not SECURITY DEFINER); LANGUAGE changes from sql to plpgsql for the loop. The
 -- EXECUTE grants from 20260619000015 survive CREATE OR REPLACE, so none are repeated here.
@@ -39,7 +40,6 @@ DECLARE
     -- (breadth-first: all of depth d sit together, after all of depth d-1).
     n_ids    UUID []    := ARRAY[p_sample_id];
     n_prev   INTEGER [] := ARRAY[0];  -- index in n_ids of the step before; 0 = the start
-    n_depth  INTEGER [] := ARRAY[0];
     n_rel    TEXT []    := ARRAY[NULL::TEXT];
     n_frac   NUMERIC [] := ARRAY[NULL::NUMERIC];
     -- New samples found from the current frontier (n_ids[lo:hi]).
@@ -49,7 +49,6 @@ DECLARE
     l_frac   NUMERIC [];
     lo       INTEGER := 1;
     hi       INTEGER := 1;
-    d        INTEGER := 0;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM physical_samples AS ps WHERE ps.sample_id = p_sample_id) THEN
         RETURN;
@@ -57,8 +56,8 @@ BEGIN
 
     LOOP
         -- One row per not-yet-visited sample reached from the frontier. If several frontier
-        -- samples (or several genealogy rows) lead to it, the lowest frontier sample_id and then
-        -- the lowest genealogy id wins, so the result does not depend on plan or row order.
+        -- samples lead to it, the lowest frontier sample_id wins, so the result does not depend
+        -- on plan or row order.
         SELECT
             array_agg(c.sid ORDER BY c.sid),
             array_agg(c.prev_idx ORDER BY c.sid),
@@ -76,18 +75,16 @@ BEGIN
             WHERE NOT EXISTS (
                 SELECT 1 FROM unnest(n_ids) AS v (vid) WHERE v.vid = sg.parent_sample_id
             )
-            ORDER BY sg.parent_sample_id, f.fid, sg.id
+            ORDER BY sg.parent_sample_id, f.fid
         ) AS c;
 
         EXIT WHEN l_ids IS NULL;
 
-        d       := d + 1;
         lo      := hi + 1;
         n_ids   := n_ids || l_ids;
         n_prev  := n_prev || l_prev;
         n_rel   := n_rel || l_rel;
         n_frac  := n_frac || l_frac;
-        n_depth := n_depth || array_fill(d, ARRAY[cardinality(l_ids)]);
         hi      := cardinality(n_ids);
     END LOOP;
 
@@ -95,19 +92,19 @@ BEGIN
     -- built top-down in one pass (no path enumeration).
     RETURN QUERY
     WITH RECURSIVE nodes AS (
-        SELECT u.sid, u.prev_idx, u.dep, u.rel, u.frac, u.ord
-        FROM unnest(n_ids, n_prev, n_depth, n_rel, n_frac)
-            WITH ORDINALITY AS u (sid, prev_idx, dep, rel, frac, ord)
+        SELECT u.sid, u.prev_idx, u.rel, u.frac, u.ord
+        FROM unnest(n_ids, n_prev, n_rel, n_frac)
+            WITH ORDINALITY AS u (sid, prev_idx, rel, frac, ord)
     ),
 
     tree AS (
-        SELECT n.ord, n.sid, n.dep, n.rel, n.frac, ARRAY[n.sid] AS tpath
+        SELECT n.ord, n.sid, 0 AS dep, n.rel, n.frac, ARRAY[n.sid] AS tpath
         FROM nodes AS n
         WHERE n.prev_idx = 0
 
         UNION ALL
 
-        SELECT n.ord, n.sid, n.dep, n.rel, n.frac, tree.tpath || n.sid
+        SELECT n.ord, n.sid, tree.dep + 1, n.rel, n.frac, tree.tpath || n.sid
         FROM tree
         INNER JOIN nodes AS n ON n.prev_idx = tree.ord
     )
@@ -130,8 +127,8 @@ COMMENT ON FUNCTION f_trace_ancestors(UUID)
     IS 'Reverse traceability: every ancestor of a sample, once (depth 0 = the sample'
        ' itself), walking child→parent through sample_genealogy. Breadth-first: each'
        ' sample appears at its minimum depth with one shortest path and the'
-       ' relationship_type/fraction of the edge that reached it (ties: lowest sample_id,'
-       ' then genealogy id). Cycle-safe.';
+       ' relationship_type/fraction of the edge that reached it (on equal-length routes the'
+       ' step before each sample is the lowest linked sample_id one level nearer). Cycle-safe.';
 
 -- ---------------------------------------------------------------------------
 -- f_trace_descendants(sample) — walk parent → child to the leaves.
@@ -154,7 +151,6 @@ DECLARE
     -- See f_trace_ancestors: the same walk, in the other direction.
     n_ids    UUID []    := ARRAY[p_sample_id];
     n_prev   INTEGER [] := ARRAY[0];
-    n_depth  INTEGER [] := ARRAY[0];
     n_rel    TEXT []    := ARRAY[NULL::TEXT];
     n_frac   NUMERIC [] := ARRAY[NULL::NUMERIC];
     l_ids    UUID [];
@@ -163,7 +159,6 @@ DECLARE
     l_frac   NUMERIC [];
     lo       INTEGER := 1;
     hi       INTEGER := 1;
-    d        INTEGER := 0;
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM physical_samples AS ps WHERE ps.sample_id = p_sample_id) THEN
         RETURN;
@@ -187,36 +182,34 @@ BEGIN
             WHERE NOT EXISTS (
                 SELECT 1 FROM unnest(n_ids) AS v (vid) WHERE v.vid = sg.child_sample_id
             )
-            ORDER BY sg.child_sample_id, f.fid, sg.id
+            ORDER BY sg.child_sample_id, f.fid
         ) AS c;
 
         EXIT WHEN l_ids IS NULL;
 
-        d       := d + 1;
         lo      := hi + 1;
         n_ids   := n_ids || l_ids;
         n_prev  := n_prev || l_prev;
         n_rel   := n_rel || l_rel;
         n_frac  := n_frac || l_frac;
-        n_depth := n_depth || array_fill(d, ARRAY[cardinality(l_ids)]);
         hi      := cardinality(n_ids);
     END LOOP;
 
     RETURN QUERY
     WITH RECURSIVE nodes AS (
-        SELECT u.sid, u.prev_idx, u.dep, u.rel, u.frac, u.ord
-        FROM unnest(n_ids, n_prev, n_depth, n_rel, n_frac)
-            WITH ORDINALITY AS u (sid, prev_idx, dep, rel, frac, ord)
+        SELECT u.sid, u.prev_idx, u.rel, u.frac, u.ord
+        FROM unnest(n_ids, n_prev, n_rel, n_frac)
+            WITH ORDINALITY AS u (sid, prev_idx, rel, frac, ord)
     ),
 
     tree AS (
-        SELECT n.ord, n.sid, n.dep, n.rel, n.frac, ARRAY[n.sid] AS tpath
+        SELECT n.ord, n.sid, 0 AS dep, n.rel, n.frac, ARRAY[n.sid] AS tpath
         FROM nodes AS n
         WHERE n.prev_idx = 0
 
         UNION ALL
 
-        SELECT n.ord, n.sid, n.dep, n.rel, n.frac, tree.tpath || n.sid
+        SELECT n.ord, n.sid, tree.dep + 1, n.rel, n.frac, tree.tpath || n.sid
         FROM tree
         INNER JOIN nodes AS n ON n.prev_idx = tree.ord
     )
@@ -239,8 +232,8 @@ COMMENT ON FUNCTION f_trace_descendants(UUID)
     IS 'Forward traceability: every descendant of a sample, once (depth 0 = the sample'
        ' itself), walking parent→child through sample_genealogy. Breadth-first: each'
        ' sample appears at its minimum depth with one shortest path and the'
-       ' relationship_type/fraction of the edge that reached it (ties: lowest sample_id,'
-       ' then genealogy id). Cycle-safe.';
+       ' relationship_type/fraction of the edge that reached it (on equal-length routes the'
+       ' step before each sample is the lowest linked sample_id one level nearer). Cycle-safe.';
 
 -- migrate:down
 -- Restores the path-enumerating definitions from 20260619000014 verbatim.
