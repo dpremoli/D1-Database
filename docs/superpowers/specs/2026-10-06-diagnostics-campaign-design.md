@@ -48,7 +48,11 @@ so batch apply needs **no server change**.
    import validates the shape and the recipe (known ops, `on`/`params` types, `recipeProblems()`
    must be empty) and drops it into the same save-as dialog so the name can be fixed before it is
    stored. A "modified" badge shows when the workbench recipe is not `recipesEquivalent` to the
-   library recipe last applied/saved.
+   library recipe last applied/saved. Saving an *imported* recipe stores it without putting it on the
+   workbench, so it does not move that baseline (`baselineAfterSave`); otherwise the untouched working
+   recipe would read as modified. Import also refuses an unsupported `recipe_version`, a param the op
+   does not have or of the wrong kind or option, malformed `inputs` bindings, and layer inputs on a
+   base-tier step (the host raises on those).
 2. **Picker.** Pure module `diagPicker.ts`: search over code/sample/campaign, group by sample
    (campaign shown when the row carries it), filter chips Needs build / Built / Error (building
    rows count as Needs build). A searchable list replaces the select, shown 200 rows at a time

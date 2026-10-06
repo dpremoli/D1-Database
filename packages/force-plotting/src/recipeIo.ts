@@ -148,3 +148,14 @@ export function isModifiedSinceLoaded(current: Recipe, loaded: Recipe | null): b
 	if (!loaded) return false;
 	return !recipesEquivalent(current, loaded);
 }
+
+/** A library recipe the workbench's recipe was loaded from or last saved as. */
+export interface LoadedRecipe { name: string; recipe: Recipe }
+
+/** The "modified since loaded" baseline after saving to the library. Saving the working recipe makes
+ *  it the baseline. Saving an IMPORTED recipe stores it but does not put it on the workbench, so the
+ *  baseline stays what it was: measuring the unchanged working recipe against the imported one
+ *  would show "modified" with nothing edited. */
+export function baselineAfterSave(prev: LoadedRecipe | null, saved: LoadedRecipe, fromImport: boolean): LoadedRecipe | null {
+	return fromImport ? prev : saved;
+}

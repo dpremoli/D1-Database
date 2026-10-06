@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_RECIPE, type Recipe } from './recipeChannels';
 import {
-	exportRecipeJson, isModifiedSinceLoaded, parseRecipeJson, recipeFileName, validateRecipe,
+	baselineAfterSave, exportRecipeJson, isModifiedSinceLoaded, parseRecipeJson, recipeFileName, validateRecipe,
 } from './recipeIo';
 
 const clone = (r: Recipe): Recipe => JSON.parse(JSON.stringify(r));
@@ -112,5 +112,28 @@ describe('isModifiedSinceLoaded', () => {
 		const e = clone(DEFAULT_RECIPE);
 		e.steps[6].on = true;
 		expect(isModifiedSinceLoaded(e, DEFAULT_RECIPE)).toBe(true);
+	});
+});
+
+describe('baselineAfterSave', () => {
+	const working = clone(DEFAULT_RECIPE);
+	const imported = clone(DEFAULT_RECIPE);
+	imported.steps[4].params.k = 60;
+	const prev = { name: 'Default', recipe: clone(DEFAULT_RECIPE) };
+
+	it('saving the working recipe makes it the baseline', () => {
+		const next = baselineAfterSave(prev, { name: 'Mine', recipe: working }, false);
+		expect(next).toEqual({ name: 'Mine', recipe: working });
+		expect(isModifiedSinceLoaded(working, next?.recipe ?? null)).toBe(false);
+	});
+	it('saving an imported recipe leaves the baseline alone, so nothing reads as modified', () => {
+		const next = baselineAfterSave(prev, { name: 'Imported', recipe: imported }, true);
+		expect(next).toBe(prev);
+		expect(isModifiedSinceLoaded(working, next?.recipe ?? null)).toBe(false);
+		// The old behaviour measured the untouched working recipe against the imported one.
+		expect(isModifiedSinceLoaded(working, imported)).toBe(true);
+	});
+	it('with nothing loaded an import adds no baseline', () => {
+		expect(baselineAfterSave(null, { name: 'Imported', recipe: imported }, true)).toBeNull();
 	});
 });
