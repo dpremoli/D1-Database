@@ -3,11 +3,19 @@
 // are over the crop window (window_start_s..window_end_s); the bit-depth and rail columns are over
 // the WHOLE cached signal (see signalStats.ts), so their headers end in `_whole`.
 import type { CsvColumn } from './csvExport';
+import { axisMapKey, type CuttingMetrics, type Metric } from './cuttingMetrics';
 import type { SignalStats } from './signalStats';
 
 export type StatsCsvRow = { axis: string } & SignalStats['axes']['Fx'];
 
-export function statsCsvColumns(stats: () => SignalStats | null | undefined): CsvColumn<StatsCsvRow>[] {
+const mv = (m: Metric | undefined) => m?.value ?? undefined;
+
+// The cutting-metrics columns repeat on every row like the RPM ones; unavailable metrics are empty
+// cells. `axis_map` records the Fc/Ff/Fp -> Fx/Fy/Fz assumption used (cuttingMetrics.ts).
+export function statsCsvColumns(
+	stats: () => SignalStats | null | undefined,
+	cutting: () => CuttingMetrics | null | undefined = () => null,
+): CsvColumn<StatsCsvRow>[] {
 	return [
 		{ header: 'axis', value: (r) => r.axis },
 		{ header: 'window_start_s', value: () => stats()?.windowSec[0] },
@@ -27,5 +35,12 @@ export function statsCsvColumns(stats: () => SignalStats | null | undefined): Cs
 		{ header: 'rpm_std', value: () => stats()?.rpm.std },
 		{ header: 'rpm_min', value: () => stats()?.rpm.min },
 		{ header: 'rpm_max', value: () => stats()?.rpm.max },
+		...(['resultant', 'Fc', 'Ff', 'Fp'] as const).flatMap((k) => (['mean', 'peak'] as const).map(
+			(s): CsvColumn<StatsCsvRow> => ({ header: `${k}_${s}_N`, value: () => mv(cutting()?.[k][s]) }),
+		)),
+		{ header: 'vc_m_per_min', value: () => mv(cutting()?.vcMPerMin) },
+		{ header: 'Pc_W', value: () => mv(cutting()?.pcW) },
+		{ header: 'kc_N_per_mm2', value: () => mv(cutting()?.kcMPa) },
+		{ header: 'axis_map', value: () => { const m = cutting()?.axisMap; return m ? axisMapKey(m) : undefined; } },
 	];
 }

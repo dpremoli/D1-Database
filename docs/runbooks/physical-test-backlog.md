@@ -35,6 +35,11 @@ named in the step.
   else `/assets/<id>` exposes (equipment images, admin uploads). Feeds the Phase 9 export-control
   decision (ADR-0005). Since #123.
 
+- [ ] **P10 — Diagnostics picker as a Lab Member.** Sign in to the Force App as a Lab Member and open
+  Diagnostics: the list loads; campaign grouping is shown if the role can read `campaigns`, and
+  otherwise *Group by* offers Sample only (no empty list). Note which it was; if Lab Member cannot
+  read campaigns and the lab wants them, add the read grant by migration. Since: this batch (PR TBD).
+
 ### Sample numbers, dashboards, saved filters
 - [ ] **D9 — next sample number.** `GET /d1-next-number/sample` returns a number when signed in,
   401 signed out, 403 for a user without app access. The Register-sample page and the sample-code
@@ -74,6 +79,56 @@ named in the step.
 - [ ] **P2 — PNG export in Directus.** "Save chart as PNG" and "as SVG" download a correct image
   (Directus's CSP allows the `blob:` image used for the PNG). Since #125.
 
+### Sample timeline and campaign overview
+- [ ] **D5 — timeline on a real sample with genealogy.** Restart Directus so `d1-trace` and the
+  rebuilt Lab Dashboard load. Lab Dashboard > Samples > pick a sample that has a parent, a child, a
+  raw stock lot, operations and tests > **Timeline** tab. Expect: stock lot, ancestors (oldest
+  first), the sample, operations and tests in date order, then descendants, matching
+  `SELECT * FROM f_sample_timeline('<id>')` and the `f_trace_*` functions run by hand. Every entry
+  opens its record. `GET /d1-trace/sample/<id>` is 401 signed out, 403 for a user without app
+  access, 400 for a bad id. Since: this batch (PR TBD).
+- [ ] **D5 — hidden items for a restricted role.** Sign in as a role whose item filter hides some
+  of that sample's relatives, operations or tests. Expect: the Timeline shows only what the role can
+  open, with "N items are not visible to you" lines where something was dropped; no code, id or
+  operator of a hidden record appears in the JSON of `/d1-trace/sample/<id>`; a sample the role
+  cannot read gives "not visible to you" (404). Field level: give the role a field rule that hides
+  `form` (samples), `pass_code` or `operation_date` (operations), `status` (tests), `supplier_name`
+  (lots), `fraction` or `mass_used_grams` (genealogy, stock provenance): the JSON has `null` for
+  that field and the Timeline shows the record without it. A role with no access to
+  `sample_genealogy` still sees the relatives, just without relationship type or fraction. A raw
+  stock lot reached through a hidden ancestor reads "via a sample you cannot see". Since: this batch
+  (PR TBD).
+- [ ] **D5 — diamond genealogy and a huge genealogy.** On a sample whose ancestors merge (two
+  parents that share a grandparent) each sample appears once in the Timeline and the counts match
+  `SELECT count(DISTINCT sample_id) FROM f_trace_ancestors('<id>')` minus the sample itself. On a
+  real database, time `GET /d1-trace/sample/<id>` for the sample with the largest genealogy: it
+  answers within the 8 s limit, or with "this sample's genealogy is too large to trace" (503)
+  shown in the tab; either way Postgres is not left running the query (`pg_stat_activity`). The
+  functions enumerate paths, so only the 8 s timeout bounds them (the real fix is a migration that
+  walks nodes). With more than 500 ancestors, descendants or events the tab says only the nearest
+  500 relatives / newest 500 operations and tests are shown. Since: this batch (PR TBD).
+- [ ] **D11 — campaign overview counts.** Open a machining trial and a testing campaign that have
+  real data. Expect: sample, operation and test-session counts equal a hand count in the
+  collection lists; "Force analysed n / m" equals the machining operations whose
+  `machining_force_analysis` rows are all `done` (operations whose files are all `skipped` are not
+  counted, and "Diagnostics built" needs every file built); the per-operation force-analysis and diagnostics
+  badges match the Force Analysis page, and an `error` badge shows the message on hover. As a role
+  that cannot read `machining_force_analysis`, the force columns show "—" and a note, not an error.
+  "Tests complete n / m" counts test sessions whose status is `processed` or `analysed` (compare
+  with a status filter on the Test Sessions list), and the status chips use the real vocabulary
+  (`registered`, `pending processing`, `processing`, `processed`, `analysing`, `analysed`,
+  `failed`). Since: this batch (PR TBD).
+- [ ] **D11 — pickers.** In a campaign, add a sample by code, then a test session that is in no
+  campaign: each appears in the overview, the counts rise, and the test session shows the campaign
+  in its own form. Remove both again. A sample that only appears through an operation is marked
+  "not in list" and its + button adds it. Also add and remove an operation and check the overview
+  reloads. Race checks, with the campaign open in two browser tabs: add the same test session in
+  both, the second gives "already in another campaign" (not an error from Directus) and the
+  session stays in the first campaign; add the same sample in both, the second just reloads with no
+  error. The batch `PATCH /items/test_sessions` answer lists the changed row for a role that may
+  read test sessions, so a normal add never shows the "already in another campaign" note. Since:
+  this batch (PR TBD).
+
 ## B. Force rig (NI-DAQ, Lab Amp, packaged Windows app)
 
 Install the current release from the update feed on the acquisition PC. Use a real sample and
@@ -101,6 +156,48 @@ tool; a test cut on scrap stock is fine.
 - [ ] **Leaving the page mid-cut.** Start a cut, go to Plot, come back after it ends: the save dialog
   offers to save it. Since #123 (doc fix).
 
+### Captures list (thousands of captures on the real drive)
+- [ ] **R9 — browse speed on the real capture drive.** With the capture drive holding about 1,000
+  or more captures (a network drive if that is what the lab uses; copy old captures in if needed),
+  open Settings > Local Captures. Expect the first 200 rows within a few seconds, "Showing 200 of
+  N" with the true N, and Load more adding the next page. Press Refresh again: a warm scan should
+  be clearly faster than the first. Note both times and the drive type here. Since: this batch (PR
+  TBD).
+- [ ] **R9 — search, sort and filters at scale.** Search a sample name, a date (`2026-10-02`) and an
+  id fragment: results match a hand check in File Explorer. Sort by Largest first: the top rows are
+  the biggest folders. The Not uploaded and Uploaded chips keep loading pages and the footer's
+  "checked" count makes sense. Needs a real Directus so the uploaded state is real. Since: this
+  batch (PR TBD).
+- [ ] **R9 — bulk delete frees the space.** Select a handful of uploaded captures and Delete
+  selected: the confirm's space total matches the drive's free space gained (Explorer or the
+  "Free on drive" figure after Refresh), the folders are gone, and the remote backup copy is marked
+  deleted rather than removed. Include one not-uploaded capture: the only-copy warning appears.
+  Cancel mid-run: the rest are untouched. Since: this batch (PR TBD).
+- [ ] **R9 — cleanup never touches unsynced captures.** With real uploaded and not-uploaded
+  captures older than N days, Free up space > Preview lists only captures that have a real
+  `manufacturing_operations` row AND a `machining_force_analysis` row with `live_cache_file` (and
+  `directus_files_id` when a `.mat` exists); cross-check three in Directus. Make one orphan: in
+  Directus delete the analysis row of an old uploaded capture (or stop an upload after the run row
+  is created); it must show "partial upload", keep its Upload button, be absent from the preview,
+  and get the only-copy warning in a bulk delete. Not-uploaded, incomplete and
+  queued ones are absent at any N. Run it and confirm those are still on disk. Repeat with Directus
+  stopped: the preview must refuse. Since: this batch (PR TBD).
+- [ ] **R9 — upload-all progress and cancel against the real Directus.** With three or more
+  not-uploaded captures, Upload N unsynced: the bar shows "Uploading n of m" and the capture name,
+  Cancel stops after the current one and says how many were not attempted, and each uploaded
+  capture has exactly one operation row (no duplicates after cancelling and running again). While
+  it runs, Delete selected, Free up space and the row Upload buttons are disabled; click a row's
+  Upload just before Upload N unsynced: that capture is still uploaded once. Open a row's Delete
+  confirm, leave it open until Upload all reaches that row, then confirm: nothing is deleted and
+  the row says it was busy. Since: this batch (PR TBD).
+- [ ] **R9 — a partial upload is completed, not skipped.** In Directus, clear `directus_files_id`
+  on the `machining_force_analysis` row of a capture that has a `capture.mat` (it then shows
+  "partial upload"). Press its Upload: expect no second operation row, no second analysis row, the
+  `.mat` uploaded once and its link filled in on the same row (the live cache file link and file
+  are untouched), and only then the row shows "Uploaded". Repeat clearing `live_cache_file`
+  instead. Then Upload on a complete one is not offered. Also stop Directus right after an upload
+  returns: the row must not show as uploaded without the check. Since: this batch (PR TBD).
+
 ### Desktop shell
 - [ ] **R11 — Restart recorder.** Kill the backend (Task Manager): the Doctor's "Restart recorder"
   brings it back and the doctor goes green. While recording: it refuses. With the backend hung
@@ -111,6 +208,17 @@ tool; a test cut on scrap stock is fine.
   Bug, Open Captures Folder (opens the capture drive), About all work; Ctrl+Shift+L/B/O work.
   Since #125.
 
+### Diagnostics page in the packaged app
+- [ ] **P10 — recipe dialogs and import/export.** In the packaged app, Save as (name + notes),
+  Rename and Delete use the in-app dialog (Escape closes, focus returns to the button). Export a
+  recipe, Import it back: it opens in the Save dialog; importing a hand-broken file is refused with
+  a reason. The "modified since loaded" badge appears after editing an applied recipe.
+  Since: this batch (PR TBD).
+- [ ] **P10 — searchable picker on real data.** With the full campaign list, search, the Needs
+  build / Built / Error chips and Group by (sample, campaign) work; campaign names appear for
+  cuts that belong to one; Open in Plot lands on that cut and Directus opens the analysis record.
+  Since: this batch (PR TBD).
+
 ### Plot on real cuts
 - [ ] **X1 — Lite 3D height.** On a real cut, Lite 3D with Z = Fz shows height; picking a point and
   the linked marker land on the raised point. Since #123.
@@ -120,6 +228,14 @@ tool; a test cut on scrap stock is fine.
   curve and mean/RMS only over the overlap of both crops. Since #124.
 - [ ] **FFT overlay units.** With a filter profile on, the filtered FFT overlay sits on the main
   spectrum for an untouched band (both are "N rms" now). Since #125.
+- [ ] **P6 — cutting metrics.** On a real turning cut with the operation sheet beside you: open
+  Signal statistics (compute), then Cutting metrics. Check Fc, Pc and kc against a hand calculation
+  from the sheet (vc = π·D·n/1000, Pc = Fc·vc/60, kc = Fc/(ap·f)) and the kc against the literature
+  range for the material. Confirm which dynamometer axis really is the main cutting force, then fix
+  the assumed default mapping (Fc=Fz, Ff=Fx, Fp=Fy) if it is wrong. Check that an OD cut (`MT-O`) uses the Diameter box unchanged
+  for vc and that a facing cut (`MT-F`, also one with a saved crop) uses D at the window midpoint,
+  matching the radial axis of the plots. Check "—" with a reason on an
+  operation with no feed or depth, and on a milling op. Since: this batch (PR TBD).
 
 ### Earlier issues that need the rig (from the 2026-10-02 batch)
 - [ ] **#84** Real DAQmx error text and codes (‑200077); whether the chassis or the module limits the
@@ -139,6 +255,16 @@ tool; a test cut on scrap stock is fine.
   which side old results were built on.) Since #123.
 - [ ] **filter-service `/fft` change deployed.** After redeploying the plugin, the Plot overlay reads
   in N rms (see the FFT check above). Since #125.
+- [ ] **P10 — batch diagnostics build on d1-server.** In Diagnostics, tick 3 or more analysed cuts
+  (at least one already built with the default recipe), Apply recipe to selected with a library
+  recipe. Expect: the summary says queued / skipped; the orchestrator daemon processes every
+  queued cut in turn until each shows built; no cut is queued twice. Since: this batch (PR TBD).
+- [ ] **P10 — skipped cuts really match.** Apply the same recipe again to the same selection:
+  everything is skipped as "already built with this recipe" and `diag_recipe_hash` /
+  `updated_at` on those rows do not change. Then tick *Rebuild*: they requeue. Since: this batch (PR TBD).
+- [ ] **P10 — build permissions by role.** As a Lab Member, Apply recipe to selected queues builds
+  (Lab Member can update `machining_force_analysis`, migration 111). As a role with read-only access
+  to analyses, it stops on the first item with "your role can't request builds" and nothing is queued. Since: this batch (PR TBD).
 - [ ] **#80** MATLAB run on the d1-server orchestrator and Directus asset download (held back).
 - [ ] **#10** Figure-mode PNGs re-baked by MATLAB for cuts with a saved crop (held back).
 - [ ] **#97** Tailscale serve, phone access, live-DAQ load (held back; security model is an owner

@@ -14,7 +14,7 @@ import { createPlaybackEngine } from './playback/engine';
 import { loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
 import { clearSetupPrefs, defaultSetupPrefs, loadSetupPrefs, pickSetup, saveSetupPrefs, type SetupPrefs } from './setupPrefs';
 import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
-import { analysisAlreadyLinked, ensureOperation, needsBlobs, uploadProgress } from './uploadResume';
+import { adoptExistingAnalysis, analysisAlreadyLinked, ensureOperation, needsBlobs, uploadProgress } from './uploadResume';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
 import { isFetchFailure } from '../netErrors';
 import { confirmAction } from '../ui/confirm';
@@ -749,7 +749,7 @@ export function createWorkspace() {
 		// Without a capture.mat (over MAT_MAX_BYTES) the analysis record is still fully usable from
 		// the decimated cache; directus_files_id just goes in as null.
 		const blobReads = new AbortController();
-		const blobs = needsBlobs(progress, matWritten)
+		let blobs = needsBlobs(progress, matWritten)
 			? fetchCaptureBlobs(client.matUrl(id), client.cacheUrl(id), matWritten, blobReads.signal)
 			: null;
 		blobs?.catch(() => {});   // surfaced by the await below, not as an unhandled rejection
@@ -762,11 +762,19 @@ export function createWorkspace() {
 			blobReads.abort();
 			throw e;
 		}
+		// An existing analysis row may already link some files: don't upload those again.
+		await adoptExistingAnalysis(progress, opId, existing);
+		if (blobs && !needsBlobs(progress, matWritten)) { blobReads.abort(); blobs = null; }
 		if (blobs) {
 			const [matBlob, cacheBlob] = await blobs;
 			await uploadCaptureFiles(id, matBlob, cacheBlob, progress);
 		}
-		if (await analysisAlreadyLinked(progress, opId, existing)) return opId;
+		try {
+			// Completes an existing but partial analysis row (PATCH of the missing links), else false.
+			if (await analysisAlreadyLinked(progress)) return opId;
+		} catch (e: any) {
+			throw new Error(`linking the capture failed - ${directusErrorMessage(e)} (the run was logged as operation ${opId}, but its existing analysis record could not be completed)`);
+		}
 		const matFileId = progress.matFileId ?? null;
 		const cacheFileId = progress.cacheFileId!;
 		const peaks = st.summary?.peaks;

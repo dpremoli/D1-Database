@@ -97,8 +97,21 @@ campaign** (e.g. a hardness and microstructure survey).
 ![A machining trial](../images/database/campaign.png)
 
 A campaign carries defaults (owner, default machine, default material) that new operations and
-tests created in it **inherit**. Its **Campaign Operations** panel lists its operations and adds
-new ones, with the search pre-filtered to the campaign's type.
+tests created in it **inherit**. Its **Campaign** panel opens with an overview:
+
+- counts of samples, operations and test sessions, and progress bars for force analysis (machining
+  operations whose force files are analysed), diagnostics builds and completed tests;
+- a table of samples with how many operations and tests each has in the campaign (a sample that
+  appears only through an operation is marked "not in list" and can be added);
+- each operation with its **force analysis** and **diagnostics** status (done, pending,
+  processing, error, not analysed; hover an error for the message);
+- each test session with its date and status.
+
+There is no planned count on a campaign, so progress is "done out of what exists", not out of a
+target. Below the overview you can **add samples** and **add test sessions** (search, click to add;
+test sessions already in another campaign are not offered; the x removes), and **add or remove
+operations** with the search pre-filtered to the campaign's type. What you see and change follows
+your role's permissions. A role that cannot read force-analysis rows sees "—" for those columns.
 
 ## Projects
 

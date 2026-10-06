@@ -7,6 +7,9 @@
  */
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
+import CampaignOverview from './CampaignOverview.vue';
+// @ts-ignore plain JS module, tested with node --test
+import { errMsg } from './overview.js';
 
 const props = defineProps<{ primaryKey?: string | number | null }>();
 const api = useApi();
@@ -26,9 +29,6 @@ const category = computed(() => (campaignType.value ? CATEGORY_FOR_TYPE[campaign
 
 const isNew = computed(() => props.primaryKey == null || props.primaryKey === '+');
 
-function errMsg(e: any): string {
-	return e?.response?.data?.errors?.[0]?.message || e?.message || 'request failed';
-}
 // Latest-request-wins: a slow earlier response must not overwrite a newer one, and nothing is
 // written after the component is gone.
 let unmounted = false;
@@ -36,19 +36,26 @@ let linkedGen = 0;
 let searchGen = 0;
 const error = ref<string | null>(null);   // last failed load / add / remove, shown above the chips
 const busyId = ref<string | null>(null);  // operation currently being added or removed
+const overviewKey = ref(0);               // bumped after an add/remove so the overview reloads
 
+// The campaign's operations, fetched once here and shared with the overview panel (as a prop)
+// instead of each reading them separately.
 const linked = ref<any[]>([]);
+const linkedLoading = ref(false);
 async function loadLinked() {
 	const gen = ++linkedGen;
-	if (isNew.value) { linked.value = []; return; }
+	if (isNew.value) { linked.value = []; linkedLoading.value = false; return; }
+	linkedLoading.value = true;
 	try {
 		const res = await api.get('/items/manufacturing_operations', {
-			params: { filter: { campaign_id: { _eq: props.primaryKey } }, fields: ['operation_id', 'pass_code', 'process_category'], sort: ['pass_code'], limit: -1 },
+			params: { filter: { campaign_id: { _eq: props.primaryKey } }, fields: ['operation_id', 'pass_code', 'process_category', 'sample_id.sample_id', 'sample_id.sample_code'], sort: ['pass_code'], limit: -1 },
 		});
 		if (gen !== linkedGen || unmounted) return;
 		linked.value = res.data?.data ?? [];
 	} catch (e) {
 		if (gen === linkedGen && !unmounted) error.value = `Could not load the campaign's operations: ${errMsg(e)}`;
+	} finally {
+		if (gen === linkedGen) linkedLoading.value = false;
 	}
 }
 onMounted(loadLinked);
@@ -97,6 +104,7 @@ async function add(op: any) {
 		busyId.value = null;
 	}
 	await loadLinked();
+	overviewKey.value++;
 }
 async function remove(op: any) {
 	if (busyId.value) return;
@@ -109,6 +117,7 @@ async function remove(op: any) {
 		busyId.value = null;
 	}
 	await loadLinked();
+	overviewKey.value++;
 	runSearch();
 }
 </script>
@@ -117,6 +126,8 @@ async function remove(op: any) {
 	<div class="co">
 		<div v-if="isNew" class="co-msg">Save the campaign first, then add operations here.</div>
 		<template v-else>
+			<CampaignOverview :primary-key="primaryKey!" :refresh-key="overviewKey" :operations="linked" :operations-loading="linkedLoading" />
+			<h4 class="co-h">Add or remove operations</h4>
 			<div v-if="error" class="co-msg co-err">{{ error }}</div>
 			<div class="co-linked">
 				<div v-for="op in linked" :key="op.operation_id" class="co-chip">
@@ -148,6 +159,7 @@ async function remove(op: any) {
 
 <style scoped>
 .co { font-size: 13px; }
+.co-h { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--theme--foreground-subdued, #64748b); margin: 16px 0 6px; }
 .co-msg { color: var(--theme--foreground-subdued, #6b7684); padding: 8px 2px; display: flex; align-items: center; gap: 6px; } .co-msg.sm { font-size: 12px; padding: 5px 2px; }
 .co-err { color: #b91c1c; }
 .co-linked { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
