@@ -63,7 +63,8 @@ physical orientation is not recorded anywhere.
 constant. vc uses the diameter at the window midpoint:
 `D_mid = D - 2 · f · n · (t_mid - t_crop) / 60`, where `t_crop` is the cache crop start (where the
 spiral model puts D), `t_mid` the window midpoint and `n` the window's mean rpm. If `D_mid <= 0`,
-vc is unavailable. The inner diameter is not used.
+vc is unavailable. With no recorded feed the shrinkage cannot be computed, so vc uses the
+crop-start diameter. The inner diameter is not used.
 
 **Missing inputs.** Each metric is computed independently and is either a value or
 `unavailable: <reason>` ("feed not recorded", "RPM is zero in this window", "diameter missing",
