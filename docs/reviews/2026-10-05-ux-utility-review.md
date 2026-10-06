@@ -14,7 +14,8 @@ or L. Paths are relative to the repo root.
 **Status:** shipped in three PRs (all merged): #123 ("Fix first" and "Small, high-value"), #124
 (the "Next" tier: P3, P4, R4, R5, D4, D3) and #125 (small high-use: R6, R10, R11, R13, P2, P11,
 D12). Their descriptions list what changed. See the **Progress checklist** below for item-by-item
-state; everything not ticked is backlog.
+state; everything not ticked is backlog. Checks that need the rig or a live Directus are tracked
+in [`docs/runbooks/physical-test-backlog.md`](../runbooks/physical-test-backlog.md).
 
 ## Fix first — broken or risky, not new features
 
