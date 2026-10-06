@@ -65,11 +65,11 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
 				</button>
 			</div>
 			<div class="actions">
-				<button v-if="!w.locked.value" class="btn success start" :disabled="w.busy.value || !w.st.connected || !!w.sampleRateBlocker.value"
+				<button v-if="!w.locked.value" class="btn success start" :disabled="w.startDisabled.value"
 					:title="w.sampleRateBlocker.value || `Start (${startKeys})`" @click="w.requestStart()">
 					<span class="material-symbols-rounded">fiber_manual_record</span> Start
 				</button>
-				<button v-else class="btn danger stop" :disabled="w.busy.value || w.isFinalizing.value" :title="`Stop (${stopKeys})`" @click="w.stop()">
+				<button v-else class="btn danger stop" :disabled="w.stopDisabled.value" :title="`Stop (${stopKeys})`" @click="w.stop()">
 					<span class="material-symbols-rounded">stop</span> {{ w.isFinalizing.value ? 'Finalizing…' : 'Stop' }}
 				</button>
 				<button v-if="w.isDone.value" class="btn" @click="w.newRun()">New</button>

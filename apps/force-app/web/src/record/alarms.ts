@@ -42,11 +42,10 @@ export function parseAlarmConfig(raw: string | null | undefined): AlarmConfig {
 		if (v && typeof v === 'object' && !Array.isArray(v)) o = v as Record<string, unknown>;
 	} catch { /* keep defaults */ }
 	const bool = (k: keyof AlarmConfig, d: boolean) => (typeof o[k] === 'boolean' ? (o[k] as boolean) : d);
-	const num = (k: keyof AlarmConfig, d: number, min: number, max = Infinity) => {
+	const num = <D>(k: keyof AlarmConfig, d: D, min: number, max = Infinity): number | D => {
 		const x = o[k];
 		return typeof x === 'number' && Number.isFinite(x) && x >= min && x <= max ? x : d;
 	};
-	const vol = o.toneVolume;
 	return {
 		forceEnabled: bool('forceEnabled', DEFAULTS.forceEnabled),
 		forceThreshold: num('forceThreshold', DEFAULTS.forceThreshold, 0),
@@ -58,7 +57,7 @@ export function parseAlarmConfig(raw: string | null | undefined): AlarmConfig {
 		warnEnabled: bool('warnEnabled', DEFAULTS.warnEnabled),
 		warnPercent: num('warnPercent', DEFAULTS.warnPercent, 1, 99),
 		stopOnForceAlarm: bool('stopOnForceAlarm', DEFAULTS.stopOnForceAlarm),
-		toneVolume: typeof vol === 'number' && Number.isFinite(vol) && vol >= 5 && vol <= 100 ? vol : null,
+		toneVolume: num('toneVolume', null, 5, 100),
 	};
 }
 
@@ -128,9 +127,10 @@ export class AlarmController {
 					forceFired = true;
 				}
 				// The alarm supersedes its own early warning; otherwise warn once per axis per recording.
-				const wi = this.warnings.findIndex((x) => x.axis === ax);
-				if (this.latched.has(key)) { if (wi >= 0) this.warnings.splice(wi, 1); }
-				else if (warnLevel != null && v >= warnLevel && !this.warned.has(key)) {
+				if (this.latched.has(key)) {
+					const wi = this.warnings.findIndex((x) => x.axis === ax);
+					if (wi >= 0) this.warnings.splice(wi, 1);
+				} else if (warnLevel != null && v >= warnLevel && !this.warned.has(key)) {
 					this.warned.add(key);
 					this.warnings.push({ key, axis: ax, label: `${ax} force`, value: v, level: warnLevel, at: Date.now() });
 				}

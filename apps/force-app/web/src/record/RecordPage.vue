@@ -457,9 +457,9 @@ function onVisibilityChange() {
 function shortcutContext(): ShortcutContext {
 	return {
 		record: w.mode.value === 'record',
-		// Same conditions as the Start / Stop / New buttons in RecordingActions.vue.
-		canStart: !w.locked.value && w.st.connected && !w.busy.value && !w.sampleRateBlocker.value && !w.saveOpen.value,
-		canStop: w.locked.value && !w.busy.value && !w.isFinalizing.value,
+		// The Start / Stop buttons' own conditions (RecordingActions.vue), plus no save dialog in front.
+		canStart: !w.locked.value && !w.startDisabled.value && !w.saveOpen.value,
+		canStop: w.locked.value && !w.stopDisabled.value,
 		alarmShowing: w.alarms.tripped,
 		canNew: w.isDone.value && !w.saveOpen.value,
 		saveDialogOpen: w.saveOpen.value,

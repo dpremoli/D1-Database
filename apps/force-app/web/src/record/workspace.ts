@@ -409,6 +409,10 @@ export function createWorkspace() {
 	const sampleRateBlocker = computed(() => (source.value === 'nidaq'
 		? sampleRateIssue(cfg.sample_rate, nidaqHardware.maxRateHz)
 		: null));
+	// The footer's Start / Stop buttons are disabled when these are true; the R10 keyboard shortcuts
+	// read the same two so a key can never do what the button can't.
+	const startDisabled = computed(() => busy.value || !st.connected || !!sampleRateBlocker.value);
+	const stopDisabled = computed(() => busy.value || isFinalizing.value);
 
 	// The resolved Sample/Operator/Machine/Tool/Insert/Edge picks (`link.*`) and the folded
 	// machining-details section (`machining.*`) used to reach Directus ONLY via buildRunPayload()'s
@@ -1049,7 +1053,7 @@ export function createWorkspace() {
 	return {
 		client, source, setSource, nidaqChannels, cfg, meta, machining, plot, replay, st, busy, errMsg, finishedCache,
 		editCutStartSec, editCutEndSec,
-		isIdle, isRecording, isFinalizing, isDone, locked, sampleRateBlocker, saveOpen,
+		isIdle, isRecording, isFinalizing, isDone, locked, sampleRateBlocker, startDisabled, stopDisabled, saveOpen,
 		mode, playback, rpmTarget,
 		start, stop, newRun, dismissFailure, clearSetup, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
 		// 2d: Directus links + run write-back
