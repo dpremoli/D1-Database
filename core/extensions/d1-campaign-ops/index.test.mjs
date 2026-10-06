@@ -26,6 +26,17 @@ test('diagState treats a missing diag_status as not built', () => {
 	assert.equal(diagState([{ diag_status: null }, { diag_status: 'processing' }]), 'processing');
 });
 
+test('diagState ignores skipped files and errored analyses that never got a diag_status', () => {
+	assert.equal(diagState([{ status: 'done', diag_status: 'done' }, { status: 'skipped', diag_status: null }]), 'done');
+	assert.equal(diagState([{ status: 'done', diag_status: 'done' }, { status: 'error', diag_status: null }]), 'done');
+	// an analysis that errored but whose diagnostics did get a status still counts
+	assert.equal(diagState([{ status: 'done', diag_status: 'done' }, { status: 'error', diag_status: 'error' }]), 'error');
+	// a done file that is not built yet still reads 'none'
+	assert.equal(diagState([{ status: 'done', diag_status: null }, { status: 'skipped', diag_status: null }]), 'none');
+	// nothing buildable at all: nothing to build
+	assert.equal(diagState([{ status: 'skipped', diag_status: null }]), 'none');
+});
+
 test('diagnostics progress does not count an operation with an unbuilt file', () => {
 	const o = buildOverview({
 		operations: [

@@ -34,9 +34,14 @@ export function analysisState(rows) {
 // Same for the Diagnostics build (`diag_status`, null until someone requests a build). A row with
 // no diag_status is an unbuilt file ('none'), so an operation is only 'done' when every one of its
 // files is built: error > processing > pending > none (some file not built yet) > done. 'none' too
-// when there are no rows at all.
+// when there are no rows at all. Rows that can never be built do not count against it: a file whose
+// analysis was skipped, and one whose analysis errored without ever getting a diag_status (the
+// analysis column already shows that error), so one built file plus one skipped file reads 'done'.
 export function diagState(rows) {
-	const s = (rows ?? []).map((r) => r?.diag_status ?? 'none');
+	const buildable = (rows ?? []).filter(
+		(r) => r?.status !== 'skipped' && !(r?.status === 'error' && r?.diag_status == null),
+	);
+	const s = buildable.map((r) => r?.diag_status ?? 'none');
 	if (!s.length) return 'none';
 	return worst(s) ?? (s.includes('none') ? 'none' : 'done');
 }
