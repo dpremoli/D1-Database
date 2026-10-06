@@ -25,7 +25,7 @@ the same stream (see `CLAUDE.md`).
 | O — Cutting metrics | P6 | `agent-a1b290277d7c04730` | merged; axis mapping (Fc=Fz, Ff=Fx, Fp=Fy) is an assumption, selectable in the card |
 | P — Captures list | R9 | `agent-ab5dd77bae769b66f` | merged; verified against 461 sim captures (stubbed Directus) |
 | /simplify (Opus) | all | main checkout | done (`0be6cac`, `b41c303`, `fcb764e`, `f2d8b12`) |
-| /code-review high (Opus) | all | read-only reviewers | done: force-app 1 blocker (cleanup could delete an only copy) + 8 should-fix, fixed in `agent-a0ca9bc74c08e7e53`; Directus 0 blockers + 5 should-fix fixed `c5a02ef`..`7b9e908`. Opus re-review in progress |
+| /code-review high (Opus) | all | read-only reviewers | done: force-app 1 blocker (cleanup could delete an only copy) + 8 should-fix, fixed in `agent-a0ca9bc74c08e7e53`; Directus 0 blockers + 5 should-fix fixed `c5a02ef`..`7b9e908`. Opus re-reviews: 1 blocker (partial upload never completed) + should-fix fixed `676df7f`..`6268cc9`; final check's 2 should-fix fixed by the coordinator. Ready for PR. |
 
 ## M. Sample timeline and campaign overview — D5, D11
 
