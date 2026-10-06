@@ -218,6 +218,7 @@ function harness(allowed) {
 			const rule = allowed[this.collection];
 			if (!rule) throw forbidden();
 			queries.push({ collection: this.collection, ...q });
+			const count = q.aggregate?.count;
 			const match = (r, f) =>
 				Object.entries(f || {}).every(([k, c]) => {
 					if (k === '_or') return c.some((x) => match(r, x));
@@ -226,6 +227,7 @@ function harness(allowed) {
 					return true;
 				});
 			const rows = (DATA[this.collection] || []).filter((r) => (rule === true || rule(r)) && match(r, q.filter));
+			if (count) return [{ count: String(rows.length) }];
 			return q.limit > 0 ? rows.slice(0, q.limit) : rows;
 		}
 	}
@@ -373,6 +375,21 @@ test('label: respects permissions (no material / owner without read access; unre
 	assert.equal((partial.body.match(/class="label"/g) || []).length, 1);
 	assert.ok(!partial.body.includes('10-AA-MF-2023-06-03'));
 	assert.ok(partial.body.includes('not found or you may not read'));
+});
+
+test('labels picker: shows the total when more samples exist than the page lists', async () => {
+	const base = DATA.physical_samples.length;
+	try {
+		for (let i = 0; i < 205; i++) DATA.physical_samples.push({ sample_id: uuid(2000 + i), sample_code: `BULK-${i}`, created_at: '2026-03-05T12:00:00Z' });
+		const { routes } = harness({ physical_samples: true });
+		const out = await get(routes, '/labels', {}, user);
+		assert.ok(out.body.includes(`(${MAX_LABELS} of ${base + 205}, newest first)`), out.body.match(/\(\d+[^)]*\)/)?.[0]);
+		// a short list shows no "of N"
+		const small = await get(routes, '/labels', { q: 's-2' }, user);
+		assert.ok(!/of \d+, newest/.test(small.body));
+	} finally {
+		DATA.physical_samples.length = base;
+	}
 });
 
 test('labels picker: lists readable samples through the caller, filters by search', async () => {

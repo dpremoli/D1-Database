@@ -291,9 +291,12 @@ export default defineEndpoint({
 			try {
 				const a = await accessFor(req);
 				const filter = q ? { sample_code: { _icontains: q } } : {};
-				const rows = await a.list('physical_samples', filter, ['sample_id', 'sample_code'], ['-created_at'], MAX_LABELS);
+				const [rows, total] = await Promise.all([
+					a.list('physical_samples', filter, ['sample_id', 'sample_code'], ['-created_at'], MAX_LABELS),
+					a.count('physical_samples', filter),
+				]);
 				res.set('Content-Security-Policy', REPORT_CSP);
-				res.set('Content-Type', 'text/html; charset=utf-8').send(renderLabelPicker({ rows, q }));
+				res.set('Content-Type', 'text/html; charset=utf-8').send(renderLabelPicker({ rows, q, total }));
 			} catch (err) {
 				logger.error(`d1-report label picker failed: ${err.stack || err.message}`);
 				plain(res, 500, 'Could not list samples.');
