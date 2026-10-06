@@ -33,6 +33,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     WebSocket,
@@ -1995,10 +1996,10 @@ async def record_status() -> dict:
 
 def _capture_ids() -> list[str]:
     """Capture directory names, newest first (ids are timestamp-prefixed)."""
-    return sorted(
-        (d for d in os.listdir(CAPTURES_ROOT) if os.path.isdir(os.path.join(CAPTURES_ROOT, d))),
-        reverse=True,
-    )
+    # scandir: the "is it a folder" answer comes with the listing, where os.path.isdir per name was
+    # one more round trip per capture on a network drive.
+    with os.scandir(CAPTURES_ROOT) as it:
+        return sorted((e.name for e in it if e.is_dir()), reverse=True)
 
 
 @app.get("/captures")
@@ -2057,84 +2058,174 @@ def _capture_file(cid: str, name: str) -> str:
     return path
 
 
+# /captures/browse: finalized captures never change except when summary.json is rewritten (a
+# metadata edit, atomic rename) or the folder goes away, so their entries are cached keyed by the
+# folder's mtime and summary.json's mtime and size. A warm scan then costs two stats per capture
+# instead of ~10, which is what makes browsing thousands of captures on a network drive tolerable.
+# Incomplete captures are never cached: their recording/discarding/recovering flags are live.
+_BROWSE_CACHE: dict[str, tuple[tuple[int, int, int], dict]] = {}
+BROWSE_MAX_LIMIT = 500
+_DATE_QUERY = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+
+
+def _capture_entry(cid: str) -> dict:
+    """The /captures/browse row for one capture folder."""
+    d = os.path.join(CAPTURES_ROOT, cid)
+    try:
+        dir_ns = os.stat(d).st_mtime_ns
+    except OSError:
+        dir_ns = 0
+    summary_path = os.path.join(d, "summary.json")
+    try:
+        st = os.stat(summary_path)
+        # Size is in the key because file times can be coarse: two writes inside one clock tick
+        # would otherwise look identical.
+        key: tuple[int, int, int] | None = (dir_ns, st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None  # no summary.json: incomplete, so not cacheable
+    if key is not None:
+        hit = _BROWSE_CACHE.get(d)
+        if hit and hit[0] == key:
+            return hit[1]
+    # #96: where the files are, for the "Show in folder" / copy-path controls.
+    entry: dict = {
+        "id": cid,
+        "dir": os.path.abspath(d),
+        "size_mb": 0.0,
+        "finalized": False,
+        "files": {},
+    }
+    total = 0
+    for fname in ("raw.d1raw", "capture.mat", "live_cache.bin", "summary.json"):
+        try:
+            n = os.stat(os.path.join(d, fname)).st_size
+        except OSError:
+            continue
+        total += n
+        entry["files"][fname] = round(n / 1e6, 2)
+    entry["size_mb"] = round(total / 1e6, 2)
+    entry["finalized"] = "summary.json" in entry["files"]
+    entry["mtime"] = dir_ns / 1e9
+    if entry["finalized"]:
+        try:
+            with open(summary_path) as f:
+                s = json.load(f)
+            entry["sample_name"] = s.get("sample_name")
+            entry["duration_sec"] = s.get("duration_sec")
+            entry["n"] = s.get("n")
+            entry["peaks"] = s.get("peaks")
+            entry["source"] = (s.get("config") or {}).get("source")
+        except (OSError, ValueError):
+            pass
+        if key is not None:
+            _BROWSE_CACHE[d] = (key, entry)
+    else:
+        # No summary: the recording crashed or its finalize failed. manifest.json is written at
+        # record start with the full config, so the sample name is still known; without this the
+        # row could only show the timestamp id (#82).
+        cfg = (_read_json(os.path.join(d, recovery.MANIFEST)) or {}).get("config") or {}
+        if isinstance(cfg, dict):
+            for k in ("sample_name", "source"):
+                if cfg.get(k):
+                    entry[k] = cfg[k]
+        info = recovery.raw_info(d)
+        if info:
+            entry["duration_sec"] = info["duration_sec"]
+            entry["n"] = info["n_rows"]
+        # What Recover needs: a raw file with at least one row (scan_incomplete's rule).
+        entry["recoverable"] = bool(info and info["n_rows"] > 0)
+        entry["recording"] = cid == _active_session_id()
+        busy = recovery.in_flight(cid)
+        entry["discarding"] = busy == "discarding"
+        entry["recovering"] = busy == "recovering"
+    return entry
+
+
+def _browse_matches(entry: dict, needles: list[str], status: str | None) -> bool:
+    if status == "finalized" and not entry["finalized"]:
+        return False
+    if status == "incomplete" and entry["finalized"]:
+        return False
+    if not needles:
+        return True
+    hay = " ".join(str(entry.get(k) or "") for k in ("id", "sample_name", "source")).lower()
+    return any(n in hay for n in needles)
+
+
 @app.get("/captures/browse")
-async def browse_captures(limit: int = 200) -> dict:
-    """Every local capture with the facts needed to decide what to keep.
+async def browse_captures(
+    limit: int = 200,
+    offset: int = 0,
+    q: str = "",
+    status: str | None = Query(None, pattern="^(finalized|incomplete)$"),
+    sort: str = Query("date_desc", pattern="^(date_desc|date_asc|size_desc|size_asc)$"),
+) -> dict:
+    """Local captures with the facts needed to decide what to keep, filtered, sorted and paged.
 
     Distinct from /captures/recent, which exists for the Auto Range picker and therefore skips
     anything without per-channel ranging data. This one lists everything on disk, finalized or not,
     because its job is disk housekeeping: captures accumulate indefinitely (a "Don't save" leaves
     the raw behind by design) and nothing in the app has ever been able to show or remove them.
+
+    Filtering: `q` is a case-insensitive substring of the id, sample name or source (an ISO date
+    such as 2026-10-02 also matches the id's 20261002); `status` is finalized or incomplete. Whether
+    a capture was uploaded is a Directus fact the recorder does not have, so the web UI filters on
+    that itself. `sort` is date_desc (default), date_asc or size_desc/size_asc; date order is the id
+    order (ids are timestamp-prefixed), which costs no per-capture I/O.
+
+    The drive is scanned at most once per request, and only as far as needed: with no q, no status
+    and a date sort, only the requested page is read.
     """
+    limit = max(1, min(limit, BROWSE_MAX_LIMIT))
+    offset = max(0, offset)
+    needle = q.strip().lower()
+    needles = [needle] if needle else []
+    m = _DATE_QUERY.match(needle)
+    if m:
+        needles.append("".join(m.groups()))
 
-    def _scan() -> tuple[list[dict], dict]:
-        rows: list[dict] = []
+    def _scan() -> dict:
+        disk = storage.disk_usage_for(CAPTURES_ROOT)
+        base = {"captures_root": CAPTURES_ROOT, "offset": offset, "limit": limit, "disk": disk}
         if not os.path.isdir(CAPTURES_ROOT):
-            return rows, storage.disk_usage_for(CAPTURES_ROOT)
-        ids = _capture_ids()
-        for cid in ids[: max(1, min(limit, 1000))]:
-            d = os.path.join(CAPTURES_ROOT, cid)
-            # #96: where the files are, for the "Show in folder" / copy-path controls.
-            entry: dict = {
-                "id": cid,
-                "dir": os.path.abspath(d),
-                "size_mb": 0.0,
-                "finalized": False,
-                "files": {},
+            return {
+                **base,
+                "captures": [],
+                "total": 0,
+                "total_all": 0,
+                "total_size_mb": 0.0,
+                "matching_size_mb": 0.0,
             }
-            total = 0
-            for fname in ("raw.d1raw", "capture.mat", "live_cache.bin", "summary.json"):
-                fpath = os.path.join(d, fname)
-                if os.path.isfile(fpath):
-                    n = os.path.getsize(fpath)
-                    total += n
-                    entry["files"][fname] = round(n / 1e6, 2)
-            entry["size_mb"] = round(total / 1e6, 2)
-            entry["finalized"] = "summary.json" in entry["files"]
-            try:
-                entry["mtime"] = os.path.getmtime(d)
-            except OSError:
-                entry["mtime"] = 0
-            if entry["finalized"]:
-                try:
-                    with open(os.path.join(d, "summary.json")) as f:
-                        s = json.load(f)
-                    entry["sample_name"] = s.get("sample_name")
-                    entry["duration_sec"] = s.get("duration_sec")
-                    entry["n"] = s.get("n")
-                    entry["peaks"] = s.get("peaks")
-                    entry["source"] = (s.get("config") or {}).get("source")
-                except (OSError, ValueError):
-                    pass
-            else:
-                # No summary — the recording crashed or its finalize failed. manifest.json is
-                # written at record start with the full config, so the sample name is still known;
-                # without this the row could only show the timestamp id (#82).
-                cfg = (_read_json(os.path.join(d, recovery.MANIFEST)) or {}).get("config") or {}
-                if isinstance(cfg, dict):
-                    for key in ("sample_name", "source"):
-                        if cfg.get(key):
-                            entry[key] = cfg[key]
-                info = recovery.raw_info(d)
-                if info:
-                    entry["duration_sec"] = info["duration_sec"]
-                    entry["n"] = info["n_rows"]
-                # What Recover needs: a raw file with at least one row (scan_incomplete's rule).
-                entry["recoverable"] = bool(info and info["n_rows"] > 0)
-                entry["recording"] = cid == _active_session_id()
-                busy = recovery.in_flight(cid)
-                entry["discarding"] = busy == "discarding"
-                entry["recovering"] = busy == "recovering"
-            rows.append(entry)
-        return rows, storage.disk_usage_for(CAPTURES_ROOT)
+        ids = _capture_ids()  # newest first
+        total_all = len(ids)
+        needs_all = bool(needles) or status is not None or sort.startswith("size")
+        if not needs_all:
+            window = ids if sort == "date_desc" else ids[::-1]
+            page = [_capture_entry(cid) for cid in window[offset : offset + limit]]
+            total, matching_mb = total_all, None
+        else:
+            live = {os.path.join(CAPTURES_ROOT, cid) for cid in ids}
+            for stale in [k for k in _BROWSE_CACHE if k not in live]:
+                if os.path.dirname(stale) == CAPTURES_ROOT:
+                    _BROWSE_CACHE.pop(stale, None)
+            rows = [e for e in map(_capture_entry, ids) if _browse_matches(e, needles, status)]
+            if sort.startswith("size"):
+                rows.sort(key=lambda e: (e["size_mb"], e["id"]), reverse=sort == "size_desc")
+            elif sort == "date_asc":
+                rows.reverse()
+            total = len(rows)
+            matching_mb = round(sum(e["size_mb"] for e in rows), 2)
+            page = rows[offset : offset + limit]
+        return {
+            **base,
+            "captures": page,
+            "total": total,
+            "total_all": total_all,
+            "total_size_mb": round(sum(c["size_mb"] for c in page), 2),
+            "matching_size_mb": matching_mb,
+        }
 
-    captures, disk = await run_in_threadpool(_scan)
-    return {
-        "captures_root": CAPTURES_ROOT,
-        "captures": captures,
-        "total_size_mb": round(sum(c["size_mb"] for c in captures), 2),
-        "disk": disk,
-    }
+    return await run_in_threadpool(_scan)
 
 
 @app.delete("/captures/{cid}")
