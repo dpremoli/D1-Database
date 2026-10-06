@@ -16,6 +16,9 @@ export type UpdateStatus =
 let status: UpdateStatus = { state: 'idle' };
 let getWindow: (() => BrowserWindow | null) | null = null;
 let isRecording: () => Promise<boolean> = async () => false;
+// True once initAutoUpdater() has attached the electron-updater listeners (packaged builds only).
+let initialized = false;
+const UNAVAILABLE = "Updates unavailable: the recorder didn't start.";
 
 function push(next: UpdateStatus): void {
   status = next;
@@ -109,8 +112,11 @@ async function offerUpdate(version: string, notes: string): Promise<void> {
 
 /** Starts an update check. Shared by Settings > About's button (update:check) and Help > Check for
  * updates. Progress and the outcome arrive as 'update:status' pushes. */
-export function startUpdateCheck(): { ok: boolean; reason?: string } {
-  if (!app.isPackaged) return { ok: false, reason: 'not a packaged build' };
+export function startUpdateCheck(): { ok: boolean; reason?: string; message?: string } {
+  if (!app.isPackaged) return { ok: false, reason: 'not a packaged build', message: 'Updates are only available in the installed app.' };
+  // initAutoUpdater() runs only once the recorder is up (createWindow). Before that nothing is
+  // listening for the check's progress or result, so it would run and say nothing.
+  if (!initialized) return { ok: false, reason: UNAVAILABLE, message: UNAVAILABLE };
   autoUpdater.checkForUpdates().catch((err) => push({ state: 'error', message: err?.message || String(err) }));
   return { ok: true };
 }
@@ -164,6 +170,7 @@ export function initAutoUpdater(getMainWindow: () => BrowserWindow | null, recor
     push({ state: 'error', message: err?.message || String(err) });
     console.error('autoUpdater error', err);
   });
+  initialized = true;
 
   autoUpdater.checkForUpdates().catch((err) => push({ state: 'error', message: err?.message || String(err) }));
 }

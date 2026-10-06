@@ -83,8 +83,8 @@ Menu.setApplicationMenu(
           type: 'info',
           buttons: ['OK'],
           title: 'Check for updates',
-          message: 'Updates are only available in the installed app.',
-          detail: r.reason,
+          message: r.message ?? 'Updates are unavailable.',
+          detail: r.message === r.reason ? undefined : r.reason,
         });
       }
     },
