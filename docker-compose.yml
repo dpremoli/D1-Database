@@ -119,6 +119,8 @@ services:
       # Lets the worker-webhook Flows send `X-Worker-Secret: {{$env.WORKER_WEBHOOK_SECRET}}`; the
       # workers reject every request without it (docs/runbooks/heavy-data-pipeline.md §3).
       FLOWS_ENV_ALLOW_LIST: WORKER_WEBHOOK_SECRET
+      # The container runs in UTC; d1-report prints label dates in this IANA zone instead.
+      D1_TIMEZONE: ${D1_TIMEZONE:-Europe/London}
     # Path A (built-in AI Chat) and any server-side extension that calls the host
     # can reach the host's Ollama here. Auto-resolved on Windows/Mac Docker
     # Desktop; the host-gateway mapping makes it work on Linux too.

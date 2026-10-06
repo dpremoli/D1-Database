@@ -119,16 +119,25 @@ test('codeFontPt: shrinks long codes to fit, never beyond the cap or floor', () 
 	assert.equal(codeFontPt('', 20, 14), 14);
 });
 
-test('labelDate: a timestamp falls on its day in the server\'s local time zone, not UTC', () => {
-	const old = process.env.TZ;
+test('labelDate: a timestamp falls on its day in D1_TIMEZONE (default Europe/London), not UTC', () => {
+	const old = process.env.D1_TIMEZONE;
 	try {
-		process.env.TZ = 'Pacific/Auckland'; // UTC+12/+13
-		const created = new Date(2026, 9, 5, 0, 30); // 00:30 local on 5 Oct = 4 Oct in UTC
-		assert.equal(labelDate(null, created), '2026-10-05');
-		assert.equal(labelDate(null, created.toISOString()), '2026-10-05');
+		delete process.env.D1_TIMEZONE;
+		// 23:30 UTC on 4 Oct is 00:30 BST on 5 Oct; the process itself runs in UTC here.
+		assert.equal(labelDate(null, '2026-10-04T23:30:00Z'), '2026-10-05');
+		assert.equal(labelDate(null, new Date('2026-10-04T23:30:00Z')), '2026-10-05');
+		// UTC midnight is 01:00 BST: same day. In winter (GMT) 00:30 UTC is still that day.
+		assert.equal(labelDate(null, '2026-10-05T00:00:00Z'), '2026-10-05');
+		assert.equal(labelDate(null, '2026-01-05T00:30:00Z'), '2026-01-05');
+		process.env.D1_TIMEZONE = 'Pacific/Auckland'; // UTC+13 in October
+		assert.equal(labelDate(null, '2026-10-04T12:30:00Z'), '2026-10-05');
+		process.env.D1_TIMEZONE = 'America/New_York';
+		assert.equal(labelDate(null, '2026-10-05T01:00:00Z'), '2026-10-04');
+		process.env.D1_TIMEZONE = 'Not/AZone'; // a typo must not break printing: back to the default
+		assert.equal(labelDate(null, '2026-10-04T23:30:00Z'), '2026-10-05');
 	} finally {
-		if (old === undefined) delete process.env.TZ;
-		else process.env.TZ = old;
+		if (old === undefined) delete process.env.D1_TIMEZONE;
+		else process.env.D1_TIMEZONE = old;
 	}
 });
 

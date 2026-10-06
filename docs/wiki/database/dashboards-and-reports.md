@@ -120,8 +120,8 @@ in the next section.
 ## Sample labels and QR codes
 
 The same `d1-report` endpoint prints sample labels: the sample code in large type, a QR code,
-the material, the date (the manufactured date, else the entry date, taken in the server's local
-time zone) and the owner's initials.
+the material, the date (the manufactured date, else the entry date, taken in the `D1_TIMEZONE` time
+zone, `Europe/London` unless set) and the owner's initials.
 Two layouts:
 
 | Layout | `layout=` | Use |

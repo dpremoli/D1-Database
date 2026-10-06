@@ -194,17 +194,35 @@ export function initials(fullName) {
 	return letters.map((w) => Array.from(w)[0].toUpperCase()).join('');
 }
 
+export const DEFAULT_TIMEZONE = 'Europe/London';
+
+// The IANA zone label dates are read in: env D1_TIMEZONE, else Europe/London. The Directus
+// container runs in UTC (no TZ set), so a sample entered at 00:30 BST would otherwise be labelled
+// with the previous day. An unknown zone name falls back to the default rather than failing the print.
+function labelTimeZone() {
+	const tz = (process.env.D1_TIMEZONE || '').trim() || DEFAULT_TIMEZONE;
+	try {
+		new Intl.DateTimeFormat('en-GB', { timeZone: tz });
+		return tz;
+	} catch {
+		return DEFAULT_TIMEZONE;
+	}
+}
+
 // ISO date (YYYY-MM-DD) for a DATE string or a timestamp; '' when absent / invalid. A DATE
-// string is used as is; a timestamp is read in the SERVER's local time zone (so a sample
-// created just after midnight local time shows that day, not the previous UTC day).
+// string is used as is; a timestamp is read in the D1_TIMEZONE zone (default Europe/London), so
+// a sample created just after local midnight shows that day, not the previous UTC day.
 export function labelDate(manufactured, created) {
 	const v = manufactured || created;
 	if (!v) return '';
 	if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
 	const d = new Date(v);
 	if (isNaN(d)) return '';
-	const p2 = (n) => String(n).padStart(2, '0');
-	return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+	const parts = new Intl.DateTimeFormat('en-GB', {
+		timeZone: labelTimeZone(), year: 'numeric', month: '2-digit', day: '2-digit',
+	}).formatToParts(d);
+	const get = (type) => parts.find((x) => x.type === type)?.value;
+	return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
 // ---- HTML -----------------------------------------------------------------------------
