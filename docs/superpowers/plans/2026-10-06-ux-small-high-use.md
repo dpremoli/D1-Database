@@ -20,7 +20,7 @@ fixes, local CI (`pre-commit` included), PR, CI green, merge.
 | K — Plot export and help | P2, P11 | `agent-a673fa3d591bdfa1d` | merged; not yet seen in a browser |
 | L — Directus saved filters | D12 | `agent-a8bc7cbd5a4f5506a` | merged; migration 135 proven up/down/up, phase1 212/0 |
 | /simplify (Opus) | all | main checkout | done (`fd66b07`, `4f6615c`, `217259a`) |
-| /code-review high (Opus) | all | read-only reviewers | done: 1 blocker (alarm hidden behind the save dialog) + 6 should-fix + nits, fixed (`391d53c`..`bd4d96e`, merge `3f1c5eb`); Opus re-review of the fixes in progress |
+| /code-review high (Opus) | all | read-only reviewers | done: 1 blocker (alarm hidden behind the save dialog) + 6 should-fix + nits, fixed (`391d53c`..`bd4d96e`, merge `3f1c5eb`); Opus re-review: 0 blockers, 2 should-fix + nits fixed `fe19075`..`400a125`. Ready for PR. |
 
 ## I. Record alarms and shortcuts — R6, R10
 
