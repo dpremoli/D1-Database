@@ -11,10 +11,10 @@ Items already tracked as open issues (#108, #100, #97, #90, #86, #81, #80, #67, 
 Items marked *(idea)* are judgement calls the reviewers did not confirm in code. Sizes are S, M
 or L. Paths are relative to the repo root.
 
-**Status:** the "Fix first" items and the "Small, high-value" batch shipped in PR #123 (merged
-2026-10-05); its description lists what changed. The "Next" tier (P3, P4, R4, R5, D4, D3) is in
-[`docs/superpowers/plans/2026-10-06-ux-next-tier.md`](../superpowers/plans/2026-10-06-ux-next-tier.md).
-See the **Progress checklist** below for item-by-item state; everything not ticked is backlog.
+**Status:** the "Fix first" items and the "Small, high-value" batch shipped in PR #123, and the
+"Next" tier (P3, P4, R4, R5, D4, D3) in PR #124 (both merged); their descriptions list what
+changed. See the **Progress checklist** below for item-by-item state; everything not ticked is
+backlog.
 
 ## Fix first — broken or risky, not new features
 
@@ -85,8 +85,7 @@ See the **Progress checklist** below for item-by-item state; everything not tick
 ## Progress checklist (2026-10-06)
 
 `[x]` done, `[~]` partly done, `[ ]` not started. "#123" shipped in PR #123 (merged 2026-10-05).
-"Next tier" is done on branch `ccr-567582b5-tmq1ec`, reviewed and fixed, **not yet merged**
-(plan: [`2026-10-06-ux-next-tier.md`](../superpowers/plans/2026-10-06-ux-next-tier.md)).
+"Next tier" shipped in PR #124 (merged 2026-10-06).
 
 ### Fix first
 - [x] **X1** Lite 3D height — #123
