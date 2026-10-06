@@ -104,6 +104,11 @@ Press **Start**. The first time in each session the app offers to test the safet
 **Start without testing** is fine if you have already checked them on this machine today. The
 thresholds are set in [Settings → Safety Alarms](settings.md#safety-alarms).
 
+While you cut, a force axis that reaches the **early-warning level** (80 % of the force limit by
+default) raises an amber banner, with no tone and nothing to acknowledge. If the limit itself is
+reached the red alarm takes over. You can also have the alarm stop the recording for you; that is
+off by default (see the settings page).
+
 While recording, the parameter fields lock and **Start** becomes **Stop**:
 
 ![A cut in progress](../images/force-app/record-live.png)

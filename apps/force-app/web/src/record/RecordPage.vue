@@ -501,12 +501,22 @@ onBeforeUnmount(() => {
 		<div class="top-overlays">
 			<!-- Disk-full protection: the backend watches free space during a recording independently of
 				 this page's own polling, and reports what (if anything) it had to do about it. -->
-			<div v-if="st.diskAction" class="disk-action-banner" :class="st.diskAction.action">
+			<div v-if="st.diskAction" class="disk-action-banner" :class="st.diskAction.action" role="status">
 				<span class="material-symbols-rounded">{{ st.diskAction.action === 'forced_stop' ? 'dangerous' : st.diskAction.action === 'backup_started' ? 'cloud_upload' : 'warning' }}</span>
 				<span v-if="st.diskAction.action === 'backup_started'">Disk space is low ({{ st.diskAction.freeGb.toFixed(1) }} GB free) — remote backup was switched on automatically to protect this recording.</span>
 				<span v-else-if="st.diskAction.action === 'forced_stop'">Recording was stopped automatically — disk space ran critically low ({{ st.diskAction.freeGb.toFixed(1) }} GB free). The data captured so far is safe.</span>
 				<span v-else>Disk space is low ({{ st.diskAction.freeGb.toFixed(1) }} GB free) and no remote backup is configured — free up space or configure a backup server soon.</span>
 				<button class="btn sm inverse disk-action-ack" @click="st.diskAction = null">Dismiss</button>
+			</div>
+
+			<!-- R6: early warning. Amber, non-modal, silent: a force axis reached the warning share of the
+				 limit. Not an alarm (nothing latches, nothing to acknowledge); Dismiss hides it for the cut. -->
+			<div v-if="w.mode.value === 'record' && w.alarms.warnings.length" class="warn-banner" role="status" aria-live="polite" data-testid="force-warning">
+				<span class="material-symbols-rounded">warning</span>
+				<span>Approaching the force limit:
+					<template v-for="(wn, i) in w.alarms.warnings" :key="wn.key">{{ i ? ', ' : ' ' }}{{ wn.axis }} {{ wn.value.toFixed(0) }} N</template>
+					(warning at {{ w.alarms.warnLevel?.toFixed(0) }} N, alarm at {{ w.alarms.config.forceThreshold }} N)</span>
+				<button class="btn sm inverse disk-action-ack" @click="w.alarms.dismissWarnings()">Dismiss</button>
 			</div>
 
 			<!-- R5: a sensor channel hit full scale this cut. Once per cut: Dismiss keeps it away until
@@ -555,7 +565,7 @@ onBeforeUnmount(() => {
 		</div>
 
 		<!-- Global safety-alarm overlay (2e): prominent, blocks nothing but demands acknowledgement. -->
-		<div v-if="w.alarms.tripped" class="alarm-overlay">
+		<div v-if="w.alarms.tripped" class="alarm-overlay" role="alert" aria-live="assertive">
 			<span class="material-symbols-rounded">warning</span>
 			<div class="ao-text">
 				<b>SAFETY ALARM</b>
@@ -628,6 +638,8 @@ onBeforeUnmount(() => {
 .disk-action-banner.forced_stop { background: #dc2626; }
 .disk-action-banner .material-symbols-rounded { font-size: var(--icon-lg); }
 .disk-action-ack { margin-left: auto; }
+.warn-banner { display: flex; align-items: center; gap: 12px; padding: 10px 18px; font-size: var(--fs-md); color: #fff; background: #b45309; flex: none; }
+.warn-banner .material-symbols-rounded { font-size: var(--icon-lg); }
 .rail-banner { display: flex; align-items: center; gap: 12px; padding: 10px 18px; font-size: var(--fs-md); color: #fff; background: #dc2626; flex: none; }
 .rail-banner .material-symbols-rounded { font-size: var(--icon-lg); }
 /* The shared icon button, see-through while it floats over the panels until pointed at. */
