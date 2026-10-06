@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('forceApp', {
     subscribe<UpdateStatus>('update:status', callback),
   /** Native folder picker; resolves to the chosen folder, or null if cancelled. */
   pickFolder: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog:pickFolder', defaultPath),
+  /** Stops and respawns the recorder backend (R11). Refused while a recording is running or being
+   * saved; `reason` says why. */
+  restartRecorder: (): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke('sidecar:restart'),
   /** Opens a local capture's folder in the file browser. Main only allows paths inside the
    * backend's captures folder. */
   revealPath: (target: string): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke('shell:reveal', target),

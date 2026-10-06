@@ -72,6 +72,11 @@ button. Where a command fixes it, **Copy** puts the command on the clipboard. In
 *NI-DAQ runtime* warns because the demo PC has no NI-DAQmx driver, and *Octree server* fails
 because none was running. Both are expected off the rig.
 
+In the installed app, when the recorder backend is down the doctor offers **Restart recorder**.
+It stops and restarts the backend, then runs the check again. It will not restart while a recording
+is in progress or still being saved. In a browser or a development build the doctor shows the
+command to start the backend by hand instead.
+
 **Service endpoints** are the URLs the app uses:
 
 | Endpoint | Default | Used for |

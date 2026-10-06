@@ -5,6 +5,7 @@ import { buildMenu } from './menu';
 import { findAvailablePort } from './port';
 import { registerAppScheme, handleAppProtocol } from './protocol';
 import { checkRevealTarget } from './reveal';
+import { restartRecorder } from './restart';
 import { watchRenderer } from './rendererWatch';
 import { PopoutTracker } from './popouts';
 import { fetchBusySession, confirmQuit, type BusySession } from './quitGuard';
@@ -157,10 +158,13 @@ let restartCause: string | undefined;
 // reported once by createWindow() below, so the state callback must stay quiet for it, or the
 // operator gets two error boxes for one failure (review 2.9).
 let startupSettled = false;
+// True while the operator's "Restart recorder" is under way: a crash then is reported to them as
+// the restart's result, not also as a separate error box.
+let manualRestart = false;
 
 function onSidecarStateChange(state: SidecarState, detail?: string): void {
   if (state === 'restarting') restartCause = detail;
-  if (state === 'crashed' && startupSettled) {
+  if (state === 'crashed' && startupSettled && !manualRestart) {
     dialog.showErrorBox('Recorder backend stopped responding', detail ?? 'See logs for details.');
   }
   // A restart (not the initial start) means the backend crashed mid-session — route the
@@ -210,6 +214,27 @@ function registerShellIpc(): void {
     }
     shell.showItemInFolder(check.path);
     return { ok: true };
+  });
+
+  // R11: Settings > Connectivity's "Restart recorder". Goes through the same supervisor as launch
+  // and the crash restarts. Refused while a recording is running or being saved; allowed when the
+  // backend cannot be asked (it is down, which is what the button is for).
+  ipcMain.handle('sidecar:restart', async (event) => {
+    if (!fromApp(event)) return { ok: false, reason: 'not allowed from this page' };
+    if (manualRestart) return { ok: false, reason: 'a restart is already in progress' };
+    manualRestart = true;
+    try {
+      const result = await restartRecorder({
+        getBusy: activeSession,
+        restart: supervisor ? () => supervisor!.restart() : null,
+        getState: () => supervisor?.getState(),
+        lastDetail: () => supervisor?.lastDetail(),
+      });
+      logToBackend(result.ok ? 'INFO' : 'WARNING', `recorder restart requested from the app: ${result.ok ? 'ok' : result.reason}`);
+      return result;
+    } finally {
+      manualRestart = false;
+    }
   });
 }
 

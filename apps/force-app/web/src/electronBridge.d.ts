@@ -26,6 +26,9 @@ declare global {
       onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
       /** Native folder picker (#101); the chosen folder, or null if cancelled. */
       pickFolder: (defaultPath?: string) => Promise<string | null>;
+      /** Stops and respawns the recorder backend (R11). Refused while a recording is running or
+       * being saved; `reason` says why. Resolves once the backend is healthy again, or failed to be. */
+      restartRecorder: () => Promise<{ ok: boolean; reason?: string }>;
       /** Opens a local capture's folder in the file browser (#96). Only paths inside the backend's
        * captures folder are allowed; `reason` says why when not. */
       revealPath: (target: string) => Promise<{ ok: boolean; reason?: string }>;

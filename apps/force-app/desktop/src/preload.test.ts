@@ -47,4 +47,11 @@ describe('preload subscriptions', () => {
     h.bus.emit('navigate', {}, '/plot');
     expect(got).toEqual(['/record']);
   });
+
+  it('restartRecorder invokes the sidecar:restart channel', async () => {
+    const { ipcRenderer } = await import('electron');
+    (ipcRenderer.invoke as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ok: true });
+    await expect(h.exposed.restartRecorder()).resolves.toEqual({ ok: true });
+    expect(ipcRenderer.invoke).toHaveBeenCalledWith('sidecar:restart');
+  });
 });

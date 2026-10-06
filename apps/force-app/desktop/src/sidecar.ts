@@ -108,6 +108,10 @@ export class SidecarSupervisor {
   private detail: string | undefined;
   private restarts = 0;
   private stopping = false;
+  // Bumped by every start() and stop(). A restart or spawn that was waiting (backoff sleep, health
+  // poll) when the operator restarted the backend by hand sees the change and stands down, so a
+  // manual restart can never leave two spawns racing for the port.
+  private epoch = 0;
   private livenessTimer: ReturnType<typeof setTimeout> | null = null;
   // Why the current process was killed by the liveness probe, if it was — reported in place of
   // the bare exit code, which for a killed process says nothing useful.
@@ -158,6 +162,7 @@ export class SidecarSupervisor {
 
   async start(): Promise<void> {
     this.stopping = false;
+    this.epoch += 1;
     this.restarts = 0;
     await this.spawnAndWait();
   }
@@ -217,6 +222,7 @@ export class SidecarSupervisor {
   }
 
   private async handleUnexpectedExit(detail: string): Promise<void> {
+    const epoch = this.epoch;
     if (this.restarts >= this.opts.maxRestarts) {
       this.setState('crashed', `giving up after ${this.restarts} restart(s)\n${detail}`);
       return;
@@ -227,11 +233,12 @@ export class SidecarSupervisor {
     const cause = detail.split('\n')[0];
     this.setState('restarting', `attempt ${this.restarts}/${this.opts.maxRestarts} in ${delay}ms: ${cause}`);
     await sleep(delay);
-    if (this.stopping) return;
+    if (this.stopping || epoch !== this.epoch) return;
     await this.spawnAndWait();
   }
 
   private async spawnAndWait(): Promise<void> {
+    const epoch = this.epoch;
     this.setState('starting');
     this.hungReason = null;
     const proc = (this.proc = this.spawnProcess());
@@ -240,9 +247,11 @@ export class SidecarSupervisor {
     let exitDetail: string | null = null;
     void exited.then((d) => { exitDetail = d; });
     const ready = await waitForHealthy(this.opts.healthUrl, this.opts.readyTimeoutMs, exited);
-    this.startingProc = null;
-    this.startupExited = null;
-    if (this.stopping) return;
+    if (this.startingProc === proc) {
+      this.startingProc = null;
+      this.startupExited = null;
+    }
+    if (this.stopping || epoch !== this.epoch) return;
     if (ready) {
       this.setState('ready');
       this.startLiveness(proc);
@@ -310,8 +319,17 @@ export class SidecarSupervisor {
     this.stableTimer = null;
   }
 
+  /** Stops the backend and starts a fresh one on the same port, resolving once that outcome is
+   * final (ready, or crashed). Reuses stop() and start(), so it is the same spawn, health-wait and
+   * liveness path as launch; the restart budget starts over, as it does for any start(). */
+  async restart(): Promise<void> {
+    await this.stop();
+    await this.start();
+  }
+
   async stop(): Promise<void> {
     this.stopping = true;
+    this.epoch += 1;
     this.stopLiveness();
     if (!this.proc || this.proc.pid == null || this.proc.exitCode !== null) {
       this.setState('stopped');
