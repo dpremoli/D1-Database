@@ -29,7 +29,7 @@ import { computeAutoCode } from './operationCode';
 import { activeFindings, diagnose, worstSeverity, type Finding } from './metadataDoctor';
 import { computeSignalStats, resolveStatsWindow, type SignalStats } from './signalStats';
 import { statsCsvColumns } from './statsCsv';
-import { AXIS_MAPS, axisMapKey, computeCuttingMetrics, opKindFromSubtype, parseAxisMap, type Metric } from './cuttingMetrics';
+import { AXIS_MAPS, axisMapKey, computeCuttingMetrics, opKindFromSubtype, parseAxisMap, usesSpiralDiameter, type Metric } from './cuttingMetrics';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
 import { saveChartImage, type ChartSnapshot } from './chartExport';
@@ -509,11 +509,18 @@ const axisMap = computed(() => parseAxisMap(axisMapSel.value));
 // Operation record first (editable above), else the capture's own copy.
 const cutFeed = computed(() => numOrNull(editOpFeedMmPerRev.value) ?? numOrNull(detail.value?.feed));
 const cutAp = computed(() => numOrNull(editOpAxialDoc.value) ?? numOrNull(detail.value?.depth_of_cut));
-const cutting = computed(() => !sigStats.value ? null : computeCuttingMetrics({
-	stats: sigStats.value, axisMap: axisMap.value,
-	opKind: opKindFromSubtype(editOpSubtype.value || op.value?.machining_operation_subtype),
-	diameterMm: editDiam.value, feedMmPerRev: cutFeed.value, apMm: cutAp.value,
-}));
+// Facing, grooving and parting spiral inwards: D_mid uses the same origin (the active crop start,
+// the saved crop when there is one) and the same feed (the geometry feed) as the plots' radial axis.
+const cutting = computed(() => {
+	if (!sigStats.value) return null;
+	const subtype = editOpSubtype.value || op.value?.machining_operation_subtype;
+	return computeCuttingMetrics({
+		stats: sigStats.value, axisMap: axisMap.value,
+		opKind: opKindFromSubtype(subtype), spiral: usesSpiralDiameter(subtype),
+		diameterMm: editDiam.value, feedMmPerRev: cutFeed.value, apMm: cutAp.value,
+		spiralFeedMmPerRev: editFeed.value, spiralOriginSec: activeCrop.value?.start,
+	});
+});
 const cuttingMapText = computed(() => {
 	const m = axisMap.value;
 	return `Assumed axis mapping: Fc (tangential, main cutting) = ${m.Fc}, Ff (feed) = ${m.Ff}, Fp (passive/radial) = ${m.Fp}. The mounting is not recorded; change it with the selector.`;

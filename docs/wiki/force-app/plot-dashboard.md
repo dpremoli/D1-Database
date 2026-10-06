@@ -232,8 +232,12 @@ for its formula; a "—" carries the reason (missing feed, depth, diameter, zero
   axes chosen in **Axis mapping**. The mounting of the dynamometer is not recorded, so the default
   (Fc = Fz, Ff = Fx, Fp = Fy) is an **assumption**; change it if your set-up differs (remembered in
   this browser).
-- **Cutting speed vc** = π·D·n/1000 m/min, with D the Diameter control at the middle of the window
-  (the disc shrinks as the tool spirals in) and n the measured mean RPM.
+- **Cutting speed vc** = π·D·n/1000 m/min, with n the measured mean RPM. For **facing, grooving
+  and parting** (`MT-F`, `MT-G`, `MT-P`) D is the diameter at the middle of the window, because the
+  disc shrinks as the tool spirals in: it starts from the Diameter control at the crop start (the
+  saved crop, if there is one) and shrinks by the feed in the Geometry box, the same numbers the
+  radial axis of the plots uses. Every other turning type (OD, roughing, boring, threading,
+  drilling) uses the Diameter control unchanged.
 - **Cutting power Pc** = Fc·vc/60 W. **Specific cutting energy kc** = Fc/(ap·f) N/mm².
 - Feed and depth come from the operation record (else the capture). Milling operations and
   operations with an unknown type show only the resultant.

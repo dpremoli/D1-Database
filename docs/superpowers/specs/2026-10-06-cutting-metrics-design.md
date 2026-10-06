@@ -54,17 +54,29 @@ physical orientation is not recorded anywhere.
 |---|---|---|
 | Fx, Fy, Fz | live cache, crop window | as Signal statistics |
 | n (rpm) | **measured mean over the window** (`SignalStats.rpm.mean`) | not the target `machining_spindle_speed_rpm`; zero or non-finite is "unavailable", no silent fallback |
-| D (mm) | the Diameter control (`editDiam`: per-op `outer_diameter` override, else cache header `CutDiameter`) | the spiral model's `D/2` is at the crop start |
+| D (mm) | the Diameter control (`editDiam`: per-op `outer_diameter` override, else cache header `CutDiameter`) | the spiral model's `D/2` is at the active crop start |
 | f (mm/rev) | operation `machining_feed_mm_per_rev`, else capture `feed` | |
 | ap (mm) | operation `machining_axial_depth_of_cut_mm`, else capture `depth_of_cut` | |
 | operation type | `machining_operation_subtype` prefix: `MT` turning, `MM` milling (same rule as `opTypeCategory` in force-app-web) | |
 
-**Face turning.** The diameter shrinks as the tool spirals inward at `f` per rev, so vc is not
+**Which operations spiral.** Only facing (`MT-F`), grooving (`MT-G`) and parting (`MT-P`) move
+the tool across the diameter (the spelled-out `MT-FACE`, `MT-GROOVE`, `MT-PART` forms are accepted
+too; the codes are the Record page's `op_type` list). OD turning (`MT-O`), roughing (`MT-R`),
+boring (`MT-B`), threading (`MT-H`) and drilling (`MT-D`) run at a constant diameter, so their vc
+uses D as entered (D = 80 mm, n = 1000 rpm gives 251.3 m/min whatever the window). An earlier
+version applied the shrinkage to every `MT*` subtype and understated vc and Pc on OD cuts.
+
+**Facing spiral.** The diameter shrinks as the tool spirals inward at `f` per rev, so vc is not
 constant. vc uses the diameter at the window midpoint:
-`D_mid = D - 2 · f · n · (t_mid - t_crop) / 60`, where `t_crop` is the cache crop start (where the
-spiral model puts D), `t_mid` the window midpoint and `n` the window's mean rpm. If `D_mid <= 0`,
-vc is unavailable. With no recorded feed the shrinkage cannot be computed, so vc uses the
-crop-start diameter. The inner diameter is not used.
+`D_mid = D - 2 · f · n · (t_mid - t_origin) / 60`, with `n` the window's mean rpm and `t_mid` the
+window midpoint. It must agree with the radial axis of the plots (`radialValuesFor` in
+`ForceDashboard.vue`), so it takes the same inputs: `t_origin` is the **active crop start** (the
+saved crop override when there is one, else the auto window, else the live crop; not the cache's
+own crop start, which differs as soon as a crop is saved) and `f` is the **geometry feed**
+(`editFeed`, the Geometry box) rather than the operation record's feed. kc keeps using the
+operation's feed. If `D_mid <= 0`, vc is unavailable. With no usable geometry feed the shrinkage
+cannot be computed, so vc uses D at the origin. The inner diameter and the plots' time-scale
+control are not used here.
 
 **Missing inputs.** Each metric is computed independently and is either a value or
 `unavailable: <reason>` ("feed not recorded", "RPM is zero in this window", "diameter missing",
@@ -80,7 +92,7 @@ reason "operation type unknown".
 
 `computeSignalStats` additionally returns the window's resultant mean and peak (one extra term in
 the pass that already iterates the window). The dashboard calls the pure
-`computeCuttingMetrics({ stats, axisMap, opKind, diameterMm, feedMmPerRev, apMm, tMidMinusCropSec })`
+`computeCuttingMetrics({ stats, axisMap, opKind, spiral, diameterMm, feedMmPerRev, apMm, spiralFeedMmPerRev, spiralOriginSec })`
 and renders the result; it recomputes when stats, an input or the mapping change. The CSV gets one
 set of columns repeated on every row, like the RPM columns.
 

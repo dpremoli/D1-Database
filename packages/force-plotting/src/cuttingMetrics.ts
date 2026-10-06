@@ -37,6 +37,15 @@ export function opKindFromSubtype(subtype: string | null | undefined): OpKind {
 	return 'unknown';
 }
 
+/** Turning operations whose diameter shrinks along the cut, so vc is not constant: facing (MT-F),
+ * grooving (MT-G) and parting (MT-P), the cuts the dashboard's spiral model describes. OD turning
+ * (MT-O), roughing (MT-R), boring (MT-B), threading (MT-H) and drilling (MT-D) run at a constant
+ * diameter. Spelled-out codes ("MT-FACE") are accepted as well. */
+const SPIRAL_SUBTYPES = new Set(['MT-F', 'MT-FACE', 'MT-FACING', 'MT-G', 'MT-GROOVE', 'MT-GROOVING', 'MT-P', 'MT-PART', 'MT-PARTING']);
+export function usesSpiralDiameter(subtype: string | null | undefined): boolean {
+	return SPIRAL_SUBTYPES.has((subtype ?? '').trim().toUpperCase());
+}
+
 export interface Metric { value: number | null; reason?: string }
 const ok = (value: number): Metric => ({ value });
 const na = (reason: string): Metric => ({ value: null, reason });
@@ -47,9 +56,19 @@ export interface CuttingInputs {
 	stats: Pick<SignalStats, 'axes' | 'rpm' | 'windowSec' | 'resultant' | 'cacheCropStartSec'>;
 	axisMap: AxisMap;
 	opKind: OpKind;
-	/** Diameter (mm) at the cache crop start, i.e. the dashboard's Diameter control. */
+	/** Facing, grooving or parting (usesSpiralDiameter): D shrinks along the cut. False keeps the
+	 * diameter constant, as for OD turning, boring or threading. */
+	spiral: boolean;
+	/** Diameter (mm) at the spiral origin, i.e. the dashboard's Diameter control. */
 	diameterMm: number | null | undefined;
+	/** Feed (mm/rev) of the operation: kc. */
 	feedMmPerRev: number | null | undefined;
+	/** Feed the spiral model uses (the dashboard's geometry feed, `editFeed`), so D_mid agrees with
+	 * the radial axis of the plots. Defaults to `feedMmPerRev`. */
+	spiralFeedMmPerRev?: number | null;
+	/** Time (s) where the spiral puts D: the active crop start, i.e. the saved crop override when
+	 * there is one. Defaults to the cache's crop start. */
+	spiralOriginSec?: number | null;
 	apMm: number | null | undefined;
 }
 
@@ -65,7 +84,7 @@ export interface CuttingMetrics {
 	axisMap: AxisMap;
 }
 
-/** Diameter at the window midpoint of a face-turning spiral: D − 2·f·n·(t_mid − t_crop)/60. */
+/** Diameter at the window midpoint of a facing spiral: D − 2·f·n·(t_mid − t_origin)/60. */
 export function midWindowDiameter(
 	diameterMm: number, feedMmPerRev: number, rpm: number, tMidMinusCropSec: number,
 ): number {
@@ -99,9 +118,12 @@ export function computeCuttingMetrics(inp: CuttingInputs): CuttingMetrics {
 	else if (!pos(rpm)) diameterMid = vc = na('RPM is zero in this window');
 	else {
 		const tMid = (stats.windowSec[0] + stats.windowSec[1]) / 2;
-		// Without a feed the spiral shrinkage is unknowable; fall back to the crop-start diameter.
-		const f = pos(inp.feedMmPerRev) ? inp.feedMmPerRev : 0;
-		const d = midWindowDiameter(inp.diameterMm, f, rpm, tMid - stats.cacheCropStartSec);
+		const origin = inp.spiralOriginSec != null && Number.isFinite(inp.spiralOriginSec) ? inp.spiralOriginSec : stats.cacheCropStartSec;
+		const spiralFeed = inp.spiralFeedMmPerRev !== undefined ? inp.spiralFeedMmPerRev : inp.feedMmPerRev;
+		// Constant D unless this is facing/grooving/parting. Without a feed the shrinkage is
+		// unknowable; fall back to the origin diameter.
+		const f = inp.spiral && pos(spiralFeed) ? spiralFeed : 0;
+		const d = midWindowDiameter(inp.diameterMm, f, rpm, tMid - origin);
 		if (!(d > 0)) diameterMid = vc = na('window lies beyond the disc centre (check diameter and crop)');
 		else { diameterMid = ok(d); vc = ok(Math.PI * d * rpm / 1000); }
 	}
