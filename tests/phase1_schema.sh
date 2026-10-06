@@ -1365,6 +1365,48 @@ SQL
 )
 grep -q 'only be set on a Sample Preparation operation' <<<"$pr_err" && ok "a recipe on a non-prep operation is rejected with a clear error" || bad "non-prep recipe was not rejected (output: $pr_err)"
 
+echo "== Module bar: Home first, Data Studio after the dashboards =="
+# directus_settings is a stub in CI: seed the shipped bar, apply the migration's up then down in a
+# rolled-back transaction, and assert the order after each, plus the cases the shipped bar does not
+# cover (a curated bar that already lists home, no dashboards, a NULL bar).
+MB=db/migrations/20261006000136_module_bar_home_first.sql
+mb_up=$(awk '/-- migrate:up/{f=1;next}/-- migrate:down/{f=0}f' "$MB")
+mb_down=$(awk '/-- migrate:down/{f=1;next}f' "$MB")
+mb_ids='SELECT string_agg(e->>'"'"'id'"'"', '"'"','"'"') FROM directus_settings, json_array_elements(module_bar) e'
+mb_shipped='[{"type":"module","id":"content","enabled":true},{"type":"module","id":"users","enabled":true},{"type":"module","id":"files","enabled":true},{"type":"module","id":"insights","enabled":true},{"type":"module","id":"d1-lab-dashboard","enabled":true},{"type":"module","id":"d1-force-dashboard","enabled":true},{"type":"module","id":"d1-fast-dashboard","enabled":true},{"type":"module","id":"settings","enabled":true}]'
+mb_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+DELETE FROM directus_settings;
+INSERT INTO directus_settings (id, module_bar) VALUES (1, '$mb_shipped');
+$mb_up
+SELECT 'up:' || ($mb_ids);
+$mb_up
+SELECT 'up_again:' || ($mb_ids);
+$mb_down
+SELECT 'down:' || ($mb_ids);
+SELECT 'down_exact:' || (module_bar::jsonb = '$mb_shipped'::jsonb) FROM directus_settings;
+UPDATE directus_settings SET module_bar = '[{"type":"module","id":"users","enabled":true},{"type":"module","id":"home","enabled":false},{"type":"module","id":"d1-force-dashboard","enabled":true},{"type":"module","id":"settings","enabled":true}]';
+$mb_up
+SELECT 'curated:' || string_agg((e->>'id') || '=' || (e->>'enabled'), ',') FROM directus_settings, json_array_elements(module_bar) e;
+UPDATE directus_settings SET module_bar = '[{"type":"module","id":"users","enabled":true},{"type":"module","id":"content","enabled":true}]';
+$mb_up
+SELECT 'no_dashboards:' || ($mb_ids);
+UPDATE directus_settings SET module_bar = NULL;
+$mb_up
+$mb_down
+SELECT 'null_kept:' || (module_bar IS NULL) FROM directus_settings;
+ROLLBACK;
+SQL
+)
+mb_check() { grep -qx "$1" <<<"$mb_out" && ok "$2" || bad "$2 (psql output: $mb_out)"; }
+mb_check "up:home,users,files,insights,d1-lab-dashboard,d1-force-dashboard,d1-fast-dashboard,content,settings" "up: Home first, Data Studio right after the dashboards"
+mb_check "up_again:home,users,files,insights,d1-lab-dashboard,d1-force-dashboard,d1-fast-dashboard,content,settings" "up: running it twice changes nothing"
+mb_check "down:content,users,files,insights,d1-lab-dashboard,d1-force-dashboard,d1-fast-dashboard,settings" "down: Home removed, Data Studio back at the front"
+mb_check "down_exact:true" "down: the shipped bar is restored exactly"
+mb_check "curated:home=false,users=true,d1-force-dashboard=true,settings=true" "up: an existing Home entry moves first and keeps its enabled flag; content is not added"
+mb_check "no_dashboards:home,users,content" "up: without dashboards the Data Studio keeps its place"
+mb_check "null_kept:true" "a NULL module bar is left alone"
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy
