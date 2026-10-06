@@ -45,7 +45,8 @@ const baseTables = () => ({
     sample_stock_provenance: [{ sample_id: GRAND, lot_id: LOT1, mass_used_grams: '120.5', notes: 'n' }],
 });
 
-// What the (permission-ignoring, path-enumerating) SQL functions return.
+// What the (permission-ignoring) SQL functions return: one row per reachable sample, with one
+// shortest path.
 const row = (depth, sample_id, ...path) => ({ depth, sample_id, path });
 const baseFn = () => ({
     f_trace_ancestors: [row(0, ROOT, ROOT), row(1, PARENT, ROOT, PARENT), row(2, GRAND, ROOT, PARENT, GRAND)],
@@ -59,23 +60,28 @@ const baseFn = () => ({
 });
 
 // The fake database applies the same grouping the endpoint's SQL does (one row per sample with its
-// shallowest depth and the distinct steps it was reached from; one row per lot and ancestor;
-// newest-N events, oldest first), so the JS is tested against realistic, de-duplicated input.
+// depth and every reached node it is linked to by a genealogy edge, rebuilt from the table; one row
+// per lot and ancestor; newest-N events, oldest first), so the JS is tested against realistic input.
 // The SQL text itself is exercised against Postgres by hand (see the physical-test backlog).
-function emulate(fn, rows, root) {
+function emulate(fn, rows, root, genealogy = []) {
     if (fn === 'f_trace_ancestors' || fn === 'f_trace_descendants') {
-        const by = new Map();
-        for (const r of rows) {
-            if (r.sample_id === root) continue;
-            const g = by.get(r.sample_id) ?? { sample_id: r.sample_id, depth: Infinity, prev: new Set() };
-            g.depth = Math.min(g.depth, r.depth);
-            g.prev.add(r.path.at(-2));
-            by.set(r.sample_id, g);
-        }
-        return [...by.values()]
-            .map((g) => ({ ...g, prev: [...g.prev] }))
-            .sort((a, b) => a.depth - b.depth || (a.sample_id < b.sample_id ? -1 : 1))
-            .slice(0, 501);
+        const up = fn === 'f_trace_ancestors';
+        const reached = new Set(rows.map((r) => r.sample_id));
+        const out = rows
+            .filter((r) => r.sample_id !== root)
+            .map((r) => ({
+                sample_id: r.sample_id,
+                depth: r.depth,
+                prev: [
+                    ...new Set(
+                        genealogy
+                            .filter((e) => (up ? e.parent_sample_id : e.child_sample_id) === r.sample_id)
+                            .map((e) => (up ? e.child_sample_id : e.parent_sample_id))
+                            .filter((x) => reached.has(x)),
+                    ),
+                ],
+            }));
+        return out.sort((a, b) => a.depth - b.depth || (a.sample_id < b.sample_id ? -1 : 1)).slice(0, 501);
     }
     if (fn === 'f_trace_stock_origins') {
         const by = new Map();
@@ -140,7 +146,7 @@ function mount({
         const m = /FROM (f_\w+)\(/.exec(sql);
         if (m) onQuery?.(m[1]);
         if (!m) return { rows: [] };
-        return { rows: emulate(m[1], fn[m[1]], bindings[0] ?? root) };
+        return { rows: emulate(m[1], fn[m[1]], bindings[0] ?? root, tables.sample_genealogy) };
     };
     const database = { raw, transaction: async (work) => work({ raw }) };
     let handler;
@@ -340,7 +346,7 @@ test('admins are allowed even without the app flag', async () => {
     assert.equal((await call(handler, { user: 'u', admin: true })).status, 200);
 });
 
-// ---- diamonds: the SQL functions return one row per PATH ----
+// ---- diamonds: the SQL functions return one row per sample, with one shortest path ----
 
 const A = id(11);
 const B = id(12);
@@ -358,10 +364,11 @@ const diamondTables = () => ({
     sample_stock_provenance: [],
     raw_stock_lots: [],
 });
-// A -> B, A -> C, B -> D, C -> D, as the functions list them: the far end appears once per path.
+// A -> B, A -> C, B -> D, C -> D, as the functions list them: the far end appears once, reached
+// through B (the lowest id), so the edge from C has to be found from the genealogy table.
 const diamondFn = () => ({
-    f_trace_ancestors: [row(0, D, D), row(1, B, D, B), row(1, C, D, C), row(2, A, D, B, A), row(2, A, D, C, A)],
-    f_trace_descendants: [row(0, A, A), row(1, B, A, B), row(1, C, A, C), row(2, D, A, B, D), row(2, D, A, C, D)],
+    f_trace_ancestors: [row(0, D, D), row(1, B, D, B), row(1, C, D, C), row(2, A, D, B, A)],
+    f_trace_descendants: [row(0, A, A), row(1, B, A, B), row(1, C, A, C), row(2, D, A, B, D)],
     f_trace_stock_origins: [],
     f_sample_timeline: [],
 });
@@ -400,7 +407,7 @@ test('diamond with one branch hidden: through_hidden only when EVERY path is hid
 });
 
 test('a hidden sample reached by two paths is counted once', async () => {
-    const { handler } = diamond([B, C, D], D); // A unreadable, listed twice by the function
+    const { handler } = diamond([B, C, D], D); // A unreadable, but reached by two routes
     const b = (await call(handler, user, D)).body;
     assert.deepEqual(b.ancestors.map((x) => x.sample_code), ['D-B', 'D-C']);
     assert.equal(b.hidden.ancestors, 1);
@@ -503,8 +510,8 @@ test('the SQL is bounded: LIMIT 501 per section, de-duplicated, under a statemen
     assert.equal(sqls.filter((q) => /^SET LOCAL statement_timeout = \d+$/.test(q)).length, 4);
     for (let i = 0; i < sqls.length; i += 2) assert.match(sqls[i], /^SET LOCAL statement_timeout = \d+$/);
     for (const q of queries) assert.match(q, /LIMIT 501/);
-    assert.match(queries[0], /GROUP BY sample_id/);
-    assert.match(queries[1], /GROUP BY sample_id/);
+    assert.match(queries[0], /GROUP BY r.sample_id, r.depth/);
+    assert.match(queries[1], /GROUP BY r.sample_id, r.depth/);
     assert.match(queries[2], /GROUP BY via_sample_id, lot_id/);
 });
 
@@ -559,10 +566,14 @@ function truncatedAncestors() {
         ...fillers.map((f) => row(1, f, ROOT, f)),
         row(2, D, ROOT, B, D),
         row(2, X, ROOT, A1, X),
-        row(3, D, ROOT, A1, X, D),
     ];
     fn.f_trace_stock_origins = [{ via_sample_id: X, depth: 2, lot_id: LOT1 }];
     const tables = baseTables();
+    // D is reached once (through B, the shortest route) but is also linked to X, which is cut from the list.
+    const edge = (child_sample_id, parent_sample_id) => ({ child_sample_id, parent_sample_id, relationship_type: 'cut_from', fraction: null });
+    tables.sample_genealogy.push(
+        edge(ROOT, B), edge(ROOT, A1), ...fillers.map((f) => edge(ROOT, f)), edge(B, D), edge(A1, X), edge(X, D),
+    );
     tables.physical_samples.push(...[B, A1, D, X, ...fillers].map((s, i) => ({ sample_id: s, sample_code: `T${i}`, form: 'bar' })));
     const readable = new Set([...all, A1, D, X, ...fillers]); // B is not readable
     return { D, X, ...mount({ readable, fn, tables }) };
