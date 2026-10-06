@@ -17,6 +17,7 @@ import {
 	migrateLegacy,
 	removeQuestion,
 	scopedKey,
+	startsConversation,
 	updateList,
 } from './history';
 
@@ -150,8 +151,9 @@ async function submit(text?: string) {
 
 	const messages = [...history(), { role: 'user', content: question }];
 	const turn = ref<Turn>({ question, status: 'pending' }).value;
+	// Follow-ups are not context-free, so only a conversation's first question goes to Recent.
+	if (startsConversation(turns.value.length)) remember(question);
 	turns.value.push(turn);
-	remember(question);
 	input.value = '';
 	await scrollToEnd();
 

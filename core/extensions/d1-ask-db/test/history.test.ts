@@ -12,6 +12,7 @@ import {
 	mergeLists,
 	migrateLegacy,
 	scopedKey,
+	startsConversation,
 	updateList,
 	parseStored,
 	removeQuestion,
@@ -160,4 +161,10 @@ test('migrateLegacy: moves the bare lists to the current user once, then deletes
 	migrateLegacy('u2'); // already gone: u2 gets nothing
 	assert.deepEqual(loadList(scopedKey(HISTORY_KEY, 'u2')), []);
 	delete (globalThis as any).window;
+});
+
+test('startsConversation: only the first question of a conversation is remembered', () => {
+	assert.equal(startsConversation(0), true);
+	assert.equal(startsConversation(1), false);
+	assert.equal(startsConversation(5), false);
 });

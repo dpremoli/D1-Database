@@ -235,7 +235,9 @@ with **Plotly charts**. Two extensions in `core/extensions/`:
   keep separate lists (the bare keys are used only if no user id is available; lists written by
   older versions under the bare keys move to the first user who opens the module, then are
   deleted). Every change re-reads the stored list first, so two tabs merge instead of overwriting
-  each other. Only question text and a timestamp are stored, never result rows. Nothing is synced
+  each other. Only the first question of a conversation is added to history (a follow-up is
+  meaningless without the turns before it, so Run again on it would lose its context; Save
+  question still works on any question). Only question text and a timestamp are stored, never result rows. Nothing is synced
   between browsers.
 
   Thumbs-up/down feedback on answers is deliberately **out of scope** until there is a place to

@@ -17,6 +17,12 @@ export const SAVED_KEY = 'd1-ask-db:saved';
 export const HISTORY_LIMIT = 20;
 export const SAVED_LIMIT = 100;
 
+/**
+ * Only the first question of a conversation goes to Recent: a follow-up ("only aluminium") means
+ * nothing without the turns before it, so "Run again" on it would lose its context.
+ */
+export const startsConversation = (priorTurns: number) => priorTurns === 0;
+
 /** Storage key for a list, scoped to the user; the bare key only when there is no user id. */
 export const scopedKey = (base: string, userId?: string | null) => (userId ? `${base}:${userId}` : base);
 

@@ -58,7 +58,8 @@ explore outward from it. Each exploration adds to the graph; ✕ clears it and �
 6. Above each answer, **Download CSV** saves the table as a spreadsheet-ready file (named after
    the question and the date), **Copy SQL** copies the query, and **Save question** pins the
    question to the **Saved** list.
-7. The empty page lists your **Saved** questions and your last 20 **Recent questions**, each with
+7. The empty page lists your **Saved** questions and your last 20 **Recent questions** (only the
+   first question of each conversation is kept, because a follow-up needs the turns before it), each with
    **Run again** and **×** to remove it. They are kept in this browser only, for your account
    (not on the server, and not visible to colleagues, even on a shared computer); only the
    question text is stored, never the answers. Clearing the site data or using a private window
