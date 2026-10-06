@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeViewState, encodeViewState, VIEW_QUERY_KEYS, type ViewState } from './viewState';
+import { decodeViewState, encodeViewState, incomingViewDecision, VIEW_QUERY_KEYS, type ViewState } from './viewState';
 
 const full: ViewState = {
 	operation: 'OP-2026-0042', mode: 'fft', axis: 'Fx', zoom: [1.25, 9.5], crop: [0.5, 12.75],
@@ -65,5 +65,33 @@ describe('viewState', () => {
 		expect(decodeViewState(undefined)).toEqual({});
 		const hostile = new Proxy({}, { get() { throw new Error('boom'); } });
 		expect(() => decodeViewState(hostile as any)).not.toThrow();
+	});
+});
+
+describe('incomingViewDecision', () => {
+	const shown: Partial<ViewState> = { operation: 'OP-Y', mode: 'fft', axis: 'Fx' };
+
+	it('applies a route that names a different operation than the one shown', () => {
+		expect(incomingViewDecision({ operation: 'OP-X' }, shown)).toEqual({ action: 'apply', view: { operation: 'OP-X' } });
+	});
+
+	it('applies a different view of the same operation', () => {
+		expect(incomingViewDecision({ operation: 'OP-Y', m: 'psd' }, shown).action).toBe('apply');
+		expect(incomingViewDecision({ operation: 'OP-Y', m: 'fft', ax: 'Fy' }, shown).action).toBe('apply');
+	});
+
+	it('writes when the route carries no view keys, or only what is shown', () => {
+		expect(incomingViewDecision({}, shown)).toEqual({ action: 'write' });
+		expect(incomingViewDecision({ unrelated: '1' }, shown)).toEqual({ action: 'write' });
+		expect(incomingViewDecision({ operation: 'OP-Y', m: 'fft', ax: 'Fx' }, shown)).toEqual({ action: 'write' });
+		expect(incomingViewDecision(null, shown)).toEqual({ action: 'write' });
+	});
+
+	it('a bare ?operation= for the shown op does not reset the rest of the view', () => {
+		expect(incomingViewDecision({ operation: 'OP-Y' }, shown)).toEqual({ action: 'write' });
+	});
+
+	it('applies when nothing is shown yet', () => {
+		expect(incomingViewDecision({ operation: 'OP-X' }, {}).action).toBe('apply');
 	});
 });

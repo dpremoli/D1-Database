@@ -35,7 +35,7 @@ import { debounce } from './debounce';
 import { cropWindowSec, diffEnvelopes, diffWindow } from './compare';
 import { createPendingCrop } from './pendingCrop';
 import {
-	decodeViewState, encodeViewState, VIEW_AXES, VIEW_QUERY_KEYS,
+	decodeViewState, encodeViewState, incomingViewDecision, VIEW_AXES, VIEW_QUERY_KEYS,
 	type ViewAxis, type ViewChartMode, type ViewState, type ViewZSeries,
 } from './viewState';
 
@@ -1089,13 +1089,7 @@ onMounted(async () => {
 		const initialView = decodeViewState(route.query);
 		const opParam = initialView.operation
 			?? (() => { try { return localStorage.getItem(LAST_OP_KEY) || undefined; } catch { return undefined; } })();
-		if (opParam) {
-			const match = rows.value.find((r) => r.operation_id?.operation_id === opParam);
-			if (match) {
-				await selectOp(match);
-				await applyViewState(initialView);
-			}
-		}
+		if (opParam) await showView({ ...initialView, operation: opParam });
 	} finally {
 		viewReady = true;   // from here on the address bar follows the view
 		loading.value = false;
@@ -1953,16 +1947,47 @@ function mergedQuery(): Record<string, any> {
 	return { ...q, ...viewQuery.value };
 }
 const writeViewQuery = debounce(() => {
-	if (!viewReady || !activation.active || route.path !== viewPath) return;
+	if (!viewReady || !activation.active || route.path !== viewPath || applyingIncoming) return;
 	const q = mergedQuery();
 	if (JSON.stringify(q) === JSON.stringify(route.query)) return;
+	lastWrittenView = viewKeysOf(q);
 	router.replace({ path: route.path, query: q, hash: route.hash }).catch(() => { /* a superseded navigation */ });
 }, 400);
 watch(viewQuery, writeViewQuery);
 onDeactivated(() => writeViewQuery.cancel());
-// Another page replaced the shared route while this one was kept alive: put the view's link back
-// (the guard above still applies, and an unchanged query is a no-op).
-onActivated(() => writeViewQuery());
+// Select the named op (when it isn't the one shown) and apply the rest of the view on top. Shared
+// by first mount and by an incoming link while this page is kept alive. False if the op isn't in
+// the list (nothing is changed then).
+async function showView(v: Partial<ViewState>): Promise<boolean> {
+	if (v.operation && v.operation !== currentOperationId.value) {
+		const match = rows.value.find((r) => r.operation_id?.operation_id === v.operation);
+		if (!match) return false;
+		await selectOp(match);
+	}
+	await applyViewState(v);
+	return true;
+}
+// This page is kept alive (#24), so route.query is not re-read by onMounted. An in-app push to
+// /plot?operation=X (Save cut, Local capture) while another op is shown must show X, not have the
+// address bar rewritten back to the old view 400 ms later. Only a route that adds nothing new is
+// written over. `lastWrittenView` lets the route change our own write causes pass without being
+// mistaken for an incoming link while the user keeps editing.
+let applyingIncoming = false;
+let lastWrittenView = '';
+const viewKeysOf = (query: Record<string, any>) => JSON.stringify(VIEW_QUERY_KEYS.map((k) => query[k] ?? null));
+async function followRoute() {
+	if (!viewReady || !activation.active || route.path !== viewPath || applyingIncoming) return;
+	if (viewKeysOf(route.query) === lastWrittenView) return;
+	const d = incomingViewDecision(route.query, viewState.value);
+	if (d.action === 'write') { writeViewQuery(); return; }
+	applyingIncoming = true;
+	try { await showView(d.view); }
+	catch { /* a link naming something this op can't show: leave the view as it is */ }
+	finally { applyingIncoming = false; }
+	writeViewQuery();
+}
+onActivated(() => { lastWrittenView = ''; void followRoute(); });
+watch(() => route.query, () => { void followRoute(); });
 onBeforeUnmount(() => writeViewQuery.cancel());
 
 function viewUrl(): string {

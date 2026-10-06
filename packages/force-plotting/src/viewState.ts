@@ -147,3 +147,20 @@ export function decodeViewState(query: QueryIn): Partial<ViewState> {
 	} catch { /* a hostile query object: whatever parsed so far stands */ }
 	return out;
 }
+
+export type IncomingViewDecision =
+	| { action: 'apply'; view: Partial<ViewState> }
+	| { action: 'write' };
+
+/** What a kept-alive Plot page does when it is activated, or its route changes while active.
+ *  'apply': the route names a different operation or view than the one on screen (an in-app push
+ *  to `/plot?operation=X`), so show it. 'write': the route carries no view keys, or only what is
+ *  already shown, so the address bar should follow the page instead. Keys the route omits never
+ *  count as a difference: a bare `?operation=X` while X is shown must not reset the view. */
+export function incomingViewDecision(query: QueryIn, current: Partial<ViewState>): IncomingViewDecision {
+	const view = decodeViewState(query);
+	const incoming = encodeViewState(view);
+	const shown = encodeViewState(current);
+	const differs = Object.keys(incoming).some((k) => incoming[k] !== shown[k]);
+	return differs ? { action: 'apply', view } : { action: 'write' };
+}
