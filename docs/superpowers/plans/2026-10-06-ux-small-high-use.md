@@ -85,7 +85,7 @@ database wiki page.
 
 - Global bookmarks (`directus_presets` with `bookmark` set, `user`/`role` NULL) for:
   - Operations: "My operations" (owner = `$CURRENT_USER`, if the operations collection has an
-    owner field; check), "This week's FAST runs", "Missing outcome".
+    owner field; check), "FAST runs, last 7 days", "Missing outcome".
   - Tests: "Failed", "Needs analysis" (whatever status values the schema really has; check the
     CHECK constraints).
   - Samples: "My samples", "No location".
