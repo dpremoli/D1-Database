@@ -21,11 +21,15 @@ import {
 	type PointMenuEvent,
 } from './cloudPick';
 import { nearestIndex } from './hoverIndex';
+import { createPendingReveal } from './pendingReveal';
+import { createMapProjector } from './mapProjector';
+import { createLongPress, TOUCH_MENU_OFFSET_PX } from './longPress';
 import { exportFrmFigure } from './frmExport';
 import { buildScaleLUT, colorizeValues, lutKey, type ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { histogramFrom, type Histogram } from './histogram';
 import LoadingOverlay from './LoadingOverlay.vue';
+import LinkRings from './LinkRings.vue';
 import { createLoadToken } from './loadToken';
 import { createFrameGate, createTrailingThrottle } from './frameScheduling';
 import { createGlLifecycle } from './glLifecycle';
@@ -614,17 +618,13 @@ function applyCamera2D() {
 // Everything here works from the live cache's sample index, the same key the charts use via
 // time (cloudPick.ts). Project through the camera exactly as the renderer does, so a pick
 // lands on what is drawn.
-const tmpV = new THREE.Vector3();
-const projOut = { px: 0, py: 0 };
+const proj = createMapProjector();
 // World (mm) point -> CSS px relative to the canvas, or null when it is off the clip volume (or
-// NaN). Returns a shared object: pickNearest consumes it immediately, and it runs ~3M times.
-function projectPx(m: THREE.Matrix4 | null, x: number, y: number, z: number) {
-	tmpV.set(x, y, z);
-	if (m) tmpV.applyMatrix4(m);
-	tmpV.project(camera!);
-	if (!(Math.abs(tmpV.x) <= 1 && Math.abs(tmpV.y) <= 1)) return null;
-	projOut.px = (tmpV.x + 1) / 2 * cssW; projOut.py = (1 - tmpV.y) / 2 * cssH;
-	return projOut;
+// NaN), for one-off callers (rings, reveal). A pick calls proj.setup() once and then proj.project()
+// per sample: the matrices are folded per pick, not per point (mapProjector.ts).
+function projectOnce(x: number, y: number, z: number) {
+	proj.setup(camera!, null, cssW, cssH);
+	return proj.project(x, y, z);
 }
 // Make the camera (and the cloud's matrixWorld, which carries the 3D Z scale) current: a pan/zoom
 // sets the view immediately but the render only happens next frame.
@@ -660,25 +660,32 @@ function cloudSource(c: Cache): PickSource | null {
 // the browser's menu and the pick runs from the right-button pointerup (onUp) when the tracker says
 // the button stayed put.
 const rightClick = createClickTracker();
+// A touchscreen has no right button: a one-finger hold opens the same menu (longPress.ts). A touch
+// that moves, or a second finger (pan, pinch), cancels it, so the gestures above are unchanged.
+const longPress = createLongPress((x, y) => pickAt(x, y, TOUCH_MENU_OFFSET_PX));
 function onContextMenu(ev: MouseEvent) { ev.preventDefault(); }
-function pickAt(clientX: number, clientY: number) {
+function pickAt(clientX: number, clientY: number, menuOffset = 0) {
 	const c = cache.value;
 	if (!c || !ready || !camera) return;
-	const base = { clientX, clientY };
+	const base = { clientX: clientX + menuOffset, clientY: clientY + menuOffset };   // where the menu opens; the pick stays under the finger
 	syncPickCamera();
 	const r = canvasEl.value!.getBoundingClientRect();
 	const px = clientX - r.left, py = clientY - r.top, radius = pickRadius(props.pointSize, 1.4);
 	const pp = effPath.value;
 	if (!is3D.value && pp.kind === 'turning_spiral') {
+		proj.setup(camera, null, cssW, cssH);
+		// the flat top-down view: samples far from the click's radius skip the trig and projection
 		const hit = pickSpiral(c, pp, props.cropStartSec, props.cropEndSec, props.stride,
-			(x, y) => projectPx(null, x, y, 0), px, py, radius, displayedKeepIndex(c[effChannel.value], props.colorScale));
+			(x, y) => proj.project(x, y, 0), px, py, radius, displayedKeepIndex(c[effChannel.value], props.colorScale),
+			proj.discAt(px, py, radius));
 		emit('pointmenu', { ...base, point: hit ? pointInfo(c, hit.i, hit.x, hit.y, hit.rho) : null });
 		return;
 	}
 	if (props.gridding && is3D.value) { emit('pointmenu', { ...base, point: null, reason: 'gridded' }); return; }
 	const src = cloudSource(c);
 	if (!src) { emit('pointmenu', { ...base, point: null }); return; }
-	const k = pickNearest(src.count, (j) => projectPx(src.m, src.pos[j * 3], src.pos[j * 3 + 1], src.pos[j * 3 + 2]),
+	proj.setup(camera, src.m, cssW, cssH);
+	const k = pickNearest(src.count, (j) => proj.project(src.pos[j * 3], src.pos[j * 3 + 1], src.pos[j * 3 + 2]),
 		px, py, radius, displayedKeep(c[effChannel.value], src.idx, props.colorScale));
 	if (k == null) { emit('pointmenu', { ...base, point: null }); return; }
 	const x = src.pos[k * 3], y = src.pos[k * 3 + 1];
@@ -724,11 +731,11 @@ const pinPos = ref<{ x: number; y: number } | null>(null);
 const hoverPos = ref<{ x: number; y: number } | null>(null);
 const ringV = new THREE.Vector3();
 function ringAt(time: number | null | undefined, cur: { x: number; y: number } | null) {
-	// No renderer/camera (WebGL unavailable, context lost, torn down on deactivate): projectPx would
+	// No renderer/camera (WebGL unavailable, context lost, torn down on deactivate): projectOnce would
 	// dereference the null camera on the first chart hover.
 	if (!ready || !camera) return null;
 	if (!timeToWorld(time, ringV)) return null;
-	const p = projectPx(null, ringV.x, ringV.y, ringV.z);
+	const p = projectOnce(ringV.x, ringV.y, ringV.z);
 	return p ? settleRing(cur, p.px, p.py) : null;
 }
 function updateRings() {
@@ -748,30 +755,28 @@ watch(() => props.hoverTime, () => { syncPickCamera(); hoverPos.value = ringAt(p
 // camera, cache or geometry still loading) the request is kept in `pendingReveal` and applied
 // after the first draw with content, and true is returned: the host asked in good faith and has
 // nothing to retry.
-let pendingReveal: number | null = null;
+const pendingReveal = createPendingReveal();
 function revealTime(t: number): boolean {
 	const c = cache.value;
-	if (c && c.N && !inWindow(c, t)) { pendingReveal = null; return false; }
-	if (is3D.value && props.gridding) { pendingReveal = null; return false; }   // cells aren't samples
+	if (c && c.N && !inWindow(c, t)) { pendingReveal.drop(); return false; }
+	if (is3D.value && props.gridding) { pendingReveal.drop(); return false; }   // cells aren't samples
 	const hasContent = usesGpuPath.value ? gpuUploaded : !!cloud;
-	if (!ready || !camera || !c || !hasContent || pendingRebuild) { pendingReveal = t; return true; }
-	pendingReveal = null;
+	if (!ready || !camera || !c || !hasContent || pendingRebuild) { pendingReveal.hold(t); return true; }
+	pendingReveal.drop();
 	return revealNow(t);
 }
 // Runs at the end of draw(), once the geometry the reveal needs exists.
 function applyPendingReveal() {
-	const t = pendingReveal;
-	if (t == null) return;
-	pendingReveal = null;
-	revealNow(t);
+	const t = pendingReveal.take();
+	if (t != null) revealNow(t);
 }
 // A different cache is a different cut: a reveal asked for the old one means nothing. (Not when the
 // cache goes from none to some: that is the load the pending reveal was waiting for.)
-watch(cache, (_n, old) => { if (old) pendingReveal = null; });
+watch(cache, (_n, old) => { if (old) pendingReveal.drop(); });
 function revealNow(t: number): boolean {
 	if (!ready || !camera || !timeToWorld(t, ringV)) return false;
 	syncPickCamera();
-	if (projectPx(null, ringV.x, ringV.y, ringV.z)) return true;
+	if (projectOnce(ringV.x, ringV.y, ringV.z)) return true;
 	if (is3D.value) {
 		if (!controls) return false;
 		// move target and eye together so the orbit angle and distance are unchanged
@@ -893,6 +898,7 @@ function teardownRenderer() {
 	ready = false;
 }
 onBeforeUnmount(() => {
+	longPress.cancel();
 	loadToken.cancel();
 	// The stage watcher is already stopped by now, so say "idle" directly: otherwise the host's busy
 	// bar stays on after a mid-load unmount.
@@ -1008,6 +1014,7 @@ let zGestureY: number | null = null;
 function avgPy(): number { let s = 0; for (const p of pointers.values()) s += p.py; return s / (pointers.size || 1); }
 
 function onDown(ev: PointerEvent) {
+	longPress.down(ev);
 	rightClick.down(ev);   // the right button still pans (2D here, 3D via OrbitControls); a release in place opens the menu (onUp)
 	if (!cache.value) return;
 	const { px, py } = localXY(ev);
@@ -1035,6 +1042,7 @@ function onDown(ev: PointerEvent) {
 	}
 }
 function onMove(ev: PointerEvent) {
+	longPress.move(ev);
 	if (!cache.value) return;
 	const { px, py } = localXY(ev);
 	if (pointers.has(ev.pointerId)) pointers.set(ev.pointerId, { px, py });
@@ -1074,6 +1082,7 @@ function onUp(ev: PointerEvent) {
 	// before the 3D early return below: OrbitControls leaves its own pointerup alone, so a right
 	// release reaches us in both modes
 	if (rightClick.up(ev)) pickAt(ev.clientX, ev.clientY);
+	longPress.up(ev);   // also cancels on pointercancel; a fired hold has nothing more to do here
 	try { (ev.currentTarget as Element).releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
 	pointers.delete(ev.pointerId);
 	if (is3D.value) {
@@ -1108,8 +1117,7 @@ function onUp(ev: PointerEvent) {
 		<div v-if="rectSel" class="fc-rect" :style="{ left: rectSel.x + 'px', top: rectSel.y + 'px', width: rectSel.w + 'px', height: rectSel.h + 'px' }"></div>
 
 		<!-- linked-moment rings: pinned (solid) and chart-hover (hollow); positions come from updateRings() -->
-		<div v-if="pinPos && !loading && !error" class="fc-ring pin" :style="{ left: pinPos.x + 'px', top: pinPos.y + 'px' }"></div>
-		<div v-if="hoverPos && !loading && !error" class="fc-ring hover" :style="{ left: hoverPos.x + 'px', top: hoverPos.y + 'px' }"></div>
+		<LinkRings :pin="loading || error ? null : pinPos" :hover="loading || error ? null : hoverPos" />
 
 		<!-- colorbar (force -> colour); the editor's "Show colour bar on render" drives barVisible -->
 		<div v-if="climits && colorScale.barVisible && !loading && !error" class="fc-cbar">
@@ -1155,10 +1163,6 @@ function onUp(ev: PointerEvent) {
 .fc-pane { position: absolute; left: 6px; top: 4px; font-size: var(--fs-xs, 11px); font-weight: 600; color: var(--text-dim, rgba(255,255,255,0.75)); letter-spacing: 0.01em; }
 
 .fc-rect { position: absolute; border: 1px solid var(--accent, #38bdf8); background: color-mix(in srgb, var(--accent, #38bdf8) 14%, transparent); pointer-events: none; border-radius: 2px; }
-
-.fc-ring { position: absolute; border-radius: 50%; box-sizing: border-box; pointer-events: none; transform: translate(-50%, -50%); }
-.fc-ring.pin { width: 12px; height: 12px; background: var(--accent, #38bdf8); border: 2px solid var(--text, #fff); box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
-.fc-ring.hover { width: 10px; height: 10px; border: 1.5px solid var(--accent, #38bdf8); opacity: 0.8; box-shadow: 0 0 0 1px rgba(0,0,0,0.4); }
 
 .fc-cbar { position: absolute; top: 10px; right: 8px; display: flex; flex-direction: column; align-items: center; gap: 3px; pointer-events: none; }
 .fc-ramp { width: 10px; height: 96px; border-radius: 3px; border: 1px solid var(--border-2, rgba(255,255,255,0.25)); }

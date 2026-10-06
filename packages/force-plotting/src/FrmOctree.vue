@@ -18,6 +18,7 @@ import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
 import LoadingOverlay from './LoadingOverlay.vue';
+import LinkRings from './LinkRings.vue';
 import { createLoadToken } from './loadToken';
 import { createGlLifecycle } from './glLifecycle';
 import { sameStage, stageInfo, streamStage, type LoadStage, type StageInfo } from './loadStage';
@@ -28,6 +29,9 @@ import {
 	type PointMenuEvent,
 } from './cloudPick';
 import { nearestIndex } from './hoverIndex';
+import { createPendingReveal } from './pendingReveal';
+import { createMapProjector } from './mapProjector';
+import { createLongPress, TOUCH_MENU_OFFSET_PX } from './longPress';
 import { spiralAnchor, spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
 import { shaderZ } from './octreePick';
 
@@ -332,7 +336,7 @@ function setupGL() {
 		controls!.update();
 		if (pco && potree && renderer && camera) {
 			updateRings();   // before the render gate below: the rings follow the camera even on idle frames
-			if (pendingReveal != null) applyPendingReveal();   // moves the camera: next frame's rings follow
+			if (pendingReveal.held) applyPendingReveal();   // moves the camera: next frame's rings follow
 			const r = potree.updatePointClouds([pco], camera, renderer);
 			const n = (r as any)?.numVisiblePoints ?? pointCount.value;
 			if (n !== lastVisibleN) { lastVisibleN = n; needsRender = true; lastChangeAt = performance.now(); }   // nodes streamed in/out
@@ -367,11 +371,13 @@ function onPtrDown(ev: PointerEvent) {
 	// OrbitControls pans on right-drag (2D and 3D): remember where the button went down so the
 	// release can tell a click (opens the menu) from a pan.
 	rightClick.down(ev);
+	longPress.down(ev);
 	if (ev.pointerType !== 'touch') return;
 	zPointers.set(ev.pointerId, ev.clientY);
 	if (zPointers.size === 3) { if (controls) controls.enabled = false; zBaseY = avgVals(zPointers); }
 }
 function onPtrMove(ev: PointerEvent) {
+	longPress.move(ev);
 	if (!zPointers.has(ev.pointerId)) return;
 	zPointers.set(ev.pointerId, ev.clientY);
 	if (zPointers.size >= 3 && props.zSeries && props.zSeries !== 'none') {
@@ -384,6 +390,7 @@ function onPtrMove(ev: PointerEvent) {
 }
 function onPtrUp(ev: PointerEvent) {
 	if (rightClick.up(ev)) pickAt(ev.clientX, ev.clientY);
+	longPress.up(ev);   // also cancels on pointercancel
 	zPointers.delete(ev.pointerId);
 	if (zPointers.size < 3 && controls) controls.enabled = true;
 }
@@ -396,6 +403,9 @@ function onPtrUp(ev: PointerEvent) {
 // streams the samples through the shader's own maths (pickSpiral, stride 1 over the whole cache,
 // which is the octree window), and rings and reveal place one sample in closed form.
 const rightClick = createClickTracker();
+// A one-finger hold opens the same menu on a touchscreen (longPress.ts). OrbitControls keeps its own
+// touch pan/dolly: a move or a second finger cancels the hold.
+const longPress = createLongPress((x, y) => pickAt(x, y, TOUCH_MENU_OFFSET_PX));
 
 // What the spiral maths needs, per (sampleCache, innerDiam, ppr): small objects only. The render
 // loop places rings every frame, so none of this may be rebuilt there.
@@ -430,11 +440,14 @@ const zAt = (i: number) => (zMap.on ? shaderZ(zMap.series![i], zMap.r0, zMap.r1,
 
 const _v = new THREE.Vector3();
 const _pt = { px: 0, py: 0 };
-// _v (world) -> CSS px relative to the canvas in `out`; false when outside the view.
+const proj = createMapProjector();
+// _v (world) -> CSS px relative to the canvas in `out`; false when outside the view. For one-off
+// callers (rings, reveal): a pick folds the camera once (proj.setup) and projects per sample.
 function toScreen(v: THREE.Vector3, out: { px: number; py: number }): boolean {
-	v.project(camera!);
-	if (v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1) return false;
-	out.px = (v.x + 1) / 2 * cssW; out.py = (1 - v.y) / 2 * cssH;
+	proj.setup(camera!, null, cssW, cssH);
+	const p = proj.project(v.x, v.y, v.z);
+	if (!p) return false;
+	out.px = p.px; out.py = p.py;
 	return true;
 }
 
@@ -443,9 +456,9 @@ function toScreen(v: THREE.Vector3, out: { px: number; py: number }): boolean {
 // (onPtrUp). OrbitControls adds its own pointerup listener on the same element without stopping
 // propagation, so ours still sees the release.
 function onContextMenu(ev: MouseEvent) { ev.preventDefault(); }
-function pickAt(clientX: number, clientY: number) {
+function pickAt(clientX: number, clientY: number, menuOffset = 0) {
 	if (!canvasEl.value || !camera) return;
-	const base = { clientX, clientY };
+	const base = { clientX: clientX + menuOffset, clientY: clientY + menuOffset };   // where the menu opens; the pick stays under the finger
 	const g = octreeGeometry();
 	if (!g) { emit('pointmenu', { ...base, point: null, reason: 'no-cache' }); return; }
 	const c = g.c;
@@ -453,10 +466,13 @@ function pickAt(clientX: number, clientY: number) {
 	camera.updateMatrixWorld();   // controls.update() moved it since the last render
 	readZ(c);   // hoisted: read the uniforms once, not per sample
 	// Gridded octrees (`fill`) still pick the nearest SAMPLE to the spot: cells aren't samples.
-	const hit = pickSpiral(c, g.path, g.cs, g.ce, 1, (x, y, i) => {
-		_v.set(x, y, zAt(i));
-		return toScreen(_v, _pt) ? _pt : null;
-	}, clientX - r.left, clientY - r.top, pickRadius(props.pointSize), displayedKeepIndex(c[props.axis], props.colorScale));
+	proj.setup(camera, null, cssW, cssH);
+	const px = clientX - r.left, py = clientY - r.top, radius = pickRadius(props.pointSize);
+	// Only the flat top-down view can skip samples by radius: with a Z series the view tilts and
+	// the height moves points, so a sample's distance from the click isn't its radius difference.
+	const cull = zMap.on ? null : proj.discAt(px, py, radius);
+	const hit = pickSpiral(c, g.path, g.cs, g.ce, 1, (x, y, i) => proj.project(x, y, zAt(i)),
+		px, py, radius, displayedKeepIndex(c[props.axis], props.colorScale), cull);
 	emit('pointmenu', { ...base, point: hit ? pointInfo(c, hit.i, hit.x, hit.y, hit.rho) : null });
 }
 
@@ -501,23 +517,22 @@ function updateRings() {
 // the inner cut-out). While the view isn't ready (octree still loading, no sample cache yet) the
 // request is kept in `pendingReveal` and applied by the render loop once both exist, and true is
 // returned: the host asked in good faith and has nothing to retry.
-let pendingReveal: number | null = null;
+const pendingReveal = createPendingReveal();
 function revealTime(t: number): boolean {
 	const g = octreeGeometry();
-	if (g && (t < g.cs || t > g.ce)) { pendingReveal = null; return false; }
-	if (!g || !camera || !controls || !pco || loading.value) { pendingReveal = t; return true; }
-	pendingReveal = null;
+	if (g && (t < g.cs || t > g.ce)) { pendingReveal.drop(); return false; }
+	if (!g || !camera || !controls || !pco || loading.value) { pendingReveal.hold(t); return true; }
+	pendingReveal.drop();
 	return revealNow(t);
 }
 function applyPendingReveal() {
-	const t = pendingReveal;
-	if (t == null || loading.value || !octreeGeometry()) return;
-	pendingReveal = null;
-	revealNow(t);
+	if (!pendingReveal.held || loading.value || !octreeGeometry()) return;   // not ready: keep it for the next frame
+	const t = pendingReveal.take();
+	if (t != null) revealNow(t);
 }
 // A different octree or cache is a different cut: a reveal asked for the old one means nothing.
 // (Not when the cache goes from none to some: that is what the pending reveal waits for.)
-watch(() => props.sampleCache, (_n, old) => { if (old) pendingReveal = null; });
+watch(() => props.sampleCache, (_n, old) => { if (old) pendingReveal.drop(); });
 function revealNow(t: number): boolean {
 	if (!camera || !controls || !timeToWorld(t)) return false;
 	camera.updateMatrixWorld();
@@ -581,11 +596,11 @@ onMounted(() => {
 	ro = new ResizeObserver(() => { sizeCanvas(); frameCamera(); });
 	nextTick(boot);
 });
-onBeforeUnmount(() => life.unmount());
+onBeforeUnmount(() => { longPress.cancel(); life.unmount(); });
 onDeactivated(() => life.deactivate());
 onActivated(() => { life.activate(); });
 
-watch(() => props.octreePath, () => { pendingReveal = null; load(); });
+watch(() => props.octreePath, () => { pendingReveal.drop(); load(); });
 watch(() => props.axis, () => { if (material) { material.uniforms.uAxis.value = AXIS_IDX[props.axis] ?? 2; emitAutoRange(); } });
 // LUT bytes resync only when lutKey changes; saturation/displayed-range/grey-vs-hide are uniforms.
 watch(() => props.colorScale, (s) => {
@@ -632,9 +647,8 @@ defineExpose({ currentBounds, exportViewport, revealTime });
 		<LoadingOverlay v-if="stage" :stage="stage" />
 		<div v-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
 		<canvas :key="canvasKey" v-show="!error" ref="canvasEl"></canvas>
-		<!-- linked-moment rings, same look and positioning as FrmCloud's .fc-ring; placed by updateRings() -->
-		<div v-if="markRing" class="fc-ring pin" :style="{ left: markRing.x + 'px', top: markRing.y + 'px' }"></div>
-		<div v-if="hoverRing" class="fc-ring hover" :style="{ left: hoverRing.x + 'px', top: hoverRing.y + 'px' }"></div>
+		<!-- linked-moment rings (shared with FrmCloud); placed by updateRings() -->
+		<LinkRings :pin="markRing" :hover="hoverRing" />
 		<span v-if="!loading && !error" class="fc-count">{{ pointCount.toLocaleString() }} pts (LOD)</span>
 	</div>
 </template>
@@ -643,10 +657,6 @@ defineExpose({ currentBounds, exportViewport, revealTime });
 .frm-octree { position: relative; width: 100%; height: 100%; min-height: 160px; background: var(--plot-bg, #0b1020); border-radius: 6px; overflow: hidden; }
 .frm-octree canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .frm-octree canvas:active { cursor: grabbing; }
-/* Kept identical to FrmCloud.vue's .fc-ring so a marker looks the same in Lite and Full. */
-.fc-ring { position: absolute; border-radius: 50%; box-sizing: border-box; pointer-events: none; transform: translate(-50%, -50%); }
-.fc-ring.pin { width: 12px; height: 12px; background: var(--accent, #38bdf8); border: 2px solid var(--text, #fff); box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
-.fc-ring.hover { width: 10px; height: 10px; border: 1.5px solid var(--accent, #38bdf8); opacity: 0.8; box-shadow: 0 0 0 1px rgba(0,0,0,0.4); }
 .fc-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim, #94a3b8); }
 .fc-msg.err { color: var(--danger, #fca5a5); font-size: var(--fs-sm, 12px); padding: 12px; text-align: center; }
 .fc-count { position: absolute; right: 6px; bottom: 4px; font-size: var(--fs-xs, 11px); color: var(--text-dim, rgba(255,255,255,0.6)); font-variant-numeric: tabular-nums; }
