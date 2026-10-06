@@ -33,7 +33,12 @@ export function toCsv(columns: string[], rows: Record<string, unknown>[]): strin
 	return '﻿' + lines.join('\r\n') + '\r\n';
 }
 
-/** `ask-<question slug>-<yyyy-mm-dd>.csv`; the slug is capped so the name stays short. */
+function localDate(d: Date): string {
+	const p2 = (n: number) => String(n).padStart(2, '0');
+	return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+}
+
+/** `ask-<question slug>-<yyyy-mm-dd>.csv` (the date in the browser's local time); the slug is capped so the name stays short. */
 export function csvFilename(question: string, date: Date = new Date()): string {
 	const slug =
 		question
@@ -44,5 +49,5 @@ export function csvFilename(question: string, date: Date = new Date()): string {
 			.replace(/^-+|-+$/g, '')
 			.slice(0, 50)
 			.replace(/-+$/, '') || 'answer';
-	return `ask-${slug}-${date.toISOString().slice(0, 10)}.csv`;
+	return `ask-${slug}-${localDate(date)}.csv`;
 }

@@ -189,13 +189,17 @@ export function initials(fullName) {
 	return letters.map((w) => Array.from(w)[0].toUpperCase()).join('');
 }
 
-// ISO date (YYYY-MM-DD) for a DATE string or a timestamp; '' when absent / invalid.
+// ISO date (YYYY-MM-DD) for a DATE string or a timestamp; '' when absent / invalid. A DATE
+// string is used as is; a timestamp is read in the SERVER's local time zone (so a sample
+// created just after midnight local time shows that day, not the previous UTC day).
 export function labelDate(manufactured, created) {
 	const v = manufactured || created;
 	if (!v) return '';
 	if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
 	const d = new Date(v);
-	return isNaN(d) ? '' : d.toISOString().slice(0, 10);
+	if (isNaN(d)) return '';
+	const p2 = (n) => String(n).padStart(2, '0');
+	return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 }
 
 // ---- HTML -----------------------------------------------------------------------------

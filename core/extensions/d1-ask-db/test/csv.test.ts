@@ -51,3 +51,14 @@ test('csvCell: plain numbers (as strings or numbers) and ordinary text are untou
 	assert.equal(csvCell(-5), '-5');
 	assert.equal(guardFormula('-5-5'), "'-5-5");
 });
+
+test('csvFilename: the date is the local day, not the UTC day', () => {
+	const old = process.env.TZ;
+	try {
+		process.env.TZ = 'Pacific/Auckland';
+		assert.equal(csvFilename('x', new Date(2026, 9, 5, 0, 30)), 'ask-x-2026-10-05.csv');
+	} finally {
+		if (old === undefined) delete process.env.TZ;
+		else process.env.TZ = old;
+	}
+});

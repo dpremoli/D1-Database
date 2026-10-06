@@ -118,13 +118,26 @@ test('codeFontPt: shrinks long codes to fit, never beyond the cap or floor', () 
 	assert.equal(codeFontPt('', 20, 14), 14);
 });
 
+test('labelDate: a timestamp falls on its day in the server\'s local time zone, not UTC', () => {
+	const old = process.env.TZ;
+	try {
+		process.env.TZ = 'Pacific/Auckland'; // UTC+12/+13
+		const created = new Date(2026, 9, 5, 0, 30); // 00:30 local on 5 Oct = 4 Oct in UTC
+		assert.equal(labelDate(null, created), '2026-10-05');
+		assert.equal(labelDate(null, created.toISOString()), '2026-10-05');
+	} finally {
+		if (old === undefined) delete process.env.TZ;
+		else process.env.TZ = old;
+	}
+});
+
 test('initials and labelDate', () => {
 	assert.equal(initials('Ada Lovelace'), 'AL');
 	assert.equal(initials('  ada  king  lovelace '), 'AL');
 	assert.equal(initials('Prince'), 'P');
 	assert.equal(initials(null), '');
 	assert.equal(labelDate('2026-03-04', '2020-01-01T00:00:00Z'), '2026-03-04');
-	assert.equal(labelDate(null, '2020-01-02T10:00:00Z'), '2020-01-02');
+	assert.equal(labelDate(null, '2020-01-02T12:00:00Z'), '2020-01-02'); // midday UTC: same day in most zones
 	assert.equal(labelDate(null, null), '');
 	assert.equal(labelDate(null, 'garbage'), '');
 });
