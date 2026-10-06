@@ -32,7 +32,7 @@ import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltere
 import { useForceHost } from './host';
 import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
 import { debounce } from './debounce';
-import { diffEnvelopes } from './compare';
+import { cropWindowSec, diffEnvelopes, diffWindow } from './compare';
 import { createPendingCrop } from './pendingCrop';
 import {
 	decodeViewState, encodeViewState, VIEW_AXES, VIEW_QUERY_KEYS,
@@ -1850,11 +1850,15 @@ async function addCompare(row: any) {
 	if (compareData.value[row.id]) return;
 	compareBusy.value = true;
 	try {
-		const res = await api.get(`/items/machining_force_analysis/${row.id}`, { params: { fields: ['series'] } });
+		// The crop fields ride along so the Difference can be limited to the cut itself (diffWindow).
+		const res = await api.get(`/items/machining_force_analysis/${row.id}`, {
+			params: { fields: ['series', 'sample_rate', 'cut_start_idx', 'cut_end_idx', 'crop_start_idx_override', 'crop_end_idx_override'] },
+		});
 		compareData.value = {
 			...compareData.value,
 			[row.id]: {
 				series: res.data?.data?.series ?? null,
+				crop: cropWindowSec(res.data?.data),
 				label: row.operation_id?.pass_code || sampleOf(row)?.sample_code || row.id,
 			},
 		};
@@ -1882,7 +1886,11 @@ watch(compareIds, (ids) => {
 const compareRefLabel = computed(() => (compareRefId.value && compareData.value[compareRefId.value]?.label) || '');
 const diffResult = computed(() => {
 	if (!diffOn.value || !compareRefId.value) return null;
-	return diffEnvelopes(detail.value?.series?.[axis.value], compareData.value[compareRefId.value]?.series?.[axis.value]);
+	// Over the cuts themselves, not the whole recording: both crops (lead-in/out air would dominate
+	// the stats), then the zoom. Compare draws each cut at its own recording time, so no shifting.
+	const ref = compareData.value[compareRefId.value];
+	const win = diffWindow(savedCropSec.value || cropWindow.value, ref?.crop, zoomStart.value, zoomEnd.value);
+	return diffEnvelopes(detail.value?.series?.[axis.value], ref?.series?.[axis.value], win);
 });
 const DIFF_W = 260, DIFF_H = 44;
 // Polyline of the difference, min/max-binned to the sparkline width so a spike is never averaged
@@ -2807,7 +2815,7 @@ function fmtDateTime(v: string | null | undefined) {
 									:title="compareRefId ? `Show ${axis} of this cut minus ${compareRefLabel}` : 'Mark a cut as ref first'"
 									@click="diffOn = !diffOn">Difference</button>
 							</div>
-							<div v-if="diffOn && compareRefId" class="cmp-diff">
+							<div v-if="diffOn && compareRefId && chartMode === 'force'" class="cmp-diff">
 								<template v-if="diffResult && diffSpark">
 									<svg :viewBox="`0 0 ${DIFF_W} ${DIFF_H}`" :width="DIFF_W" :height="DIFF_H" role="img"
 										:aria-label="`${axis} difference versus ${compareRefLabel}`">
@@ -2819,7 +2827,7 @@ function fmtDateTime(v: string | null | undefined) {
 										mean {{ fmtDelta(diffResult.mean) }} N · RMS {{ diffResult.rms.toPrecision(3) }} N
 									</span>
 								</template>
-								<span v-else class="cmp-hint">No overlapping time range with the reference for {{ axis }}.</span>
+								<span v-else class="cmp-hint">No overlap with the reference for {{ axis }} within both cuts' crops{{ zoomed ? ' and the zoom' : '' }}.</span>
 							</div>
 							<div v-if="!detail" class="empty">Select an operation to view its signals</div>
 							<div v-else-if="isSpectral" class="charts-col">

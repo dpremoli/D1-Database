@@ -103,9 +103,13 @@ chip removes it and **Clear** removes all:
 **Difference**. A small trace appears under the Compare bar showing the selected axis (the one
 highlighted for the FRM map) of the current cut minus the reference, with the mean and RMS of the
 difference in newtons. What the two passes share (tool and machine signature) cancels, so what is
-left points at material or wear. It uses the force envelopes already loaded for Compare, aligned in
-time over the stretch both cuts cover; if they do not overlap you get a note instead. Removing the
-reference chip turns Difference off.
+left points at material or wear. It uses the force envelopes already loaded for Compare, over the
+stretch where both cuts' **crop windows** overlap (the cut itself, not the lead-in and lead-out, so
+those do not swamp the mean and RMS), and only over the **zoomed** range when you have zoomed. The
+trace and its readout say which seconds they cover. Compare draws each cut at its own recording
+time and the difference uses the same time base, so there is no extra shifting. If the windows do
+not overlap you get a note instead. The trace is shown in Force mode only. Removing the reference
+chip turns Difference off.
 
 ## FRM map panel
 
