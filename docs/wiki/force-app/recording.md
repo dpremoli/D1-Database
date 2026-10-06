@@ -71,6 +71,31 @@ which explains them in full and holds the cut-detection threshold:
 
 ## 4. Start
 
+### Pre-flight checks
+
+A row of small chips above **Start** shows what is and isn't ready. Hover a chip for the detail.
+Anything that needs attention also gets a line of its own with **Show me**, which rings the control
+that fixes it (or opens the page that owns it).
+
+| Chip | Checks | If it isn't right |
+|---|---|---|
+| **Sample** | a Sample is picked | warning. See *Start anyway* below. |
+| **Signed in** / **Offline session** | there is a sign-in to upload with | an offline session is only a note: the cut is saved on this PC and uploaded after you sign in again. Not signed in at all is a warning. |
+| **Lab Amp** (NI-DAQ) | the amp answers | a warning if it doesn't. **Start** resets the amp and sets it to MEASURE itself, so RESET beforehand is normal and shows as fine. |
+| **Tacho** (NI-DAQ) | tacho pulses seen | shown as *not checked*: the recorder only sees the tacho once samples are flowing, so the check is the Tacho alarm during the cut. |
+| **Disk** | free space on the capture drive, as *about N min at this rate* | a warning under 30 minutes, red under 5. The runway is free space minus the 1 GB at which the recorder force-stops, divided by the sample rate × 10 columns × 4 bytes. **Show me** goes to the sample rate. |
+| **Channels** (NI-DAQ) | the saved channel list can record | red for a rotating-dyno layout or one input wired to two channels, a warning if a force channel or the Tacho has no input yet. **Show me** opens the NI-DAQ page at the channel list. |
+
+A chip that couldn't be read yet (the recorder is still starting, the amp page didn't answer) shows
+as *not checked*, never as a failure. The list refreshes every 15 seconds while you wait, and
+Replay has no checks.
+
+**Start anyway.** A missing Sample is a warning, not a block: pressing **Start** with no Sample asks
+*Start without a Sample?* and **Start anyway** goes on. The cut can be linked to a Sample later
+(for example when you were offline), but it can't be uploaded until it is. Everything that already
+stopped a start still does: the NI-DAQ sample-rate limit disables **Start**, the low-disk prompt and
+the alarm test below are unchanged.
+
 Press **Start**. The first time in each session the app offers to test the safety alarms:
 
 ![The alarm-test prompt](../images/force-app/alarm-test-prompt.png)
@@ -85,6 +110,25 @@ While recording, the parameter fields lock and **Start** becomes **Stop**:
 
 A recording stops when you press **Stop**. It also stops by itself when a simulated run reaches
 its planned length, or when the capture drive runs out of space.
+
+### Railed channels
+
+If a sensor channel reaches full scale while you are cutting, the app tells you during the cut, not
+after it. A railed channel has saturated the Lab Amp's analog output, so its peaks are flattened
+and only a wider range fixes it, which you can only change between cuts.
+
+- A red **Railed** tile appears in the Overview strip naming the channel (`Fy2`, `Fz1`, …).
+- A red dot appears on the Force Plot's **Sub** button, and a red **railed** badge beside the
+  channel in its list.
+- A red banner says *Ch Fy2 railed - re-range before the next cut*. It shows **once per cut**:
+  **Dismiss** keeps it away until the next cut, even if more channels rail. The tile and badges
+  stay until you press **New** or start the next cut.
+
+A channel counts as railed when its peak reaches **99 %** of its full scale (the Lab Amp range for
+that channel). That is the same test the saved capture uses for its per-channel clipping flags,
+which the **Converge** toggle reads to widen the range for the next cut. The live warning only
+works on the NI-DAQ source with per-channel ranges known (Lab Amp reachable at Start). Simulated
+data is already in newtons with no range to compare against, so it never rails.
 
 ## 5. Save or discard
 

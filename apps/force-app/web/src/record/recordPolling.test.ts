@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { IntervalGate, shouldPollBackup, shouldPollDisk } from './recordPolling';
+import { IntervalGate, shouldPollBackup, shouldPollDisk, shouldPollPreflight } from './recordPolling';
 
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { vi.useRealTimers(); });
@@ -10,6 +10,14 @@ describe('what is polled (2.6)', () => {
 		expect(shouldPollDisk('record', 'finalizing')).toBe(false);
 		expect(shouldPollDisk('record', 'idle')).toBe(false);
 		expect(shouldPollDisk('playback', 'recording')).toBe(false);
+	});
+	it('polls the pre-Start checklist inputs only while waiting to start, in record mode', () => {
+		expect(shouldPollPreflight('record', 'idle')).toBe(true);
+		expect(shouldPollPreflight('record', 'done')).toBe(true);
+		expect(shouldPollPreflight('record', 'error')).toBe(true);
+		expect(shouldPollPreflight('record', 'recording')).toBe(false);
+		expect(shouldPollPreflight('record', 'finalizing')).toBe(false);
+		expect(shouldPollPreflight('playback', 'idle')).toBe(false);
 	});
 	it('polls backup progress only when a backup is configured', () => {
 		expect(shouldPollBackup('record', 'recording', false)).toBe(false);

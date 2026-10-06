@@ -18,6 +18,7 @@ from .acquisition.consumers import CutDetector, Decimator, FrmIntegrator
 from .acquisition.ring import Ring
 from .backup import BackupStreamer, mark_remote_deleted
 from .backup import load_config as load_backup_config
+from .clipping import RailDetector
 from .config import RecordConfig
 from .d1rw import RawWriter
 from .dsp import sum_axes, tacho_column, welch_spectra
@@ -41,6 +42,7 @@ SUB_NAMES = ["Fx1", "Fx2", "Fy1", "Fy2", "Fz1", "Fz2", "Fz3", "Fz4", "Tacho"]
 DISK_BACKUP_GB = 3.0
 DISK_STOP_GB = 1.0
 DISK_CHECK_INTERVAL = 10.0
+RAIL_REPUBLISH_SEC = 2.0
 
 
 def _raw_rows(capture_dir: str) -> int:
@@ -85,6 +87,10 @@ class RecordingSession:
         self.frm = FrmIntegrator(cfg, fs=self.source.rate)
         self.cut = CutDetector(cfg, self.source.rate)
         self.cut_started_t: float | None = None
+        # Live railing test on the raw volts (see clipping.py); needs the per-channel gains, so
+        # it is inert for sim/replay. Its latched set is streamed and reported in status().
+        self.rails = RailDetector(cfg.dyno_gains, cfg.analog_fullscale_v)
+        self._rail_sent = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._finalize_thread: threading.Thread | None = None
@@ -359,6 +365,15 @@ class RecordingSession:
             if t.size == 0:
                 continue
             self.raw.append(t, data)  # never dropped — source of truth
+            # Published when a channel newly rails, then re-sent every RAIL_REPUBLISH_SEC while
+            # any is railed: a slow client's queue drops control messages under backpressure, and
+            # this is the one the operator must not miss.
+            newly = self.rails.update(data)
+            if newly or (
+                self.rails.any and time.monotonic() - self._rail_sent > RAIL_REPUBLISH_SEC
+            ):
+                self._rail_sent = time.monotonic()
+                self._publish_control({"type": "railed", "channels": self.rails.railed})
             axes = sum_axes(data)
             for i, ax in enumerate(("Fx", "Fy", "Fz")):
                 self.peaks[i] = max(self.peaks[i], float(np.max(np.abs(axes[ax]))))
@@ -456,6 +471,8 @@ class RecordingSession:
             "config": self.cfg.model_dump(),
             # None until the first chunk is processed; False => tacho producing no readable pulses.
             "tacho_ok": self._tacho_ok,
+            # Indices (0-7, Fx1..Fz4) of the sensor channels that have railed this cut.
+            "railed": self.rails.railed,
         }
         if self.backup:
             s["backup"] = self.backup.status()

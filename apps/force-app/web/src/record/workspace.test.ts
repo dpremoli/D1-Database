@@ -34,7 +34,7 @@ vi.mock('./directusLookups', () => ({
 	resolveMachiningMethodId: vi.fn().mockResolvedValue('method-1'),
 }));
 vi.mock('./directusSync', () => ({ logRun: vi.fn(), syncStatus: {} }));
-const labampMock = vi.hoisted(() => ({ setMode: vi.fn().mockResolvedValue(undefined), converge: vi.fn() }));
+const labampMock = vi.hoisted(() => ({ setMode: vi.fn().mockResolvedValue(undefined), converge: vi.fn(), status: vi.fn() }));
 vi.mock('./labampApi', () => ({ labamp: labampMock }));
 const confirmMock = vi.hoisted(() => ({ confirmAction: vi.fn().mockResolvedValue(true) }));
 vi.mock('../ui/confirm', () => confirmMock);
@@ -43,6 +43,7 @@ vi.mock('../ui/spotlight', () => ({ spotlight: vi.fn() }));
 import { createWorkspace } from './workspace';
 import { clearUploadProgress } from './uploadResume';
 import { alarmController } from './alarms';
+import { hwStatus } from './hwStatus';
 
 type Reply = { ok?: boolean; status?: number; body?: unknown; text?: string };
 let replies: Record<string, Reply | (() => Reply | Promise<Reply>)>;
@@ -268,6 +269,82 @@ describe('workspace.start() (2.5)', () => {
 		await w.start();
 		expect(w.busy.value).toBe(false);
 		expect(calls.filter((c) => c === 'POST /record/start')).toHaveLength(0);
+	});
+});
+
+// ---- R4: pre-flight checklist and "Start anyway" ----
+describe('workspace pre-flight (R4)', () => {
+	beforeEach(() => { alarmController.testedSinceStart.value = true; hwStatus.diskFreeGb = 200; });
+	afterEach(() => { hwStatus.diskFreeGb = -1; });
+	const startPosts = () => calls.filter((c) => c === 'POST /record/start').length;
+	const item = (w: Awaited<ReturnType<typeof make>>, id: string) => w.preflight.value.find((it) => it.id === id);
+
+	it('a missing Sample is a warning, and the first Start press asks instead of starting', async () => {
+		replies['/record/start'] = { body: { id: 'cap-p1' } };
+		const w = await make();
+		w.link.sampleId = '';
+		expect(item(w, 'sample')?.level).toBe('warn');
+		await w.requestStart();
+		expect(w.sampleConfirmOpen.value).toBe(true);
+		expect(startPosts()).toBe(0);
+		expect(w.st.state).toBe('idle');
+	});
+
+	it('"Start anyway" then starts, without a Sample', async () => {
+		replies['/record/start'] = { body: { id: 'cap-p2' } };
+		const w = await make();
+		w.link.sampleId = '';
+		await w.requestStart();
+		await w.startAnyway();
+		expect(w.sampleConfirmOpen.value).toBe(false);
+		expect(startPosts()).toBe(1);
+		expect(w.st.state).toBe('recording');
+	});
+
+	it('with a Sample set Start goes straight through, and picking one closes the prompt', async () => {
+		replies['/record/start'] = { body: { id: 'cap-p3' } };
+		const w = await make();
+		w.link.sampleId = '';
+		await w.requestStart();
+		expect(w.sampleConfirmOpen.value).toBe(true);
+		w.link.sampleId = 'sample-1';
+		await nextTick();
+		expect(w.sampleConfirmOpen.value).toBe(false);
+		expect(item(w, 'sample')?.level).toBe('ok');
+		await w.requestStart();
+		expect(startPosts()).toBe(1);
+	});
+
+	it('reads the session, the disk poll and the form: offline note, runway from free space', async () => {
+		const w = await make();
+		auth.state.offline = true; auth.state.accessToken = null; auth.state.refreshToken = null;
+		hwStatus.diskFreeGb = 61;
+		w.cfg.sample_rate = 25000;
+		expect(item(w, 'auth')?.level).toBe('info');
+		expect(item(w, 'disk')?.detail).toMatch(/61\.0 GB free, about 17 h at 25,000 Hz/);
+		auth.state.offline = false; auth.state.refreshToken = 'rt';
+	});
+
+	it('NI-DAQ adds the amp, tacho and channel items once read; replay has none', async () => {
+		labampMock.status.mockResolvedValueOnce({ reachable: true, mode: 'RESET', mock: false });
+		replies['/nidaq/channels'] = { body: { channels: [], roles: [], colors: {} } };
+		const w = await make();
+		w.setSource('nidaq');
+		await w.refreshPreflight();
+		expect(w.preflight.value.map((it) => it.id)).toEqual(['sample', 'auth', 'amp', 'tacho', 'disk', 'channels']);
+		expect(item(w, 'amp')?.level).toBe('ok');
+		expect(item(w, 'channels')?.level).toBe('warn');   // an empty list: nothing assigned
+		w.setSource('replay');
+		expect(w.preflight.value).toEqual([]);
+	});
+
+	it('an unreadable amp or channel list is "not checked", not a failure', async () => {
+		const w = await make();
+		w.setSource('nidaq');
+		labampMock.status.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+		await w.refreshPreflight();                           // the amp read rejects, the channel read 404s
+		expect(item(w, 'amp')?.level).toBe('skip');
+		expect(item(w, 'channels')?.level).toBe('skip');
 	});
 });
 
@@ -692,5 +769,46 @@ describe('workspace.newRun() (R3)', () => {
 		expect(w.machining.operation_sequence).toBe('4');
 		expect(w.machining.chips_ref).toBe('CH-4');
 		expect(w.machining.new_edge).toBe(true);
+	});
+});
+
+// ---- R5: live rail warning ----
+describe('workspace.railBanner (R5)', () => {
+	const railed = (w: Awaited<ReturnType<typeof make>>, ch: number[]) => { w.st.railed = ch; return nextTick(); };
+
+	it('shows nothing until a channel rails, then names it', async () => {
+		const w = await make();
+		expect(w.railBanner.value).toBeNull();
+		await railed(w, [2]);
+		expect(w.railBanner.value).toBe('Ch Fy1 railed - re-range before the next cut');
+	});
+
+	it('appears once per cut: Dismiss keeps it away for the rest of the cut, even as more channels rail', async () => {
+		const w = await make();
+		await railed(w, [2]);
+		w.dismissRailBanner();
+		expect(w.railBanner.value).toBeNull();
+		await railed(w, [2, 5]);          // the backend re-sends the set every couple of seconds
+		await railed(w, [2, 5]);
+		expect(w.railBanner.value).toBeNull();
+	});
+
+	it('comes back for the next cut after New', async () => {
+		const w = await make();
+		await railed(w, [2]);
+		w.dismissRailBanner();
+		w.newRun();                        // client.reset() clears the railed set
+		await nextTick();
+		expect(w.st.railed).toEqual([]);
+		expect(w.railBanner.value).toBeNull();
+		await railed(w, [4]);
+		expect(w.railBanner.value).toBe('Ch Fz1 railed - re-range before the next cut');
+	});
+
+	it('is not shown for a replayed cut', async () => {
+		const w = await make();
+		w.setSource('replay');
+		await railed(w, [2]);
+		expect(w.railBanner.value).toBeNull();
 	});
 });
