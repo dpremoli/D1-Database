@@ -147,3 +147,45 @@ Files: `packages/force-plotting/src/{FrmOctree.vue,cloudPick.ts(+test),ForceDash
    entry, if untagged), physical-test backlog entries: MATLAB crop + manifest on d1-server; octree
    pick alignment on a real archived cut (with and without an official crop); touch long-press on a
    touchscreen.
+
+## Review fixes (Opus review: force-app-reviewer + /code-review high)
+
+One worker, files: everything this plan touched. Each fix with a test where the repo can test it.
+
+1. **Exact octree anchor (float32 + decimation).** The cache's `t` is float32; the manifest's
+   `cut_start_sec` is a double, so `idxOfTime` can skip `t[0]` (≈48% of starts) and, with a
+   decimated cache (`step` ≥ 2) or an override start between cache samples, the anchor lands up
+   to `step-1` raw samples late. Fix: MATLAB adds `revs_cs` to the build JSON — the cumulative
+   revolutions at `cutstart` in **the same units as the live cache's `revs` array** (check how
+   `write_live_cache` derives it, e.g. `revs_cum`, and whether PPR is applied there) — and the
+   orchestrator passes it through into `d1_build.json` (an optional key: schema stays 1; the
+   parser accepts manifests without it). The client then uses `{ tCs: cut_start_sec, revsCs:
+   revs_cs }` as the spiral anchor (no cache lookup), which is exact for any decimation and also
+   lets an override that starts before the cache map the overlapping part (window = build ∩
+   cache; `outside-cache` only when they don't overlap). Without `revs_cs` (older manifests):
+   compare/anchor with `Math.fround(cut_start_sec)` / `Math.fround(cut_end_sec)` so a float32
+   `t[0]` equal to the rounded start is included. Tests: a Float32Array cache with `t = k/Fs`
+   (non-representable), decimated, override mid-step, override before the cache.
+2. **MATLAB crop as one unit.** Apply `crop_end_sec` only if the start was applied or no start was
+   given; set `crop_source = 'override'` only when a value actually changed the window. Make
+   `test_octree_out.m`'s degenerate case consistent.
+3. **Crop saved during a build.** In the orchestrator's octree and grid "done" UPDATEs, set the
+   status to `'pending'` (and keep the requested_at fresh) instead of `'done'` when the row's
+   `crop_start_idx_override` / `crop_end_idx_override` are `IS DISTINCT FROM` the values claimed —
+   so a crop saved while `processing` (or while the dashboard thought `pending`) gets its rebuild.
+   Update the dashboard note in `saveCropAsOfficial` accordingly ("rebuilds after the current
+   build"). pytest for the SQL params.
+4. **Manifest required and ordered.** MATLAB always writes the build JSON, so a missing/unreadable
+   one fails the build (`octree_status='error'` with a clear message) instead of publishing an
+   octree whose fallback geometry may be wrong. Write `d1_build.json` before `metadata.json` (a
+   client that sees metadata also sees the manifest); remove any stale `d1_build.json` before
+   publishing. pytest.
+5. **Long-press robustness.** `createLongPress.down`: an `isPrimary` touch starts a new gesture —
+   clear the stale pointer set first. Call `longPress.cancel()` in FrmCloud's `teardownRenderer`
+   and FrmOctree's `teardownGL` (canvas swaps lose pointerups). In ForceChart only swallow a
+   `contextmenu` for touch (`(ev as PointerEvent).pointerType !== 'mouse'` and `longPress.touching`),
+   never a mouse right-click. Tests.
+6. **Loading reason.** While the manifest fetch is pending, FrmOctree's pick emits a new reason
+   `'loading'` (add to the union) and the dashboard hint says "The map is still loading" — not
+   "Needs this cut's live cache".
+7. Spec + backlog text updated for `revs_cs`, the re-queue-on-done rule and the required manifest.
