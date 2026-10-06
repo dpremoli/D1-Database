@@ -4,7 +4,13 @@ import { buildComposition, compositionAria, toElements, type ElementRow } from '
 
 // Stacked wt% bar of a material's alloying elements, with a legend. The rows are
 // material_alloying_elements ({ symbol, weight_percent }).
-const props = defineProps<{ elements: ElementRow[] }>();
+const props = withDefaults(
+	defineProps<{ elements: ElementRow[]; emptyText?: string; noWeightsText?: string }>(),
+	{
+		emptyText: 'No alloying elements recorded yet.',
+		noWeightsText: 'Add a weight % to each element to see the stacked breakdown.',
+	},
+);
 
 const parsed = computed(() => toElements(props.elements));
 const comp = computed(() => buildComposition(parsed.value));
@@ -13,12 +19,12 @@ const aria = computed(() => compositionAria(comp.value.segments));
 
 <template>
 	<div class="d1-composition">
-		<p v-if="!parsed.length" class="notice">No alloying elements recorded yet.</p>
+		<p v-if="!parsed.length" class="notice">{{ emptyText }}</p>
 
 		<!-- Elements present but none has a weight % -->
 		<div v-else-if="comp.specifiedSum === 0" class="notice">
 			<div class="chips"><span v-for="e in parsed" :key="e.symbol" class="chip">{{ e.symbol }}</span></div>
-			<span>Add a weight % to each element to see the stacked breakdown.</span>
+			<span>{{ noWeightsText }}</span>
 		</div>
 
 		<template v-else>
