@@ -11,7 +11,7 @@ Items already tracked as open issues (#108, #100, #97, #90, #86, #81, #80, #67, 
 Items marked *(idea)* are judgement calls the reviewers did not confirm in code. Sizes are S, M
 or L. Paths are relative to the repo root.
 
-**Status:** shipped in three PRs (all merged): #123 ("Fix first" and "Small, high-value"), #124
+**Status:** shipped in four PRs (all merged): #123 ("Fix first" and "Small, high-value"), #124
 (the "Next" tier: P3, P4, R4, R5, D4, D3), #125 (small high-use: R6, R10, R11, R13, P2, P11,
 D12) and #127 (larger: D5, D11, P10, P6, R9). Their descriptions list what changed. See the **Progress checklist** below for item-by-item
 state; everything not ticked is backlog. Checks that need the rig or a live Directus are tracked
