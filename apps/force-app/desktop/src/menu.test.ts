@@ -8,7 +8,19 @@ vi.mock('electron', () => ({
   Menu: { buildFromTemplate: (template: unknown[]) => ({ template }) },
 }));
 
-import { buildMenu } from './menu';
+import { applyMenuBarMode, buildMenu } from './menu';
+
+describe('applyMenuBarMode', () => {
+  it('hides the bar but lets Alt reveal it (auto-hide), so Help stays reachable', () => {
+    const calls: Array<[string, boolean]> = [];
+    applyMenuBarMode({
+      setAutoHideMenuBar: (v: boolean) => calls.push(['autoHide', v]),
+      setMenuBarVisibility: (v: boolean) => calls.push(['visible', v]),
+    });
+    expect(calls).toContainEqual(['autoHide', true]);
+    expect(calls).toContainEqual(['visible', false]);
+  });
+});
 
 describe('buildMenu', () => {
   it('the Connectivity Doctor item sends a navigate IPC message to the current window', () => {

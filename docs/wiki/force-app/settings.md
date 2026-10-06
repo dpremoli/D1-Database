@@ -83,7 +83,10 @@ because none was running. Both are expected off the rig.
 
 In the installed app, when the recorder backend is down the doctor offers **Restart recorder**.
 It stops and restarts the backend, then runs the check again. It will not restart while a recording
-is in progress or still being saved. In a browser or a development build the doctor shows the
+is in progress or still being saved. If the recorder does not answer the status check but the app
+still thinks it is running (it may be busy recording), the app asks "The recorder isn't answering,
+a recording may be in progress. Restart anyway?" and leaves it alone unless you choose **Restart
+anyway**. If the app already knows the backend has stopped, it restarts without asking. In a browser or a development build the doctor shows the
 command to start the backend by hand instead.
 
 **Service endpoints** are the URLs the app uses:

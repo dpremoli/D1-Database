@@ -7,16 +7,16 @@
 -- The legacy `owner` column (a direct Directus-user uuid, hidden since the people unification,
 -- migration 062) is no longer what the owner picker writes, so it is not used.
 --
---   manufacturing_operations  My operations          owner's people.user_id = $CURRENT_USER
---                             This week's FAST runs  FAST method (method_code MF, as the FAST
---                                                    bookmark) and operation_date in the last 7 days
---                             Missing outcome        outcome_notes empty (the only outcome column)
---   test_sessions             Failed                 status = failed
---                             Needs analysis         status = processed (the pipeline has finished
---                                                    and no analysis has started: the next states
---                                                    are analysing then analysed; see migration 013)
---   physical_samples          My samples             owner's people.user_id = $CURRENT_USER
---                             No location            location empty (NULL or '')
+--   manufacturing_operations  My operations            owner's people.user_id = $CURRENT_USER
+--                             FAST runs, last 7 days   FAST method (method_code MF, as the FAST
+--                                                      bookmark) and operation_date in the last 7 days
+--                             Missing outcome          outcome_notes empty (the only outcome column)
+--   test_sessions             Failed                   status = failed
+--                             Needs analysis           status = processed (the pipeline has finished
+--                                                      and no analysis has started: the next states
+--                                                      are analysing then analysed; see migration 013)
+--   physical_samples          My samples               owner's people.user_id = $CURRENT_USER
+--                             No location              location empty (NULL or '')
 --
 -- Idempotent: a bookmark that already exists (same collection and name) is left alone, so a
 -- filter or columns curated in the Directus UI survive a re-run; scripts/configure_directus.sql
@@ -29,7 +29,7 @@ FROM (VALUES
     ('manufacturing_operations', 'My operations',
      '{"_and":[{"owner_person_id":{"user_id":{"_eq":"$CURRENT_USER"}}}]}',
      '{"tabular":{"sort":["-operation_date"]}}', 'person', '#2196F3'),
-    ('manufacturing_operations', 'This week''s FAST runs',
+    ('manufacturing_operations', 'FAST runs, last 7 days',
      '{"_and":[{"method_id":{"method_code":{"_eq":"MF"}}},{"operation_date":{"_gte":"$NOW(-7 days)"}}]}',
      '{"tabular":{"sort":["-operation_date"]}}', 'date_range', '#F44336'),
     ('manufacturing_operations', 'Missing outcome',
@@ -60,7 +60,7 @@ DELETE FROM directus_presets
 WHERE "user" IS NULL AND role IS NULL
   AND (collection, bookmark) IN (
       ('manufacturing_operations', 'My operations'),
-      ('manufacturing_operations', 'This week''s FAST runs'),
+      ('manufacturing_operations', 'FAST runs, last 7 days'),
       ('manufacturing_operations', 'Missing outcome'),
       ('test_sessions', 'Failed'),
       ('test_sessions', 'Needs analysis'),

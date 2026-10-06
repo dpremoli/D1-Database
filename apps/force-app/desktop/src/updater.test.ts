@@ -109,6 +109,30 @@ describe('updater recording gate', () => {
   });
 });
 
+describe('startUpdateCheck before the updater is initialized', () => {
+  it('says updates are unavailable instead of starting a check nobody is listening to', async () => {
+    vi.resetModules();
+    h.handlers.clear();
+    h.updater.checkForUpdates.mockClear();
+    const { startUpdateCheck } = await import('./updater');
+    const r = startUpdateCheck();
+    expect(r.ok).toBe(false);
+    expect(r.message).toBe("Updates unavailable: the recorder didn't start.");
+    expect(r.reason).toBe(r.message);
+    expect(h.updater.checkForUpdates).not.toHaveBeenCalled();
+  });
+
+  it('starts the check once initAutoUpdater has run', async () => {
+    vi.resetModules();
+    h.handlers.clear();
+    const { initAutoUpdater, startUpdateCheck } = await import('./updater');
+    initAutoUpdater(() => null, async () => false);
+    h.updater.checkForUpdates.mockClear();
+    expect(startUpdateCheck()).toEqual({ ok: true });
+    expect(h.updater.checkForUpdates).toHaveBeenCalledOnce();
+  });
+});
+
 describe('update-downloaded dialog release notes (R13)', () => {
   async function dialogDetail(releaseNotes: unknown): Promise<string> {
     await boot(async () => false);
@@ -141,6 +165,6 @@ describe('update-downloaded dialog release notes (R13)', () => {
   it('trims very long notes', async () => {
     const detail = await dialogDetail('x '.repeat(5000));
     expect(detail.length).toBeLessThan(2000);
-    expect(detail).toContain('full notes in Settings → About');
+    expect(detail).toContain('full notes: https://github.com/dpremoli/D1-Database/releases');
   });
 });

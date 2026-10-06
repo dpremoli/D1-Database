@@ -77,6 +77,10 @@ other page then shows a blue banner with the elapsed time, sample count and peak
 
 ## Keyboard and menus
 
+The installed app hides its menu bar. Press **Alt** to show it (the Help menu is in it), and
+press **Alt** again or click away to hide it. The Help items that have a shortcut also work
+without opening the menu.
+
 | | |
 |---|---|
 | **F11** | toggle full screen |

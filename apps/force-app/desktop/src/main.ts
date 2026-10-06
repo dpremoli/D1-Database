@@ -1,14 +1,14 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { ConfigStore } from './config';
-import { buildMenu } from './menu';
+import { applyMenuBarMode, buildMenu } from './menu';
 import { findAvailablePort } from './port';
 import { registerAppScheme, handleAppProtocol } from './protocol';
 import { checkRevealTarget } from './reveal';
-import { restartRecorder } from './restart';
+import { isCrashRecovery, restartRecorder, unknownStatusDialog } from './restart';
 import { watchRenderer } from './rendererWatch';
 import { PopoutTracker } from './popouts';
-import { fetchBusySession, confirmQuit, type BusySession } from './quitGuard';
+import { fetchBusySession, fetchRecorderActivity, confirmQuit, type BusySession } from './quitGuard';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
 import { initAutoUpdater, startUpdateCheck } from './updater';
@@ -83,8 +83,8 @@ Menu.setApplicationMenu(
           type: 'info',
           buttons: ['OK'],
           title: 'Check for updates',
-          message: 'Updates are only available in the installed app.',
-          detail: r.reason,
+          message: r.message ?? 'Updates are unavailable.',
+          detail: r.message === r.reason ? undefined : r.reason,
         });
       }
     },
@@ -189,7 +189,7 @@ function onSidecarStateChange(state: SidecarState, detail?: string): void {
   // A restart (not the initial start) means the backend crashed mid-session — route the
   // operator back to Record, where the existing recovery banner (RecordPage.vue) picks up any
   // incomplete session via GET /recovery/check on mount.
-  if (state === 'ready' && supervisor && supervisor.getRestartCount() > 0) {
+  if (supervisor && isCrashRecovery(state, supervisor.getRestartCount(), manualRestart)) {
     logToBackend('WARNING', `recorder backend restarted (${restartCause ?? 'unknown cause'})`);
     mainWindow?.webContents.send('navigate', '/record');
   }
@@ -226,15 +226,19 @@ function registerShellIpc(): void {
   });
 
   // R11: Settings > Connectivity's "Restart recorder". Goes through the same supervisor as launch
-  // and the crash restarts. Refused while a recording is running or being saved; allowed when the
-  // backend cannot be asked (it is down, which is what the button is for).
+  // and the crash restarts. Refused while a recording is running or being saved. When the backend
+  // does not answer: restarted at once if the supervisor already knows it is down, otherwise the
+  // operator is asked first (a busy recorder can be slow to answer too).
   ipcMain.handle('sidecar:restart', async (event) => {
     if (!fromApp(event)) return { ok: false, reason: 'not allowed from this page' };
     if (manualRestart) return { ok: false, reason: 'a restart is already in progress' };
     manualRestart = true;
     try {
       const result = await restartRecorder({
-        getBusy: activeSession,
+        getActivity: () => fetchRecorderActivity((p, t) => recorderFetch(p, t)),
+        // Native dialogs would hang the e2e suite (see confirmQuitDuringRecording).
+        confirmUnknown: async () =>
+          process.env.FORCE_APP_TEST_HOOKS === '1' || (await dialog.showMessageBox(unknownStatusDialog())).response === 1,
         restart: supervisor ? () => supervisor!.restart() : null,
         getState: () => supervisor?.getState(),
         lastDetail: () => supervisor?.lastDetail(),
@@ -459,17 +463,17 @@ if (gotLock) {
     if (process.platform !== 'darwin') app.quit();
   });
 
-  // The View/Help bar is redundant now — both menu items just navigate to Settings tabs already
-  // reachable from the in-app sidebar. Hiding (not removing) it keeps the Menu registered, so
-  // Reload/Toggle DevTools still work via their normal accelerators; only the visible bar goes
-  // away. Covers every window the app creates, including the "open in a second window" popouts
-  // from AppShell.vue, not just the main one.
+  // The View/Help bar is hidden until Alt is pressed (auto-hide), not removed: Help > Check for
+  // Updates, About and Connectivity Doctor have no accelerator, so Alt is how they are reached.
+  // Keeping the Menu registered also keeps Reload/Toggle DevTools working via their normal
+  // accelerators. Covers every window the app creates, including the "open in a second window"
+  // popouts from AppShell.vue, not just the main one.
   // Every window and pop-out (and any WebContents the app might create later) may only navigate
   // within app://force.
   app.on('web-contents-created', (_event, contents) => guardNavigation(contents));
 
   app.on('browser-window-created', (_event, window) => {
-    window.setMenuBarVisibility(false);
+    applyMenuBarMode(window);
   });
 
   app.on('before-quit', (event) => {

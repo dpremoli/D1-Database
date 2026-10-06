@@ -215,7 +215,7 @@ WHERE collection IN ('physical_samples','manufacturing_operations')
   -- the saved filters below (migration 135) are kept as they are, not recreated
   AND (collection, bookmark) NOT IN (
       ('manufacturing_operations', 'My operations'),
-      ('manufacturing_operations', 'This week''s FAST runs'),
+      ('manufacturing_operations', 'FAST runs, last 7 days'),
       ('manufacturing_operations', 'Missing outcome'),
       ('physical_samples', 'My samples'),
       ('physical_samples', 'No location')
@@ -254,7 +254,7 @@ FROM (VALUES
     ('manufacturing_operations', 'My operations',
      '{"_and":[{"owner_person_id":{"user_id":{"_eq":"$CURRENT_USER"}}}]}',
      '{"tabular":{"sort":["-operation_date"]}}', 'person', '#2196F3'),
-    ('manufacturing_operations', 'This week''s FAST runs',
+    ('manufacturing_operations', 'FAST runs, last 7 days',
      '{"_and":[{"method_id":{"method_code":{"_eq":"MF"}}},{"operation_date":{"_gte":"$NOW(-7 days)"}}]}',
      '{"tabular":{"sort":["-operation_date"]}}', 'date_range', '#F44336'),
     ('manufacturing_operations', 'Missing outcome',
