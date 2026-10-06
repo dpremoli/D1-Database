@@ -11,6 +11,7 @@ export { buildComposition, toElements, compositionAria } from './composition';
 export type { ElementRow, Segment, Composition } from './composition';
 export { linkedFiles, DEFAULT_UNC_PREFIX } from './linkedFiles';
 export type { LinkedFile } from './linkedFiles';
+export { estimateMassGrams, volumeMm3 } from './mass';
 export { buildPatch, formFields, versionChanged, saveErrors } from './editDrawer';
 export type { FieldDef } from './editDrawer';
 export { buildLife, truncatedNotes, hiddenText } from './life';
