@@ -6,10 +6,8 @@
 import type { Cache } from './liveCache';
 
 export interface OctreeBuild {
-	kind: 'octree' | 'grid';
 	feed: number; diam: number; innerDiam: number; ppr: number;   // mm/rev, mm, mm, pulses per rev
 	cutStartSec: number; cutEndSec: number;   // the file's Time axis, the same as the live cache's `t`
-	cropSource?: 'auto' | 'override';
 }
 
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -27,10 +25,8 @@ export function parseOctreeBuild(raw: unknown): OctreeBuild | null {
 		|| !num(m.cut_start_sec) || !num(m.cut_end_sec)) return null;
 	if (m.ppr <= 0 || m.cut_end_sec < m.cut_start_sec) return null;
 	return {
-		kind: m.kind === 'grid' ? 'grid' : 'octree',
 		feed: m.feed, diam: m.diam, innerDiam: m.inner_diam, ppr: m.ppr,
 		cutStartSec: m.cut_start_sec, cutEndSec: m.cut_end_sec,
-		cropSource: m.crop_source === 'override' ? 'override' : m.crop_source === 'auto' ? 'auto' : undefined,
 	};
 }
 

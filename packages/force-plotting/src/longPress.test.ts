@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createLongPress, type PressEvent } from './longPress';
 
-const touch = (id: number, x: number, y: number, type?: string): PressEvent => ({ pointerId: id, pointerType: 'touch', clientX: x, clientY: y, type });
+const touch = (id: number, x: number, y: number): PressEvent => ({ pointerId: id, pointerType: 'touch', clientX: x, clientY: y });
 
 describe('createLongPress', () => {
 	beforeEach(() => { vi.useFakeTimers(); });
 	afterEach(() => { vi.useRealTimers(); });
 
-	it('fires once with the client point after the hold, and the release is consumed', () => {
+	it('fires once with the client point after the hold', () => {
 		const got: [number, number][] = [];
 		const lp = createLongPress((x, y) => got.push([x, y]));
 		lp.down(touch(1, 100, 200));
@@ -17,15 +17,15 @@ describe('createLongPress', () => {
 		expect(got).toEqual([[100, 200]]);
 		vi.advanceTimersByTime(5000);
 		expect(got).toHaveLength(1);
-		expect(lp.up(touch(1, 100, 200, 'pointerup'))).toBe(true);
-		expect(lp.up(touch(1, 100, 200, 'pointerup'))).toBe(false);   // only the one release
+		lp.up(touch(1, 100, 200));
+		expect(lp.touching).toBe(false);
 	});
-	it('a release before the hold cancels it and is not consumed', () => {
+	it('a release before the hold cancels it', () => {
 		const onPress = vi.fn();
 		const lp = createLongPress(onPress);
 		lp.down(touch(1, 10, 10));
 		vi.advanceTimersByTime(300);
-		expect(lp.up(touch(1, 10, 10, 'pointerup'))).toBe(false);
+		lp.up(touch(1, 10, 10));
 		vi.advanceTimersByTime(1000);
 		expect(onPress).not.toHaveBeenCalled();
 	});
@@ -59,24 +59,24 @@ describe('createLongPress', () => {
 		lp.down(touch(1, 100, 100));
 		vi.advanceTimersByTime(200);
 		lp.down(touch(2, 150, 100));
-		lp.up(touch(2, 150, 100, 'pointerup'));
+		lp.up(touch(2, 150, 100));
 		vi.advanceTimersByTime(2000);
 		expect(onPress).not.toHaveBeenCalled();
 	});
-	it('pointercancel cancels it and is not consumed', () => {
+	it('pointercancel cancels it', () => {
 		const onPress = vi.fn();
 		const lp = createLongPress(onPress);
 		lp.down(touch(1, 5, 5));
-		expect(lp.up(touch(1, 5, 5, 'pointercancel'))).toBe(false);
+		lp.up(touch(1, 5, 5));
 		vi.advanceTimersByTime(1000);
 		expect(onPress).not.toHaveBeenCalled();
 	});
-	it('a pointercancel after it fired is not a consumed release, but clears the state', () => {
+	it('a release after it fired clears the touch', () => {
 		const lp = createLongPress(() => {});
 		lp.down(touch(1, 5, 5));
 		vi.advanceTimersByTime(500);
-		expect(lp.up(touch(1, 5, 5, 'pointercancel'))).toBe(false);
-		expect(lp.up(touch(1, 5, 5, 'pointerup'))).toBe(false);
+		lp.up(touch(1, 5, 5));
+		expect(lp.touching).toBe(false);
 	});
 	it('ignores mouse and pen', () => {
 		const onPress = vi.fn();
@@ -86,12 +86,13 @@ describe('createLongPress', () => {
 		vi.advanceTimersByTime(2000);
 		expect(onPress).not.toHaveBeenCalled();
 		expect(lp.touching).toBe(false);
-		expect(lp.up({ pointerId: 1, pointerType: 'mouse', clientX: 0, clientY: 0, type: 'pointerup' })).toBe(false);
+		lp.up({ pointerId: 1, pointerType: 'mouse', clientX: 0, clientY: 0 });
+		expect(lp.touching).toBe(false);
 	});
 	it('arms again for the next touch after a fired one', () => {
 		const onPress = vi.fn();
 		const lp = createLongPress(onPress);
-		lp.down(touch(1, 1, 1)); vi.advanceTimersByTime(500); lp.up(touch(1, 1, 1, 'pointerup'));
+		lp.down(touch(1, 1, 1)); vi.advanceTimersByTime(500); lp.up(touch(1, 1, 1));
 		lp.down(touch(2, 2, 2)); vi.advanceTimersByTime(500);
 		expect(onPress).toHaveBeenCalledTimes(2);
 		expect(onPress).toHaveBeenLastCalledWith(2, 2);

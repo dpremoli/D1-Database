@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, onDeactivated, ref } from 'vue';
 import { hoverIndexAt } from './hoverIndex';
 import { createLongPress, TOUCH_MENU_OFFSET_PX } from './longPress';
 import { markInView, markTagText } from './chartMark';
@@ -94,6 +94,8 @@ onMounted(() => {
 	if (bodyEl.value) ro.observe(bodyEl.value);
 });
 onBeforeUnmount(() => { longPress.cancel(); ro?.disconnect(); if (rafId) cancelAnimationFrame(rafId); });
+// The Plot page is kept alive: a finger down as it hides never sends its pointerup here.
+onDeactivated(() => longPress.cancel());
 
 function niceNum(v: number): string {
 	const a = Math.abs(v);

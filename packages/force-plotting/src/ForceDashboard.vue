@@ -2261,12 +2261,13 @@ function openChartMenu(e: { clientX: number; clientY: number; x: number | null; 
 		const c = octreeSampleCache.value;
 		if (!detail.value?.live_cache_file) hint = 'Needs this cut’s live cache';
 		// A time outside the mappable window (the octree's build window within the live cache) has no
-		// mapped sample. The map knows that window (the build manifest); before it is ready, or for an
-		// octree without one, the cache's own range stands in. With the cache still loading we can't
-		// say, so the item stays enabled (the map queues the reveal).
+		// mapped sample. The map knows that window (the build manifest): null means nothing can be
+		// mapped; undefined means it isn't known yet, and the cache's own range stands in. With the
+		// cache still loading we can't say, so the item stays enabled (the map queues the reveal).
 		else if (c && c.N) {
 			const w = frmOctreeRef.value?.timeWindow?.() as { start: number; end: number } | null | undefined;
-			if (w ? (t < w.start || t > w.end) : (t < c.t[0] || t > c.t[c.N - 1])) hint = 'Outside the mapped window';
+			if (w === null) hint = 'The live cache doesn’t cover this octree’s crop';
+			else if (w ? (t < w.start || t > w.end) : (t < c.t[0] || t > c.t[c.N - 1])) hint = 'Outside the mapped window';
 		}
 	}
 	else if (liveAvailable.value) {

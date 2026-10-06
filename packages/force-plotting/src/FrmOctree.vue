@@ -30,7 +30,7 @@ import {
 } from './cloudPick';
 import { nearestIndex } from './hoverIndex';
 import { createPendingReveal } from './pendingReveal';
-import { cacheCoversBuild, mappableWindow, parseOctreeBuild, type OctreeBuild } from './octreeBuild';
+import { mappableWindow, parseOctreeBuild, type OctreeBuild } from './octreeBuild';
 import { createMapProjector } from './mapProjector';
 import { createLongPress, TOUCH_MENU_OFFSET_PX } from './longPress';
 import { spiralAnchor, spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
@@ -351,7 +351,7 @@ function setupGL() {
 		controls!.update();
 		if (pco && potree && renderer && camera) {
 			updateRings();   // before the render gate below: the rings follow the camera even on idle frames
-			if (pendingReveal.held) applyPendingReveal();   // moves the camera: next frame's rings follow
+			applyPendingReveal();   // moves the camera: next frame's rings follow
 			const r = potree.updatePointClouds([pco], camera, renderer);
 			const n = (r as any)?.numVisiblePoints ?? pointCount.value;
 			if (n !== lastVisibleN) { lastVisibleN = n; needsRender = true; lastChangeAt = performance.now(); }   // nodes streamed in/out
@@ -431,7 +431,7 @@ const longPress = createLongPress((x, y) => pickAt(x, y, TOUCH_MENU_OFFSET_PX));
 // false: the r = 0 anchor has no sample, so nothing can be placed).
 interface OctreeGeo {
 	c: Cache; innerDiam: number; ppr: number; build: OctreeBuild | null; path: TurningSpiralParams;
-	cs: number; ce: number; covered: boolean; win: { start: number; end: number } | null; u: SpiralUniforms;
+	cs: number; ce: number; win: { start: number; end: number } | null; u: SpiralUniforms;
 }
 let geo: OctreeGeo | null = null;
 let build: OctreeBuild | null = null;
@@ -446,7 +446,7 @@ function octreeGeometry(): OctreeGeo | null {
 	if (g.path.kind !== 'turning_spiral') return null;
 	const cs = g.window.cropStartSec, ce = g.window.cropEndSec;
 	geo = {
-		c, innerDiam, ppr, build, path: g.path, cs, ce, covered: cacheCoversBuild(c, build), win: mappableWindow(c, build),
+		c, innerDiam, ppr, build, path: g.path, cs, ce, win: mappableWindow(c, build),
 		u: spiralUniformValues({ ...g.path, ...spiralAnchor(c, cs) }),
 	};
 	return geo;
@@ -490,7 +490,7 @@ function pickAt(clientX: number, clientY: number, menuOffset = 0) {
 	const base = { clientX: clientX + menuOffset, clientY: clientY + menuOffset };   // where the menu opens; the pick stays under the finger
 	const g = octreeGeometry();
 	if (!g) { emit('pointmenu', { ...base, point: null, reason: 'no-cache' }); return; }
-	if (!g.covered) { emit('pointmenu', { ...base, point: null, reason: 'outside-cache' }); return; }
+	if (!g.win) { emit('pointmenu', { ...base, point: null, reason: 'outside-cache' }); return; }
 	const c = g.c;
 	const r = canvasEl.value.getBoundingClientRect();
 	camera.updateMatrixWorld();   // controls.update() moved it since the last render
@@ -556,9 +556,8 @@ function revealTime(t: number): boolean {
 	return revealNow(t);
 }
 function applyPendingReveal() {
-	if (!pendingReveal.held || loading.value || !octreeGeometry()) return;   // not ready: keep it for the next frame
-	const t = pendingReveal.take();
-	if (t != null) revealNow(t);
+	if (!pendingReveal.held || loading.value || !octreeGeometry()) return;   // none, or not ready: keep it for the next frame
+	revealNow(pendingReveal.take()!);
 }
 // A different octree or cache is a different cut: a reveal asked for the old one means nothing.
 // (Not when the cache goes from none to some: that is what the pending reveal waits for.)
@@ -627,7 +626,7 @@ onMounted(() => {
 	nextTick(boot);
 });
 onBeforeUnmount(() => { longPress.cancel(); life.unmount(); });
-onDeactivated(() => life.deactivate());
+onDeactivated(() => { longPress.cancel(); life.deactivate(); });   // a finger down as the page hides never sends its pointerup here
 onActivated(() => { life.activate(); });
 
 watch(() => props.octreePath, () => { pendingReveal.drop(); load(); });
@@ -669,9 +668,14 @@ function exportViewport(filename: string, subtitle?: string) {
 		axis: props.axis, subtitle, filename,
 	});
 }
-// The time span the map can place samples for (the build's window within the cache), or null when
-// that isn't known yet or there is none: the host uses it to say why "Show position on map" is off.
-function timeWindow(): { start: number; end: number } | null { return octreeGeometry()?.win ?? null; }
+// The time span the map can place samples for (the build's window within the cache): the host uses it
+// to say why "Show position on map" is off.
+// undefined while that isn't known yet (no sample cache, manifest still loading); null when nothing
+// can be mapped (the cache doesn't reach the build's cut start, or doesn't overlap its window).
+function timeWindow(): { start: number; end: number } | null | undefined {
+	const g = octreeGeometry();
+	return g ? g.win : undefined;
+}
 defineExpose({ currentBounds, exportViewport, revealTime, timeWindow });
 </script>
 

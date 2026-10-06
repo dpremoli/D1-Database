@@ -51,22 +51,22 @@ export function createMapProjector() {
 		},
 
 		/**
-		 * For an orthographic view of the plane z = `z`: the world point under canvas (px, py) and a
+		 * For an orthographic view of the plane z = 0: the world point under canvas (px, py) and a
 		 * world radius that covers every point of that plane projecting within `radiusPx` of it. The
 		 * radius is exact up to a hair of slack (the smallest px-per-mm of the view's 2x2, so it also
 		 * holds for a rotated or anisotropic ortho view), which is what lets a pick skip a sample on
 		 * its distance from the click instead of projecting it. null for a perspective view (where
 		 * pixels aren't a fixed number of mm) or a degenerate one. The result is a shared object.
 		 */
-		discAt(px: number, py: number, radiusPx: number, z = 0): WorldDisc | null {
+		discAt(px: number, py: number, radiusPx: number): WorldDisc | null {
 			if (w0 !== 0 || w1 !== 0 || w2 !== 0 || !(w3 > 0)) return null;
 			// px = halfW * (clipX / w3 + 1), py = halfH * (1 - clipY / w3): scale the rows to px per mm
 			const sx = halfW / w3, sy = halfH / w3;
 			const j00 = a0 * sx, j01 = a1 * sx, j10 = -b0 * sy, j11 = -b1 * sy;
 			const det = j00 * j11 - j01 * j10;
 			if (!(Math.abs(det) > 1e-12)) return null;
-			const rx = px - halfW - a2 * z * sx - a3 * sx;
-			const ry = py - halfH - (-b2 * z * sy) - (-b3 * sy);
+			const rx = px - halfW - a3 * sx;   // the plane z = 0: the flat views the cull is for
+			const ry = py - halfH + b3 * sy;
 			disc.x = (rx * j11 - j01 * ry) / det;
 			disc.y = (j00 * ry - j10 * rx) / det;
 			// smallest singular value of the 2x2: |d px| >= sigmaMin * |d world|
@@ -79,4 +79,3 @@ export function createMapProjector() {
 	};
 }
 
-export type MapProjector = ReturnType<typeof createMapProjector>;

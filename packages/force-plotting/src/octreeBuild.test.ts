@@ -16,10 +16,8 @@ function cacheOf(t0: number, t1: number, n = 101): Cache {
 describe('parseOctreeBuild', () => {
 	it('reads a well-formed manifest', () => {
 		expect(parseOctreeBuild(good)).toEqual({
-			kind: 'octree', feed: 0.05, diam: 80, innerDiam: 10, ppr: 2,
-			cutStartSec: 0.264, cutEndSec: 3.867, cropSource: 'override',
+			feed: 0.05, diam: 80, innerDiam: 10, ppr: 2, cutStartSec: 0.264, cutEndSec: 3.867,
 		});
-		expect(parseOctreeBuild({ ...good, kind: 'grid', crop_source: 'auto' })).toMatchObject({ kind: 'grid', cropSource: 'auto' });
 	});
 	it('accepts a zero-length window and a zero inner diameter', () => {
 		expect(parseOctreeBuild({ ...good, inner_diam: 0, cut_end_sec: 0.264 })).not.toBeNull();

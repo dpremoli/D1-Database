@@ -905,7 +905,7 @@ onBeforeUnmount(() => {
 	if (stage.value) emit('stage', null);
 	life.unmount();
 });
-onDeactivated(() => life.deactivate());
+onDeactivated(() => { longPress.cancel(); life.deactivate(); });   // a finger down as the page hides never sends its pointerup here
 onActivated(() => {
 	if (life.activate()) return;
 	if (!ready) nextTick(() => { setupRenderer(); scheduleRebuild(); });
