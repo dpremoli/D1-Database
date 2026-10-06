@@ -161,7 +161,9 @@ tool; a test cut on scrap stock is fine.
 - [ ] **R9 — upload-all progress and cancel against the real Directus.** With three or more
   not-uploaded captures, Upload N unsynced: the bar shows "Uploading n of m" and the capture name,
   Cancel stops after the current one and says how many were not attempted, and each uploaded
-  capture has exactly one operation row (no duplicates after cancelling and running again). Since:
+  capture has exactly one operation row (no duplicates after cancelling and running again). While
+  it runs, Delete selected, Free up space and the row Upload buttons are disabled; click a row's
+  Upload just before Upload N unsynced: that capture is still uploaded once. Since:
   this batch (PR TBD).
 
 ### Desktop shell
