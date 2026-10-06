@@ -23,8 +23,8 @@ the same stream (see `CLAUDE.md`).
 | M — Sample timeline and campaign overview | D5, D11 | `agent-a8bd81e18c8eeb71e` | merged; new `d1-trace` endpoint; no schema change |
 | N — Diagnostics across a campaign | P10 | `agent-a72215e01a6e621f0` | merged; picker still loads all rows (P12); campaign read permission for non-admins unchecked |
 | O — Cutting metrics | P6 | `agent-a1b290277d7c04730` | merged; axis mapping (Fc=Fz, Ff=Fx, Fp=Fy) is an assumption, selectable in the card |
-| P — Captures list | R9 | `agent-ab5dd77bae769b66f` | in progress |
-| /simplify (Opus) | all | — | not started |
+| P — Captures list | R9 | `agent-ab5dd77bae769b66f` | merged; verified against 461 sim captures (stubbed Directus) |
+| /simplify (Opus) | all | main checkout | in progress |
 | /code-review high (Opus) | all | — | not started |
 
 ## M. Sample timeline and campaign overview — D5, D11
