@@ -6,7 +6,9 @@ describe('yAxisTitle', () => {
 		expect(yAxisTitle('env', 'N')).toBe('Force (N)');
 		expect(yAxisTitle('env', 'rpm')).toBe('Speed (rpm)');
 		expect(yAxisTitle('env', 'σ')).toBe('Residual (σ)');
-		expect(yAxisTitle('line', 'N', true)).toBe('Amplitude (log scale) (N)');
+		expect(yAxisTitle('line', 'N', true)).toBe('Amplitude (log scale) (N rms)');
+		expect(yAxisTitle('line', 'N')).toBe('Amplitude (N rms)');
+		expect(yAxisTitle('env', 'N')).toBe('Force (N)'); // an envelope is a force, not an rms amplitude
 		expect(yAxisTitle('line', '')).toBe('');
 	});
 });
@@ -29,7 +31,7 @@ describe('buildChartSvg', () => {
 		const f = Array.from({ length: 40 }, (_, i) => i + 1);
 		const svg = buildChartSvg({ title: 'Fz · spectrum', kind: 'line', data: { f, amp: f.map((v) => 100 / v) }, xUnit: 'Hz', yUnit: 'N', logY: true });
 		expect(svg).toContain('Frequency (Hz)');
-		expect(svg).toContain('Amplitude (log scale) (N)');
+		expect(svg).toContain('Amplitude (log scale) (N rms)');
 	});
 	it('escapes text from labels', () => {
 		const svg = buildChartSvg({

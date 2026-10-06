@@ -72,8 +72,16 @@ function traceOf(kind: 'env' | 'line', d: any, x0: number, x1: number, max: numb
 	return d.f?.length ? decimateTrace(d.f, d.amp, d.amp, x0, x1, max) : null;
 }
 
+/** The unit as shown on a chart. A spectrum's force amplitude is RMS (the main trace is
+ *  sqrt(pspectrum power) and the filter overlay uses welch scaling="spectrum"), so a spectrum in N
+ *  reads "N rms" everywhere it is shown: axis title, peak readout and hover. */
+export function displayUnit(kind: 'env' | 'line', unit: string | undefined): string | undefined {
+	return kind === 'line' && unit === 'N' ? 'N rms' : unit;
+}
+
 /** The y-axis title for a chart: what is plotted and its unit, e.g. "Force (N)". Empty without a unit. */
 export function yAxisTitle(kind: 'env' | 'line', unit: string | undefined, logY = false): string {
+	unit = displayUnit(kind, unit);
 	if (!unit) return '';
 	const name = unit === 'rpm' ? 'Speed' : unit === 'σ' ? 'Residual' : kind === 'env' ? 'Force' : 'Amplitude';
 	return `${name}${logY ? ' (log scale)' : ''} (${unit})`;

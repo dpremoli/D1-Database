@@ -2,7 +2,7 @@
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { hoverIndexAt } from './hoverIndex';
 import { markInView, markTagText } from './chartMark';
-import { yAxisTitle, type ChartSnapshot } from './chartExport';
+import { displayUnit, yAxisTitle, type ChartSnapshot } from './chartExport';
 
 // Dependency-free chart. kind='env' → min/max envelope (force or RPM; always
 // includes 0 on the y-axis); kind='line' → FFT amplitude (optional log y).
@@ -63,9 +63,9 @@ const ML = 56, MR = 12, MT = 8, MB = 24;
 // when one is actually supplied, so charts without it keep today's exact layout.
 const hasSecondX = computed(() => !!(props.secondXValues && props.secondXValues.length));
 const MT_EFF = computed(() => (hasSecondX.value ? MT + 16 : MT));
-// The y-axis unit shown on screen and in exports. A spectrum is the force amplitude (N); a chart
-// whose host gave no unit shows none rather than a made-up one.
-const yLabelUnit = computed(() => props.yUnit || (props.kind === 'line' ? 'N' : ''));
+// The y-axis unit shown on screen and in exports. A spectrum is the force amplitude in N rms; a
+// chart whose host gave no unit shows none rather than a made-up one.
+const yLabelUnit = computed(() => displayUnit(props.kind, props.yUnit || (props.kind === 'line' ? 'N' : '')) ?? '');
 const yTitle = computed(() => yAxisTitle(props.kind, yLabelUnit.value));
 const stroke = computed(() => props.color || '#0d9488');
 const peakNum = computed(() => {

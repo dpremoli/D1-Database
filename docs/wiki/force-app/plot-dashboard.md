@@ -115,7 +115,7 @@ chip turns Difference off.
 
 Right-click any Signals chart and choose **Save chart as PNG** or **Save chart as SVG**. The file
 is a report-styled figure, not a screenshot: white background, a title with the operation tag, axis
-and mode, axis titles with units (*Time (s)*, *Force (N)*, *Frequency (Hz)*, *Amplitude (N)*), ticks,
+and mode, axis titles with units (*Time (s)*, *Force (N)*, *Frequency (Hz)*, *Amplitude (N rms)*), ticks,
 the trace for the current zoom, the shaded crop window and, if you have cuts in Compare, a legend
 naming each one. The PNG is the same figure drawn at twice the size. Long traces are thinned for
 the file, keeping each stretch's minimum and maximum, so peaks survive. Spectrum charts have only
@@ -242,6 +242,10 @@ In **Lite** view, the FRM panel previews **raw** and **filtered** side by side, 
 the filtered spectrum is drawn dashed over the active axis:
 
 ![Filter preview](../images/force-app/plot-filters-page.png)
+
+Spectrum charts are in **N rms**: a steady sine of amplitude A reads A/√2. The dashed filtered
+overlay uses the same scale as the solid spectrum, so the two are directly comparable (before this
+change the overlay was a density in N/√Hz and sat on a different scale).
 
 - **Load profile… / Save…** stores and reuses named filter chains.
 - **Apply (Lite)** makes the chain this cut's default. *Lite* recomputes it live, but *Full* and
