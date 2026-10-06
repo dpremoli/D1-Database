@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 
 # aliased: `platform` is also a form field name on /support/report-bug (the renderer's UA string)
@@ -276,6 +277,33 @@ def _load_labamp_config() -> dict:
 
 _labamp_cfg = _load_labamp_config()
 _labamp = None  # type: ignore[assignment]
+
+_DEFAULT_ANALOG_FULLSCALE_V = 10.0
+
+
+def _valid_fullscale_v(v: object) -> bool:
+    """A usable analog full-scale voltage: a real number (not a bool), finite and above zero."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v > 0
+
+
+def _analog_fullscale_v() -> float:
+    """The Lab Amp's analog full scale in volts. A stored value that is not a positive finite
+    number (a hand-edited labamp.json, or one saved before PUT validated it) falls back to the
+    default with a warning rather than failing every NI-DAQ start and /labamp/* call."""
+    v = _labamp_cfg.get("analog_fullscale_v", _DEFAULT_ANALOG_FULLSCALE_V)
+    if isinstance(v, str):  # an older hand-edited "5.0" still worked through float()
+        try:
+            v = float(v)
+        except ValueError:
+            pass
+    if _valid_fullscale_v(v):
+        return float(v)
+    log.warning(
+        "labamp config analog_fullscale_v=%r is not a positive finite number; using %s V",
+        v,
+        _DEFAULT_ANALOG_FULLSCALE_V,
+    )
+    return _DEFAULT_ANALOG_FULLSCALE_V
 
 
 def _rebuild_labamp() -> None:
@@ -1779,7 +1807,7 @@ async def record_start(cfg: RecordConfig) -> dict:
         # The gains below, the live rail detector (session.py) and finalize's clipped flags must all
         # use the SAME analog full scale: the Lab Amp's (settings or ANALOG_FULLSCALE_V), not
         # RecordConfig's 10 V default, or a rig on another range never rails.
-        vfs = float(_labamp_cfg.get("analog_fullscale_v", 10.0))
+        vfs = _analog_fullscale_v()
         cfg.analog_fullscale_v = vfs
         # The NI-DAQ page's channel model is the source of truth for physical channels + per-channel
         # gains. A request may still override with an explicit non-default channel list.
@@ -2322,7 +2350,7 @@ def _daq() -> tuple[int, int, int, float]:
     """(nidaq_bits, dac_bits, effective_bits, analog_fullscale_v). Effective = chain bottleneck."""
     nidaq = int(_labamp_cfg.get("nidaq_bits", 16))
     dac = int(_labamp_cfg.get("labamp_dac_bits", 12))
-    vfs = float(_labamp_cfg.get("analog_fullscale_v", 10.0))
+    vfs = _analog_fullscale_v()
     return nidaq, dac, effective_bits(dac, nidaq), vfs
 
 
@@ -2464,6 +2492,8 @@ async def labamp_post_config(body: dict) -> dict:
             raise HTTPException(400, "channels must be an integer from 1 to 64")
     if "mode" in body and body["mode"] not in ("mock", "real"):
         raise HTTPException(400, 'mode must be "mock" or "real"')
+    if "analog_fullscale_v" in body and not _valid_fullscale_v(body["analog_fullscale_v"]):
+        raise HTTPException(422, "analog_fullscale_v must be a finite number above 0 (volts)")
     for k in (
         "base_url",
         "channels",
