@@ -6,12 +6,13 @@
 			<section v-if="data.stock_origins.length || data.hidden.stock_origins">
 				<h4>Raw stock</h4>
 				<ul>
-					<li v-for="s in data.stock_origins" :key="s.lot_id + s.via_sample_id" class="d1-tl-node d1-tl-stock">
-						<router-link :to="`/content/raw_stock_lots/${s.lot_id}`">{{ s.lot_code }}</router-link>
+					<li v-for="s in data.stock_origins" :key="`${s.lot_id}|${s.via_sample_id}`" class="d1-tl-node d1-tl-stock">
+						<router-link :to="`/content/raw_stock_lots/${s.lot_id}`">{{ s.lot_code || 'Stock lot' }}</router-link>
 						<span class="d1-tl-sub">
 							{{ [s.stock_type, s.supplier_name].filter(Boolean).join(' · ') }}
 							<template v-if="s.mass_used_grams !== null"> · {{ s.mass_used_grams }} g used</template>
 							<template v-if="s.via_sample_code && s.depth > 0"> · via {{ s.via_sample_code }}</template>
+							<template v-if="s.through_hidden"> · via a sample you cannot see</template>
 						</span>
 					</li>
 					<li v-if="data.hidden.stock_origins" class="d1-tl-hidden">{{ hiddenText(data.hidden.stock_origins) }}</li>
@@ -24,11 +25,11 @@
 					<li v-if="data.hidden.ancestors" class="d1-tl-hidden">{{ hiddenText(data.hidden.ancestors) }}</li>
 					<li
 						v-for="a in ancestors"
-						:key="a.sample_id + a.depth"
+						:key="a.sample_id"
 						class="d1-tl-node"
 						:style="{ marginLeft: `${Math.min(a.indent, 6) * 10}px` }"
 					>
-						<router-link :to="`/content/physical_samples/${a.sample_id}`">{{ a.sample_code }}</router-link>
+						<router-link :to="`/content/physical_samples/${a.sample_id}`">{{ a.sample_code || 'Sample' }}</router-link>
 						<span class="d1-tl-sub">
 							{{ [a.form, relation(a)].filter(Boolean).join(' · ') }}
 							<template v-if="a.through_hidden"> · via a sample you cannot see</template>
@@ -67,11 +68,11 @@
 				<ul>
 					<li
 						v-for="d in descendants"
-						:key="d.sample_id + d.depth"
+						:key="d.sample_id"
 						class="d1-tl-node"
 						:style="{ marginLeft: `${Math.min(d.indent, 6) * 10}px` }"
 					>
-						<router-link :to="`/content/physical_samples/${d.sample_id}`">{{ d.sample_code }}</router-link>
+						<router-link :to="`/content/physical_samples/${d.sample_id}`">{{ d.sample_code || 'Sample' }}</router-link>
 						<span class="d1-tl-sub">
 							{{ [d.form, relation(d)].filter(Boolean).join(' · ') }}
 							<template v-if="d.through_hidden"> · via a sample you cannot see</template>
@@ -81,9 +82,7 @@
 				</ul>
 			</section>
 
-			<div v-if="truncatedNames.length" class="d1-tl-msg d1-tl-err">
-				Very long history: only the first 500 entries of {{ truncatedNames.join(', ') }} are shown.
-			</div>
+			<div v-for="t in truncatedNotes" :key="t" class="d1-tl-msg d1-tl-err">{{ t }}</div>
 		</div>
 	</div>
 </template>
@@ -136,7 +135,14 @@ const ancestors = computed(() => {
 	return rows.map((a: any) => ({ ...a, indent: top - a.depth }));
 });
 const descendants = computed(() => (data.value?.descendants ?? []).map((d: any) => ({ ...d, indent: d.depth - 1 })));
-const truncatedNames = computed(() => Object.keys(data.value?.truncated ?? {}).map((k) => k.replace('_', ' ')));
+// Each list is capped at 500 by the server: the nearest relatives, and the newest events.
+const TRUNCATED_TEXT: Record<string, string> = {
+	ancestors: 'Very long history: only the 500 nearest ancestors are shown.',
+	descendants: 'Very long history: only the 500 nearest descendants are shown.',
+	stock_origins: 'Very long history: only the 500 nearest raw stock lots are shown.',
+	events: 'Very long history: only the newest 500 operations and tests are shown.',
+};
+const truncatedNotes = computed(() => Object.keys(data.value?.truncated ?? {}).map((k) => TRUNCATED_TEXT[k] ?? `Very long history: ${k.replace('_', ' ')} is cut short.`));
 
 function relation(n: any): string {
 	const parts: string[] = [];
