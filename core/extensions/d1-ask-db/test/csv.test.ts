@@ -1,7 +1,7 @@
 // Run: node --experimental-strip-types --test core/extensions/d1-ask-db/test/*.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { csvCell, csvFilename, csvField, toCsv } from '../src/csv.ts';
+import { csvCell, guardFormula, csvFilename, csvField, toCsv } from '../src/csv.ts';
 
 test('csvCell: null, undefined, NaN and Infinity are empty', () => {
 	for (const v of [null, undefined, NaN, Infinity, -Infinity, new Date('x')]) assert.equal(csvCell(v), '');
@@ -36,4 +36,18 @@ test('csvFilename: slug + date, accents stripped, capped, fallback', () => {
 	assert.equal(csvFilename('???', d), 'ask-answer-2026-10-05.csv');
 	const long = csvFilename('a'.repeat(200), d);
 	assert.ok(long.length <= 'ask-'.length + 50 + '-2026-10-05.csv'.length);
+});
+
+test('csvCell: text starting with = + - @ tab or CR is neutralised against formula injection', () => {
+	for (const v of ['=SUM(A1)', '+1+1', '-2+3', '@SUM(1)', '\tcmd', '\rcmd', '=HYPERLINK("http://x","y")', '-']) {
+		assert.equal(csvCell(v), `'${v}`, JSON.stringify(v));
+	}
+	assert.equal(csvField(csvCell('=1,2')), `"'=1,2"`);
+	assert.equal(toCsv(['=bad'], [{ '=bad': '@x' }]), "\ufeff'=bad\r\n'@x\r\n");
+});
+
+test('csvCell: plain numbers (as strings or numbers) and ordinary text are untouched', () => {
+	for (const v of ['-5', '+5', '-1.5', '3', '1e5', '-1.2E-3', 'abc', 'a=b', ' =x', '2026-10-05', '']) assert.equal(csvCell(v), v);
+	assert.equal(csvCell(-5), '-5');
+	assert.equal(guardFormula('-5-5'), "'-5-5");
 });

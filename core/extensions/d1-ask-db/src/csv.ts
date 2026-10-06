@@ -1,5 +1,16 @@
 /** Pure helpers for the "Download CSV" answer action (RFC 4180, UTF-8 BOM for Excel). */
 
+const PLAIN_NUMBER = /^[+-]?\d+(\.\d+)?([eE][+-]?\d+)?$/;
+
+/**
+ * Spreadsheet formula guard: a text cell starting with = + - @ tab or CR is run as a formula by
+ * Excel / Sheets, so it gets a leading apostrophe. Plain-number strings are left alone (Postgres
+ * numerics arrive as strings, and negatives must stay numeric).
+ */
+export function guardFormula(text: string): string {
+	return /^[=+\-@\t\r]/.test(text) && !PLAIN_NUMBER.test(text) ? `'${text}` : text;
+}
+
 /** One cell as text: null, undefined and NaN/Infinity become empty; objects become JSON. */
 export function csvCell(value: unknown): string {
 	if (value === null || value === undefined) return '';
@@ -7,7 +18,7 @@ export function csvCell(value: unknown): string {
 	if (typeof value === 'bigint') return value.toString();
 	if (value instanceof Date) return Number.isNaN(value.getTime()) ? '' : value.toISOString();
 	if (typeof value === 'object') return JSON.stringify(value);
-	return String(value);
+	return guardFormula(String(value));
 }
 
 /** Quote a field only when it has to be: a comma, a double quote, CR or LF. */
@@ -17,7 +28,7 @@ export function csvField(text: string): string {
 
 /** The whole file body: header row, then one CRLF-terminated line per row, after a BOM. */
 export function toCsv(columns: string[], rows: Record<string, unknown>[]): string {
-	const lines = [columns.map((c) => csvField(c)).join(',')];
+	const lines = [columns.map((c) => csvField(guardFormula(c))).join(',')];
 	for (const row of rows) lines.push(columns.map((c) => csvField(csvCell(row[c]))).join(','));
 	return '﻿' + lines.join('\r\n') + '\r\n';
 }
