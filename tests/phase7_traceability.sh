@@ -27,16 +27,18 @@ run_eq() {
 # leftovers of an earlier killed run are removed first. Only the P7-* rows this script creates
 # are touched. Rows written to audit_logs stay: it is append-only by design.
 FIXTURE_CODES="'P7-BILLET','P7-DISC','P7-PIECE-A','P7-PIECE-B'"
+# Also the diamond (P7-D-*) and ladder (P7-L-*) fixtures of the "visit each sample once" checks.
+FIXTURE_MATCH="(sample_code IN ($FIXTURE_CODES) OR sample_code LIKE 'P7-D-%' OR sample_code LIKE 'P7-L-%')"
 cleanup_fixture() {
     $PSQL -c "
 BEGIN;
-DELETE FROM test_sessions            WHERE sample_id IN (SELECT sample_id FROM physical_samples WHERE sample_code IN ($FIXTURE_CODES));
-DELETE FROM manufacturing_operations WHERE sample_id IN (SELECT sample_id FROM physical_samples WHERE sample_code IN ($FIXTURE_CODES));
-DELETE FROM sample_stock_provenance  WHERE sample_id IN (SELECT sample_id FROM physical_samples WHERE sample_code IN ($FIXTURE_CODES))
+DELETE FROM test_sessions            WHERE sample_id IN (SELECT sample_id FROM physical_samples WHERE $FIXTURE_MATCH);
+DELETE FROM manufacturing_operations WHERE sample_id IN (SELECT sample_id FROM physical_samples WHERE $FIXTURE_MATCH);
+DELETE FROM sample_stock_provenance  WHERE sample_id IN (SELECT sample_id FROM physical_samples WHERE $FIXTURE_MATCH)
                                         OR lot_id IN (SELECT lot_id FROM raw_stock_lots WHERE lot_code = 'P7-LOT-001');
-DELETE FROM sample_genealogy         WHERE child_sample_id  IN (SELECT sample_id FROM physical_samples WHERE sample_code IN ($FIXTURE_CODES))
-                                        OR parent_sample_id IN (SELECT sample_id FROM physical_samples WHERE sample_code IN ($FIXTURE_CODES));
-DELETE FROM physical_samples         WHERE sample_code IN ($FIXTURE_CODES);
+DELETE FROM sample_genealogy         WHERE child_sample_id  IN (SELECT sample_id FROM physical_samples WHERE $FIXTURE_MATCH)
+                                        OR parent_sample_id IN (SELECT sample_id FROM physical_samples WHERE $FIXTURE_MATCH);
+DELETE FROM physical_samples         WHERE $FIXTURE_MATCH;
 DELETE FROM raw_stock_lots           WHERE lot_code = 'P7-LOT-001';
 COMMIT;" >/dev/null
 }
@@ -121,6 +123,75 @@ run_eq "PIECE-A timeline has 2 events" \
 run_eq "First timeline event is the manufacturing operation" \
     "SELECT event_type FROM f_sample_timeline($PA) ORDER BY event_date LIMIT 1" \
     "manufacturing_operation"
+
+echo "== Genealogy walks visit each sample once (diamond, cycle, ladder) =="
+# Diamond D-A -> D-B, D-A -> D-C, D-B -> D-D, D-C -> D-D (parent -> child): two paths from A to D.
+# Cycle D-X -> D-Y -> D-Z -> D-X must terminate. Ladder: a top, 30 levels of two samples, a
+# bottom, each level the parent of both samples of the next: 2^31 paths, 62 samples. All inside
+# one DO block (one transaction); the timing check raises when a walk takes 1 s or more.
+if ! diamond_err=$($PSQL -c "
+DO \$\$
+DECLARE a uuid; b uuid; c uuid; d uuid; x uuid; y uuid; z uuid;
+        top uuid; bottom uuid; prev uuid[]; cur uuid[]; i int; t0 timestamptz;
+BEGIN
+  INSERT INTO physical_samples (sample_code, form) VALUES ('P7-D-A','coupon') RETURNING sample_id INTO a;
+  INSERT INTO physical_samples (sample_code, form) VALUES ('P7-D-B','coupon') RETURNING sample_id INTO b;
+  INSERT INTO physical_samples (sample_code, form) VALUES ('P7-D-C','coupon') RETURNING sample_id INTO c;
+  INSERT INTO physical_samples (sample_code, form) VALUES ('P7-D-D','coupon') RETURNING sample_id INTO d;
+  INSERT INTO sample_genealogy (child_sample_id,parent_sample_id,relationship_type,fraction) VALUES
+    (b,a,'cut_from',0.5), (c,a,'cut_from',0.5), (d,b,'derived_from',0.25), (d,c,'sintered_from',0.75);
+  INSERT INTO physical_samples (sample_code, form) VALUES ('P7-D-X','coupon') RETURNING sample_id INTO x;
+  INSERT INTO physical_samples (sample_code, form) VALUES ('P7-D-Y','coupon') RETURNING sample_id INTO y;
+  INSERT INTO physical_samples (sample_code, form) VALUES ('P7-D-Z','coupon') RETURNING sample_id INTO z;
+  INSERT INTO sample_genealogy (child_sample_id,parent_sample_id) VALUES (y,x), (z,y), (x,z);
+
+  IF (SELECT count(*) FROM f_trace_ancestors(d)) <> 4 THEN RAISE EXCEPTION 'diamond ancestors: want 4 rows'; END IF;
+  IF (SELECT count(*) FROM f_trace_ancestors(d) WHERE sample_id = a) <> 1 THEN RAISE EXCEPTION 'diamond: A not exactly once'; END IF;
+  IF (SELECT depth FROM f_trace_ancestors(d) WHERE sample_id = a) <> 2 THEN RAISE EXCEPTION 'diamond: A not at depth 2'; END IF;
+  -- tie between B and C (both depth 1 parents of D, both parents of nothing else): lowest sample_id wins
+  IF (SELECT path FROM f_trace_ancestors(d) WHERE sample_id = a) <> ARRAY[d, least(b,c), a] THEN
+    RAISE EXCEPTION 'diamond: path to A is not the lowest-id shortest path'; END IF;
+  IF (SELECT count(*) FROM f_trace_descendants(a)) <> 4 THEN RAISE EXCEPTION 'diamond descendants: want 4 rows'; END IF;
+  IF (SELECT depth FROM f_trace_descendants(a) WHERE sample_id = d) <> 2 THEN RAISE EXCEPTION 'diamond: D not at depth 2'; END IF;
+  -- the edge columns come from the edge that reached the sample on the reported path
+  IF (SELECT fraction FROM f_trace_descendants(a) WHERE sample_id = d)
+     IS DISTINCT FROM (SELECT fraction FROM sample_genealogy WHERE parent_sample_id = least(b,c) AND child_sample_id = d)
+  THEN RAISE EXCEPTION 'diamond: edge fraction does not match the path'; END IF;
+
+  IF (SELECT count(*) FROM f_trace_ancestors(x)) <> 3 THEN RAISE EXCEPTION 'cycle ancestors: want 3 rows'; END IF;
+  IF (SELECT count(*) FROM f_trace_descendants(x)) <> 3 THEN RAISE EXCEPTION 'cycle descendants: want 3 rows'; END IF;
+  IF (SELECT count(*) FROM f_trace_ancestors(gen_random_uuid())) <> 0 THEN RAISE EXCEPTION 'unknown sample: want 0 rows'; END IF;
+
+  INSERT INTO physical_samples (sample_code, form) VALUES ('P7-L-TOP','coupon') RETURNING sample_id INTO top;
+  prev := ARRAY[top];
+  FOR i IN 1..30 LOOP
+    cur := '{}';
+    FOR k IN 0..1 LOOP
+      INSERT INTO physical_samples (sample_code, form) VALUES ('P7-L-' || i || '-' || k, 'coupon') RETURNING sample_id INTO x;
+      cur := cur || x;
+      INSERT INTO sample_genealogy (child_sample_id,parent_sample_id) SELECT x, p FROM unnest(prev) AS p;
+    END LOOP;
+    prev := cur;
+  END LOOP;
+  INSERT INTO physical_samples (sample_code, form) VALUES ('P7-L-BOTTOM','coupon') RETURNING sample_id INTO bottom;
+  INSERT INTO sample_genealogy (child_sample_id,parent_sample_id) SELECT bottom, p FROM unnest(prev) AS p;
+
+  t0 := clock_timestamp();
+  IF (SELECT count(*) FROM f_trace_ancestors(bottom)) <> 62 THEN RAISE EXCEPTION 'ladder ancestors: want 62 rows'; END IF;
+  IF clock_timestamp() - t0 >= interval '1 second' THEN RAISE EXCEPTION 'ladder ancestors took %', clock_timestamp() - t0; END IF;
+  IF (SELECT depth FROM f_trace_ancestors(bottom) WHERE sample_id = top) <> 31 THEN RAISE EXCEPTION 'ladder: top not at depth 31'; END IF;
+  t0 := clock_timestamp();
+  IF (SELECT count(*) FROM f_trace_descendants(top)) <> 62 THEN RAISE EXCEPTION 'ladder descendants: want 62 rows'; END IF;
+  IF clock_timestamp() - t0 >= interval '1 second' THEN RAISE EXCEPTION 'ladder descendants took %', clock_timestamp() - t0; END IF;
+  IF (SELECT count(DISTINCT sample_id) FROM f_trace_descendants(top)) <> 62 THEN RAISE EXCEPTION 'ladder: a sample repeats'; END IF;
+END \$\$;
+" 2>&1 >/dev/null); then
+    bad "diamond / cycle / ladder checks failed: $diamond_err"
+else
+    ok "diamond: A once at depth 2 from D (and D once from A), lowest-id shortest path, edge matches"
+    ok "cycle terminates with each sample once, in both directions; unknown sample gives no rows"
+    ok "30-level ladder (2^31 paths): 62 rows in under 1 s, both directions, each sample once"
+fi
 
 echo
 echo "Phase 7: $pass passed, $fail failed"
