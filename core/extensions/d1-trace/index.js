@@ -5,8 +5,8 @@
 //
 // The four traceability functions (db/migrations/20260619000014_traceability.sql; the two genealogy
 // walks are plpgsql since 20261006000136) run as the database owner, so they ignore Directus
-// permissions. This endpoint uses them only to find
-// WHICH records are related (ids, depth, which node each was reached from). Every value it returns
+// permissions. This endpoint uses them only to find WHICH records are related (ids, depth, which
+// node each was reached from). Every value it returns
 // (codes, forms, labels, dates, status, relationship type, fraction, mass) is then read through
 // Directus's ItemsService with req.accountability, so a record the caller cannot read is dropped
 // and only counted, and a field the role cannot read is simply absent. A sample the caller cannot

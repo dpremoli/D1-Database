@@ -22,10 +22,10 @@ sample exactly once, at its minimum depth. `path` is one shortest route from the
 starting sample (the starting sample first), and `relationship_type` / `fraction`
 are those of the edge that reached the sample on that route. If several routes
 have the same length, the step before each sample is the lowest `sample_id` among
-the samples one level nearer that link to it, so results are repeatable. A sample with two
-parents that share a grandparent therefore lists the grandparent once, at depth 2;
-the other route is not listed (query `sample_genealogy` for the edges between the
-returned samples if you need every link). Before migration 20261006000136 these
+the samples one level nearer that link to it, so results are repeatable. A sample
+with two parents that share a grandparent therefore lists the grandparent once, at
+depth 2; the other route is not listed (query `sample_genealogy` for the edges
+between the returned samples if you need every link). Before migration 20261006000136 these
 functions listed one row per route, so diamond-shaped genealogies grew
 exponentially (a 24-level ladder took over two minutes); a 30-level ladder now
 takes milliseconds. `f_trace_stock_origins` builds on `f_trace_ancestors`, so it

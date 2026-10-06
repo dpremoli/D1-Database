@@ -14,8 +14,8 @@ need the rig or a live Directus go into `docs/runbooks/physical-test-backlog.md`
 |---|---|---|---|
 | Q — Axis map | P6 follow-up | `agent-a1be65656a21052ac` / `worktree-agent-a1be65656a21052ac` | merged (0cfc4e3) |
 | R — Genealogy functions | f_trace_* rewrite | `agent-a5e569554167ef559` / `worktree-agent-a5e569554167ef559` | merged (66f1e96) |
-| /simplify (Opus) | all | — | not started |
-| /code-review high (Opus) | all | — | Q reviewed, fixes in 73b8674; R in review |
+| /simplify (Opus) | all | — | done (folded into the reviews) |
+| /code-review high (Opus) | all | — | reviewed, fixes 73b8674 + fe2ff70, re-reviewed, fixes in next commit |
 
 ## Q. Cutting-metrics axis map
 

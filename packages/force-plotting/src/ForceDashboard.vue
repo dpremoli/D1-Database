@@ -509,9 +509,10 @@ removeLegacyAxisMap();   // the old single choice was made against the previous 
 const onAxisMapChange = () => writeAxisMapForSubtype(axisMapSubtype.value, parseAxisMap(axisMapSel.value));
 const axisMap = computed(() => parseAxisMap(axisMapSel.value));
 const AXIS_MAP_STANDARD = formatAxisMap(DEFAULT_AXIS_MAP);
-// Operation record first (editable above), else the capture's own copy.
-const cutFeed = computed(() => numOrNull(editOpFeedMmPerRev.value) ?? numOrNull(detail.value?.feed));
-const cutAp = computed(() => numOrNull(editOpAxialDoc.value) ?? numOrNull(detail.value?.depth_of_cut));
+// Operation record first (editable above), else the capture's own copy. With no (readable) operation
+// the editOp* refs still hold the previous operation's values, so they are ignored then.
+const cutFeed = computed(() => (op.value ? numOrNull(editOpFeedMmPerRev.value) : null) ?? numOrNull(detail.value?.feed));
+const cutAp = computed(() => (op.value ? numOrNull(editOpAxialDoc.value) : null) ?? numOrNull(detail.value?.depth_of_cut));
 // Facing, grooving and parting spiral inwards: D_mid uses the same origin (the active crop start,
 // the saved crop when there is one) and the same feed (the geometry feed) as the plots' radial axis.
 const cutting = computed(() => {
