@@ -115,3 +115,5 @@ export {
 export type { DiagState, PickerBucket, PickerRow, PickerGroup, GroupBy } from './diagPicker';
 export { updateRecipe } from './diagRecipes';
 export { exportRecipeJson, parseRecipeJson, validateRecipe, isModifiedSinceLoaded } from './recipeIo';
+export { buildPatch, planBatch, runBatch, summaryLine, builtWithRecipe } from './diagBatch';
+export type { BatchRow, BatchItem, BatchSummary, BatchProgress, BatchAction } from './diagBatch';

@@ -18,10 +18,11 @@
 // process_diag_row, which bakes every per-point statistic into attrs.d1an and the diag octree.
 // The browser only thresholds and highlights what the server already computed.
 import { computed, onMounted, ref } from 'vue';
-import { toPickerRow, type Recipe } from '@d1/force-plotting';
+import { buildPatch, toPickerRow, type BatchRow, type Recipe } from '@d1/force-plotting';
 import { api } from '../directusClient';
 import StandaloneDiagnosticsWorkbench from './StandaloneDiagnosticsWorkbench.vue';
 import DiagPicker from './DiagPicker.vue';
+import DiagBatchDialog from './DiagBatchDialog.vue';
 
 type DiagState = 'done' | 'pending' | 'processing' | 'error' | null;
 
@@ -62,6 +63,13 @@ function label(r: Row): string {
 }
 const pickerRows = computed(() => rows.value.map(toPickerRow));
 const checked = ref<string[]>([]);
+const batchOpen = ref(false);
+const batchRows = computed<BatchRow[]>(() => {
+	const ids = new Set(checked.value);
+	return rows.value.filter((r) => ids.has(r.id)).map((r) => ({
+		id: r.id, code: label(r), diag_status: r.diag_status, diag_path: r.diag_path, diag_recipe: r.diag_recipe,
+	}));
+});
 
 async function loadRows() {
 	loading.value = true; err.value = null;
@@ -98,14 +106,13 @@ async function build(recipe?: Recipe) {
 	if (!r?.id || building.value) return;
 	building.value = true; buildMsg.value = 'Requesting diagnostics build on the host…';
 	try {
-		const patch: Record<string, unknown> = {
-			diag_status: 'pending', diag_requested_at: new Date().toISOString(),
-		};
+		// buildPatch is shared with "Apply recipe to selected" so both send the same request.
 		// A Bake from the workbench carries the edited recipe; persist it so process_diag_row
 		// bakes it and claim_diag's hash reflects it. A plain Build/Retry leaves diag_recipe
 		// untouched (NULL = the built-in default). Painted layers need no plumbing here: the
 		// workbench writes diag_layer rows directly, and process_diag_row reads them at bake.
-		if (recipe) { patch.diag_recipe = recipe; r.diag_recipe = recipe; }
+		const patch = buildPatch(recipe);
+		if (recipe) r.diag_recipe = recipe;
 		await api.patch(`/items/machining_force_analysis/${r.id}`, patch);
 		buildMsg.value = 'Analysing on the host (minutes for large ops)…';
 		const deadline = Date.now() + 15 * 60 * 1000;
@@ -156,8 +163,15 @@ async function build(recipe?: Recipe) {
 			>
 				{{ building ? 'Requesting…' : (selected.diag_status === 'error' ? 'Retry' : 'Build') }}
 			</button>
+			<button
+				class="btn sm" :disabled="!checked.length || building"
+				title="Queue a saved recipe on every ticked operation (skips ones already built with it)"
+				@click="batchOpen = true"
+			>Apply recipe to {{ checked.length }} selected…</button>
 			<button class="btn sm" :disabled="loading || building" title="Reload the operation list from the database" @click="loadRows">Refresh</button>
 		</header>
+
+		<DiagBatchDialog v-if="batchOpen" :rows="batchRows" @close="batchOpen = false" @finished="loadRows" />
 
 		<p v-if="err" class="diag-note error">{{ err }}</p>
 		<!-- While a workbench is open the bake state belongs in its own state strip, next to
