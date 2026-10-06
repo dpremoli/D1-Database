@@ -63,6 +63,12 @@ export function resolveShortcut(e: KeyLike, ctx: ShortcutContext): ShortcutActio
 		return 'save';
 	}
 
+	// Silencing a safety alarm is never blocked by another surface: stop-on-alarm opens the save
+	// dialog while the tone is still looping, and A must still work from behind or inside it. The
+	// alarm banner sits above the dialog (z-index), so the operator can also click it. Typing in a
+	// field is the only exception (an "a" in the notes field is text, not a command).
+	if (none && key.toLowerCase() === 'a' && ctx.alarmShowing && !isTypingTarget(e.target)) return 'acknowledge';
+
 	if (isTypingTarget(e.target)) return null;
 	if (ctx.saveDialogOpen) return null; // the dialog is modal: nothing behind it is reachable
 

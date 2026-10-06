@@ -97,7 +97,19 @@ describe('save dialog', () => {
 	it('blocks the page shortcuts behind the modal', () => {
 		expect(resolveShortcut(key('Enter', { ctrlKey: true }), open)).toBeNull();
 		expect(resolveShortcut(key('n', { ctrlKey: true }), open)).toBeNull();
-		expect(resolveShortcut(key('a'), { ...open, alarmShowing: true })).toBeNull();
+	});
+	it('A still acknowledges a showing alarm while the dialog is open (stop-on-alarm)', () => {
+		expect(resolveShortcut(key('a'), { ...open, alarmShowing: true })).toBe('acknowledge');
+		expect(resolveShortcut(key('A'), { ...open, alarmShowing: true, canStart: false })).toBe('acknowledge');
+		expect(resolveShortcut(key('a', { target: { tagName: 'BUTTON' } }), { ...open, alarmShowing: true })).toBe('acknowledge');
+	});
+	it('A does nothing in the dialog when no alarm is showing, or while typing in a dialog field', () => {
+		expect(resolveShortcut(key('a'), open)).toBeNull();
+		expect(resolveShortcut(key('a', { target: { tagName: 'INPUT', type: 'text' } }), { ...open, alarmShowing: true })).toBeNull();
+		expect(resolveShortcut(key('a', { target: { tagName: 'TEXTAREA' } }), { ...open, alarmShowing: true })).toBeNull();
+	});
+	it('a confirm prompt still owns the keyboard even with an alarm showing', () => {
+		expect(resolveShortcut(key('a'), { ...open, modalOpen: true, alarmShowing: true })).toBeNull();
 	});
 	it('plain Enter outside the dialog does nothing', () => {
 		expect(resolveShortcut(key('Enter'), ctx())).toBeNull();

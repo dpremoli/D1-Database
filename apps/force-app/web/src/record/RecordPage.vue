@@ -656,7 +656,12 @@ onBeforeUnmount(() => {
    100vh -- guaranteeing exactly 8px of overflow, and a scrollbar, on the default layout at every
    window size. A block formatting context keeps that margin inside. */
 .rec-wrap { min-height: 100vh; display: flow-root; background: radial-gradient(1200px 600px at 50% -10%, var(--bg-2), var(--bg)); padding-bottom: 24px; }
-.alarm-overlay { --banner: #dc2626; position: fixed; top: 0; left: 0; right: 0; z-index: 100; display: flex; align-items: center; gap: 14px; padding: 12px 20px;
+/* z-index 290: the topmost surface except the confirm prompt (300, launched from this banner's
+   Acknowledge button) and the offline banner (1000). It must sit above every dialog backdrop
+   (save 200, edit-metadata 250, virtual-channel builder 260): stop-on-alarm opens the save dialog
+   while the tone is still looping, and the operator has to be able to click Acknowledge.
+   z-order.test.ts pins this ordering. */
+.alarm-overlay { --banner: #dc2626; position: fixed; top: 0; left: 0; right: 0; z-index: 290; display: flex; align-items: center; gap: 14px; padding: 12px 20px;
 	color: #fff; background: #dc2626; box-shadow: 0 6px 24px rgba(220,38,38,0.5); animation: alarmpulse 0.9s ease-in-out infinite; }
 @keyframes alarmpulse { 0%,100% { background: #dc2626; } 50% { background: #991b1b; } }
 .alarm-overlay > .material-symbols-rounded { font-size: var(--icon-2xl); }
