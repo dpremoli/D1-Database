@@ -10,6 +10,13 @@ export function shouldPollDisk(mode: 'record' | 'playback', state: string): bool
 	return mode === 'record' && state === 'recording';
 }
 
+/** The pre-Start checklist (preflight.ts) reads free space and the amp/channel state while the
+ * page is waiting to Start, i.e. in record mode and not mid-cut. The disk poll above is reused for
+ * the free-space half, so a cut that is on screen (done/error) or about to start is covered too. */
+export function shouldPollPreflight(mode: 'record' | 'playback', state: string): boolean {
+	return mode === 'record' && state !== 'recording' && state !== 'finalizing';
+}
+
 /** Backup progress is only worth polling when a backup is configured. `enabled` arrives with the
  * first /backup/status reply, which on a remount is after the state is already 'recording', so
  * it is an input here and the watcher re-runs when it flips. */

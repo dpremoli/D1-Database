@@ -8,7 +8,7 @@ import { getWorkspace, WORKSPACE } from './workspace';
 import { startSync } from './directusSync';
 import { hwStatus } from './hwStatus';
 import { labamp } from './labampApi';
-import { IntervalGate, shouldPollBackup, shouldPollDisk } from './recordPolling';
+import { IntervalGate, shouldPollBackup, shouldPollDisk, shouldPollPreflight } from './recordPolling';
 import { shouldOpenSaveDialog } from './saveDialogGate';
 import { parseDismissedIds, parseSavedLayout } from './recordLayout';
 import PanelFrame from './panels/PanelFrame.vue';
@@ -184,7 +184,8 @@ async function checkDisk() {
 			diskInfo.free_gb = data.free_gb ?? -1;
 			diskInfo.total_gb = data.total_gb ?? 0;
 			diskInfo.used_pct = data.used_pct ?? 0;
-			w.alarms.evaluateDisk(diskInfo.free_gb);
+			// Also polled while idle for the pre-Start checklist: that must not raise the alarm.
+			if (st.state === 'recording') w.alarms.evaluateDisk(diskInfo.free_gb);
 		}
 	} catch { /* backend unreachable */ } finally { diskInfo.checking = false; }
 }
@@ -194,7 +195,13 @@ async function checkDisk() {
 // may mount (or the reconcile may adopt a cut) while already recording, with no state change left
 // to trigger the watcher (review 2.6).
 const diskGate = new IntervalGate(checkDisk, 30_000);
-watch([() => st.state, () => w.mode.value], ([s, m]) => diskGate.set(shouldPollDisk(m, s)), { immediate: true });
+// R4: it also runs while waiting to Start (preflight.ts reads hwStatus.diskFreeGb for the runway).
+watch([() => st.state, () => w.mode.value], ([s, m]) => diskGate.set(shouldPollDisk(m, s) || shouldPollPreflight(m, s)), { immediate: true });
+// The checklist's other inputs (amp mode, saved channel list), NI-DAQ only, refreshed on the same
+// terms and whenever the source changes.
+const preflightGate = new IntervalGate(() => { void w.refreshPreflight(); }, 15_000);
+watch([() => st.state, () => w.mode.value], ([s, m]) => preflightGate.set(shouldPollPreflight(m, s)), { immediate: true });
+watch(() => w.source.value, () => { void w.refreshPreflight(); });
 
 // ---- Live backup status ----
 const backupStatus = reactive<{ enabled: boolean; state: string; progress: number; connected: boolean; error: string | null }>({
@@ -466,6 +473,7 @@ onBeforeUnmount(() => {
 	// destroyed here is destroyed for the rest of the session -- see PlaybackEngine.suspend().
 	w.playback.suspend();
 	diskGate.stop();
+	preflightGate.stop();
 	backupGate.stop();
 	if (recoveryTickTimer) clearInterval(recoveryTickTimer);
 	gridRO?.disconnect();

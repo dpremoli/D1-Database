@@ -72,6 +72,12 @@ if (record) {
 	} else {
 		const before = (await (await fetch(`${recorder}/record/status`)).json()).id ?? null;
 		await start.click();
+		// No Sample is picked in the smoke run: the pre-flight asks "Start anyway" first (R4).
+		const anyway = page.getByTestId('start-anyway');
+		if (await anyway.isVisible({ timeout: 2000 }).catch(() => false)) {
+			console.log('pre-flight: no Sample -> "Start anyway"');
+			await anyway.click();
+		}
 		// The safety gate (fbda167) asks to test alarms before the first run of a session.
 		const skip = page.getByRole('button', { name: /start without testing/i });
 		if (await skip.isVisible({ timeout: 2000 }).catch(() => false)) {

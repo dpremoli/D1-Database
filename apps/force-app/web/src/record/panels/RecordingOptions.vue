@@ -177,7 +177,7 @@ onBeforeUnmount(() => {
 			 cut. Machine/Operator/Operation type (also identity-ish, but set-once-per-session facts
 			 rather than per-cut ones) live together in their own subpanel below. ─── -->
 		<div class="links">
-			<LookupField v-model="w.link.sampleId" :display-label="w.link.sampleLabel" label="Sample" placeholder="search sample code…"
+			<LookupField v-model="w.link.sampleId" data-focus="sample" :display-label="w.link.sampleLabel" label="Sample" placeholder="search sample code…"
 				icon="search" :search="w.searchSamples" :disabled="w.locked.value" @select="w.onSelectSample" />
 		</div>
 

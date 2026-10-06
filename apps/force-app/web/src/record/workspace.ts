@@ -22,6 +22,10 @@ import { spotlight } from '../ui/spotlight';
 import { FIELD_FOCUS, StartRequestError, sampleRateIssue } from './recordingErrors';
 import { nidaqHardware } from './nidaqHardware';
 import { railBannerText } from './railing';
+import { computePreflight, needsSampleConfirm, type AmpReading, type ChannelLike } from './preflight';
+import { hwStatus } from './hwStatus';
+import { nidaqApi } from '../nidaq/nidaqApi';
+import { authStore } from '../authStore';
 
 export type Axis = 'Fx' | 'Fy' | 'Fz';
 
@@ -288,6 +292,44 @@ export function createWorkspace() {
 			if (source.value === 'nidaq') alarms.evaluateTacho(st.tachoOk);
 		}
 	});
+
+	// R4: pre-flight checklist for Start (preflight.ts). Its inputs are read here: the amp and the
+	// saved channel list by refreshPreflight() (RecordPage polls it while waiting to Start), free
+	// space from the Record page's disk poll via hwStatus, the rest straight from the form.
+	const preflightReads = reactive<{ amp: AmpReading | null; channels: ChannelLike[] | null }>({ amp: null, channels: null });
+	async function refreshPreflight() {
+		if (source.value !== 'nidaq' || locked.value) return;
+		const [amp, chans] = await Promise.allSettled([labamp.status(), nidaqApi.getChannels()]);
+		// An unreadable amp or channel list is "not checked", never "failed": the recorder may just be
+		// starting up, and Start has its own error path for a backend that really is down.
+		preflightReads.amp = amp.status === 'fulfilled' ? { reachable: !!amp.value.reachable, mode: amp.value.mode ?? null, mock: !!amp.value.mock } : null;
+		preflightReads.channels = chans.status === 'fulfilled' ? chans.value.channels : null;
+	}
+	const preflight = computed(() => computePreflight({
+		source: source.value,
+		sampleSet: !!link.sampleId,
+		session: hasServerSession() ? 'server' : authStore.state.offline ? 'offline' : 'none',
+		amp: preflightReads.amp,
+		// The recorder measures the tacho only once samples flow, so there is nothing to report
+		// before Start (st.tachoOk is last cut's value until the next one begins).
+		tachoOk: null,
+		diskFreeGb: hwStatus.diskFreeGb >= 0 ? hwStatus.diskFreeGb : null,
+		sampleRate: cfg.sample_rate,
+		channels: preflightReads.channels,
+	}));
+	// A missing Sample is a warning, not a block: the first Start press shows "Start anyway".
+	const sampleConfirmOpen = ref(false);
+	watch(() => link.sampleId, (id) => { if (id) sampleConfirmOpen.value = false; });
+	watch(source, () => { sampleConfirmOpen.value = false; });
+	async function requestStart() {
+		if (busy.value) return;
+		if (needsSampleConfirm(preflight.value)) { sampleConfirmOpen.value = true; return; }
+		await start();
+	}
+	async function startAnyway() {
+		sampleConfirmOpen.value = false;
+		await start();
+	}
 
 	// R5: the backend latches which sensor channels railed this cut (st.railed). The banner names
 	// them once per cut: dismissing it keeps it gone until `railed` is empty again, which is what
@@ -1002,6 +1044,8 @@ export function createWorkspace() {
 		alarms,
 		// converging between-cuts auto-range
 		converge, convergeAfterCut,
+		// R4: pre-flight checklist and the Start flow that honours it
+		preflight, refreshPreflight, requestStart, startAnyway, sampleConfirmOpen,
 		// R5: live rail warning banner (once per cut)
 		railBanner, dismissRailBanner,
 		// Recording-behaviour toggles (Detect cut start / Drift compensation / Converging auto-range)
