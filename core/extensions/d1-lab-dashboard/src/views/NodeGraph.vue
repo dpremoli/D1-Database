@@ -43,13 +43,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
 import cytoscape from 'cytoscape';
-import { useD1Items } from '../composables/useD1Items';
-import { useRequestGate, errorText } from '../composables/useRequestGate';
+import { useItems, useRequestGate, errorText } from '@d1/ui';
 
 const props = defineProps<{ standalone?: boolean }>();
 const emit = defineEmits<{ (e: 'select', payload: { collection: string; id: string }): void }>();
 
-const { getItems, getItem } = useD1Items();
+const { getItems, getItem } = useItems();
 
 const graphEl = ref<HTMLElement | null>(null);
 const loading = ref(false);

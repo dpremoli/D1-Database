@@ -117,6 +117,27 @@ before saving and warns if someone else saved in between.
 (checked first thing in stage 1), "Edit" opens `/content/<c>/<id>` in the same tab. The result is
 then recorded in this spec.
 
+**Finding (stage 1, 2026-10-06): the drawer is possible, so the fallback is only a runtime guard.**
+Checked against the Directus source (`main`, which `directus/directus:11` tracks) and the installed
+`@directus/composables`, because no live Directus was available:
+
+- `app/src/components/register.ts` registers `VForm` and `VDrawer` with `app.component(...)`, so
+  `<v-form>` and `<v-drawer>` resolve in any extension template, the same as `v-button` and `v-icon`.
+- `app/src/composables/use-system.ts` provides `useFieldsStore` (with the user, collections,
+  permissions and other stores) through `STORES_INJECT`, and `useStores()` from
+  `@directus/extensions-sdk` returns it. `@directus/composables`' own `useCollection` calls
+  `useFieldsStore().getFieldsForCollectionSorted()` the same way.
+- The Data Studio item page itself renders `<v-form v-model="edits" :fields :initial-values
+  :primary-key>`, and `v-form` provides `values` to its interfaces, which the d1 interfaces inject.
+  `EditDrawer` uses the same props, so those interfaces see what they see in the Data Studio.
+
+`EditDrawer` therefore renders the real form. If `v-form` or the fields store is ever missing (a
+Directus upgrade renames it), the drawer does not open and the page navigates to
+`/content/<c>/<id>` instead. Not provable without a live Directus, so it is a backlog item: the
+form shows the custom interfaces and saves through them (see the physical test backlog).
+Deliberate gaps: the record is read with `fields=*` (relational interfaces fetch their own
+related rows), and fields the role may not read are hidden rather than shown disabled.
+
 "New" actions (new operation for this sample, new test, new campaign in this project) open
 `/content/<c>/+`. Pre-filling the parent needs a query-to-default mechanism Directus does not
 have, so it is out of scope (UX review D7 note).

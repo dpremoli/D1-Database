@@ -39,11 +39,11 @@
 			<div v-if="!selectedOp" class="d1-empty">Select a FAST run</div>
 			<div v-else class="d1-detail">
 				<div class="d1-detail-section">
-					<router-link class="d1-open" :to="`/content/manufacturing_operations/${selectedOp.operation_id}`">
-						<v-icon name="open_in_new" small />Open run in Directus
+					<router-link class="d1-open" :to="recordRoute('manufacturing_operations', selectedOp.operation_id)">
+						<v-icon name="open_in_new" small />Open run
 					</router-link>
-					<router-link v-if="selectedOp.sample_id?.sample_id" class="d1-open" :to="`/content/physical_samples/${selectedOp.sample_id.sample_id}`">
-						<v-icon name="open_in_new" small />Open sample in Directus
+					<router-link v-if="selectedOp.sample_id?.sample_id" class="d1-open" :to="recordRoute('physical_samples', selectedOp.sample_id.sample_id)">
+						<v-icon name="open_in_new" small />Open sample
 					</router-link>
 				</div>
 				<div class="d1-detail-section">
@@ -83,11 +83,10 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue';
-import { useD1Items } from '../composables/useD1Items';
-import { useRequestGate, errorText } from '../composables/useRequestGate';
+import { useItems, useRequestGate, errorText, recordRoute } from '@d1/ui';
 import NodeGraph from './NodeGraph.vue';
 
-const { getItems } = useD1Items();
+const { getItems } = useItems();
 
 const operations = ref<any[]>([]);
 const loadingOps = ref(false);

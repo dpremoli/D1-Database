@@ -90,6 +90,11 @@ cd core/extensions/<name> && npm ci && npm run build
 docker restart d1-database-directus-1     # extensions load at start-up
 ```
 
+Four extensions are npm workspaces of the repo root and have no lock file of their own:
+`d1-force-dashboard`, `d1-home`, `d1-lab-dashboard` and `d1-composition-bar`. Build them from the
+repo root instead: `npm ci`, then `npm run build:extension` (force dashboard) and
+`npm run build:extensions` (the other three).
+
 On the Windows host, `EXTENSIONS_AUTO_RELOAD` does not see changes across the bind mount, so
 always restart. [`core/README.md`](../../../core/README.md#extensions-coreextensions) lists every
 extension and what it does.

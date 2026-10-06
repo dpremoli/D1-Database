@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { useApi, useStores } from '@directus/extensions-sdk';
 import { useRouter } from 'vue-router';
+import { collectionRoute, recordRoute } from '@d1/ui';
 
 const api = useApi();
 const router = useRouter();
@@ -59,10 +60,10 @@ const actions: Action[] = [
 
 const stats = ref([
 	{ label: 'Samples', value: '—', icon: 'science', to: SAMPLES_LIST },
-	{ label: 'Machining', value: '—', icon: 'build', to: '/content/manufacturing_operations' },
+	{ label: 'Machining', value: '—', icon: 'build', to: collectionRoute('manufacturing_operations') },
 	{ label: 'FAST', value: '—', icon: 'whatshot', to: '/d1-fast-dashboard' },
-	{ label: 'Tests', value: '—', icon: 'biotech', to: '/content/test_sessions' },
-	{ label: 'Campaigns', value: '—', icon: 'flag', to: '/content/campaigns' },
+	{ label: 'Tests', value: '—', icon: 'biotech', to: collectionRoute('test_sessions') },
+	{ label: 'Campaigns', value: '—', icon: 'flag', to: collectionRoute('campaigns') },
 ]);
 
 // Recent activity: samples, operations, and tests merged into one feed,
@@ -123,7 +124,7 @@ onMounted(async () => {
 		const samples: Activity[] = (samplesRes.data.data ?? []).map((r: any) => ({
 			kind: 'sample', id: r.sample_id, code: r.sample_code,
 			meta: r.material_id?.common_name || r.form || '—', date: r.created_at,
-			to: `/content/physical_samples/${r.sample_id}`,
+			to: recordRoute('physical_samples', r.sample_id),
 		}));
 		const ops: Activity[] = (opsRes.data.data ?? []).map((r: any) => {
 			const isFast = r.process_category === 'sintering';
@@ -131,13 +132,13 @@ onMounted(async () => {
 				kind: isFast ? 'fast' as const : 'operation' as const,
 				id: r.operation_id, code: r.pass_code || r.sample_id?.sample_code || '—',
 				meta: r.sample_id?.sample_code || '—', date: r.created_at,
-				to: isFast ? `/d1-fast-dashboard?operation=${r.operation_id}` : `/content/manufacturing_operations/${r.operation_id}`,
+				to: isFast ? `/d1-fast-dashboard?operation=${r.operation_id}` : recordRoute('manufacturing_operations', r.operation_id),
 			};
 		});
 		const tests: Activity[] = (testsRes.data.data ?? []).map((r: any) => ({
 			kind: 'test', id: r.session_id, code: r.test_type || 'Test',
 			meta: r.sample_id?.sample_code || '—', date: r.created_at,
-			to: `/content/test_sessions/${r.session_id}`,
+			to: recordRoute('test_sessions', r.session_id),
 		}));
 		recent.value = [...samples, ...ops, ...tests]
 			.filter((a) => a.date)

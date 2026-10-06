@@ -129,6 +129,61 @@ named in the step.
   read test sessions, so a normal add never shows the "already in another campaign" note. Since:
   this batch (PR TBD).
 
+### Explorer pages (Home module)
+Restart Directus after `npm ci` and `npm run build:extensions` at the repo root so
+the rebuilt `d1-home`, `d1-lab-dashboard` and `d1-composition-bar` load, and apply migration 136.
+
+- [ ] **E1 — edit drawer saves through real interfaces.** On a sample page click **Edit**. Expect:
+  the drawer shows the same form as Content (sample code builder, material and project pickers,
+  geometry preview, linked files), with the record's values. Change the nickname and the form's
+  dimensions, press the tick: the drawer closes, the page shows the new values and the geometry
+  drawing redraws. Change a field through a custom interface (pick another material or machine)
+  and save: it is stored (check the Content form and Revisions). Press Cancel after an edit: a
+  "Discard your changes?" dialog appears. Check that `v-form` and `useFieldsStore` really are
+  available: if the drawer never opens and the browser goes to the Content form instead, that is
+  the guard in `EditDrawer` firing, and the spec's Editing section needs revising. Since: Explorer
+  pages E1 (PR pending).
+- [ ] **E1 — edit conflict and errors.** Open **Edit** on a sample, then change the same sample in
+  another tab (any field) and save it there. Back in the drawer, change a field and save: a warning
+  says someone else saved, with **Discard mine and reload** and **Save anyway**; both work. Clear a
+  required field (the sample code) and save: the Directus error text shows in the drawer and
+  nothing is saved. As a role that may not update samples: the save error is shown, not a blank
+  drawer. Since: Explorer pages E1 (PR pending).
+- [ ] **E1 — landing module after login.** Sign in as a Lab Member and as an admin from a fresh
+  browser session. Expect: Home is the first icon on the module bar, Content (the Data Studio)
+  follows the three dashboards. Note which page the app opens after login: Home (first module) or
+  Content. If it is Content, Directus does not land on the first module; the spec's "app.after
+  redirect" is then a follow-up decision. Check that a bar curated in Settings > Appearance that
+  already listed Home keeps it, first. `dbmate down` removes Home and moves Content to the front.
+  Since: Explorer pages E1 (PR pending).
+- [ ] **E1 — module bar order.** After migration 136 the bar reads Home, User Directory, File
+  Library, Insights, Lab Dashboard, Force Analysis, FAST Analysis, Content, Settings (for a bar
+  that had the shipped order), and every icon still opens its module. On a fresh install
+  (`scripts/configure_all.sh`) the same order is created. Since: Explorer pages E1 (PR pending).
+- [ ] **E1 — Sample page on real data.** Open `/admin/home/samples/<id>` for a sample with a parent,
+  children, a raw stock lot, machining and FAST operations, tests and linked archive files. Expect:
+  the header (code, nickname, status, project and campaign links, owner), the geometry drawing at
+  the right proportions, the material's composition bar equal to the material form's, a measured
+  mass or an "estimated" one, the life strip in the right order (stock, parents oldest first, this
+  sample centred, operations and tests by date, children) with every item a link, **View forces** on
+  machining operations and **View FAST** on sintering ones opening the right run, and the file
+  rows' copy-path buttons giving the same paths as the sample form. Narrow the browser below
+  ~640 px wide (or open the page in a split view): the strip becomes a vertical list. **Print
+  label** and **Report** open in a new tab. Operations and tests that you click open the
+  "not built yet" page with an *Open in Data Studio* button until stage 4. Dark theme: the page is
+  readable. Since: Explorer pages E1 (PR pending).
+- [ ] **E1 — Sample page with hidden relatives.** As a role whose item filter hides some of that
+  sample's relatives, operations or tests, open the page. Expect: the life strip shows only what
+  the role can open, with dashed "N not visible to you" markers where something was dropped (and
+  "via a sample you cannot see" on a relative reached only through a hidden one); the Operations
+  and Tests tables show only readable rows. A sample the role cannot read, and a made-up id, both
+  show "Not found or not visible to you" with a link back to Home. Since: Explorer pages E1 (PR
+  pending).
+- [ ] **E1 — links from Home and the dashboards.** On Home, the recent-activity sample cards and, in
+  the Lab Dashboard, "Open sample" and the timeline entries open the Sample page; operation and test
+  links open the placeholder page whose *Open in Data Studio* button opens the right Content form.
+  FAST runs on Home still open the FAST dashboard. Since: Explorer pages E1 (PR pending).
+
 ## B. Force rig (NI-DAQ, Lab Amp, packaged Windows app)
 
 Install the current release from the update feed on the acquisition PC. Use a real sample and

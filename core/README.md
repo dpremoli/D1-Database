@@ -41,7 +41,12 @@ committed.
 
 Mounted read-only at `/directus/extensions` (see `docker-compose.yml`). The
 Vue/TypeScript extensions are built in place (`npm install && npm run build` in
-the extension's folder; `dist/` is git-ignored). Restart the Directus container
+the extension's folder; `dist/` is git-ignored). Four of them are npm workspaces of the repo root
+because they import shared source: `d1-force-dashboard` (uses `packages/force-plotting`) and
+`d1-home`, `d1-lab-dashboard`, `d1-composition-bar` (use [`packages/d1-ui`](../packages/d1-ui/), the
+Explorer pages' kit). They have no `package-lock.json` of their own: run `npm ci` at the repo root,
+then `npm run build:extension` (force dashboard) or `npm run build:extensions` (the other three).
+Restart the Directus container
 after a rebuild — on the Windows host `EXTENSIONS_AUTO_RELOAD` does not pick up
 changes across the bind mount (ADR-0010).
 

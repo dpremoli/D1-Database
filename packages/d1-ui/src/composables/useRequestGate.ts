@@ -22,8 +22,3 @@ export function useRequestGate() {
 		},
 	};
 }
-
-// Text for a visible error from an Axios/Directus failure.
-export function errorText(e: any, fallback = 'Request failed'): string {
-	return e?.response?.data?.errors?.[0]?.message || e?.message || fallback;
-}

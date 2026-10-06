@@ -23,17 +23,18 @@ From left to right:
 
    | Icon | Module | What it is |
    |---|---|---|
-   | cube | **Content** | every collection (table) and its records |
+   | house | **Home** | the landing page, the formatted record pages and the guided *Register a sample* ([below](#the-home-page)) |
    | people | **User Directory** | Directus user accounts |
    | folder | **File Library** | uploaded files and indexed archive files |
    | chart | **Insights** | Directus's own dashboards |
    | grid | **Lab Dashboard** | the D1 overview of samples, machining and FAST ([Dashboards](dashboards-and-reports.md#lab-dashboard)) |
    | line chart | **Force Analysis** | the machining force dashboard ([Force data](force-data.md)) |
    | gauge | **FAST Analysis** | sintering traces ([FAST sintering data](fast-data.md)) |
+   | cube | **Content** | the Data Studio: every collection (table) and its records |
    | cog | **Settings** | data model, roles, policies (administrators only) |
 
-   **Home**, **Force Crawler** and **Ask the Database** are also modules. They are reached from
-   the Home page's tiles rather than the rail.
+   **Force Crawler** and **Ask the Database** are also modules. They are reached from the Home
+   page's tiles rather than the rail.
 
 2. **The navigation panel**: in Content, the collections grouped into folders (*Inventory*,
    *Manufacturing Operations*, *Manufacturing Methods*…). Type in *Search Collection…* to find
@@ -50,6 +51,12 @@ From left to right:
 *Ask the database*, *Manage people*, *Dashboards*, *Force Analysis*, *FAST Analysis*, *Force
 Crawler*), counts of samples, machining operations, FAST runs, tests and campaigns, and the most
 recent activity.
+
+Records on these pages open as **formatted pages** rather than Content forms. The first one built
+is the **Sample page** (`/admin/home/samples/<id>`, see [Samples](samples.md#the-sample-page));
+operations, tests, campaigns and projects will follow, and until then their links land on a page
+with an *Open in Data Studio* button. Content stays available for everything: it is after the
+dashboards on the rail.
 
 ## Working with records
 

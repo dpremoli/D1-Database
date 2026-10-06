@@ -1,6 +1,8 @@
 import { useApi } from '@directus/extensions-sdk';
 
-export function useD1Items() {
+// Thin wrapper over the Directus /items API, as the signed-in user, so permissions apply.
+// (Not the SDK's own `useItems` composable, which is a list-layout helper.)
+export function useItems() {
 	const api = useApi();
 
 	async function getItems(collection: string, params: Record<string, unknown> = {}): Promise<any[]> {
@@ -13,7 +15,12 @@ export function useD1Items() {
 		return data.data;
 	}
 
-	async function searchItems(collection: string, field: string, query: string, extra: Record<string, unknown> = {}): Promise<any[]> {
+	async function searchItems(
+		collection: string,
+		field: string,
+		query: string,
+		extra: Record<string, unknown> = {},
+	): Promise<any[]> {
 		return getItems(collection, {
 			...extra,
 			[`filter[${field}][_contains]`]: query,
