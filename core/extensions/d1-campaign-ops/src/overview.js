@@ -31,12 +31,14 @@ export function analysisState(rows) {
 	return worst(s) ?? (s.includes('done') ? 'done' : 'skipped');
 }
 
-// Same for the Diagnostics build (`diag_status`, null until someone requests a build). Rows with no
-// diag_status are ignored; 'none' when none of them has one.
+// Same for the Diagnostics build (`diag_status`, null until someone requests a build). A row with
+// no diag_status is an unbuilt file ('none'), so an operation is only 'done' when every one of its
+// files is built: error > processing > pending > none (some file not built yet) > done. 'none' too
+// when there are no rows at all.
 export function diagState(rows) {
-	const s = (rows ?? []).map((r) => r?.diag_status).filter(Boolean);
+	const s = (rows ?? []).map((r) => r?.diag_status ?? 'none');
 	if (!s.length) return 'none';
-	return worst(s) ?? 'done';
+	return worst(s) ?? (s.includes('none') ? 'none' : 'done');
 }
 
 const first = (rows, field) => (rows ?? []).map((r) => r?.[field]).find(Boolean) ?? null;
@@ -106,8 +108,12 @@ export function buildOverview({ samples = [], operations = [], tests = [], analy
 	);
 
 	// Force analysis only applies to machining operations (and anything that already has a row), so
-	// the progress denominator is those, not every operation of an imaging campaign.
-	const forceOps = opRows.filter((o) => o.process_category === 'machining' || o.analysis !== 'none');
+	// the progress denominator is those, not every operation of an imaging campaign. An operation
+	// whose files were all skipped is deliberately not analysed and is left out as well, otherwise
+	// the bar could never reach 100%.
+	const forceOps = opRows.filter(
+		(o) => (o.process_category === 'machining' || o.analysis !== 'none') && o.analysis !== 'skipped',
+	);
 	const countBy = (rows, key) => {
 		const out = {};
 		for (const r of rows) {

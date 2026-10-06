@@ -90,7 +90,8 @@ named in the step.
 - [ ] **D11 — campaign overview counts.** Open a machining trial and a testing campaign that have
   real data. Expect: sample, operation and test-session counts equal a hand count in the
   collection lists; "Force analysed n / m" equals the machining operations whose
-  `machining_force_analysis` rows are all `done`; the per-operation force-analysis and diagnostics
+  `machining_force_analysis` rows are all `done` (operations whose files are all `skipped` are not
+  counted, and "Diagnostics built" needs every file built); the per-operation force-analysis and diagnostics
   badges match the Force Analysis page, and an `error` badge shows the message on hover. As a role
   that cannot read `machining_force_analysis`, the force columns show "—" and a note, not an error.
   "Tests complete n / m" counts test sessions whose status is `processed` or `analysed` (compare

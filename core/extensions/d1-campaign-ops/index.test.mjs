@@ -15,11 +15,56 @@ test('analysisState rolls several files up, worst first', () => {
 	assert.equal(analysisState([{ status: 'skipped' }]), 'skipped');
 });
 
-test('diagState ignores rows with no diag_status', () => {
+test('diagState treats a missing diag_status as not built', () => {
+	assert.equal(diagState([]), 'none');
 	assert.equal(diagState([{ diag_status: null }, {}]), 'none');
-	assert.equal(diagState([{ diag_status: 'done' }, { diag_status: null }]), 'done');
+	assert.equal(diagState([{ diag_status: 'done' }, { diag_status: 'done' }]), 'done');
+	// one built file and one never requested: the operation is not built
+	assert.equal(diagState([{ diag_status: 'done' }, { diag_status: null }]), 'none');
 	assert.equal(diagState([{ diag_status: 'done' }, { diag_status: 'error' }]), 'error');
 	assert.equal(diagState([{ diag_status: 'pending' }, { diag_status: 'done' }]), 'pending');
+	assert.equal(diagState([{ diag_status: null }, { diag_status: 'processing' }]), 'processing');
+});
+
+test('diagnostics progress does not count an operation with an unbuilt file', () => {
+	const o = buildOverview({
+		operations: [
+			{ operation_id: 'o1', process_category: 'machining' },
+			{ operation_id: 'o2', process_category: 'machining' },
+		],
+		analyses: [
+			{ operation_id: 'o1', status: 'done', diag_status: 'done' },
+			{ operation_id: 'o1', status: 'done', diag_status: null },
+			{ operation_id: 'o2', status: 'done', diag_status: 'done' },
+		],
+	});
+	assert.equal(o.progress.analysed, 2);
+	assert.equal(o.progress.diagBuilt, 1);
+	assert.equal(o.progress.diagBuiltPct, 50);
+});
+
+test('operations whose force files were all skipped are not in the force-analysis denominator', () => {
+	const o = buildOverview({
+		operations: [
+			{ operation_id: 'o1', process_category: 'machining' },
+			{ operation_id: 'o2', process_category: 'machining' },
+			{ operation_id: 'o3', process_category: 'machining' },
+		],
+		analyses: [
+			{ operation_id: 'o1', status: 'done', diag_status: 'done' },
+			{ operation_id: 'o2', status: 'skipped' },
+			{ operation_id: 'o2', status: 'skipped' },
+			// o3 mixes done and skipped: it is analysed, and stays in
+			{ operation_id: 'o3', status: 'done' },
+			{ operation_id: 'o3', status: 'skipped' },
+		],
+	});
+	assert.equal(o.progress.forceOps, 2);
+	assert.equal(o.progress.analysed, 2);
+	assert.equal(o.progress.analysedPct, 100);
+	assert.equal(o.progress.diagBuilt, 1);
+	// the skipped operation is still listed with its state
+	assert.equal(o.opRows.find((r) => r.operation_id === 'o2').analysis, 'skipped');
 });
 
 const S1 = { sample_id: 's1', sample_code: '9-A-1' };

@@ -81,6 +81,10 @@ Schema check (`20260628000047_campaigns.sql`, `20260710000087_campaign_redesign.
   (the old `complete` no longer exists). **Decision:** a test counts toward "Tests complete" when it
   is `processed` or `analysed` (its data has been through the heavy-data worker; analysis is an
   optional later step). The status chips list every status in lifecycle order.
+- An operation can have several force files. The roll-up is worst first (`error > processing >
+  pending > done > skipped`). For diagnostics a file with a null `diag_status` is unbuilt, so an
+  operation is "built" only when every file is. Operations whose files are all `skipped` are left
+  out of the progress denominators (they are deliberately not analysed), so the bars can reach 100%.
 - There is **no planned count** on `campaigns` (only `status`, dates and notes), so progress is
   shown as "operations with a completed analysis out of operations", not "done vs. planned".
 
