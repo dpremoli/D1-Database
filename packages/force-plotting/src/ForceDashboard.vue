@@ -1693,6 +1693,7 @@ async function saveCropAsOfficial() {
 		if (invalidate.octree_status) { d.octree_status = 'pending'; if (frmMode.value === 'full' && !gridFull.value) frmMode.value = pickDefaultMode(); }
 		if (invalidate.grid_octree_status) { d.grid_octree_status = 'pending'; if (frmMode.value === 'full' && gridFull.value) frmMode.value = pickDefaultMode(); }
 		cropTouched.value = false;
+		pendingCrop.clear();   // the saved window is now the truth; a link's crop request must not re-apply
 		cropSavedMsg.value = backToAuto ? 'Reverted to auto crop' : 'Saved as official crop';
 		window.setTimeout(() => { cropSavedMsg.value = ''; }, 2500);
 	} catch (e: any) {
@@ -2283,6 +2284,7 @@ function radialValuesFor(bucketT: number[] | Float32Array | undefined): Float32A
 
 function resetLive() {
 	const d = detail.value;
+	pendingCrop.clear();   // Reset restores the cache's window; a link's crop request must not re-apply over it
 	if (cropWindow.value) { cropStartSec.value = cropWindow.value.start; cropEndSec.value = cropWindow.value.end; cropTouched.value = true; }
 	if (d) {
 		editFeed.value = Number(d.feed) || editFeed.value;
