@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { alignAndDiff, diffEnvelopes, diffStats, type EnvelopeSeries } from './compare';
+import { alignAndDiff, cropWindowSec, diffEnvelopes, diffStats, diffWindow, intersectWindows, type EnvelopeSeries } from './compare';
 
 const SPR = 256;
 
@@ -125,6 +125,57 @@ describe('diffEnvelopes', () => {
 	it('caps the output size on a long recording', () => {
 		const a = env(0, 600, 60000, () => 1);
 		expect(diffEnvelopes(a, a)!.t.length).toBeLessThanOrEqual(4001);
+	});
+
+	it('is restricted to a window, so lead-in/out outside the crop does not leak into the stats', () => {
+		// Both cuts have junk outside 3..8 s (tool approaching / leaving); the cut itself differs by 2 N.
+		const cur = env(0, 10, 1000, (t) => (t >= 3 && t <= 8 ? 12 : 500));
+		const ref = env(0, 10, 1000, () => 10);
+		const whole = diffEnvelopes(cur, ref)!;
+		expect(whole.mean).toBeGreaterThan(100);
+		const d = diffEnvelopes(cur, ref, { start: 3.1, end: 7.9 })!;
+		expect(d.t[0]).toBeGreaterThanOrEqual(3.1 - 1e-3);
+		expect(d.t[d.t.length - 1]).toBeLessThanOrEqual(7.9 + 1e-3);
+		expect(d.mean).toBeCloseTo(2, 4);
+		expect(d.rms).toBeCloseTo(2, 4);
+	});
+
+	it('returns null when the window misses the overlap', () => {
+		const a = env(0, 10, 100, () => 1);
+		expect(diffEnvelopes(a, a, { start: 20, end: 30 })).toBeNull();
+		expect(diffEnvelopes(a, a, { start: 5, end: 5 })).toBeNull();
+	});
+});
+
+describe('Difference windowing helpers', () => {
+	it('cropWindowSec: a saved override wins over the auto-crop, in seconds', () => {
+		expect(cropWindowSec({ sample_rate: 1000, cut_start_idx: 2000, cut_end_idx: 9000 })).toEqual({ start: 2, end: 9 });
+		expect(cropWindowSec({ sample_rate: 1000, cut_start_idx: 2000, cut_end_idx: 9000, crop_start_idx_override: 3000, crop_end_idx_override: 8000 }))
+			.toEqual({ start: 3, end: 8 });
+	});
+
+	it('cropWindowSec: null (unbounded) without a usable crop or rate', () => {
+		expect(cropWindowSec(null)).toBeNull();
+		expect(cropWindowSec({ cut_start_idx: 1, cut_end_idx: 5 })).toBeNull();
+		expect(cropWindowSec({ sample_rate: 1000, cut_start_idx: 5, cut_end_idx: 5 })).toBeNull();
+		expect(cropWindowSec({ sample_rate: 1000, cut_start_idx: null, cut_end_idx: null })).toBeNull();
+	});
+
+	it('intersectWindows: null is unbounded; disjoint windows come back empty', () => {
+		expect(intersectWindows(null, undefined)).toBeNull();
+		expect(intersectWindows({ start: 2, end: 9 }, null)).toEqual({ start: 2, end: 9 });
+		expect(intersectWindows({ start: 2, end: 9 }, { start: 5, end: 20 })).toEqual({ start: 5, end: 9 });
+		const none = intersectWindows({ start: 0, end: 3 }, { start: 5, end: 8 })!;
+		expect(none.end).toBeLessThanOrEqual(none.start);
+	});
+
+	it('diffWindow: both crops, then the zoom when both ends are set', () => {
+		const a = { start: 2, end: 9 }, b = { start: 4, end: 12 };
+		expect(diffWindow(a, b, null, null)).toEqual({ start: 4, end: 9 });
+		expect(diffWindow(a, b, 5, 7)).toEqual({ start: 5, end: 7 });
+		expect(diffWindow(a, b, 6, null)).toEqual({ start: 4, end: 9 });   // a half-set zoom is ignored
+		expect(diffWindow(null, null, null, null)).toBeNull();
+		expect(diffWindow(null, b, 0, 100)).toEqual({ start: 4, end: 12 });
 	});
 });
 

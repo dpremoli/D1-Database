@@ -51,6 +51,19 @@ const DEFAULTS = { mode: 'force', axis: 'Fz', zSeries: 'none' } as const;
 const MAX_COMPARE = 5;
 const MAX_ID_LEN = 128;
 
+/** The Plot page lets any number of cuts be compared (the colours just cycle), but a link keeps a
+ *  bounded list so it stays short enough to paste. The reference is always kept: dropping it would
+ *  silently turn the Difference off for the recipient. */
+export function capCompare(ids: readonly string[], reference: string | undefined, max = MAX_COMPARE): string[] {
+	const list = ids.filter(validId);
+	const kept = list.slice(0, max);
+	if (reference && list.includes(reference) && !kept.includes(reference)) {
+		kept.pop();
+		kept.push(reference);
+	}
+	return kept;
+}
+
 const num = (n: number) => String(+n.toPrecision(7));
 const pairOut = (p: readonly [number, number]) => `${num(p[0])},${num(p[1])}`;
 
@@ -84,7 +97,7 @@ export function encodeViewState(state: Partial<ViewState>): Record<string, strin
 	if (state.axis && state.axis !== DEFAULTS.axis && oneOf(VIEW_AXES, state.axis)) q[K.axis] = state.axis;
 	if (validPair(state.zoom) && state.zoom[1] > state.zoom[0]) q[K.zoom] = pairOut(state.zoom);
 	if (validPair(state.crop) && state.crop[1] > state.crop[0]) q[K.crop] = pairOut(state.crop);
-	const cmp = (state.compare ?? []).filter(validId).slice(0, MAX_COMPARE);
+	const cmp = capCompare(state.compare ?? [], state.reference);
 	if (cmp.length) q[K.compare] = cmp.join(',');
 	if (validId(state.reference) && cmp.includes(state.reference)) q[K.reference] = state.reference;
 	if (state.diff && q[K.reference]) q[K.diff] = '1';

@@ -338,6 +338,20 @@ describe('workspace pre-flight (R4)', () => {
 		expect(w.preflight.value).toEqual([]);
 	});
 
+	it('the channel check follows the list Start sends: a custom Record-page list skips the saved-model check', async () => {
+		labampMock.status.mockResolvedValueOnce({ reachable: true, mode: 'RESET', mock: false });
+		replies['/nidaq/channels'] = { body: { channels: [], roles: [], colors: {} } };   // the model would warn
+		const w = await make();
+		w.setSource('nidaq');
+		await w.refreshPreflight();
+		expect(item(w, 'channels')?.level).toBe('warn');        // default list: the saved model records
+		w.nidaqChannels.value = 'Dev1/ai0\nDev1/ai1';
+		expect(item(w, 'channels')?.level).toBe('skip');        // custom list: the model is not what records
+		expect(item(w, 'channels')?.detail).toMatch(/custom channel list/i);
+		w.nidaqChannels.value = '';
+		expect(item(w, 'channels')?.level).toBe('warn');        // empty: the backend uses the model again
+	});
+
 	it('an unreadable amp or channel list is "not checked", not a failure', async () => {
 		const w = await make();
 		w.setSource('nidaq');
@@ -803,6 +817,21 @@ describe('workspace.railBanner (R5)', () => {
 		expect(w.railBanner.value).toBeNull();
 		await railed(w, [4]);
 		expect(w.railBanner.value).toBe('Ch Fz1 railed - re-range before the next cut');
+	});
+
+	it('a dismissal belongs to its capture: adopting another railed cut shows its banner', async () => {
+		const w = await make();
+		w.st.captureId = 'cap-a';
+		await railed(w, [2]);
+		w.dismissRailBanner();
+		expect(w.railBanner.value).toBeNull();
+		// A reconcile adopts a different railed cut: `railed` never passed through empty.
+		w.st.captureId = 'cap-b';
+		await railed(w, [3]);
+		expect(w.railBanner.value).toBe('Ch Fy2 railed - re-range before the next cut');
+		w.st.captureId = 'cap-a';           // and cap-a stays dismissed if it is shown again
+		await railed(w, [2]);
+		expect(w.railBanner.value).toBeNull();
 	});
 
 	it('is not shown for a replayed cut', async () => {

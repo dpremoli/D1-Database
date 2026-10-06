@@ -50,6 +50,9 @@ export interface PreflightInput {
 	sampleRate: number;
 	/** The saved NI-DAQ channel list, null = not read yet. */
 	channels: ChannelLike[] | null;
+	/** The Record page's own channel list is not the default one, so Start sends it and the backend
+	 *  ignores the saved channel model: checking the model would answer for a different list. */
+	channelsCustom?: boolean;
 }
 
 /** The recorder force-stops a cut below this much free space (backend session.DISK_STOP_GB), so
@@ -130,7 +133,7 @@ export function computePreflight(i: PreflightInput): PreflightItem[] {
 
 	items.push(diskItem(i.diskFreeGb, i.sampleRate));
 
-	if (i.source === 'nidaq') items.push(channelsItem(i.channels));
+	if (i.source === 'nidaq') items.push(channelsItem(i.channels, !!i.channelsCustom));
 
 	return items;
 }
@@ -142,7 +145,7 @@ function ampItem(amp: AmpReading | null): PreflightItem {
 	if (!amp.reachable) {
 		return {
 			id: 'amp', label: 'Lab Amp', level: 'warn', focus,
-			detail: 'The Lab Amp is not reachable. Start still works, using the gains from its last range, but nothing can reset or range it.',
+			detail: 'The Lab Amp is not reachable. Start still works, but without its ranges the cut uses the NI-DAQ channel gains if the channel model has them, and is otherwise recorded in volts, not newtons. Nothing can reset or range the amp.',
 		};
 	}
 	if (amp.mode === 'MEASURE') return { id: 'amp', label: 'Lab Amp', level: 'ok', detail: `Connected, in MEASURE${tag}.` };
@@ -166,8 +169,14 @@ function diskItem(freeGb: number | null, rate: number): PreflightItem {
 	return { id: 'disk', label: 'Disk', level: 'ok', detail: `${where}.` };
 }
 
-function channelsItem(channels: ChannelLike[] | null): PreflightItem {
+function channelsItem(channels: ChannelLike[] | null, custom: boolean): PreflightItem {
 	const focus = { id: 'nidaq-channels', route: '/nidaq' };
+	if (custom) {
+		return {
+			id: 'channels', label: 'Channels', level: 'skip',
+			detail: 'Not checked: this Start sends the custom channel list from the Record page, not the saved channel model.',
+		};
+	}
 	if (!channels) return { id: 'channels', label: 'Channels', level: 'skip', detail: 'Channel configuration not read yet.' };
 	const { fail, warn } = channelConfigIssues(channels);
 	if (fail.length) return { id: 'channels', label: 'Channels', level: 'fail', focus, detail: `Channel configuration problem: ${fail.join('; ')}.` };

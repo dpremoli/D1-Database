@@ -81,10 +81,10 @@ that fixes it (or opens the page that owns it).
 |---|---|---|
 | **Sample** | a Sample is picked | warning. See *Start anyway* below. |
 | **Signed in** / **Offline session** | there is a sign-in to upload with | an offline session is only a note: the cut is saved on this PC and uploaded after you sign in again. Not signed in at all is a warning. |
-| **Lab Amp** (NI-DAQ) | the amp answers | a warning if it doesn't. **Start** resets the amp and sets it to MEASURE itself, so RESET beforehand is normal and shows as fine. |
+| **Lab Amp** (NI-DAQ) | the amp answers | a warning if it doesn't: without the amp's ranges Start uses the channel model's gains if it has them, and otherwise records in volts, not newtons. **Start** resets the amp and sets it to MEASURE itself, so RESET beforehand is normal and shows as fine. |
 | **Tacho** (NI-DAQ) | tacho pulses seen | shown as *not checked*: the recorder only sees the tacho once samples are flowing, so the check is the Tacho alarm during the cut. |
 | **Disk** | free space on the capture drive, as *about N min at this rate* | a warning under 30 minutes, red under 5. The runway is free space minus the 1 GB at which the recorder force-stops, divided by the sample rate × 10 columns × 4 bytes. **Show me** goes to the sample rate. |
-| **Channels** (NI-DAQ) | the saved channel list can record | red for a rotating-dyno layout or one input wired to two channels, a warning if a force channel or the Tacho has no input yet. **Show me** opens the NI-DAQ page at the channel list. |
+| **Channels** (NI-DAQ) | the saved channel list can record | red for a rotating-dyno layout or one input wired to two channels, a warning if a force channel or the Tacho has no input yet. **Show me** opens the NI-DAQ page at the channel list. Skipped (*not checked*) when the Record page's own channel list isn't the default one, because Start then sends that list and ignores the saved channel model. |
 
 A chip that couldn't be read yet (the recorder is still starting, the amp page didn't answer) shows
 as *not checked*, never as a failure. The list refreshes every 15 seconds while you wait, and
@@ -122,13 +122,18 @@ and only a wider range fixes it, which you can only change between cuts.
   channel in its list.
 - A red banner says *Ch Fy2 railed - re-range before the next cut*. It shows **once per cut**:
   **Dismiss** keeps it away until the next cut, even if more channels rail. The tile and badges
-  stay until you press **New** or start the next cut.
+  stay until you press **New** or start the next cut. They show in Record mode only, never when
+  you play back an archived cut.
 
-A channel counts as railed when its peak reaches **99 %** of its full scale (the Lab Amp range for
-that channel). That is the same test the saved capture uses for its per-channel clipping flags,
+A channel counts as railed when its peak reaches **99 %** of its full scale (its gain times the
+Lab Amp's analog full-scale voltage, which you set in the Lab Amp settings or `ANALOG_FULLSCALE_V`). That is the same test the saved capture uses for its per-channel clipping flags,
 which the **Converge** toggle reads to widen the range for the next cut. The live warning only
-works on the NI-DAQ source with per-channel ranges known (Lab Amp reachable at Start). Simulated
-data is already in newtons with no range to compare against, so it never rails.
+works on the NI-DAQ source with per-channel gains known, which come from the Lab Amp's ranges
+(Lab Amp reachable at Start) **or** from the `gain_n_per_v` set on each channel in the NI-DAQ
+channel model. With neither, there is no warning, and the cut is recorded in **volts, not
+newtons** (the recorder falls back to a gain of 1), so the Lab Amp pre-flight chip says so when the
+amp is unreachable. Simulated data is already in newtons with no range to compare against, so it
+never rails.
 
 ## 5. Save or discard
 

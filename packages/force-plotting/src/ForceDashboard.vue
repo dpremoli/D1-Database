@@ -32,7 +32,8 @@ import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltere
 import { useForceHost } from './host';
 import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
 import { debounce } from './debounce';
-import { diffEnvelopes } from './compare';
+import { cropWindowSec, diffEnvelopes, diffWindow } from './compare';
+import { createPendingCrop } from './pendingCrop';
 import {
 	decodeViewState, encodeViewState, VIEW_AXES, VIEW_QUERY_KEYS,
 	type ViewAxis, type ViewChartMode, type ViewState, type ViewZSeries,
@@ -384,6 +385,7 @@ watch(() => detail.value?.id, (id) => {
 	// lines linger until its live cache reloads). A saved override wins over the derived auto-crop;
 	// onCloudLoaded then refines from the cache (but only when there's no override to respect).
 	cropSavePrompt.value = false; cropSavedMsg.value = '';
+	pendingCrop.clear();   // a link's crop request belongs to the op it named
 	const initCrop = savedCropSec.value || cropWindow.value;
 	if (initCrop) { cropStartSec.value = initCrop.start; cropEndSec.value = initCrop.end; }
 	else { cropStartSec.value = 0; cropEndSec.value = 0; }
@@ -477,6 +479,7 @@ watch(() => detail.value?.id, () => { sigStats.value = null; statsErr.value = nu
 function onCropEdit(which: 'start' | 'end', v: number) {
 	if (which === 'start') cropStartSec.value = v; else cropEndSec.value = v;
 	cropTouched.value = true;
+	pendingCrop.clear();   // the user's own edit beats a link's crop request
 	if (frmMode.value !== 'lite' && liveAvailable.value) chooseMode('lite');
 }
 watch(statsOpen, (open) => {
@@ -1847,11 +1850,15 @@ async function addCompare(row: any) {
 	if (compareData.value[row.id]) return;
 	compareBusy.value = true;
 	try {
-		const res = await api.get(`/items/machining_force_analysis/${row.id}`, { params: { fields: ['series'] } });
+		// The crop fields ride along so the Difference can be limited to the cut itself (diffWindow).
+		const res = await api.get(`/items/machining_force_analysis/${row.id}`, {
+			params: { fields: ['series', 'sample_rate', 'cut_start_idx', 'cut_end_idx', 'crop_start_idx_override', 'crop_end_idx_override'] },
+		});
 		compareData.value = {
 			...compareData.value,
 			[row.id]: {
 				series: res.data?.data?.series ?? null,
+				crop: cropWindowSec(res.data?.data),
 				label: row.operation_id?.pass_code || sampleOf(row)?.sample_code || row.id,
 			},
 		};
@@ -1879,7 +1886,11 @@ watch(compareIds, (ids) => {
 const compareRefLabel = computed(() => (compareRefId.value && compareData.value[compareRefId.value]?.label) || '');
 const diffResult = computed(() => {
 	if (!diffOn.value || !compareRefId.value) return null;
-	return diffEnvelopes(detail.value?.series?.[axis.value], compareData.value[compareRefId.value]?.series?.[axis.value]);
+	// Over the cuts themselves, not the whole recording: both crops (lead-in/out air would dominate
+	// the stats), then the zoom. Compare draws each cut at its own recording time, so no shifting.
+	const ref = compareData.value[compareRefId.value];
+	const win = diffWindow(savedCropSec.value || cropWindow.value, ref?.crop, zoomStart.value, zoomEnd.value);
+	return diffEnvelopes(detail.value?.series?.[axis.value], ref?.series?.[axis.value], win);
 });
 const DIFF_W = 260, DIFF_H = 44;
 // Polyline of the difference, min/max-binned to the sparkline width so a spike is never averaged
@@ -1916,7 +1927,7 @@ watch(selectedRowId, (id) => { if (id) compareIds.value = compareIds.value.filte
 // showing: the router is shared, and replacing its query then would corrupt that page's URL.
 const viewPath = route.path;
 let viewReady = false;
-let pendingCrop: [number, number] | null = null;
+const pendingCrop = createPendingCrop();
 const currentOperationId = computed<string | undefined>(
 	() => rows.value.find((r) => r.id === selectedRowId.value)?.operation_id?.operation_id || undefined,
 );
@@ -1949,6 +1960,9 @@ const writeViewQuery = debounce(() => {
 }, 400);
 watch(viewQuery, writeViewQuery);
 onDeactivated(() => writeViewQuery.cancel());
+// Another page replaced the shared route while this one was kept alive: put the view's link back
+// (the guard above still applies, and an unchanged query is a no-op).
+onActivated(() => writeViewQuery());
 onBeforeUnmount(() => writeViewQuery.cancel());
 
 function viewUrl(): string {
@@ -1977,17 +1991,17 @@ async function applyViewState(v: Partial<ViewState>) {
 		colorScale.value = withAutoRange(colorScale.value, v.scale[0], v.scale[1]);
 		locked.value = true;
 	}
-	if (v.crop) {
+	const opId = detail.value?.id;
+	if (v.crop && opId) {
 		// The crop handles are re-seeded from the cache when it parses (onCloudLoaded), which may
-		// land after this; keep the request and apply it there too.
-		pendingCrop = v.crop;
-		applyPendingCrop();
+		// land after this. Apply now, but keep the request until that op's load has re-applied it.
+		pendingCrop.set(opId, v.crop);
+		applyPendingCrop(pendingCrop.peek(opId));
 	}
 }
-function applyPendingCrop() {
-	if (!pendingCrop) return;
-	cropStartSec.value = pendingCrop[0]; cropEndSec.value = pendingCrop[1];
-	pendingCrop = null;
+function applyPendingCrop(crop: [number, number] | null) {
+	if (!crop) return;
+	cropStartSec.value = crop[0]; cropEndSec.value = crop[1];
 }
 
 // Selected axes for a panel (spectral views render one SpectrumView per axis, like the force plot).
@@ -2016,7 +2030,7 @@ function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam:
 	// the diameter below. Absent an override, the cache's crop is the best available.
 	if (savedCropSec.value) { cropStartSec.value = savedCropSec.value.start; cropEndSec.value = savedCropSec.value.end; }
 	else { cropStartSec.value = meta.csSec; cropEndSec.value = meta.ceSec; }
-	applyPendingCrop();   // a shared link's crop preview beats the cache's own window
+	applyPendingCrop(pendingCrop.take(detail.value?.id));   // a shared link's crop preview beats the cache's own window
 	editFeed.value = cleanFloat(meta.feed);
 	editDiam.value = cleanFloat(meta.diam);
 	const od = Number(detail.value?.outer_diameter);
@@ -2804,7 +2818,7 @@ function fmtDateTime(v: string | null | undefined) {
 									:title="compareRefId ? `Show ${axis} of this cut minus ${compareRefLabel}` : 'Mark a cut as ref first'"
 									@click="diffOn = !diffOn">Difference</button>
 							</div>
-							<div v-if="diffOn && compareRefId" class="cmp-diff">
+							<div v-if="diffOn && compareRefId && chartMode === 'force'" class="cmp-diff">
 								<template v-if="diffResult && diffSpark">
 									<svg :viewBox="`0 0 ${DIFF_W} ${DIFF_H}`" :width="DIFF_W" :height="DIFF_H" role="img"
 										:aria-label="`${axis} difference versus ${compareRefLabel}`">
@@ -2816,7 +2830,7 @@ function fmtDateTime(v: string | null | undefined) {
 										mean {{ fmtDelta(diffResult.mean) }} N · RMS {{ diffResult.rms.toPrecision(3) }} N
 									</span>
 								</template>
-								<span v-else class="cmp-hint">No overlapping time range with the reference for {{ axis }}.</span>
+								<span v-else class="cmp-hint">No overlap with the reference for {{ axis }} within both cuts' crops{{ zoomed ? ' and the zoom' : '' }}.</span>
 							</div>
 							<div v-if="!detail" class="empty">Select an operation to view its signals</div>
 							<div v-else-if="isSpectral" class="charts-col">

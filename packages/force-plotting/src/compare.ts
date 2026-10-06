@@ -12,6 +12,9 @@ export interface AlignedDiff {
 	diff: Float32Array;
 }
 
+/** Optional [lo, hi] (same units as rev) the overlap is further restricted to. */
+export type RevRange = readonly [number, number];
+
 // Linear interpolation mirroring numpy's np.interp (the same primitive
 // scripts/diag/angular.py's angular_resample already uses server-side): `xp` must be sorted
 // ascending; `x` is assumed sorted ascending too (true by construction here, since it's a
@@ -47,6 +50,7 @@ export function alignAndDiff(
 	revB: Float32Array,
 	sigB: Float32Array,
 	samplesPerRev: number,
+	range?: RevRange,
 ): AlignedDiff {
 	if (revA.length !== sigA.length) {
 		throw new Error(`revA/sigA length mismatch: ${revA.length} vs ${sigA.length}`);
@@ -54,8 +58,8 @@ export function alignAndDiff(
 	if (revB.length !== sigB.length) {
 		throw new Error(`revB/sigB length mismatch: ${revB.length} vs ${sigB.length}`);
 	}
-	const lo = Math.max(revA[0], revB[0]);
-	const hi = Math.min(revA[revA.length - 1], revB[revB.length - 1]);
+	const lo = Math.max(revA[0], revB[0], range?.[0] ?? -Infinity);
+	const hi = Math.min(revA[revA.length - 1], revB[revB.length - 1], range?.[1] ?? Infinity);
 	if (hi <= lo) {
 		throw new Error(
 			`no overlapping revolution range between the two cuts (A: [${revA[0]}, ${revA[revA.length - 1]}], B: [${revB[0]}, ${revB[revB.length - 1]}])`,
@@ -111,23 +115,75 @@ export function diffStats(diff: ArrayLike<number>): { mean: number; rms: number 
 	return { mean: sum / n, rms: Math.sqrt(sq / n) };
 }
 
+// ---- Windowing -----------------------------------------------------------------------------------
+// Compare draws every cut at its own recording time (series t), so the Difference is windowed in
+// that same base: the intersection of the two cuts' crop windows (the part that is actually the
+// cut, not lead-in/out air) and, when the chart is zoomed, the zoomed x-range.
+
+export interface TimeWindow { start: number; end: number }
+
+/** The fields of an analysis row that define its crop (what the dashboard's crop handles use). */
+export interface CropFields {
+	sample_rate?: number | null;
+	cut_start_idx?: number | null;
+	cut_end_idx?: number | null;
+	crop_start_idx_override?: number | null;
+	crop_end_idx_override?: number | null;
+}
+
+/** A cut's crop window in seconds: a saved override wins over the derived auto-crop; null when it
+ *  has neither (or no sample rate), i.e. unbounded. */
+export function cropWindowSec(row: CropFields | null | undefined): TimeWindow | null {
+	const fs = Number(row?.sample_rate);
+	if (!row || !(fs > 0)) return null;
+	const pick = (a: number | null | undefined, b: number | null | undefined) =>
+		a != null && b != null ? { start: Number(a) / fs, end: Number(b) / fs } : null;
+	const w = pick(row.crop_start_idx_override, row.crop_end_idx_override) ?? pick(row.cut_start_idx, row.cut_end_idx);
+	return w && Number.isFinite(w.start) && Number.isFinite(w.end) && w.end > w.start ? w : null;
+}
+
+/** Intersect windows; a null/undefined window is unbounded. Returns null when every input is
+ *  unbounded, and a window with end <= start when they do not overlap. */
+export function intersectWindows(...windows: (TimeWindow | null | undefined)[]): TimeWindow | null {
+	let out: TimeWindow | null = null;
+	for (const w of windows) {
+		if (!w) continue;
+		out = out ? { start: Math.max(out.start, w.start), end: Math.min(out.end, w.end) } : { ...w };
+	}
+	return out;
+}
+
+/** The window the Difference is computed over: both cuts' crops, then the zoom (when both zoom
+ *  ends are set). null means unrestricted. */
+export function diffWindow(
+	currentCrop: TimeWindow | null | undefined, referenceCrop: TimeWindow | null | undefined,
+	zoomStart: number | null | undefined, zoomEnd: number | null | undefined,
+): TimeWindow | null {
+	const zoom = zoomStart != null && zoomEnd != null && Number.isFinite(zoomStart) && Number.isFinite(zoomEnd)
+		? { start: Math.min(zoomStart, zoomEnd), end: Math.max(zoomStart, zoomEnd) } : null;
+	return intersectWindows(currentCrop, referenceCrop, zoom);
+}
+
 /**
- * current - reference over the time range both envelopes cover, or null when either is unusable or
- * they do not overlap. Never throws: this feeds a live readout, and a bad cut should just show
- * "no overlap" rather than break the panel.
+ * current - reference over the time range both envelopes cover (and `window`, when given), or null
+ * when either is unusable or they do not overlap. Never throws: this feeds a live readout, and a bad
+ * cut should just show "no overlap" rather than break the panel.
  */
-export function diffEnvelopes(current: EnvelopeSeries | null | undefined, reference: EnvelopeSeries | null | undefined): EnvelopeDiff | null {
+export function diffEnvelopes(
+	current: EnvelopeSeries | null | undefined, reference: EnvelopeSeries | null | undefined,
+	window?: TimeWindow | null,
+): EnvelopeDiff | null {
 	if (!current || !reference) return null;
 	const a = midLine(current), b = midLine(reference);
 	if (!a || !b) return null;
-	const lo = Math.max(a.x[0], b.x[0]);
-	const hi = Math.min(a.x[a.x.length - 1], b.x[b.x.length - 1]);
+	const lo = Math.max(a.x[0], b.x[0], window?.start ?? -Infinity);
+	const hi = Math.min(a.x[a.x.length - 1], b.x[b.x.length - 1], window?.end ?? Infinity);
 	if (!(hi > lo)) return null;
 	// Resolve the denser of the two traces, bounded so a long recording stays cheap to redraw.
 	const density = Math.max(a.x.length / (a.x[a.x.length - 1] - a.x[0]), b.x.length / (b.x[b.x.length - 1] - b.x[0]));
 	const spr = Math.min(density, MAX_DIFF_POINTS / (hi - lo));
 	try {
-		const r = alignAndDiff(a.x, a.y, b.x, b.y, spr);
+		const r = alignAndDiff(a.x, a.y, b.x, b.y, spr, window ? [lo, hi] : undefined);
 		return { t: r.rev, diff: r.diff, ...diffStats(r.diff) };
 	} catch { return null; }
 }

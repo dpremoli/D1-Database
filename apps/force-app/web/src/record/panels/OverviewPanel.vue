@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { useWorkspace } from '../workspace';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS } from '../liveClient';
-import { railedNames } from '../railing';
+import { railedNames, shownRailed } from '../railing';
 import { formatBandwidth, formatDuration, formatMegabytes } from '../../format';
 const w = useWorkspace();
 const st = w.st;
@@ -28,7 +28,7 @@ const bandwidth = computed(() => {
 	return formatBandwidth((st.nTotal * ROW_BYTES) / st.tSec);
 });
 
-const railed = computed(() => railedNames(st.railed).join(', '));
+const railed = computed(() => railedNames(shownRailed(w.mode.value, st.railed)).join(', '));
 
 const eta = computed(() => {
 	if (w.source.value === 'sim' && w.cfg.duration_sec > 0 && st.state === 'recording') {

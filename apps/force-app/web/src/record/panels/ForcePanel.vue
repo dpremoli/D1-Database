@@ -16,7 +16,7 @@ import { channelColor } from '../types';
 import { theme } from '../../theme';
 import { appUrl } from '../../appUrl';
 import type { PlotMode } from '../plotModes';
-import { isRailed } from '../railing';
+import { isRailed, shownRailed } from '../railing';
 import { clampWindowSec, WINDOW_MAX_SEC, WINDOW_MIN_SEC, WINDOW_SLIDER_MAX_SEC } from '../plotWindow';
 
 const props = defineProps<{ inst?: { mode?: PlotMode; channels?: string[]; axes?: string[]; windowSec?: number } }>();
@@ -56,7 +56,8 @@ function toggle(key: string) {
 }
 const subsOpen = ref(false);
 // R5: sensor channels that reached full scale this cut get a red badge on their chip.
-const railedAny = computed(() => w.st.railed.length > 0);
+const railedNow = computed(() => shownRailed(w.mode.value, w.st.railed));
+const railedAny = computed(() => railedNow.value.length > 0);
 const subCount = computed(() => selected.value.filter((k) => (SUB_NAMES as readonly string[]).includes(k)).length);
 // #34: each panel has its own time window, stored on its layout entry (so it persists with the
 // layout). A panel that never set one follows the workspace default, w.plot.windowSec. A cleared
@@ -107,7 +108,7 @@ function openLive() {
 				<div v-if="subsOpen" class="subpop" @click.stop>
 					<button v-for="s in SUB_NAMES" :key="s" class="subopt" :class="{ on: selected.includes(s) }" @click="toggle(s)">
 						<span class="dot" :style="{ background: channelColor(s, theme) }"></span>{{ s }}
-						<span v-if="isRailed(w.st.railed, s)" class="rail-badge" :data-testid="`rail-badge-${s}`" title="Railed: reached full scale this cut">railed</span>
+						<span v-if="isRailed(railedNow, s)" class="rail-badge" :data-testid="`rail-badge-${s}`" title="Railed: reached full scale this cut">railed</span>
 						<span v-if="selected.includes(s)" class="material-symbols-rounded tick">check</span>
 					</button>
 				</div>

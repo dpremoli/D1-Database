@@ -8,7 +8,7 @@ import { getWorkspace, WORKSPACE } from './workspace';
 import { startSync } from './directusSync';
 import { hwStatus } from './hwStatus';
 import { labamp } from './labampApi';
-import { IntervalGate, shouldPollBackup, shouldPollDisk, shouldPollPreflight } from './recordPolling';
+import { IntervalGate, shouldPollBackup, shouldPollPreflight, syncDiskGate } from './recordPolling';
 import { shouldOpenSaveDialog } from './saveDialogGate';
 import { parseDismissedIds, parseSavedLayout } from './recordLayout';
 import PanelFrame from './panels/PanelFrame.vue';
@@ -199,10 +199,9 @@ const diskGate = new IntervalGate(checkDisk, 30_000);
 // hwStatus.diskFreeGb), and its other inputs (amp mode, saved channel list, NI-DAQ only) are
 // refreshed on the same terms and whenever the source changes.
 const preflightGate = new IntervalGate(() => { void w.refreshPreflight(); }, 15_000);
-watch([() => st.state, () => w.mode.value], ([s, m]) => {
-	const preflight = shouldPollPreflight(m, s);
-	diskGate.set(shouldPollDisk(m, s) || preflight);
-	preflightGate.set(preflight);
+watch([() => st.state, () => w.mode.value], ([s, m], old) => {
+	syncDiskGate(diskGate, m, s, old?.[0] && old[1] ? { state: old[0], mode: old[1] } : undefined);
+	preflightGate.set(shouldPollPreflight(m, s));
 }, { immediate: true });
 watch(() => w.source.value, () => { void w.refreshPreflight(); });
 
