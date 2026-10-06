@@ -24,8 +24,8 @@ the same stream (see `CLAUDE.md`).
 | N — Diagnostics across a campaign | P10 | `agent-a72215e01a6e621f0` | merged; picker still loads all rows (P12); campaign read permission for non-admins unchecked |
 | O — Cutting metrics | P6 | `agent-a1b290277d7c04730` | merged; axis mapping (Fc=Fz, Ff=Fx, Fp=Fy) is an assumption, selectable in the card |
 | P — Captures list | R9 | `agent-ab5dd77bae769b66f` | merged; verified against 461 sim captures (stubbed Directus) |
-| /simplify (Opus) | all | main checkout | in progress |
-| /code-review high (Opus) | all | — | not started |
+| /simplify (Opus) | all | main checkout | done (`0be6cac`, `b41c303`, `fcb764e`, `f2d8b12`) |
+| /code-review high (Opus) | all | read-only reviewers | in progress |
 
 ## M. Sample timeline and campaign overview — D5, D11
 
