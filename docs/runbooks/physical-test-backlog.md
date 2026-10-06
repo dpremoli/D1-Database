@@ -220,6 +220,19 @@ tool; a test cut on scrap stock is fine.
   Since: this batch (PR TBD).
 
 ### Plot on real cuts
+- [ ] **Octree pick and ring alignment on a real archived cut.** On a cut that has a live cache and
+  both a Full and a Gridded octree: right-click a point in Full, then Show position in time; the
+  marker lands on the matching force feature, and Show position on map from a chart puts the ring on
+  the same spot (not offset or on a neighbouring turn). Repeat in Gridded. Do it with the auto crop,
+  then after saving an official crop and letting both octrees rebuild, then after editing inner
+  diameter or pulses per rev without rebuilding: picks and rings must stay aligned (they follow
+  `d1_build.json`, not the edited row). An octree built before the manifest still works as before
+  (and may drift after the edit). Since this PR.
+- [ ] **Touch long-press on a touchscreen.** On a touchscreen laptop or tablet: hold one finger on
+  the map (Lite 2D, Lite 3D, Full) and on a Force chart for ~0.5 s. Expect the menu to open once, a
+  little down-right of the finger (not under it), with the pick under the finger. A drag or
+  two-finger pinch must still pan/zoom and never open the menu. Android Chrome: the menu opens once
+  (no second browser menu); iOS Safari: no text callout or magnifier. Since this PR.
 - [ ] **X1 — Lite 3D height.** On a real cut, Lite 3D with Z = Fz shows height; picking a point and
   the linked marker land on the raised point. Since #123.
 - [ ] **P2 — PNG/SVG export in the app.** Both downloads open, axes and units are right, a zoomed
@@ -248,6 +261,16 @@ tool; a test cut on scrap stock is fine.
 - [ ] **#90** Packaged NSIS build and the Tailscale update feed (held back).
 
 ## C. d1-server and infrastructure
+
+- [ ] **Official crop reaches the octree and grid builds; `d1_build.json` is published.** On
+  `d1-server`, in the Plot page save an official crop on an archived cut that has Full and Gridded
+  octrees; let the orchestrator rebuild both. Check `<OCTREE_DIR>/<op>/d1_build.json` and
+  `<OCTREE_DIR>/grid/<op>/d1_build.json`: `schema` 1, `crop_source: "override"`, `cut_start_sec` /
+  `cut_end_sec` equal the saved crop (index / sample rate) to a sample, and `feed`, `diam`,
+  `inner_diam`, `ppr` match the row. Reverting to auto crop and rebuilding gives
+  `crop_source: "auto"`. Also run `scripts/matlab/test_octree_out.m` by hand in MATLAB (it asserts
+  the crop window and the JSON; the MATLAB changes have never been executed). The Full view then
+  shows the saved window, matching the charts. Since this PR.
 
 - [ ] **Diag clustering is CPU-independent.** Rebuild a diagnostics analysis on `d1-server` for a cut
   built before 2026-10-06: cluster ids match the old result. (`scripts/diag/spatial.py` pins
