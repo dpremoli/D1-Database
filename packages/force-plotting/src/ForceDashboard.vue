@@ -29,7 +29,7 @@ import { computeAutoCode } from './operationCode';
 import { activeFindings, diagnose, worstSeverity, type Finding } from './metadataDoctor';
 import { computeSignalStats, resolveStatsWindow, type SignalStats } from './signalStats';
 import { statsCsvColumns } from './statsCsv';
-import { AXIS_MAPS, axisMapKey, computeCuttingMetrics, opKindFromSubtype, parseAxisMap, usesSpiralDiameter, type Metric } from './cuttingMetrics';
+import { AXIS_MAPS, axisMapKey, computeCuttingMetrics, opKindFromSubtype, parseAxisMap, removeLegacyAxisMap, resolveAxisMap, usesSpiralDiameter, writeAxisMapForSubtype, type Metric } from './cuttingMetrics';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
 import { saveChartImage, type ChartSnapshot } from './chartExport';
@@ -500,12 +500,17 @@ function fmtStat(v: number): string {
 }
 
 // ---- Cutting metrics card (cuttingMetrics.ts; spec 2026-10-06-cutting-metrics-design.md) ----
-// Over the same crop window as the statistics. The Fc/Ff/Fp -> Fx/Fy/Fz mapping is an ASSUMPTION
-// (not recorded anywhere), so it is visible and changeable here and remembered per browser.
-const AXIS_MAP_KEY = 'd1.cuttingAxisMap';
-const axisMapSel = ref(axisMapKey(parseAxisMap((() => { try { return localStorage.getItem(AXIS_MAP_KEY); } catch { return null; } })())));
-watch(axisMapSel, (v) => { try { localStorage.setItem(AXIS_MAP_KEY, v); } catch { /* ignore */ } });
+// Over the same crop window as the statistics. The standard mapping is Fc = Fx, Ff = Fy, Fp = Fz
+// (the owner's), but it depends on workholding and the operation, so it is selectable and
+// remembered per operation subtype in this browser (cuttingMetrics.ts).
+removeLegacyAxisMap();   // the old single choice was made against the previous default
+// cutSubtype, axisMapSel and its loader are declared with the operation refs (below), which they read.
+const onAxisMapChange = () => writeAxisMapForSubtype(cutSubtype.value, parseAxisMap(axisMapSel.value));
 const axisMap = computed(() => parseAxisMap(axisMapSel.value));
+const axisMapLabel = computed(() => {
+	const m = axisMap.value;
+	return `Fc = ${m.Fc}, Ff = ${m.Ff}, Fp = ${m.Fp}`;
+});
 // Operation record first (editable above), else the capture's own copy.
 const cutFeed = computed(() => numOrNull(editOpFeedMmPerRev.value) ?? numOrNull(detail.value?.feed));
 const cutAp = computed(() => numOrNull(editOpAxialDoc.value) ?? numOrNull(detail.value?.depth_of_cut));
@@ -513,7 +518,7 @@ const cutAp = computed(() => numOrNull(editOpAxialDoc.value) ?? numOrNull(detail
 // the saved crop when there is one) and the same feed (the geometry feed) as the plots' radial axis.
 const cutting = computed(() => {
 	if (!sigStats.value) return null;
-	const subtype = editOpSubtype.value || op.value?.machining_operation_subtype;
+	const subtype = cutSubtype.value;
 	return computeCuttingMetrics({
 		stats: sigStats.value, axisMap: axisMap.value,
 		opKind: opKindFromSubtype(subtype), spiral: usesSpiralDiameter(subtype),
@@ -523,7 +528,7 @@ const cutting = computed(() => {
 });
 const cuttingMapText = computed(() => {
 	const m = axisMap.value;
-	return `Assumed axis mapping: Fc (tangential, main cutting) = ${m.Fc}, Ff (feed) = ${m.Ff}, Fp (passive/radial) = ${m.Fp}. The mounting is not recorded; change it with the selector.`;
+	return `Axis mapping in use: Fc (tangential, main cutting) = ${m.Fc}, Ff (feed) = ${m.Ff}, Fp (passive/radial) = ${m.Fp}. The standard is Fc = Fx, Fp = Fz, but it depends on workholding and operation; the mounting is not recorded. Change it with the selector (remembered per operation type).`;
 });
 const cutVal = (m: Metric | undefined, digits = 1) => m?.value == null ? '—' : (Math.abs(m.value) >= 1000 ? (m.value / 1000).toFixed(2) + 'k' : m.value.toFixed(digits));
 const cutTip = (m: Metric | undefined, formula: string) => m?.value == null ? `Unavailable: ${m?.reason ?? 'no data'}` : formula;
@@ -1433,6 +1438,11 @@ const srcMeta = reactive({
 	outcomeNotes: '', passCode: '',
 });
 const editOpSubtype = ref('');
+const cutSubtype = computed(() => editOpSubtype.value || op.value?.machining_operation_subtype || '');
+const axisMapSel = ref(axisMapKey(resolveAxisMap(cutSubtype.value)));
+// Load the remembered choice when the operation (subtype) changes; a change made in the select is
+// written in onAxisMapChange, so loading never writes.
+watch(cutSubtype, (st) => { axisMapSel.value = axisMapKey(resolveAxisMap(st)); });
 const editOpNewEdge = ref<boolean | null>(null);
 const editOpCoolant = ref<boolean | null>(null);
 const editOperatorName = ref('');
@@ -2796,11 +2806,12 @@ function fmtDateTime(v: string | null | undefined) {
 										<template v-if="cutting.kcMPa.value == null">kc: {{ cutting.kcMPa.reason }}.</template>
 									</template>
 								</p>
-								<label class="setting-note cutting-map">Axis mapping (Fc / Ff / Fp), an assumption:
-									<select v-model="axisMapSel" :title="cuttingMapText">
+								<label class="setting-note cutting-map">Axis mapping in use (Fc / Ff / Fp): <strong>{{ axisMapLabel }}</strong>
+									<select v-model="axisMapSel" :title="cuttingMapText" @change="onAxisMapChange">
 										<option v-for="a in AXIS_MAPS" :key="a.key" :value="a.key">{{ a.key }}</option>
 									</select>
 								</label>
+								<p class="setting-note">Axis mapping depends on workholding and operation — set per operation type{{ cutSubtype ? ` (${cutSubtype})` : '' }}. Standard: Fc = Fx, Fp = Fz.</p>
 								<p class="setting-note">Over the crop window. Values use the operation's feed and depth of cut (else the capture's), the Diameter control and the measured mean RPM. Hover a value for its formula.</p>
 							</template>
 						</template>

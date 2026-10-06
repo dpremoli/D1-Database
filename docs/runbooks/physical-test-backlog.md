@@ -231,8 +231,9 @@ tool; a test cut on scrap stock is fine.
 - [ ] **P6 — cutting metrics.** On a real turning cut with the operation sheet beside you: open
   Signal statistics (compute), then Cutting metrics. Check Fc, Pc and kc against a hand calculation
   from the sheet (vc = π·D·n/1000, Pc = Fc·vc/60, kc = Fc/(ap·f)) and the kc against the literature
-  range for the material. Confirm which dynamometer axis really is the main cutting force, then fix
-  the assumed default mapping (Fc=Fz, Ff=Fx, Fp=Fy) if it is wrong. Check that an OD cut (`MT-O`) uses the Diameter box unchanged
+  range for the material. Confirm the axis mapping per workholding and operation type on the rig
+  (the owner's standard, the default, is Fc = Fx, Fp = Fz, Ff = Fy): pick the right mapping for
+  each type and check it is remembered for that type only and the CSV `axis_map` matches. Check that an OD cut (`MT-O`) uses the Diameter box unchanged
   for vc and that a facing cut (`MT-F`, also one with a saved crop) uses D at the window midpoint,
   matching the radial axis of the plots. Check "—" with a reason on an
   operation with no feed or depth, and on a milling op. Since: this batch (PR TBD).
