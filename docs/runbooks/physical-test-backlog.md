@@ -146,7 +146,11 @@ tool; a test cut on scrap stock is fine.
   Cancel mid-run: the rest are untouched. Since: this batch (PR TBD).
 - [ ] **R9 — cleanup never touches unsynced captures.** With real uploaded and not-uploaded
   captures older than N days, Free up space > Preview lists only captures that have a real
-  `manufacturing_operations` row; cross-check three in Directus. Not-uploaded, incomplete and
+  `manufacturing_operations` row AND a `machining_force_analysis` row with `live_cache_file` (and
+  `directus_files_id` when a `.mat` exists); cross-check three in Directus. Make one orphan: in
+  Directus delete the analysis row of an old uploaded capture (or stop an upload after the run row
+  is created); it must show "partial upload", keep its Upload button, be absent from the preview,
+  and get the only-copy warning in a bulk delete. Not-uploaded, incomplete and
   queued ones are absent at any N. Run it and confirm those are still on disk. Repeat with Directus
   stopped: the preview must refuse. Since: this batch (PR TBD).
 - [ ] **R9 — upload-all progress and cancel against the real Directus.** With three or more

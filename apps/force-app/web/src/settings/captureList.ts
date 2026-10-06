@@ -22,7 +22,10 @@ export interface ListCapture {
 export interface RowFacts {
 	/** The Directus lookup succeeded. When false, `uploaded` says nothing. */
 	uploadedKnown: boolean;
+	/** Fully uploaded: operation row, files and analysis row (captureUploadState.ts). */
 	uploaded: Record<string, boolean>;
+	/** An operation row exists but the upload never finished. Still the only copy. */
+	partial?: Record<string, boolean>;
 	/** Captures whose database record is still waiting in the offline queue. */
 	queuedIds: ReadonlySet<string>;
 	/** Ids with a complete copy on the remote backup server; null when that is unknown. */
@@ -34,6 +37,7 @@ export type RowState =
 	| 'working' // being recorded, deleted or recovered right now
 	| 'unknown' // finalized, but the database could not be asked
 	| 'queued' // finalized, upload waiting in the offline queue
+	| 'partial' // finalized, an upload started (operation row) but never finished
 	| 'not_uploaded'
 	| 'uploaded';
 
@@ -43,6 +47,7 @@ export function rowState(c: ListCapture, f: RowFacts): RowState {
 	if (!f.uploadedKnown) return 'unknown';
 	if (f.uploaded[c.id]) return 'uploaded';
 	if (f.queuedIds.has(c.id)) return 'queued';
+	if (f.partial?.[c.id]) return 'partial';
 	return 'not_uploaded';
 }
 

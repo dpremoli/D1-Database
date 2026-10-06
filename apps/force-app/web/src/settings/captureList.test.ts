@@ -234,3 +234,26 @@ describe('upload progress', () => {
 		expect(startUploadProgress(0).finished).toBe(true);
 	});
 });
+
+describe('partial upload (orphan operation row)', () => {
+	// An upload that died after the operation row was created: the row exists, no analysis row or files.
+	const f = facts({ partial: { orphan: true } });
+
+	it('is its own state: not uploaded, so the Upload action and the only-copy warning apply', () => {
+		expect(rowState(cap('orphan'), f)).toBe('partial');
+		expect(matchesFilter(cap('orphan'), 'not_uploaded', f)).toBe(true);
+		expect(matchesFilter(cap('orphan'), 'uploaded', f)).toBe(false);
+	});
+
+	it('is never a cleanup candidate, however old', () => {
+		const old = cap('orphan', { mtime: NOW_S - 400 * DAY });
+		expect(isCleanupCandidate(old, f, cleanupCutoff(30, NOW_MS))).toBe(false);
+		expect(cleanupCandidates([old, cap('ok', { mtime: NOW_S - 400 * DAY })], facts({ partial: { orphan: true }, uploaded: { ok: true } }), 30, NOW_MS).map((c) => c.id)).toEqual(['ok']);
+	});
+
+	it('shows as the only copy in the bulk-delete plan', () => {
+		const plan = planBulkDelete(new Set(['orphan']), [cap('orphan')], f);
+		expect(plan.items[0]).toMatchObject({ state: 'partial', onlyCopy: true });
+		expect(plan.onlyCopyCount).toBe(1);
+	});
+});

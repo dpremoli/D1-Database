@@ -14,7 +14,7 @@ import { authStore } from '../authStore';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, hasServerSession, recorderFromExtra } from '../recorder';
 import { confirmAction } from '../ui/confirm';
 import EditCaptureMetadataDialog from './EditCaptureMetadataDialog.vue';
-import { matchUploaded, uploadedRowsSince } from './captureUploadState';
+import { lookupUploadState, type UploadStateResult } from './captureUploadState';
 import { remoteCopyLabel } from './backupLabels';
 import { fetchRemoteBackupStates } from '../recorderHttp';
 import { formatMegabytes } from '../format';
@@ -73,7 +73,11 @@ const busy = ref<Record<string, string>>({});   // id -> 'deleting' | 'uploading
 const rowMsg = ref<Record<string, string>>({});
 // Which captures already exist in Directus. Looked up once per load so the list can distinguish
 // "safe to delete, it's in the database" from "this is the only copy".
+// "Uploaded" means the operation row, its files and the analysis row all exist. `partial` is a
+// capture with an operation row but no finished upload (an orphan from a died upload): it still
+// counts as the only copy and stays uploadable.
 const uploaded = ref<Record<string, boolean>>({});
+const partial = ref<Record<string, boolean>>({});
 // capture_id -> operation_id, for the metadata editor: present means "PATCH the Directus row too,
 // not just the local summary.json".
 const uploadedOpId = ref<Record<string, string>>({});
@@ -185,39 +189,47 @@ function setFilter(f: StatusFilter) {
 	void load();
 }
 
-/** Which of `ids` already have a database row. Null when Directus can't be asked. */
-async function lookupUploaded(ids: string[]): Promise<{ uploaded: Record<string, boolean>; opIds: Record<string, string> } | null> {
+/** Which of `rows` are fully uploaded (see captureUploadState.ts). Null when Directus can't be asked. */
+async function lookupUploaded(rows: Capture[]): Promise<UploadStateResult | null> {
 	// recorded_metadata.capture_id is what both upload paths stamp (workspace.ts and
 	// uploadCapture.ts), so it is the link back from a local capture to its database row. Directus
-	// can't filter on that JSON key, so candidate rows are fetched and matched client-side (see
-	// captureUploadState.ts for why the created_at bound is safe).
+	// can't filter on that JSON key, so candidate rows are fetched and matched client-side. An
+	// operation row alone is not "uploaded": the analysis row with its files must exist too.
 	try {
-		if (!ids.length) return { uploaded: {}, opIds: {} };
-		const since = uploadedRowsSince(ids);
-		const res = await api.get('/items/manufacturing_operations', {
-			params: {
-				filter: { recorded_metadata: { _nnull: true }, ...(since ? { created_at: { _gte: since } } : {}) },
-				fields: ['operation_id', 'recorded_metadata'], limit: -1,
-			},
-		});
-		return matchUploaded(res.data?.data ?? [], ids);
+		return await lookupUploadState(
+			rows.map((c) => ({ id: c.id, hasMat: hasMat(c) })),
+			async (collection, params) => (await api.get(`/items/${collection}`, { params })).data?.data ?? [],
+		);
 	} catch {
 		// Offline or not permitted: leave the state unknown rather than claiming "not uploaded",
 		// which would invite deleting the only copy of a capture that is in fact safe.
 		return null;
 	}
 }
+/** A capture wrote a .mat unless it was too big for the format (the recorder lists the files it has). */
+const hasMat = (c: Capture) => c.files?.['capture.mat'] !== undefined;
 
-function mergeUploaded(r: { uploaded: Record<string, boolean>; opIds: Record<string, string> }) {
-	uploaded.value = { ...uploaded.value, ...r.uploaded };
-	uploadedOpId.value = { ...uploadedOpId.value, ...r.opIds };
+/** Record what a lookup found for exactly the rows it covered (an entry that is no longer true is cleared). */
+function mergeUploaded(rows: Capture[], r: UploadStateResult) {
+	const up = { ...uploaded.value };
+	const part = { ...partial.value };
+	const ops = { ...uploadedOpId.value };
+	for (const c of rows) {
+		if (r.uploaded[c.id]) up[c.id] = true; else delete up[c.id];
+		if (r.partial[c.id]) part[c.id] = true; else delete part[c.id];
+		if (r.opIds[c.id]) ops[c.id] = r.opIds[c.id]; else delete ops[c.id];
+	}
+	uploaded.value = up;
+	partial.value = part;
+	uploadedOpId.value = ops;
 	uploadedKnown.value = true;
 }
 
 async function checkUploaded() {
 	uploadedKnown.value = false;
-	const r = await lookupUploaded(captures.value.map((c) => c.id));
-	if (r) mergeUploaded(r);
+	const rows = captures.value.slice();
+	const r = await lookupUploaded(rows);
+	if (r) mergeUploaded(rows, r);
 }
 
 // ---- What the list shows ----
@@ -225,6 +237,7 @@ async function checkUploaded() {
 const facts = computed<RowFacts>(() => ({
 	uploadedKnown: uploadedKnown.value,
 	uploaded: uploaded.value,
+	partial: partial.value,
 	queuedIds: queuedCaptureIds.value as Set<string>,
 	remoteComplete: remoteIds.value
 		? new Set([...remoteIds.value].filter(([, st]) => st === 'complete').map(([id]) => id))
@@ -314,7 +327,7 @@ function toggleRow(id: string) { selected.value = toggleId(selected.value, id); 
 function toggleAllShown() { selected.value = toggleAll(selected.value, visible.value); }
 
 const stateText: Record<string, string> = {
-	uploaded: 'uploaded', queued: 'NOT uploaded (queued)', not_uploaded: 'NOT uploaded', unknown: 'upload state unknown',
+	uploaded: 'uploaded', queued: 'NOT uploaded (queued)', partial: 'NOT uploaded (partial)', not_uploaded: 'NOT uploaded', unknown: 'upload state unknown',
 };
 function listStats(items: { id: string; size_mb: number; state: string }[], nameOf: (id: string) => string) {
 	const rows = items.slice(0, STAT_ROWS).map((i) => ({
@@ -425,12 +438,12 @@ async function previewCleanup() {
 			cleanupScan.value = { loaded: pool.length, total: data.total };
 			if (!data.captures?.length || pool.length >= data.total) break;
 		}
-		const r = await lookupUploaded(pool.map((c) => c.id));
+		const r = await lookupUploaded(pool);
 		if (!r) {
 			cleanupMsg.value = 'Cannot tell which captures are uploaded because the database could not be reached. Nothing can be selected for cleanup.';
 			return;
 		}
-		mergeUploaded(r);
+		mergeUploaded(pool, r);
 		cleanupPool.value = pool;
 	} catch (e: any) {
 		cleanupMsg.value = describeFetchError(e, 'failed to scan the captures');
@@ -446,7 +459,7 @@ async function runCleanup() {
 	const sum = summarizeCleanup(items);
 	const ok = await confirmAction({
 		title: `Delete ${items.length} uploaded capture${items.length === 1 ? '' : 's'}?`,
-		message: `Every one of these is older than ${cleanupDays.value} days and has a record in the database. Captures that are not uploaded, incomplete, queued or unknown are never included.`,
+		message: `Every one of these is older than ${cleanupDays.value} days and has its analysis and files in the database. Captures that are not uploaded, incomplete, queued or unknown are never included.`,
 		detail: 'This cannot be undone. The database records and analyses stay.',
 		stats: [
 			{ label: 'Captures', value: String(sum.count) },
@@ -458,14 +471,12 @@ async function runCleanup() {
 	});
 	if (!ok) return;
 	// Ask Directus again now, and apply the rule to what it says now rather than to the preview.
-	const fresh = await lookupUploaded(items.map((c) => c.id));
+	const fresh = await lookupUploaded(items);
 	if (!fresh) {
 		cleanupMsg.value = 'The database stopped answering, so nothing was deleted.';
 		return;
 	}
-	const next = { ...uploaded.value };
-	for (const c of items) next[c.id] = !!fresh.uploaded[c.id];
-	uploaded.value = next;
+	mergeUploaded(items, fresh);
 	const cutoff = cleanupCutoff(cleanupDays.value, Date.now());
 	const results = await deleteMany(items, (c) => isCleanupCandidate(c, facts.value, cutoff));
 	reportDeletes('Cleanup finished', results);
@@ -541,6 +552,8 @@ async function upload(c: Capture): Promise<UploadOutcome> {
 			matWritten: sum.mat_written,
 		});
 		uploaded.value = { ...uploaded.value, [c.id]: true };
+		const { [c.id]: _done, ...stillPartial } = partial.value;
+		partial.value = stillPartial;
 		rowMsg.value[c.id] = 'uploaded';
 		return 'uploaded';
 	} catch (e: any) {
@@ -895,6 +908,7 @@ onMounted(async () => {
 					<span v-else-if="!uploadedKnown" class="tag">upload state unknown</span>
 					<span v-else-if="uploaded[c.id]" class="tag ok">uploaded</span>
 					<span v-else-if="queuedCaptureIds.has(c.id)" class="tag">upload queued</span>
+					<span v-else-if="partial[c.id]" class="tag warn" title="A database record exists but the upload never finished (files or analysis missing). This is still the only complete copy: upload it again to finish.">partial upload</span>
 					<span v-else class="tag warn">not uploaded</span>
 					<!-- Not part of the chain above: these say something else about the row. -->
 					<span v-if="c.recording" class="tag">recording now</span>

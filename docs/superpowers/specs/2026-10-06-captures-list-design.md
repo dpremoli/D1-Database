@@ -37,8 +37,17 @@ per-capture round trips, not the JSON size (3000 rows is about 1.5 MB, trivial),
 filtering runs matters less than how many captures have to be inspected per request.
 
 Also relevant: "uploaded" is not known to the recorder. It is derived in the browser from Directus
-(`captureUploadState.ts`), one query for all rows. Any status filter on it has to run in the
-browser.
+(`captureUploadState.ts`). Any status filter on it has to run in the browser.
+
+**What "uploaded" means.** A `manufacturing_operations` row carrying the capture id is not enough:
+the upload order is operation row, files, analysis row, so an upload that died after the first step
+leaves an orphan operation row. A capture counts as uploaded (for the cleanup rule, the bulk-delete
+only-copy warning and hiding the Upload button) only when a `machining_force_analysis` row for one
+of its operations has `live_cache_file` set, and `directus_files_id` too when the capture wrote a
+`.mat` (the browse row's `files` lists `capture.mat`; captures over `MAT_MAX_BYTES` have none).
+Otherwise it is a **partial upload**: it counts as not uploaded, the only copy, and stays uploadable
+(`ensureOperation` resumes on the existing operation row). The analysis rows are fetched with one
+query per 80 operation ids (`operation_id _in`, three fields only).
 
 ## Options
 
@@ -116,7 +125,7 @@ These apply to bulk delete and cleanup. The single-row Delete keeps its present 
    these have NOT been uploaded and have no complete remote backup: this is the only copy"
    above the list. A capture queued for upload counts as not uploaded.
 5. **Cleanup is stricter and has no manual override.** A candidate must be finalized, positively
-   known as uploaded to Directus, not queued, not recording/discarding/recovering, and older than
+   known as fully uploaded to Directus (not a partial upload), not queued, not recording/discarding/recovering, and older than
    N days by its recording time (folder mtime). Not-uploaded, incomplete and unknown never
    qualify. The candidate list is previewed (count, space, oldest and newest) before the
    confirm, and the rules are re-applied to fresh state at the moment of deleting, not to the

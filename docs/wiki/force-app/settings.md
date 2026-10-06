@@ -146,8 +146,9 @@ in progress or one being recovered. Bulk delete is unavailable while the databas
 because it can't tell which captures are the only copy.
 
 **Free up space.** Pick a number of days and press **Preview**: it scans every finalized capture and
-lists the ones that are uploaded to the database and older than that. Captures that are not
-uploaded, incomplete, waiting in the upload queue or of unknown state are never included, whatever
+lists the ones that are fully uploaded to the database (run, files and analysis record, not just a
+run record left by an upload that died) and older than that. Captures that are not
+uploaded, partially uploaded, incomplete, waiting in the upload queue or of unknown state are never included, whatever
 their age. **Delete** asks again, re-checks each capture against the database as it goes, and reports
 the result.
 
