@@ -218,9 +218,11 @@ sfb_check "down:Machining" "down: removes the seven bookmarks and keeps other bo
 # scripts/configure_directus.sql seeds the same seven bookmarks as the migration (an operator may
 # run either first, and it is re-run after every change), so the two lists must not drift apart.
 CFG=scripts/configure_directus.sql
-sfb_values() { awk '/^FROM \(VALUES/{f=1;next}/^\) AS v\(/{f=0}f' "$1"; }
-sfb_mig_values=$(sfb_values "$SFB")
-sfb_cfg_values=$(sfb_values "$CFG")
+# Each extraction starts at the file's saved-filters comment block ($2), so a VALUES list elsewhere
+# in the file (configure_directus.sql has several) cannot be picked up instead.
+sfb_values() { awk -v anchor="$2" '$0 ~ anchor{a=1} a&&/^FROM \(VALUES/{f=1;next} f&&/^\) AS v\(/{exit} f' "$1"; }
+sfb_mig_values=$(sfb_values "$SFB" '^-- D12: saved filters')
+sfb_cfg_values=$(sfb_values "$CFG" '^-- Saved filters \(migration 135\)')
 [[ -n "$sfb_mig_values" && "$sfb_mig_values" == "$sfb_cfg_values" ]] \
     && ok "configure_directus.sql seeds the same bookmark rows as migration 135" \
     || bad "configure_directus.sql and migration 135 bookmark VALUES differ"
