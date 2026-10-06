@@ -43,6 +43,17 @@ describe('viewState', () => {
 		expect(encodeViewState({ compare: ['a'], reference: 'z', diff: true })).toEqual({ cmp: 'a' });
 	});
 
+	it('a link carries the first five compared cuts but always keeps the reference', () => {
+		const all = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+		expect(encodeViewState({ compare: all }).cmp).toBe('a,b,c,d,e');
+		const q = encodeViewState({ compare: all, reference: 'g', diff: true });
+		expect(q.cmp).toBe('a,b,c,d,g');
+		expect(q.ref).toBe('g');
+		expect(q.diff).toBe('1');
+		expect(decodeViewState(q)).toMatchObject({ compare: ['a', 'b', 'c', 'd', 'g'], reference: 'g', diff: true });
+		expect(encodeViewState({ compare: all, reference: 'b' }).cmp).toBe('a,b,c,d,e');   // already inside
+	});
+
 	it('de-duplicates and caps the compare set', () => {
 		expect(decodeViewState({ cmp: 'a,a,b,c,d,e,f,g' }).compare).toEqual(['a', 'b', 'c', 'd', 'e']);
 	});
