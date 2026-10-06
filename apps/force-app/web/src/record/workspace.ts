@@ -287,6 +287,10 @@ export function createWorkspace() {
 	// Safety alarms (2e) — the app-wide controller (config lives in Settings > Alarms), evaluated
 	// here on every live frame while recording.
 	const alarms = alarmController;
+	// R6 (opt-in): a tripped force alarm stops the recording through the normal stop path, so the
+	// save dialog and finalize behave exactly as after a manual Stop. The controller calls this once
+	// per trip; the state check keeps a late call from stopping anything that is not recording.
+	alarms.onForceTrip = () => { if (mode.value === 'record' && st.state === 'recording') void stop(); };
 	// Record mode only: an archived cut must never trip a safety alarm on a machine that is not
 	// cutting. Playback drove this with RPM that was also wrong by the decimation stride, so every
 	// replay raised the full-screen overlay.

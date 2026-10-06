@@ -104,9 +104,30 @@ Press **Start**. The first time in each session the app offers to test the safet
 **Start without testing** is fine if you have already checked them on this machine today. The
 thresholds are set in [Settings → Safety Alarms](settings.md#safety-alarms).
 
+While you cut, a force axis that reaches the **early-warning level** (80 % of the force limit by
+default) raises an amber banner, with no tone and nothing to acknowledge. If the limit itself is
+reached the red alarm takes over. You can also have the alarm stop the recording for you; that is
+off by default (see the settings page).
+
 While recording, the parameter fields lock and **Start** becomes **Stop**:
 
 ![A cut in progress](../images/force-app/record-live.png)
+
+### Keyboard shortcuts
+
+The Record page has a **Keyboard shortcuts** line under **Start** that lists these. On a Mac use
+Cmd instead of Ctrl.
+
+| Keys | Does |
+|---|---|
+| Ctrl+Enter | **Start**, exactly as the button: the pre-flight prompt, the alarm test, the low-disk prompt and the sample-rate block all still apply |
+| Ctrl+. | **Stop** |
+| A | acknowledge a safety alarm, while the alarm banner shows (you are still asked to confirm) |
+| Ctrl+N | **New**, once a cut is finished |
+| Enter | the save dialog's main button (**Save**, or **Open in Plot** once saved) |
+
+Space and Esc are never used to start or stop. The shortcuts are ignored while you type in a field
+(except Enter in the save dialog) and in Replay.
 
 A recording stops when you press **Stop**. It also stops by itself when a simulated run reaches
 its planned length, or when the capture drive runs out of space.
