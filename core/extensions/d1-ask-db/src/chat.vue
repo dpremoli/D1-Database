@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue';
+import { nextTick, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 import ChartPanel from './chart-panel.vue';
 import ExampleChips from './example-chips.vue';
 import { copyText } from './clipboard';
-import { csvFilename, toCsv } from './csv';
+import { csvCell, csvFilename, toCsv } from './csv';
 import QuestionList from './question-list.vue';
 import {
 	HISTORY_KEY,
@@ -51,26 +51,25 @@ const scroller = ref<HTMLDivElement | null>(null);
 const asked = ref(loadList(HISTORY_KEY));
 const saved = ref(loadList(SAVED_KEY));
 
+watch(asked, (list) => saveList(HISTORY_KEY, list));
+watch(saved, (list) => saveList(SAVED_KEY, list));
+
 function remember(question: string) {
 	asked.value = addQuestion(asked.value, question, Date.now(), HISTORY_LIMIT);
-	saveList(HISTORY_KEY, asked.value);
 }
 
 function forget(question: string) {
 	asked.value = removeQuestion(asked.value, question);
-	saveList(HISTORY_KEY, asked.value);
 }
 
 function toggleSaved(question: string) {
 	saved.value = hasQuestion(saved.value, question)
 		? removeQuestion(saved.value, question)
 		: addQuestion(saved.value, question, Date.now());
-	saveList(SAVED_KEY, saved.value);
 }
 
 function unsave(question: string) {
 	saved.value = removeQuestion(saved.value, question);
-	saveList(SAVED_KEY, saved.value);
 }
 
 /** A plain-language message for a failed /d1-ask/chat call. */
@@ -194,12 +193,6 @@ async function copySql(turn: Turn) {
 		turn.copied = undefined;
 	}, 2000);
 }
-
-function cell(value: unknown): string {
-	if (value === null || value === undefined) return '';
-	if (typeof value === 'object') return JSON.stringify(value);
-	return String(value);
-}
 </script>
 
 <template>
@@ -314,7 +307,7 @@ function cell(value: unknown): string {
 								<tbody>
 									<tr v-for="(row, r) in turn.rows" :key="r">
 										<td v-for="col in turn.columns" :key="col">
-											{{ cell(row[col]) }}
+											{{ csvCell(row[col]) }}
 										</td>
 									</tr>
 								</tbody>
