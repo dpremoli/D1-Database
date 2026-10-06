@@ -20,10 +20,10 @@ the same stream (see `CLAUDE.md`).
 
 | Stream | Items | Worktree / branch | State |
 |---|---|---|---|
-| M — Sample timeline and campaign overview | D5, D11 | — | not started |
-| N — Diagnostics across a campaign | P10 | — | not started |
-| O — Cutting metrics | P6 | — | not started |
-| P — Captures list | R9 | — | not started |
+| M — Sample timeline and campaign overview | D5, D11 | `agent-a8bd81e18c8eeb71e` | in progress |
+| N — Diagnostics across a campaign | P10 | `agent-a72215e01a6e621f0` | in progress |
+| O — Cutting metrics | P6 | `agent-a1b290277d7c04730` | in progress |
+| P — Captures list | R9 | `agent-ab5dd77bae769b66f` | in progress |
 | /simplify (Opus) | all | — | not started |
 | /code-review high (Opus) | all | — | not started |
 
