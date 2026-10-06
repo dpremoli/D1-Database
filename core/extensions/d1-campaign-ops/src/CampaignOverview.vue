@@ -12,7 +12,14 @@ import { useApi } from '@directus/extensions-sdk';
 // @ts-ignore plain JS module, tested with node --test
 import { TEST_STATUS_ORDER, buildOverview, errMsg, isDuplicate, isForbidden } from './overview.js';
 
-const props = defineProps<{ primaryKey: string | number; refreshKey?: number }>();
+// `operations` is the campaign's operations as read by the parent (CampaignOps), which owns that
+// fetch and reloads it after an add or remove; a failed read is reported there.
+const props = defineProps<{
+	primaryKey: string | number;
+	refreshKey?: number;
+	operations: any[];
+	operationsLoading?: boolean;
+}>();
 const api = useApi();
 
 let unmounted = false;
@@ -23,7 +30,6 @@ const actionError = ref<string | null>(null);
 const busy = ref<string | null>(null);
 
 const junction = ref<any[]>([]);        // campaign_samples rows (with their own id, for removal)
-const operations = ref<any[]>([]);
 const tests = ref<any[]>([]);
 const analyses = ref<any[]>([]);
 const analysisUnavailable = ref(false); // the role may not read machining_force_analysis
@@ -31,7 +37,7 @@ const analysisFailed = ref(false);      // the read failed for another reason (l
 const noAnalysis = computed(() => analysisUnavailable.value || analysisFailed.value);
 
 const ov = computed(() =>
-	buildOverview({ samples: junction.value, operations: operations.value, tests: tests.value, analyses: analyses.value }),
+	buildOverview({ samples: junction.value, operations: props.operations, tests: tests.value, analyses: analyses.value }),
 );
 const junctionIdBySample = computed(() => {
 	const m = new Map<string, string>();
@@ -52,14 +58,8 @@ async function load() {
 	loading.value = true;
 	const errs: string[] = [];
 	const cid = props.primaryKey;
-	const [j, o, t, a] = await Promise.allSettled([
+	const [j, t, a] = await Promise.allSettled([
 		list('campaign_samples', { filter: { campaign_id: { _eq: cid } }, fields: ['id', 'sample_id.sample_id', 'sample_id.sample_code'], limit: -1 }),
-		list('manufacturing_operations', {
-			filter: { campaign_id: { _eq: cid } },
-			fields: ['operation_id', 'pass_code', 'process_category', 'sample_id.sample_id', 'sample_id.sample_code'],
-			sort: ['pass_code'],
-			limit: -1,
-		}),
 		list('test_sessions', {
 			filter: { campaign_id: { _eq: cid } },
 			fields: ['session_id', 'test_type', 'status', 'session_date', 'sample_id.sample_id', 'sample_id.sample_code'],
@@ -79,7 +79,6 @@ async function load() {
 		return [];
 	};
 	junction.value = val(j, 'the sample list');
-	operations.value = val(o, 'operations');
 	tests.value = val(t, 'test sessions');
 	// No access to the force-analysis table is a normal state for some roles: say so, don't alarm.
 	// Any other failure (network, server) is a real error and is listed with the others.
@@ -219,7 +218,7 @@ async function setTestCampaign(id: string, campaign: string | number | null, lab
 
 <template>
 	<div class="ov">
-		<div v-if="loading && !junction.length && !operations.length && !tests.length" class="ov-msg"><v-progress-circular indeterminate x-small /> loading overview…</div>
+		<div v-if="(loading || operationsLoading) && !junction.length && !operations.length && !tests.length" class="ov-msg"><v-progress-circular indeterminate x-small /> loading overview…</div>
 		<template v-else>
 			<div v-for="e in errors" :key="e" class="ov-msg ov-err">{{ e }}</div>
 			<div v-if="actionError" class="ov-msg ov-err">{{ actionError }}</div>

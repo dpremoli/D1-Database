@@ -38,18 +38,24 @@ const error = ref<string | null>(null);   // last failed load / add / remove, sh
 const busyId = ref<string | null>(null);  // operation currently being added or removed
 const overviewKey = ref(0);               // bumped after an add/remove so the overview reloads
 
+// The campaign's operations, fetched once here and shared with the overview panel (as a prop)
+// instead of each reading them separately.
 const linked = ref<any[]>([]);
+const linkedLoading = ref(false);
 async function loadLinked() {
 	const gen = ++linkedGen;
-	if (isNew.value) { linked.value = []; return; }
+	if (isNew.value) { linked.value = []; linkedLoading.value = false; return; }
+	linkedLoading.value = true;
 	try {
 		const res = await api.get('/items/manufacturing_operations', {
-			params: { filter: { campaign_id: { _eq: props.primaryKey } }, fields: ['operation_id', 'pass_code', 'process_category'], sort: ['pass_code'], limit: -1 },
+			params: { filter: { campaign_id: { _eq: props.primaryKey } }, fields: ['operation_id', 'pass_code', 'process_category', 'sample_id.sample_id', 'sample_id.sample_code'], sort: ['pass_code'], limit: -1 },
 		});
 		if (gen !== linkedGen || unmounted) return;
 		linked.value = res.data?.data ?? [];
 	} catch (e) {
 		if (gen === linkedGen && !unmounted) error.value = `Could not load the campaign's operations: ${errMsg(e)}`;
+	} finally {
+		if (gen === linkedGen) linkedLoading.value = false;
 	}
 }
 onMounted(loadLinked);
@@ -120,7 +126,7 @@ async function remove(op: any) {
 	<div class="co">
 		<div v-if="isNew" class="co-msg">Save the campaign first, then add operations here.</div>
 		<template v-else>
-			<CampaignOverview :primary-key="primaryKey!" :refresh-key="overviewKey" />
+			<CampaignOverview :primary-key="primaryKey!" :refresh-key="overviewKey" :operations="linked" :operations-loading="linkedLoading" />
 			<h4 class="co-h">Add or remove operations</h4>
 			<div v-if="error" class="co-msg co-err">{{ error }}</div>
 			<div class="co-linked">
