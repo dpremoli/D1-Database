@@ -20,8 +20,8 @@ harness has created worktrees on a stale base before).
 | F — Record pre-flight and clipping | R4, R5 | `agent-ac8631645146fa4c6` | merged; verified in the sim UI (force-app-verify) |
 | G — Sample labels and QR | D4 | `agent-ae33f229aecfe9f8c` | merged; d1-report tests now run in CI |
 | H — Ask-DB export and history | D3 | `agent-a1b0b9664f0489c4f` | merged; helper tests now run in CI |
-| /simplify (Opus) | all | main checkout | in progress |
-| /code-review high (Opus) | all | — | not started |
+| /simplify (Opus) | all | main checkout | done (`835a4bf`..`b780840`) |
+| /code-review high (Opus) | all | read-only reviewers | in progress |
 
 ## E. Plot links and pass-to-pass difference — P3, P4
 
