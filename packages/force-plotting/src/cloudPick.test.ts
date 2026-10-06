@@ -7,6 +7,7 @@ import type { Cache } from './liveCache';
 import { buildPath, type PathParams, type TurningSpiralParams } from './path';
 import { createMapProjector } from './mapProjector';
 import { spiralPointAt } from './frmCloudShader';
+import { parseOctreeBuild } from './octreeBuild';
 import * as THREE from 'three';
 
 describe('pickNearest', () => {
@@ -152,6 +153,34 @@ describe('octreePathParams', () => {
 	it('falls back to rpm 0 when the cache carries no rpm', () => {
 		const { path } = octreePathParams(makeCache(false), 0, 1);
 		expect(path.kind === 'turning_spiral' && path.rpm).toBe(0);
+	});
+});
+
+describe('octreePathParams with a build manifest', () => {
+	const build = parseOctreeBuild({
+		schema: 1, kind: 'octree', speed_mode: 'measured', feed: 0.08, diam: 60, inner_diam: 5, ppr: 3,
+		cut_start_sec: 0.1, cut_end_sec: 0.4, crop_source: 'override',
+	})!;
+	it('takes feed, diameters, ppr and the window from the manifest, not the cache or the row', () => {
+		const c = makeCache();
+		const { path, window } = octreePathParams(c, 10, 4, build);
+		expect(path).toMatchObject({ kind: 'turning_spiral', speedMode: 'measured', feed: 0.08, diam: 60, innerDiam: 5, ppr: 3 });
+		expect(window).toEqual({ cropStartSec: 0.1, cropEndSec: 0.4, stride: 1 });   // not t[0]..t[N-1]
+	});
+	it('anchors r = 0 at the first cache sample at the manifest start', () => {
+		const c = makeCache();
+		const { path, window } = octreePathParams(c, 10, 4, build);
+		const a = buildPath(c, path, window)!;
+		expect(a.count).toBeGreaterThan(0);
+		expect(c.t[a.idx[0]]).toBeGreaterThanOrEqual(0.1 - 1e-6);
+		expect(c.t[a.idx[0]]).toBeLessThan(0.1 + 0.011);
+		expect(c.t[a.idx[a.count - 1]]).toBeLessThanOrEqual(0.4 + 1e-6);
+		expect(a.pos[0]).toBeCloseTo(30, 5);   // the manifest's diam / 2 at the anchor
+	});
+	it('keeps the row-based behaviour when there is no manifest (or null)', () => {
+		const c = makeCache();
+		expect(octreePathParams(c, 10, 4, null)).toEqual(octreePathParams(c, 10, 4));
+		expect(octreePathParams(c, 10, 4, undefined).window.cropStartSec).toBe(c.t[0]);
 	});
 });
 

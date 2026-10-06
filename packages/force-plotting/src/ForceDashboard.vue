@@ -1716,8 +1716,12 @@ async function saveCropAsOfficial() {
 	// already always current; Figure mode (frm_fx/fy/fz) has no such live-triggerable rebuild path.
 	const invalidate: Record<string, any> = {};
 	const now = new Date().toISOString();
-	if (d.octree_status === 'done') { invalidate.octree_status = 'pending'; invalidate.octree_requested_at = now; }
-	if (d.grid_octree_status === 'done') { invalidate.grid_octree_status = 'pending'; invalidate.grid_octree_requested_at = now; }
+	// 'error' is re-queued too: a failed build has nothing to keep, and the retry picks up the new crop.
+	// 'pending'/'processing' are left alone (already queued; a running build finishes on the old window).
+	const requeue = (st: unknown) => st === 'done' || st === 'error';
+	if (requeue(d.octree_status)) { invalidate.octree_status = 'pending'; invalidate.octree_requested_at = now; }
+	if (requeue(d.grid_octree_status)) { invalidate.grid_octree_status = 'pending'; invalidate.grid_octree_requested_at = now; }
+	const building = d.octree_status === 'processing' || d.grid_octree_status === 'processing';
 	try {
 		await api.patch(`/items/machining_force_analysis/${d.id}`, { crop_start_idx_override: startIdx, crop_end_idx_override: endIdx, ...invalidate });
 		d.crop_start_idx_override = startIdx; d.crop_end_idx_override = endIdx;   // so cropDirty/savedCropSec update
@@ -1728,8 +1732,9 @@ async function saveCropAsOfficial() {
 		if (invalidate.grid_octree_status) { d.grid_octree_status = 'pending'; if (frmMode.value === 'full' && gridFull.value) frmMode.value = pickDefaultMode(); }
 		cropTouched.value = false;
 		pendingCrop.clear();   // the saved window is now the truth; a link's crop request must not re-apply
-		cropSavedMsg.value = backToAuto ? 'Reverted to auto crop' : 'Saved as official crop';
-		window.setTimeout(() => { cropSavedMsg.value = ''; }, 2500);
+		cropSavedMsg.value = (backToAuto ? 'Reverted to auto crop' : 'Saved as official crop')
+			+ (building ? ' (a build already running keeps the old window)' : '');
+		window.setTimeout(() => { cropSavedMsg.value = ''; }, building ? 6000 : 2500);
 	} catch (e: any) {
 		cropSavedMsg.value = e?.response?.status === 403 ? 'Not permitted to save' : 'Save failed';
 	} finally { cropSaving.value = false; cropSavePrompt.value = false; }
@@ -2208,6 +2213,7 @@ function openPointMenu(e: PointMenuEvent) {
 	const hint = p ? undefined
 		: e.reason === 'gridded' ? 'Gridded 3D view averages samples'
 		: e.reason === 'no-cache' ? 'Needs this cut’s live cache'
+		: e.reason === 'outside-cache' ? 'The live cache doesn’t cover this octree’s crop'
 		: 'No point under the cursor';
 	const items: ContextMenuItem[] = [
 		{ label: 'Show position in time', disabled: !p, hint, run: () => { if (p) showInTime(p.t); } },
@@ -2254,9 +2260,14 @@ function openChartMenu(e: { clientX: number; clientY: number; x: number | null; 
 	if (octreeOn.value) {
 		const c = octreeSampleCache.value;
 		if (!detail.value?.live_cache_file) hint = 'Needs this cut’s live cache';
-		// The octree covers the live cache's own window; a time outside it has no mapped sample. With
-		// the cache still loading we can't say, so the item stays enabled (the map queues the reveal).
-		else if (c && c.N && (t < c.t[0] || t > c.t[c.N - 1])) hint = 'Outside the mapped window';
+		// A time outside the mappable window (the octree's build window within the live cache) has no
+		// mapped sample. The map knows that window (the build manifest); before it is ready, or for an
+		// octree without one, the cache's own range stands in. With the cache still loading we can't
+		// say, so the item stays enabled (the map queues the reveal).
+		else if (c && c.N) {
+			const w = frmOctreeRef.value?.timeWindow?.() as { start: number; end: number } | null | undefined;
+			if (w ? (t < w.start || t > w.end) : (t < c.t[0] || t > c.t[c.N - 1])) hint = 'Outside the mapped window';
+		}
 	}
 	else if (liveAvailable.value) {
 		// A zero-width crop means the crop isn't loaded/seeded yet (both edges 0), not "nothing is inside".

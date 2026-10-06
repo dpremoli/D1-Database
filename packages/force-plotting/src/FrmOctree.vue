@@ -30,6 +30,7 @@ import {
 } from './cloudPick';
 import { nearestIndex } from './hoverIndex';
 import { createPendingReveal } from './pendingReveal';
+import { cacheCoversBuild, mappableWindow, parseOctreeBuild, type OctreeBuild } from './octreeBuild';
 import { createMapProjector } from './mapProjector';
 import { createLongPress, TOUCH_MENU_OFFSET_PX } from './longPress';
 import { spiralAnchor, spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
@@ -61,7 +62,7 @@ const emit = defineEmits<{
 	(e: 'points', n: number): void;   // LOD-visible point count (for the resolution readout)
 	(e: 'zscale', v: number): void;   // 3-finger vertical swipe adjusts the Z exaggeration
 	(e: 'stage', v: StageInfo | null): void;   // what the view is busy with (null = idle), for the host's busy mark (#102)
-	(e: 'pointmenu', v: PointMenuEvent): void;   // right-click on the map (point null = nothing resolvable)
+	(e: 'pointmenu', v: PointMenuEvent): void;   // right-click or long-press on the map (point null = nothing resolvable)
 }>();
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
@@ -225,6 +226,18 @@ async function loadMeta(base: string): Promise<Record<string, [number, number]>>
 	return found;
 }
 
+// The octree's build manifest (d1_build.json): the geometry and cut window the host integrated it
+// with. null for an octree built before the manifest existed (404), an unreadable or malformed file:
+// the map then falls back to the cache window and the row's values. no-store, like metadata.json: a
+// stale copy would place picks against the previous build.
+async function loadBuild(base: string): Promise<OctreeBuild | null> {
+	try {
+		const res = await fetch(`${base}d1_build.json`, { cache: 'no-store' });
+		if (!res.ok) return null;
+		return parseOctreeBuild(await res.json());
+	} catch { return null; }
+}
+
 // Free the current octree: its node geometries, material and gradient texture. Reloading used to
 // just drop the reference (only unmount disposed), which leaked GPU memory on every op switch once
 // the component stayed mounted across them.
@@ -232,6 +245,7 @@ function disposeCloud() {
 	// The rings belong to the octree being dropped: the loop that updates them only runs while a
 	// pco exists, so without this the old operation's rings would sit frozen on the new load.
 	markRing.value = null; hoverRing.value = null;
+	build = null; buildReady = false;   // the next octree's manifest decides its geometry
 	if (pco) {
 		scene?.remove(pco);
 		try { pco.dispose(); } catch { /* already disposed */ }
@@ -259,9 +273,10 @@ async function load() {
 	const base = `${useForceHost().octreeUrl}/${props.octreePath}/`;
 	let pt: Potree | null = null, loaded: PointCloudOctree | null = null;
 	try {
-		const found = await loadMeta(base);
+		const [found, bld] = await Promise.all([loadMeta(base), loadBuild(base)]);
 		if (!loadToken.isCurrent(mine)) return;
 		Object.assign(ranges, found);
+		build = bld; buildReady = true;
 		pt = new Potree();
 		pt.maxNumNodesLoading = 12;   // parallelise node fetches so full-res streams in faster
 		// "Full-res" must mean full res: budget the LOD to cover the whole octree (a small
@@ -409,17 +424,31 @@ const longPress = createLongPress((x, y) => pickAt(x, y, TOUCH_MENU_OFFSET_PX));
 
 // What the spiral maths needs, per (sampleCache, innerDiam, ppr): small objects only. The render
 // loop places rings every frame, so none of this may be rebuilt there.
-interface OctreeGeo { c: Cache; innerDiam: number; ppr: number; path: TurningSpiralParams; cs: number; ce: number; u: SpiralUniforms }
+// With the build manifest the geometry is the build's own (feed, diameters, ppr, window), and the
+// row's inner diameter / ppr are ignored: they may have been edited since. Without one (an older
+// octree) it is the cache window with the row's values. `win` is what can be mapped: the window
+// clipped to the cache's t range, null when the cache starts after the build's cut start (`covered`
+// false: the r = 0 anchor has no sample, so nothing can be placed).
+interface OctreeGeo {
+	c: Cache; innerDiam: number; ppr: number; build: OctreeBuild | null; path: TurningSpiralParams;
+	cs: number; ce: number; covered: boolean; win: { start: number; end: number } | null; u: SpiralUniforms;
+}
 let geo: OctreeGeo | null = null;
+let build: OctreeBuild | null = null;
+let buildReady = false;   // the manifest fetch has settled: before that, picks would use the wrong geometry
 function octreeGeometry(): OctreeGeo | null {
 	const c = props.sampleCache;
 	if (!c || !c.N) { geo = null; return null; }   // never keep a dropped cache (100+ MB) reachable
+	if (!buildReady) return null;
 	const innerDiam = props.innerDiam ?? 0, ppr = props.ppr ?? 1;
-	if (geo && geo.c === c && geo.innerDiam === innerDiam && geo.ppr === ppr) return geo;
-	const g = octreePathParams(c, innerDiam, ppr);
+	if (geo && geo.c === c && geo.innerDiam === innerDiam && geo.ppr === ppr && geo.build === build) return geo;
+	const g = octreePathParams(c, innerDiam, ppr, build);
 	if (g.path.kind !== 'turning_spiral') return null;
 	const cs = g.window.cropStartSec, ce = g.window.cropEndSec;
-	geo = { c, innerDiam, ppr, path: g.path, cs, ce, u: spiralUniformValues({ ...g.path, ...spiralAnchor(c, cs) }) };
+	geo = {
+		c, innerDiam, ppr, build, path: g.path, cs, ce, covered: cacheCoversBuild(c, build), win: mappableWindow(c, build),
+		u: spiralUniformValues({ ...g.path, ...spiralAnchor(c, cs) }),
+	};
 	return geo;
 }
 
@@ -461,6 +490,7 @@ function pickAt(clientX: number, clientY: number, menuOffset = 0) {
 	const base = { clientX: clientX + menuOffset, clientY: clientY + menuOffset };   // where the menu opens; the pick stays under the finger
 	const g = octreeGeometry();
 	if (!g) { emit('pointmenu', { ...base, point: null, reason: 'no-cache' }); return; }
+	if (!g.covered) { emit('pointmenu', { ...base, point: null, reason: 'outside-cache' }); return; }
 	const c = g.c;
 	const r = canvasEl.value.getBoundingClientRect();
 	camera.updateMatrixWorld();   // controls.update() moved it since the last render
@@ -477,11 +507,11 @@ function pickAt(clientX: number, clientY: number, menuOffset = 0) {
 }
 
 // World position of the sample at time `sec` into _v (Z as the shader draws it); false when there
-// is none (no cache, outside the octree's cut window, or past the inner-diameter cut-out).
+// is none (no cache, outside the octree's cut window or the cache's, or past the inner-diameter cut-out).
 const _pos: SpiralPos = { x: 0, y: 0, rho: 0, visible: false };
 function timeToWorld(sec: number | null | undefined): boolean {
 	const g = octreeGeometry();
-	if (sec == null || !g || sec < g.cs || sec > g.ce) return false;
+	if (sec == null || !g || !g.win || sec < g.win.start || sec > g.win.end) return false;
 	const c = g.c;
 	const i = nearestIndex(c.t, sec);
 	spiralPositionInto(g.u, c.t[i], c.revs[i], g.cs, g.ce, _pos);
@@ -520,7 +550,7 @@ function updateRings() {
 const pendingReveal = createPendingReveal();
 function revealTime(t: number): boolean {
 	const g = octreeGeometry();
-	if (g && (t < g.cs || t > g.ce)) { pendingReveal.drop(); return false; }
+	if (g && (!g.win || t < g.win.start || t > g.win.end)) { pendingReveal.drop(); return false; }
 	if (!g || !camera || !controls || !pco || loading.value) { pendingReveal.hold(t); return true; }
 	pendingReveal.drop();
 	return revealNow(t);
@@ -639,7 +669,10 @@ function exportViewport(filename: string, subtitle?: string) {
 		axis: props.axis, subtitle, filename,
 	});
 }
-defineExpose({ currentBounds, exportViewport, revealTime });
+// The time span the map can place samples for (the build's window within the cache), or null when
+// that isn't known yet or there is none: the host uses it to say why "Show position on map" is off.
+function timeWindow(): { start: number; end: number } | null { return octreeGeometry()?.win ?? null; }
+defineExpose({ currentBounds, exportViewport, revealTime, timeWindow });
 </script>
 
 <template>

@@ -188,10 +188,21 @@ Things to know:
 
 - **Full and Gridded** views have no time stored in their points. They are matched by position
   against the cut's live cache, so the cut needs one (the same cache Lite uses). Without it the
-  time items are greyed out.
+  time items are greyed out. The host records what each octree was built with, so the match stays
+  right even if you later change the inner diameter or pulses per rev. An octree built before that
+  was recorded is matched with the cache's window and the current values, and can drift after such
+  an edit: rebuild it to fix that.
+- **Official crop.** Once you save an official crop, Full and Gridded are rebuilt on the host with
+  that window, and follow it when the rebuild finishes (a build already running when you save
+  finishes on the old window). If the live cache doesn't cover an octree's crop, the menu says
+  *The live cache doesn't cover this octree's crop*.
 - **Gridded** views average samples into cells, so a right-click picks the *nearest sample to the
   spot*, not the cell. A gridded Lite view in 3D can't be picked at all; use the 2D view.
 - Right-drag still pans the map. Only a right-click that doesn't move opens the menu.
+- **On a touchscreen**, hold one finger still on the map (Lite 2D and 3D, Full) or on a Force chart
+  for about half a second to open the same menu. It opens slightly down-right of your finger so the
+  finger doesn't cover it. Moving, or putting a second finger down, cancels it and the gesture pans
+  or zooms as usual.
 - **Escape**, or switching to another operation, clears the marker. The marker is never saved.
 
 ## Display
