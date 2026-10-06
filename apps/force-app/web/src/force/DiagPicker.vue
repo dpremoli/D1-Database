@@ -41,11 +41,7 @@ function toggleBucket(b: PickerBucket) {
 	if (next.has(b)) next.delete(b); else next.add(b);
 	buckets.value = next;
 }
-function toggleOne(id: string) {
-	const next = new Set(props.checked);
-	if (next.has(id)) next.delete(id); else next.add(id);
-	emit('update:checked', [...next]);
-}
+function toggleOne(id: string) { toggleGroup([id], !checkedSet.value.has(id)); }
 function toggleGroup(ids: string[], on: boolean) {
 	const next = new Set(props.checked);
 	for (const id of ids) { if (on) next.add(id); else next.delete(id); }

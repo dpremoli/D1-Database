@@ -10,6 +10,7 @@ import { computed, ref } from 'vue';
 import type { Recipe } from './recipeChannels';
 import { saveRecipe, deleteRecipe, updateRecipe, type SavedRecipe } from './diagRecipes';
 import { exportRecipeJson, isModifiedSinceLoaded, parseRecipeJson, recipeFileName } from './recipeIo';
+import { downloadText } from './csvExport';
 import RecipeDialog from './RecipeDialog.vue';
 
 const props = defineProps<{ library: SavedRecipe[]; currentRecipe: Recipe }>();
@@ -92,11 +93,7 @@ async function onConfirm(v: { name: string; notes: string }) {
 }
 
 function download(name: string, text: string) {
-	const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-	const a = document.createElement('a');
-	a.href = url; a.download = recipeFileName(name);
-	document.body.appendChild(a); a.click(); a.remove();
-	setTimeout(() => URL.revokeObjectURL(url), 1000);
+	downloadText(recipeFileName(name), text, 'application/json');
 }
 function exportRecipe() {
 	const r = selected.value;

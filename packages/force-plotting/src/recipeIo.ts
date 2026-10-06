@@ -2,6 +2,7 @@
 // library badge. Pure: no host, no DOM. Import validates the file shape and the recipe itself
 // (known ops, typed params, satisfiable step order via recipeProblems) so a bad file is refused
 // with a reason instead of being stored and failing later in the host bake.
+import { safeFilePart } from './csvExport';
 import { recipeProblems, recipesEquivalent, STEP_META, type Recipe, type RecipeStep } from './recipeChannels';
 
 export const RECIPE_FILE_TAG = 1;
@@ -24,8 +25,7 @@ export function exportRecipeJson(p: { name: string; notes?: string | null; recip
 
 /** A filesystem-safe name for the downloaded file. */
 export function recipeFileName(name: string): string {
-	const base = name.trim().replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '');
-	return `${base || 'recipe'}.d1recipe.json`;
+	return `${safeFilePart(name) || 'recipe'}.d1recipe.json`;
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {

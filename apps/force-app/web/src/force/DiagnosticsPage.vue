@@ -18,13 +18,11 @@
 // process_diag_row, which bakes every per-point statistic into attrs.d1an and the diag octree.
 // The browser only thresholds and highlights what the server already computed.
 import { computed, onMounted, ref } from 'vue';
-import { buildPatch, toPickerRow, type BatchRow, type Recipe } from '@d1/force-plotting';
+import { buildPatch, toPickerRow, type BatchRow, type DiagState, type Recipe } from '@d1/force-plotting';
 import { api } from '../directusClient';
 import StandaloneDiagnosticsWorkbench from './StandaloneDiagnosticsWorkbench.vue';
 import DiagPicker from './DiagPicker.vue';
 import DiagBatchDialog from './DiagBatchDialog.vue';
-
-type DiagState = 'done' | 'pending' | 'processing' | 'error' | null;
 
 interface Row {
 	id: string;

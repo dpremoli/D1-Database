@@ -2,39 +2,14 @@
 // "?" overlay for the Plot dashboard: the gestures that are not visible on screen. A modal dialog:
 // Escape closes it, Tab stays inside it, and focus goes back to whatever opened it. Host-agnostic
 // (no host imports) and styled like InfoTip's bubble so it reads as the same family of help.
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { ref } from 'vue';
 import { PLOT_HELP } from './plotHelp';
+import { useModalFocus } from './modalFocus';
 
 const emit = defineEmits<{ (e: 'close'): void }>();
 const rootEl = ref<HTMLElement | null>(null);
 const closeBtn = ref<HTMLButtonElement | null>(null);
-let opener: HTMLElement | null = null;
-
-function focusable(): HTMLElement[] {
-	return rootEl.value
-		? Array.from(rootEl.value.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
-		: [];
-}
-function onKey(e: KeyboardEvent) {
-	if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); emit('close'); return; }
-	if (e.key !== 'Tab') return;
-	const els = focusable();
-	if (!els.length) return;
-	const first = els[0], last = els[els.length - 1];
-	const cur = document.activeElement;
-	if (!rootEl.value?.contains(cur)) { e.preventDefault(); first.focus(); }
-	else if (e.shiftKey && cur === first) { e.preventDefault(); last.focus(); }
-	else if (!e.shiftKey && cur === last) { e.preventDefault(); first.focus(); }
-}
-onMounted(() => {
-	opener = document.activeElement as HTMLElement | null;
-	window.addEventListener('keydown', onKey, true);
-	nextTick(() => closeBtn.value?.focus());
-});
-onBeforeUnmount(() => {
-	window.removeEventListener('keydown', onKey, true);
-	opener?.focus?.();
-});
+useModalFocus(rootEl, { onEscape: () => emit('close'), initialFocus: () => closeBtn.value?.focus() });
 </script>
 
 <template>

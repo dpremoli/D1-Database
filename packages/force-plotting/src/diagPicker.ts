@@ -71,8 +71,9 @@ export function groupRows(rows: PickerRow[], by: GroupBy): PickerGroup[] {
 		const key = (by === 'sample' ? r.sample_id : r.campaign_id) ?? '';
 		let g = map.get(key);
 		if (!g) {
-			const label = by === 'sample' ? (r.sample_label || NO_SAMPLE) : (r.campaign_label || NO_CAMPAIGN);
-			g = { key, label: key ? label : (by === 'sample' ? NO_SAMPLE : NO_CAMPAIGN), sub: by === 'sample' ? r.campaign_label : null, rows: [] };
+			const none = by === 'sample' ? NO_SAMPLE : NO_CAMPAIGN;
+			const label = key ? (by === 'sample' ? r.sample_label : r.campaign_label) || none : none;
+			g = { key, label, sub: by === 'sample' ? r.campaign_label : null, rows: [] };
 			map.set(key, g);
 		}
 		g.rows.push(r);

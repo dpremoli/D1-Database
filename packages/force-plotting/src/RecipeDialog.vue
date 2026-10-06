@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // In-app replacement for window.prompt / window.confirm in the recipe library. One modal, three
-// modes: 'save' and 'rename' (name + notes fields) and 'delete' (confirm). Behaves like
-// PlotHelp.vue: Escape closes, Tab stays inside, focus returns to whatever opened it. The
+// modes: 'save' and 'rename' (name + notes fields) and 'delete' (confirm). Keyboard handling is
+// useModalFocus, as in PlotHelp.vue. The
 // parent owns the async work and passes `busy` / `error` back so a failed save (name taken)
 // stays open with the message instead of vanishing.
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { ref } from 'vue';
+import { useModalFocus } from './modalFocus';
 
 const props = defineProps<{
 	mode: 'save' | 'rename' | 'delete';
@@ -25,42 +26,20 @@ const nameEl = ref<HTMLInputElement | null>(null);
 const confirmEl = ref<HTMLButtonElement | null>(null);
 const name = ref(props.name ?? '');
 const notes = ref(props.notes ?? '');
-let opener: HTMLElement | null = null;
 
 const needsFields = props.mode !== 'delete';
 
-function focusable(): HTMLElement[] {
-	return rootEl.value
-		? Array.from(rootEl.value.querySelectorAll<HTMLElement>('button:not(:disabled), input, textarea, [tabindex]:not([tabindex="-1"])'))
-		: [];
-}
 function submit() {
 	if (props.busy) return;
 	if (needsFields && !name.value.trim()) { nameEl.value?.focus(); return; }
 	emit('confirm', { name: name.value.trim(), notes: notes.value.trim() });
 }
-function onKey(e: KeyboardEvent) {
-	if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (!props.busy) emit('close'); return; }
-	if (e.key !== 'Tab') return;
-	const els = focusable();
-	if (!els.length) return;
-	const first = els[0], last = els[els.length - 1];
-	const cur = document.activeElement;
-	if (!rootEl.value?.contains(cur)) { e.preventDefault(); first.focus(); }
-	else if (e.shiftKey && cur === first) { e.preventDefault(); last.focus(); }
-	else if (!e.shiftKey && cur === last) { e.preventDefault(); first.focus(); }
-}
-onMounted(() => {
-	opener = document.activeElement as HTMLElement | null;
-	window.addEventListener('keydown', onKey, true);
-	nextTick(() => {
+useModalFocus(rootEl, {
+	onEscape: () => { if (!props.busy) emit('close'); },
+	initialFocus: () => {
 		if (needsFields) { nameEl.value?.focus(); nameEl.value?.select(); }
 		else confirmEl.value?.focus();
-	});
-});
-onBeforeUnmount(() => {
-	window.removeEventListener('keydown', onKey, true);
-	opener?.focus?.();
+	},
 });
 </script>
 

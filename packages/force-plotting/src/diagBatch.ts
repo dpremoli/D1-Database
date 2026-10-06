@@ -5,7 +5,8 @@
 // returns the summary. The host orchestrator is the real queue (it claims 'pending' rows one at
 // a time), so queueing is just that PATCH -- see
 // docs/superpowers/specs/2026-10-06-diagnostics-campaign-design.md.
-import { DEFAULT_RECIPE, recipeProblems, recipesEquivalent, type Recipe } from './recipeChannels';
+import { DEFAULT_RECIPE, recipesEquivalent, type Recipe } from './recipeChannels';
+import type { DiagState } from './diagPicker';
 import { validateRecipe } from './recipeIo';
 
 /** Body of a build request. A Bake / batch carries the recipe (persisted so process_diag_row
@@ -20,7 +21,7 @@ export function buildPatch(recipe?: Recipe, now: Date = new Date()): Record<stri
 export interface BatchRow {
 	id: string;
 	code: string;
-	diag_status: 'done' | 'pending' | 'processing' | 'error' | null;
+	diag_status: DiagState;
 	diag_path: string | null;
 	diag_recipe: Recipe | null;
 }
@@ -49,7 +50,7 @@ export function builtWithRecipe(row: BatchRow, recipe: Recipe): boolean {
 }
 
 export function planBatch(rows: BatchRow[], recipe: Recipe, opts: BatchOptions = {}): BatchItem[] {
-	const bad = validateRecipe(recipe) ?? recipeProblems(recipe)[0]?.message ?? null;
+	const bad = validateRecipe(recipe);
 	return rows.map((r): BatchItem => {
 		const item = (action: BatchAction, reason = ''): BatchItem => ({ id: r.id, code: r.code, action, reason });
 		if (bad) return item('refuse', `recipe is not runnable: ${bad}`);

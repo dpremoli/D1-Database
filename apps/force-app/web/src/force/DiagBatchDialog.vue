@@ -5,9 +5,9 @@
 // that takes effect before the next item. The host orchestrator does the actual work, one cut
 // after another, so "queued" means "waiting for the host", not "built". A modal like PlotHelp:
 // Escape closes (not mid-run: Cancel first), Tab stays inside, focus returns to the opener.
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import {
-	fetchRecipeLibrary, planBatch, runBatch, summaryLine,
+	fetchRecipeLibrary, planBatch, runBatch, summaryLine, useModalFocus,
 	type BatchRow, type BatchSummary, type SavedRecipe,
 } from '@d1/force-plotting';
 import { api } from '../directusClient';
@@ -25,7 +25,6 @@ const running = ref(false);
 const cancelRequested = ref(false);
 const progress = ref<{ done: number; total: number; current: string | null } | null>(null);
 const summary = ref<BatchSummary | null>(null);
-let opener: HTMLElement | null = null;
 
 const chosen = computed(() => library.value.find((r) => r.recipe_id === recipeId.value) ?? null);
 const plan = computed(() => chosen.value ? planBatch(props.rows, chosen.value.recipe, { rebuild: rebuild.value }) : []);
@@ -53,32 +52,10 @@ async function start() {
 }
 function close() { if (!running.value) emit('close'); }
 
-function focusable(): HTMLElement[] {
-	return rootEl.value
-		? Array.from(rootEl.value.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])'))
-		: [];
-}
-function onKey(e: KeyboardEvent) {
-	if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
-	if (e.key !== 'Tab') return;
-	const els = focusable();
-	if (!els.length) return;
-	const first = els[0], last = els[els.length - 1];
-	const cur = document.activeElement;
-	if (!rootEl.value?.contains(cur)) { e.preventDefault(); first.focus(); }
-	else if (e.shiftKey && cur === first) { e.preventDefault(); last.focus(); }
-	else if (!e.shiftKey && cur === last) { e.preventDefault(); first.focus(); }
-}
+useModalFocus(rootEl, { onEscape: close, initialFocus: () => firstEl.value?.focus() });
 onMounted(async () => {
-	opener = document.activeElement as HTMLElement | null;
-	window.addEventListener('keydown', onKey, true);
-	nextTick(() => firstEl.value?.focus());
 	try { library.value = await fetchRecipeLibrary(); }
 	catch (e: unknown) { libErr.value = (e as { message?: string })?.message || 'could not load the recipe library'; }
-});
-onBeforeUnmount(() => {
-	window.removeEventListener('keydown', onKey, true);
-	opener?.focus?.();
 });
 </script>
 
