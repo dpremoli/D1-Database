@@ -38,8 +38,29 @@ export class IntervalGate {
 			this.onStop?.();
 		}
 	}
+	/** Run the call now and restart the interval from here. set(true) is a no-op while running, so
+	 *  this is how a gate that was already on (widened to more states) gets an immediate check. */
+	poke(): void {
+		this.fn();
+		if (this.timer) clearInterval(this.timer);
+		this.timer = setInterval(this.fn, this.ms);
+	}
 	/** Stop without the onStop follow-up (unmount). */
 	stop(): void {
 		if (this.timer) { clearInterval(this.timer); this.timer = null; }
 	}
+}
+
+/** Drive the disk gate for a (mode, state) change. The gate also runs while idle (the checklist's
+ * free-space runway), so going idle -> recording finds it already running and set(true) would do
+ * nothing: the alarm's first check would wait up to a full interval. Poke it on that transition. */
+export function syncDiskGate(
+	gate: Pick<IntervalGate, 'running' | 'set' | 'poke'>,
+	mode: 'record' | 'playback', state: string,
+	prev?: { mode: 'record' | 'playback'; state: string },
+): void {
+	const wasRunning = gate.running;
+	const recording = shouldPollDisk(mode, state);
+	gate.set(recording || shouldPollPreflight(mode, state));
+	if (wasRunning && recording && prev && !shouldPollDisk(prev.mode, prev.state)) gate.poke();
 }
