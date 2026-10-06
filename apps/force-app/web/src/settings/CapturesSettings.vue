@@ -9,6 +9,7 @@ import { getConfig } from '../config';
 import { describeFetchError } from '../netErrors';
 import { api } from '../directusClient';
 import { uploadCaptureColdStart } from '../record/uploadCapture';
+import { clearUploadProgress } from '../record/uploadResume';
 import { discardQueued, listQueue, retryQueued, syncStatus, uploadQueuedAsMe, type QueuedRun } from '../record/directusSync';
 import { authStore } from '../authStore';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, hasServerSession, recorderFromExtra } from '../recorder';
@@ -619,6 +620,9 @@ async function upload(c: Capture): Promise<UploadOutcome> {
 			rowMsg.value[c.id] = 'uploaded';
 			return 'uploaded';
 		}
+		// The in-memory progress says "done" but the database disagrees (a linked file was removed, or
+		// the answer was unknown): forget it so the next upload looks the record up again.
+		clearUploadProgress(c.id);
 		const { [c.id]: _gone, ...notUploaded } = uploaded.value;
 		uploaded.value = notUploaded;
 		partial.value = { ...partial.value, [c.id]: true };
