@@ -181,6 +181,11 @@ these need the rig and a human:
 - [ ] Kill the backend mid-recording (`Stop-Process -Name force-app-backend`, or the `python.exe`
       running uvicorn in dev). The supervisor should restart it and route back to Record, where the
       recovery banner picks up the interrupted session.
+- [ ] **Settings > Connectivity > Restart recorder** (R11): with the backend killed, the button
+      brings it back and the doctor goes green; during a recording it refuses with a reason.
+- [ ] Help menu (R13): **Check for Updates…** lands on Settings > About and runs the check;
+      **Open Captures Folder** opens the configured capture drive; **Report a Bug…** opens the
+      report screen. When an update finishes downloading, the prompt lists what's new.
 - [ ] A second copy of the app focuses the running window instead of opening a second one.
 - [x] **Live backup end to end — done 2026-08-23.** A real 25 kHz NI-DAQ recording (112,500
       samples, 4,500,032 bytes) streamed to `d1-server` over Tailscale and reached 100 %. The raw

@@ -108,3 +108,39 @@ describe('updater recording gate', () => {
     expect(await h.handlers.get('update:install')!(APP)).toMatchObject({ ok: false, reason: 'no update downloaded yet' });
   });
 });
+
+describe('update-downloaded dialog release notes (R13)', () => {
+  async function dialogDetail(releaseNotes: unknown): Promise<string> {
+    await boot(async () => false);
+    h.showMessageBox.mockResolvedValue({ response: 1 });
+    h.updater.emit('update-downloaded', { version: '2.0.0', releaseNotes });
+    await vi.advanceTimersByTimeAsync(0);
+    return h.showMessageBox.mock.calls[0][0].detail as string;
+  }
+
+  it('shows the notes, as plain text, above the usual hint', async () => {
+    const detail = await dialogDetail('<ul><li>Fixed flat forces</li><li>Faster &amp; safer</li></ul>');
+    expect(detail).toContain("What's new:");
+    expect(detail).toContain('- Fixed flat forces');
+    expect(detail).toContain('- Faster & safer');
+    expect(detail).not.toContain('<li>');
+    expect(detail).toContain('Not now');
+  });
+
+  it('accepts the array form', async () => {
+    const detail = await dialogDetail([{ version: '2.0.0', note: '<p>Only this</p>' }]);
+    expect(detail).toContain('Only this');
+  });
+
+  it('keeps the old text when there are no notes', async () => {
+    const detail = await dialogDetail(undefined);
+    expect(detail).not.toContain("What's new");
+    expect(detail).toContain('Not now');
+  });
+
+  it('trims very long notes', async () => {
+    const detail = await dialogDetail('x '.repeat(5000));
+    expect(detail.length).toBeLessThan(2000);
+    expect(detail).toContain('full notes in Settings → About');
+  });
+});

@@ -80,6 +80,45 @@ describe('SidecarSupervisor', () => {
     expect(sup.getState()).toBe('crashed');
   }, 15000);
 
+  it('restart() replaces a running backend with a new process and ends ready (R11)', async () => {
+    const port = freePort();
+    sup = new SidecarSupervisor({
+      exePath: process.execPath,
+      args: [FIXTURE, String(port)],
+      port,
+      healthUrl: `http://127.0.0.1:${port}/health`,
+      readyTimeoutMs: 5000,
+    });
+    await sup.start();
+    const first = sup.getPid();
+    await sup.restart();
+    expect(sup.getState()).toBe('ready');
+    expect(sup.getPid()).not.toBe(first);
+    expect(sup.getRestartCount()).toBe(0);
+  }, 15000);
+
+  it('restart() while a crash restart is waiting out its backoff leaves exactly one backend (R11)', async () => {
+    const port = freePort();
+    sup = new SidecarSupervisor({
+      exePath: process.execPath,
+      args: [FIXTURE, String(port)],
+      port,
+      healthUrl: `http://127.0.0.1:${port}/health`,
+      readyTimeoutMs: 5000,
+    });
+    await sup.start();
+    process.kill(sup.getPid()!);
+    await waitFor(() => sup!.getState() === 'restarting', 3000);
+    expect(sup.getState()).toBe('restarting');
+    await sup.restart();
+    expect(sup.getState()).toBe('ready');
+    const pid = sup.getPid();
+    // Outlast the 1 s backoff the manual restart overtook: it must not spawn a second backend.
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(sup.getState()).toBe('ready');
+    expect(sup.getPid()).toBe(pid);
+  }, 15000);
+
   // stop() kills the tree with Windows `taskkill` (killTree), so this only means anything on
   // Windows. It runs in force-app-release.yml (windows-latest); the Linux CI job skips it.
   it.skipIf(process.platform !== 'win32')('stop() terminates the process so a later health request fails', async () => {

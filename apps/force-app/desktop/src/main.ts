@@ -5,12 +5,13 @@ import { buildMenu } from './menu';
 import { findAvailablePort } from './port';
 import { registerAppScheme, handleAppProtocol } from './protocol';
 import { checkRevealTarget } from './reveal';
+import { restartRecorder } from './restart';
 import { watchRenderer } from './rendererWatch';
 import { PopoutTracker } from './popouts';
 import { fetchBusySession, confirmQuit, type BusySession } from './quitGuard';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
-import { initAutoUpdater } from './updater';
+import { initAutoUpdater, startUpdateCheck } from './updater';
 import { classifyWindowOpen, guardNavigation, isAppSender, popoutKey } from './windowOpen';
 import { WindowStateStore, isOnSomeDisplay } from './windowState';
 
@@ -72,7 +73,26 @@ async function confirmQuitDuringRecording(): Promise<boolean> {
   if (process.env.FORCE_APP_TEST_HOOKS === '1') return true;
   return confirmQuit({ getBusy: activeSession, showMessageBox: (o) => dialog.showMessageBox(o) });
 }
-Menu.setApplicationMenu(buildMenu(() => mainWindow));
+Menu.setApplicationMenu(
+  buildMenu(() => mainWindow, {
+    checkForUpdates: () => {
+      const r = startUpdateCheck();
+      // Progress shows on Settings > About; only a check that could not even start needs a box.
+      if (!r.ok) {
+        void dialog.showMessageBox({
+          type: 'info',
+          buttons: ['OK'],
+          title: 'Check for updates',
+          message: 'Updates are only available in the installed app.',
+          detail: r.reason,
+        });
+      }
+    },
+    openCapturesFolder: () => {
+      void openCapturesFolder();
+    },
+  }),
+);
 
 function webDistDir(): string {
   // dist-desktop (base '/'), not dist (base '/app/'): the /app/ variant's asset URLs cannot
@@ -157,10 +177,13 @@ let restartCause: string | undefined;
 // reported once by createWindow() below, so the state callback must stay quiet for it, or the
 // operator gets two error boxes for one failure (review 2.9).
 let startupSettled = false;
+// True while the operator's "Restart recorder" is under way: a crash then is reported to them as
+// the restart's result, not also as a separate error box.
+let manualRestart = false;
 
 function onSidecarStateChange(state: SidecarState, detail?: string): void {
   if (state === 'restarting') restartCause = detail;
-  if (state === 'crashed' && startupSettled) {
+  if (state === 'crashed' && startupSettled && !manualRestart) {
     dialog.showErrorBox('Recorder backend stopped responding', detail ?? 'See logs for details.');
   }
   // A restart (not the initial start) means the backend crashed mid-session — route the
@@ -198,19 +221,61 @@ function registerShellIpc(): void {
   // backend each time rather than taken from the renderer, since the root can change at runtime.
   ipcMain.handle('shell:reveal', async (event, requested: unknown) => {
     if (!fromApp(event)) return { ok: false, reason: 'not allowed from this page' };
-    const root = await currentCapturesRoot();
-    if (!root) return { ok: false, reason: "can't reach the recording backend" };
-    const check = checkRevealTarget(requested, root);
-    if (!check.ok) return check;
-    if (check.isDir) {
-      // Opens the folder itself, showing its files. openPath only for directories: on a file it
-      // would launch whatever program the file type is associated with.
-      const err = await shell.openPath(check.path);
-      return err ? { ok: false, reason: err } : { ok: true };
-    }
-    shell.showItemInFolder(check.path);
-    return { ok: true };
+    return revealInFileBrowser(requested);
   });
+
+  // R11: Settings > Connectivity's "Restart recorder". Goes through the same supervisor as launch
+  // and the crash restarts. Refused while a recording is running or being saved; allowed when the
+  // backend cannot be asked (it is down, which is what the button is for).
+  ipcMain.handle('sidecar:restart', async (event) => {
+    if (!fromApp(event)) return { ok: false, reason: 'not allowed from this page' };
+    if (manualRestart) return { ok: false, reason: 'a restart is already in progress' };
+    manualRestart = true;
+    try {
+      const result = await restartRecorder({
+        getBusy: activeSession,
+        restart: supervisor ? () => supervisor!.restart() : null,
+        getState: () => supervisor?.getState(),
+        lastDetail: () => supervisor?.lastDetail(),
+      });
+      logToBackend(result.ok ? 'INFO' : 'WARNING', `recorder restart requested from the app: ${result.ok ? 'ok' : result.reason}`);
+      return result;
+    } finally {
+      manualRestart = false;
+    }
+  });
+}
+
+/** Opens `requested` in the file browser if it lies inside the backend's captures folder. */
+async function revealInFileBrowser(requested: unknown): Promise<{ ok: boolean; reason?: string }> {
+  const root = await currentCapturesRoot();
+  if (!root) return { ok: false, reason: "can't reach the recording backend" };
+  const check = checkRevealTarget(requested, root);
+  if (!check.ok) return check;
+  if (check.isDir) {
+    // Opens the folder itself, showing its files. openPath only for directories: on a file it
+    // would launch whatever program the file type is associated with.
+    const err = await shell.openPath(check.path);
+    return err ? { ok: false, reason: err } : { ok: true };
+  }
+  shell.showItemInFolder(check.path);
+  return { ok: true };
+}
+
+/** Help > Open Captures Folder: the capture drive the backend is configured with right now
+ * (GET /storage/config), the same root "Show in folder" is confined to. */
+async function openCapturesFolder(): Promise<void> {
+  const root = await currentCapturesRoot();
+  const result = root ? await revealInFileBrowser(root) : { ok: false, reason: "can't reach the recording backend" };
+  if (!result.ok) {
+    void dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['OK'],
+      title: 'Open captures folder',
+      message: "Couldn't open the captures folder.",
+      detail: result.reason,
+    });
+  }
 }
 
 async function currentCapturesRoot(): Promise<string | null> {

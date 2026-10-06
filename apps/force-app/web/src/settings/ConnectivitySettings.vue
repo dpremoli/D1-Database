@@ -6,6 +6,7 @@ import { confirmAction } from '../ui/confirm';
 import { formatMegabytes } from '../format';
 import { fetchRemoteBackupStates } from '../recorderHttp';
 import { remoteCopyLabel } from './backupLabels';
+import { restartBridge, runRestart } from './recorderRestart';
 
 interface Finding {
 	service: string;
@@ -17,6 +18,8 @@ interface Finding {
 	fixable?: string;
 	/** Label for the fix button when "Fix now" would undersell it (e.g. "Discard all…"). */
 	fix_label?: string;
+	/** Offer the shell's "Restart recorder" button (packaged app only). */
+	restartable?: boolean;
 	/** Where the person can handle this by hand: an in-app route. */
 	link?: { to: string; label: string };
 	/** What a bulk fix would act on, so the confirmation can name it. */
@@ -30,6 +33,22 @@ const loading = ref(false);
 const lastChecked = ref('');
 const recorderDown = ref(false);
 const fixingId = ref('');
+
+// R11: in the packaged app the shell can respawn the backend; browser and dev builds can't, and
+// keep the "start it yourself" command instead.
+const canRestart = !!restartBridge();
+const restarting = ref(false);
+const restartError = ref('');
+async function restartRecorder() {
+	const bridge = restartBridge();
+	if (!bridge || restarting.value) return;
+	restarting.value = true;
+	restartError.value = '';
+	const outcome = await runRestart(bridge);
+	restarting.value = false;
+	if (!outcome.ok) restartError.value = outcome.message;
+	await runDoctor();
+}
 
 // A finding marked `pending` (discards still deleting in the background) means the answer isn't
 // final yet, so the doctor asks again by itself instead of settling on a half-true result (#83).
@@ -77,9 +96,12 @@ async function runDoctor(quiet = false) {
 					? `The recorder backend is not running on this machine (port ${port}). It needs to be started as a background process before recording.`
 					: `Cannot connect to ${host}:${port}. Check that the recorder backend is running on that host and the Recorder URL under Service endpoints below is correct.`,
 				fix: isLocal
-					? 'Start the backend by running this command in a terminal opened in the D1-Database folder:'
+					? (canRestart
+						? 'Restart the recorder from here, or check Settings > Logs for why it stopped.'
+						: 'Start the backend by running this command in a terminal opened in the D1-Database folder:')
 					: `Verify the Recorder URL under Service endpoints below, or start the backend on ${host}.`,
-				fix_command: isLocal
+				restartable: isLocal && canRestart,
+				fix_command: isLocal && !canRestart
 					? `cd "${backendPath}"; python -m uvicorn app.main:app --host 127.0.0.1 --port ${port}`
 					: undefined,
 			});
@@ -282,6 +304,13 @@ onMounted(() => runDoctor());
 					<div v-else-if="f.link" class="finding-fix">
 						<router-link class="btn sm" :to="f.link.to">{{ f.link.label }}</router-link>
 					</div>
+					<div v-if="f.restartable" class="finding-fix">
+						<button class="btn sm" :disabled="restarting" @click="restartRecorder">
+							<span class="material-symbols-rounded">{{ restarting ? 'hourglass_top' : 'restart_alt' }}</span>
+							{{ restarting ? 'Restarting…' : 'Restart recorder' }}
+						</button>
+						<span v-if="restartError" class="fix-text restart-error">{{ restartError }}</span>
+					</div>
 					<div v-if="f.fix_command" class="cmd-block">
 						<code>{{ f.fix_command }}</code>
 						<button class="btn sm" @click="copyCommand(f.fix_command!, f.service)">
@@ -344,6 +373,7 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 /* Only the text grows — a bare `span` selector also caught the wrench icon, so the two split the
    row 50/50 and every fix line started half-way across the card, away from its icon. */
 .finding-fix .fix-text { flex: 1; }
+.finding-fix .restart-error { color: var(--danger); }
 
 
 .cmd-block { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; }
