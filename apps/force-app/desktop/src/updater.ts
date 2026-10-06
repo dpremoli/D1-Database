@@ -1,5 +1,6 @@
 import { app, dialog, ipcMain, Notification, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { formatReleaseNotes } from './releaseNotes';
 import { isAppSender } from './windowOpen';
 
 export type UpdateStatus =
@@ -48,7 +49,8 @@ function performInstall(version: string): void {
   }, 800);
 }
 
-function showUpdateDialog(version: string): void {
+function showUpdateDialog(version: string, notes: string): void {
+  const choice = 'Choose "Not now" to keep working on the current version — you can install it anytime from Settings > About.';
   void dialog
     .showMessageBox({
       type: 'info',
@@ -56,14 +58,14 @@ function showUpdateDialog(version: string): void {
       defaultId: 0,
       title: 'Update ready',
       message: `Version ${version} has been downloaded and is ready to install.`,
-      detail: 'Choose "Not now" to keep working on the current version — you can install it anytime from Settings > About.',
+      detail: notes ? `What's new:\n${notes}\n\n${choice}` : choice,
     })
     .then(async ({ response }) => {
       if (response !== 0) return;
       // The dialog can sit open for a long time: a cut may have started (or still be finalizing)
       // since offerUpdate() looked. Check again at the moment of the click, as update:install does.
       if (await isRecording()) {
-        deferUntilIdle(version);
+        deferUntilIdle(version, notes);
         void dialog.showMessageBox({
           type: 'warning',
           buttons: ['OK'],
@@ -81,10 +83,12 @@ function showUpdateDialog(version: string): void {
 // on a slow poll rather than wired to a push event, since nothing pushes "recording just stopped"
 // to the main process either.
 let pendingVersion: string | null = null;
+let pendingNotes = '';
 let recheckTimer: ReturnType<typeof setInterval> | null = null;
 
-function deferUntilIdle(version: string): void {
+function deferUntilIdle(version: string, notes: string): void {
   pendingVersion = version;
+  pendingNotes = notes;
   if (recheckTimer) return;
   recheckTimer = setInterval(async () => {
     if (pendingVersion && !(await isRecording())) {
@@ -92,17 +96,25 @@ function deferUntilIdle(version: string): void {
       recheckTimer = null;
       const v = pendingVersion;
       pendingVersion = null;
-      showUpdateDialog(v);
+      showUpdateDialog(v, pendingNotes);
     }
   }, 60_000);
 }
 
-async function offerUpdate(version: string): Promise<void> {
+async function offerUpdate(version: string, notes: string): Promise<void> {
   if (await isRecording()) {
-    deferUntilIdle(version);
+    deferUntilIdle(version, notes);
     return;
   }
-  showUpdateDialog(version);
+  showUpdateDialog(version, notes);
+}
+
+/** Starts an update check. Shared by Settings > About's button (update:check) and Help > Check for
+ * updates. Progress and the outcome arrive as 'update:status' pushes. */
+export function startUpdateCheck(): { ok: boolean; reason?: string } {
+  if (!app.isPackaged) return { ok: false, reason: 'not a packaged build' };
+  autoUpdater.checkForUpdates().catch((err) => push({ state: 'error', message: err?.message || String(err) }));
+  return { ok: true };
 }
 
 /** electron-updater needs a real packaged app with publish config to do anything meaningful —
@@ -126,9 +138,7 @@ export function initAutoUpdater(getMainWindow: () => BrowserWindow | null, recor
       : { version: '', packaged: false, status: { state: 'idle' } satisfies UpdateStatus });
   ipcMain.handle('update:check', (event) => {
     if (!isAppSender(event)) return NOT_ALLOWED;
-    if (!app.isPackaged) return { ok: false, reason: 'not a packaged build' };
-    autoUpdater.checkForUpdates().catch((err) => push({ state: 'error', message: err?.message || String(err) }));
-    return { ok: true };
+    return startUpdateCheck();
   });
   // Same guard as the automatic prompt — a manual click from Settings must not be able to force
   // a restart mid-cut either. Re-checks live rather than trusting offerUpdate()'s earlier read,
@@ -150,7 +160,7 @@ export function initAutoUpdater(getMainWindow: () => BrowserWindow | null, recor
   autoUpdater.on('download-progress', (p) => push({ state: 'downloading', percent: Math.round(p.percent) }));
   autoUpdater.on('update-downloaded', (info) => {
     push({ state: 'downloaded', version: info.version });
-    void offerUpdate(info.version);
+    void offerUpdate(info.version, formatReleaseNotes(info.releaseNotes));
   });
   autoUpdater.on('error', (err) => {
     push({ state: 'error', message: err?.message || String(err) });

@@ -11,7 +11,7 @@ import { PopoutTracker } from './popouts';
 import { fetchBusySession, confirmQuit, type BusySession } from './quitGuard';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
-import { initAutoUpdater } from './updater';
+import { initAutoUpdater, startUpdateCheck } from './updater';
 import { classifyWindowOpen, guardNavigation, isAppSender, popoutKey } from './windowOpen';
 import { WindowStateStore, isOnSomeDisplay } from './windowState';
 
@@ -73,7 +73,26 @@ async function confirmQuitDuringRecording(): Promise<boolean> {
   if (process.env.FORCE_APP_TEST_HOOKS === '1') return true;
   return confirmQuit({ getBusy: activeSession, showMessageBox: (o) => dialog.showMessageBox(o) });
 }
-Menu.setApplicationMenu(buildMenu(() => mainWindow));
+Menu.setApplicationMenu(
+  buildMenu(() => mainWindow, {
+    checkForUpdates: () => {
+      const r = startUpdateCheck();
+      // Progress shows on Settings > About; only a check that could not even start needs a box.
+      if (!r.ok) {
+        void dialog.showMessageBox({
+          type: 'info',
+          buttons: ['OK'],
+          title: 'Check for updates',
+          message: 'Updates are only available in the installed app.',
+          detail: r.reason,
+        });
+      }
+    },
+    openCapturesFolder: () => {
+      void openCapturesFolder();
+    },
+  }),
+);
 
 function webDistDir(): string {
   // dist-desktop (base '/'), not dist (base '/app/'): the /app/ variant's asset URLs cannot
@@ -202,18 +221,7 @@ function registerShellIpc(): void {
   // backend each time rather than taken from the renderer, since the root can change at runtime.
   ipcMain.handle('shell:reveal', async (event, requested: unknown) => {
     if (!fromApp(event)) return { ok: false, reason: 'not allowed from this page' };
-    const root = await currentCapturesRoot();
-    if (!root) return { ok: false, reason: "can't reach the recording backend" };
-    const check = checkRevealTarget(requested, root);
-    if (!check.ok) return check;
-    if (check.isDir) {
-      // Opens the folder itself, showing its files. openPath only for directories: on a file it
-      // would launch whatever program the file type is associated with.
-      const err = await shell.openPath(check.path);
-      return err ? { ok: false, reason: err } : { ok: true };
-    }
-    shell.showItemInFolder(check.path);
-    return { ok: true };
+    return revealInFileBrowser(requested);
   });
 
   // R11: Settings > Connectivity's "Restart recorder". Goes through the same supervisor as launch
@@ -236,6 +244,38 @@ function registerShellIpc(): void {
       manualRestart = false;
     }
   });
+}
+
+/** Opens `requested` in the file browser if it lies inside the backend's captures folder. */
+async function revealInFileBrowser(requested: unknown): Promise<{ ok: boolean; reason?: string }> {
+  const root = await currentCapturesRoot();
+  if (!root) return { ok: false, reason: "can't reach the recording backend" };
+  const check = checkRevealTarget(requested, root);
+  if (!check.ok) return check;
+  if (check.isDir) {
+    // Opens the folder itself, showing its files. openPath only for directories: on a file it
+    // would launch whatever program the file type is associated with.
+    const err = await shell.openPath(check.path);
+    return err ? { ok: false, reason: err } : { ok: true };
+  }
+  shell.showItemInFolder(check.path);
+  return { ok: true };
+}
+
+/** Help > Open Captures Folder: the capture drive the backend is configured with right now
+ * (GET /storage/config), the same root "Show in folder" is confined to. */
+async function openCapturesFolder(): Promise<void> {
+  const root = await currentCapturesRoot();
+  const result = root ? await revealInFileBrowser(root) : { ok: false, reason: "can't reach the recording backend" };
+  if (!result.ok) {
+    void dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['OK'],
+      title: 'Open captures folder',
+      message: "Couldn't open the captures folder.",
+      detail: result.reason,
+    });
+  }
 }
 
 async function currentCapturesRoot(): Promise<string | null> {
