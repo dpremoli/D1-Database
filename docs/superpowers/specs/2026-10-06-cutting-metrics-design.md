@@ -44,8 +44,9 @@ earlier guess (Fc = Fz, Ff = Fx, Fp = Fy).
 
 - The card carries a select ("Axis mapping") with all six assignments and states the mapping in
   use, with a note that it depends on workholding and operation.
-- The choice is remembered **per operation subtype** (MT-F, MT-O, ...; empty or unknown is
-  `default`) in localStorage key `d1.cuttingAxisMapBySubtype`, a JSON object
+- The choice is remembered **per saved operation subtype** (MT-F, MT-O, ...; empty is `default`,
+  any other subtype, recognised or not, gets its own entry; an unsaved edit of the Subtype field
+  does not change the key) in localStorage key `d1.cuttingAxisMapBySubtype`, a JSON object
   `{ "MT-F": "Fz/Fx/Fy", ... }`. Subtypes without an entry use the standard. Unreadable or invalid
   entries are ignored. The old single key `d1.cuttingAxisMap` was chosen against the old default
   and is removed on first load.

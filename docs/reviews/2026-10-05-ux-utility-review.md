@@ -134,7 +134,9 @@ in [`docs/runbooks/physical-test-backlog.md`](../runbooks/physical-test-backlog.
   - [ ] Align by revolution or radius
   - [ ] Compare on the FFT
 - [x] **P6** Cutting metrics card — #127
-  - [ ] Confirm the dynamometer axis mapping (default Fc=Fz, Ff=Fx, Fp=Fy; selectable)
+  - [ ] Confirm the dynamometer axis mapping per workholding and operation on the rig. Default
+    Fc=Fx, Ff=Fy, Fp=Fz (owner, 2026-10-06), remembered per operation subtype; see the
+    physical-test backlog, P6
 - [ ] **P7** Wear trend beyond peak force (mean/RMS stored per cut)
 - [ ] **P8** Saved, named markers per operation
 - [ ] **P9** Polar Plot on the dashboard (tooth-pass lines on the FFT first)

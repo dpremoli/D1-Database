@@ -36,7 +36,13 @@ export const AXIS_MAP_BY_SUBTYPE_KEY = 'd1.cuttingAxisMapBySubtype';
 export const LEGACY_AXIS_MAP_KEY = 'd1.cuttingAxisMap';
 const DEFAULT_SUBTYPE_KEY = 'default';
 
-/** Storage key of an operation subtype: trimmed, upper-cased; empty/unknown is "default". */
+/** Fc = .., Ff = .., Fp = .. for display. */
+export function formatAxisMap(m: AxisMap): string {
+	return `Fc = ${m.Fc}, Ff = ${m.Ff}, Fp = ${m.Fp}`;
+}
+
+/** Storage key of an operation subtype: trimmed, upper-cased; empty is "default". Any other
+ * subtype, recognised or not, gets its own entry. */
 export function subtypeMapKey(subtype: string | null | undefined): string {
 	return (subtype ?? '').trim().toUpperCase() || DEFAULT_SUBTYPE_KEY;
 }

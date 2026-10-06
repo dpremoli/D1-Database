@@ -233,10 +233,11 @@ tool; a test cut on scrap stock is fine.
   from the sheet (vc = π·D·n/1000, Pc = Fc·vc/60, kc = Fc/(ap·f)) and the kc against the literature
   range for the material. Confirm the axis mapping per workholding and operation type on the rig
   (the owner's standard, the default, is Fc = Fx, Fp = Fz, Ff = Fy): pick the right mapping for
-  each type and check it is remembered for that type only and the CSV `axis_map` matches. Check that an OD cut (`MT-O`) uses the Diameter box unchanged
-  for vc and that a facing cut (`MT-F`, also one with a saved crop) uses D at the window midpoint,
+  each type and check it is remembered for that type only and the CSV `axis_map` matches. Check
+  that an OD cut (`MT-O`) uses the Diameter box unchanged for vc and that a facing cut (`MT-F`, also one with a saved crop) uses D at the window midpoint,
   matching the radial axis of the plots. Check "—" with a reason on an
-  operation with no feed or depth, and on a milling op. Since: this batch (PR TBD).
+  operation with no feed or depth, and on a milling op. Since #127 (new default and per-subtype
+  memory: this batch, PR TBD).
 
 ### Earlier issues that need the rig (from the 2026-10-02 batch)
 - [ ] **#84** Real DAQmx error text and codes (‑200077); whether the chassis or the module limits the

@@ -11,7 +11,7 @@ export type StatsCsvRow = { axis: string } & SignalStats['axes']['Fx'];
 const mv = (m: Metric | undefined) => m?.value ?? undefined;
 
 // The cutting-metrics columns repeat on every row like the RPM ones; unavailable metrics are empty
-// cells. `axis_map` records the Fc/Ff/Fp -> Fx/Fy/Fz assumption used (cuttingMetrics.ts).
+// cells. `axis_map` records the axis mapping in use (per subtype, cuttingMetrics.ts).
 export function statsCsvColumns(
 	stats: () => SignalStats | null | undefined,
 	cutting: () => CuttingMetrics | null | undefined = () => null,

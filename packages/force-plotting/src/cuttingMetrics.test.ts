@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	AXIS_MAPS, AXIS_MAP_BY_SUBTYPE_KEY, DEFAULT_AXIS_MAP, LEGACY_AXIS_MAP_KEY, readAxisMapsBySubtype, removeLegacyAxisMap, resolveAxisMap, subtypeMapKey, writeAxisMapForSubtype, computeCuttingMetrics, midWindowDiameter, opKindFromSubtype, parseAxisMap, usesSpiralDiameter,
+	AXIS_MAPS, AXIS_MAP_BY_SUBTYPE_KEY, DEFAULT_AXIS_MAP, formatAxisMap, LEGACY_AXIS_MAP_KEY, readAxisMapsBySubtype, removeLegacyAxisMap, resolveAxisMap, subtypeMapKey, writeAxisMapForSubtype, computeCuttingMetrics, midWindowDiameter, opKindFromSubtype, parseAxisMap, usesSpiralDiameter,
 	type CuttingInputs,
 } from './cuttingMetrics';
 
@@ -146,6 +146,7 @@ describe('helpers', () => {
 describe('default axis map', () => {
 	it('is the owner standard: Fc = Fx, Ff = Fy, Fp = Fz', () => {
 		expect(DEFAULT_AXIS_MAP).toEqual({ Fc: 'Fx', Ff: 'Fy', Fp: 'Fz' });
+		expect(formatAxisMap(DEFAULT_AXIS_MAP)).toBe('Fc = Fx, Ff = Fy, Fp = Fz');
 		const m = computeCuttingMetrics(inp({ axisMap: DEFAULT_AXIS_MAP }));
 		expect(m.Fc.mean.value).toBe(200);
 		expect(m.Ff.mean.value).toBe(100);
