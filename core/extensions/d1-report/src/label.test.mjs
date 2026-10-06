@@ -55,8 +55,9 @@ test('parseSelection: caps the number of distinct samples at MAX_LABELS', () => 
 	const ids = (n) => Array.from({ length: n }, (_, i) => uuid(i + 1));
 	assert.equal(parseSelection({ ids: ids(MAX_LABELS).join(',') }).ids.length, MAX_LABELS);
 	assert.match(parseSelection({ ids: ids(MAX_LABELS + 1).join(',') }).error, /At most 200/);
-	// ids + codes together count
-	assert.ok(parseSelection({ ids: ids(MAX_LABELS).join(','), codes: 'A-1' }).error);
+	// a code may name a sample that is already in ids, so ids + codes are not capped together here
+	assert.deepEqual(parseSelection({ ids: ids(MAX_LABELS).join(','), codes: 'A-1' }).codes, ['A-1']);
+	assert.ok(parseSelection({ codes: Array.from({ length: MAX_LABELS + 1 }, (_, i) => `C-${i}`).join(',') }).error);
 	// duplicates do not count twice
 	assert.equal(parseSelection({ ids: Array(MAX_LABELS * 2).fill(uuid(1)) }).ids.length, 1);
 });
@@ -313,6 +314,25 @@ test('label routes: every error response is text/plain, never HTML', async () =>
 		assert.equal(out.status, status, r + JSON.stringify(q));
 		assert.match(out.headers['Content-Type'], /^text\/plain/, r + JSON.stringify(q));
 		assert.ok(!out.body.includes('<a/href'), out.body);
+	}
+});
+
+test('label: 200 ticked samples plus one code already among them is accepted; 201 distinct are refused', async () => {
+	const base = DATA.physical_samples.length;
+	try {
+		for (let i = 0; i < 205; i++) {
+			DATA.physical_samples.push({ sample_id: uuid(1000 + i), sample_code: `BULK-${i}`, created_at: '2026-03-05T12:00:00Z' });
+		}
+		const { routes } = harness({ physical_samples: true });
+		const ticked = (n) => Array.from({ length: n }, (_, i) => uuid(1000 + i)).join(',');
+		const ok = await get(routes, '/label', { ids: ticked(MAX_LABELS), codes: 'BULK-0' }, user);
+		assert.equal(ok.status, 200);
+		assert.equal((ok.body.match(/class="label"/g) || []).length, MAX_LABELS);
+		const tooMany = await get(routes, '/label', { ids: ticked(MAX_LABELS), codes: 'BULK-200' }, user);
+		assert.equal(tooMany.status, 400);
+		assert.match(tooMany.body, /At most 200/);
+	} finally {
+		DATA.physical_samples.length = base;
 	}
 });
 

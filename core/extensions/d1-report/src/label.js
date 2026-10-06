@@ -142,7 +142,7 @@ function tokens(raw) {
 }
 
 // Validate and de-duplicate the requested samples: `ids` are sample UUIDs, `codes` human
-// sample codes. At least one is required and the total is capped at MAX_LABELS.
+// sample codes. At least one is required; ids and codes are each capped at MAX_LABELS.
 export function parseSelection(query = {}) {
 	const idTokens = tokens(query.ids);
 	const codeTokens = tokens(query.codes);
@@ -157,9 +157,14 @@ export function parseSelection(query = {}) {
 
 	const ids = [...new Set(idTokens.map((t) => t.toLowerCase()))];
 	const codes = [...new Set(codeTokens)];
-	if (ids.length + codes.length > MAX_LABELS) return { error: `At most ${MAX_LABELS} samples per sheet.` };
+	// Each list is capped here; a code may name a sample that is also in `ids`, so the cap on
+	// distinct samples is applied after the codes are resolved (the endpoint, via capError).
+	if (ids.length > MAX_LABELS || codes.length > MAX_LABELS) return { error: `At most ${MAX_LABELS} samples per sheet.` };
 	return { ids, codes };
 }
+
+// The message for a selection that resolved to more than MAX_LABELS distinct samples, or ''.
+export const capError = (rows) => (rows.length > MAX_LABELS ? `At most ${MAX_LABELS} samples per sheet.` : '');
 
 // Put the readable `rows` back in the order they were requested (ids first, then codes),
 // one label per sample even if it was named by both id and code.

@@ -19,6 +19,7 @@ import { createAccess } from './access.js';
 import {
 	LABEL_JS,
 	MAX_LABELS,
+	capError,
 	initials,
 	labelDate,
 	orderRows,
@@ -230,6 +231,8 @@ export default defineEndpoint({
 					await a.list('physical_samples', clauses.length === 1 ? clauses[0] : { _or: clauses }),
 					sel
 				);
+				// Distinct samples, after codes resolved to ids (a code may repeat an id).
+				if (capError(rows)) return plain(res, 400, capError(rows));
 				// Same body whether the samples are missing or not permitted.
 				if (!rows.length) return notFound(res, 'Sample');
 
