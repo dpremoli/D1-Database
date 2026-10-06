@@ -76,7 +76,7 @@ Ready-made filtered lists, one click away in the navigation panel:
 | Collection | View | Shows |
 |---|---|---|
 | Manufacturing Operations | **My operations** | operations whose owner is you, newest first |
-| Manufacturing Operations | **This week's FAST runs** | FAST (`MF`) operations dated in the last 7 days |
+| Manufacturing Operations | **FAST runs, last 7 days** | FAST (`MF`) operations dated in the last 7 days |
 | Manufacturing Operations | **Missing outcome** | operations with no outcome notes yet |
 | Manufacturing Operations | **Machining**, **FAST** | all operations of that family |
 | Test Sessions | **Failed** | tests whose pipeline status is `failed` |

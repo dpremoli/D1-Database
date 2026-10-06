@@ -7,7 +7,7 @@
 A **manufacturing operation** is one process step performed on a sample: a machining pass, a
 FAST sinter, a heat treatment, a preparation for metallography. Operations are listed under
 **Manufacturing Operations**, with shortcuts to the **FAST** and **Machining** subsets and to
-**My operations**, **This week's FAST runs** and **Missing outcome**
+**My operations**, **FAST runs, last 7 days** and **Missing outcome**
 ([Saved views](getting-started.md#saved-views)).
 
 ![The operations list](../images/database/operations-list.png)

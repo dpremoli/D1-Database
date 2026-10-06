@@ -195,7 +195,7 @@ SELECT 'up:' || count(*) FROM directus_presets WHERE "user" IS NULL AND role IS 
   AND collection IN ('manufacturing_operations','test_sessions','physical_samples') AND bookmark <> 'Machining';
 SELECT 'up_curated_kept:' || (filter::jsonb ->> 'curated') FROM directus_presets WHERE bookmark='Failed' AND collection='test_sessions';
 SELECT 'up_mine:' || (filter::jsonb #>> '{_and,0,owner_person_id,user_id,_eq}') FROM directus_presets WHERE bookmark='My samples';
-SELECT 'up_fast:' || (filter::jsonb #>> '{_and,1,operation_date,_gte}') FROM directus_presets WHERE bookmark='This week''s FAST runs';
+SELECT 'up_fast:' || (filter::jsonb #>> '{_and,1,operation_date,_gte}') FROM directus_presets WHERE bookmark='FAST runs, last 7 days';
 SELECT 'up_needs:' || (filter::jsonb #>> '{_and,0,status,_eq}') FROM directus_presets WHERE bookmark='Needs analysis';
 $sfb_up
 SELECT 'up_idempotent:' || count(*) FROM directus_presets WHERE "user" IS NULL AND role IS NULL AND bookmark IS NOT NULL
@@ -210,7 +210,7 @@ sfb_check() { grep -qx "$1" <<<"$sfb_out" && ok "$2" || bad "$2 (psql output: $s
 sfb_check "up:7" "up: seven global bookmarks present"
 sfb_check "up_curated_kept:true" "up: an existing (curated) bookmark is left alone"
 sfb_check 'up_mine:$CURRENT_USER' "up: My samples filters on the owner's linked Directus user"
-sfb_check 'up_fast:$NOW(-7 days)' "up: This week's FAST runs uses a rolling 7-day window"
+sfb_check 'up_fast:$NOW(-7 days)' "up: FAST runs, last 7 days uses a rolling 7-day window"
 sfb_check "up_needs:processed" "up: Needs analysis uses a real status value"
 sfb_check "up_idempotent:7" "up is idempotent"
 sfb_check "down:Machining" "down: removes the seven bookmarks and keeps other bookmarks"
