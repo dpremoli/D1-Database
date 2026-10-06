@@ -222,6 +222,24 @@ Computed in the browser from the live cache:
   per axis, with units in the column names (`mean_N`, `rms_N`, `rpm_mean`…). The file is named
   `signal_stats_<pass code>.csv`.
 
+### Cutting metrics
+
+Below Signal statistics, for the same crop window (compute the statistics first). Hover any value
+for its formula; a "—" carries the reason (missing feed, depth, diameter, zero RPM) as its tooltip.
+
+- **Resultant |F|:** mean and peak of √(Fx² + Fy² + Fz²).
+- **Fc / Ff / Fp:** cutting (tangential), feed and passive force, mean and peak, taken from the
+  axes chosen in **Axis mapping**. The mounting of the dynamometer is not recorded, so the default
+  (Fc = Fz, Ff = Fx, Fp = Fy) is an **assumption**; change it if your set-up differs (remembered in
+  this browser).
+- **Cutting speed vc** = π·D·n/1000 m/min, with D the Diameter control at the middle of the window
+  (the disc shrinks as the tool spirals in) and n the measured mean RPM.
+- **Cutting power Pc** = Fc·vc/60 W. **Specific cutting energy kc** = Fc/(ap·f) N/mm².
+- Feed and depth come from the operation record (else the capture). Milling operations and
+  operations with an unknown type show only the resultant.
+- The metrics are also columns in the statistics CSV (`Fc_mean_N`, `Pc_W`, `kc_N_per_mm2`,
+  `axis_map`…). Design: [spec](../../superpowers/specs/2026-10-06-cutting-metrics-design.md).
+
 > The demo cut in these screenshots shows *clip* on every axis. That is an artefact of the
 > simulated signal, not something a real recording would normally show.
 

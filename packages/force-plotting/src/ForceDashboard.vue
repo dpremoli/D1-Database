@@ -29,6 +29,7 @@ import { computeAutoCode } from './operationCode';
 import { activeFindings, diagnose, worstSeverity, type Finding } from './metadataDoctor';
 import { computeSignalStats, resolveStatsWindow, type SignalStats } from './signalStats';
 import { statsCsvColumns } from './statsCsv';
+import { AXIS_MAPS, axisMapKey, computeCuttingMetrics, opKindFromSubtype, parseAxisMap, type Metric } from './cuttingMetrics';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
 import { saveChartImage, type ChartSnapshot } from './chartExport';
@@ -431,11 +432,12 @@ watch(editDiam, (v) => {
 // the cache isn't downloaded yet the panel offers an explicit compute (= download).
 // One accordion open at a time in the detail column: Operation detail | Signal statistics
 // | Signal filters are mutually exclusive (opening one folds the others).
-const openPanel = ref<'detail' | 'display' | 'stats' | 'filters' | null>('detail');
-function togglePanel(p: 'detail' | 'display' | 'stats' | 'filters') { openPanel.value = openPanel.value === p ? null : p; }
+const openPanel = ref<'detail' | 'display' | 'stats' | 'cutting' | 'filters' | null>('detail');
+function togglePanel(p: 'detail' | 'display' | 'stats' | 'cutting' | 'filters') { openPanel.value = openPanel.value === p ? null : p; }
 const opDetailOpen = computed(() => openPanel.value === 'detail');
 const displayPanelOpen = computed(() => openPanel.value === 'display');
 const statsOpen = computed(() => openPanel.value === 'stats');
+const cuttingOpen = computed(() => openPanel.value === 'cutting');
 const STAT_AXES = ['Fx', 'Fy', 'Fz'] as const;
 const sigStats = ref<SignalStats | null>(null);
 const statsBusy = ref(false);
@@ -470,7 +472,7 @@ async function computeStats() {
 // Recompute (cheap, cache already local) when the crop moves while the panel is open.
 let statsTimer = 0;
 watch(() => [cropStartSec.value, cropEndSec.value], () => {
-	if (!statsOpen.value || !sigStats.value) return;
+	if ((!statsOpen.value && !cuttingOpen.value) || !sigStats.value) return;
 	clearTimeout(statsTimer);
 	statsTimer = window.setTimeout(computeStats, 400);
 });
@@ -496,8 +498,29 @@ function fmtStat(v: number): string {
 	return v.toFixed(2);
 }
 
+// ---- Cutting metrics card (cuttingMetrics.ts; spec 2026-10-06-cutting-metrics-design.md) ----
+// Over the same crop window as the statistics. The Fc/Ff/Fp -> Fx/Fy/Fz mapping is an ASSUMPTION
+// (not recorded anywhere), so it is visible and changeable here and remembered per browser.
+const AXIS_MAP_KEY = 'd1.cuttingAxisMap';
+const axisMapSel = ref(axisMapKey(parseAxisMap((() => { try { return localStorage.getItem(AXIS_MAP_KEY); } catch { return null; } })())));
+watch(axisMapSel, (v) => { try { localStorage.setItem(AXIS_MAP_KEY, v); } catch { /* ignore */ } });
+// Operation record first (editable above), else the capture's own copy.
+const cutFeed = computed(() => numOrNull(editOpFeedMmPerRev.value) ?? numOrNull(detail.value?.feed));
+const cutAp = computed(() => numOrNull(editOpAxialDoc.value) ?? numOrNull(detail.value?.depth_of_cut));
+const cutting = computed(() => !sigStats.value ? null : computeCuttingMetrics({
+	stats: sigStats.value, axisMap: parseAxisMap(axisMapSel.value),
+	opKind: opKindFromSubtype(editOpSubtype.value || op.value?.machining_operation_subtype),
+	diameterMm: editDiam.value, feedMmPerRev: cutFeed.value, apMm: cutAp.value,
+}));
+const cuttingMapText = computed(() => {
+	const m = parseAxisMap(axisMapSel.value);
+	return `Assumed axis mapping: Fc (tangential, main cutting) = ${m.Fc}, Ff (feed) = ${m.Ff}, Fp (passive/radial) = ${m.Fp}. The mounting is not recorded; change it with the selector.`;
+});
+const cutVal = (m: Metric | undefined, digits = 1) => m?.value == null ? '—' : (Math.abs(m.value) >= 1000 ? (m.value / 1000).toFixed(2) + 'k' : m.value.toFixed(digits));
+const cutTip = (m: Metric | undefined, formula: string) => m?.value == null ? `Unavailable: ${m?.reason ?? 'no data'}` : formula;
+
 // CSV of the statistics table (columns in statsCsv.ts).
-const STATS_COLS = statsCsvColumns(() => sigStats.value);
+const STATS_COLS = statsCsvColumns(() => sigStats.value, () => cutting.value);
 function statsCsv(): string {
 	const st = sigStats.value;
 	return st ? toCsv(STATS_COLS, STAT_AXES.map((a) => ({ axis: a, ...st.axes[a] }))) : '';
@@ -2730,6 +2753,50 @@ function fmtDateTime(v: string | null | undefined) {
 						</template>
 					</div>
 
+					<!-- Cutting metrics: resultant force, Fc/Ff/Fp, vc, Pc, kc over the crop window. Needs the
+					     statistics (same window, same cache), so it shows a hint until those are computed. -->
+					<div v-if="detail" class="card info info-cutting" :class="{ collapsed: !cuttingOpen }">
+						<div class="info-head">
+							<span>
+								<button class="chevbtn" title="Collapse/expand" @click="togglePanel('cutting')"><v-icon :name="cuttingOpen ? 'expand_more' : 'chevron_right'" x-small /></button>
+								<v-icon name="precision_manufacturing" x-small /> Cutting metrics
+							</span>
+						</div>
+						<template v-if="cuttingOpen">
+							<div v-if="!cutting" class="empty sm">Compute Signal statistics first (same crop window).</div>
+							<template v-else>
+								<table class="stats-table cutting-table">
+									<thead><tr><th></th><th>Mean</th><th>Peak</th></tr></thead>
+									<tbody>
+										<tr><td>Resultant |F| <span class="u">N</span></td>
+											<td :title="cutTip(cutting.resultant.mean, '|F| = √(Fx² + Fy² + Fz²) per sample, mean over the window')">{{ cutVal(cutting.resultant.mean) }}</td>
+											<td :title="cutTip(cutting.resultant.peak, '|F| = √(Fx² + Fy² + Fz²) per sample, maximum over the window')">{{ cutVal(cutting.resultant.peak) }}</td></tr>
+										<tr v-for="r in (['Fc', 'Ff', 'Fp'] as const)" :key="r">
+											<td>{{ r }} <span class="u">N</span> <span class="u">({{ r === 'Fc' ? 'cutting' : r === 'Ff' ? 'feed' : 'passive' }}, {{ cutting.axisMap[r] }})</span></td>
+											<td :title="cutTip(cutting[r].mean, `${r} = |mean ${cutting.axisMap[r]}| over the window. ${cuttingMapText}`)">{{ cutVal(cutting[r].mean) }}</td>
+											<td :title="cutTip(cutting[r].peak, `${r} peak = max |${cutting.axisMap[r]}| over the window. ${cuttingMapText}`)">{{ cutVal(cutting[r].peak) }}</td></tr>
+									</tbody>
+								</table>
+								<div class="kv" :title="cutTip(cutting.vcMPerMin, 'vc = π · D · n / 1000 [m/min], D in mm at the window midpoint (the disc shrinks by 2·f per rev), n = measured mean RPM in the window')"><span>Cutting speed vc</span><span>{{ cutVal(cutting.vcMPerMin) }} <span class="u">m/min</span></span></div>
+								<div class="kv" :title="cutTip(cutting.pcW, 'Pc = Fc · vc / 60 [W] (vc in m/min), mean Fc. Feed-force power neglected.')"><span>Cutting power Pc</span><span>{{ cutVal(cutting.pcW) }} <span class="u">W</span></span></div>
+								<div class="kv" :title="cutTip(cutting.kcMPa, 'kc = Fc / (ap · f) [N/mm² = MPa], mean Fc, ap = axial depth of cut, f = feed per rev')"><span>Specific cutting energy kc</span><span>{{ cutVal(cutting.kcMPa, 0) }} <span class="u">N/mm²</span></span></div>
+								<p v-if="cutting.pcW.value == null || cutting.kcMPa.value == null" class="setting-note">
+									<template v-if="cutting.Fc.mean.value == null">{{ cutting.Fc.mean.reason }}.</template>
+									<template v-else>
+										<template v-if="cutting.pcW.value == null">Pc: {{ cutting.pcW.reason }}. </template>
+										<template v-if="cutting.kcMPa.value == null">kc: {{ cutting.kcMPa.reason }}.</template>
+									</template>
+								</p>
+								<label class="setting-note cutting-map">Axis mapping (Fc / Ff / Fp), an assumption:
+									<select v-model="axisMapSel" :title="cuttingMapText">
+										<option v-for="a in AXIS_MAPS" :key="a.key" :value="a.key">{{ a.key }}</option>
+									</select>
+								</label>
+								<p class="setting-note">Over the crop window. Values use the operation's feed and depth of cut (else the capture's), the Diameter control and the measured mean RPM. Hover a value for its formula.</p>
+							</template>
+						</template>
+					</div>
+
 					<!-- Signal filters: interactive preview in Lite (raw|filtered compare), bake to
 					     apply the chain to every output. Collapsed by default. -->
 					<div v-if="detail" class="card info info-filters" :class="{ collapsed: !filtersOpen }">
@@ -3467,6 +3534,7 @@ function fmtDateTime(v: string | null | undefined) {
 .stats-win { font-size: var(--fs-xs, 11px); color: var(--theme--foreground-subdued, #98a2b3); }
 .stats-win .linkbtn { float: none; margin-left: 8px; }
 .stats-rpm { margin-top: 2px; }
+.cutting-map select { margin-left: 4px; }
 .stats-compute { margin-top: 4px; }
 .acc-head {
 	display: flex; align-items: center; gap: 4px; width: 100%; text-align: left;

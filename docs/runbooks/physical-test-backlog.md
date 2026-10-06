@@ -120,6 +120,12 @@ tool; a test cut on scrap stock is fine.
   curve and mean/RMS only over the overlap of both crops. Since #124.
 - [ ] **FFT overlay units.** With a filter profile on, the filtered FFT overlay sits on the main
   spectrum for an untouched band (both are "N rms" now). Since #125.
+- [ ] **P6 — cutting metrics.** On a real turning cut with the operation sheet beside you: open
+  Signal statistics (compute), then Cutting metrics. Check Fc, Pc and kc against a hand calculation
+  from the sheet (vc = π·D·n/1000, Pc = Fc·vc/60, kc = Fc/(ap·f)) and the kc against the literature
+  range for the material. Confirm which dynamometer axis really is the main cutting force, then fix
+  the assumed default mapping (Fc=Fz, Ff=Fx, Fp=Fy) if it is wrong. Check "—" with a reason on an
+  operation with no feed or depth, and on a milling op. Since: this batch (PR TBD).
 
 ### Earlier issues that need the rig (from the 2026-10-02 batch)
 - [ ] **#84** Real DAQmx error text and codes (‑200077); whether the chassis or the module limits the
