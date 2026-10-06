@@ -97,6 +97,11 @@ tree in either direction:
 | `f_trace_stock_origins(sample_id)` | the raw stock lots it came from |
 | `f_sample_timeline(sample_id)` | its operations and tests, in date order |
 
+The functions run as the database owner and ignore Directus permissions, so the app does not call
+them directly. The Lab Dashboard's Timeline tab reads them through the `d1-trace` endpoint
+(`GET /d1-trace/sample/<id>`), which re-checks every sample, operation, test and stock lot against
+the signed-in user's permissions and drops, and only counts, what they cannot read.
+
 See the [traceability runbook](../../runbooks/traceability.md). The sample report
 ([Reports](dashboards-and-reports.md#printable-reports)) shows the same lineage on paper.
 

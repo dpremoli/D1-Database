@@ -74,6 +74,32 @@ named in the step.
 - [ ] **P2 — PNG export in Directus.** "Save chart as PNG" and "as SVG" download a correct image
   (Directus's CSP allows the `blob:` image used for the PNG). Since #125.
 
+### Sample timeline and campaign overview
+- [ ] **D5 — timeline on a real sample with genealogy.** Restart Directus so `d1-trace` and the
+  rebuilt Lab Dashboard load. Lab Dashboard > Samples > pick a sample that has a parent, a child, a
+  raw stock lot, operations and tests > **Timeline** tab. Expect: stock lot, ancestors (oldest
+  first), the sample, operations and tests in date order, then descendants, matching
+  `SELECT * FROM f_sample_timeline('<id>')` and the `f_trace_*` functions run by hand. Every entry
+  opens its record. `GET /d1-trace/sample/<id>` is 401 signed out, 403 for a user without app
+  access, 400 for a bad id. Since: this batch (PR TBD).
+- [ ] **D5 — hidden items for a restricted role.** Sign in as a role whose item filter hides some
+  of that sample's relatives, operations or tests. Expect: the Timeline shows only what the role can
+  open, with "N items are not visible to you" lines where something was dropped; no code, id or
+  operator of a hidden record appears in the JSON of `/d1-trace/sample/<id>`; a sample the role
+  cannot read gives "not visible to you" (404). Since: this batch (PR TBD).
+- [ ] **D11 — campaign overview counts.** Open a machining trial and a testing campaign that have
+  real data. Expect: sample, operation and test-session counts equal a hand count in the
+  collection lists; "Force analysed n / m" equals the machining operations whose
+  `machining_force_analysis` rows are all `done`; the per-operation force-analysis and diagnostics
+  badges match the Force Analysis page, and an `error` badge shows the message on hover. As a role
+  that cannot read `machining_force_analysis`, the force columns show "—" and a note, not an error.
+  Since: this batch (PR TBD).
+- [ ] **D11 — pickers.** In a campaign, add a sample by code, then a test session that is in no
+  campaign: each appears in the overview, the counts rise, and the test session shows the campaign
+  in its own form. Remove both again. A sample that only appears through an operation is marked
+  "not in list" and its + button adds it. Also add and remove an operation and check the overview
+  reloads. Since: this batch (PR TBD).
+
 ## B. Force rig (NI-DAQ, Lab Amp, packaged Windows app)
 
 Install the current release from the update feed on the acquisition PC. Use a real sample and

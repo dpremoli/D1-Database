@@ -18,6 +18,12 @@ right draws a graph of the selected record's neighbours.
 Search or filter the samples by status, then pick one to see its identity and dimensions, its
 manufacturing operations (date, method, machine, edge, outcome) and its test sessions.
 
+The **Timeline** tab beside *Sample Detail* shows the sample's whole story in one list: the raw stock
+lot it came from, its ancestors (oldest first), the sample itself, its operations and tests in
+date order, and the samples made from it. Every entry links to its record. You only see records
+your role can read; anything else is summarised as "N items are not visible to you". If the
+walk to a relative passes through a sample you cannot see, the entry says so.
+
 ### Machining
 
 ![Lab Dashboard, Machining tab](../images/database/lab-machining.png)

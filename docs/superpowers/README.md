@@ -32,6 +32,10 @@ open.
 | [Diagnostics Phase H](specs/2026-09-04-diagnostics-workbench-phase-h-design.md) | Diagnostics | Implemented |
 | [Milling path models + polar plot](specs/2026-09-07-milling-path-models-and-polar-design.md) | force-app / plotting | Implemented |
 | [FRM ↔ Signals linking](specs/2026-10-04-frm-signal-linking-design.md) | force-app / plotting | Implemented |
+<<<<<<< HEAD
 | [Cutting metrics card](specs/2026-10-06-cutting-metrics-design.md) | force plotting | Implemented |
+=======
+| [Sample timeline + campaign overview](specs/2026-10-06-sample-timeline-and-campaign-overview-design.md) | Directus extensions | Implemented |
+>>>>>>> worktree-agent-a8bd81e18c8eeb71e
 
 Add a row when a new spec lands, and update its Status line (and this table) when it ships.
