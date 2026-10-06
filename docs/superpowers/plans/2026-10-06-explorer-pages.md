@@ -19,7 +19,7 @@ Delete this plan once the batch has shipped (see `docs/superpowers/README.md`).
 
 | Stream | Scope | Worktree / branch | State |
 |---|---|---|---|
-| E1 — Kit and Sample page | spec stage 1 | — | not started |
+| E1 — Kit and Sample page | spec stage 1 | `agent-a75d68373a9795e38` | in progress |
 | E2 — Campaign page and matrix | spec stage 2 | — | waits for E1 |
 | E3 — Projects, Project, Home "my work" | spec stage 3 (D10) | — | waits for E1 |
 | E4 — Operation and Test pages; links; QR target | spec stage 4 | — | waits for E1 |
