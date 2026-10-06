@@ -3097,9 +3097,9 @@ function fmtDateTime(v: string | null | undefined) {
 					</div>
 				</div>
 			</div>
-			<!-- Map / chart right-click menu (position:fixed, so it can sit at the dashboard root). -->
 			<PlotHelp v-if="helpOpen" @close="helpOpen = false" />
-			<ContextMenu v-if="menu":x="menu.x" :y="menu.y" :items="menu.items" @close="menu = null" />
+			<!-- Map / chart right-click menu (position:fixed, so it can sit at the dashboard root). -->
+			<ContextMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menu.items" @close="menu = null" />
 		</div>
 	</private-view>
 </template>

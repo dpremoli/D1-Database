@@ -363,9 +363,13 @@ function onContextMenu(ev: MouseEvent) {
 	const g = geom.value;
 	if (!g || !props.menu) return;
 	ev.preventDefault();
-	const i = props.kind === 'env' ? bucketAt(ev) : null;
-	if (props.kind === 'env' && i == null) return;
-	emit('chartmenu', { clientX: ev.clientX, clientY: ev.clientY, x: i != null ? g.xs[i] : null, snapshot });
+	let x: number | null = null;
+	if (props.kind === 'env') {
+		const i = bucketAt(ev);
+		if (i == null) return;
+		x = g.xs[i];
+	}
+	emit('chartmenu', { clientX: ev.clientX, clientY: ev.clientY, x, snapshot });
 }
 // The chart as the image exporter wants it: the props, not the on-screen geometry, so the file
 // is laid out for a report and not for this panel's pixel size.

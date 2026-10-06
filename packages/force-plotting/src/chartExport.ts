@@ -153,6 +153,11 @@ export function buildChartSvg(o: ChartSvgOpts): string {
 		out.push(`<line x1="${mL}" x2="${mL + pw}" y1="${f1(sy(0))}" y2="${f1(sy(0))}" stroke="#444" stroke-width="1"/>`);
 	}
 
+	const line = (tr: Trace, y: (i: number) => number) => {
+		let p = '';
+		for (let i = 0; i < tr.x.length; i++) p += `${i ? 'L' : 'M'}${f1(sx(tr.x[i]))},${f1(sy(y(i)))} `;
+		return p;
+	};
 	const area = (tr: Trace, a = 0, b = tr.x.length - 1) => {
 		let p = 'M';
 		for (let i = a; i <= b; i++) p += `${f1(sx(tr.x[i]))},${f1(sy(tr.hi[i]))} `;
@@ -160,29 +165,27 @@ export function buildChartSvg(o: ChartSvgOpts): string {
 		for (let i = b; i >= a; i--) p += `${f1(sx(tr.x[i]))},${f1(sy(tr.lo[i]))} `;
 		return p + 'Z';
 	};
+	const col = escapeXml(color);
 	out.push('<g clip-path="url(#plot)">');
 	if (o.kind === 'env' && main.x.length) {
 		const hasCrop = o.cropStart != null && o.cropEnd != null;
-		out.push(`<path d="${area(main)}" fill="${escapeXml(color)}" fill-opacity="${hasCrop ? 0.12 : 0.25}" stroke="${escapeXml(color)}" stroke-opacity="0.5" stroke-width="0.8"/>`);
+		out.push(`<path d="${area(main)}" fill="${col}" fill-opacity="${hasCrop ? 0.12 : 0.25}" stroke="${col}" stroke-opacity="0.5" stroke-width="0.8"/>`);
 		if (hasCrop) {
 			// the analysed window at full saturation, as on screen, plus its two edges
 			const a = main.x.findIndex((v) => v >= o.cropStart!);
 			let b = -1;
 			for (let k = main.x.length - 1; k >= 0; k--) if (main.x[k] <= o.cropEnd!) { b = k; break; }
-			if (a >= 0 && b >= a) out.push(`<path d="${area(main, a, b)}" fill="${escapeXml(color)}" fill-opacity="0.35" stroke="${escapeXml(color)}" stroke-width="1"/>`);
+			if (a >= 0 && b >= a) out.push(`<path d="${area(main, a, b)}" fill="${col}" fill-opacity="0.35" stroke="${col}" stroke-width="1"/>`);
 			for (const t of [o.cropStart!, o.cropEnd!]) {
 				if (t < x0 || t > x1) continue;
 				out.push(`<line x1="${f1(sx(t))}" x2="${f1(sx(t))}" y1="${mT}" y2="${mT + ph}" stroke="#334155" stroke-width="1" stroke-dasharray="5 3"/>`);
 			}
 		}
 	} else if (main.x.length) {
-		let p = 'M';
-		for (let i = 0; i < main.x.length; i++) p += `${f1(sx(main.x[i]))},${f1(sy(main.hi[i]))} `;
-		out.push(`<path d="${p}" fill="none" stroke="${escapeXml(color)}" stroke-width="1.3"/>`);
+		out.push(`<path d="${line(main, (i) => main.hi[i])}" fill="none" stroke="${col}" stroke-width="1.3"/>`);
 	}
 	for (const { c, tr } of cmpTraces) {
-		let p = '';
-		for (let i = 0; i < tr.x.length; i++) p += `${i ? 'L' : 'M'}${f1(sx(tr.x[i]))},${f1(sy((tr.lo[i] + tr.hi[i]) / 2))} `;
+		const p = line(tr, (i) => (tr.lo[i] + tr.hi[i]) / 2);
 		if (p) out.push(`<path d="${p}" fill="none" stroke="${escapeXml(c.color)}" stroke-width="1.5" stroke-dasharray="6 3"/>`);
 	}
 	out.push('</g>');
