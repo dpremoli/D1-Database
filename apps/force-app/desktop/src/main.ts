@@ -5,10 +5,10 @@ import { applyMenuBarMode, buildMenu } from './menu';
 import { findAvailablePort } from './port';
 import { registerAppScheme, handleAppProtocol } from './protocol';
 import { checkRevealTarget } from './reveal';
-import { restartRecorder } from './restart';
+import { restartRecorder, unknownStatusDialog } from './restart';
 import { watchRenderer } from './rendererWatch';
 import { PopoutTracker } from './popouts';
-import { fetchBusySession, confirmQuit, type BusySession } from './quitGuard';
+import { fetchBusySession, fetchRecorderActivity, confirmQuit, type BusySession } from './quitGuard';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
 import { initAutoUpdater, startUpdateCheck } from './updater';
@@ -226,15 +226,19 @@ function registerShellIpc(): void {
   });
 
   // R11: Settings > Connectivity's "Restart recorder". Goes through the same supervisor as launch
-  // and the crash restarts. Refused while a recording is running or being saved; allowed when the
-  // backend cannot be asked (it is down, which is what the button is for).
+  // and the crash restarts. Refused while a recording is running or being saved. When the backend
+  // does not answer: restarted at once if the supervisor already knows it is down, otherwise the
+  // operator is asked first (a busy recorder can be slow to answer too).
   ipcMain.handle('sidecar:restart', async (event) => {
     if (!fromApp(event)) return { ok: false, reason: 'not allowed from this page' };
     if (manualRestart) return { ok: false, reason: 'a restart is already in progress' };
     manualRestart = true;
     try {
       const result = await restartRecorder({
-        getBusy: activeSession,
+        getActivity: () => fetchRecorderActivity((p, t) => recorderFetch(p, t)),
+        // Native dialogs would hang the e2e suite (see confirmQuitDuringRecording).
+        confirmUnknown: async () =>
+          process.env.FORCE_APP_TEST_HOOKS === '1' || (await dialog.showMessageBox(unknownStatusDialog())).response === 1,
         restart: supervisor ? () => supervisor!.restart() : null,
         getState: () => supervisor?.getState(),
         lastDetail: () => supervisor?.lastDetail(),

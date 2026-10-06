@@ -11,31 +11,49 @@ export interface BusySession {
   samples: number;
 }
 
-/** Reads GET /record/status. Null when nothing is running or the backend cannot be asked: failing
- * OPEN keeps the operator from being trapped in an app they cannot close whenever the sidecar has
- * already died, which is precisely when they most want to restart it. */
-export async function fetchBusySession(
+/** What GET /record/status says, with "idle" and "couldn't ask" kept apart. */
+export type RecorderActivity =
+  | { status: 'busy'; session: BusySession }
+  | { status: 'idle' }
+  /** No answer: the backend is down, still starting, slow, or replied with an error. */
+  | { status: 'unknown' };
+
+/** Reads GET /record/status. Never throws. */
+export async function fetchRecorderActivity(
   request: (path: string, timeoutMs: number) => Promise<Response | null>,
-): Promise<BusySession | null> {
+): Promise<RecorderActivity> {
   try {
     const res = await request('/record/status', 2000);
-    if (!res?.ok) return null;
+    if (!res?.ok) return { status: 'unknown' };
     const s = (await res.json()) as {
       state?: string;
       elapsed_sec?: number;
       n_total?: number;
       config?: { sample_name?: string };
     };
-    if (s.state !== 'recording' && s.state !== 'finalizing') return null;
+    if (s.state !== 'recording' && s.state !== 'finalizing') return { status: 'idle' };
     return {
-      kind: s.state,
-      sample: s.config?.sample_name || 'the current run',
-      elapsed: Number(s.elapsed_sec ?? 0),
-      samples: Number(s.n_total ?? 0),
+      status: 'busy',
+      session: {
+        kind: s.state,
+        sample: s.config?.sample_name || 'the current run',
+        elapsed: Number(s.elapsed_sec ?? 0),
+        samples: Number(s.n_total ?? 0),
+      },
     };
   } catch {
-    return null;
+    return { status: 'unknown' };
   }
+}
+
+/** The running session, or null when nothing is running OR the backend cannot be asked: failing
+ * OPEN keeps the operator from being trapped in an app they cannot close whenever the sidecar has
+ * already died. (Restarting the recorder tells the two apart: see fetchRecorderActivity.) */
+export async function fetchBusySession(
+  request: (path: string, timeoutMs: number) => Promise<Response | null>,
+): Promise<BusySession | null> {
+  const a = await fetchRecorderActivity(request);
+  return a.status === 'busy' ? a.session : null;
 }
 
 /** The dialog for quitting while `busy`. Button 0 is always the safe one, focused so a stray Enter
