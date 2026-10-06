@@ -33,6 +33,7 @@ import { useForceHost } from './host';
 import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
 import { debounce } from './debounce';
 import { diffEnvelopes } from './compare';
+import { createPendingCrop } from './pendingCrop';
 import {
 	decodeViewState, encodeViewState, VIEW_AXES, VIEW_QUERY_KEYS,
 	type ViewAxis, type ViewChartMode, type ViewState, type ViewZSeries,
@@ -384,6 +385,7 @@ watch(() => detail.value?.id, (id) => {
 	// lines linger until its live cache reloads). A saved override wins over the derived auto-crop;
 	// onCloudLoaded then refines from the cache (but only when there's no override to respect).
 	cropSavePrompt.value = false; cropSavedMsg.value = '';
+	pendingCrop.clear();   // a link's crop request belongs to the op it named
 	const initCrop = savedCropSec.value || cropWindow.value;
 	if (initCrop) { cropStartSec.value = initCrop.start; cropEndSec.value = initCrop.end; }
 	else { cropStartSec.value = 0; cropEndSec.value = 0; }
@@ -477,6 +479,7 @@ watch(() => detail.value?.id, () => { sigStats.value = null; statsErr.value = nu
 function onCropEdit(which: 'start' | 'end', v: number) {
 	if (which === 'start') cropStartSec.value = v; else cropEndSec.value = v;
 	cropTouched.value = true;
+	pendingCrop.clear();   // the user's own edit beats a link's crop request
 	if (frmMode.value !== 'lite' && liveAvailable.value) chooseMode('lite');
 }
 watch(statsOpen, (open) => {
@@ -1916,7 +1919,7 @@ watch(selectedRowId, (id) => { if (id) compareIds.value = compareIds.value.filte
 // showing: the router is shared, and replacing its query then would corrupt that page's URL.
 const viewPath = route.path;
 let viewReady = false;
-let pendingCrop: [number, number] | null = null;
+const pendingCrop = createPendingCrop();
 const currentOperationId = computed<string | undefined>(
 	() => rows.value.find((r) => r.id === selectedRowId.value)?.operation_id?.operation_id || undefined,
 );
@@ -1977,17 +1980,17 @@ async function applyViewState(v: Partial<ViewState>) {
 		colorScale.value = withAutoRange(colorScale.value, v.scale[0], v.scale[1]);
 		locked.value = true;
 	}
-	if (v.crop) {
+	const opId = detail.value?.id;
+	if (v.crop && opId) {
 		// The crop handles are re-seeded from the cache when it parses (onCloudLoaded), which may
-		// land after this; keep the request and apply it there too.
-		pendingCrop = v.crop;
-		applyPendingCrop();
+		// land after this. Apply now, but keep the request until that op's load has re-applied it.
+		pendingCrop.set(opId, v.crop);
+		applyPendingCrop(pendingCrop.peek(opId));
 	}
 }
-function applyPendingCrop() {
-	if (!pendingCrop) return;
-	cropStartSec.value = pendingCrop[0]; cropEndSec.value = pendingCrop[1];
-	pendingCrop = null;
+function applyPendingCrop(crop: [number, number] | null) {
+	if (!crop) return;
+	cropStartSec.value = crop[0]; cropEndSec.value = crop[1];
 }
 
 // Selected axes for a panel (spectral views render one SpectrumView per axis, like the force plot).
@@ -2016,7 +2019,7 @@ function onCloudLoaded(meta: { csSec: number; ceSec: number; feed: number; diam:
 	// the diameter below. Absent an override, the cache's crop is the best available.
 	if (savedCropSec.value) { cropStartSec.value = savedCropSec.value.start; cropEndSec.value = savedCropSec.value.end; }
 	else { cropStartSec.value = meta.csSec; cropEndSec.value = meta.ceSec; }
-	applyPendingCrop();   // a shared link's crop preview beats the cache's own window
+	applyPendingCrop(pendingCrop.take(detail.value?.id));   // a shared link's crop preview beats the cache's own window
 	editFeed.value = cleanFloat(meta.feed);
 	editDiam.value = cleanFloat(meta.diam);
 	const od = Number(detail.value?.outer_diameter);
