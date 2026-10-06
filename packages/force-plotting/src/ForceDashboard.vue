@@ -33,7 +33,10 @@ import { useForceHost } from './host';
 import { downloadText, safeFilePart, toCsv, useCopyFeedback, type CsvColumn } from './csvExport';
 import { debounce } from './debounce';
 import { diffEnvelopes } from './compare';
-import { decodeViewState, encodeViewState, VIEW_QUERY_KEYS, type ViewState } from './viewState';
+import {
+	decodeViewState, encodeViewState, VIEW_AXES, VIEW_QUERY_KEYS,
+	type ViewAxis, type ViewChartMode, type ViewState, type ViewZSeries,
+} from './viewState';
 
 const host = useForceHost();
 const api = host.api;
@@ -56,8 +59,8 @@ const isAdminRole = computed(() => {
 	return ADMIN_ROLE_IDS.has(roleId) || cu?.role?.admin_access === true || cu?.admin_access === true;
 });
 
-const AXES = ['Fx', 'Fy', 'Fz'] as const;
-type Axis = typeof AXES[number];
+const AXES = VIEW_AXES;
+type Axis = ViewAxis;
 const AXIS_COLOR: Record<Axis, string> = { Fx: '#dc2626', Fy: '#16a34a', Fz: '#2563eb' };  // red / green / blue
 
 const loading = ref(true);
@@ -75,7 +78,7 @@ const selectedRowId = ref<string | null>(null);
 const detail = ref<any | null>(null);
 const loadingDetail = ref(false);
 
-const chartMode = ref<'force' | 'fft' | 'psd' | 'spectrogram' | 'waterfall'>('force');
+const chartMode = ref<ViewChartMode>('force');
 // Same set/order the Record page's plot panels offer, picked the same way (from the panel's title).
 // Its first entry is the time-domain view under each page's own name for it ("Force" here, "Time"
 // there -- both stay as they were).
@@ -234,7 +237,7 @@ const gridFull = ref(false);   // "Gridded" sub-toggle, shown only in Full mode
 const buildingOctree = ref(false);
 const octreeMsg = ref<string | null>(null);
 // Z-series: drive the octree's Z axis from a force series for a true 3D view.
-const zSeries = ref<'none' | 'Fx' | 'Fy' | 'Fz'>('none');
+const zSeries = ref<ViewZSeries>('none');
 const zScale = ref(0.35);
 const octreeAvailable = computed(() => detail.value?.octree_status === 'done' && !!detail.value?.octree_path);
 const octreeOn = computed(() => frmMode.value === 'full' && octreeAvailable.value);
@@ -1944,7 +1947,7 @@ const writeViewQuery = debounce(() => {
 	if (JSON.stringify(q) === JSON.stringify(route.query)) return;
 	router.replace({ path: route.path, query: q, hash: route.hash }).catch(() => { /* a superseded navigation */ });
 }, 400);
-watch(viewQuery, () => writeViewQuery());
+watch(viewQuery, writeViewQuery);
 onDeactivated(() => writeViewQuery.cancel());
 onBeforeUnmount(() => writeViewQuery.cancel());
 

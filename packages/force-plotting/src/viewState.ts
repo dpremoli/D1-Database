@@ -6,12 +6,13 @@
 // hand or truncated by a chat client, so anything unknown or malformed is dropped (that field
 // falls back to the dashboard's default) and nothing here ever throws.
 
+import type { FrmMode } from './frmMode';
+
 export const CHART_MODE_KEYS = ['force', 'fft', 'psd', 'spectrogram', 'waterfall'] as const;
 export type ViewChartMode = (typeof CHART_MODE_KEYS)[number];
 export const VIEW_AXES = ['Fx', 'Fy', 'Fz'] as const;
 export type ViewAxis = (typeof VIEW_AXES)[number];
-export const VIEW_FRM_MODES = ['figure', 'lite', 'full'] as const;
-export type ViewFrmMode = (typeof VIEW_FRM_MODES)[number];
+export const VIEW_FRM_MODES: readonly FrmMode[] = ['figure', 'lite', 'full'];
 export const VIEW_Z_SERIES = ['none', 'Fx', 'Fy', 'Fz'] as const;
 export type ViewZSeries = (typeof VIEW_Z_SERIES)[number];
 
@@ -29,7 +30,7 @@ export interface ViewState {
 	/** The compare chip marked as the difference reference. */
 	reference: string;
 	diff: boolean;
-	frm: ViewFrmMode;
+	frm: FrmMode;
 	zSeries: ViewZSeries;
 	/** Locked colour-scale saturation range. Present only while the scale is locked. */
 	scale: [number, number];
