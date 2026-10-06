@@ -2064,6 +2064,10 @@ def _capture_file(cid: str, name: str) -> str:
 # instead of ~10, which is what makes browsing thousands of captures on a network drive tolerable.
 # Incomplete captures are never cached: their recording/discarding/recovering flags are live.
 _BROWSE_CACHE: dict[str, tuple[tuple[int, int, int], dict]] = {}
+# /captures/browse runs in the threadpool, so two requests can touch the cache at once. Every
+# mutation and the prune's snapshot of the keys hold this lock: iterating a dict another thread is
+# inserting into raises "dictionary changed size during iteration".
+_BROWSE_CACHE_LOCK = threading.Lock()
 BROWSE_MAX_LIMIT = 500
 _DATE_QUERY = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 
@@ -2119,7 +2123,8 @@ def _capture_entry(cid: str) -> dict:
         except (OSError, ValueError):
             pass
         if key is not None:
-            _BROWSE_CACHE[d] = (key, entry)
+            with _BROWSE_CACHE_LOCK:
+                _BROWSE_CACHE[d] = (key, entry)
     else:
         # No summary: the recording crashed or its finalize failed. manifest.json is written at
         # record start with the full config, so the sample name is still known; without this the
@@ -2140,6 +2145,14 @@ def _capture_entry(cid: str) -> dict:
         entry["discarding"] = busy == "discarding"
         entry["recovering"] = busy == "recovering"
     return entry
+
+
+def _prune_browse_cache(live: set[str]) -> None:
+    """Drop cached entries of this root whose capture folder is gone."""
+    with _BROWSE_CACHE_LOCK:
+        for stale in [k for k in _BROWSE_CACHE if k not in live]:
+            if os.path.dirname(stale) == CAPTURES_ROOT:
+                _BROWSE_CACHE.pop(stale, None)
 
 
 def _browse_matches(entry: dict, needles: list[str], status: str | None) -> bool:
@@ -2205,10 +2218,7 @@ async def browse_captures(
             page = [_capture_entry(cid) for cid in window[offset : offset + limit]]
             total, matching_mb = total_all, None
         else:
-            live = {os.path.join(CAPTURES_ROOT, cid) for cid in ids}
-            for stale in [k for k in _BROWSE_CACHE if k not in live]:
-                if os.path.dirname(stale) == CAPTURES_ROOT:
-                    _BROWSE_CACHE.pop(stale, None)
+            _prune_browse_cache({os.path.join(CAPTURES_ROOT, cid) for cid in ids})
             rows = [e for e in map(_capture_entry, ids) if _browse_matches(e, needles, status)]
             if sort.startswith("size"):
                 rows.sort(key=lambda e: (e["size_mb"], e["id"]), reverse=sort == "size_desc")
