@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	AXIS_MAPS, DEFAULT_AXIS_MAP, computeCuttingMetrics, midWindowDiameter, opKindFromSubtype, parseAxisMap,
+	AXIS_MAPS, DEFAULT_AXIS_MAP, computeCuttingMetrics, midWindowDiameter, opKindFromSubtype, parseAxisMap, usesSpiralDiameter,
 	type CuttingInputs,
 } from './cuttingMetrics';
 
@@ -14,7 +14,7 @@ const baseStats: CuttingInputs['stats'] = {
 	resultant: { mean: RES, peak: RES },
 };
 const inp = (o: Partial<CuttingInputs> = {}): CuttingInputs => ({
-	stats: baseStats, axisMap: DEFAULT_AXIS_MAP, opKind: 'turning', diameterMm: 100, feedMmPerRev: 0.1, apMm: 2, ...o,
+	stats: baseStats, axisMap: DEFAULT_AXIS_MAP, opKind: 'turning', spiral: false, diameterMm: 100, feedMmPerRev: 0.1, apMm: 2, ...o,
 });
 
 describe('computeCuttingMetrics', () => {
@@ -37,12 +37,12 @@ describe('computeCuttingMetrics', () => {
 	it('uses the diameter at the window midpoint of the spiral', () => {
 		// 60 s window, 1000 rpm, f = 0.01: mid is 30 s => 500 revs => D = 100 - 2 * 0.01 * 500 = 90
 		expect(midWindowDiameter(100, 0.01, 1000, 30)).toBeCloseTo(90, 9);
-		const m = computeCuttingMetrics(inp({ feedMmPerRev: 0.01, stats: { ...baseStats, windowSec: [0, 60] } }));
+		const m = computeCuttingMetrics(inp({ spiral: true, feedMmPerRev: 0.01, stats: { ...baseStats, windowSec: [0, 60] } }));
 		expect(m.diameterMidMm.value).toBeCloseTo(90, 9);
 		expect(m.vcMPerMin.value).toBeCloseTo(Math.PI * 90, 9);
 	});
 	it('reports a window past the disc centre as unavailable', () => {
-		const m = computeCuttingMetrics(inp({ feedMmPerRev: 0.1, stats: { ...baseStats, windowSec: [0, 60] } }));
+		const m = computeCuttingMetrics(inp({ spiral: true, feedMmPerRev: 0.1, stats: { ...baseStats, windowSec: [0, 60] } }));
 		expect(m.vcMPerMin.value).toBeNull();
 		expect(m.pcW.value).toBeNull();
 		expect(m.kcMPa.value).toBe(3000);   // kc needs no speed
@@ -84,6 +84,44 @@ describe('computeCuttingMetrics', () => {
 		const m = computeCuttingMetrics(inp({ stats: { ...baseStats, axes: { Fx: e, Fy: e, Fz: e } } }));
 		expect(m.resultant.mean.value).toBeNull();
 		expect(m.Fc.mean.value).toBeNull();
+	});
+});
+
+describe('which operations spiral', () => {
+	// The reviewer's example: D = 80 mm, f = 0.2 mm/rev, n = 1000 rpm, window midpoint 10 s after the origin.
+	const stats = { ...baseStats, windowSec: [9, 11] as [number, number] };
+	const ex = (o: Partial<CuttingInputs>) => computeCuttingMetrics(inp({ diameterMm: 80, feedMmPerRev: 0.2, stats, ...o }));
+
+	it('OD turning, boring and threading keep the constant diameter', () => {
+		for (const sub of ['MT-O', 'MT-R', 'MT-B', 'MT-H', 'MT-D', 'MT-Other', '', null]) {
+			const spiral = usesSpiralDiameter(sub);
+			expect(spiral).toBe(false);
+			const m = ex({ spiral });
+			expect(m.diameterMidMm.value).toBe(80);
+			expect(m.vcMPerMin.value).toBeCloseTo(251.327, 3);   // pi * 80 * 1000 / 1000
+		}
+	});
+	it('facing, grooving and parting use the diameter at the window midpoint', () => {
+		for (const sub of ['MT-F', 'MT-G', 'MT-P', 'mt-face', 'MT-Facing']) {
+			expect(usesSpiralDiameter(sub)).toBe(true);
+			const m = ex({ spiral: true });
+			expect(m.diameterMidMm.value).toBeCloseTo(80 - 2 * 0.2 * 1000 * 10 / 60, 9);   // 13.33 mm
+			expect(m.vcMPerMin.value).toBeCloseTo(Math.PI * m.diameterMidMm.value! * 1000 / 1000, 9);
+		}
+	});
+	it('measures the shrinkage from the active crop start, not the cache start', () => {
+		// Saved crop starts at 6 s: the window midpoint is 4 s into the spiral, not 10 s.
+		const withCrop = ex({ spiral: true, spiralOriginSec: 6 });
+		expect(withCrop.diameterMidMm.value).toBeCloseTo(80 - 2 * 0.2 * 1000 * 4 / 60, 9);   // 53.33 mm
+		// No override: falls back to the cache crop start (0 s here).
+		expect(ex({ spiral: true }).diameterMidMm.value).toBeCloseTo(80 - 2 * 0.2 * 1000 * 10 / 60, 9);
+	});
+	it('uses the geometry feed of the spiral, not the operation feed, for D_mid (kc keeps the op feed)', () => {
+		const m = ex({ spiral: true, feedMmPerRev: 0.2, spiralFeedMmPerRev: 0.1, spiralOriginSec: 0 });
+		expect(m.diameterMidMm.value).toBeCloseTo(80 - 2 * 0.1 * 1000 * 10 / 60, 9);   // 46.67 mm
+		expect(m.kcMPa.value).toBe(600 / (2 * 0.2));
+		// No usable geometry feed: constant D, as before.
+		expect(ex({ spiral: true, spiralFeedMmPerRev: 0 }).diameterMidMm.value).toBe(80);
 	});
 });
 

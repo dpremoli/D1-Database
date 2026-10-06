@@ -9,7 +9,7 @@
 import { computed, ref } from 'vue';
 import type { Recipe } from './recipeChannels';
 import { saveRecipe, deleteRecipe, updateRecipe, type SavedRecipe } from './diagRecipes';
-import { exportRecipeJson, isModifiedSinceLoaded, parseRecipeJson, recipeFileName } from './recipeIo';
+import { baselineAfterSave, exportRecipeJson, isModifiedSinceLoaded, parseRecipeJson, recipeFileName, type LoadedRecipe } from './recipeIo';
 import { downloadText } from './csvExport';
 import RecipeDialog from './RecipeDialog.vue';
 
@@ -21,7 +21,7 @@ const emit = defineEmits<{
 }>();
 
 type Dlg =
-	| { kind: 'save'; name: string; notes: string; recipe: Recipe }
+	| { kind: 'save'; name: string; notes: string; recipe: Recipe; fromImport?: boolean }
 	| { kind: 'rename'; id: string; name: string; notes: string }
 	| { kind: 'delete'; id: string; name: string };
 
@@ -32,7 +32,7 @@ const dlg = ref<Dlg | null>(null);
 const dlgErr = ref<string | null>(null);
 const fileEl = ref<HTMLInputElement | null>(null);
 // The library recipe last applied or saved: what "modified" is measured against.
-const loaded = ref<{ name: string; recipe: Recipe } | null>(null);
+const loaded = ref<LoadedRecipe | null>(null);
 
 const selected = computed(() => props.library.find((x) => x.recipe_id === sel.value) ?? null);
 const modified = computed(() => isModifiedSinceLoaded(props.currentRecipe, loaded.value?.recipe ?? null));
@@ -69,7 +69,7 @@ async function onConfirm(v: { name: string; notes: string }) {
 		if (d.kind === 'save') {
 			const snap = JSON.parse(JSON.stringify(d.recipe)) as Recipe;
 			const saved = await saveRecipe({ name: v.name, recipe: snap, notes: v.notes || undefined });
-			loaded.value = { name: v.name, recipe: snap };
+			loaded.value = baselineAfterSave(loaded.value, { name: v.name, recipe: snap }, !!d.fromImport);
 			emit('saved');
 			sel.value = saved?.recipe_id ?? sel.value;
 		} else if (d.kind === 'rename') {
@@ -114,7 +114,7 @@ async function onFile(e: Event) {
 	if (!parsed.ok) { err.value = `Import refused: ${parsed.error}.`; return; }
 	// Hand it to the save dialog so the name can be fixed before it is stored.
 	dlgErr.value = null;
-	dlg.value = { kind: 'save', name: parsed.name, notes: parsed.notes ?? '', recipe: parsed.recipe };
+	dlg.value = { kind: 'save', name: parsed.name, notes: parsed.notes ?? '', recipe: parsed.recipe, fromImport: true };
 }
 </script>
 

@@ -37,8 +37,17 @@ per-capture round trips, not the JSON size (3000 rows is about 1.5 MB, trivial),
 filtering runs matters less than how many captures have to be inspected per request.
 
 Also relevant: "uploaded" is not known to the recorder. It is derived in the browser from Directus
-(`captureUploadState.ts`), one query for all rows. Any status filter on it has to run in the
-browser.
+(`captureUploadState.ts`). Any status filter on it has to run in the browser.
+
+**What "uploaded" means.** A `manufacturing_operations` row carrying the capture id is not enough:
+the upload order is operation row, files, analysis row, so an upload that died after the first step
+leaves an orphan operation row. A capture counts as uploaded (for the cleanup rule, the bulk-delete
+only-copy warning and hiding the Upload button) only when a `machining_force_analysis` row for one
+of its operations has `live_cache_file` set, and `directus_files_id` too when the capture wrote a
+`.mat` (the browse row's `files` lists `capture.mat`; captures over `MAT_MAX_BYTES` have none).
+Otherwise it is a **partial upload**: it counts as not uploaded, the only copy, and stays uploadable
+(`ensureOperation` resumes on the existing operation row). The analysis rows are fetched with one
+query per 80 operation ids (`operation_id _in`, three fields only).
 
 ## Options
 
@@ -100,6 +109,25 @@ or `sort` is a 422.
 - "Free up space" panel: delete uploaded captures older than N days, with a preview first.
 - `uploadAllUnsynced` shows "n of m, current item" and a Cancel button that stops between items.
 
+## Cost of the Uploaded / Not uploaded chips
+
+Upload state is Directus's, so these two chips filter in the browser, which makes a page of the
+list cost two things: a recorder scan (the server filter `status=finalized` needs an entry for every
+capture, warm about two stats each) and a Directus lookup for the ids on that page. Trade-offs made:
+
+- **Look up only new ids.** The page keeps the state of every id it has already looked up and asks
+  Directus only about ids loaded since (`idsToLookUp`), instead of re-fetching everything loaded for
+  each extra page. A reload (Refresh, search, chip, sort) clears the cache and looks everything up
+  again, so an entry never outlives the list it was found for. If a lookup fails, its rows stay
+  unknown (never "not uploaded") until the next reload.
+- **One big page.** With one of these chips the page size is the recorder's maximum (500, not 200),
+  so a screenful of matches usually takes one request instead of several.
+- **Not removed:** the operation-row query is still bounded below by `created_at` only (an upload can
+  happen long after the recording, so there is no safe upper bound), so a lookup for older pages
+  scans every operation since that date. Filtering that on the server would need a real
+  `capture_id` column on `manufacturing_operations` (a migration; key 9 of the force-app
+  conventions), which is out of scope here.
+
 ## Delete safety rules
 
 These apply to bulk delete and cleanup. The single-row Delete keeps its present dialog.
@@ -116,14 +144,26 @@ These apply to bulk delete and cleanup. The single-row Delete keeps its present 
    these have NOT been uploaded and have no complete remote backup: this is the only copy"
    above the list. A capture queued for upload counts as not uploaded.
 5. **Cleanup is stricter and has no manual override.** A candidate must be finalized, positively
-   known as uploaded to Directus, not queued, not recording/discarding/recovering, and older than
+   known as fully uploaded to Directus (not a partial upload), not queued, not recording/discarding/recovering, and older than
    N days by its recording time (folder mtime). Not-uploaded, incomplete and unknown never
    qualify. The candidate list is previewed (count, space, oldest and newest) before the
    confirm, and the rules are re-applied to fresh state at the moment of deleting, not to the
-   preview.
+   preview: one lookup of every candidate after the confirm, then again per item right before its
+   delete (see rule 7).
 6. **Per-item results.** Deletion runs one capture at a time and carries on after a failure. The
    summary lists deleted, failed (with the reason) and skipped (became unsafe), plus total space
    actually freed (`freed_mb` from the endpoint).
+
+7. **Three loops share the page, so each checks the others.** Upload all, bulk delete and cleanup
+   can overlap with each other and with the row buttons. A capture with an upload or delete in
+   flight (`busy`) is not selectable, not a cleanup candidate and not offered an Upload; bulk delete,
+   cleanup preview and the row Upload buttons are disabled while Upload all runs, and Upload all
+   and the row buttons are disabled while a bulk delete runs. Per item, right before `DELETE`,
+   the page re-reads the capture from the recorder (`GET /captures/{id}/summary`: still there and
+   finalized) and, for cleanup, re-asks Directus whether its known operation still has a complete
+   analysis row. That fresh state decides; the row the plan was made from does not. A failed
+   re-check skips the item with the reason. The recorder's own refusals (recording, recover in
+   flight) stay the last gate.
 
 ## Data flow
 

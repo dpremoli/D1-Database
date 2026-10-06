@@ -22,7 +22,12 @@ export interface ListCapture {
 export interface RowFacts {
 	/** The Directus lookup succeeded. When false, `uploaded` says nothing. */
 	uploadedKnown: boolean;
+	/** Fully uploaded: operation row, files and analysis row (captureUploadState.ts). */
 	uploaded: Record<string, boolean>;
+	/** An operation row exists but the upload never finished. Still the only copy. */
+	partial?: Record<string, boolean>;
+	/** Captures with an upload, delete or recover in flight from this page. */
+	busyIds?: ReadonlySet<string>;
 	/** Captures whose database record is still waiting in the offline queue. */
 	queuedIds: ReadonlySet<string>;
 	/** Ids with a complete copy on the remote backup server; null when that is unknown. */
@@ -34,6 +39,7 @@ export type RowState =
 	| 'working' // being recorded, deleted or recovered right now
 	| 'unknown' // finalized, but the database could not be asked
 	| 'queued' // finalized, upload waiting in the offline queue
+	| 'partial' // finalized, an upload started (operation row) but never finished
 	| 'not_uploaded'
 	| 'uploaded';
 
@@ -43,7 +49,15 @@ export function rowState(c: ListCapture, f: RowFacts): RowState {
 	if (!f.uploadedKnown) return 'unknown';
 	if (f.uploaded[c.id]) return 'uploaded';
 	if (f.queuedIds.has(c.id)) return 'queued';
+	if (f.partial?.[c.id]) return 'partial';
 	return 'not_uploaded';
+}
+
+/** Whether a row's Upload action is on offer. Uploading twice creates a second operation row, so
+ * it needs a positively known state, no queued copy, and nothing already running for the row. */
+export function canUploadCapture(c: ListCapture, f: RowFacts): boolean {
+	return c.finalized && f.uploadedKnown && !f.uploaded[c.id] && !f.queuedIds.has(c.id)
+		&& !f.busyIds?.has(c.id) && !c.recording && !c.discarding && !c.recovering;
 }
 
 // ---- Filter ----
@@ -63,6 +77,17 @@ export function serverStatusFor(filter: StatusFilter): ServerStatus | undefined 
  * number of matches and more pages may be needed to fill a view. */
 export const isClientFilter = (filter: StatusFilter): boolean =>
 	filter === 'not_uploaded' || filter === 'uploaded';
+
+/** Rows per request. A browser-side chip scans pages until a screenful matches, and each page costs
+ * the recorder a scan of the whole drive plus a Directus lookup for its ids, so those chips ask for
+ * the largest page the recorder allows instead of many small ones. */
+export const pageSizeFor = (filter: StatusFilter, normal: number, max: number): number =>
+	isClientFilter(filter) ? max : normal;
+
+/** The captures whose upload state has not been looked up yet: only these go to Directus when a
+ * page is appended, the rest keep what they were found to be. */
+export const idsToLookUp = <T extends { id: string }>(rows: T[], checked: ReadonlySet<string>): T[] =>
+	rows.filter((c) => !checked.has(c.id));
 
 /** "Not uploaded" means every finalized capture without a database record, queued ones and ones
  * whose state is unknown included: hiding those would hide the captures most at risk. */
@@ -86,8 +111,8 @@ export function needsMorePages(o: { loaded: number; total: number; matched: numb
 
 /** Incomplete captures are never selectable in bulk (recover them, or delete one at a time where
  * the dialog says what is lost), nor is anything being recorded, deleted or recovered. */
-export function isBulkSelectable(c: ListCapture): boolean {
-	return c.finalized && !c.recording && !c.discarding && !c.recovering;
+export function isBulkSelectable(c: ListCapture, f?: Pick<RowFacts, 'busyIds'>): boolean {
+	return c.finalized && !c.recording && !c.discarding && !c.recovering && !f?.busyIds?.has(c.id);
 }
 
 /** Why bulk delete is unavailable, or null. Without a known upload state it cannot tell which
@@ -98,8 +123,8 @@ export function bulkDeleteBlockReason(f: RowFacts): string | null {
 		: 'Bulk delete needs to know which captures are uploaded, and the database could not be reached.';
 }
 
-export function selectableIds(rows: ListCapture[]): string[] {
-	return rows.filter(isBulkSelectable).map((c) => c.id);
+export function selectableIds(rows: ListCapture[], f?: Pick<RowFacts, 'busyIds'>): string[] {
+	return rows.filter((c) => isBulkSelectable(c, f)).map((c) => c.id);
 }
 
 export function toggleId(sel: ReadonlySet<string>, id: string): Set<string> {
@@ -109,8 +134,8 @@ export function toggleId(sel: ReadonlySet<string>, id: string): Set<string> {
 }
 
 /** Select every selectable row in `rows`, or clear them all if they are already all selected. */
-export function toggleAll(sel: ReadonlySet<string>, rows: ListCapture[]): Set<string> {
-	const ids = selectableIds(rows);
+export function toggleAll(sel: ReadonlySet<string>, rows: ListCapture[], f?: Pick<RowFacts, 'busyIds'>): Set<string> {
+	const ids = selectableIds(rows, f);
 	const all = ids.length > 0 && ids.every((id) => sel.has(id));
 	const next = new Set(sel);
 	for (const id of ids) { if (all) next.delete(id); else next.add(id); }
@@ -146,7 +171,7 @@ export function planBulkDelete(selected: ReadonlySet<string>, rows: ListCapture[
 	const byId = new Map(rows.map((c) => [c.id, c]));
 	for (const id of selected) {
 		const c = byId.get(id);
-		if (!c || !isBulkSelectable(c)) { skipped.push(id); continue; }
+		if (!c || !isBulkSelectable(c, f)) { skipped.push(id); continue; }
 		const state = rowState(c, f);
 		items.push({ id, size_mb: c.size_mb, state, onlyCopy: state !== 'uploaded' && !f.remoteComplete?.has(id) });
 	}
@@ -165,7 +190,7 @@ export function planBulkDelete(selected: ReadonlySet<string>, rows: ListCapture[
  * busy, and older than the cutoff by folder mtime. Used for the preview and again at delete time on
  * fresh state. Not uploaded, incomplete and unknown never qualify. */
 export function isCleanupCandidate(c: ListCapture, f: RowFacts, cutoffMs: number): boolean {
-	if (!f.uploadedKnown || !c.finalized) return false;
+	if (!f.uploadedKnown || !c.finalized || f.busyIds?.has(c.id)) return false;
 	if (rowState(c, f) !== 'uploaded' || f.queuedIds.has(c.id)) return false;
 	if (!(c.mtime > 0)) return false;   // unknown age is never "old"
 	return c.mtime * 1000 < cutoffMs;
@@ -194,6 +219,23 @@ export function summarizeCleanup(cands: ListCapture[]): CleanupPreview {
 		oldest: times.length ? Math.min(...times) : null,
 		newest: times.length ? Math.max(...times) : null,
 	};
+}
+
+/** Right before one bulk delete: why this capture must be skipped, judged on a freshly fetched row
+ * and fresh facts rather than the row the plan was made from, or null when it may go. `fresh` is
+ * null when the capture is no longer there. */
+export function bulkDeleteSkipReason(fresh: ListCapture | null, f: RowFacts): string | null {
+	if (!fresh) return 'no longer on disk';
+	if (f.busyIds?.has(fresh.id)) return 'busy (an upload or delete is running for it)';
+	if (!isBulkSelectable(fresh, f)) return 'no longer safe to delete';
+	return bulkDeleteBlockReason(f);
+}
+
+/** The same for Free up space: the cleanup rule re-applied to fresh state. */
+export function cleanupSkipReason(fresh: ListCapture | null, f: RowFacts, cutoffMs: number): string | null {
+	if (!fresh) return 'no longer on disk';
+	if (f.busyIds?.has(fresh.id)) return 'busy (an upload or delete is running for it)';
+	return isCleanupCandidate(fresh, f, cutoffMs) ? null : 'no longer safe to delete';
 }
 
 // ---- Results ----

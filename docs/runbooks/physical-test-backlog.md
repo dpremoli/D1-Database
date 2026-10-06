@@ -35,6 +35,11 @@ named in the step.
   else `/assets/<id>` exposes (equipment images, admin uploads). Feeds the Phase 9 export-control
   decision (ADR-0005). Since #123.
 
+- [ ] **P10 — Diagnostics picker as a Lab Member.** Sign in to the Force App as a Lab Member and open
+  Diagnostics: the list loads; campaign grouping is shown if the role can read `campaigns`, and
+  otherwise *Group by* offers Sample only (no empty list). Note which it was; if Lab Member cannot
+  read campaigns and the lab wants them, add the read grant by migration. Since: this batch (PR TBD).
+
 ### Sample numbers, dashboards, saved filters
 - [ ] **D9 — next sample number.** `GET /d1-next-number/sample` returns a number when signed in,
   401 signed out, 403 for a user without app access. The Register-sample page and the sample-code
@@ -170,13 +175,19 @@ tool; a test cut on scrap stock is fine.
   Cancel mid-run: the rest are untouched. Since: this batch (PR TBD).
 - [ ] **R9 — cleanup never touches unsynced captures.** With real uploaded and not-uploaded
   captures older than N days, Free up space > Preview lists only captures that have a real
-  `manufacturing_operations` row; cross-check three in Directus. Not-uploaded, incomplete and
+  `manufacturing_operations` row AND a `machining_force_analysis` row with `live_cache_file` (and
+  `directus_files_id` when a `.mat` exists); cross-check three in Directus. Make one orphan: in
+  Directus delete the analysis row of an old uploaded capture (or stop an upload after the run row
+  is created); it must show "partial upload", keep its Upload button, be absent from the preview,
+  and get the only-copy warning in a bulk delete. Not-uploaded, incomplete and
   queued ones are absent at any N. Run it and confirm those are still on disk. Repeat with Directus
   stopped: the preview must refuse. Since: this batch (PR TBD).
 - [ ] **R9 — upload-all progress and cancel against the real Directus.** With three or more
   not-uploaded captures, Upload N unsynced: the bar shows "Uploading n of m" and the capture name,
   Cancel stops after the current one and says how many were not attempted, and each uploaded
-  capture has exactly one operation row (no duplicates after cancelling and running again). Since:
+  capture has exactly one operation row (no duplicates after cancelling and running again). While
+  it runs, Delete selected, Free up space and the row Upload buttons are disabled; click a row's
+  Upload just before Upload N unsynced: that capture is still uploaded once. Since:
   this batch (PR TBD).
 
 ### Desktop shell
@@ -213,7 +224,9 @@ tool; a test cut on scrap stock is fine.
   Signal statistics (compute), then Cutting metrics. Check Fc, Pc and kc against a hand calculation
   from the sheet (vc = π·D·n/1000, Pc = Fc·vc/60, kc = Fc/(ap·f)) and the kc against the literature
   range for the material. Confirm which dynamometer axis really is the main cutting force, then fix
-  the assumed default mapping (Fc=Fz, Ff=Fx, Fp=Fy) if it is wrong. Check "—" with a reason on an
+  the assumed default mapping (Fc=Fz, Ff=Fx, Fp=Fy) if it is wrong. Check that an OD cut (`MT-O`) uses the Diameter box unchanged
+  for vc and that a facing cut (`MT-F`, also one with a saved crop) uses D at the window midpoint,
+  matching the radial axis of the plots. Check "—" with a reason on an
   operation with no feed or depth, and on a milling op. Since: this batch (PR TBD).
 
 ### Earlier issues that need the rig (from the 2026-10-02 batch)
@@ -241,8 +254,9 @@ tool; a test cut on scrap stock is fine.
 - [ ] **P10 — skipped cuts really match.** Apply the same recipe again to the same selection:
   everything is skipped as "already built with this recipe" and `diag_recipe_hash` /
   `updated_at` on those rows do not change. Then tick *Rebuild*: they requeue. Since: this batch (PR TBD).
-- [ ] **P10 — non-admin refusal.** As a non-admin, Apply recipe to selected stops on the first
-  item with "not permitted (admin only)", nothing is queued. Since: this batch (PR TBD).
+- [ ] **P10 — build permissions by role.** As a Lab Member, Apply recipe to selected queues builds
+  (Lab Member can update `machining_force_analysis`, migration 111). As a role with read-only access
+  to analyses, it stops on the first item with "your role can't request builds" and nothing is queued. Since: this batch (PR TBD).
 - [ ] **#80** MATLAB run on the d1-server orchestrator and Directus asset download (held back).
 - [ ] **#10** Figure-mode PNGs re-baked by MATLAB for cuts with a saved crop (held back).
 - [ ] **#97** Tailscale serve, phone access, live-DAQ load (held back; security model is an owner

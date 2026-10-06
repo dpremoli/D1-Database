@@ -18,7 +18,8 @@ workbench does not say when the recipe in hand differs from the saved one it cam
 2. Build / Retry / the workbench's Bake (`build(recipe?)`) does one `PATCH
    /items/machining_force_analysis/:id` with `diag_status: 'pending'`, `diag_requested_at: now`
    and, for a Bake, `diag_recipe: <recipe>` (a plain Build leaves `diag_recipe` untouched, NULL =
-   the built-in default). Directus permissions refuse non-admins with 403.
+   the built-in default). A role without update permission on the analysis table gets 403 (Lab Member has it since
+   migration 111, so it can queue builds; roles without it, e.g. read-only ones, cannot).
 3. The host orchestrator (`scripts/force_orchestrator.py`) polls: `claim_diag` picks rows with
    `diag_status = 'pending'` (oldest `diag_requested_at` first, concurrency 1, `FOR UPDATE SKIP
    LOCKED`), flips them to `processing`, and `process_diag_row` bakes the octree, then stores
@@ -47,25 +48,35 @@ so batch apply needs **no server change**.
    import validates the shape and the recipe (known ops, `on`/`params` types, `recipeProblems()`
    must be empty) and drops it into the same save-as dialog so the name can be fixed before it is
    stored. A "modified" badge shows when the workbench recipe is not `recipesEquivalent` to the
-   library recipe last applied/saved.
+   library recipe last applied/saved. Saving an *imported* recipe stores it without putting it on the
+   workbench, so it does not move that baseline (`baselineAfterSave`); otherwise the untouched working
+   recipe would read as modified. Import also refuses an unsupported `recipe_version`, a param the op
+   does not have or of the wrong kind or option, malformed `inputs` bindings, and layer inputs on a
+   base-tier step (the host raises on those).
 2. **Picker.** Pure module `diagPicker.ts`: search over code/sample/campaign, group by sample
    (campaign shown when the row carries it), filter chips Needs build / Built / Error (building
    rows count as Needs build). A searchable list replaces the select, shown 200 rows at a time
    with "Show more" (the list is cheap to filter in memory; the fetch keeps `limit: -1` for now,
    see P12). Each row links to Plot (`/plot?...`) and the Directus item.
+   **Campaigns are optional.** Nothing in the migrations or `configure_users_and_policies.sql`
+   grants Lab Member read on `campaigns`, and a nested `operation_id.campaign_id.*` read on a
+   forbidden collection is a 403 that would empty the whole list. The main query therefore asks
+   only for the foreign key (`operation_id.campaign_id`); the campaign records come from a separate
+   `GET /items/campaigns` that may fail, and `attachCampaigns()` merges them in. If it fails, the
+   rows carry no campaign, the Campaign grouping is hidden and the picker groups by sample.
 3. **Apply recipe to selected.** Multi-select checkboxes in the picker, a recipe chooser from the
    library, then `planBatch()` (pure) classifies each selected row:
    - **skip, already built:** `diag_status = done` and the effective baked recipe
      (`diag_recipe ?? DEFAULT_RECIPE`) is `recipesEquivalent` to the chosen one;
    - **skip, already queued:** `pending` / `processing`;
    - **refuse, with reason:** recipe invalid (`validateRecipe` / `recipeProblems`); a request the
-     server refuses (403 admin only, which also stops the run) is reported as refused too. A cut
+     server refuses (403, the role can't update analysis rows, which also stops the run) is reported as refused too. A cut
      with no archive `.mat` is not detected up front: the host marks it `error` as today;
    - **queue:** everything else.
    The executor sends exactly the Bake PATCH (shared `buildPatch()` helper in `diagBatch.ts`, now used by the
    single build too) per queued row, sequentially, updates progress, checks a cancel flag between
    items, and ends with a summary (queued / skipped (reason) / refused (reason) / failed (reason,
-   403 = admin only)). "Rebuild anyway" is an explicit checkbox that disables the already-built
+   403 = the role can't request builds)). "Rebuild anyway" is an explicit checkbox that disables the already-built
    skip.
 
 ## Idempotency and the recipe hash

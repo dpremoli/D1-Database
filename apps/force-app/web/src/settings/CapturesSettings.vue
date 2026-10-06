@@ -14,13 +14,14 @@ import { authStore } from '../authStore';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, hasServerSession, recorderFromExtra } from '../recorder';
 import { confirmAction } from '../ui/confirm';
 import EditCaptureMetadataDialog from './EditCaptureMetadataDialog.vue';
-import { matchUploaded, uploadedRowsSince } from './captureUploadState';
+import { lookupUploadState, recheckUploaded, type RowGetter, type UploadStateResult } from './captureUploadState';
 import { remoteCopyLabel } from './backupLabels';
 import { fetchRemoteBackupStates } from '../recorderHttp';
 import { formatMegabytes } from '../format';
 import {
-	beginUploadItem, bulkDeleteBlockReason, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
-	isBulkSelectable, isCleanupCandidate, isClientFilter, matchesFilter, needsMorePages, planBulkDelete,
+	beginUploadItem, bulkDeleteBlockReason, bulkDeleteSkipReason, canUploadCapture, cleanupCandidates, cleanupCutoff,
+	cleanupSkipReason, finishUploadItem, finishUploads, idsToLookUp, isBulkSelectable, isClientFilter, matchesFilter, needsMorePages,
+	pageSizeFor, planBulkDelete,
 	pruneSelection, requestUploadCancel, rowState, serverStatusFor, shouldStopUploads, startUploadProgress,
 	sumMb, summarizeCleanup, summarizeDeleteResults, toggleAll, toggleId, uploadProgressText,
 	type DeleteResult, type RowFacts, type StatusFilter, type UploadOutcome, type UploadProgress,
@@ -53,6 +54,7 @@ interface Capture {
 const base = () => getConfig().recorderUrl;
 
 const PAGE = 200;   // rows per request; the recorder caps a page at 500
+const MAX_PAGE = 500;
 const captures = ref<Capture[]>([]);
 const capturesRoot = ref('');
 // Server-side counts: `total` matches the current search and server filter, `totalAll` is everything
@@ -73,7 +75,11 @@ const busy = ref<Record<string, string>>({});   // id -> 'deleting' | 'uploading
 const rowMsg = ref<Record<string, string>>({});
 // Which captures already exist in Directus. Looked up once per load so the list can distinguish
 // "safe to delete, it's in the database" from "this is the only copy".
+// "Uploaded" means the operation row, its files and the analysis row all exist. `partial` is a
+// capture with an operation row but no finished upload (an orphan from a died upload): it still
+// counts as the only copy and stays uploadable.
 const uploaded = ref<Record<string, boolean>>({});
+const partial = ref<Record<string, boolean>>({});
 // capture_id -> operation_id, for the metadata editor: present means "PATCH the Directus row too,
 // not just the local summary.json".
 const uploadedOpId = ref<Record<string, string>>({});
@@ -103,7 +109,7 @@ interface BrowsePage {
 }
 
 async function fetchPage(offset: number, over: { status?: string; sort?: string; q?: string; limit?: number } = {}): Promise<BrowsePage> {
-	const p = new URLSearchParams({ limit: String(over.limit ?? PAGE), offset: String(offset), sort: over.sort ?? sortKey.value });
+	const p = new URLSearchParams({ limit: String(over.limit ?? pageSizeFor(statusFilter.value, PAGE, MAX_PAGE)), offset: String(offset), sort: over.sort ?? sortKey.value });
 	const q = (over.q ?? query.value).trim();
 	if (q) p.set('q', q);
 	const status = over.status ?? serverStatusFor(statusFilter.value);
@@ -127,6 +133,10 @@ async function load() {
 		matchingMb.value = data.matching_size_mb ?? null;
 		disk.value = data.disk || {};
 		selected.value = new Set();
+		// A fresh list starts from nothing known: entries from before (a capture uploaded or
+		// removed elsewhere meanwhile) must not outlive a reload.
+		uploaded.value = {}; partial.value = {}; uploadedOpId.value = {}; checkedIds.clear();
+		uploadedKnown.value = false;
 		void loadRemoteIds();
 		await checkUploaded();
 		await fillForClientFilter(mine);
@@ -185,39 +195,54 @@ function setFilter(f: StatusFilter) {
 	void load();
 }
 
-/** Which of `ids` already have a database row. Null when Directus can't be asked. */
-async function lookupUploaded(ids: string[]): Promise<{ uploaded: Record<string, boolean>; opIds: Record<string, string> } | null> {
+/** Which of `rows` are fully uploaded (see captureUploadState.ts). Null when Directus can't be asked. */
+async function lookupUploaded(rows: Capture[]): Promise<UploadStateResult | null> {
 	// recorded_metadata.capture_id is what both upload paths stamp (workspace.ts and
 	// uploadCapture.ts), so it is the link back from a local capture to its database row. Directus
-	// can't filter on that JSON key, so candidate rows are fetched and matched client-side (see
-	// captureUploadState.ts for why the created_at bound is safe).
+	// can't filter on that JSON key, so candidate rows are fetched and matched client-side. An
+	// operation row alone is not "uploaded": the analysis row with its files must exist too.
 	try {
-		if (!ids.length) return { uploaded: {}, opIds: {} };
-		const since = uploadedRowsSince(ids);
-		const res = await api.get('/items/manufacturing_operations', {
-			params: {
-				filter: { recorded_metadata: { _nnull: true }, ...(since ? { created_at: { _gte: since } } : {}) },
-				fields: ['operation_id', 'recorded_metadata'], limit: -1,
-			},
-		});
-		return matchUploaded(res.data?.data ?? [], ids);
+		return await lookupUploadState(rows.map((c) => ({ id: c.id, hasMat: hasMat(c) })), getRows);
 	} catch {
 		// Offline or not permitted: leave the state unknown rather than claiming "not uploaded",
 		// which would invite deleting the only copy of a capture that is in fact safe.
 		return null;
 	}
 }
+const getRows: RowGetter = async (collection, params) => (await api.get(`/items/${collection}`, { params })).data?.data ?? [];
+/** A capture wrote a .mat unless it was too big for the format (the recorder lists the files it has). */
+const hasMat = (c: Capture) => c.files?.['capture.mat'] !== undefined;
 
-function mergeUploaded(r: { uploaded: Record<string, boolean>; opIds: Record<string, string> }) {
-	uploaded.value = { ...uploaded.value, ...r.uploaded };
-	uploadedOpId.value = { ...uploadedOpId.value, ...r.opIds };
-	uploadedKnown.value = true;
+/** Record what a lookup found for exactly the rows it covered (an entry that is no longer true is cleared). */
+function mergeUploaded(rows: Capture[], r: UploadStateResult) {
+	const up = { ...uploaded.value };
+	const part = { ...partial.value };
+	const ops = { ...uploadedOpId.value };
+	for (const c of rows) {
+		if (r.uploaded[c.id]) up[c.id] = true; else delete up[c.id];
+		if (r.partial[c.id]) part[c.id] = true; else delete part[c.id];
+		if (r.opIds[c.id]) ops[c.id] = r.opIds[c.id]; else delete ops[c.id];
+	}
+	uploaded.value = up;
+	partial.value = part;
+	uploadedOpId.value = ops;
 }
 
+// Ids whose upload state has been looked up since the last reload. Loading another page only asks
+// Directus about the new ids; the rest keep their cached state.
+const checkedIds = new Set<string>();
 async function checkUploaded() {
-	uploadedKnown.value = false;
-	const r = await lookupUploaded(captures.value.map((c) => c.id));
-	if (r) mergeUploaded(r);
+	const rows = idsToLookUp(captures.value, checkedIds);
+	if (rows.length) {
+		const r = await lookupUploaded(rows);
+		if (r) {
+			mergeUploaded(rows, r);
+			for (const c of rows) checkedIds.add(c.id);
+		}
+	}
+	// Known only when every loaded row has been looked up: a page whose lookup failed leaves its rows
+	// "unknown" (never "not uploaded"), and the safety rules switch to their unknown-state behaviour.
+	uploadedKnown.value = captures.value.every((c) => checkedIds.has(c.id));
 }
 
 // ---- What the list shows ----
@@ -225,6 +250,8 @@ async function checkUploaded() {
 const facts = computed<RowFacts>(() => ({
 	uploadedKnown: uploadedKnown.value,
 	uploaded: uploaded.value,
+	partial: partial.value,
+	busyIds: new Set(Object.keys(busy.value)),
 	queuedIds: queuedCaptureIds.value as Set<string>,
 	remoteComplete: remoteIds.value
 		? new Set([...remoteIds.value].filter(([, st]) => st === 'complete').map(([id]) => id))
@@ -303,7 +330,7 @@ const selected = ref<Set<string>>(new Set());
 const selectedRows = computed(() => captures.value.filter((c) => selected.value.has(c.id)));
 const selectedMb = computed(() => sumMb(selectedRows.value));
 const bulkBlock = computed(() => bulkDeleteBlockReason(facts.value));
-const shownSelectable = computed(() => visible.value.filter(isBulkSelectable));
+const shownSelectable = computed(() => visible.value.filter((c) => isBulkSelectable(c, facts.value)));
 const selectableCount = computed(() => shownSelectable.value.length);
 const allShownSelected = computed(() => selectableCount.value > 0 && shownSelectable.value.every((c) => selected.value.has(c.id)));
 const bulk = ref<{ done: number; total: number; current: string; cancel: boolean } | null>(null);
@@ -311,10 +338,10 @@ const bulkReport = ref<{ title: string; text: string; problems: string[] } | nul
 const STAT_ROWS = 12;   // items listed in a confirm dialog before "and N more"
 
 function toggleRow(id: string) { selected.value = toggleId(selected.value, id); }
-function toggleAllShown() { selected.value = toggleAll(selected.value, visible.value); }
+function toggleAllShown() { selected.value = toggleAll(selected.value, visible.value, facts.value); }
 
 const stateText: Record<string, string> = {
-	uploaded: 'uploaded', queued: 'NOT uploaded (queued)', not_uploaded: 'NOT uploaded', unknown: 'upload state unknown',
+	uploaded: 'uploaded', queued: 'NOT uploaded (queued)', partial: 'NOT uploaded (partial)', not_uploaded: 'NOT uploaded', unknown: 'upload state unknown',
 };
 function listStats(items: { id: string; size_mb: number; state: string }[], nameOf: (id: string) => string) {
 	const rows = items.slice(0, STAT_ROWS).map((i) => ({
@@ -325,16 +352,31 @@ function listStats(items: { id: string; size_mb: number; state: string }[], name
 	return rows;
 }
 
-/** Delete one capture at a time, re-checking each against the state at that moment. Carries on past
- * a failure, stops between items when cancelled, and reports every item. */
-async function deleteMany(items: Capture[], stillOk: (c: Capture) => boolean): Promise<DeleteResult[]> {
+/** What one capture looks like right now, read just before it is deleted rather than taken from the
+ * row the plan was made from. The recorder's summary says whether it is still there and finalized
+ * (and whether it wrote a .mat); the recorder's DELETE then refuses a recording or a recover in
+ * flight as the last gate. Null when the capture has gone. Throws when the recorder can't answer. */
+async function freshRow(c: Capture): Promise<{ row: Capture; hasMat: boolean } | null> {
+	const res = await fetch(`${base()}/captures/${c.id}/summary`);
+	if (res.status === 404) return null;
+	if (!res.ok) throw new Error(`summary: HTTP ${res.status}`);
+	const sum = await res.json().catch(() => ({}));
+	return { row: { ...c, finalized: true }, hasMat: sum?.mat_written !== false };
+}
+
+/** Delete one capture at a time. Before each one `skipReason` re-checks it against fresh state (and
+ * says why to skip it, or null). Carries on past a failure, stops between items when cancelled, and
+ * reports every item. */
+async function deleteMany(items: Capture[], skipReason: (c: Capture) => Promise<string | null>): Promise<DeleteResult[]> {
 	const results: DeleteResult[] = [];
 	bulk.value = { done: 0, total: items.length, current: '', cancel: false };
 	for (const c of items) {
 		if (bulk.value.cancel) { results.push({ id: c.id, outcome: 'skipped', reason: 'cancelled' }); continue; }
 		bulk.value.current = c.sample_name || c.id;
-		if (!stillOk(c)) {
-			results.push({ id: c.id, outcome: 'skipped', reason: 'no longer safe to delete' });
+		let reason: string | null;
+		try { reason = await skipReason(c); } catch (e: any) { reason = `could not re-check it (${e?.message || e})`; }
+		if (reason) {
+			results.push({ id: c.id, outcome: 'skipped', reason });
 		} else {
 			busy.value[c.id] = 'deleting';
 			try {
@@ -374,7 +416,7 @@ function nameOf(id: string): string {
 }
 
 async function deleteSelected() {
-	if (bulkBlock.value || bulk.value) return;
+	if (bulkBlock.value || bulk.value || uploadingAll.value) return;
 	const plan = planBulkDelete(selected.value, captures.value, facts.value);
 	if (!plan.items.length) return;
 	const n = plan.items.length;
@@ -391,9 +433,12 @@ async function deleteSelected() {
 	if (!ok) return;
 	const byId = new Map(captures.value.map((c) => [c.id, c]));
 	const rows = plan.items.map((i) => byId.get(i.id)).filter((c): c is Capture => !!c);
-	// Re-evaluated per item at delete time: a row that began recovering meanwhile is skipped, and
-	// so is everything if the database stops answering.
-	const results = await deleteMany(rows, (c) => isBulkSelectable(c) && !bulkDeleteBlockReason(facts.value));
+	// Re-evaluated per item at delete time on freshly read state: a capture that began uploading or
+	// recovering meanwhile, or has gone, is skipped, and so is everything if the database stops answering.
+	const results = await deleteMany(rows, async (c) => {
+		const fresh = await freshRow(c);
+		return bulkDeleteSkipReason(fresh?.row ?? null, facts.value);
+	});
 	reportDeletes('Bulk delete finished', results);
 }
 
@@ -406,14 +451,24 @@ const cleanupPool = ref<Capture[] | null>(null);
 const cleanupScan = ref<{ loaded: number; total: number } | null>(null);
 const cleanupMsg = ref('');
 const cleanupNow = ref(Date.now());
+// The cleanup scan looks up its own pool, so what it may trust is separate from the list's state.
+// null = no successful lookup of the pool: nothing can qualify.
+const cleanupState = ref<UploadStateResult | null>(null);
+const cleanupFacts = computed<RowFacts>(() => ({
+	...facts.value,
+	uploadedKnown: !!cleanupState.value,
+	uploaded: cleanupState.value?.uploaded ?? {},
+	partial: cleanupState.value?.partial ?? {},
+}));
 const cleanupList = computed(() =>
-	cleanupPool.value ? cleanupCandidates(cleanupPool.value, facts.value, cleanupDays.value, cleanupNow.value) : []);
+	cleanupPool.value ? cleanupCandidates(cleanupPool.value, cleanupFacts.value, cleanupDays.value, cleanupNow.value) : []);
 const cleanupSummary = computed(() => summarizeCleanup(cleanupList.value));
 const cleanupLeftOut = computed(() => (cleanupPool.value ? cleanupPool.value.length - cleanupList.value.length : 0));
 const fmtDay = (mtime: number | null) => (mtime ? new Date(mtime * 1000).toLocaleDateString() : '—');
 
 async function previewCleanup() {
 	cleanupPool.value = null;
+	cleanupState.value = null;
 	cleanupMsg.value = '';
 	cleanupNow.value = Date.now();
 	const pool: Capture[] = [];
@@ -425,12 +480,12 @@ async function previewCleanup() {
 			cleanupScan.value = { loaded: pool.length, total: data.total };
 			if (!data.captures?.length || pool.length >= data.total) break;
 		}
-		const r = await lookupUploaded(pool.map((c) => c.id));
+		const r = await lookupUploaded(pool);
 		if (!r) {
 			cleanupMsg.value = 'Cannot tell which captures are uploaded because the database could not be reached. Nothing can be selected for cleanup.';
 			return;
 		}
-		mergeUploaded(r);
+		cleanupState.value = r;
 		cleanupPool.value = pool;
 	} catch (e: any) {
 		cleanupMsg.value = describeFetchError(e, 'failed to scan the captures');
@@ -440,13 +495,13 @@ async function previewCleanup() {
 }
 
 async function runCleanup() {
-	if (bulk.value || !cleanupPool.value) return;
+	if (bulk.value || uploadingAll.value || !cleanupPool.value) return;
 	const items = cleanupList.value.slice();
 	if (!items.length) return;
 	const sum = summarizeCleanup(items);
 	const ok = await confirmAction({
 		title: `Delete ${items.length} uploaded capture${items.length === 1 ? '' : 's'}?`,
-		message: `Every one of these is older than ${cleanupDays.value} days and has a record in the database. Captures that are not uploaded, incomplete, queued or unknown are never included.`,
+		message: `Every one of these is older than ${cleanupDays.value} days and has its analysis and files in the database. Captures that are not uploaded, incomplete, queued or unknown are never included.`,
 		detail: 'This cannot be undone. The database records and analyses stay.',
 		stats: [
 			{ label: 'Captures', value: String(sum.count) },
@@ -458,18 +513,26 @@ async function runCleanup() {
 	});
 	if (!ok) return;
 	// Ask Directus again now, and apply the rule to what it says now rather than to the preview.
-	const fresh = await lookupUploaded(items.map((c) => c.id));
+	const fresh = await lookupUploaded(items);
 	if (!fresh) {
 		cleanupMsg.value = 'The database stopped answering, so nothing was deleted.';
 		return;
 	}
-	const next = { ...uploaded.value };
-	for (const c of items) next[c.id] = !!fresh.uploaded[c.id];
-	uploaded.value = next;
+	cleanupState.value = fresh;
 	const cutoff = cleanupCutoff(cleanupDays.value, Date.now());
-	const results = await deleteMany(items, (c) => isCleanupCandidate(c, facts.value, cutoff));
+	// Then once more per item, right before its delete: is it still there, is it still fully uploaded
+	// (one analysis-row query for its known operation), and is nothing running for it.
+	const results = await deleteMany(items, async (c) => {
+		const now = await freshRow(c);
+		if (!now) return cleanupSkipReason(null, cleanupFacts.value, cutoff);
+		const opId = cleanupState.value?.opIds[c.id];
+		const complete = opId ? await recheckUploaded(opId, now.hasMat, getRows) : false;
+		const f = { ...cleanupFacts.value, uploaded: { ...cleanupFacts.value.uploaded, [c.id]: complete } };
+		return cleanupSkipReason(now.row, f, cutoff);
+	});
 	reportDeletes('Cleanup finished', results);
 	cleanupPool.value = null;
+	cleanupState.value = null;
 	await load();   // re-count from the drive (warm: two stats per capture)
 }
 
@@ -509,6 +572,7 @@ async function onMetadataSaved() {
 }
 
 async function upload(c: Capture): Promise<UploadOutcome> {
+	if (busy.value[c.id] || bulk.value || !canUpload(c)) return 'skipped';   // never two uploads of one capture
 	// Before any prompt: an offline session can't upload, so don't ask the user to confirm something
 	// that cannot run.
 	if (!hasServerSession()) { rowMsg.value[c.id] = OFFLINE_SESSION_UPLOAD_MESSAGE; return 'failed'; }
@@ -541,6 +605,8 @@ async function upload(c: Capture): Promise<UploadOutcome> {
 			matWritten: sum.mat_written,
 		});
 		uploaded.value = { ...uploaded.value, [c.id]: true };
+		const { [c.id]: _done, ...stillPartial } = partial.value;
+		partial.value = stillPartial;
 		rowMsg.value[c.id] = 'uploaded';
 		return 'uploaded';
 	} catch (e: any) {
@@ -556,7 +622,7 @@ async function upload(c: Capture): Promise<UploadOutcome> {
 const uploadRun = ref<UploadProgress | null>(null);
 const uploadingAll = computed(() => !!uploadRun.value && !uploadRun.value.finished);
 async function uploadAllUnsynced() {
-	if (uploadingAll.value) return;
+	if (uploadingAll.value || bulk.value) return;
 	const pending = unsynced.value.slice();
 	if (!pending.length) return;
 	if (!hasServerSession()) { error.value = OFFLINE_SESSION_UPLOAD_MESSAGE; return; }
@@ -619,9 +685,10 @@ function refreshQueue() { queue.value = listQueue(); }
 const queuedCaptureIds = computed(
 	() => new Set(queue.value.map((q) => q.payload?.recorded_metadata?.capture_id).filter(Boolean)),
 );
+// Also false while anything is already running for the row, so Upload all cannot start a second
+// upload of a capture whose own Upload button was just pressed (that would make a second run).
 function canUpload(c: Capture): boolean {
-	return c.finalized && uploadedKnown.value
-		&& !uploaded.value[c.id] && !queuedCaptureIds.value.has(c.id);
+	return canUploadCapture(c, facts.value);
 }
 const unsynced = computed(() => captures.value.filter(canUpload));
 
@@ -713,7 +780,7 @@ onMounted(async () => {
 				<span class="material-symbols-rounded">{{ loading ? 'hourglass_top' : 'refresh' }}</span>
 				{{ loading ? 'Loading…' : 'Refresh' }}
 			</button>
-			<button v-if="unsynced.length && !uploadingAll" class="btn primary" title="Counts the captures loaded below" @click="uploadAllUnsynced">
+			<button v-if="unsynced.length && !uploadingAll" class="btn primary" :disabled="!!bulk" :title="bulk ? 'A delete is running' : 'Counts the captures loaded below'" @click="uploadAllUnsynced">
 				<span class="material-symbols-rounded">cloud_upload</span>
 				Upload {{ unsynced.length }} unsynced
 			</button>
@@ -743,7 +810,7 @@ onMounted(async () => {
 					<input type="number" min="0" max="3650" v-model.number="cleanupDays" class="days" :disabled="!!bulk" />
 					days
 				</label>
-				<button class="btn" :disabled="!!cleanupScan || !!bulk" @click="previewCleanup">
+				<button class="btn" :disabled="!!cleanupScan || !!bulk || uploadingAll" @click="previewCleanup">
 					<span class="material-symbols-rounded">{{ cleanupScan ? 'hourglass_top' : 'search' }}</span>
 					{{ cleanupScan ? `Scanning ${cleanupScan.loaded} of ${cleanupScan.total || '…'}` : cleanupPool ? 'Scan again' : 'Preview' }}
 				</button>
@@ -865,7 +932,7 @@ onMounted(async () => {
 			</label>
 			<template v-if="selected.size">
 				<span class="hint">{{ selected.size }} selected, {{ formatMegabytes(selectedMb) }}</span>
-				<button class="btn sm danger" :disabled="!!bulkBlock || !!bulk" :title="bulkBlock || ''" @click="deleteSelected">
+				<button class="btn sm danger" :disabled="!!bulkBlock || !!bulk || uploadingAll" :title="bulkBlock || (uploadingAll ? 'Upload all is running' : '')" @click="deleteSelected">
 					<span class="material-symbols-rounded">delete</span>Delete selected…
 				</button>
 				<button class="btn sm quiet" @click="selected = new Set()">Clear</button>
@@ -879,9 +946,9 @@ onMounted(async () => {
 
 		<div v-for="c in visible" :key="c.id" class="row" :class="{ picked: selected.has(c.id) }" :data-focus="!c.finalized ? 'incomplete-captures' : undefined">
 			<input
-				type="checkbox" class="pick" :checked="selected.has(c.id)" :disabled="!isBulkSelectable(c) || !!bulk"
+				type="checkbox" class="pick" :checked="selected.has(c.id)" :disabled="!isBulkSelectable(c, facts) || !!bulk"
 				:aria-label="`Select ${c.sample_name || c.id}`"
-				:title="isBulkSelectable(c) ? '' : c.finalized ? 'Busy right now' : 'Incomplete captures are deleted one at a time'"
+				:title="isBulkSelectable(c, facts) ? '' : c.finalized ? 'Busy right now' : 'Incomplete captures are deleted one at a time'"
 				@change="toggleRow(c.id)"
 			/>
 			<div class="rmain">
@@ -895,6 +962,7 @@ onMounted(async () => {
 					<span v-else-if="!uploadedKnown" class="tag">upload state unknown</span>
 					<span v-else-if="uploaded[c.id]" class="tag ok">uploaded</span>
 					<span v-else-if="queuedCaptureIds.has(c.id)" class="tag">upload queued</span>
+					<span v-else-if="partial[c.id]" class="tag warn" title="A database record exists but the upload never finished (files or analysis missing). This is still the only complete copy: upload it again to finish.">partial upload</span>
 					<span v-else class="tag warn">not uploaded</span>
 					<!-- Not part of the chain above: these say something else about the row. -->
 					<span v-if="c.recording" class="tag">recording now</span>
@@ -929,7 +997,7 @@ onMounted(async () => {
 					<span class="material-symbols-rounded" :class="{ spin: busy[c.id] === 'recovering' }">{{ busy[c.id] === 'recovering' ? 'progress_activity' : 'healing' }}</span>
 					{{ busy[c.id] === 'recovering' ? 'Recovering…' : 'Recover' }}
 				</button>
-				<button v-if="canUpload(c)" class="btn sm" :disabled="!!busy[c.id]" @click="upload(c)">
+				<button v-if="canUpload(c) || busy[c.id] === 'uploading'" class="btn sm" :disabled="!!busy[c.id] || uploadingAll || !!bulk" :title="uploadingAll ? 'Upload all is running' : bulk ? 'A delete is running' : ''" @click="upload(c)">
 					<span class="material-symbols-rounded">{{ busy[c.id] === 'uploading' ? 'hourglass_top' : 'cloud_upload' }}</span>
 					{{ busy[c.id] === 'uploading' ? 'Uploading…' : 'Upload' }}
 				</button>
@@ -948,7 +1016,7 @@ onMounted(async () => {
 			</span>
 			<button v-if="captures.length < total" class="btn sm" :disabled="loadingMore || loading" @click="loadMore">
 				<span class="material-symbols-rounded">{{ loadingMore ? 'hourglass_top' : 'expand_more' }}</span>
-				{{ loadingMore ? 'Loading…' : `Load more (${Math.min(PAGE, total - captures.length)} of ${total - captures.length} left)` }}
+				{{ loadingMore ? 'Loading…' : `Load more (${Math.min(pageSizeFor(statusFilter, PAGE, MAX_PAGE), total - captures.length)} of ${total - captures.length} left)` }}
 			</button>
 		</div>
 

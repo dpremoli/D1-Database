@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	bucketOf, countByBucket, filterRows, groupRows, toPickerRow, windowGroups, type PickerRow,
+	attachCampaigns, bucketOf, countByBucket, filterRows, groupRows, toPickerRow, windowGroups, type PickerRow,
 } from './diagPicker';
 
 function row(id: string, o: Partial<PickerRow> = {}): PickerRow {
@@ -97,5 +97,34 @@ describe('toPickerRow', () => {
 		expect(toPickerRow({ id: 'a', diag_status: null, diag_path: null })).toMatchObject({
 			code: 'a', sample_id: null, campaign_id: null, sample_label: null,
 		});
+	});
+});
+
+describe('attachCampaigns (campaign names fetched apart from the rows)', () => {
+	const mk = (id: string, campaign: unknown) => ({
+		id, diag_status: 'done' as const, diag_path: 'p',
+		operation_id: { operation_id: `op-${id}`, pass_code: `P-${id}`, campaign_id: campaign as string | null },
+	});
+	const camps = [{ campaign_id: 'c1', campaign_code: 'K1', name: 'Spring' }];
+
+	it('swaps the foreign key for the campaign record', () => {
+		const [r] = attachCampaigns([mk('1', 'c1')], camps);
+		expect(toPickerRow(r as never)).toMatchObject({ campaign_id: 'c1', campaign_label: 'K1 Spring' });
+	});
+	it('a campaign the role cannot see, or no campaign, is "no campaign", not a broken row', () => {
+		const rows = attachCampaigns([mk('1', 'c-hidden'), mk('2', null)], camps);
+		expect(rows.map((r) => toPickerRow(r as never).campaign_id)).toEqual([null, null]);
+	});
+	it('when the campaigns query failed (null) every row still loads, grouped by sample only', () => {
+		const rows = attachCampaigns([mk('1', 'c1'), mk('2', 'c2')], null);
+		const picker = rows.map((r) => toPickerRow(r as never));
+		expect(picker.map((r) => r.code)).toEqual(['P-1', 'P-2']);
+		expect(picker.every((r) => r.campaign_id === null && r.campaign_label === null)).toBe(true);
+	});
+	it('leaves rows without an operation alone and does not mutate its input', () => {
+		const input = [mk('1', 'c1'), { id: 'x', diag_status: 'done' as const, diag_path: null }];
+		const out = attachCampaigns(input as never[], camps);
+		expect(out[1]).toBe(input[1]);
+		expect((input[0] as any).operation_id.campaign_id).toBe('c1');
 	});
 });

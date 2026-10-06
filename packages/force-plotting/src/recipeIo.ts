@@ -3,7 +3,7 @@
 // (known ops, typed params, satisfiable step order via recipeProblems) so a bad file is refused
 // with a reason instead of being stored and failing later in the host bake.
 import { safeFilePart } from './csvExport';
-import { recipeProblems, recipesEquivalent, STEP_META, type Recipe, type RecipeStep } from './recipeChannels';
+import { DEFAULT_RECIPE, recipeProblems, recipesEquivalent, STEP_META, type ParamSpec, type Recipe, type RecipeStep } from './recipeChannels';
 
 export const RECIPE_FILE_TAG = 1;
 
@@ -32,6 +32,44 @@ function isObj(v: unknown): v is Record<string, unknown> {
 	return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
+/** The recipe schema version this app writes and understands (scripts/diag/recipe.py RECIPE_VERSION). */
+export const SUPPORTED_RECIPE_VERSION = DEFAULT_RECIPE.recipe_version;
+
+/** Scalar params the host reads that the editor does not surface (scripts/diag/ops.py), so a recipe
+ *  that sets them is still valid. Anything else is a typo or a param the host would silently ignore. */
+const HIDDEN_PARAMS: Record<string, ParamSpec[]> = {
+	angular_resample: [{ key: 'channel', label: 'Channel', kind: 'select' }],
+	tsa: [{ key: 'samples_per_rev', label: 'Samples / rev', kind: 'number' }],
+	envelope: [
+		{ key: 'channel', label: 'Channel', kind: 'select' },
+		{ key: 'samples_per_rev', label: 'Samples / rev', kind: 'number' },
+	],
+};
+
+/** Why this value does not suit the param, or null. Ranges are the editor's concern, not the file's. */
+function paramProblem(spec: ParamSpec, v: number | string | null): string | null {
+	if (spec.kind === 'number') {
+		if (v === null) return spec.default === null ? null : 'must be a number';
+		return typeof v === 'number' ? null : 'must be a number';
+	}
+	if (typeof v !== 'string') return 'must be text';
+	if (spec.options && !spec.options.some((o) => o.value === v)) {
+		return `must be one of ${spec.options.map((o) => o.value).join(', ')}`;
+	}
+	return null;
+}
+
+/** A layer binding: {layer: name} or {layers: [names]}, optionally {required: boolean}. */
+function bindingProblem(b: unknown): string | null {
+	if (!isObj(b)) return 'must be an object';
+	if (Object.keys(b).some((k) => k !== 'layer' && k !== 'layers' && k !== 'required')) return 'has unknown keys';
+	if (b.required !== undefined && typeof b.required !== 'boolean') return 'required must be true or false';
+	const one = typeof b.layer === 'string' && !!b.layer;
+	const many = Array.isArray(b.layers) && b.layers.length > 0 && b.layers.every((n) => typeof n === 'string' && !!n);
+	if (one === many) return 'needs either a layer name or a list of layer names';
+	return null;
+}
+
 function checkStep(s: unknown, i: number, seen: Set<string>): string | null {
 	if (!isObj(s)) return `step ${i + 1} is not an object`;
 	if (typeof s.id !== 'string' || !s.id) return `step ${i + 1} has no id`;
@@ -40,13 +78,27 @@ function checkStep(s: unknown, i: number, seen: Set<string>): string | null {
 	if (typeof s.op !== 'string' || !STEP_META[s.op]) return `step ${i + 1} has an unknown op "${String(s.op)}"`;
 	if (typeof s.on !== 'boolean') return `step "${s.id}" needs on: true or false`;
 	if (!isObj(s.params)) return `step "${s.id}" has no params object`;
+	const specs = [...STEP_META[s.op].params, ...(HIDDEN_PARAMS[s.op] ?? [])];
 	for (const [k, v] of Object.entries(s.params)) {
 		if (!(v === null || typeof v === 'number' || typeof v === 'string')) {
 			return `step "${s.id}" param "${k}" must be a number, string or null`;
 		}
 		if (typeof v === 'number' && !Number.isFinite(v)) return `step "${s.id}" param "${k}" is not finite`;
+		const spec = specs.find((p) => p.key === k);
+		if (!spec) return `step "${s.id}" (${s.op}) has no param "${k}"`;
+		const bad = paramProblem(spec, v);
+		if (bad) return `step "${s.id}" param "${k}" ${bad}`;
 	}
-	if (s.inputs !== undefined && !isObj(s.inputs)) return `step "${s.id}" inputs must be an object`;
+	if (s.inputs !== undefined) {
+		if (!isObj(s.inputs)) return `step "${s.id}" inputs must be an object`;
+		if (Object.keys(s.inputs).length && STEP_META[s.op].tier === 'base') {
+			return `step "${s.id}" (${s.op}) cannot take layer inputs: only derived steps can`;
+		}
+		for (const [k, b] of Object.entries(s.inputs)) {
+			const bad = bindingProblem(b);
+			if (bad) return `step "${s.id}" input "${k}" ${bad}`;
+		}
+	}
 	return null;
 }
 
@@ -54,6 +106,9 @@ function checkStep(s: unknown, i: number, seen: Set<string>): string | null {
 export function validateRecipe(r: unknown): string | null {
 	if (!isObj(r)) return 'recipe is not an object';
 	if (typeof r.recipe_version !== 'number') return 'recipe_version missing';
+	if (r.recipe_version !== SUPPORTED_RECIPE_VERSION) {
+		return `unsupported recipe_version ${r.recipe_version} (this app supports ${SUPPORTED_RECIPE_VERSION})`;
+	}
 	if (typeof r.name !== 'string') return 'recipe name missing';
 	if (!Array.isArray(r.steps) || r.steps.length === 0) return 'recipe has no steps';
 	const seen = new Set<string>();
@@ -92,4 +147,15 @@ export function parseRecipeJson(text: string): ParsedRecipe {
 export function isModifiedSinceLoaded(current: Recipe, loaded: Recipe | null): boolean {
 	if (!loaded) return false;
 	return !recipesEquivalent(current, loaded);
+}
+
+/** A library recipe the workbench's recipe was loaded from or last saved as. */
+export interface LoadedRecipe { name: string; recipe: Recipe }
+
+/** The "modified since loaded" baseline after saving to the library. Saving the working recipe makes
+ *  it the baseline. Saving an IMPORTED recipe stores it but does not put it on the workbench, so the
+ *  baseline stays what it was: measuring the unchanged working recipe against the imported one
+ *  would show "modified" with nothing edited. */
+export function baselineAfterSave(prev: LoadedRecipe | null, saved: LoadedRecipe, fromImport: boolean): LoadedRecipe | null {
+	return fromImport ? prev : saved;
 }

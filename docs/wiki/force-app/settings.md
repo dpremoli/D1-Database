@@ -142,14 +142,18 @@ and a red warning for any that is not uploaded and has no complete remote backup
 Deletion runs one capture at a time, can be cancelled between captures, carries on past a failure,
 and ends with a summary of what was deleted, failed or skipped and the space actually freed.
 Incomplete captures can't be ticked (recover them, or delete them one by one), nor can the recording
-in progress or one being recovered. Bulk delete is unavailable while the database can't be reached,
+in progress or one being recovered. A capture that is uploading right now can't be ticked, and bulk delete and Free up space are
+disabled while **Upload N unsynced** runs (and the reverse). Bulk delete is unavailable while the
+database can't be reached,
 because it can't tell which captures are the only copy.
 
 **Free up space.** Pick a number of days and press **Preview**: it scans every finalized capture and
-lists the ones that are uploaded to the database and older than that. Captures that are not
-uploaded, incomplete, waiting in the upload queue or of unknown state are never included, whatever
-their age. **Delete** asks again, re-checks each capture against the database as it goes, and reports
-the result.
+lists the ones that are fully uploaded to the database (run, files and analysis record, not just a
+run record left by an upload that died) and older than that. Captures that are not
+uploaded, partially uploaded, incomplete, waiting in the upload queue or of unknown state are never included, whatever
+their age. **Delete** asks again, looks every candidate up once more, then re-checks each capture
+(still on disk, still fully uploaded, nothing running for it) right before deleting it, and
+reports the result. A capture that is uploading is skipped.
 
 **Upload N unsynced** shows "Uploading n of m" with the capture in flight, and **Cancel** stops after
 the current capture. It counts the captures loaded in the list.

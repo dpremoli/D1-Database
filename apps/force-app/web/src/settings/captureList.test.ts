@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	beginUploadItem, bulkDeleteBlockReason, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
+	beginUploadItem, bulkDeleteBlockReason, bulkDeleteSkipReason, canUploadCapture, cleanupSkipReason, idsToLookUp, pageSizeFor, cleanupCandidates, cleanupCutoff, finishUploadItem, finishUploads,
 	isBulkSelectable, isClientFilter, isCleanupCandidate, matchesFilter, needsMorePages, planBulkDelete,
 	pruneSelection, requestUploadCancel, rowState, selectableIds, serverStatusFor, shouldStopUploads,
 	startUploadProgress, summarizeCleanup, summarizeDeleteResults, toggleAll, toggleId, uploadProgressText,
@@ -232,5 +232,105 @@ describe('upload progress', () => {
 
 	it('an empty run is finished at once', () => {
 		expect(startUploadProgress(0).finished).toBe(true);
+	});
+});
+
+describe('partial upload (orphan operation row)', () => {
+	// An upload that died after the operation row was created: the row exists, no analysis row or files.
+	const f = facts({ partial: { orphan: true } });
+
+	it('is its own state: not uploaded, so the Upload action and the only-copy warning apply', () => {
+		expect(rowState(cap('orphan'), f)).toBe('partial');
+		expect(matchesFilter(cap('orphan'), 'not_uploaded', f)).toBe(true);
+		expect(matchesFilter(cap('orphan'), 'uploaded', f)).toBe(false);
+	});
+
+	it('is never a cleanup candidate, however old', () => {
+		const old = cap('orphan', { mtime: NOW_S - 400 * DAY });
+		expect(isCleanupCandidate(old, f, cleanupCutoff(30, NOW_MS))).toBe(false);
+		expect(cleanupCandidates([old, cap('ok', { mtime: NOW_S - 400 * DAY })], facts({ partial: { orphan: true }, uploaded: { ok: true } }), 30, NOW_MS).map((c) => c.id)).toEqual(['ok']);
+	});
+
+	it('shows as the only copy in the bulk-delete plan', () => {
+		const plan = planBulkDelete(new Set(['orphan']), [cap('orphan')], f);
+		expect(plan.items[0]).toMatchObject({ state: 'partial', onlyCopy: true });
+		expect(plan.onlyCopyCount).toBe(1);
+	});
+});
+
+describe('canUploadCapture', () => {
+	it('is on offer for a not-uploaded and for a partially uploaded capture', () => {
+		expect(canUploadCapture(cap('n'), facts())).toBe(true);
+		expect(canUploadCapture(cap('orphan'), facts({ partial: { orphan: true } }))).toBe(true);
+	});
+
+	it('is off once uploaded, queued, incomplete, or with an unknown upload state', () => {
+		expect(canUploadCapture(cap('up'), facts({ uploaded: { up: true } }))).toBe(false);
+		expect(canUploadCapture(cap('q'), facts({ queuedIds: new Set(['q']) }))).toBe(false);
+		expect(canUploadCapture(cap('i', { finalized: false }), facts())).toBe(false);
+		expect(canUploadCapture(cap('n'), facts({ uploadedKnown: false }))).toBe(false);
+	});
+
+	it('is off while an upload (or delete) is already running for the row, so Upload all skips it', () => {
+		const f = facts({ busyIds: new Set(['n']) });
+		expect(canUploadCapture(cap('n'), f)).toBe(false);
+		expect(canUploadCapture(cap('other'), f)).toBe(true);
+	});
+});
+
+describe('busy captures (an upload is running for them)', () => {
+	const f = facts({ uploaded: { up: true }, busyIds: new Set(['up']) });
+	const old = cap('up', { mtime: NOW_S - 400 * DAY });
+
+	it('are not selectable and are dropped from the bulk-delete plan', () => {
+		expect(isBulkSelectable(old, f)).toBe(false);
+		expect(isBulkSelectable(old, facts())).toBe(true);
+		expect(selectableIds([old, cap('other')], f)).toEqual(['other']);
+		expect(toggleAll(new Set(), [old, cap('other')], f)).toEqual(new Set(['other']));
+		const plan = planBulkDelete(new Set(['up', 'other']), [old, cap('other')], f);
+		expect(plan.items.map((i) => i.id)).toEqual(['other']);
+		expect(plan.skipped).toEqual(['up']);
+	});
+
+	it('are never cleanup candidates', () => {
+		expect(isCleanupCandidate(old, f, cleanupCutoff(30, NOW_MS))).toBe(false);
+		expect(isCleanupCandidate(old, facts({ uploaded: { up: true } }), cleanupCutoff(30, NOW_MS))).toBe(true);
+	});
+});
+
+describe('per-item re-check right before a delete', () => {
+	const cutoff = cleanupCutoff(30, NOW_MS);
+	const old = cap('a', { mtime: NOW_S - 400 * DAY });
+
+	it('bulk: skips a capture that has gone, one that became busy, and everything when the state is unknown', () => {
+		expect(bulkDeleteSkipReason(null, facts())).toMatch(/no longer on disk/);
+		expect(bulkDeleteSkipReason(old, facts({ busyIds: new Set(['a']) }))).toMatch(/busy/);
+		expect(bulkDeleteSkipReason({ ...old, recovering: true }, facts())).toMatch(/no longer safe/);
+		expect(bulkDeleteSkipReason(old, facts({ uploadedKnown: false }))).toMatch(/could not be reached/);
+		expect(bulkDeleteSkipReason(old, facts())).toBeNull();
+	});
+
+	it('cleanup: judges the fresh upload state, not the preview it was planned from', () => {
+		// The preview said uploaded; fresh facts say the analysis row is gone (or never completed).
+		expect(cleanupSkipReason(old, facts({ uploaded: { a: false } }), cutoff)).toMatch(/no longer safe/);
+		expect(cleanupSkipReason(old, facts({ uploaded: { a: true }, busyIds: new Set(['a']) }), cutoff)).toMatch(/busy/);
+		expect(cleanupSkipReason(null, facts({ uploaded: { a: true } }), cutoff)).toMatch(/no longer on disk/);
+		expect(cleanupSkipReason(old, facts({ uploaded: { a: true } }), cutoff)).toBeNull();
+	});
+});
+
+describe('paging cost with a browser-side chip', () => {
+	it('asks for the largest page for Uploaded / Not uploaded, the normal one otherwise', () => {
+		expect(pageSizeFor('uploaded', 200, 500)).toBe(500);
+		expect(pageSizeFor('not_uploaded', 200, 500)).toBe(500);
+		expect(pageSizeFor('all', 200, 500)).toBe(200);
+		expect(pageSizeFor('incomplete', 200, 500)).toBe(200);
+	});
+
+	it('looks up only the ids that have not been looked up yet', () => {
+		const rows = [cap('a'), cap('b'), cap('c')];
+		expect(idsToLookUp(rows, new Set(['a', 'b'])).map((c) => c.id)).toEqual(['c']);
+		expect(idsToLookUp(rows, new Set()).map((c) => c.id)).toEqual(['a', 'b', 'c']);
+		expect(idsToLookUp(rows, new Set(['a', 'b', 'c']))).toEqual([]);
 	});
 });

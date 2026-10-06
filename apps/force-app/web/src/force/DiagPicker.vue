@@ -17,6 +17,8 @@ const props = defineProps<{
 	checked: string[];
 	loading?: boolean;
 	disabled?: boolean;
+	/** Campaign names are readable by this role; false hides the Campaign grouping. */
+	byCampaign?: boolean;
 }>();
 const emit = defineEmits<{
 	(e: 'select', id: string): void;
@@ -26,6 +28,9 @@ const emit = defineEmits<{
 const query = ref('');
 const buckets = ref<Set<PickerBucket>>(new Set());
 const by = ref<GroupBy>('sample');
+// Without campaign records there is nothing to group by; fall back to sample.
+const campaignsOk = computed(() => props.byCampaign !== false);
+watch(campaignsOk, (ok) => { if (!ok) by.value = 'sample'; });
 const limit = ref(PAGE);
 
 const counts = computed(() => countByBucket(props.rows));
@@ -64,7 +69,7 @@ function openInDirectus(id: string) { useForceHost().openRecord('machining_force
 	<aside class="dp" aria-label="Operations">
 		<div class="dp-top">
 			<input
-				v-model="query" class="dp-search" type="search" placeholder="Search code, sample, campaign…"
+				v-model="query" class="dp-search" type="search" :placeholder="campaignsOk ? 'Search code, sample, campaign…' : 'Search code, sample…'"
 				aria-label="Search operations" :disabled="disabled"
 			>
 			<div class="dp-chips" role="group" aria-label="Filter by diagnostics state">
@@ -77,7 +82,7 @@ function openInDirectus(id: string) { useForceHost().openRecord('machining_force
 				<label>Group by
 					<select v-model="by" aria-label="Group by">
 						<option value="sample">Sample</option>
-						<option value="campaign">Campaign</option>
+						<option v-if="campaignsOk" value="campaign">Campaign</option>
 					</select>
 				</label>
 				<button type="button" class="dp-link" :disabled="disabled || !filtered.length" @click="selectAllFiltered">Tick all {{ filtered.length }}</button>
