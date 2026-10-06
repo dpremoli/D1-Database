@@ -100,6 +100,28 @@ describe('restartRecorder', () => {
     expect(r.reason).toContain('not restarted');
     expect(d.restart).not.toHaveBeenCalled();
   });
+  it('checks again after the operator confirms and refuses if a recording started meanwhile', async () => {
+    const answers: RecorderActivity[] = [unknown, busy(recording)];
+    const d = deps({ getActivity: async () => answers.shift() ?? idle });
+    const r = await restartRecorder(d);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('in progress');
+    expect(d.confirmUnknown).toHaveBeenCalledOnce();
+    expect(d.restart).not.toHaveBeenCalled();
+  });
+  it('still restarts after the confirmation when the second check is idle or unknown again', async () => {
+    for (const second of [idle, unknown]) {
+      const answers: RecorderActivity[] = [unknown, second];
+      const d = deps({ getActivity: async () => answers.shift() ?? idle });
+      expect(await restartRecorder(d)).toEqual({ ok: true });
+      expect(d.restart).toHaveBeenCalledOnce();
+    }
+  });
+  it('does not re-check when no confirmation was needed', async () => {
+    const getActivity = vi.fn(async () => idle);
+    await restartRecorder(deps({ getActivity }));
+    expect(getActivity).toHaveBeenCalledOnce();
+  });
   it('restarts without asking when the supervisor already knows the backend is down', async () => {
     let state: SidecarState = 'crashed';
     const d = deps({

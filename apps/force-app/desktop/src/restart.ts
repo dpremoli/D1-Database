@@ -75,6 +75,12 @@ export async function restartRecorder(deps: RestartDeps): Promise<RestartResult>
   if (decision.action === 'confirm' && !(await deps.confirmUnknown())) {
     return { ok: false, reason: 'The recorder was not restarted.' };
   }
+  if (decision.action === 'confirm') {
+    // The dialog may have been open for a while: a recording can have started in the meantime.
+    // Only a definite "busy" blocks; unknown again is what the operator just agreed to.
+    const again = restartDecision(await deps.getActivity(), deps.getState());
+    if (again.action === 'refuse') return { ok: false, reason: again.reason };
+  }
   try {
     await deps.restart();
   } catch (err) {

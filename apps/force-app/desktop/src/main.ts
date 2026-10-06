@@ -177,9 +177,12 @@ let restartCause: string | undefined;
 // reported once by createWindow() below, so the state callback must stay quiet for it, or the
 // operator gets two error boxes for one failure (review 2.9).
 let startupSettled = false;
-// True while the operator's "Restart recorder" is under way: a crash then is reported to them as
-// the restart's result, not also as a separate error box.
+// True only while supervisor.restart() runs for the operator's "Restart recorder": a crash then is
+// reported to them as the restart's result, not also as a separate error box. Not set while a
+// confirmation dialog is open, so a real crash or auto-restart meanwhile is announced normally.
 let manualRestart = false;
+// True from the moment "Restart recorder" is invoked until it has finished (including any dialog).
+let restartInProgress = false;
 
 function onSidecarStateChange(state: SidecarState, detail?: string): void {
   if (state === 'restarting') restartCause = detail;
@@ -231,22 +234,37 @@ function registerShellIpc(): void {
   // operator is asked first (a busy recorder can be slow to answer too).
   ipcMain.handle('sidecar:restart', async (event) => {
     if (!fromApp(event)) return { ok: false, reason: 'not allowed from this page' };
-    if (manualRestart) return { ok: false, reason: 'a restart is already in progress' };
-    manualRestart = true;
+    if (restartInProgress) return { ok: false, reason: 'a restart is already in progress' };
+    restartInProgress = true;
     try {
       const result = await restartRecorder({
         getActivity: () => fetchRecorderActivity((p, t) => recorderFetch(p, t)),
         // Native dialogs would hang the e2e suite (see confirmQuitDuringRecording).
-        confirmUnknown: async () =>
-          process.env.FORCE_APP_TEST_HOOKS === '1' || (await dialog.showMessageBox(unknownStatusDialog())).response === 1,
-        restart: supervisor ? () => supervisor!.restart() : null,
+        // Modal to the window that asked, so the operator can't keep working behind it.
+        confirmUnknown: async () => {
+          if (process.env.FORCE_APP_TEST_HOOKS === '1') return true;
+          const parent = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+          const opts = unknownStatusDialog();
+          const res = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+          return res.response === 1;
+        },
+        restart: supervisor
+          ? async () => {
+              manualRestart = true;
+              try {
+                await supervisor!.restart();
+              } finally {
+                manualRestart = false;
+              }
+            }
+          : null,
         getState: () => supervisor?.getState(),
         lastDetail: () => supervisor?.lastDetail(),
       });
       logToBackend(result.ok ? 'INFO' : 'WARNING', `recorder restart requested from the app: ${result.ok ? 'ok' : result.reason}`);
       return result;
     } finally {
-      manualRestart = false;
+      restartInProgress = false;
     }
   });
 }
