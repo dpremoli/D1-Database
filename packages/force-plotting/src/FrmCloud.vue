@@ -23,6 +23,7 @@ import {
 import { nearestIndex } from './hoverIndex';
 import { createPendingReveal } from './pendingReveal';
 import { createMapProjector } from './mapProjector';
+import { createLongPress, TOUCH_MENU_OFFSET_PX } from './longPress';
 import { exportFrmFigure } from './frmExport';
 import { buildScaleLUT, colorizeValues, lutKey, type ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
@@ -659,11 +660,14 @@ function cloudSource(c: Cache): PickSource | null {
 // the browser's menu and the pick runs from the right-button pointerup (onUp) when the tracker says
 // the button stayed put.
 const rightClick = createClickTracker();
+// A touchscreen has no right button: a one-finger hold opens the same menu (longPress.ts). A touch
+// that moves, or a second finger (pan, pinch), cancels it, so the gestures above are unchanged.
+const longPress = createLongPress((x, y) => pickAt(x, y, TOUCH_MENU_OFFSET_PX));
 function onContextMenu(ev: MouseEvent) { ev.preventDefault(); }
-function pickAt(clientX: number, clientY: number) {
+function pickAt(clientX: number, clientY: number, menuOffset = 0) {
 	const c = cache.value;
 	if (!c || !ready || !camera) return;
-	const base = { clientX, clientY };
+	const base = { clientX: clientX + menuOffset, clientY: clientY + menuOffset };   // where the menu opens; the pick stays under the finger
 	syncPickCamera();
 	const r = canvasEl.value!.getBoundingClientRect();
 	const px = clientX - r.left, py = clientY - r.top, radius = pickRadius(props.pointSize, 1.4);
@@ -894,6 +898,7 @@ function teardownRenderer() {
 	ready = false;
 }
 onBeforeUnmount(() => {
+	longPress.cancel();
 	loadToken.cancel();
 	// The stage watcher is already stopped by now, so say "idle" directly: otherwise the host's busy
 	// bar stays on after a mid-load unmount.
@@ -1009,6 +1014,7 @@ let zGestureY: number | null = null;
 function avgPy(): number { let s = 0; for (const p of pointers.values()) s += p.py; return s / (pointers.size || 1); }
 
 function onDown(ev: PointerEvent) {
+	longPress.down(ev);
 	rightClick.down(ev);   // the right button still pans (2D here, 3D via OrbitControls); a release in place opens the menu (onUp)
 	if (!cache.value) return;
 	const { px, py } = localXY(ev);
@@ -1036,6 +1042,7 @@ function onDown(ev: PointerEvent) {
 	}
 }
 function onMove(ev: PointerEvent) {
+	longPress.move(ev);
 	if (!cache.value) return;
 	const { px, py } = localXY(ev);
 	if (pointers.has(ev.pointerId)) pointers.set(ev.pointerId, { px, py });
@@ -1075,6 +1082,7 @@ function onUp(ev: PointerEvent) {
 	// before the 3D early return below: OrbitControls leaves its own pointerup alone, so a right
 	// release reaches us in both modes
 	if (rightClick.up(ev)) pickAt(ev.clientX, ev.clientY);
+	longPress.up(ev);   // also cancels on pointercancel; a fired hold has nothing more to do here
 	try { (ev.currentTarget as Element).releasePointerCapture(ev.pointerId); } catch { /* ignore */ }
 	pointers.delete(ev.pointerId);
 	if (is3D.value) {

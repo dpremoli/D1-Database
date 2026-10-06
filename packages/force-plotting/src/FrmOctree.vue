@@ -31,6 +31,7 @@ import {
 import { nearestIndex } from './hoverIndex';
 import { createPendingReveal } from './pendingReveal';
 import { createMapProjector } from './mapProjector';
+import { createLongPress, TOUCH_MENU_OFFSET_PX } from './longPress';
 import { spiralAnchor, spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
 import { shaderZ } from './octreePick';
 
@@ -370,11 +371,13 @@ function onPtrDown(ev: PointerEvent) {
 	// OrbitControls pans on right-drag (2D and 3D): remember where the button went down so the
 	// release can tell a click (opens the menu) from a pan.
 	rightClick.down(ev);
+	longPress.down(ev);
 	if (ev.pointerType !== 'touch') return;
 	zPointers.set(ev.pointerId, ev.clientY);
 	if (zPointers.size === 3) { if (controls) controls.enabled = false; zBaseY = avgVals(zPointers); }
 }
 function onPtrMove(ev: PointerEvent) {
+	longPress.move(ev);
 	if (!zPointers.has(ev.pointerId)) return;
 	zPointers.set(ev.pointerId, ev.clientY);
 	if (zPointers.size >= 3 && props.zSeries && props.zSeries !== 'none') {
@@ -387,6 +390,7 @@ function onPtrMove(ev: PointerEvent) {
 }
 function onPtrUp(ev: PointerEvent) {
 	if (rightClick.up(ev)) pickAt(ev.clientX, ev.clientY);
+	longPress.up(ev);   // also cancels on pointercancel
 	zPointers.delete(ev.pointerId);
 	if (zPointers.size < 3 && controls) controls.enabled = true;
 }
@@ -399,6 +403,9 @@ function onPtrUp(ev: PointerEvent) {
 // streams the samples through the shader's own maths (pickSpiral, stride 1 over the whole cache,
 // which is the octree window), and rings and reveal place one sample in closed form.
 const rightClick = createClickTracker();
+// A one-finger hold opens the same menu on a touchscreen (longPress.ts). OrbitControls keeps its own
+// touch pan/dolly: a move or a second finger cancels the hold.
+const longPress = createLongPress((x, y) => pickAt(x, y, TOUCH_MENU_OFFSET_PX));
 
 // What the spiral maths needs, per (sampleCache, innerDiam, ppr): small objects only. The render
 // loop places rings every frame, so none of this may be rebuilt there.
@@ -449,9 +456,9 @@ function toScreen(v: THREE.Vector3, out: { px: number; py: number }): boolean {
 // (onPtrUp). OrbitControls adds its own pointerup listener on the same element without stopping
 // propagation, so ours still sees the release.
 function onContextMenu(ev: MouseEvent) { ev.preventDefault(); }
-function pickAt(clientX: number, clientY: number) {
+function pickAt(clientX: number, clientY: number, menuOffset = 0) {
 	if (!canvasEl.value || !camera) return;
-	const base = { clientX, clientY };
+	const base = { clientX: clientX + menuOffset, clientY: clientY + menuOffset };   // where the menu opens; the pick stays under the finger
 	const g = octreeGeometry();
 	if (!g) { emit('pointmenu', { ...base, point: null, reason: 'no-cache' }); return; }
 	const c = g.c;
@@ -589,7 +596,7 @@ onMounted(() => {
 	ro = new ResizeObserver(() => { sizeCanvas(); frameCamera(); });
 	nextTick(boot);
 });
-onBeforeUnmount(() => life.unmount());
+onBeforeUnmount(() => { longPress.cancel(); life.unmount(); });
 onDeactivated(() => life.deactivate());
 onActivated(() => { life.activate(); });
 
