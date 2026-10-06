@@ -40,6 +40,7 @@ export function opKindFromSubtype(subtype: string | null | undefined): OpKind {
 export interface Metric { value: number | null; reason?: string }
 const ok = (value: number): Metric => ({ value });
 const na = (reason: string): Metric => ({ value: null, reason });
+const naPair = (reason: string) => ({ mean: na(reason), peak: na(reason) });
 const pos = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
 
 export interface CuttingInputs {
@@ -79,9 +80,9 @@ export function computeCuttingMetrics(inp: CuttingInputs): CuttingMetrics {
 		: 'operation type unknown (subtype is not MT…)';
 
 	const force = (role: CutRole): { mean: Metric; peak: Metric } => {
-		if (!turning) return { mean: na(notTurning), peak: na(notTurning) };
+		if (!turning) return naPair(notTurning);
 		const a = stats.axes[axisMap[role]];
-		if (!a || !a.n) return { mean: na('no samples in the window'), peak: na('no samples in the window') };
+		if (!a || !a.n) return naPair('no samples in the window');
 		return { mean: ok(Math.abs(a.mean)), peak: ok(Math.max(Math.abs(a.min), Math.abs(a.max))) };
 	};
 	const Fc = force('Fc'), Ff = force('Ff'), Fp = force('Fp');
@@ -89,24 +90,24 @@ export function computeCuttingMetrics(inp: CuttingInputs): CuttingMetrics {
 	const hasWin = stats.axes.Fx.n > 0;
 	const resultant = hasWin
 		? { mean: ok(stats.resultant.mean), peak: ok(stats.resultant.peak) }
-		: { mean: na('no samples in the window'), peak: na('no samples in the window') };
+		: naPair('no samples in the window');
 
 	const rpm = stats.rpm.mean;
 	let diameterMid: Metric, vc: Metric;
-	if (!turning) { diameterMid = na(notTurning); vc = na(notTurning); }
-	else if (!pos(inp.diameterMm)) { diameterMid = na('diameter missing'); vc = na('diameter missing'); }
-	else if (!pos(rpm)) { diameterMid = na('RPM is zero in this window'); vc = na('RPM is zero in this window'); }
+	if (!turning) diameterMid = vc = na(notTurning);
+	else if (!pos(inp.diameterMm)) diameterMid = vc = na('diameter missing');
+	else if (!pos(rpm)) diameterMid = vc = na('RPM is zero in this window');
 	else {
 		const tMid = (stats.windowSec[0] + stats.windowSec[1]) / 2;
 		// Without a feed the spiral shrinkage is unknowable; fall back to the crop-start diameter.
 		const f = pos(inp.feedMmPerRev) ? inp.feedMmPerRev : 0;
 		const d = midWindowDiameter(inp.diameterMm, f, rpm, tMid - stats.cacheCropStartSec);
-		if (!(d > 0)) { diameterMid = na('window lies beyond the disc centre (check diameter and crop)'); vc = diameterMid; }
+		if (!(d > 0)) diameterMid = vc = na('window lies beyond the disc centre (check diameter and crop)');
 		else { diameterMid = ok(d); vc = ok(Math.PI * d * rpm / 1000); }
 	}
 
 	let pc: Metric, kc: Metric;
-	if (Fc.mean.value == null) { pc = na(Fc.mean.reason!); kc = na(Fc.mean.reason!); }
+	if (Fc.mean.value == null) pc = kc = na(Fc.mean.reason!);
 	else {
 		pc = vc.value == null ? na(vc.reason!) : ok(Fc.mean.value * vc.value / 60);
 		if (!pos(inp.feedMmPerRev)) kc = na('feed not recorded');

@@ -432,8 +432,9 @@ watch(editDiam, (v) => {
 // the cache isn't downloaded yet the panel offers an explicit compute (= download).
 // One accordion open at a time in the detail column: Operation detail | Signal statistics
 // | Signal filters are mutually exclusive (opening one folds the others).
-const openPanel = ref<'detail' | 'display' | 'stats' | 'cutting' | 'filters' | null>('detail');
-function togglePanel(p: 'detail' | 'display' | 'stats' | 'cutting' | 'filters') { openPanel.value = openPanel.value === p ? null : p; }
+type DetailPanel = 'detail' | 'display' | 'stats' | 'cutting' | 'filters';
+const openPanel = ref<DetailPanel | null>('detail');
+function togglePanel(p: DetailPanel) { openPanel.value = openPanel.value === p ? null : p; }
 const opDetailOpen = computed(() => openPanel.value === 'detail');
 const displayPanelOpen = computed(() => openPanel.value === 'display');
 const statsOpen = computed(() => openPanel.value === 'stats');
@@ -504,16 +505,17 @@ function fmtStat(v: number): string {
 const AXIS_MAP_KEY = 'd1.cuttingAxisMap';
 const axisMapSel = ref(axisMapKey(parseAxisMap((() => { try { return localStorage.getItem(AXIS_MAP_KEY); } catch { return null; } })())));
 watch(axisMapSel, (v) => { try { localStorage.setItem(AXIS_MAP_KEY, v); } catch { /* ignore */ } });
+const axisMap = computed(() => parseAxisMap(axisMapSel.value));
 // Operation record first (editable above), else the capture's own copy.
 const cutFeed = computed(() => numOrNull(editOpFeedMmPerRev.value) ?? numOrNull(detail.value?.feed));
 const cutAp = computed(() => numOrNull(editOpAxialDoc.value) ?? numOrNull(detail.value?.depth_of_cut));
 const cutting = computed(() => !sigStats.value ? null : computeCuttingMetrics({
-	stats: sigStats.value, axisMap: parseAxisMap(axisMapSel.value),
+	stats: sigStats.value, axisMap: axisMap.value,
 	opKind: opKindFromSubtype(editOpSubtype.value || op.value?.machining_operation_subtype),
 	diameterMm: editDiam.value, feedMmPerRev: cutFeed.value, apMm: cutAp.value,
 }));
 const cuttingMapText = computed(() => {
-	const m = parseAxisMap(axisMapSel.value);
+	const m = axisMap.value;
 	return `Assumed axis mapping: Fc (tangential, main cutting) = ${m.Fc}, Ff (feed) = ${m.Ff}, Fp (passive/radial) = ${m.Fp}. The mounting is not recorded; change it with the selector.`;
 });
 const cutVal = (m: Metric | undefined, digits = 1) => m?.value == null ? '—' : (Math.abs(m.value) >= 1000 ? (m.value / 1000).toFixed(2) + 'k' : m.value.toFixed(digits));
