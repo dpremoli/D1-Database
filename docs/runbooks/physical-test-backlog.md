@@ -421,7 +421,8 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   this project yet." Since: Explorer pages E5-fix-ui (PR pending).
 - [ ] **E5-fix-ui: People page and register-sample.** As a Lab Member open People: the **App login**
   field is read-only with "An admin links logins." and saving a person does not change the login;
-  as an admin the login picker works. As a member whose login has no People row open **Register a
+  as an admin the login picker works. Opening an existing person as a member shows no **Delete**
+  button (admin only; Since: E5-r2-ui). As a member whose login has no People row open **Register a
   Sample**: it says up front that the login is not linked and the button refuses; as an admin
   without a People row it still registers. If the server answers the create with 204 (a member
   with a People row that somehow cannot read the sample) the page says "Created, but you can't see

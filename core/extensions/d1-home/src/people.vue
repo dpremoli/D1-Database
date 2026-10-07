@@ -209,7 +209,7 @@ async function remove() {
 					<p v-if="err" class="err">{{ err }}</p>
 				</v-card-text>
 				<v-card-actions>
-					<v-button v-if="!isNew" secondary class="del" :loading="saving" @click="remove"><v-icon name="delete" left small />Delete</v-button>
+					<v-button v-if="!isNew && isAdmin" secondary class="del" :loading="saving" @click="remove"><v-icon name="delete" left small />Delete</v-button>
 					<div class="spacer" />
 					<v-button secondary @click="dialog = false">Cancel</v-button>
 					<v-button :loading="saving" @click="save">{{ isNew ? 'Add person' : 'Save' }}</v-button>
