@@ -9,8 +9,9 @@ import { buildGeometry } from './geometry';
 
 // Collections that have an Explorer page (the `home` module). This is the same mapping as
 // recordRoute() in packages/d1-ui; d1-report is built on its own and cannot import the kit, so
-// the table is repeated here. Keep the two in step.
-const EXPLORER_PAGES = {
+// the table is repeated here. Keep the two in step: index.test.mjs parses RECORD_PAGES out of the
+// kit source and fails when they differ.
+export const EXPLORER_PAGES = {
 	physical_samples: 'samples',
 	manufacturing_operations: 'operations',
 	test_sessions: 'tests',

@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import endpoint from './index.js';
-import { adminRecordUrl } from './render.js';
+import { readFileSync } from 'node:fs';
+import { adminRecordUrl, EXPLORER_PAGES } from './render.js';
 
 const SID = '11111111-1111-4111-8111-111111111111';
 const OP_A = '22222222-2222-4222-8222-222222222222';
@@ -262,6 +263,17 @@ test('adminRecordUrl: trims trailing slashes and encodes the id', () => {
 	assert.equal(adminRecordUrl('https://lims.example.org///', 'physical_samples', 'a/b c'), 'https://lims.example.org/admin/home/samples/a%2Fb%20c');
 	assert.equal(adminRecordUrl('', 'physical_samples', 'x'), '/admin/home/samples/x');
 	assert.equal(adminRecordUrl(undefined, 'physical_samples', 'x'), '/admin/home/samples/x');
+});
+
+test('EXPLORER_PAGES matches RECORD_PAGES in the kit (packages/d1-ui/src/recordRoute.ts)', () => {
+	// d1-report cannot import the kit, so its copy of the table is checked against the source.
+	const src = readFileSync(new URL('../../../../packages/d1-ui/src/recordRoute.ts', import.meta.url), 'utf8');
+	const body = /const RECORD_PAGES[^=]*=\s*\{([^}]*)\}/.exec(src);
+	assert.ok(body, 'RECORD_PAGES not found in recordRoute.ts');
+	const kit = {};
+	for (const m of body[1].matchAll(/(\w+)\s*:\s*'\/home\/([^']+)'/g)) kit[m[1]] = m[2];
+	assert.ok(Object.keys(kit).length >= 5, 'parsed too few RECORD_PAGES entries');
+	assert.deepEqual(EXPLORER_PAGES, kit);
 });
 
 test('reports link back to the Explorer page of the record, not the Data Studio form', async () => {
