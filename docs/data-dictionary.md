@@ -217,9 +217,9 @@ after parsing.
 | Column | Type | Description |
 |---|---|---|
 | `session_id` | UUID PK | |
-| `sample_id` | UUID FK | Sample under test |
+| `sample_id` | UUID FK | Primary sample under test: derived from `test_sessions_subject` by a trigger (migration `…137`); do not write directly |
 | `equipment_id` | UUID FK | Test rig used |
-| `insert_edge_id` | UUID FK | Cutting edge involved (machining tests) |
+| `insert_edge_id` | UUID FK | Primary cutting edge involved (machining tests): derived from `test_sessions_subject`; do not write directly |
 | `project_id` | UUID FK | Optional project grouping |
 | `test_type` | TEXT | e.g. force_measurement, microstructure, hardness |
 | `capture_software` | TEXT | Data-capture app + version |
@@ -231,9 +231,13 @@ after parsing.
 | `status` | TEXT | Pipeline state: registered \| pending_processing \| processing \| processed \| analysing \| analysed \| failed (migration `…013`) |
 
 Since Phase 1: what a test targets is recorded through the `test_sessions_subject`
-M2A junction (a sample, an insert edge, …; `sample_id` and `insert_edge_id` are kept
-as nullable backups), and typed per-test parameters are inline columns prefixed by
-test type (`tensile_*`, `hardness_*`, `sem_*`, `xrd_*`, …).
+M2A junction (a sample, an insert edge, …). `sample_id` and `insert_edge_id` are a
+denormalised *primary subject*: since migration `…137` a trigger on the junction sets
+them to the first (lowest junction id) `physical_samples` / `insert_edges` subject, so
+form-created tests are found by readers that filter on `sample_id`. A test with several
+samples shows only the first there; read the junction for all of them. Typed per-test
+parameters are inline columns prefixed by test type (`tensile_*`, `hardness_*`, `sem_*`,
+`xrd_*`, …).
 
 ---
 
