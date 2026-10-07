@@ -297,6 +297,51 @@ def test_hook_rules_file_is_current_and_drift_is_detected(tmp_path):
     assert gen.main(["--check", "--hook-rules", str(stale)]) == 0
 
 
+def test_owner_guards_cover_every_record_whose_update_is_wider_than_delete():
+    """An editor who changes the owner column would gain delete, so each such record is guarded."""
+    wider = {
+        c
+        for c, actions in DOC["rules"].items()
+        if "update" in actions
+        and "delete" in actions
+        and BY_KEY[(c, "update")]["permissions"] != BY_KEY[(c, "delete")]["permissions"]
+    }
+    guards = gen.hook_rules(DOC)["ownerGuards"]
+    assert wider == set(DOC["owner_guards"]) == set(guards)
+    assert wider == {"physical_samples", "manufacturing_operations", "test_sessions"}
+    for collection, g in guards.items():
+        assert g["field"] == "owner_person_id"
+        # the filter shipped to the hook is the record's delete row, word for word
+        assert g["filter"] == BY_KEY[(collection, "delete")]["permissions"], collection
+
+
+def test_a_wider_update_rule_without_an_owner_guard_is_rejected():
+    doc = {**DOC, "owner_guards": {}}
+    with pytest.raises(gen.RulesError, match="owner_guards"):
+        gen.hook_rules(doc)
+
+
+def test_owner_guard_needs_update_and_delete_filters():
+    doc = {
+        **DOC,
+        "owner_guards": {
+            **DOC["owner_guards"],
+            "fast_run_data": {"field": "x", "key": "y", "value_key": "z"},
+        },
+    }
+    with pytest.raises(gen.RulesError, match="fast_run_data"):
+        gen.hook_rules(doc)
+
+
+def test_resolver_checks_the_owner_guards_too():
+    db = _directus()
+    db["columns"].remove("test_sessions.session_id")
+    assert any("owner_guard test_sessions" in p for p in gen.resolve(DOC, db))
+    db = _directus()
+    db["columns"].remove("people.person_id")
+    assert any("owner_guard" in p and "person_id" in p for p in gen.resolve(DOC, db))
+
+
 def test_guard_rejects_a_parent_without_an_update_filter():
     doc = {
         **DOC,
@@ -367,8 +412,11 @@ def _directus(drop=()):
     }
     cols |= {
         "physical_samples.sample_id",
+        "manufacturing_operations.operation_id",
+        "test_sessions.session_id",
         "campaigns.campaign_id",
         "projects.project_id",
+        "people.person_id",
     }
     for key in drop:
         rel.pop(key)
@@ -462,6 +510,25 @@ def test_guard_keys_are_the_parents_primary_keys():
                 f"AND a.attnum = ANY(i.indkey) WHERE i.indrelid = 'public.{c['parent']}'::regclass AND i.indisprimary"
             )
             assert pk == c["key"], (junction, c)
+
+
+def test_owner_guard_keys_are_the_primary_keys():
+    _migrated()
+
+    def pk(table):
+        return _psql(
+            "SELECT a.attname FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid "
+            f"AND a.attnum = ANY(i.indkey) WHERE i.indrelid = 'public.{table}'::regclass AND i.indisprimary"
+        )
+
+    for collection, g in DOC["owner_guards"].items():
+        assert pk(collection) == g["key"], collection
+        target = _psql(
+            "SELECT confrelid::regclass::text FROM pg_constraint WHERE contype = 'f' "
+            f"AND conrelid = 'public.{collection}'::regclass "
+            f"AND conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = 'public.{collection}'::regclass AND attname = '{g['field']}')]"
+        )
+        assert pk(target) == g["value_key"], (collection, target)
 
 
 def test_co_owners_is_not_a_real_column_any_more():

@@ -113,4 +113,11 @@ INSERT INTO directus_fields (collection, field, interface, special, width, sort,
 ('campaigns',        'samples',   'list-m2m', 'm2m', 'full', 30, false),
 ('physical_samples', 'campaigns', 'list-m2m', 'm2m', 'full', 60, false);
 
+-- ── people pickers (migration 062) ─────────────────────────────────────────────
+-- This script deletes the campaigns field rows, so the Owner picker of migration 062 (m2o -> people) is
+-- re-added with the same settings and the legacy `owner` column stays hidden. See configure_directus.sql.
+DELETE FROM directus_fields WHERE (collection, field) IN (('campaigns','owner_person_id'));
+INSERT INTO directus_fields (collection, field, special, interface, options, display, display_options, readonly, hidden, sort, width, required, translations) VALUES ('campaigns', 'owner_person_id', 'm2o', 'select-dropdown-m2o', '{"template":"{{full_name}}","enableCreate":true}', 'related-values', '{"template":"{{full_name}}"}', FALSE, FALSE, 8, 'half', FALSE, '[{"language": "en-US", "translation": "Owner"}]');
+UPDATE directus_fields SET hidden = TRUE WHERE (collection, field) IN (('campaigns','owner'));
+
 COMMIT;

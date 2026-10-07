@@ -73,6 +73,14 @@ Decisions after the review of the first implementation (2026-10-07):
    read People, create a row with no login or with their own, and update every column **except**
    `user_id`; only admins link or relink logins and delete People rows (a delete would orphan the
    owner of every record that person owns).
+10. **Only the owner can hand a record over.** Co-owners may update a sample and only its owner may
+    delete it, so a co-owner who set `owner_person_id` to themselves would gain delete. The same
+    holds for operations and tests (their editors include the sample's owner and co-owners, their
+    delete is the record's own owner). The `d1-access-guard` hook therefore refuses an update that
+    **changes** `owner_person_id` of a sample, operation or test unless the caller passes that
+    record's **delete** rule, i.e. is its current owner. The owner can hand a record to someone else;
+    an editor cannot take it. Campaigns and projects need no such check: their update and delete
+    rules are the same, so only the owner or PI can reach the update at all.
 
 ## Decision
 
@@ -182,6 +190,18 @@ and passes (the caller is creating that record). A drift check (`gen_access_rule
 pre-commit, phase1 and pytest) fails when `rules.json` is stale. It guards the Directus API, as
 everything here does: SQL imports (`migrate_legacy.py`) are not checked.
 
+**The owner check** (decision 10) is the same hook's second job. `access_rules.json` lists the
+records whose update rule is wider than their delete rule under `owner_guards` (the owner column,
+the record's primary key and the people key), and `gen_access_rules.py` fails when a ruled collection
+has such a pair and no entry, so a new collection cannot forget it. `rules.json` carries each
+record's **delete filter** as `ownerGuards`. On `items.update` of one of those collections whose
+payload names the owner column, the hook reads the current owners straight from the database, skips
+the keys whose owner is not changing (an editor saving the whole form sends the owner back
+unchanged), and runs the delete filter as the caller through `ItemsService` for each remaining key,
+so a batch update is checked per key and one refused key refuses the batch. Setting an owner on an
+ownerless record, clearing an owner and naming a brand-new person all count as changes. Create is
+not checked (the creator may name anyone). Admins and internal calls bypass, as for the junctions.
+
 **The filters walk Directus relations.** A filter on `owner_person_id.user_id` only works while
 `directus_relations` has the `owner_person_id -> people` row, and an alias such as `co_owners` or
 `projects.operations` needs its relation and a `directus_fields` row. The `configure_*.sql` scripts
@@ -237,9 +257,6 @@ Two schema changes make the filters expressible:
   owning something in a project is one of the ways to read the project. The same holds for
   `campaign_id` pointing at a campaign they cannot read: it makes the *record* readable to that
   campaign's owner, not the campaign to them.
-- **A co-owner can take over a record.** Update lets a co-owner of a sample change its
-  `owner_person_id` (to themselves), which also gives them delete. Owners are expected to add only
-  co-owners they trust; the `audit_logs` row names who did it.
 - **People need a `people` row.** A member without a `people` row linked by `user_id` owns
   nothing, because the hook cannot fill the owner, and sees only what others share with them. A
   member can create their own row (no login, or their own) but only an admin can link or relink a
@@ -304,7 +321,10 @@ Two schema changes make the filters expressible:
   operations, tests and campaigns, and the PI on projects.
 - `core/extensions/d1-access-guard/index.test.mjs`: creates and parent-key updates of the three
   junctions are refused without the right (campaign_samples: campaign and sample), allowed with it,
-  admins and internal calls bypass, and the read runs as the caller.
+  admins and internal calls bypass, and the read runs as the caller. Owner changes on a sample,
+  operation or test: refused for a co-owner, allowed for the owner and for an admin, a payload
+  without the owner field or with the unchanged owner is not checked, batch updates are checked per
+  key.
 - `core/extensions/d1-report`: the sample report blanks projects the caller cannot read.
 - Physical backlog: as user A (owner) and user B (unrelated), each rule above is visible to A,
   invisible to B, and reachable by B after B is added as a co-owner or investigator.
