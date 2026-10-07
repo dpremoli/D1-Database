@@ -35,7 +35,9 @@ export function useProjectsIndex() {
 
 	const campaignCounts = ref(new Map<string, number>());
 	const sampleCounts = ref(new Map<string, number>());
-	const countsError = ref('');
+	// Each count loads on its own, so one collection the role cannot read leaves the other intact.
+	const campaignCountsError = ref('');
+	const sampleCountsError = ref('');
 	const activity = ref(new Map<string, WeeklyActivity>());
 	const activityError = ref('');
 	const truncated = ref(false);
@@ -45,7 +47,8 @@ export function useProjectsIndex() {
 		const token = gate.begin();
 		loading.value = true;
 		error.value = '';
-		countsError.value = '';
+		campaignCountsError.value = '';
+		sampleCountsError.value = '';
 		activityError.value = '';
 		rolesError.value = '';
 		try {
@@ -89,12 +92,18 @@ export function useProjectsIndex() {
 			})(),
 			(async () => {
 				try {
-					const [campaigns, samples] = await Promise.all([grouped('campaigns'), grouped('physical_samples')]);
-					if (!gate.isCurrent(token)) return;
-					campaignCounts.value = countsByKey(campaigns, 'project_id');
-					sampleCounts.value = countsByKey(samples, 'project_id');
+					const campaigns = await grouped('campaigns');
+					if (gate.isCurrent(token)) campaignCounts.value = countsByKey(campaigns, 'project_id');
 				} catch (e: any) {
-					if (gate.isCurrent(token)) countsError.value = `Could not load counts: ${errorText(e)}`;
+					if (gate.isCurrent(token)) campaignCountsError.value = `Could not load campaign counts: ${errorText(e)}`;
+				}
+			})(),
+			(async () => {
+				try {
+					const samples = await grouped('physical_samples');
+					if (gate.isCurrent(token)) sampleCounts.value = countsByKey(samples, 'project_id');
+				} catch (e: any) {
+					if (gate.isCurrent(token)) sampleCountsError.value = `Could not load sample counts: ${errorText(e)}`;
 				}
 			})(),
 			(async () => {
@@ -120,5 +129,5 @@ export function useProjectsIndex() {
 	load();
 	onBeforeUnmount(() => gate.cancel());
 
-	return { projects, loading, error, campaignCounts, sampleCounts, countsError, activity, activityError, truncated, rolesError, reload: load };
+	return { projects, loading, error, campaignCounts, sampleCounts, campaignCountsError, sampleCountsError, activity, activityError, truncated, rolesError, reload: load };
 }
