@@ -810,6 +810,11 @@ def _crop_opts(row) -> dict:
     return out
 
 
+def _claimed_crop(row) -> list:
+    """The crop override values this build was claimed (and so built) with."""
+    return [row.get("crop_start_idx_override"), row.get("crop_end_idx_override")]
+
+
 _BUILD_KEYS = (
     "speed_mode",
     "feed",
@@ -820,25 +825,41 @@ _BUILD_KEYS = (
     "cut_end_sec",
     "crop_source",
 )
+# Optional: passed through when MATLAB wrote it (the cumulative raw revolutions at cut_start_sec,
+# in the live cache's `revs` units); the client falls back to Math.fround(window) without it.
+_OPTIONAL_BUILD_KEYS = ("revs_cs",)
 
 
-def _publish_build_manifest(
-    dst: Path, matlab_json: str, kind: str, n_points: int
-) -> bool:
-    """Write d1_build.json (the geometry MATLAB actually integrated, plus schema/kind/
-    n_points/built_at) next to the published metadata.json. Without MATLAB's JSON, publish
-    nothing: the client then falls back to the cache window and row values."""
+def _load_build_manifest(matlab_json: str, kind: str, n_points: int) -> dict:
+    """The d1_build.json body: the geometry MATLAB actually integrated plus schema/kind/
+    n_points/built_at. MATLAB always writes its JSON, so a missing or unreadable one is a
+    failed build (the fallback geometry from the row may be wrong); raises RuntimeError."""
     try:
         m = json.loads(Path(matlab_json).read_text(encoding="utf-8"))
         manifest = {"schema": 1, "kind": kind}
         manifest.update({k: m[k] for k in _BUILD_KEYS})
-        manifest["n_points"] = int(n_points)
-        manifest["built_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        (dst / "d1_build.json").write_text(json.dumps(manifest), encoding="utf-8")
-        return True
-    except (OSError, ValueError, KeyError) as e:
-        log.warning("[%s] no d1_build.json (%s: %s)", kind.upper(), type(e).__name__, e)
-        return False
+        manifest.update({k: m[k] for k in _OPTIONAL_BUILD_KEYS if k in m})
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise RuntimeError(
+            f"MATLAB build manifest missing or unreadable ({type(e).__name__}: {e}); "
+            "the octree would have no trustworthy geometry"
+        ) from e
+    manifest["n_points"] = int(n_points)
+    manifest["built_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return manifest
+
+
+def _publish_octree_dir(dst: Path, octmp: Path, manifest: dict) -> None:
+    """Replace dst with the built octree. d1_build.json lands before metadata.json (the file a
+    client loads first), so anything that sees an octree also sees its manifest."""
+    if dst.exists():
+        shutil.rmtree(dst, ignore_errors=True)
+    dst.mkdir(parents=True, exist_ok=True)
+    (dst / "d1_build.json").unlink(missing_ok=True)  # stale one if rmtree was partial
+    for fn in ("hierarchy.bin", "octree.bin"):
+        shutil.copy2(octmp / fn, dst / fn)
+    (dst / "d1_build.json").write_text(json.dumps(manifest), encoding="utf-8")
+    shutil.copy2(octmp / "metadata.json", dst / "metadata.json")
 
 
 def process_octree_row(
@@ -920,20 +941,23 @@ def process_octree_row(
         # same 1/99 percentiles so all three renderers share one colour scale.
         _patch_octree_climits(Path(octmp) / "metadata.json", fx, fy, fz)
 
+        # Checked before the old octree is replaced: a build without its manifest fails here.
+        manifest = _load_build_manifest(binp + ".json", "octree", n)
         op = str(row["operation_id"])
-        dst = OCTREE_DIR / op
-        if dst.exists():
-            shutil.rmtree(dst, ignore_errors=True)
-        dst.mkdir(parents=True, exist_ok=True)
-        for fn in ("metadata.json", "hierarchy.bin", "octree.bin"):
-            shutil.copy2(Path(octmp) / fn, dst / fn)
-        _publish_build_manifest(dst, binp + ".json", "octree", n)
+        _publish_octree_dir(OCTREE_DIR / op, Path(octmp), manifest)
 
+        # A crop saved while this build ran (status pending/processing, so the dashboard did not
+        # re-queue) is not in what was just built: go back to 'pending' for that rebuild.
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE machining_force_analysis SET octree_status='done', octree_path=%s, "
-                "octree_points=%s, octree_error=NULL, updated_at=now() WHERE id=%s",
-                [op, int(n), row["id"]],
+                "UPDATE machining_force_analysis SET "
+                "octree_status=CASE WHEN crop_start_idx_override IS DISTINCT FROM %s "
+                "OR crop_end_idx_override IS DISTINCT FROM %s THEN 'pending' ELSE 'done' END, "
+                "octree_requested_at=CASE WHEN crop_start_idx_override IS DISTINCT FROM %s "
+                "OR crop_end_idx_override IS DISTINCT FROM %s THEN now() "
+                "ELSE octree_requested_at END, "
+                "octree_path=%s, octree_points=%s, octree_error=NULL, updated_at=now() WHERE id=%s",
+                [*_claimed_crop(row), *_claimed_crop(row), op, int(n), row["id"]],
             )
         conn.commit()
         log.info("[OCTREE] %s -> %s (%d pts)", Path(row["archive_path"]).stem, op, n)
@@ -1519,22 +1543,32 @@ def process_grid_row(
             raise RuntimeError("PotreeConverter failed: " + " | ".join(tail))
         _patch_octree_climits(Path(octmp) / "metadata.json", fx, fy, fz)
 
+        manifest = _load_build_manifest(binp + ".json", "grid", n)
         op = str(row["operation_id"])
-        dst = OCTREE_DIR / "grid" / op
-        if dst.exists():
-            shutil.rmtree(dst, ignore_errors=True)
-        dst.mkdir(parents=True, exist_ok=True)
-        for fn in ("metadata.json", "hierarchy.bin", "octree.bin"):
-            shutil.copy2(Path(octmp) / fn, dst / fn)
-        _publish_build_manifest(dst, binp + ".json", "grid", n)
+        _publish_octree_dir(OCTREE_DIR / "grid" / op, Path(octmp), manifest)
 
+        # Same re-queue rule as the octree: a crop saved during the build gets its rebuild.
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE machining_force_analysis SET grid_octree_status='done', "
+                "UPDATE machining_force_analysis SET "
+                "grid_octree_status=CASE WHEN crop_start_idx_override IS DISTINCT FROM %s "
+                "OR crop_end_idx_override IS DISTINCT FROM %s THEN 'pending' ELSE 'done' END, "
+                "grid_octree_requested_at=CASE WHEN crop_start_idx_override IS DISTINCT FROM %s "
+                "OR crop_end_idx_override IS DISTINCT FROM %s THEN now() "
+                "ELSE grid_octree_requested_at END, "
                 "grid_octree_path=%s, grid_octree_points=%s, grid_fidelity=%s, "
                 "grid_arm_ratio=%s, grid_cell_mm=%s, grid_octree_error=NULL, updated_at=now() "
                 "WHERE id=%s",
-                [f"grid/{op}", int(n), fidelity, arm_ratio, cell_mm, row["id"]],
+                [
+                    *_claimed_crop(row),
+                    *_claimed_crop(row),
+                    f"grid/{op}",
+                    int(n),
+                    fidelity,
+                    arm_ratio,
+                    cell_mm,
+                    row["id"],
+                ],
             )
         conn.commit()
         log.info(
