@@ -406,6 +406,12 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   change this record.". As B, an investigator who cannot edit, force a save on a campaign (Data
   Studio form) and on a project: the text names the campaign's owner / the project's PI when the
   server gives no reason of its own. Since: Explorer pages E5-r2-ui (PR pending).
+- [ ] **E5-r2-ui: Edit follows the record, one permissions request per page.** As a co-owner (not
+  owner) of a sample, open it, **Edit**, set the Owner to someone else and save: the **Edit** button
+  disappears without a reload. Open a record you can change, then follow a link to one you cannot
+  (browser Network tab): Edit does not carry over from the first. On a Campaign page there is a
+  single `GET /permissions/me/campaigns/<id>`, and the pickers vanish after you hand the campaign
+  over. Since: Explorer pages E5-r2-ui (PR pending).
 - [ ] **E5-fix-ui: hidden relatives are named, not shown as empty.** As B (sees one sample of A's
   campaign through a test, not A's other samples): open an operation whose input sample B cannot
   see. Expect "Not visible to you" next to **Input**, not "No sample is linked". A test whose sample

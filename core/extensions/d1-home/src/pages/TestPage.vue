@@ -19,7 +19,12 @@ const { test, loading, notVisible, error, params, subjects, files, hidden, reloa
 const editing = ref(false);
 // Edit is offered unless the server says this user may not change the record (an investigator
 // or a reader through a sample may read it but not edit it).
-const { canUpdate } = useCanUpdate('test_sessions', toRef(props, 'id'));
+const { canUpdate, refresh: refreshCanUpdate } = useCanUpdate('test_sessions', toRef(props, 'id'));
+// A save can change who may edit the record (the Owner field), so ask again.
+function onSaved() {
+	reload();
+	refreshCanUpdate();
+}
 
 const t = computed(() => test.value);
 const typeText = computed(() => (t.value?.test_type ? humanise(t.value.test_type) : 'Test'));
@@ -130,7 +135,7 @@ const openReport = () => window.open(`/d1-report/test/${encodeURIComponent(props
 					collection="test_sessions"
 					:primary-key="id"
 					:title="`Edit ${typeText}`"
-					@saved="reload()"
+					@saved="onSaved"
 				/>
 			</template>
 		</div>

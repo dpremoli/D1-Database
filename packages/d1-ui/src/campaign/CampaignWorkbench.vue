@@ -14,9 +14,12 @@ import { useCanUpdate } from '../composables/useCanUpdate';
 // operation and test lists and their pickers. Used by the Campaign page and, without the matrix, by
 // the d1-campaign-ops interface on the Data Studio campaign form. Every read is the signed-in
 // user's, and each list loads and fails on its own.
-const props = withDefaults(defineProps<{ campaignId: string; campaignType?: string | null; showMatrix?: boolean }>(), {
-	showMatrix: true,
-});
+// `canUpdate` is passed by a host that already asked about this campaign (the Campaign page, so one
+// request serves the Edit button and the panels); without it (undefined) the workbench asks itself.
+const props = withDefaults(
+	defineProps<{ campaignId: string; campaignType?: string | null; showMatrix?: boolean; canUpdate?: boolean | null }>(),
+	{ showMatrix: true, canUpdate: undefined },
+);
 
 const data = useCampaignData(toRef(props, 'campaignId'));
 const { junction, operations, tests, analyses, analysisUnavailable, overview, matrix, reload } = data;
@@ -24,9 +27,9 @@ const { junction, operations, tests, analyses, analysisUnavailable, overview, ma
 // A user who can read the campaign but not change it (an investigator, someone who only sees it
 // through a sample) gets the lists without the pickers and remove buttons. Unknown (null) keeps
 // them: the server refuses a write the user may not make, and the panels say so.
-const campaignIdRef = toRef(props, 'campaignId');
-const { canUpdate } = useCanUpdate('campaigns', campaignIdRef);
-const readonly = computed(() => canUpdate.value === false);
+const askId = computed(() => (props.canUpdate === undefined ? props.campaignId : null));
+const own = useCanUpdate('campaigns', askId);
+const readonly = computed(() => (props.canUpdate === undefined ? own.canUpdate.value : props.canUpdate) === false);
 
 defineExpose({ reload });
 </script>
