@@ -10,8 +10,9 @@ export type CutRole = 'Fc' | 'Ff' | 'Fp';
 export type AxisMap = Record<CutRole, ForceAxis>;
 export type OpKind = 'turning' | 'milling' | 'unknown';
 
-/** Assumed default for turning on this plate; NOT documented anywhere else (spec, "Axis mapping"). */
-export const DEFAULT_AXIS_MAP: AxisMap = { Fc: 'Fz', Ff: 'Fx', Fp: 'Fy' };
+/** The owner's standard: Fc = Fx, Fp = Fz (so Ff = Fy). It can change with workholding and the
+ * machining operation, hence the per-subtype memory below (spec, "Axis mapping"). */
+export const DEFAULT_AXIS_MAP: AxisMap = { Fc: 'Fx', Ff: 'Fy', Fp: 'Fz' };
 
 /** All six assignments, for the card's select. Key is `Fc/Ff/Fp` axes, e.g. "Fz/Fx/Fy". */
 export const AXIS_MAPS: { key: string; map: AxisMap }[] = (() => {
@@ -27,6 +28,62 @@ export const AXIS_MAPS: { key: string; map: AxisMap }[] = (() => {
 export function axisMapKey(m: AxisMap): string { return `${m.Fc}/${m.Ff}/${m.Fp}`; }
 export function parseAxisMap(key: string | null | undefined): AxisMap {
 	return AXIS_MAPS.find((a) => a.key === key)?.map ?? DEFAULT_AXIS_MAP;
+}
+
+/** localStorage key of the per-subtype choice: a JSON object `{ [subtype]: "Fc/Ff/Fp" }`. */
+export const AXIS_MAP_BY_SUBTYPE_KEY = 'd1.cuttingAxisMapBySubtype';
+/** The old single-value key, chosen against the previous default; removed on first load. */
+export const LEGACY_AXIS_MAP_KEY = 'd1.cuttingAxisMap';
+const DEFAULT_SUBTYPE_KEY = 'default';
+
+/** Fc = .., Ff = .., Fp = .. for display. */
+export function formatAxisMap(m: AxisMap): string {
+	return `Fc = ${m.Fc}, Ff = ${m.Ff}, Fp = ${m.Fp}`;
+}
+
+/** Storage key of an operation subtype: trimmed, upper-cased; empty is "default". Any other
+ * subtype, recognised or not, gets its own entry. */
+export function subtypeMapKey(subtype: string | null | undefined): string {
+	return (subtype ?? '').trim().toUpperCase() || DEFAULT_SUBTYPE_KEY;
+}
+
+type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+const defaultStorage = (): StorageLike | null => { try { return typeof localStorage === 'undefined' ? null : localStorage; } catch { return null; } };
+
+/** Reads the stored map defensively: anything that is not an object of valid mapping keys is dropped. */
+export function readAxisMapsBySubtype(storage: StorageLike | null = defaultStorage()): Record<string, string> {
+	const out: Record<string, string> = {};
+	if (!storage) return out;
+	try {
+		const raw = storage.getItem(AXIS_MAP_BY_SUBTYPE_KEY);
+		if (!raw) return out;
+		const parsed: unknown = JSON.parse(raw);
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return out;
+		for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+			if (typeof v === 'string' && AXIS_MAPS.some((a) => a.key === v)) out[k] = v;
+		}
+	} catch { /* corrupt or inaccessible storage: use defaults */ }
+	return out;
+}
+
+/** The mapping for a subtype: its stored choice, else the default. */
+export function resolveAxisMap(subtype: string | null | undefined, storage: StorageLike | null = defaultStorage()): AxisMap {
+	return parseAxisMap(readAxisMapsBySubtype(storage)[subtypeMapKey(subtype)]);
+}
+
+/** Remembers `map` for `subtype`; other subtypes' entries are kept. Never throws. */
+export function writeAxisMapForSubtype(subtype: string | null | undefined, map: AxisMap, storage: StorageLike | null = defaultStorage()): void {
+	if (!storage) return;
+	try {
+		const all = readAxisMapsBySubtype(storage);
+		all[subtypeMapKey(subtype)] = axisMapKey(map);
+		storage.setItem(AXIS_MAP_BY_SUBTYPE_KEY, JSON.stringify(all));
+	} catch { /* ignore */ }
+}
+
+/** Drops the pre-per-subtype single key (it was chosen against the old default). */
+export function removeLegacyAxisMap(storage: StorageLike | null = defaultStorage()): void {
+	try { storage?.removeItem(LEGACY_AXIS_MAP_KEY); } catch { /* ignore */ }
 }
 
 /** `MT*` turning, `MM*` milling (the rule force-app-web's opTypeCategory uses); anything else unknown. */
