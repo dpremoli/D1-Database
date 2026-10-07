@@ -29,7 +29,7 @@ import { computeAutoCode } from './operationCode';
 import { activeFindings, diagnose, worstSeverity, type Finding } from './metadataDoctor';
 import { computeSignalStats, resolveStatsWindow, type SignalStats } from './signalStats';
 import { statsCsvColumns } from './statsCsv';
-import { AXIS_MAPS, axisMapKey, computeCuttingMetrics, opKindFromSubtype, parseAxisMap, usesSpiralDiameter, type Metric } from './cuttingMetrics';
+import { AXIS_MAPS, DEFAULT_AXIS_MAP, axisMapKey, computeCuttingMetrics, formatAxisMap, opKindFromSubtype, parseAxisMap, removeLegacyAxisMap, resolveAxisMap, usesSpiralDiameter, writeAxisMapForSubtype, type Metric } from './cuttingMetrics';
 import { type FilterChain, chainActive, chainSummary, defaultChain, fetchFiltered, fetchFilteredFft } from './filterChain';
 import { useForceHost } from './host';
 import { saveChartImage, type ChartSnapshot } from './chartExport';
@@ -500,20 +500,24 @@ function fmtStat(v: number): string {
 }
 
 // ---- Cutting metrics card (cuttingMetrics.ts; spec 2026-10-06-cutting-metrics-design.md) ----
-// Over the same crop window as the statistics. The Fc/Ff/Fp -> Fx/Fy/Fz mapping is an ASSUMPTION
-// (not recorded anywhere), so it is visible and changeable here and remembered per browser.
-const AXIS_MAP_KEY = 'd1.cuttingAxisMap';
-const axisMapSel = ref(axisMapKey(parseAxisMap((() => { try { return localStorage.getItem(AXIS_MAP_KEY); } catch { return null; } })())));
-watch(axisMapSel, (v) => { try { localStorage.setItem(AXIS_MAP_KEY, v); } catch { /* ignore */ } });
+// Over the same crop window as the statistics. The standard mapping is Fc = Fx, Ff = Fy, Fp = Fz
+// (the owner's), but it depends on workholding and the operation, so it is selectable and
+// remembered per operation subtype in this browser (cuttingMetrics.ts).
+removeLegacyAxisMap();   // the old single choice was made against the previous default
+// cutSubtype, axisMapSubtype, axisMapSel and its loader are declared with the operation refs
+// (below), which they read.
+const onAxisMapChange = () => writeAxisMapForSubtype(axisMapSubtype.value, parseAxisMap(axisMapSel.value));
 const axisMap = computed(() => parseAxisMap(axisMapSel.value));
-// Operation record first (editable above), else the capture's own copy.
-const cutFeed = computed(() => numOrNull(editOpFeedMmPerRev.value) ?? numOrNull(detail.value?.feed));
-const cutAp = computed(() => numOrNull(editOpAxialDoc.value) ?? numOrNull(detail.value?.depth_of_cut));
+const AXIS_MAP_STANDARD = formatAxisMap(DEFAULT_AXIS_MAP);
+// Operation record first (editable above), else the capture's own copy. With no (readable) operation
+// the editOp* refs still hold the previous operation's values, so they are ignored then.
+const cutFeed = computed(() => (op.value ? numOrNull(editOpFeedMmPerRev.value) : null) ?? numOrNull(detail.value?.feed));
+const cutAp = computed(() => (op.value ? numOrNull(editOpAxialDoc.value) : null) ?? numOrNull(detail.value?.depth_of_cut));
 // Facing, grooving and parting spiral inwards: D_mid uses the same origin (the active crop start,
 // the saved crop when there is one) and the same feed (the geometry feed) as the plots' radial axis.
 const cutting = computed(() => {
 	if (!sigStats.value) return null;
-	const subtype = editOpSubtype.value || op.value?.machining_operation_subtype;
+	const subtype = cutSubtype.value;
 	return computeCuttingMetrics({
 		stats: sigStats.value, axisMap: axisMap.value,
 		opKind: opKindFromSubtype(subtype), spiral: usesSpiralDiameter(subtype),
@@ -523,7 +527,7 @@ const cutting = computed(() => {
 });
 const cuttingMapText = computed(() => {
 	const m = axisMap.value;
-	return `Assumed axis mapping: Fc (tangential, main cutting) = ${m.Fc}, Ff (feed) = ${m.Ff}, Fp (passive/radial) = ${m.Fp}. The mounting is not recorded; change it with the selector.`;
+	return `Axis mapping in use: Fc (tangential, main cutting) = ${m.Fc}, Ff (feed) = ${m.Ff}, Fp (passive/radial) = ${m.Fp}. The standard is ${AXIS_MAP_STANDARD}, but it depends on workholding and operation; the mounting is not recorded. Change it with the selector (remembered per operation type).`;
 });
 const cutVal = (m: Metric | undefined, digits = 1) => m?.value == null ? '—' : (Math.abs(m.value) >= 1000 ? (m.value / 1000).toFixed(2) + 'k' : m.value.toFixed(digits));
 const cutTip = (m: Metric | undefined, formula: string) => m?.value == null ? `Unavailable: ${m?.reason ?? 'no data'}` : formula;
@@ -1433,6 +1437,16 @@ const srcMeta = reactive({
 	outcomeNotes: '', passCode: '',
 });
 const editOpSubtype = ref('');
+// The edited subtype previews the metrics (op kind, spiral). With no operation the editOp* refs keep
+// the previous operation's values (seedMetaFromDetail returns early), so ignore them then.
+const cutSubtype = computed(() => op.value ? (editOpSubtype.value || op.value.machining_operation_subtype || '') : '');
+// The axis-map memory is keyed on the SAVED subtype, so a choice made while the Subtype field holds
+// unsaved or half-typed text is not stored under that text.
+const axisMapSubtype = computed(() => op.value?.machining_operation_subtype || '');
+const axisMapSel = ref(axisMapKey(resolveAxisMap(axisMapSubtype.value)));
+// Load the remembered choice when the operation (subtype) changes; a change made in the select is
+// written in onAxisMapChange, so loading never writes.
+watch(axisMapSubtype, (st) => { axisMapSel.value = axisMapKey(resolveAxisMap(st)); });
 const editOpNewEdge = ref<boolean | null>(null);
 const editOpCoolant = ref<boolean | null>(null);
 const editOperatorName = ref('');
@@ -1716,8 +1730,13 @@ async function saveCropAsOfficial() {
 	// already always current; Figure mode (frm_fx/fy/fz) has no such live-triggerable rebuild path.
 	const invalidate: Record<string, any> = {};
 	const now = new Date().toISOString();
-	if (d.octree_status === 'done') { invalidate.octree_status = 'pending'; invalidate.octree_requested_at = now; }
-	if (d.grid_octree_status === 'done') { invalidate.grid_octree_status = 'pending'; invalidate.grid_octree_requested_at = now; }
+	// 'error' is re-queued too: a failed build has nothing to keep, and the retry picks up the new crop.
+	// 'pending'/'processing' are left alone: a pending build reads the new crop when it starts, and the
+	// host re-queues a running one when it finishes (its done UPDATE sees the override changed).
+	const requeue = (st: unknown) => st === 'done' || st === 'error';
+	if (requeue(d.octree_status)) { invalidate.octree_status = 'pending'; invalidate.octree_requested_at = now; }
+	if (requeue(d.grid_octree_status)) { invalidate.grid_octree_status = 'pending'; invalidate.grid_octree_requested_at = now; }
+	const building = d.octree_status === 'processing' || d.grid_octree_status === 'processing';
 	try {
 		await api.patch(`/items/machining_force_analysis/${d.id}`, { crop_start_idx_override: startIdx, crop_end_idx_override: endIdx, ...invalidate });
 		d.crop_start_idx_override = startIdx; d.crop_end_idx_override = endIdx;   // so cropDirty/savedCropSec update
@@ -1728,8 +1747,9 @@ async function saveCropAsOfficial() {
 		if (invalidate.grid_octree_status) { d.grid_octree_status = 'pending'; if (frmMode.value === 'full' && gridFull.value) frmMode.value = pickDefaultMode(); }
 		cropTouched.value = false;
 		pendingCrop.clear();   // the saved window is now the truth; a link's crop request must not re-apply
-		cropSavedMsg.value = backToAuto ? 'Reverted to auto crop' : 'Saved as official crop';
-		window.setTimeout(() => { cropSavedMsg.value = ''; }, 2500);
+		cropSavedMsg.value = (backToAuto ? 'Reverted to auto crop' : 'Saved as official crop')
+			+ (building ? ' (the build in progress is redone with it afterwards)' : '');
+		window.setTimeout(() => { cropSavedMsg.value = ''; }, building ? 6000 : 2500);
 	} catch (e: any) {
 		cropSavedMsg.value = e?.response?.status === 403 ? 'Not permitted to save' : 'Save failed';
 	} finally { cropSaving.value = false; cropSavePrompt.value = false; }
@@ -2208,6 +2228,8 @@ function openPointMenu(e: PointMenuEvent) {
 	const hint = p ? undefined
 		: e.reason === 'gridded' ? 'Gridded 3D view averages samples'
 		: e.reason === 'no-cache' ? 'Needs this cut’s live cache'
+		: e.reason === 'outside-cache' ? 'The live cache doesn’t cover this octree’s crop'
+		: e.reason === 'loading' ? 'The map is still loading'
 		: 'No point under the cursor';
 	const items: ContextMenuItem[] = [
 		{ label: 'Show position in time', disabled: !p, hint, run: () => { if (p) showInTime(p.t); } },
@@ -2254,9 +2276,15 @@ function openChartMenu(e: { clientX: number; clientY: number; x: number | null; 
 	if (octreeOn.value) {
 		const c = octreeSampleCache.value;
 		if (!detail.value?.live_cache_file) hint = 'Needs this cut’s live cache';
-		// The octree covers the live cache's own window; a time outside it has no mapped sample. With
-		// the cache still loading we can't say, so the item stays enabled (the map queues the reveal).
-		else if (c && c.N && (t < c.t[0] || t > c.t[c.N - 1])) hint = 'Outside the mapped window';
+		// A time outside the mappable window (the octree's build window within the live cache) has no
+		// mapped sample. The map knows that window (the build manifest): null means nothing can be
+		// mapped; undefined means it isn't known yet, and the cache's own range stands in. With the
+		// cache still loading we can't say, so the item stays enabled (the map queues the reveal).
+		else if (c && c.N) {
+			const w = frmOctreeRef.value?.timeWindow?.() as { start: number; end: number } | null | undefined;
+			if (w === null) hint = 'The live cache doesn’t cover this octree’s crop';
+			else if (w ? (t < w.start || t > w.end) : (t < c.t[0] || t > c.t[c.N - 1])) hint = 'Outside the mapped window';
+		}
 	}
 	else if (liveAvailable.value) {
 		// A zero-width crop means the crop isn't loaded/seeded yet (both edges 0), not "nothing is inside".
@@ -2796,11 +2824,12 @@ function fmtDateTime(v: string | null | undefined) {
 										<template v-if="cutting.kcMPa.value == null">kc: {{ cutting.kcMPa.reason }}.</template>
 									</template>
 								</p>
-								<label class="setting-note cutting-map">Axis mapping (Fc / Ff / Fp), an assumption:
-									<select v-model="axisMapSel" :title="cuttingMapText">
-										<option v-for="a in AXIS_MAPS" :key="a.key" :value="a.key">{{ a.key }}</option>
+								<label class="setting-note cutting-map">Axis mapping<template v-if="axisMapSubtype"> for {{ axisMapSubtype }}</template>:
+									<select v-model="axisMapSel" :title="cuttingMapText" @change="onAxisMapChange">
+										<option v-for="a in AXIS_MAPS" :key="a.key" :value="a.key">{{ formatAxisMap(a.map) }}</option>
 									</select>
 								</label>
+								<p class="setting-note">Depends on workholding and operation, so it is remembered per operation type. Standard: {{ AXIS_MAP_STANDARD }}.</p>
 								<p class="setting-note">Over the crop window. Values use the operation's feed and depth of cut (else the capture's), the Diameter control and the measured mean RPM. Hover a value for its formula.</p>
 							</template>
 						</template>

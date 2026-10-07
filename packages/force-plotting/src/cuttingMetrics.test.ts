@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-	AXIS_MAPS, DEFAULT_AXIS_MAP, computeCuttingMetrics, midWindowDiameter, opKindFromSubtype, parseAxisMap, usesSpiralDiameter,
+	AXIS_MAPS, AXIS_MAP_BY_SUBTYPE_KEY, DEFAULT_AXIS_MAP, formatAxisMap, LEGACY_AXIS_MAP_KEY, readAxisMapsBySubtype, removeLegacyAxisMap, resolveAxisMap, subtypeMapKey, writeAxisMapForSubtype, computeCuttingMetrics, midWindowDiameter, opKindFromSubtype, parseAxisMap, usesSpiralDiameter,
 	type CuttingInputs,
 } from './cuttingMetrics';
+
+// Fixtures use Fc = Fz (600 N) so the arithmetic below stays put; the default has its own test.
+const FZ_MAP = { Fc: 'Fz', Ff: 'Fx', Fp: 'Fy' } as const;
 
 // Constant forces: Fx = 200 N, Fy = -100 N, Fz = 600 N (min = max = mean). 1000 rpm throughout.
 const axis = (v: number) => ({ n: 100, mean: v, rms: Math.abs(v), std: 0, min: v, max: v, p2p: 0, effBits: null, railLoPct: 0, railHiPct: 0, clipped: false });
@@ -14,7 +17,7 @@ const baseStats: CuttingInputs['stats'] = {
 	resultant: { mean: RES, peak: RES },
 };
 const inp = (o: Partial<CuttingInputs> = {}): CuttingInputs => ({
-	stats: baseStats, axisMap: DEFAULT_AXIS_MAP, opKind: 'turning', spiral: false, diameterMm: 100, feedMmPerRev: 0.1, apMm: 2, ...o,
+	stats: baseStats, axisMap: FZ_MAP, opKind: 'turning', spiral: false, diameterMm: 100, feedMmPerRev: 0.1, apMm: 2, ...o,
 });
 
 describe('computeCuttingMetrics', () => {
@@ -137,5 +140,69 @@ describe('helpers', () => {
 		expect(parseAxisMap('Fx/Fz/Fy')).toEqual({ Fc: 'Fx', Ff: 'Fz', Fp: 'Fy' });
 		expect(parseAxisMap('nonsense')).toEqual(DEFAULT_AXIS_MAP);
 		expect(parseAxisMap(null)).toEqual(DEFAULT_AXIS_MAP);
+	});
+});
+
+describe('default axis map', () => {
+	it('is the owner standard: Fc = Fx, Ff = Fy, Fp = Fz', () => {
+		expect(DEFAULT_AXIS_MAP).toEqual({ Fc: 'Fx', Ff: 'Fy', Fp: 'Fz' });
+		expect(formatAxisMap(DEFAULT_AXIS_MAP)).toBe('Fc = Fx, Ff = Fy, Fp = Fz');
+		const m = computeCuttingMetrics(inp({ axisMap: DEFAULT_AXIS_MAP }));
+		expect(m.Fc.mean.value).toBe(200);
+		expect(m.Ff.mean.value).toBe(100);
+		expect(m.Fp.mean.value).toBe(600);
+	});
+});
+
+class MemStore {
+	d = new Map<string, string>();
+	getItem(k: string) { return this.d.has(k) ? this.d.get(k)! : null; }
+	setItem(k: string, v: string) { this.d.set(k, v); }
+	removeItem(k: string) { this.d.delete(k); }
+}
+
+describe('per-subtype axis map storage', () => {
+	it('falls back to the default with nothing stored or no storage', () => {
+		expect(resolveAxisMap('MT-F', new MemStore())).toEqual(DEFAULT_AXIS_MAP);
+		expect(resolveAxisMap('MT-F', null)).toEqual(DEFAULT_AXIS_MAP);
+	});
+	it('remembers an override per subtype, case-insensitively, leaving others alone', () => {
+		const st = new MemStore();
+		writeAxisMapForSubtype('mt-f', { Fc: 'Fz', Ff: 'Fx', Fp: 'Fy' }, st);
+		expect(resolveAxisMap('MT-F', st)).toEqual({ Fc: 'Fz', Ff: 'Fx', Fp: 'Fy' });
+		expect(resolveAxisMap('MT-O', st)).toEqual(DEFAULT_AXIS_MAP);
+		writeAxisMapForSubtype('MT-O', { Fc: 'Fy', Ff: 'Fx', Fp: 'Fz' }, st);
+		expect(resolveAxisMap('MT-F', st).Fc).toBe('Fz');
+		expect(resolveAxisMap('MT-O', st).Fc).toBe('Fy');
+	});
+	it('uses "default" for an empty or unknown subtype', () => {
+		expect(subtypeMapKey(null)).toBe('default');
+		expect(subtypeMapKey('  ')).toBe('default');
+		const st = new MemStore();
+		writeAxisMapForSubtype('', { Fc: 'Fy', Ff: 'Fx', Fp: 'Fz' }, st);
+		expect(resolveAxisMap(undefined, st).Fc).toBe('Fy');
+	});
+	it('ignores corrupt storage and bad entries', () => {
+		const st = new MemStore();
+		st.setItem(AXIS_MAP_BY_SUBTYPE_KEY, '{not json');
+		expect(readAxisMapsBySubtype(st)).toEqual({});
+		st.setItem(AXIS_MAP_BY_SUBTYPE_KEY, '[1,2]');
+		expect(readAxisMapsBySubtype(st)).toEqual({});
+		st.setItem(AXIS_MAP_BY_SUBTYPE_KEY, JSON.stringify({ 'MT-F': 'bogus', 'MT-O': 'Fz/Fx/Fy', 'MT-P': 7 }));
+		expect(readAxisMapsBySubtype(st)).toEqual({ 'MT-O': 'Fz/Fx/Fy' });
+		writeAxisMapForSubtype('MT-F', DEFAULT_AXIS_MAP, st);   // a write repairs the blob
+		expect(readAxisMapsBySubtype(st)).toEqual({ 'MT-O': 'Fz/Fx/Fy', 'MT-F': 'Fx/Fy/Fz' });
+	});
+	it('never throws when storage does', () => {
+		const bad = { getItem() { throw new Error('x'); }, setItem() { throw new Error('x'); }, removeItem() { throw new Error('x'); } };
+		expect(resolveAxisMap('MT-F', bad)).toEqual(DEFAULT_AXIS_MAP);
+		expect(() => writeAxisMapForSubtype('MT-F', DEFAULT_AXIS_MAP, bad)).not.toThrow();
+		expect(() => removeLegacyAxisMap(bad)).not.toThrow();
+	});
+	it('removes the legacy single key', () => {
+		const st = new MemStore();
+		st.setItem(LEGACY_AXIS_MAP_KEY, 'Fz/Fx/Fy');
+		removeLegacyAxisMap(st);
+		expect(st.getItem(LEGACY_AXIS_MAP_KEY)).toBeNull();
 	});
 });

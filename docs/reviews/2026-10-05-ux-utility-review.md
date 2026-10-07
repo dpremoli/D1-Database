@@ -11,9 +11,9 @@ Items already tracked as open issues (#108, #100, #97, #90, #86, #81, #80, #67, 
 Items marked *(idea)* are judgement calls the reviewers did not confirm in code. Sizes are S, M
 or L. Paths are relative to the repo root.
 
-**Status:** shipped in three PRs (all merged): #123 ("Fix first" and "Small, high-value"), #124
-(the "Next" tier: P3, P4, R4, R5, D4, D3) and #125 (small high-use: R6, R10, R11, R13, P2, P11,
-D12). Their descriptions list what changed. See the **Progress checklist** below for item-by-item
+**Status:** shipped in four PRs (all merged): #123 ("Fix first" and "Small, high-value"), #124
+(the "Next" tier: P3, P4, R4, R5, D4, D3), #125 (small high-use: R6, R10, R11, R13, P2, P11,
+D12) and #127 (larger: D5, D11, P10, P6, R9). Their descriptions list what changed. See the **Progress checklist** below for item-by-item
 state; everything not ticked is backlog. Checks that need the rig or a live Directus are tracked
 in [`docs/runbooks/physical-test-backlog.md`](../runbooks/physical-test-backlog.md).
 
@@ -111,7 +111,7 @@ in [`docs/runbooks/physical-test-backlog.md`](../runbooks/physical-test-backlog.
   - [ ] ETA during hardware recording
   - [ ] The pre-Start disk prompt still uses the hidden 8 s duration
 - [ ] **R8** Fix metadata (sample, notes) inside the save dialog
-- [ ] **R9** Captures list: search, filter, bulk delete, upload progress
+- [x] **R9** Captures list — #127: search, status chips, sort, paging with totals, guarded bulk delete, "Free up space" cleanup, Upload all with progress/cancel; "partial upload" state
 - [x] **R10** Record keyboard shortcuts — #125 (Ctrl/Cmd+Enter, Ctrl/Cmd+., A, Ctrl/Cmd+N, Enter in the save dialog)
   - [ ] Not available in pop-out windows; Ctrl+N cannot be overridden in a browser tab (Electron is fine)
 - [x] **R11** "Restart recorder" — #125 (refuses while recording; confirms when the recorder doesn't answer)
@@ -133,14 +133,14 @@ in [`docs/runbooks/physical-test-backlog.md`](../runbooks/physical-test-backlog.
 - [~] **P5** Wider Compare — the difference adds a mean/RMS delta readout
   - [ ] Align by revolution or radius
   - [ ] Compare on the FFT
-- [ ] **P6** Cutting metrics (resultant, Fc/Ff/Fp, power, specific energy)
+- [x] **P6** Cutting metrics card — #127
+  - [ ] Confirm the dynamometer axis mapping per workholding and operation on the rig. Default
+    Fc=Fx, Ff=Fy, Fp=Fz (owner, 2026-10-06), remembered per operation subtype; see the
+    physical-test backlog, P6
 - [ ] **P7** Wear trend beyond peak force (mean/RMS stored per cut)
 - [ ] **P8** Saved, named markers per operation
 - [ ] **P9** Polar Plot on the dashboard (tooth-pass lines on the FFT first)
-- [~] **P10** Diagnostics across a campaign — only cluster CSVs are named after the cut
-  - [ ] Batch recipe apply
-  - [ ] Proper dialogs instead of `window.prompt` / `window.confirm`
-  - [ ] Searchable picker
+- [x] **P10** Diagnostics across a campaign — #127: recipe dialogs and import/export, searchable picker, apply recipe to selected
 - [x] **P11** Gesture help overlay; units on every signal chart — #125 (spectra are "N rms"; filter-service `/fft` now matches)
 - [ ] **P12** Scale the campaign list (pagination, faster pick)
 - [ ] **P13** Filter/diag service batch endpoints *(idea)*
@@ -154,14 +154,14 @@ in [`docs/runbooks/physical-test-backlog.md`](../runbooks/physical-test-backlog.
   - [ ] A bulk action on the samples list itself: Directus 11 extensions cannot add one
   - [ ] Scan-to-open not checked on a phone against a live Directus
   - [ ] Case-insensitive code matching
-- [ ] **D5** Sample timeline view
+- [x] **D5** Sample timeline — #127 (`d1-trace` endpoint, permission-filtered)
 - [ ] **D6** Reverse traceability breadcrumbs
 - [x] **D7** "Open in Directus" links on the lab dashboards — #123
   - [ ] "New operation for this sample": nothing can prefill the operation form yet
 - [ ] **D8** Clone / bulk create / copy-from-last
 - [x] **D9** Next sample number from the database — #123 (`next_sample_code_number()`, `d1-next-number`)
 - [x] **D10** Per-user home page and "needs attention" tiles — Explorer pages E3 (PR pending)
-- [ ] **D11** Campaign overview
+- [x] **D11** Campaign overview — #127 (counts, progress, pickers); full Campaign page with the sample × step matrix in Explorer pages E2 (PR pending)
 - [x] **D12** Saved filters — #125 (7 global bookmarks, migration 135; kept by `configure_directus.sql` re-runs)
 - [ ] **D13** Notifications on processing finish/fail *(idea)*
 - [ ] **D14** Note search UI
@@ -175,6 +175,8 @@ in [`docs/runbooks/physical-test-backlog.md`](../runbooks/physical-test-backlog.
 - [x] The finalize clipping test ignored the Lab Amp full scale (pre-existing; surfaced by R5)
 - [x] The FFT overlay from filter-service was N/√Hz on an N axis (pre-existing; surfaced by P11)
 - [x] The offline banner covered the safety-alarm banner (pre-existing)
+- [x] Re-uploading a partially uploaded capture never completed its analysis row (pre-existing; surfaced by R9)
+- [x] `f_trace_ancestors` / `f_trace_descendants` (migration 014) enumerated paths, not samples, so deep diamond genealogies blew up exponentially; fixed by migration 20261006000136 (breadth-first walk, one row per sample at its minimum depth; `d1-trace` keeps its 8 s deadline as a safety net). Real-database check: physical-test backlog, section A
 - [x] Label endpoint hardening: errors are `text/plain` with no echoed markup, and the 200-row cap is counted once
 
 ## Suggested order

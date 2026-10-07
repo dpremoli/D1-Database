@@ -5,6 +5,10 @@ import {
 } from './cloudPick';
 import type { Cache } from './liveCache';
 import { buildPath, type PathParams, type TurningSpiralParams } from './path';
+import { createMapProjector } from './mapProjector';
+import { phase0Samples, spiralAnchor, spiralPointAt } from './frmCloudShader';
+import { cacheCoversBuild, mappableWindow, parseOctreeBuild } from './octreeBuild';
+import * as THREE from 'three';
 
 describe('pickNearest', () => {
 	const pts = [{ px: 0, py: 0 }, { px: 10, py: 10 }, { px: 12, py: 10 }, { px: 100, py: 100 }];
@@ -152,6 +156,34 @@ describe('octreePathParams', () => {
 	});
 });
 
+describe('octreePathParams with a build manifest', () => {
+	const build = parseOctreeBuild({
+		schema: 1, kind: 'octree', speed_mode: 'measured', feed: 0.08, diam: 60, inner_diam: 5, ppr: 3,
+		cut_start_sec: 0.1, cut_end_sec: 0.4, crop_source: 'override',
+	})!;
+	it('takes feed, diameters, ppr and the window from the manifest, not the cache or the row', () => {
+		const c = makeCache();
+		const { path, window } = octreePathParams(c, 10, 4, build);
+		expect(path).toMatchObject({ kind: 'turning_spiral', speedMode: 'measured', feed: 0.08, diam: 60, innerDiam: 5, ppr: 3 });
+		expect(window).toEqual({ cropStartSec: Math.fround(0.1), cropEndSec: Math.fround(0.4), stride: 1 });   // float32 like t; not t[0]..t[N-1]
+	});
+	it('anchors r = 0 at the first cache sample at the manifest start', () => {
+		const c = makeCache();
+		const { path, window } = octreePathParams(c, 10, 4, build);
+		const a = buildPath(c, path, window)!;
+		expect(a.count).toBeGreaterThan(0);
+		expect(c.t[a.idx[0]]).toBeGreaterThanOrEqual(0.1 - 1e-6);
+		expect(c.t[a.idx[0]]).toBeLessThan(0.1 + 0.011);
+		expect(c.t[a.idx[a.count - 1]]).toBeLessThanOrEqual(0.4 + 1e-6);
+		expect(a.pos[0]).toBeCloseTo(30, 5);   // the manifest's diam / 2 at the anchor
+	});
+	it('keeps the row-based behaviour when there is no manifest (or null)', () => {
+		const c = makeCache();
+		expect(octreePathParams(c, 10, 4, null)).toEqual(octreePathParams(c, 10, 4));
+		expect(octreePathParams(c, 10, 4, undefined).window.cropStartSec).toBe(c.t[0]);
+	});
+});
+
 describe('displayedKeep', () => {
 	const vals = Float32Array.from([1, 5, 9]);
 	const idx = Int32Array.from([0, 1, 2]);
@@ -230,11 +262,214 @@ describe('pickSpiral', () => {
 	});
 });
 
+// A long synthetic turning-spiral cache: steady 3 rev/s, so rho winds in from the outer radius.
+function spiralCache(n: number): Cache {
+	const Fs = 5000, t = new Float32Array(n), revs = new Float32Array(n), rpm = new Float32Array(n).fill(180);
+	for (let i = 0; i < n; i++) { t[i] = i / Fs; revs[i] = (3 * i) / Fs; }
+	const z = () => new Float32Array(n);
+	return { N: n, Fs, feed: 0.05, diam: 80, csSec: 0, ceSec: (n - 1) / Fs, t, Fx: z(), Fy: z(), Fz: z(), rpm, revs };
+}
+
+describe('pickSpiral with a radius cull', () => {
+	const W = 800, H = 800;
+	// a flat top-down ortho view over +-45 mm, panned a little
+	function view(zoom = 1, cx = 1.5, cy = -2) {
+		const cam = new THREE.OrthographicCamera(-45, 45, 45, -45, 0.1, 1e6);
+		cam.position.set(cx, cy, 10); cam.zoom = zoom;
+		cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+		const proj = createMapProjector();
+		proj.setup(cam, null, W, H);
+		return proj;
+	}
+	const base: TurningSpiralParams = {
+		kind: 'turning_spiral', feed: 0.05, diam: 80, innerDiam: 0, speedMode: 'measured', rpm: 180, vc: 20, timeScale: 1, ppr: 1,
+	};
+	// clicks just beside drawn samples (so there is a winner), plus a few that land on nothing
+	function onSpiral(c: Cache, path: TurningSpiralParams, proj: ReturnType<typeof createMapProjector>,
+		indices = [50, 4000, 12345, 30001, 39000]): [number, number][] {
+		const out: [number, number][] = [[400, 400], [10, 10]];
+		for (const i of indices) {
+			const v = spiralPointAt(c, path, 0, 8, i);
+			const p = v.visible ? proj.project(v.x, v.y, 0) : null;
+			if (p) out.push([p.px + 1.3, p.py - 0.7]);
+		}
+		return out;
+	}
+
+	for (const mode of ['measured', 'rpm', 'vc'] as const) {
+		for (const stride of [1, 3, 7]) {
+			for (const innerDiam of [0, 39.5]) {
+				it(`returns the unculled winner: ${mode}, stride ${stride}, inner diameter ${innerDiam}`, () => {
+					const c = spiralCache(40000);
+					const path: TurningSpiralParams = { ...base, speedMode: mode, innerDiam };
+					const proj = view();
+					const project = (x: number, y: number) => proj.project(x, y, 0);
+					let hits = 0;
+					for (const [px, py] of onSpiral(c, path, proj)) {
+						const plain = pickSpiral(c, path, 0, 8, stride, project, px, py, 8);
+						const disc = proj.discAt(px, py, 8);
+						expect(disc).not.toBeNull();
+						const culled = pickSpiral(c, path, 0, 8, stride, project, px, py, 8, undefined, disc);
+						expect(culled).toEqual(plain);
+						if (plain) hits++;
+					}
+					expect(hits).toBeGreaterThan(0);   // not vacuous: some clicks land on the spiral
+				});
+			}
+		}
+	}
+
+	it('also agrees when keep() hides samples and the view is zoomed', () => {
+		const c = spiralCache(40000);
+		const proj = view(3, 40, 0);   // panned onto the ring so the zoomed view still sees the spiral
+		const project = (x: number, y: number) => proj.project(x, y, 0);
+		const keep = (i: number) => i % 5 !== 0;
+		let hits = 0;
+		for (const [px, py] of onSpiral(c, base, proj, Array.from({ length: 400 }, (_, k) => k * 97))) {
+			const plain = pickSpiral(c, base, 0, 8, 1, project, px, py, 12, keep);
+			const culled = pickSpiral(c, base, 0, 8, 1, project, px, py, 12, keep, proj.discAt(px, py, 12));
+			expect(culled).toEqual(plain);
+			if (plain) hits++;
+		}
+		expect(hits).toBeGreaterThan(0);
+	});
+
+	it('is faster on a 1M-sample cache (timing is logged, not asserted)', () => {
+		const c = spiralCache(1_000_000);
+		const proj = view();
+		const project = (x: number, y: number) => proj.project(x, y, 0);
+		const px = 430, py = 380;
+		// the pre-fold baseline: per-sample Vector3.project through the camera
+		const cam = new THREE.OrthographicCamera(-45, 45, 45, -45, 0.1, 1e6);
+		cam.position.set(1.5, -2, 10); cam.updateProjectionMatrix(); cam.updateMatrixWorld();
+		const v = new THREE.Vector3(), o = { px: 0, py: 0 };
+		const legacy = (x: number, y: number) => {
+			v.set(x, y, 0).project(cam);
+			if (!(Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1)) return null;
+			o.px = (v.x + 1) / 2 * W; o.py = (1 - v.y) / 2 * H;
+			return o;
+		};
+		const time = (cull: boolean) => {
+			const t0 = performance.now();
+			let r = null;
+			for (let k = 0; k < 3; k++) r = pickSpiral(c, base, 0, 200, 1, project, px, py, 8, undefined, cull ? proj.discAt(px, py, 8) : null);
+			return { ms: (performance.now() - t0) / 3, r };
+		};
+		time(true); time(false);   // warm up
+		const culled = time(true), plain = time(false);
+		const t0 = performance.now();
+		const old = pickSpiral(c, base, 0, 200, 1, legacy, px, py, 8);
+		const oldMs = performance.now() - t0;
+		console.log(`pickSpiral 1M samples: Vector3.project ${oldMs.toFixed(1)} ms, folded ${plain.ms.toFixed(1)} ms, folded + cull ${culled.ms.toFixed(1)} ms`);
+		expect(culled.r).toEqual(plain.r);
+		expect(old).toEqual(plain.r);
+	});
+});
+
 describe('settleRing', () => {
 	it('keeps the old object for sub-quarter-pixel moves', () => {
 		const cur = { x: 10, y: 10 };
 		expect(settleRing(cur, 10.1, 10.2)).toBe(cur);
 		expect(settleRing(cur, 11, 10)).toEqual({ x: 11, y: 10 });
 		expect(settleRing(null, 1, 2)).toEqual({ x: 1, y: 2 });
+	});
+});
+
+// The octree is integrated on the host in doubles from every raw sample; the browser sees a float32,
+// possibly decimated live cache. These tests build both from one double-precision truth and check the
+// map places each cache sample where the octree has it.
+describe('octree anchor: float32 + decimated cache, override mid-step, override before the cache', () => {
+	const Fs = 2560, FEED = 0.05, DIAM = 80, PPR = 2;
+	const rawT = (k: number) => k / Fs;                              // doubles, like MATLAB's Time column
+	const rawRevs = (k: number) => 3 * rawT(k) + 2 * rawT(k) ** 2;   // cumulative raw revs (double)
+	// A cache over raw samples [k0, k0 + n*step), every `step`-th, stored as float32 like write_live_cache.
+	function cacheOver(k0: number, n: number, step: number): { c: Cache; raw: number[] } {
+		const raw = Array.from({ length: n }, (_, j) => k0 + j * step);
+		const c: Cache = {
+			N: n, Fs, feed: FEED, diam: DIAM, csSec: rawT(k0), ceSec: rawT(raw[n - 1]),
+			t: Float32Array.from(raw, rawT), revs: Float32Array.from(raw, rawRevs),
+			Fx: new Float32Array(n), Fy: new Float32Array(n), Fz: new Float32Array(n), rpm: new Float32Array(n).fill(180),
+		};
+		return { c, raw };
+	}
+	// The octree's own position of raw sample k for an octree starting at raw sample kc.
+	const truth = (k: number, kc: number) => {
+		const r = (rawRevs(k) - rawRevs(kc)) / PPR, rho = DIAM / 2 - FEED * r;
+		return { x: rho * Math.cos(2 * Math.PI * r), y: rho * Math.sin(2 * Math.PI * r) };
+	};
+	const manifest = (kc: number, ke: number, revs = true) => parseOctreeBuild({
+		schema: 1, kind: 'octree', speed_mode: 'measured', feed: FEED, diam: DIAM, inner_diam: 0, ppr: PPR,
+		cut_start_sec: rawT(kc), cut_end_sec: rawT(ke), crop_source: 'override', ...(revs ? { revs_cs: rawRevs(kc) } : {}),
+	})!;
+	const project = (x: number, y: number) => ({ px: 400 + x * 20, py: 400 - y * 20 });
+	// first k at/after `from` whose t is not a float32 value and rounds BELOW the double (a start the
+	// double comparison would skip)
+	const roundsDown = (from: number) => { let k = from; while (!(Math.fround(rawT(k)) < rawT(k))) k++; return k; };
+
+	// Click each of a few cache samples at the octree's position for it; the map must offer that sample
+	// (or an immediate neighbour on the same pixel) at the octree's position for it.
+	function expectAligned(c: Cache, raw: number[], build: ReturnType<typeof manifest>, kc: number, js: number[]) {
+		const g = octreePathParams(c, 0, 1, build);
+		for (const j of js) {
+			const tr = truth(raw[j], kc), p = project(tr.x, tr.y);
+			const hit = pickSpiral(c, g.path as TurningSpiralParams, g.window.cropStartSec, g.window.cropEndSec, 1, project, p.px, p.py, 2, undefined, null, g.anchor)!;
+			expect(hit, `sample ${j}`).not.toBeNull();
+			expect(Math.abs(hit.i - j)).toBeLessThanOrEqual(1);
+			const at = truth(raw[hit.i], kc);
+			expect(hit.x).toBeCloseTo(at.x, 3);
+			expect(hit.y).toBeCloseTo(at.y, 3);
+		}
+	}
+
+	it('float32 cache, non-representable start: sample 0 is inside the window and on the octree', () => {
+		const k0 = roundsDown(6758);
+		const { c, raw } = cacheOver(k0, 400, 1);
+		const b = manifest(k0, raw[399]);
+		// the old comparison (the double start vs float32 t) drops sample 0
+		expect(phase0Samples(c, rawT(k0), rawT(raw[399]), 1).k0).toBe(1);
+		const g = octreePathParams(c, 0, 1, b);
+		expect(phase0Samples(c, g.window.cropStartSec, g.window.cropEndSec, 1)).toMatchObject({ k0: 0, n: 400 });
+		expect(mappableWindow(c, b)!.start).toBe(c.t[0]);
+		expectAligned(c, raw, b, k0, [0, 1, 40, 399]);
+	});
+	it('decimated cache, start mid-step: anchored on the host revs_cs, not on the next cache sample', () => {
+		const step = 4, k0 = roundsDown(6000), kc = k0 + 2 * step + 1;   // between cache samples 2 and 3
+		const { c, raw } = cacheOver(k0, 300, step);
+		const b = manifest(kc, raw[299]);
+		// the old anchor (first cache sample >= start) is up to a step late: visibly off the octree
+		const lateJ = c.t.findIndex((t) => t >= rawT(kc));
+		const late = spiralPointAt(c, octreePathParams(c, 0, 1, b).path as any, rawT(kc), rawT(raw[299]), 60);
+		const tr = truth(raw[60], kc);
+		expect(Math.hypot(late.x - tr.x, late.y - tr.y)).toBeGreaterThan(0.02);
+		expect(raw[lateJ]).toBeGreaterThan(kc);
+		expectAligned(c, raw, b, kc, [lateJ, lateJ + 1, 60, 299]);
+		expect(mappableWindow(c, b)!.start).toBe(Math.fround(rawT(kc)));   // the window starts at the crop, between cache samples
+	});
+	it('start before the cache: maps the overlap, anchored on the host revs_cs', () => {
+		const step = 2, k0 = 5000, kc = k0 - 300;   // the octree starts 300 raw samples before the cache
+		const { c, raw } = cacheOver(k0, 200, step);
+		const b = manifest(kc, raw[199]);
+		expect(cacheCoversBuild(c, b)).toBe(true);
+		expect(mappableWindow(c, b)).toEqual({ start: c.t[0], end: Math.fround(rawT(raw[199])) });
+		expectAligned(c, raw, b, kc, [0, 1, 100, 199]);
+		// without revs_cs there is no anchor to find in the cache: not mappable (the older behaviour)
+		expect(mappableWindow(c, manifest(kc, raw[199], false))).toBeNull();
+	});
+	it('a manifest without revs_cs still includes a float32 t[0] that rounded below the start', () => {
+		const k0 = roundsDown(7000);
+		const { c, raw } = cacheOver(k0, 300, 1);
+		const b = manifest(k0, raw[299], false);
+		const g = octreePathParams(c, 0, 1, b);
+		expect(g.anchor).toEqual(spiralAnchor(c, g.window.cropStartSec));
+		expect(g.anchor.revsCs).toBe(c.revs[0]);
+		expect(phase0Samples(c, g.window.cropStartSec, g.window.cropEndSec, 1).k0).toBe(0);
+		expectAligned(c, raw, b, k0, [0, 1, 150]);
+	});
+	it('the crop ends on the float32 end sample too', () => {
+		const k0 = roundsDown(6758), ke = (() => { let k = k0 + 200; while (!(Math.fround(rawT(k)) > rawT(k))) k++; return k; })();
+		const { c } = cacheOver(k0, 300, 1);
+		const g = octreePathParams(c, 0, 1, manifest(k0, ke));
+		const s = phase0Samples(c, g.window.cropStartSec, g.window.cropEndSec, 1);
+		expect(k0 + s.k0 + s.n - 1).toBe(ke);   // the sample at ke is drawn (a double end would stop one short)
 	});
 });
