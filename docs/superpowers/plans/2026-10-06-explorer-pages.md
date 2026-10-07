@@ -24,7 +24,7 @@ Delete this plan once the batch has shipped (see `docs/superpowers/README.md`).
 | E3 — Projects, Project, Home "my work" | spec stage 3 (D10) | `agent-ac65ea5bc992c974e` | merged (`1107cb1`); `directus-ui-reviewer`: 0 blocking, 7 should-fix → E3-fix in `agent-ad01616309859b46c`, merged |
 | E4 — Operation and Test pages; links; QR target | spec stage 4 | `agent-a783b7731c3e45aa8` | merged (`277f9fd`); E4-fix (`02f5900`) and E4-mig (`7ba8af3`: migrations renumbered 138/139, sample-delete keeps multi-subject tests, edge delete blocked) merged; origin/main merged (`112abe3`) |
 | E5 — Row-level visibility | ADR-0011 | — | waits for owner decisions |
-| Final review, CI, PR | all | main checkout | in progress: whole-branch `directus-ui-reviewer` + migration re-review of 138/139 |
+| Final review, CI, PR | all | main checkout | migration re-review of 138/139: 138 clean; 139 1 blocking (back-fill re-copy resurrects removed samples) + 4 should-fix → E4-mig2 in `agent-a1980b630c1a61ec3`, in progress; whole-branch `directus-ui-reviewer` running |
 
 ## E1. Kit and Sample page
 
