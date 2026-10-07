@@ -100,9 +100,10 @@ Investigator* and *Secondary Investigators* fields of the project.
 | Operation, test | its owner, or an owner or co-owner of the sample it acts on | its owner | anyone |
 | Campaign | owner | owner | anyone |
 | Project | PI | PI | anyone |
-| Attached rows (co-owners, genealogy, stock provenance, data files, force analyses, test subjects) | whoever may edit the record they belong to | same, except force analyses (no delete) | anyone, except the rows below |
+| Attached rows (genealogy, stock provenance, data files, force analyses) | whoever may edit the record they belong to | same, except force analyses (no delete) | anyone, except the rows below |
 | Co-owner of a sample | whoever may edit the sample | same | only if you may edit that sample |
 | Investigator of a project | the PI | the PI | only the PI |
+| Test subject (the sample or insert edge a test acts on) | whoever may edit the test | same | only if you may edit that test |
 | Sample in a campaign | the campaign's owner, or an owner or co-owner of the sample | same | only if you may edit **both** the campaign and the sample |
 | Fast run data, project rollup | nobody (read only) | nobody | nobody |
 | **People** | everything except the login (`user_id`) | admins only | a row with no login or your own |
@@ -114,8 +115,8 @@ record hands it over: you lose edit rights if you are not also a co-owner. Only 
 change its Owner (samples, operations and tests; the `d1-access-guard` hook refuses anyone else,
 including a co-owner, so nobody can give themselves delete rights). Admins can always change it.
 
-The rows that grant access (co-owners, investigators, samples in a campaign) cannot be used to grant
-yourself access: creating one, or moving it to another sample, project or campaign, is refused
+The rows that grant access (co-owners, investigators, samples in a campaign, a test's subjects) cannot be used to grant
+yourself access: creating one, or moving it to another sample, project, campaign or test, is refused
 unless you may edit the record it attaches to (the `d1-access-guard` hook; the error says which).
 So to put a sample in someone else's campaign, add that person as a co-owner of the sample first and
 let them add it. Only an admin can link a login to a People row: a member who could would inherit
@@ -139,7 +140,7 @@ anything: create the user first, then ask an admin to link it on their People ro
 - **Records with no owner** are visible only through their project, campaign or co-owners. Assign an
   owner (`scripts/transfer_sample_ownership.py`, or edit the field); the migration prints how many
   there were when it ran.
-- **Creating** a record is not filtered (Directus ignores filters on create), only the three
+- **Creating** a record is not filtered (Directus ignores filters on create), only the four
   access-granting rows above are checked, and only on the Directus API (a SQL import is not). A
   member can point their own record at a project they cannot read and so read that project's row
   (not its samples); the audit log records who did it.

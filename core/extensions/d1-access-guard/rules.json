@@ -80,6 +80,44 @@
           ]
         }
       }
+    ],
+    "test_sessions_subject": [
+      {
+        "field": "test_sessions_id",
+        "parent": "test_sessions",
+        "key": "session_id",
+        "filter": {
+          "_or": [
+            {
+              "owner_person_id": {
+                "user_id": {
+                  "_eq": "$CURRENT_USER"
+                }
+              }
+            },
+            {
+              "sample_id": {
+                "owner_person_id": {
+                  "user_id": {
+                    "_eq": "$CURRENT_USER"
+                  }
+                }
+              }
+            },
+            {
+              "sample_id": {
+                "co_owners": {
+                  "_some": {
+                    "user_id": {
+                      "_eq": "$CURRENT_USER"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
     ]
   },
   "ownerGuards": {

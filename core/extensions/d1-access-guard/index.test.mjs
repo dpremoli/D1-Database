@@ -62,9 +62,17 @@ test('registers an items.create and an items.update filter', () => {
   assert.deepEqual(Object.keys(mount().filters).sort(), ['items.create', 'items.update']);
 });
 
-test('the shipped rules guard exactly the three visibility junctions', () => {
-  assert.deepEqual(Object.keys(RULES).sort(), ['campaign_samples', 'project_investigators', 'sample_co_owners']);
+test('the shipped rules guard exactly the four visibility junctions', () => {
+  assert.deepEqual(Object.keys(RULES).sort(), [
+    'campaign_samples',
+    'project_investigators',
+    'sample_co_owners',
+    'test_sessions_subject',
+  ]);
   assert.deepEqual(RULES.campaign_samples.map((c) => c.parent), ['campaigns', 'physical_samples']);
+  assert.deepEqual(RULES.test_sessions_subject.map((c) => [c.field, c.parent, c.key]), [
+    ['test_sessions_id', 'test_sessions', 'session_id'],
+  ]);
   for (const checks of Object.values(RULES)) {
     for (const c of checks) assert.ok(JSON.stringify(c.filter).includes('$CURRENT_USER'), c.parent);
   }
@@ -131,6 +139,34 @@ test('campaign_samples create needs the campaign AND the sample', async () => {
   );
 });
 
+// A subject row sets test_sessions.sample_id (migration 139), and a sample's owner reads the tests on it.
+// Without this guard a member could add their own sample to a colleague's test and read and edit it.
+test('test_sessions_subject create is checked against the test (derived sample_id self-grant)', async () => {
+  const meta = { collection: 'test_sessions_subject' };
+  const payload = { test_sessions_id: 't1', collection: 'physical_samples', item: 'my-sample' };
+  const ok = mount();
+  assert.equal(await ok.filters['items.create'](payload, meta, ctx()), payload);
+  assert.equal(ok.log.reads.length, 1);
+  assert.equal(ok.log.reads[0].collection, 'test_sessions');
+  assert.deepEqual(ok.log.reads[0].query.filter._and[0], { session_id: { _eq: 't1' } });
+  const sent = JSON.stringify(ok.log.reads[0].query.filter._and[1]);
+  assert.ok(sent.includes('user-1') && sent.includes('owner_person_id'), "the test's update rule, as the caller");
+
+  const { filters } = mount({ canUpdate: (c) => c !== 'test_sessions' });
+  await assert.rejects(filters['items.create'](payload, meta, ctx()), denied(/test_sessions t1/));
+});
+
+test('test_sessions_subject update: repointing the test is checked, naming another item is not', async () => {
+  const { filters, log } = mount({ canUpdate: () => false });
+  const database = fakeDb([{ id: 9, test_sessions_id: 't1' }]);
+  const meta = { collection: 'test_sessions_subject', keys: [9] };
+  await assert.rejects(filters['items.update']({ test_sessions_id: 't2' }, meta, ctx({ database })), denied(/test_sessions t2/));
+  // the row already belongs to a test the caller could change; swapping its item grants nothing new
+  await filters['items.update']({ item: 'another' }, meta, ctx({ database }));
+  await filters['items.update']({ test_sessions_id: 't1' }, meta, ctx({ database }));
+  assert.equal(log.reads.length, 1);
+});
+
 test('an array payload checks every item', async () => {
   const { filters } = mount({ canUpdate: (_c, id) => id !== 's2' });
   await assert.rejects(
@@ -156,7 +192,7 @@ test('admins and internal calls are not checked', async () => {
 
 test('other collections are left alone', async () => {
   const { filters, log } = mount({ canUpdate: () => false });
-  for (const collection of ['physical_samples', 'campaigns', 'sample_genealogy', 'test_sessions_subject', undefined]) {
+  for (const collection of ['physical_samples', 'campaigns', 'sample_genealogy', 'session_data_files', undefined]) {
     await filters['items.create']({ sample_id: 's1' }, { collection }, ctx());
     await filters['items.update']({ sample_id: 's1' }, { collection, keys: [1] }, ctx());
   }

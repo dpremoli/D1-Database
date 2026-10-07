@@ -12,7 +12,9 @@
     "'custom' holds the rows that need more than a filter: per collection and action, any of permissions, validation and",
     "fields (a list; written as the comma-separated text Directus stores). 'guards' lists the junctions whose rows grant",
     "visibility: Directus does not filter create, so the d1-access-guard hook (core/extensions/d1-access-guard) refuses",
-    "to create or repoint one unless the caller passes the parent's update rule. gen_access_rules.py writes that rule",
+    "to create or repoint one unless the caller passes the parent's update rule. A junction also counts when a column a",
+    "read path uses is derived from it: test_sessions.sample_id is kept equal to the first sample of test_sessions_subject",
+    "(migration 139), so adding a subject row to a test can change who reads that test. gen_access_rules.py writes that rule",
     "into core/extensions/d1-access-guard/rules.json. 'field' is the junction's FK to the parent, 'key' the parent's primary key.",
     "'owner_guards' lists the records whose update rule is wider than their delete rule (co-owners may update a sample, only the",
     "owner may delete it). Changing the owner column there would hand delete rights to the editor, so the same hook refuses an",
@@ -119,7 +121,8 @@
     "campaign_samples": [
       {"field": "campaign_id", "parent": "campaigns", "key": "campaign_id", "rule": "update"},
       {"field": "sample_id", "parent": "physical_samples", "key": "sample_id", "rule": "update"}
-    ]
+    ],
+    "test_sessions_subject": [{"field": "test_sessions_id", "parent": "test_sessions", "key": "session_id", "rule": "update"}]
   },
   "owner_guards": {
     "physical_samples": {"field": "owner_person_id", "key": "sample_id", "value_key": "person_id"},

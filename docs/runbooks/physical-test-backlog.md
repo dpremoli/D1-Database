@@ -521,6 +521,14 @@ migration 141 prints about ownerless records.
   request's transaction; if a nested create is wrongly refused, the hook's `database` is not the
   transaction and that needs fixing). Remove B as investigator and re-add via A: works. Since:
   Explorer pages E5 fix (PR pending).
+- [ ] **E5 r2 — nobody can attach their sample to someone else's test (`test_sessions_subject`).** A
+  owns test T (on A's sample SA); B owns sample SB and is unrelated to T. As B: `POST
+  /items/test_sessions_subject {"test_sessions_id": T, "collection": "physical_samples", "item": SB}`
+  answers **403 FORBIDDEN** (message names the test), no row is created, and B still cannot read T.
+  The same POST by A, or by the admin, works. A creating a **new test with a sample in the form** (the
+  *Subject* field) still works. Naming a sample A cannot read on A's own test is allowed (A reads
+  the test; SB's owner can then read and edit it): confirm and record that this is what you want
+  (ADR-0011 decision 5). Since: Explorer pages E5 r2 (PR pending).
 - [ ] **E5 fix — a PI sees the project's campaigns' records.** B is PI of project P2 and owns nothing
   else. A creates a campaign in P2, a sample in that campaign (the sample's own project left empty)
   and an operation and a test on it with no project of their own. B sees the campaign, the sample, the

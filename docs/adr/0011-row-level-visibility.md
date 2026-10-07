@@ -47,17 +47,29 @@ UUID columns are hidden backups (`20260703000062_people_directus_meta.sql`) and 
 
 Decisions after the review of the first implementation (2026-10-07):
 
-5. **Self-grant is blocked.** Three junctions grant visibility when a row is written: a
+5. **Self-grant is blocked.** Four junctions grant visibility when a row is written: a
    `sample_co_owners` row (the co-owner reads and edits the sample), a `project_investigators` row
-   (the investigator reads everything in the project) and a `campaign_samples` row (the campaign's
-   owner reads the sample). Directus does not filter create, so a member could grant themselves
-   access by creating one. The `d1-access-guard` hook (below) refuses a create, or an update that
-   repoints the parent key, unless the caller may **update the parent**: the sample for
-   `sample_co_owners`, the project (its PI) for `project_investigators`, and for `campaign_samples`
+   (the investigator reads everything in the project), a `campaign_samples` row (the campaign's
+   owner reads the sample) and a `test_sessions_subject` row. The last one is indirect: migration 139
+   keeps `test_sessions.sample_id` equal to the first sample of the test's subject rows (lowest
+   junction id), and the test read and update rules go through `sample_id`, so a member who added a
+   subject row naming **their own** sample to a colleague's test (choosing a low id for the row) would
+   become that test's reader and editor. Directus does not filter create, so a member could grant
+   themselves access by creating one. The `d1-access-guard` hook (below) refuses a create, or an
+   update that repoints the parent key, unless the caller may **update the parent**: the sample for
+   `sample_co_owners`, the project (its PI) for `project_investigators`, the test (its owner, or an
+   owner or co-owner of its sample) for `test_sessions_subject`, and for `campaign_samples`
    **both** the campaign (its owner) **and** the sample (owner or co-owner of it). The sample half is
    the ruling for campaigns: without it a campaign owner could add any sample to their campaign and
    read it. A sample owner who wants a sample in someone else's campaign makes that person its
    co-owner, who then adds it. Deleting a `campaign_samples` row stays open to either side.
+   For a subject row the guard does **not** also require that the caller can read the sample (or
+   insert edge) it names. Naming a sample you cannot read gives you nothing (the test is already
+   yours to update, `sample_id` reads back as hidden, no rule grants a sample through a test); its
+   effect is that the **sample's** owner and co-owners can then read and edit your test, which is the
+   same trade as adding them as collaborators and is visible on the test. A member who does not want
+   that does not add the subject. Any later rule that reads a record **through a derived column**
+   needs the junction it is derived from in `guards`; a pytest enforces this for `sample_id`.
 6. **The audit log is for admins only.** Lab Member has no grant on `audit_logs`: it holds the old
    and new values of every change, including records the member cannot see, and has no owner column
    to filter on. No extension reads it as a member (checked).
@@ -117,7 +129,7 @@ the project is read-only):
 campaigns by their owner; projects by their PI.
 
 **Create:** any member, with no filter (Directus does not apply item filters to create), except the
-three junctions that grant visibility, which the `d1-access-guard` hook checks (decision 5). The
+four junctions that grant visibility, which the `d1-access-guard` hook checks (decision 5). The
 `d1-default-owner` hook makes the creator the owner of a new sample, operation, test or
 campaign, and the PI of a new project, so the creator can read and edit what they just made.
 
@@ -130,7 +142,7 @@ the parent's update rule:
 | `sample_genealogy` | read: either the child or the parent sample; update and delete: the child sample's update rule |
 | `campaign_samples` | read: the campaign's or the sample's read rule; update and delete: the campaign's owner or the sample's owner or co-owner; create (or repointing a key): the campaign's update rule **and** the sample's update rule (guard) |
 | `operation_data_files`, `machining_force_analysis`, `fast_run_data` | the operation (`operation_id`); `fast_run_data` has read only and `machining_force_analysis` has no delete, as before |
-| `session_data_files`, `test_sessions_subject` | the test (`session_id`, `test_sessions_id`) |
+| `session_data_files`, `test_sessions_subject` | the test (`session_id`, `test_sessions_id`); creating a `test_sessions_subject` row (or repointing its test) needs the test's update rule (guard) |
 | `project_investigators` | read: the project's read rule; update and delete: the project's PI; create (or repointing the project): the project's update rule, i.e. the PI (guard) |
 | `project_rollup` (read only) | the project's PI and investigators only |
 
@@ -177,7 +189,7 @@ The rules are documented by intent in `docs/wiki/database/roles-and-permissions.
 drop-Directus drill (ADR-0002) can re-implement them.
 
 **The guard hook.** `core/extensions/d1-access-guard` (a plain `index.js` hook, like
-`d1-default-owner`) registers `items.create` and `items.update` filters for the three junctions of
+`d1-default-owner`) registers `items.create` and `items.update` filters for the four junctions of
 decision 5. It reads `rules.json`, which `gen_access_rules.py --write` generates from the
 `guards` section of `access_rules.json` and which holds each parent's **own update filter**, so the
 rule is written once. The hook runs `ItemsService.readByQuery` on the parent with the caller's
@@ -248,7 +260,7 @@ Two schema changes make the filters expressible:
   `subject` alias cannot be traversed cheaply in a filter.
 - **`directus_files` is unchanged.** Any member can read any file, and `/assets/<id>` serves the
   bytes. The Phase 9 export-control item covers it.
-- **Create is filtered only for the three visibility junctions.** Directus ignores item filters on
+- **Create is filtered only for the four visibility junctions.** Directus ignores item filters on
   create; the guard hook (decision 5) closes the junctions, and only on the Directus API. Other
   create paths (a SQL import, `migrate_legacy.py`) are not checked, and neither is a record's own
   foreign key: a member who sets a sample's, operation's, test's or campaign's `project_id` to a
@@ -319,7 +331,7 @@ Two schema changes make the filters expressible:
   and the path resolver.
 - `core/extensions/d1-default-owner/index.test.mjs`: the hook defaults the owner on samples,
   operations, tests and campaigns, and the PI on projects.
-- `core/extensions/d1-access-guard/index.test.mjs`: creates and parent-key updates of the three
+- `core/extensions/d1-access-guard/index.test.mjs`: creates and parent-key updates of the four
   junctions are refused without the right (campaign_samples: campaign and sample), allowed with it,
   admins and internal calls bypass, and the read runs as the caller. Owner changes on a sample,
   operation or test: refused for a co-owner, allowed for the owner and for an admin, a payload
