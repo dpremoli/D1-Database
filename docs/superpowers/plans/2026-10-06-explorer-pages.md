@@ -20,9 +20,9 @@ Delete this plan once the batch has shipped (see `docs/superpowers/README.md`).
 | Stream | Scope | Worktree / branch | State |
 |---|---|---|---|
 | E1 — Kit and Sample page | spec stage 1 | `agent-a75d68373a9795e38` | merged (`5fbba12`); coordinator fix: co-owner names, admin build docs. Lineage graph and QR action deferred to E4 |
-| E2 — Campaign page and matrix | spec stage 2 | — | waits for E1 |
-| E3 — Projects, Project, Home "my work" | spec stage 3 (D10) | — | waits for E1 |
-| E4 — Operation and Test pages; links; QR target | spec stage 4 | — | waits for E1 |
+| E2 — Campaign page and matrix | spec stage 2 | (relaunched 2026-10-07) | in progress; first run lost to a usage-limit stop and container reclaim, nothing committed |
+| E3 — Projects, Project, Home "my work" | spec stage 3 (D10) | (relaunched 2026-10-07) | in progress; first run lost to a usage-limit stop and container reclaim, nothing committed |
+| E4 — Operation and Test pages; links; QR target | spec stage 4 | (relaunched 2026-10-07) | in progress; first run lost to a usage-limit stop and container reclaim, nothing committed |
 | E5 — Row-level visibility | ADR-0011 | — | waits for owner decisions |
 | /simplify, review, CI, PR | all | main checkout | — |
 
