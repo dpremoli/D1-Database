@@ -88,7 +88,8 @@ review subagent with `force-app-conventions` preloaded. It keeps shared notes in
 `.claude/agent-memory/force-app-reviewer/`. Two implementation profiles run plan streams in their
 own worktrees: [`force-plotting-implementer`](./.claude/agents/force-plotting-implementer.md)
 (`packages/force-plotting`) and [`directus-ui-implementer`](./.claude/agents/directus-ui-implementer.md)
-(the Directus front end, with `directus-ui-conventions` preloaded). [`.claude/settings.json`](./.claude/settings.json)
+(the Directus front end, with `directus-ui-conventions` preloaded), and
+[`directus-ui-reviewer`](./.claude/agents/directus-ui-reviewer.md) is its read-only reviewer. [`.claude/settings.json`](./.claude/settings.json)
 logs each skill use to the gitignored `.claude/skill-usage.log`
 (`cut -f2 .claude/skill-usage.log | sort | uniq -c`), so unused skills can be pruned. The rest of
 `.claude/` (local settings, memory, plans) stays gitignored, and so does any skill's
