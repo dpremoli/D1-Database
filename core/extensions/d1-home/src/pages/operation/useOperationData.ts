@@ -1,23 +1,12 @@
 import { onBeforeUnmount, ref, watch, type Ref } from 'vue';
 import {
-	errorText, isNotVisible, linkedFiles, paramColumns, paramRows, shareFiles, useFieldDefs, useItems, useRequestGate,
-	type LinkedFile, type ParamRow,
+	LIST_CAP, errorText, isNotVisible, linkedFiles, paramColumns, paramRows, shareFiles, useFieldDefs, useItems, useRequestGate,
+	useSections, type LinkedFile, type ParamRow,
 } from '@d1/ui';
 
 // Everything the Operation page reads, as the signed-in user. The operation itself decides between
 // "page" and "Not found or not visible to you"; every other block is a section that loads in
 // parallel and fails on its own (same pattern as the Sample page).
-
-// Force analyses shown for one operation. One more is read so the page can say when it stops short.
-export const FORCE_CAP = 200;
-
-export interface Section<T> {
-	data: T;
-	loading: boolean;
-	error: string;
-}
-
-const section = <T>(initial: T) => ref<Section<T>>({ data: initial, loading: false, error: '' }) as Ref<Section<T>>;
 
 const OPERATION_FIELDS = [
 	'operation_id', 'pass_code', 'operation_sequence', 'operation_date', 'process_category', 'operator_name',
@@ -39,6 +28,7 @@ export function useOperationData(id: Ref<string>) {
 	const { getItem, getItems } = useItems();
 	const { getFieldDefs } = useFieldDefs();
 	const gate = useRequestGate();
+	const { section, fill } = useSections(gate);
 
 	const operation = ref<any | null>(null);
 	const loading = ref(false);
@@ -50,16 +40,6 @@ export function useOperationData(id: Ref<string>) {
 	const fast = section<any | null>(null);
 	const files = section<LinkedFile[]>([]);
 	const shared = section<LinkedFile[]>([]);
-
-	async function fill<T>(target: Ref<Section<T>>, token: number, what: string, read: () => Promise<T>) {
-		target.value = { ...target.value, loading: true, error: '' };
-		try {
-			const data = await read();
-			if (gate.isCurrent(token)) target.value = { data, loading: false, error: '' };
-		} catch (e: any) {
-			if (gate.isCurrent(token)) target.value = { ...target.value, loading: false, error: `Could not load ${what}: ${errorText(e)}` };
-		}
-	}
 
 	async function readParams(opId: string, category: string | null): Promise<ParamRow[]> {
 		if (!category) return [];
@@ -112,7 +92,7 @@ export function useOperationData(id: Ref<string>) {
 						'directus_files_id.id', 'directus_files_id.filename_download', 'directus_files_id.title',
 					],
 					sort: ['id'],
-					limit: FORCE_CAP + 1,
+					limit: LIST_CAP + 1,
 				}),
 			),
 			fill(fast, token, 'the FAST run', async () => {

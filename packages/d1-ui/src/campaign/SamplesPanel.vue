@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
-import { errorText } from '../format';
+import { errorText, isDuplicate } from '../format';
 import { useItems } from '../composables/useItems';
 import { useRequestGate } from '../composables/useRequestGate';
 import LoadState from '../components/LoadState.vue';
 import RecordLink from '../components/RecordLink.vue';
 import Section from '../components/Section.vue';
 import PickerBox from './PickerBox.vue';
-import { isDuplicate } from './errors';
-import { LIST_CAP, type CampaignSection } from './useCampaignData';
+import { inheritCampaignProject } from './assign';
+import { LIST_CAP, type SectionState } from '../composables/useSections';
 
 // The campaign's samples (the `campaign_samples` junction, plus samples that only appear through an
 // operation or test, flagged) and the picker that adds samples to the junction. Removing deletes
@@ -19,7 +19,7 @@ const props = defineProps<{
 	/** `overview.sampleRows` */
 	rows: any[];
 	/** The junction rows (their own ids are needed to remove a sample). */
-	junction: CampaignSection<any[]>;
+	junction: SectionState<any[]>;
 }>();
 const emit = defineEmits<{ (e: 'changed'): void }>();
 
@@ -91,6 +91,9 @@ async function add(id: string, code?: string | null) {
 	actionError.value = '';
 	try {
 		await api.post('/items/campaign_samples', { campaign_id: props.campaignId, sample_id: id });
+		// A sample added to a campaign also gets the campaign's project when it has none (never
+		// overwriting one).
+		actionError.value = await inheritCampaignProject(api, 'physical_samples', 'sample_id', id, props.campaignId, code || 'The sample');
 		results.value = results.value.filter((r) => r.sample_id !== id);
 	} catch (e) {
 		// Already linked (another tab, or a stale list): not an error, the reload shows it.

@@ -373,6 +373,15 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   open their Content forms, and a project with more than 1000 operations still links its rows.
   Rows from a campaign-only operation (operation has no project, campaign has) link too; an
   operation of another project does not appear. Since: Explorer pages E4-fix (PR pending).
+- [ ] **E-final: campaign pickers set the project; project counts agree with campaign cards.** In
+  a campaign that belongs to a project, add an operation, a test session and a sample that have no
+  project (Operations, Tests and Samples panels). Expect each record's `project_id` to become the
+  campaign's project (check in the Content form). Add one that already has another project:
+  it keeps its own. Open the Project page: the Operations, Tests and Samples tiles, the Equipment
+  used list and the Activity sparkline include those records even for ones added before this
+  change (project empty, campaign set), and the totals are not smaller than the campaign cards'
+  sums. Add an operation that someone else just added elsewhere (two tabs): the panel says
+  "... is already in another campaign." and nothing changes. Since: Explorer pages E-final (PR pending).
 
 ## B. Force rig (NI-DAQ, Lab Amp, packaged Windows app)
 

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { RecordLink, Section, StatusBadge, asRecord, humanise } from '@d1/ui';
-import type { Subjects } from './useTestData';
+import { RecordLink, Section, StatusBadge, asRecord, humanise, type TestSubjects } from '@d1/ui';
 
-// What the test was run on. A test made through the form points at its target through the subject
-// junction (a sample or, for tool tests, an insert edge); older rows carry a single sample_id.
-// Both are shown, without repeating a sample that appears in each.
-const props = defineProps<{ sample: unknown; subjects: Subjects }>();
+// What the test was run on: the subjects of the test_sessions_subject junction (samples, or for
+// tool tests an insert edge). `sample` is the derived primary sample (test_sessions.sample_id, kept
+// equal to the junction's first sample by migration 139, or the only link of an older row), so it
+// normally repeats the first junction sample; it is listed once, and still shows when the junction
+// cannot be read.
+const props = defineProps<{ sample: unknown; subjects: TestSubjects }>();
 
 const samples = computed(() => {
 	const out = [...props.subjects.samples];

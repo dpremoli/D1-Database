@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { LoadState, ProgressBar, Section, campaignTypeLabel, collectionRoute, formatDate, humanise, recordRoute } from '@d1/ui';
-import type { Block } from './useProjectData';
-import { LIST_CAP } from './useProjectData';
+import {
+	LIST_CAP, LoadState, ProgressBar, Section, campaignTypeLabel, collectionRoute, formatDate, humanise, recordRoute,
+	type SectionState,
+} from '@d1/ui';
 import { computed } from 'vue';
 
 // The project's campaigns as cards: type, owner, status, dates, plain counts and one progress bar
 // ("force analysed n / m" for a machining trial, "tests complete n / m" for a testing campaign).
 // The numbers are computed here from the real collections; the Campaign page has its own roll-up.
-const props = defineProps<{ campaigns: Block<any[]> }>();
+const props = defineProps<{ campaigns: SectionState<any[]> }>();
 
 const rows = computed(() => props.campaigns.data.slice(0, LIST_CAP));
 const capped = computed(() => props.campaigns.data.length > LIST_CAP);

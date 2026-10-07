@@ -3,7 +3,8 @@ import { computed } from 'vue';
 import ProgressBar from '../components/ProgressBar.vue';
 import StatTile from '../components/StatTile.vue';
 import StatusBadge from '../components/StatusBadge.vue';
-import { TEST_STATUS_ORDER, type Overview } from './rollup';
+import { TEST_STATUS_ORDER } from '../status';
+import type { Overview } from './rollup';
 
 // Counts and progress bars of a campaign, from the roll-up (`buildOverview`).
 const props = defineProps<{

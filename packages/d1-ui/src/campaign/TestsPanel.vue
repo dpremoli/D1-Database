@@ -9,10 +9,11 @@ import RecordLink from '../components/RecordLink.vue';
 import Section from '../components/Section.vue';
 import StatusBadge from '../components/StatusBadge.vue';
 import PickerBox from './PickerBox.vue';
-import { LIST_CAP, type CampaignSection } from './useCampaignData';
+import { campaignAssignPatch, inheritCampaignProject, lostRaceMessage } from './assign';
+import { LIST_CAP, type SectionState } from '../composables/useSections';
 
 // The campaign's test sessions and the picker that adds sessions that are in no campaign yet.
-const props = defineProps<{ campaignId: string; rows: any[]; section: CampaignSection<any[]> }>();
+const props = defineProps<{ campaignId: string; rows: any[]; section: SectionState<any[]> }>();
 const emit = defineEmits<{ (e: 'changed'): void }>();
 
 const api = useApi();
@@ -73,26 +74,20 @@ async function runSearch() {
 }
 
 // The change is conditional so two people (or two tabs) cannot take the same session: adding only
-// touches a session that is still in no campaign, removing only one that is in this campaign.
-// Directus answers a batch update with the rows it changed, so an empty answer means someone got
-// there first.
+// touches a session that is still in no campaign, removing only one that is in this campaign
+// (campaignAssignPatch). Directus answers a batch update with the rows it changed, so an empty
+// answer means someone got there first.
 async function setCampaign(id: string, campaign: string | null, label: string) {
 	if (busy.value) return;
 	busy.value = id;
 	actionError.value = '';
 	try {
-		const res = await api.patch('/items/test_sessions', {
-			query: {
-				filter: {
-					session_id: { _eq: id },
-					campaign_id: campaign ? { _null: true } : { _eq: props.campaignId },
-				},
-			},
-			data: { campaign_id: campaign },
-		});
-		const changed = res.data?.data;
-		if (Array.isArray(changed) && !changed.length) {
-			actionError.value = campaign ? `${label} is already in another campaign.` : `${label} is no longer in this campaign.`;
+		const res = await api.patch('/items/test_sessions', campaignAssignPatch('session_id', id, props.campaignId, campaign));
+		actionError.value = lostRaceMessage(res.data?.data, !!campaign, label) ?? '';
+		// A session added to a campaign also gets the campaign's project when it has none (never
+		// overwriting one), so project-scoped counts do not depend on the fallback.
+		if (campaign && !actionError.value) {
+			actionError.value = await inheritCampaignProject(api, 'test_sessions', 'session_id', id, campaign, label);
 		}
 		results.value = results.value.filter((r) => r.session_id !== id);
 	} catch (e) {

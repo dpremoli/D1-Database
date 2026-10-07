@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isDuplicate, isForbidden } from './errors';
-import { TEST_STATUS_ORDER, analysisState, buildOverview, diagState } from './rollup';
+import { TEST_STATUS_ORDER } from '../status';
+import { analysisState, buildOverview, countsTowardForceProgress, diagState } from './rollup';
 
 // Ported from core/extensions/d1-campaign-ops/index.test.mjs (node:test); the cases are unchanged.
 describe('campaign roll-up', () => {
@@ -152,21 +152,15 @@ describe('campaign roll-up', () => {
 		// every status of the lifecycle has a chip position
 		expect([...TEST_STATUS_ORDER].sort()).toEqual([...statuses].sort());
 	});
+});
 
-	it('isForbidden is true only for permission failures, not for other errors', () => {
-		const http = (status: number, code?: string) => ({ response: { status, data: { errors: [{ extensions: { code } }] } } });
-		expect(isForbidden(http(403, 'FORBIDDEN'))).toBe(true);
-		expect(isForbidden({ response: { status: 403 } })).toBe(true);
-		expect(isForbidden(http(200, 'FORBIDDEN'))).toBe(true);
-		expect(isForbidden(http(500, 'INTERNAL_SERVER_ERROR'))).toBe(false);
-		expect(isForbidden(http(503))).toBe(false);
-		expect(isForbidden(new Error('Network Error'))).toBe(false);
-		expect(isForbidden(undefined)).toBe(false);
+describe('countsTowardForceProgress', () => {
+	it('counts machining operations and any operation that has a force file', () => {
+		expect(countsTowardForceProgress({ process_category: 'machining' }, 'none')).toBe(true);
+		expect(countsTowardForceProgress({ process_category: 'sintering' }, 'done')).toBe(true);
+		expect(countsTowardForceProgress({ process_category: 'imaging' }, 'none')).toBe(false);
 	});
-
-	it('isDuplicate recognises a unique-constraint failure', () => {
-		expect(isDuplicate({ response: { status: 400, data: { errors: [{ extensions: { code: 'RECORD_NOT_UNIQUE' } }] } } })).toBe(true);
-		expect(isDuplicate({ response: { status: 400, data: { errors: [{ extensions: { code: 'INVALID_PAYLOAD' } }] } } })).toBe(false);
-		expect(isDuplicate(new Error('x'))).toBe(false);
+	it('leaves out an operation whose files were all skipped', () => {
+		expect(countsTowardForceProgress({ process_category: 'machining' }, 'skipped')).toBe(false);
 	});
 });

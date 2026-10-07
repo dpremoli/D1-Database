@@ -23,11 +23,26 @@ export function errorText(e: any, fallback = 'Request failed'): string {
 	return e?.response?.data?.errors?.[0]?.message || e?.message || fallback;
 }
 
-// A record that is missing and one the signed-in user may not read look the same on purpose
-// (Directus answers 403 for both, d1-trace 404).
+const errCode = (e: any) => e?.response?.data?.errors?.[0]?.extensions?.code;
+
+// The failure predicates of the Directus API. Which one to use:
+//   isForbidden  a read of a related list the role may not see (HTTP 403 or the FORBIDDEN code):
+//                the section says so, or falls back to a narrower filter. NOT a missing record.
+//   isNotVisible the one record a page is about: missing and unreadable look the same on purpose
+//                (Directus answers 403 for both, d1-trace 404), so this adds 404.
+//   isDuplicate  a unique-constraint violation (the row already exists).
+// Network and 5xx errors are none of these; callers must not treat them as "cannot read".
+export function isForbidden(e: any): boolean {
+	return e?.response?.status === 403 || errCode(e) === 'FORBIDDEN';
+}
+
 export function isNotVisible(e: any): boolean {
 	const status = e?.response?.status;
 	return status === 403 || status === 404;
+}
+
+export function isDuplicate(e: any): boolean {
+	return errCode(e) === 'RECORD_NOT_UNIQUE';
 }
 
 // A measured quantity for display. formatNumber() rounds to a fixed number of decimals, which

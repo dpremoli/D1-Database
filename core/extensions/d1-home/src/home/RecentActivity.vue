@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
-import { errorText, formatDate, recordRoute } from '@d1/ui';
+import { analysisLink, errorText, formatDate, recordRoute, type AnalysisLink } from '@d1/ui';
 import { samplesBookmarkLink, SAMPLES_LIST } from './samplesBookmark';
 
 // Recent activity: samples, operations and tests merged into one feed, each tagged with its kind,
-// newest first. Links go through recordRoute (FAST runs open the FAST dashboard, as before).
+// newest first. Links go through recordRoute; a FAST run opens its Operation page like any other
+// operation and keeps a second action to its FAST dashboard (the kit's analysisLink).
 type Kind = 'sample' | 'operation' | 'fast' | 'test';
-interface Activity { kind: Kind; id: string; code: string; meta: string; date: string; to: string }
+interface Activity { kind: Kind; id: string; code: string; meta: string; date: string; to: string; extra?: AnalysisLink | null }
 const KIND_LABEL: Record<Kind, string> = { sample: 'Sample', operation: 'Operation', fast: 'FAST', test: 'Test' };
 
 const api = useApi();
@@ -43,7 +44,8 @@ const SOURCES: { label: string; read: () => Promise<Activity[]> }[] = [
 					kind: isFast ? ('fast' as const) : ('operation' as const),
 					id: r.operation_id, code: r.pass_code || r.sample_id?.sample_code || '—',
 					meta: r.sample_id?.sample_code || '—', date: r.created_at,
-					to: isFast ? `/d1-fast-dashboard?operation=${r.operation_id}` : recordRoute('manufacturing_operations', r.operation_id),
+					to: recordRoute('manufacturing_operations', r.operation_id),
+					extra: isFast ? analysisLink(r.operation_id, r.process_category) : null,
 				};
 			});
 		},
@@ -88,14 +90,15 @@ onMounted(async () => {
 		</div>
 		<p v-if="error" class="error" role="alert">{{ error }}</p>
 		<div v-if="recent.length" class="recent-grid">
-			<router-link v-for="r in recent" :key="`${r.kind}-${r.id}`" :to="r.to" class="rcard">
+			<div v-for="r in recent" :key="`${r.kind}-${r.id}`" class="rcard">
 				<span class="r-top">
 					<span class="r-kind" :class="`k-${r.kind}`">{{ KIND_LABEL[r.kind] }}</span>
 					<span class="r-date">{{ formatDate(r.date) }}</span>
 				</span>
-				<span class="r-code">{{ r.code }}</span>
+				<router-link :to="r.to" class="r-code">{{ r.code }}</router-link>
 				<span class="r-meta">{{ r.meta }}</span>
-			</router-link>
+				<router-link v-if="r.extra" :to="r.extra.to" class="r-extra">{{ r.extra.label }} →</router-link>
+			</div>
 		</div>
 		<p v-else-if="!error" class="empty">No activity yet.</p>
 	</section>
@@ -108,7 +111,7 @@ onMounted(async () => {
 .link:hover { text-decoration: underline; }
 .recent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
 .rcard {
-	display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; min-width: 0; text-decoration: none;
+	position: relative; display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; min-width: 0;
 	border: 1px solid var(--theme--border-color-subdued); border-radius: 14px;
 	background: var(--theme--background); color: var(--theme--foreground);
 	transition: border-color 0.14s ease, box-shadow 0.14s ease;
@@ -120,7 +123,11 @@ onMounted(async () => {
 .k-operation { color: var(--theme--success); background: var(--theme--success-background); }
 .k-fast { color: var(--theme--warning); background: var(--theme--warning-background); }
 .k-test { color: var(--theme--foreground-subdued); background: var(--theme--background-normal); }
-.r-code { font-family: var(--theme--fonts--monospace--font-family, monospace); font-weight: 700; font-size: 14px; overflow-wrap: anywhere; }
+.r-code { font-family: var(--theme--fonts--monospace--font-family, monospace); font-weight: 700; font-size: 14px; overflow-wrap: anywhere; color: inherit; text-decoration: none; }
+/* The whole card opens the record: the code link stretches over it, the extra action sits above. */
+.r-code::after { content: ''; position: absolute; inset: 0; border-radius: 14px; }
+.r-extra { position: relative; z-index: 1; align-self: flex-start; font-size: 12px; font-weight: 600; color: var(--theme--primary); text-decoration: none; }
+.r-extra:hover { text-decoration: underline; }
 .r-meta { font-size: 12.5px; color: var(--theme--foreground-subdued); }
 .r-date { font-size: 11px; color: var(--theme--foreground-subdued); }
 .empty { color: var(--theme--foreground-subdued); }

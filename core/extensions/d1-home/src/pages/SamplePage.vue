@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue';
 import {
-	EditDrawer, LoadState, RecordHeader, RecordLink, Section, StatusBadge,
+	EditDrawer, LoadState, NotVisible, RecordHeader, RecordLink, Section, StatusBadge,
 	buildLife, dataStudioRoute, truncatedNotes,
 } from '@d1/ui';
 import { useSampleData } from './sample/useSampleData';
@@ -43,12 +43,7 @@ const openReportPage = () => openReport(`/d1-report/sample/${encodeURIComponent(
 		<div class="sample-page">
 			<LoadState v-if="loading && !sample" loading loading-text="Loading sample…" />
 
-			<div v-else-if="notVisible" class="not-found">
-				<v-icon name="lock" large />
-				<h2>Not found or not visible to you</h2>
-				<p>This sample does not exist, or you do not have permission to see it.</p>
-				<v-button to="/home">Back to Home</v-button>
-			</div>
+			<NotVisible v-else-if="notVisible" what="sample" />
 
 			<LoadState v-else-if="error" :error="error" />
 
@@ -130,16 +125,4 @@ const openReportPage = () => openReport(`/d1-report/sample/${encodeURIComponent(
 .sample-page :deep(.crumbs a:hover) { text-decoration: underline; }
 .export { color: var(--theme--danger); font-weight: 650; }
 .note { margin: 8px 0 0; font-size: 12.5px; color: var(--theme--warning); }
-.not-found {
-	max-width: 520px;
-	margin: 64px auto;
-	text-align: center;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 10px;
-}
-.not-found :deep(.v-icon) { --v-icon-color: var(--theme--foreground-subdued); }
-.not-found h2 { margin: 6px 0 0; font-size: 20px; }
-.not-found p { margin: 0 0 12px; color: var(--theme--foreground-subdued); }
 </style>

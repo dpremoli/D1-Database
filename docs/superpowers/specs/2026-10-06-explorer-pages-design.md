@@ -1,8 +1,10 @@
 # Explorer pages: a custom front end over Directus
 
 **Date:** 2026-10-06
-**Status:** Design only. Plan: [`plans/2026-10-06-explorer-pages.md`](../plans/2026-10-06-explorer-pages.md).
-Access rule: [ADR-0011](../../adr/0011-row-level-visibility.md) (proposed).
+**Status:** Implemented 2026-10-07 (PR pending); access restriction (ADR-0011) not built. Plan:
+[`plans/2026-10-06-explorer-pages.md`](../plans/2026-10-06-explorer-pages.md).
+Access rule: [ADR-0011](../../adr/0011-row-level-visibility.md) (proposed, not built: the pages
+show what the signed-in user's role may read today).
 
 ## Why
 
@@ -185,13 +187,28 @@ when the cap is hit. Counts per project do use `aggregate` + `groupBy=project_id
 
 ### Project
 
-- **Header:** code, name, status, dates, PI, investigators, and Edit / Report / Data Studio actions.
-- **Tiles:** samples, operations, tests and campaigns.
+- **Header:** code, name, status, dates, PI, investigators, and Edit / Data Studio actions (no Report).
+- **Tiles:** samples, operations, tests and campaigns. These use the one **"belongs to project"
+  rule** (below), so they agree with the campaign cards.
 - **Campaigns** as cards, each with type, owner, status and a progress bar (the campaign roll-up's
   "analysed n / m").
 - **Not in a campaign:** samples, operations and tests with this `project_id` and no campaign.
 - **Activity:** the sparkline at full width.
 - **Equipment used:** distinct equipment from the project's operations.
+
+**"Belongs to project" (E-final).** Nothing in the database copies a campaign's project onto its
+operations, tests or samples, and the campaign pickers used to set only `campaign_id`. So a record
+belongs to project P if its own `project_id` is P, or it has none and its campaign's `project_id`
+is P (the COALESCE rule of `v_project_rollup`; `projectScope.ts` in the kit builds the filters).
+The Project tiles, the activity sparkline, *Equipment used* and the project items view use it.
+*Samples* is the one place with a wider rule: the tile counts a sample if its own `project_id` is P
+**or** it is in one of P's campaigns (through `campaign_samples`), the same samples the campaign
+cards count. The Projects index cannot express either rule in a grouped aggregate, so its sample
+count is "samples assigned to the project" (`project_id` only), and its sparkline, which reads
+rows, applies the rule exactly. The pickers now also copy the campaign's project onto a record that
+has none (never overwriting one, as `d1-project-inherit` does), which makes the two agree for new
+data. A record whose own project differs from its campaign's counts for its own project in the
+tiles but still shows on its campaign's card.
 
 Reads the real collections (not `project_rollup`, which ADR-0011 restricts). The investigators
 are read from `project_investigators` as a separate section, so a role that cannot read the
@@ -236,8 +253,10 @@ and test reports only.
   - dimensions, mass estimate, condition, manufacturing method.
 - **Life of the sample.** A horizontal timeline strip: stock lot → parents → this sample →
   operations and tests by date → children. It reuses the `d1-trace` response, laid out
-  left-to-right with the vertical list as the narrow-screen fallback. Below it are a small lineage
-  graph (the `NodeGraph` cytoscape view, read-only) and the "N not visible to you" markers.
+  left-to-right with the vertical list as the narrow-screen fallback. Below it is the "N not
+  visible to you" marker. **Deviation (E4):** the lineage graph is not drawn inline (that would
+  pull the `NodeGraph` cytoscape view into the page bundle); an **Open lineage graph** button
+  opens the Lab Dashboard graph centred on the sample (`?sample=<id>`).
 - **Operations and tests** as tables with status badges. Each force-measured operation has
   "View forces" (`/d1-force-dashboard?operation=`) and FAST ones have "View FAST".
 - **Files:** linked data files and archive paths (the `d1-archive-links` logic).

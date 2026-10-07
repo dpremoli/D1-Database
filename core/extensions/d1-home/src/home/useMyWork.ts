@@ -1,7 +1,7 @@
-import { onBeforeUnmount, ref, type Ref } from 'vue';
+import { onBeforeUnmount, ref } from 'vue';
 import {
-	CURRENT_USER, campaignsMine, errorText, isForbidden, isNotVisible, ownedByMe, projectsMine, samplesMine, useItems,
-	useRequestGate,
+	CURRENT_USER, campaignsMine, isForbidden, isNotVisible, ownedByMe, projectsMine, samplesMine, useItems,
+	useRequestGate, useSections,
 } from '@d1/ui';
 
 // "My work" on Home: the projects where I am PI or investigator, the campaigns I own and my newest samples, read as the
@@ -11,20 +11,14 @@ import {
 export const CARD_LIMIT = 12;
 export const SAMPLE_LIMIT = 10;
 
-export interface Block<T> {
-	data: T;
-	loading: boolean;
-	error: string;
-}
-const block = <T>(initial: T) => ref<Block<T>>({ data: initial, loading: true, error: '' }) as Ref<Block<T>>;
-
 export function useMyWork() {
 	const { getItems } = useItems();
 	const gate = useRequestGate();
+	const { section, fill } = useSections(gate);
 
-	const projects = block<any[]>([]);
-	const campaigns = block<any[]>([]);
-	const samples = block<any[]>([]);
+	const projects = section<any[]>([], true);
+	const campaigns = section<any[]>([], true);
+	const samples = section<any[]>([], true);
 	// null until known. A user with no people row owns nothing by the owner path, which is worth
 	// saying out loud rather than showing three empty lists.
 	const hasPerson = ref<boolean | null>(null);
@@ -32,16 +26,6 @@ export function useMyWork() {
 	// not read the junction): that list then shows ownership / PI only. One note per list.
 	const partialProjects = ref('');
 	const partialSamples = ref('');
-
-	async function fill<T>(target: Ref<Block<T>>, token: number, what: string, read: () => Promise<T>) {
-		target.value = { ...target.value, loading: true, error: '' };
-		try {
-			const data = await read();
-			if (gate.isCurrent(token)) target.value = { data, loading: false, error: '' };
-		} catch (e: any) {
-			if (gate.isCurrent(token)) target.value = { data: [] as any, loading: false, error: `Could not load ${what}: ${errorText(e)}` } as Block<T>;
-		}
-	}
 
 	// Try the full filter; if Directus refuses it (403 / not visible), fall back to the owner-only
 	// half and set the note. Any other failure (network, 5xx, a bad filter) is rethrown so the

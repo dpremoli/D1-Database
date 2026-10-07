@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { DIAG_STATUS, FORCE_STATUS, SAMPLE_STATUS, TEST_STATUS, humanise, statusStyle } from './status';
+import {
+	CAMPAIGN_STATUS, DIAG_STATUS, FORCE_STATUS, SAMPLE_STATUS, TEST_DONE_STATUSES, TEST_GLYPH, TEST_RANK, TEST_STATUS,
+	TEST_STATUS_ORDER, humanise, statusStyle,
+} from './status';
 
 describe('vocabularies', () => {
 	it('covers the whole test-session lifecycle', () => {
@@ -57,5 +60,36 @@ describe('humanise', () => {
 	it('capitalises and replaces underscores', () => {
 		expect(humanise('heat_treatment')).toBe('Heat treatment');
 		expect(humanise('')).toBe('');
+	});
+});
+
+describe('the test lifecycle is defined once', () => {
+	it('derives every list from the same statuses', () => {
+		const statuses = Object.keys(TEST_STATUS);
+		expect(TEST_STATUS_ORDER).toEqual(statuses);
+		expect(Object.keys(TEST_RANK)).toEqual(statuses);
+		expect(Object.keys(TEST_GLYPH)).toEqual(statuses);
+	});
+	it('counts processed and analysed as done, nothing else', () => {
+		expect(TEST_DONE_STATUSES).toEqual(['processed', 'analysed']);
+	});
+	it('ranks failed worst and analysed most advanced', () => {
+		const byRank = [...TEST_STATUS_ORDER].sort((a, b) => TEST_RANK[a] - TEST_RANK[b]);
+		expect(byRank[0]).toBe('failed');
+		expect(byRank[byRank.length - 1]).toBe('analysed');
+	});
+	it('gives done statuses a tick and failures a bang', () => {
+		expect(TEST_GLYPH.analysed).toBe('✓');
+		expect(TEST_GLYPH.failed).toBe('!');
+	});
+});
+
+describe('campaign status', () => {
+	it('colours the known values', () => {
+		expect(statusStyle('campaign', 'on_hold')).toEqual({ label: 'On hold', tone: 'warning' });
+		expect(CAMPAIGN_STATUS.active.tone).toBe('success');
+	});
+	it('shows an unknown free-text value humanised and neutral', () => {
+		expect(statusStyle('campaign', 'in_review')).toEqual({ label: 'In review', tone: 'neutral' });
 	});
 });

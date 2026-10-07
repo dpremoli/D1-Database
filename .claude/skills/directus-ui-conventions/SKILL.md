@@ -1,6 +1,6 @@
 ---
 name: directus-ui-conventions
-description: Background knowledge for any change to the custom Directus front end — the Explorer pages and Home (core/extensions/d1-home), the shared @d1/ui kit (packages/d1-ui), and the extensions that use it (d1-lab-dashboard, d1-campaign-ops, d1-project-items, d1-composition-bar). Load before editing or reviewing files there. It lists the invariants that recent bugs came from.
+description: Background knowledge for any change to the custom Directus front end — the Explorer pages and Home (core/extensions/d1-home), the shared @d1/ui kit (packages/d1-ui), and the extensions that use it (d1-lab-dashboard, d1-campaign-ops, d1-project-items, d1-composition-bar, d1-fast-dashboard). Load before editing or reviewing files there. It lists the invariants that recent bugs came from.
 user-invocable: false
 paths:
   - packages/d1-ui/**
@@ -9,6 +9,7 @@ paths:
   - core/extensions/d1-campaign-ops/**
   - core/extensions/d1-project-items/**
   - core/extensions/d1-composition-bar/**
+  - core/extensions/d1-fast-dashboard/**
 ---
 
 # Directus front end: what to know before changing it
@@ -38,6 +39,8 @@ copy its structure.
    forbidden list does not blank the page.
 5. **Drop stale answers.** Use the kit's `useRequestGate` (latest request wins) for anything keyed
    by a route param.
+   Load related blocks with the kit's `useSections(gate)` and `LIST_CAP`: a failed reload keeps the
+   section's last data and shows the error. Do not copy a local `fill` helper.
 6. **Edit through `EditDrawer`.** It renders the collection's own `v-form`, so custom interfaces
    keep working. Do not rebuild create or edit forms. "New" opens `/content/<c>/+`.
 7. **Theme variables only** (`--theme--*`), so light and dark both work. Status colours and labels
@@ -57,15 +60,24 @@ copy its structure.
     `docs/runbooks/physical-test-backlog.md`, under "Explorer pages (Home module)", in the same
     change (see `CLAUDE.md`).
 
+12. **One "belongs to project" rule.** Nothing in the database copies a campaign's project onto its
+    operations, tests or samples. Read project-scoped records with the kit's `projectScopeFilter` /
+    `sampleProjectScopeFilter` / `anyProjectFilter` (own `project_id`, else the campaign's), never a
+    bare `project_id = P`. Pickers that put a record in a campaign set its `project_id` only where
+    it is null (`campaign/assign.ts`).
+
 ## Checks before a commit
 
 ```bash
 npm ci                                  # when workspaces or dependencies changed
 npm test -w @d1/ui && npm run typecheck -w @d1/ui
+npm run typecheck -w directus-extension-d1-home -w directus-extension-d1-campaign-ops
 npm run build:extensions                # every workspace extension that uses the kit
 node --test core/extensions/*/index.test.mjs
 bash scripts/sync_geometry.sh --check
 ```
+
+`d1-lab-dashboard` has no typecheck script (older cytoscape type errors in `NodeGraph.vue`).
 
 Plus `npm run build:extension` and `npm test -w @d1/force-plotting` if you touched the force
 dashboard host, and `npm ci && npm test` in `core/extensions/d1-report` if you touched it.

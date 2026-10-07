@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue';
 import {
-	EditDrawer, LoadState, RecordHeader, Section, Sparkline, StatTile, dataStudioRoute, formatDate, projectStatusLabel,
+	EditDrawer, LoadState, NotVisible, RecordHeader, Section, Sparkline, StatTile, dataStudioRoute, formatDate, projectStatusLabel,
 } from '@d1/ui';
 import { useProjectData } from './projects/useProjectData';
 import CampaignCards from './projects/CampaignCards.vue';
@@ -36,12 +36,7 @@ const tilesDisabled = computed(() => counts.value.loading);
 		<div class="project-page">
 			<LoadState v-if="loading && !project" loading loading-text="Loading project…" />
 
-			<div v-else-if="notVisible" class="not-found">
-				<v-icon name="lock" large />
-				<h2>Not found or not visible to you</h2>
-				<p>This project does not exist, or you do not have permission to see it.</p>
-				<v-button to="/home">Back to Home</v-button>
-			</div>
+			<NotVisible v-else-if="notVisible" what="project" />
 
 			<LoadState v-else-if="error" :error="error" />
 
@@ -150,8 +145,4 @@ const tilesDisabled = computed(() => counts.value.loading);
 }
 .e-name { font-weight: 650; font-size: 13.5px; }
 .e-count { font-size: 12px; color: var(--theme--foreground-subdued); }
-.not-found { max-width: 520px; margin: 64px auto; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
-.not-found :deep(.v-icon) { --v-icon-color: var(--theme--foreground-subdued); }
-.not-found h2 { margin: 6px 0 0; font-size: 20px; }
-.not-found p { margin: 0 0 12px; color: var(--theme--foreground-subdued); }
 </style>

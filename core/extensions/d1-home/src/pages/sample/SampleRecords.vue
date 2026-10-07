@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { LoadState, RecordLink, Section, StatusBadge, analysisLink, collectionRoute, formatDate, processLabel } from '@d1/ui';
-import { LIST_CAP, type Section as SectionState } from './useSampleData';
+import {
+	LIST_CAP, LoadState, RecordLink, Section, StatusBadge, analysisLink, collectionRoute, formatDate, processLabel, type SectionState,
+} from '@d1/ui';
 
 // The sample's operations and tests as tables: each row links to its page, tests carry their
 // status, and machining / FAST operations offer the matching analysis dashboard.
