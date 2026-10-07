@@ -106,22 +106,20 @@ export function useSampleData(id: Ref<string>) {
 			),
 			fill(tests, token, 'tests', async () => {
 				const fields = ['session_id', 'test_type', 'test_category', 'session_date', 'status', 'equipment_id.equipment_name', 'operator_name'];
-				// A test made through the form records its target in the subject junction and leaves
-				// sample_id empty, so a sample's tests are those pointing at it either way.
-				const [direct, bySubject] = await Promise.all([
-					getItems('test_sessions', { filter: { sample_id: { _eq: sampleId } }, fields, sort: ['session_date'], limit: LIST_CAP + 1 }),
-					getItems('test_sessions_subject', {
-						filter: { _and: [{ collection: { _eq: 'physical_samples' } }, { item: { _eq: sampleId } }] },
-						fields: ['test_sessions_id'],
-						limit: LIST_CAP + 1,
-					}).catch((e) => (isNotVisible(e) ? [] : Promise.reject(e))),
-				]);
-				const have = new Set(direct.map((t: any) => t.session_id));
-				const missing = [...new Set(bySubject.map((r: any) => r.test_sessions_id as string))].filter((x) => !have.has(x));
-				const extra = missing.length
-					? await getItems('test_sessions', { filter: { session_id: { _in: missing } }, fields, limit: missing.length })
-					: [];
-				return [...direct, ...extra].sort((a: any, b: any) => String(a.session_date ?? '').localeCompare(String(b.session_date ?? '')));
+				const read = (filter: Record<string, unknown>) =>
+					getItems('test_sessions', { filter, fields, sort: ['session_date'], limit: LIST_CAP + 1 });
+				// sample_id is the test's primary sample (kept in step with the subject junction by a
+				// trigger); a test with several samples lists the others only in the junction. One read
+				// with an _or, sorted and capped by the server, covers both.
+				const direct = { sample_id: { _eq: sampleId } };
+				const viaSubject = { subject: { _some: { _and: [{ collection: { _eq: 'physical_samples' } }, { item: { _eq: sampleId } }] } } };
+				try {
+					return await read({ _or: [direct, viaSubject] });
+				} catch (e) {
+					// A role that may not read the junction cannot filter on it: fall back to the primary sample.
+					if (!isNotVisible(e)) throw e;
+					return read(direct);
+				}
 			}),
 			fill(campaigns, token, 'campaigns', () =>
 				getItems('campaign_samples', {
