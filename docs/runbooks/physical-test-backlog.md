@@ -226,8 +226,11 @@ tool; a test cut on scrap stock is fine.
   the same spot (not offset or on a neighbouring turn). Repeat in Gridded. Do it with the auto crop,
   then after saving an official crop and letting both octrees rebuild, then after editing inner
   diameter or pulses per rev without rebuilding: picks and rings must stay aligned (they follow
-  `d1_build.json`, not the edited row). An octree built before the manifest still works as before
-  (and may drift after the edit). Since this PR.
+  `d1_build.json`, not the edited row). Also on a cut whose live cache is decimated (more than
+  `live_cache_points` samples) and with an official crop that starts between two cache samples, and
+  one that starts before the cache's window: rings and picks must still sit on the same spot as the
+  octree's points (the anchor is `revs_cs`, not a cache sample). An octree built before the manifest
+  still works as before (and may drift after the edit). Since this PR.
 - [ ] **Touch long-press on a touchscreen.** On a touchscreen laptop or tablet: hold one finger on
   the map (Lite 2D, Lite 3D, Full) and on a Force chart for ~0.5 s. Expect the menu to open once, a
   little down-right of the finger (not under it), with the pick under the finger. A drag or
@@ -267,8 +270,12 @@ tool; a test cut on scrap stock is fine.
   octrees; let the orchestrator rebuild both. Check `<OCTREE_DIR>/<op>/d1_build.json` and
   `<OCTREE_DIR>/grid/<op>/d1_build.json`: `schema` 1, `crop_source: "override"`, `cut_start_sec` /
   `cut_end_sec` equal the saved crop (index / sample rate) to a sample, and `feed`, `diam`,
-  `inner_diam`, `ppr` match the row. Reverting to auto crop and rebuilding gives
-  `crop_source: "auto"`. Also run `scripts/matlab/test_octree_out.m` by hand in MATLAB (it asserts
+  `inner_diam`, `ppr` match the row, and `revs_cs` is present (the cumulative raw revolutions at
+  the window start: it equals the live cache's `revs` at that sample for an undecimated cache).
+  Reverting to auto crop and rebuilding gives `crop_source: "auto"`. Save a different crop while a
+  build is running: when it finishes the row goes back to `pending` and is rebuilt with the new crop
+  (no stale octree left as `done`). Stop MATLAB's JSON from being written (or break the file): the
+  build ends `error` with a "build manifest missing" message and the previous octree stays served. Also run `scripts/matlab/test_octree_out.m` by hand in MATLAB (it asserts
   the crop window and the JSON; the MATLAB changes have never been executed). The Full view then
   shows the saved window, matching the charts. Since this PR.
 
