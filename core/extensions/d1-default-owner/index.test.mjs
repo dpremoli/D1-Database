@@ -42,6 +42,46 @@ for (const collection of ['physical_samples', 'manufacturing_operations', 'test_
   });
 }
 
+test('projects: a new project defaults its principal investigator to the creator, not owner_person_id', async () => {
+  const db = fakeDb({ 'user-1': { person_id: 'person-1' } });
+  const payload = { project_code: 'P1' };
+  await mount()['items.create'](payload, { collection: 'projects' }, ctx(db));
+  assert.equal(payload.principal_investigator_person, 'person-1');
+  assert.equal('owner_person_id' in payload, false);
+  assert.deepEqual(db.calls, [{ table: 'people', column: 'user_id', value: 'user-1', columns: 'person_id' }]);
+});
+
+test('projects: an explicit principal investigator wins and is not looked up', async () => {
+  const db = fakeDb({ 'user-1': { person_id: 'person-1' } });
+  const payload = { principal_investigator_person: 'someone-else' };
+  await mount()['items.create'](payload, { collection: 'projects' }, ctx(db));
+  assert.equal(payload.principal_investigator_person, 'someone-else');
+  assert.equal(db.calls.length, 0);
+});
+
+test('projects: an explicit null principal investigator is filled; an owner_person_id is ignored', async () => {
+  const db = fakeDb({ 'user-1': { person_id: 'person-1' } });
+  const payload = { principal_investigator_person: null, owner_person_id: 'x' };
+  await mount()['items.create'](payload, { collection: 'projects' }, ctx(db));
+  assert.equal(payload.principal_investigator_person, 'person-1');
+  assert.equal(payload.owner_person_id, 'x');
+});
+
+test('every collection fills only its own field', async () => {
+  const db = fakeDb({ 'user-1': { person_id: 'person-1' } });
+  for (const [collection, field] of [
+    ['physical_samples', 'owner_person_id'],
+    ['manufacturing_operations', 'owner_person_id'],
+    ['test_sessions', 'owner_person_id'],
+    ['campaigns', 'owner_person_id'],
+    ['projects', 'principal_investigator_person'],
+  ]) {
+    const payload = {};
+    await mount()['items.create'](payload, { collection }, ctx(db));
+    assert.deepEqual(payload, { [field]: 'person-1' }, collection);
+  }
+});
+
 test('an explicit owner wins, and is not even looked up', async () => {
   const db = fakeDb({ 'user-1': { person_id: 'person-1' } });
   const payload = { owner_person_id: 'someone-else' };
@@ -59,10 +99,10 @@ test('an explicit null owner is treated as blank and filled', async () => {
 
 test('other collections are left alone', async () => {
   const db = fakeDb({ 'user-1': { person_id: 'person-1' } });
-  for (const collection of ['projects', 'materials', 'equipment', 'sample_co_owners', undefined]) {
+  for (const collection of ['materials', 'equipment', 'sample_co_owners', 'people', undefined]) {
     const payload = {};
     await mount()['items.create'](payload, { collection }, ctx(db));
-    assert.equal('owner_person_id' in payload, false, String(collection));
+    assert.deepEqual(payload, {}, String(collection));
   }
   assert.equal(db.calls.length, 0);
 });
