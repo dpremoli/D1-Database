@@ -52,7 +52,7 @@ has '^apps/force-app/desktop/' && \
   echo "npm test -w force-app-desktop && npm run typecheck -w force-app-desktop   # CI: force-app-js"
 has '^core/extensions/d1-force-dashboard/' && echo "npm run build:extension   # CI: force-app-js"
 has '^(packages/d1-ui/|core/extensions/(d1-home|d1-lab-dashboard|d1-composition-bar|d1-campaign-ops|d1-project-items|d1-fast-dashboard)/)' && \
-  echo "npm test -w @d1/ui && npm run typecheck -w @d1/ui && npm run build:extensions   # CI: directus-ui"
+  echo "npm test -w @d1/ui && npm run typecheck -w @d1/ui && npm run typecheck -w directus-extension-d1-home -w directus-extension-d1-campaign-ops && npm run build:extensions   # CI: directus-ui"
 has '^apps/force-app/backend/' && echo "(cd apps/force-app/backend && python -m pytest -q)   # CI: force-app-python"
 for s in backup-server bug-report-relay; do
   has "^apps/force-app/$s/" && echo "(cd apps/force-app/$s && python -m pytest -q)   # CI: force-app-python"

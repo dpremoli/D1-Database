@@ -16,8 +16,10 @@ const TEST_FIELDS = [
 	'campaign_id.campaign_id', 'campaign_id.campaign_code', 'campaign_id.name',
 	'owner_person_id.person_id', 'owner_person_id.full_name',
 	'operator_person_id.person_id', 'operator_person_id.full_name',
-	// The single-sample column. A test made through the form records its target as a subject row
-	// instead (test_sessions_subject), so this is empty for those and `subjects` carries the sample.
+	// The primary sample. A test made through the form records its targets in the subject junction
+	// (test_sessions_subject); since migration 139 a trigger keeps this column equal to the junction's
+	// first sample, so it is filled for those tests too. Further samples exist only in the junction,
+	// which `subjects` reads.
 	'sample_id.sample_id', 'sample_id.sample_code', 'sample_id.nickname', 'sample_id.form', 'sample_id.current_status',
 ];
 
