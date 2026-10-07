@@ -41,6 +41,11 @@ left for CI to discover):
 
 - **Schema/migrations:** migrations must apply up *and* down cleanly; audit
   triggers and constraints have tests (Phase 1+).
+- **New lab-data collection:** Lab Members only see records they are involved in
+  ([ADR-0011](./docs/adr/0011-row-level-visibility.md)). Add the collection to
+  `scripts/access_rules.json` (`rules`, not `unfiltered`), run
+  `python3 scripts/gen_access_rules.py --write` and add a migration that applies the new rows
+  (copy `20261007000141_lab_member_row_visibility.sql`). Reference data goes in `unfiltered`.
 - **Plugins/services:** unit tests beside the code; integration tests in
   [`tests/`](./tests/).
 - **Foundation:** `bash tests/phase0_smoke.sh` validates repo structure, env
