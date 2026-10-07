@@ -327,6 +327,26 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   **Open lineage graph** opens the Lab Dashboard graph centred on that sample, with its operations,
   tests and neighbours, and reloading the graph URL (`?sample=<id>`) does the same. Since:
   Explorer pages E4 (PR pending).
+- [ ] **E4-fix — the subject trigger on real data (migration 137).** Apply the migration to the
+  real database (`dbmate up`) and check the back-fill: `SELECT count(*) FROM test_sessions t WHERE
+  t.sample_id IS NULL AND EXISTS (SELECT 1 FROM test_sessions_subject s WHERE s.test_sessions_id =
+  t.session_id AND s.collection = 'physical_samples')` returns 0 (unless such a subject names a
+  sample that no longer exists). Then create a test through the Content form, picking a sample in
+  Subject. Expect, for that new test: `sample_id` is filled in the table; it appears in the
+  campaign's matrix on the Campaign page (if the sample is in the campaign); the sample report
+  (Generate PDF) lists it under tests; the Lab Dashboard lineage graph and the Sample dashboard
+  show it; the sample's timeline (`f_sample_timeline`) has its entry; and the Tests panel search by
+  the sample code finds it. Add a second sample to the same test: nothing changes in those views
+  (only the first sample is primary), but the Sample page of the second sample lists the test.
+  Remove the first subject: the second takes over. Changing a subject adds no extra audit row on
+  the test besides the one `sample_id` update. Since: Explorer pages E4-fix (PR pending).
+- [ ] **E4-fix — project items link by row_id.** In a project whose operations include two with the
+  same pass code (or any project with many operations), open the Project items panel. Expect every
+  operation and sample row to link to the right record (hover or click: the Operation page of that
+  very operation, not another with the same code), tools, edges, inserts, materials and equipment
+  open their Content forms, and a project with more than 1000 operations still links its rows.
+  Rows from a campaign-only operation (operation has no project, campaign has) link too; an
+  operation of another project does not appear. Since: Explorer pages E4-fix (PR pending).
 
 ## B. Force rig (NI-DAQ, Lab Amp, packaged Windows app)
 
