@@ -5,7 +5,7 @@
     "scripts/configure_users_and_policies.sql (gen_access_rules.py --write) and into the migration that applies it;",
     "tests/phase1_schema.sh and tests/scripts/test_access_rules.py fail when either drifts from this file.",
     "A rule is a set of paths, OR-ed together. Each path ends at a user column that must equal the signed-in user",
-    "($CURRENT_USER). {\"via\": \"sample_id\", \"set\": \"sample.read\"} prefixes every path of another set with a relation field; {"set": ...} includes it as is.",
+    "($CURRENT_USER). {\"via\": \"sample_id\", \"set\": \"sample.read\"} prefixes every path of another set with a relation field; {\"set\": ...} includes it as is.",
     "'rules' lists, per collection and action, the set that filters it, or \"any\" for no filter. Directus does not apply item",
     "filters to create, so create is always \"any\". 'unfiltered' is every other Lab Member grant: reference data and the rows",
     "added by later migrations. A new collection that holds lab data needs an entry in 'rules', not in 'unfiltered'."
