@@ -28,9 +28,9 @@ const p = computed(() => props.overview.progress);
 <template>
 	<div class="d1-progress-block">
 		<div class="tiles">
-			<StatTile label="Samples" :value="overview.counts.samples" icon="science" />
-			<StatTile label="Operations" :value="overview.counts.operations" icon="precision_manufacturing" />
-			<StatTile label="Test sessions" :value="overview.counts.tests" icon="biotech" />
+			<StatTile label="Samples" :value="overview.counts.samples" icon="science" hint="Samples you can see in this campaign" />
+			<StatTile label="Operations" :value="overview.counts.operations" icon="precision_manufacturing" hint="Operations you can see in this campaign" />
+			<StatTile label="Test sessions" :value="overview.counts.tests" icon="biotech" hint="Test sessions you can see in this campaign" />
 		</div>
 		<p v-if="overview.counts.hiddenSamples" class="hidden-note">
 			{{ overview.counts.hiddenSamples }} {{ overview.counts.hiddenSamples === 1 ? 'sample' : 'samples' }} in this campaign not visible to you

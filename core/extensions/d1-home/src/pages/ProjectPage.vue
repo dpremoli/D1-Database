@@ -75,6 +75,7 @@ const tilesDisabled = computed(() => counts.value.loading);
 					<StatTile label="Tests" :value="num(counts.data.tests)" icon="biotech" />
 					<StatTile label="Campaigns" :value="num(counts.data.campaigns)" icon="flag" />
 				</div>
+				<p class="vis">Counts of the records you can see in this project.</p>
 				<p v-if="counts.error" class="warn" role="alert">{{ counts.error }}</p>
 
 				<CampaignCards :campaigns="campaigns" />
@@ -123,6 +124,7 @@ const tilesDisabled = computed(() => counts.value.loading);
 </template>
 
 <style scoped>
+.vis { margin: 6px 0 0; font-size: 12.5px; color: var(--theme--foreground-subdued); }
 .project-page {
 	max-width: 1180px;
 	margin: 0 auto;

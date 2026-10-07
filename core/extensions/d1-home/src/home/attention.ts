@@ -55,7 +55,7 @@ export const ATTENTION: AttentionDef[] = [
 	{
 		key: 'tests-failed',
 		label: 'Failed test sessions',
-		hint: 'Test sessions with status "failed"',
+		hint: 'Test sessions you can see with status "failed"',
 		icon: 'report',
 		collection: 'test_sessions',
 		filter: failedTests,
@@ -72,7 +72,7 @@ export const ATTENTION: AttentionDef[] = [
 	{
 		key: 'force-pending',
 		label: 'Operations with force files still pending',
-		hint: 'Operations with at least one force file queued for analysis',
+		hint: 'Operations you can see with at least one force file queued for analysis',
 		icon: 'hourglass_top',
 		collection: 'manufacturing_operations',
 		filter: forcePendingOperations,
