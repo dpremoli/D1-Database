@@ -512,6 +512,22 @@ migration 141 prints about ownerless records.
   Settings -> Data Model -> `physical_samples` shows `owner_person_id` -> People, `campaigns` ->
   `owner_person_id`, and `campaign_samples` -> `campaigns` relations. (A re-run used to delete the
   owner relations and every filter then failed.) Since: Explorer pages E5 fix (PR pending).
+- [ ] **E5 owner — only the owner can change a record's owner.** Setup: A owns sample S; B is
+  a co-owner of S (so B can edit but not delete it); the hook loaded at Directus start-up. As B:
+  `PATCH /items/physical_samples/<S> {"owner_person_id": "<B's person id>"}` answers **403
+  FORBIDDEN** and the owner is unchanged; the same through the Data Studio sample form (change
+  *Owner*, Save) shows the error; `PATCH ... {"notes": "x"}` works, and saving the form without
+  touching *Owner* works. A `PATCH /items/physical_samples {"keys": [S, <a sample B owns>], "data":
+  {"owner_person_id": "<A's person id>"}}` is refused as a whole. Repeat for an operation and a test
+  that B co-edits through the sample (403). As A: handing S to B works, after which A can no longer
+  delete S and B can; as the admin changing the owner always works. Campaigns and projects are
+  unaffected (only their owner or PI can edit them at all). Since: Explorer pages E5 owner (PR pending).
+- [ ] **E5 owner — Owner and Operator pickers survive `configure_all.sh`.** After running
+  `scripts/configure_all.sh` against the real database (and Directus restarting), open a sample, an
+  operation, a test, a campaign, an etchant, a prep recipe, a tool box, a cutting insert and an insert
+  edge in the Data Studio: *Owner* (and *Operator* on operations and tests, *Principal Investigator*
+  on a project) is a People dropdown that lists names and offers "create", not a raw UUID input.
+  Since: Explorer pages E5 owner (PR pending).
 - [ ] **E5 fix — the sample report hides projects the reader cannot open.** A owns sample S in project
   P and B is a co-owner of S but not an investigator of P. As B open the sample report
   (`/d1-report/sample/<S>`): the sample is there, but its Project line and the operations' and tests'

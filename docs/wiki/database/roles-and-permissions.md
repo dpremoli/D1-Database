@@ -110,8 +110,9 @@ Investigator* and *Secondary Investigators* fields of the project.
 Being PI or investigator of a project, or owning a campaign a sample is in, lets you **read** that
 sample, not edit it. A new sample, operation, test or campaign is created with you as its owner
 (the `d1-default-owner` hook), so you can always open what you just made. Changing the *Owner* of a
-record hands it over: you lose edit rights if you are not also a co-owner. A co-owner of a sample
-can also change its Owner (to themselves), so add only co-owners you trust.
+record hands it over: you lose edit rights if you are not also a co-owner. Only a record's owner can
+change its Owner (samples, operations and tests; the `d1-access-guard` hook refuses anyone else,
+including a co-owner, so nobody can give themselves delete rights). Admins can always change it.
 
 The rows that grant access (co-owners, investigators, samples in a campaign) cannot be used to grant
 yourself access: creating one, or moving it to another sample, project or campaign, is refused
@@ -158,7 +159,8 @@ paths per collection and action, each ending in "this column is the signed-in us
 To change a rule: edit the JSON, run `python3 scripts/gen_access_rules.py --write`, and add a
 migration that applies the rows from `--values` (copy migration 141). A new collection that holds
 lab data needs an entry in `rules`, not in `unfiltered`; a junction that grants visibility also needs an entry
-in `guards` (the generator writes the hook's `rules.json`).
+in `guards`, and a record whose update rule is wider than its delete rule needs one in
+`owner_guards` (the generator writes the hook's `rules.json` and fails when either is missing).
 
 To re-implement them without Directus (the ADR-0002 drill), read the paths as joins: a sample row
 is visible when `owner_person_id` is a person whose `user_id` is the current user, **or** a

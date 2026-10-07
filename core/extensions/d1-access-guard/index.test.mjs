@@ -242,3 +242,202 @@ test('update: clearing a parent key grants nothing', async () => {
   await filters['items.update']({ sample_id: null }, { collection: 'sample_co_owners', keys: [5] }, ctx({ database: fakeDb([{ id: 5, sample_id: 's1' }]) }));
   assert.equal(log.reads.length, 0);
 });
+
+// ---- owner guard: changing the owner column needs the record's delete rule ----------------------
+
+// db(table).whereIn(pk, keys).select(...) -> the rows of `existing` for those keys.
+function ownerDb(existing) {
+  const calls = [];
+  const db = (table) => ({
+    whereIn: (column, keys) => ({
+      select: async (...columns) => {
+        calls.push({ table, column, keys, columns });
+        return existing.filter((row) => keys.includes(row[column]));
+      },
+    }),
+  });
+  db.calls = calls;
+  return db;
+}
+
+test('the shipped rules guard the owner column where update is wider than delete', () => {
+  const guards = JSON.parse(readFileSync(new URL('./rules.json', import.meta.url), 'utf8')).ownerGuards;
+  assert.deepEqual(Object.keys(guards).sort(), ['manufacturing_operations', 'physical_samples', 'test_sessions']);
+  for (const [collection, g] of Object.entries(guards)) {
+    assert.equal(g.field, 'owner_person_id', collection);
+    assert.equal(g.valueKey, 'person_id', collection);
+    // the delete rule: the owner only, not the co-owners the update rule also lets in
+    assert.ok(JSON.stringify(g.filter).includes('$CURRENT_USER'), collection);
+    assert.ok(!JSON.stringify(g.filter).includes('co_owners'), collection);
+  }
+});
+
+test('owner change: a co-owner (who cannot delete) is refused', async () => {
+  const { filters, log } = mount({ canUpdate: () => false });
+  const database = ownerDb([{ sample_id: 's1', owner_person_id: 'p-owner' }]);
+  await assert.rejects(
+    filters['items.update']({ owner_person_id: 'p-me' }, { collection: 'physical_samples', keys: ['s1'] }, ctx({ database })),
+    denied(/physical_samples s1/),
+  );
+  assert.deepEqual(database.calls, [
+    { table: 'physical_samples', column: 'sample_id', keys: ['s1'], columns: ['sample_id', 'owner_person_id'] },
+  ]);
+  // the check is the delete rule (owner only), run as the caller on the sample itself
+  const [{ collection, query }] = log.reads;
+  assert.equal(collection, 'physical_samples');
+  assert.deepEqual(query.filter._and[0], { sample_id: { _eq: 's1' } });
+  const sent = JSON.stringify(query.filter._and[1]);
+  assert.ok(sent.includes('user-1') && !sent.includes('$CURRENT_USER') && !sent.includes('co_owners'));
+});
+
+test('owner change: the owner handing over is allowed', async () => {
+  const { filters, log } = mount({ canUpdate: () => true });
+  const payload = { owner_person_id: 'p-new', notes: 'x' };
+  const database = ownerDb([{ operation_id: 'o1', owner_person_id: 'p-me' }]);
+  assert.equal(
+    await filters['items.update'](payload, { collection: 'manufacturing_operations', keys: ['o1'] }, ctx({ database })),
+    payload,
+  );
+  assert.equal(log.reads.length, 1);
+  assert.equal(log.reads[0].collection, 'manufacturing_operations');
+});
+
+test('owner change: each guarded collection is checked against its own key', async () => {
+  for (const [collection, pk] of [['physical_samples', 'sample_id'], ['manufacturing_operations', 'operation_id'], ['test_sessions', 'session_id']]) {
+    const { filters, log } = mount({ canUpdate: () => false });
+    const database = ownerDb([{ [pk]: 'k1', owner_person_id: 'p1' }]);
+    await assert.rejects(
+      filters['items.update']({ owner_person_id: 'p2' }, { collection, keys: ['k1'] }, ctx({ database })),
+      denied(new RegExp(`${collection} k1`)),
+    );
+    assert.deepEqual(log.reads[0].query.fields, [pk]);
+  }
+});
+
+test('owner change: admins and internal calls are not checked', async () => {
+  const { filters, log } = mount({ canUpdate: () => false });
+  const database = ownerDb([{ sample_id: 's1', owner_person_id: 'p1' }]);
+  const meta = { collection: 'physical_samples', keys: ['s1'] };
+  await filters['items.update']({ owner_person_id: 'p2' }, meta, ctx({ database, accountability: { user: 'a', admin: true } }));
+  await filters['items.update']({ owner_person_id: 'p2' }, meta, ctx({ database, accountability: null }));
+  await filters['items.update']({ owner_person_id: 'p2' }, meta, ctx({ database, accountability: { user: null, admin: false } }));
+  assert.equal(log.reads.length, 0);
+  assert.equal(database.calls.length, 0);
+});
+
+test('owner change: a payload without the owner field is untouched', async () => {
+  const { filters, log } = mount({ canUpdate: () => false });
+  const database = ownerDb([{ sample_id: 's1', owner_person_id: 'p1' }]);
+  const payload = { sample_code: 'X-2', project_id: 'p9' };
+  assert.equal(
+    await filters['items.update'](payload, { collection: 'physical_samples', keys: ['s1'] }, ctx({ database })),
+    payload,
+  );
+  assert.equal(log.reads.length, 0);
+  assert.equal(database.calls.length, 0);
+});
+
+test('owner change: sending the current owner back (a form save) is not a change', async () => {
+  const { filters, log } = mount({ canUpdate: () => false });
+  const database = ownerDb([{ sample_id: 's1', owner_person_id: 'p1' }]);
+  const payload = { owner_person_id: 'p1', notes: 'x' };
+  await filters['items.update'](payload, { collection: 'physical_samples', keys: ['s1'] }, ctx({ database }));
+  await filters['items.update']({ owner_person_id: { person_id: 'p1' } }, { collection: 'physical_samples', keys: ['s1'] }, ctx({ database }));
+  assert.equal(log.reads.length, 0);
+});
+
+test('owner change: clearing the owner is a change; clearing an empty owner is not', async () => {
+  const { filters, log } = mount({ canUpdate: () => false });
+  await assert.rejects(
+    filters['items.update'](
+      { owner_person_id: null },
+      { collection: 'test_sessions', keys: ['t1'] },
+      ctx({ database: ownerDb([{ session_id: 't1', owner_person_id: 'p1' }]) }),
+    ),
+    denied(/test_sessions t1/),
+  );
+  await filters['items.update'](
+    { owner_person_id: null },
+    { collection: 'test_sessions', keys: ['t2'] },
+    ctx({ database: ownerDb([{ session_id: 't2', owner_person_id: null }]) }),
+  );
+  assert.equal(log.reads.length, 1);
+});
+
+test('owner change: setting an owner on an unowned record needs the delete rule too', async () => {
+  const { filters } = mount({ canUpdate: () => false });
+  await assert.rejects(
+    filters['items.update'](
+      { owner_person_id: 'p-me' },
+      { collection: 'physical_samples', keys: ['s1'] },
+      ctx({ database: ownerDb([{ sample_id: 's1', owner_person_id: null }]) }),
+    ),
+    denied(/s1/),
+  );
+});
+
+test('owner change: a nested new person (no key) is a change', async () => {
+  const { filters } = mount({ canUpdate: () => false });
+  await assert.rejects(
+    filters['items.update'](
+      { owner_person_id: { full_name: 'New Person' } },
+      { collection: 'physical_samples', keys: ['s1'] },
+      ctx({ database: ownerDb([{ sample_id: 's1', owner_person_id: 'p1' }]) }),
+    ),
+    denied(/s1/),
+  );
+});
+
+test('owner change: a batch update is checked per key, and one refused key refuses the batch', async () => {
+  const { filters, log } = mount({ canUpdate: (_c, id) => id !== 's2' });
+  const database = ownerDb([
+    { sample_id: 's1', owner_person_id: 'p-me' },
+    { sample_id: 's2', owner_person_id: 'p-other' },
+    { sample_id: 's3', owner_person_id: 'p-me' },
+  ]);
+  await assert.rejects(
+    filters['items.update']({ owner_person_id: 'p-new' }, { collection: 'physical_samples', keys: ['s1', 's2', 's3'] }, ctx({ database })),
+    denied(/s2/),
+  );
+  assert.deepEqual(log.reads.map((r) => r.query.filter._and[0].sample_id._eq), ['s1', 's2']);
+  assert.deepEqual(database.calls[0].keys, ['s1', 's2', 's3']);
+
+  const ok = mount({ canUpdate: () => true });
+  await ok.filters['items.update']({ owner_person_id: 'p-new' }, { collection: 'physical_samples', keys: ['s1', 's3'] }, ctx({ database }));
+  assert.equal(ok.log.reads.length, 2);
+});
+
+test('owner change: only the keys whose owner actually changes are checked', async () => {
+  const { filters, log } = mount({ canUpdate: () => false });
+  const database = ownerDb([
+    { sample_id: 's1', owner_person_id: 'p-new' },
+    { sample_id: 's2', owner_person_id: 'p-new' },
+  ]);
+  await filters['items.update']({ owner_person_id: 'p-new' }, { collection: 'physical_samples', keys: ['s1', 's2'] }, ctx({ database }));
+  assert.equal(log.reads.length, 0);
+});
+
+test('owner change: a 403 from the read means "not the owner"; other errors are rethrown', async () => {
+  const forbiddenRead = Object.assign(new Error('nope'), { code: 'FORBIDDEN', status: 403 });
+  const database = ownerDb([{ sample_id: 's1', owner_person_id: 'p1' }]);
+  await assert.rejects(
+    mount({ readError: forbiddenRead }).filters['items.update']({ owner_person_id: 'p2' }, { collection: 'physical_samples', keys: ['s1'] }, ctx({ database })),
+    denied(/s1/),
+  );
+  const boom = new Error('connection lost');
+  await assert.rejects(
+    mount({ readError: boom }).filters['items.update']({ owner_person_id: 'p2' }, { collection: 'physical_samples', keys: ['s1'] }, ctx({ database })),
+    (err) => err === boom,
+  );
+});
+
+test('owner change: collections without an owner guard, and creates, are left alone', async () => {
+  const { filters, log } = mount({ canUpdate: () => false });
+  const database = ownerDb([{ id: 1, owner_person_id: 'p1' }]);
+  for (const collection of ['campaigns', 'projects', 'etchants', 'sample_co_owners']) {
+    await filters['items.update']({ owner_person_id: 'p2' }, { collection, keys: [1] }, ctx({ database }));
+  }
+  await filters['items.create']({ owner_person_id: 'p2' }, { collection: 'physical_samples' }, ctx({ database }));
+  assert.equal(log.reads.length, 0);
+  assert.equal(database.calls.length, 0);
+});

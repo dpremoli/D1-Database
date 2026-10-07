@@ -13,7 +13,12 @@
     "fields (a list; written as the comma-separated text Directus stores). 'guards' lists the junctions whose rows grant",
     "visibility: Directus does not filter create, so the d1-access-guard hook (core/extensions/d1-access-guard) refuses",
     "to create or repoint one unless the caller passes the parent's update rule. gen_access_rules.py writes that rule",
-    "into core/extensions/d1-access-guard/rules.json. 'field' is the junction's FK to the parent, 'key' the parent's primary key."
+    "into core/extensions/d1-access-guard/rules.json. 'field' is the junction's FK to the parent, 'key' the parent's primary key.",
+    "'owner_guards' lists the records whose update rule is wider than their delete rule (co-owners may update a sample, only the",
+    "owner may delete it). Changing the owner column there would hand delete rights to the editor, so the same hook refuses an",
+    "update that changes 'field' unless the caller passes the record's delete rule (they are its current owner). 'key' is the",
+    "record's primary key, 'value_key' the primary key of the table 'field' points to. gen_access_rules.py fails when a ruled",
+    "collection has different update and delete filters and no entry here."
   ],
   "policy": "20000002-0000-0000-0000-000000000002",
   "sets": {
@@ -115,6 +120,11 @@
       {"field": "campaign_id", "parent": "campaigns", "key": "campaign_id", "rule": "update"},
       {"field": "sample_id", "parent": "physical_samples", "key": "sample_id", "rule": "update"}
     ]
+  },
+  "owner_guards": {
+    "physical_samples": {"field": "owner_person_id", "key": "sample_id", "value_key": "person_id"},
+    "manufacturing_operations": {"field": "owner_person_id", "key": "operation_id", "value_key": "person_id"},
+    "test_sessions": {"field": "owner_person_id", "key": "session_id", "value_key": "person_id"}
   },
   "unfiltered": {
     "machining_params": ["create", "read", "update", "delete"],
