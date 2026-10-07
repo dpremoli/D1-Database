@@ -7,8 +7,8 @@ import { go } from './goto';
 import { SAMPLES_LIST, samplesBookmarkLink } from './samplesBookmark';
 
 // The counts that Home always had, a quiet strip under "my work". Every count reads as the signed-in
-// user, so since ADR-0011 it is what that user may see (their own and co-owned records and those of
-// their projects), not the lab's total. Lab Admins still see everything.
+// user, so since ADR-0011 it is what that user may see (see "What you see" in the Explorer pages
+// wiki page for every path), not the lab's total. Lab Admins still see everything.
 const api = useApi();
 const router = useRouter();
 
@@ -48,7 +48,7 @@ onMounted(async () => {
 <template>
 	<section aria-labelledby="stats-h">
 		<h2 id="stats-h" class="h">At a glance</h2>
-		<p class="sub">Counts of the records you can see: yours, ones you co-own, and those of projects you are on.</p>
+		<p class="sub">Counts of the records you can see: yours, ones you co-own, those of projects where you are PI or investigator (including through the project's campaigns), and the operations and tests of samples you can see.</p>
 		<div class="stats">
 			<button v-for="st in stats" :key="st.label" class="stat" @click="go(router, st.to)">
 				<v-icon :name="st.icon" class="s-icon" />

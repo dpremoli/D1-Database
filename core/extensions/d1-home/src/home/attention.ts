@@ -8,8 +8,8 @@ import {
 //   - force analysis in `error` on my operations: operations I own with a force file in error;
 //   - failed test sessions: test_sessions.status = 'failed' (the Data Studio "Failed" bookmark);
 //   - operations with force files still pending (queued, not yet analysed);
-//   - samples with no owner (owner_person_id empty): admins only, since a member would see
-//     only their own rows once ADR-0011 is live.
+//   - samples with no owner (owner_person_id empty): admins only, since a member can read only
+//     the records they are involved in (ADR-0011) and so never sees an ownerless sample.
 
 export interface AttentionItem {
 	id: string;
