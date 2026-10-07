@@ -203,10 +203,25 @@ decision 5. It reads `rules.json`, which `gen_access_rules.py --write` generates
 rule is written once. The hook runs `ItemsService.readByQuery` on the parent with the caller's
 accountability (and the request's transaction, so a parent created in the same request is found),
 the key and that filter with `$CURRENT_USER` substituted, and refuses with a 403 `FORBIDDEN` when no
-row comes back. Admins and calls with no accountability (flows, scripts, other extensions) are not
+row comes back **and** the parent was not inserted by this same transaction (below). Admins and calls with no accountability (flows, scripts, other extensions) are not
 checked; every other caller is, whatever their policy. On update only a parent key that actually
-changes is checked. A payload that creates a brand-new parent in the same request has no key to check
-and passes (the caller is creating that record). A drift check (`gen_access_rules.py --check`, in
+changes is checked.
+
+**Creating a parent and its junction rows in one save** (a project with investigators, a sample with
+co-owners, a campaign with samples, a test with subjects) must work even when the creator names
+someone else as owner or PI, in which case the new row's update rule does not hold for them. Directus
+inserts the parent first and then runs the junction's create filter inside the same transaction, so
+when the update rule refuses, the hook asks the database whether that parent row was **inserted by
+the current transaction**: `SELECT <key> FROM <parent> WHERE <key> = $1 AND xmin = pg_current_xact_id()::xid`
+on `context.database` (the request's transaction). A match passes; a row that merely exists, or one that
+was only updated by someone else earlier, has another `xmin` and goes by the update rule, so a member
+still cannot attach themselves to a record they did not just make. This is per parent: for
+`campaign_samples` the campaign may be new while the sample still needs its own update rule, unless
+that sample is new too. A parent created inside a savepoint has the sub-transaction's id and is not
+recognised, which refuses (fails closed); Directus does not use savepoints. A residual case: a row
+that a trigger *updates* in the same transaction as the junction insert also carries that `xmin`;
+no trigger does this to a record the caller could not already change. A payload that nests a parent
+with no key has nothing to check and passes (the caller is creating that record). A drift check (`gen_access_rules.py --check`, in
 pre-commit, phase1 and pytest) fails when `rules.json` is stale. It guards the Directus API, as
 everything here does: SQL imports (`migrate_legacy.py`) are not checked.
 

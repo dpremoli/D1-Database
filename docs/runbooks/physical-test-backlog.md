@@ -519,7 +519,7 @@ migration 141 prints about ownerless records.
   save** (the Data Studio *Co-owners* field on a new sample), and a new project with an investigator,
   and a new campaign with samples A owns: none is refused (the guard reads the parent inside the
   request's transaction; if a nested create is wrongly refused, the hook's `database` is not the
-  transaction and that needs fixing). Remove B as investigator and re-add via A: works. Since:
+  transaction and that needs fixing; see the next item for the owner-is-someone-else case). Remove B as investigator and re-add via A: works. Since:
   Explorer pages E5 fix (PR pending).
 - [ ] **E5 r2 — nobody can attach their sample to someone else's test (`test_sessions_subject`).** A
   owns test T (on A's sample SA); B owns sample SB and is unrelated to T. As B: `POST
@@ -535,6 +535,16 @@ migration 141 prints about ownerless records.
   and B can open and edit them afterwards; A sees them through the campaign. A new campaign created
   by B under P shows *Owner: B*, not the PI. Choosing another owner explicitly in the form is kept.
   Since: Explorer pages E5 r2 (PR pending).
+- [ ] **E5 r2 — creating a parent with junction rows in one save, owner = someone else.** As A (a
+  Lab Member): (1) Data Studio, new **project**, *Principal Investigator* = B, *Investigators* = C, Save.
+  (2) New **sample**, *Owner* = B, *Co-owners* = C, Save. (3) New **campaign**, *Owner* = B, with
+  *Samples* = a sample A owns, Save. (4) New **test**, *Owner* = B, with a *Subject* sample. Each saves
+  with no 403 (the guard recognises the parent as created in this request: `xmin =
+  pg_current_xact_id()::xid`). A then loses the record (it is B's). Then, as A, the same saves with a
+  **sample A cannot edit** in (3), or `POST /items/sample_co_owners` for an **existing** sample A
+  cannot edit, are still 403. If (1) to (4) are refused, Directus runs the nested junction create
+  outside one transaction (or in a savepoint) and the hook needs another way to know the parent is
+  new. Since: Explorer pages E5 r2 (PR pending).
 - [ ] **E5 fix — a PI sees the project's campaigns' records.** B is PI of project P2 and owns nothing
   else. A creates a campaign in P2, a sample in that campaign (the sample's own project left empty)
   and an operation and a test on it with no project of their own. B sees the campaign, the sample, the

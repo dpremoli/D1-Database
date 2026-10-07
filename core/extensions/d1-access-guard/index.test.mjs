@@ -29,7 +29,9 @@ function mount({ canUpdate = () => true, readError = null } = {}) {
 }
 
 // db(table).whereIn(pk, keys).select(...) -> the rows of `existing`.
-function fakeDb(existing = []) {
+// db(table).where(column, id).whereRaw(sql).first(column) -> the row when `table:id` is in `created`
+// (the parent was inserted by this transaction), else undefined.
+function fakeDb(existing = [], created = []) {
   const calls = [];
   const db = (table) => ({
     whereIn: (column, keys) => ({
@@ -37,6 +39,14 @@ function fakeDb(existing = []) {
         calls.push({ table, column, keys, columns });
         return existing;
       },
+    }),
+    where: (column, id) => ({
+      whereRaw: (sql) => ({
+        first: async (selected) => {
+          calls.push({ table, column, id, sql, selected });
+          return created.includes(`${table}:${id}`) ? { [column]: id } : undefined;
+        },
+      }),
     }),
   });
   db.calls = calls;
@@ -199,6 +209,89 @@ test('other collections are left alone', async () => {
   assert.equal(log.reads.length, 0);
 });
 
+// ---- a parent created in the same request (nested create) ----------------------------------------
+// Creating a new project with investigators, a sample with co-owners or a campaign with samples runs
+// the junction filter after the parent insert, in the same transaction. The creator may have named
+// someone else as owner or PI, so the parent's update rule need not hold; the row is theirs to build.
+
+test('a parent inserted by this transaction passes without its update rule (project + investigators)', async () => {
+  const { filters, log } = mount({ canUpdate: () => false });
+  const database = fakeDb([], ['projects:p-new']);
+  const payload = { project_id: 'p-new', user_id: 'u9' };
+  assert.equal(
+    await filters['items.create'](payload, { collection: 'project_investigators' }, ctx({ database })),
+    payload,
+  );
+  assert.equal(log.reads.length, 1, 'the update rule is still tried first');
+  assert.equal(database.calls.length, 1);
+  const [call] = database.calls;
+  assert.deepEqual([call.table, call.column, call.id, call.selected], ['projects', 'project_id', 'p-new', 'project_id']);
+  assert.match(call.sql, /xmin\s*=\s*pg_current_xact_id\(\)::xid/);
+});
+
+test('a parent that merely exists is not "created here": the update rule decides (self-grant stays closed)', async () => {
+  const { filters } = mount({ canUpdate: () => false });
+  const database = fakeDb([], ['projects:other']);
+  await assert.rejects(
+    filters['items.create']({ project_id: 'p1', user_id: 'user-1' }, { collection: 'project_investigators' }, ctx({ database })),
+    denied(/projects p1/),
+  );
+  assert.equal(database.calls.length, 1, 'the transaction check ran and found nothing');
+});
+
+test('a parent the caller may update does not need the transaction check', async () => {
+  const { filters } = mount();
+  const database = fakeDb();
+  await filters['items.create']({ sample_id: 's1', user_id: 'u9' }, { collection: 'sample_co_owners' }, ctx({ database }));
+  assert.equal(database.calls.length, 0);
+});
+
+test('a new sample with co-owners and a new test with subjects pass', async () => {
+  const { filters } = mount({ canUpdate: () => false });
+  const database = fakeDb([], ['physical_samples:s-new', 'test_sessions:t-new']);
+  await filters['items.create']({ sample_id: 's-new', user_id: 'u9' }, { collection: 'sample_co_owners' }, ctx({ database }));
+  await filters['items.create'](
+    { test_sessions_id: 't-new', collection: 'physical_samples', item: 'x' },
+    { collection: 'test_sessions_subject' },
+    ctx({ database }),
+  );
+  await assert.rejects(
+    filters['items.create']({ test_sessions_id: 't-old', collection: 'physical_samples', item: 'x' }, { collection: 'test_sessions_subject' }, ctx({ database })),
+    denied(/test_sessions t-old/),
+  );
+});
+
+test('campaign_samples: a new campaign still needs the sample update rule, unless the sample is new too', async () => {
+  const meta = { collection: 'campaign_samples' };
+  // new campaign (not the caller's to update), someone else's existing sample: refused on the sample
+  const rule = mount({ canUpdate: () => false });
+  await assert.rejects(
+    rule.filters['items.create']({ campaign_id: 'c-new', sample_id: 's-old' }, meta, ctx({ database: fakeDb([], ['campaigns:c-new']) })),
+    denied(/physical_samples s-old/),
+  );
+  // new campaign + a sample the caller may update: allowed
+  const mine = mount({ canUpdate: (c) => c === 'physical_samples' });
+  await mine.filters['items.create']({ campaign_id: 'c-new', sample_id: 's-mine' }, meta, ctx({ database: fakeDb([], ['campaigns:c-new']) }));
+  // new campaign + new sample (both created in the request): allowed
+  const both = mount({ canUpdate: () => false });
+  await both.filters['items.create'](
+    { campaign_id: 'c-new', sample_id: 's-new' },
+    meta,
+    ctx({ database: fakeDb([], ['campaigns:c-new', 'physical_samples:s-new']) }),
+  );
+  // an existing campaign the caller does not own with a new sample: refused on the campaign
+  await assert.rejects(
+    both.filters['items.create']({ campaign_id: 'c-old', sample_id: 's-new' }, meta, ctx({ database: fakeDb([], ['physical_samples:s-new']) })),
+    denied(/campaigns c-old/),
+  );
+});
+
+test('a repoint to a parent created in this transaction passes too', async () => {
+  const { filters } = mount({ canUpdate: () => false });
+  const database = fakeDb([{ id: 5, sample_id: 's1' }], ['physical_samples:s-new']);
+  await filters['items.update']({ sample_id: 's-new' }, { collection: 'sample_co_owners', keys: [5] }, ctx({ database }));
+});
+
 test('no parent key, or a brand-new nested parent, passes (the database or the creator decides)', async () => {
   const { filters, log } = mount({ canUpdate: () => false });
   await filters['items.create']({ user_id: 'u9' }, { collection: 'sample_co_owners' }, ctx());
@@ -235,7 +328,7 @@ test('update: repointing the sample key is checked, and refused without the righ
     filters['items.update']({ sample_id: 's2' }, { collection: 'sample_co_owners', keys: [5] }, ctx({ database })),
     denied(/s2/),
   );
-  assert.deepEqual(database.calls, [{ table: 'sample_co_owners', column: 'id', keys: [5], columns: ['id', 'sample_id'] }]);
+  assert.deepEqual(database.calls[0], { table: 'sample_co_owners', column: 'id', keys: [5], columns: ['id', 'sample_id'] });
   assert.equal(log.reads.length, 1);
 });
 

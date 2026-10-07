@@ -30,6 +30,17 @@
 //
 // Admins, and calls with no accountability (flows, scripts, other extensions), are not checked.
 // Everyone else is, whatever their policy, because the rules are the Lab Member rules.
+//
+// Creating a parent and its junction rows in one request (a project with investigators, a sample with
+// co-owners, a campaign with samples) is allowed. The parent has just been inserted, in the request's
+// transaction, so its update rule may not hold for the creator (they named someone else as owner or
+// PI), yet the creator is the one making that record. A parent key therefore also passes when the
+// parent row was inserted by the current transaction (Postgres: its xmin is this transaction's id),
+// without checking its update rule. Only a row INSERTED here can match, one that merely exists
+// cannot, so this never lets a member attach themselves to a record someone else made. The sample of
+// a campaign_samples row is still checked (it is a different row) unless it is new too. A row
+// created inside a savepoint carries the sub-transaction id and is not recognised: that fails closed
+// (refused); Directus does not use savepoints.
 // A payload that nests a brand-new parent (no key) is allowed: the caller is creating that record.
 
 import { readFileSync } from 'node:fs';
@@ -93,6 +104,17 @@ export default ({ filter }, { services }) => {
     }
   }
 
+  // True when the parent row was inserted by the transaction this request runs in. xmin is the id of
+  // the inserting transaction; pg_current_xact_id() is ours (cast to the 32-bit xid xmin uses).
+  async function createdInThisTransaction(check, id, context) {
+    const row = await context
+      .database(check.parent)
+      .where(check.key, id)
+      .whereRaw('xmin = pg_current_xact_id()::xid')
+      .first(check.key);
+    return row !== undefined && row !== null;
+  }
+
   // Throws a 403 for the first parent the caller may not update. `fields` limits which of the
   // junction's parent keys are checked (the ones an update touches); null checks them all.
   async function enforce(collection, item, fields, context) {
@@ -100,7 +122,7 @@ export default ({ filter }, { services }) => {
     for (const check of checks) {
       const id = parentKey(item[check.field], check.key);
       if (id === null || id === undefined) continue; // not set (the database refuses it) or a new parent
-      if (!(await canUpdate(check, id, context))) {
+      if (!(await canUpdate(check, id, context)) && !(await createdInThisTransaction(check, id, context))) {
         throw forbidden(
           `You can only change ${collection} rows for a ${check.parent} record you may update ` +
             `(you are not allowed to update ${check.parent} ${id}). This controls who can see the record (ADR-0011).`,
