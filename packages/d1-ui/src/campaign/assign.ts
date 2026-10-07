@@ -10,6 +10,7 @@
 //     conditional request (`project_id _null`), because one batch body cannot be per-row.
 
 import { errorText, isForbidden } from '../format';
+import { itemPermissionsUrl, NOT_OWNER_MESSAGE, NOT_YOUR_RECORD_MESSAGE, updateAccess } from '../canUpdate';
 
 export interface BatchPatch {
 	query: { filter: Record<string, unknown> };
@@ -30,14 +31,51 @@ export function projectInheritPatch(pk: string, id: string, projectId: string): 
 }
 
 // The message for a conditional campaign change that touched no row, or null when it changed one.
-export function lostRaceMessage(changed: unknown, adding: boolean, label: string): string | null {
+// An empty answer has two causes that look the same: someone got there first, or the user's update
+// rule (row-level visibility, ADR-0011) does not cover the record, so the batch matched nothing.
+// `canUpdate` (from the item-permissions endpoint) tells them apart; false means "not permitted".
+export function lostRaceMessage(changed: unknown, adding: boolean, label: string, canUpdate?: boolean | null): string | null {
 	if (!Array.isArray(changed) || changed.length) return null;
+	if (canUpdate === false) return `${label}: ${notPermittedMessage(adding)}`;
 	return adding ? `${label} is already in another campaign.` : `${label} is no longer in this campaign.`;
+}
+
+// What to tell a user whose write was refused: adding needs a record they own or co-own, changing
+// or removing needs the owner or a co-owner.
+export function notPermittedMessage(adding: boolean): string {
+	return adding ? NOT_YOUR_RECORD_MESSAGE : NOT_OWNER_MESSAGE;
+}
+
+// A refused write (403) as text, null for any other failure (the caller shows errorText then).
+export function forbiddenWriteMessage(e: unknown, adding: boolean): string | null {
+	return isForbidden(e) ? notPermittedMessage(adding) : null;
 }
 
 interface Api {
 	get(url: string, config?: any): Promise<any>;
 	patch(url: string, body?: any): Promise<any>;
+}
+
+// May the signed-in user update this record? null when unknown (the read failed).
+export async function readCanUpdate(api: Api, collection: string, id: string): Promise<boolean | null> {
+	try {
+		return updateAccess((await api.get(itemPermissionsUrl(collection, id))).data);
+	} catch {
+		return null;
+	}
+}
+
+// lostRaceMessage for a batch answer, asking the permissions endpoint only when the answer is empty.
+export async function changeOutcomeMessage(
+	api: Api,
+	collection: string,
+	id: string,
+	changed: unknown,
+	adding: boolean,
+	label: string,
+): Promise<string | null> {
+	if (!Array.isArray(changed) || changed.length) return null;
+	return lostRaceMessage(changed, adding, label, await readCanUpdate(api, collection, id));
 }
 
 // The project of campaign `campaignId` as the signed-in user sees it; null when it has none or the

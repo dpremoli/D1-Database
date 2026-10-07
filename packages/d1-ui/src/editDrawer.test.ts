@@ -59,6 +59,13 @@ describe('saveErrors', () => {
 		expect(saveErrors(e)).toEqual(['one', 'two']);
 	});
 
+	it('replaces a refusal with the owner-or-co-owner message', () => {
+		const status403 = { response: { status: 403, data: { errors: [{ message: "You don't have permission to access this." }] } } };
+		expect(saveErrors(status403)).toEqual(['Only the owner or a co-owner can change this record.']);
+		const code = { response: { data: { errors: [{ message: 'x', extensions: { code: 'FORBIDDEN' } }] } } };
+		expect(saveErrors(code)).toEqual(['Only the owner or a co-owner can change this record.']);
+	});
+
 	it('falls back to the error message', () => {
 		expect(saveErrors(new Error('offline'))).toEqual(['offline']);
 		expect(saveErrors({})).toEqual(['The record could not be saved.']);

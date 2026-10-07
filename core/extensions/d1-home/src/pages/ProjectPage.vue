@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue';
 import {
-	EditDrawer, LoadState, NotVisible, RecordHeader, Section, Sparkline, StatTile, dataStudioRoute, formatDate, projectStatusLabel,
+	EditDrawer, useCanUpdate, LoadState, NotVisible, RecordHeader, Section, Sparkline, StatTile, dataStudioRoute, formatDate, projectStatusLabel,
 } from '@d1/ui';
 import { useProjectData } from './projects/useProjectData';
 import CampaignCards from './projects/CampaignCards.vue';
@@ -19,6 +19,9 @@ const {
 } = useProjectData(toRef(props, 'id'));
 
 const editing = ref(false);
+// Edit is offered unless the server says this user may not change the record (an investigator
+// or a reader through a sample may read it but not edit it).
+const { canUpdate } = useCanUpdate('projects', toRef(props, 'id'));
 const code = computed(() => project.value?.project_code ?? 'Project');
 const studioTo = computed(() => dataStudioRoute('projects', props.id));
 const active = computed(() => project.value?.is_active !== false);
@@ -59,7 +62,7 @@ const tilesDisabled = computed(() => counts.value.loading);
 						<span v-if="project.export_controlled" class="export">Export controlled</span>
 					</template>
 					<template #actions>
-						<v-button small @click="editing = true"><v-icon name="edit" small left />Edit</v-button>
+						<v-button v-if="canUpdate !== false" small @click="editing = true"><v-icon name="edit" small left />Edit</v-button>
 						<v-button small secondary :to="studioTo"><v-icon name="open_in_new" small left />Data Studio</v-button>
 					</template>
 				</RecordHeader>

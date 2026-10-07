@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue';
 import {
-	EditDrawer, LoadState, NotVisible, RecordHeader, RecordLink, Section, StatusBadge,
+	EditDrawer, useCanUpdate, LoadState, NotVisible, RecordHeader, RecordLink, Section, StatusBadge,
 	buildLife, dataStudioRoute, truncatedNotes,
 } from '@d1/ui';
 import { useSampleData } from './sample/useSampleData';
@@ -18,6 +18,9 @@ const { sample, loading, notVisible, error, elements, campaigns, operations, tes
 	useSampleData(toRef(props, 'id'));
 
 const editing = ref(false);
+// Edit is offered unless the server says this user may not change the record (an investigator
+// or a reader through a sample may read it but not edit it).
+const { canUpdate } = useCanUpdate('physical_samples', toRef(props, 'id'));
 
 const code = computed(() => sample.value?.sample_code ?? 'Sample');
 const studioTo = computed(() => dataStudioRoute('physical_samples', props.id));
@@ -70,7 +73,7 @@ const openReportPage = () => openReport(`/d1-report/sample/${encodeURIComponent(
 						<span v-if="sample.export_controlled" class="export">Export controlled</span>
 					</template>
 					<template #actions>
-						<v-button small @click="editing = true"><v-icon name="edit" small left />Edit</v-button>
+						<v-button v-if="canUpdate !== false" small @click="editing = true"><v-icon name="edit" small left />Edit</v-button>
 						<v-button small secondary @click="printLabel"><v-icon name="label" small left />Print label</v-button>
 						<v-button small secondary @click="openReportPage"><v-icon name="picture_as_pdf" small left />Report</v-button>
 						<v-button small secondary :to="studioTo"><v-icon name="open_in_new" small left />Data Studio</v-button>

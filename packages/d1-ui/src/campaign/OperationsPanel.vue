@@ -10,7 +10,7 @@ import RecordLink from '../components/RecordLink.vue';
 import Section from '../components/Section.vue';
 import StatusBadge from '../components/StatusBadge.vue';
 import PickerBox from './PickerBox.vue';
-import { campaignAssignPatch, inheritCampaignProject, lostRaceMessage } from './assign';
+import { campaignAssignPatch, changeOutcomeMessage, forbiddenWriteMessage, inheritCampaignProject } from './assign';
 import { operationCategoryFor } from './campaignType';
 import { LIST_CAP, type SectionState } from '../composables/useSections';
 
@@ -25,6 +25,8 @@ const props = defineProps<{
 	section: SectionState<any[]>;
 	/** The role may not read the force-analysis table: show a dash instead of "not analysed". */
 	forceHidden?: boolean;
+	/** The user may not change this campaign: no picker, no remove buttons. */
+	readonly?: boolean;
 }>();
 const emit = defineEmits<{ (e: 'changed'): void }>();
 
@@ -90,7 +92,7 @@ async function setCampaign(id: string, passCode: string | null, campaign: string
 	const label = passCode || 'the operation';
 	try {
 		const res = await api.patch('/items/manufacturing_operations', campaignAssignPatch('operation_id', id, props.campaignId, campaign));
-		actionError.value = lostRaceMessage(res.data?.data, !!campaign, label) ?? '';
+		actionError.value = (await changeOutcomeMessage(api, 'manufacturing_operations', id, res.data?.data, !!campaign, label)) ?? '';
 		// An operation added to a campaign also gets the campaign's project when it has none
 		// (never overwriting one), so project-scoped counts do not depend on the fallback.
 		if (campaign && !actionError.value) {
@@ -98,7 +100,7 @@ async function setCampaign(id: string, passCode: string | null, campaign: string
 		}
 		results.value = results.value.filter((r) => r.operation_id !== id);
 	} catch (e) {
-		actionError.value = `Could not ${campaign ? 'add' : 'remove'} ${label}: ${errorText(e)}`;
+		actionError.value = forbiddenWriteMessage(e, !!campaign) ?? `Could not ${campaign ? 'add' : 'remove'} ${label}: ${errorText(e)}`;
 	} finally {
 		busy.value = null;
 	}
@@ -127,14 +129,15 @@ async function setCampaign(id: string, passCode: string | null, campaign: string
 							<span v-if="forceHidden || o.diag === 'none'" class="dim">—</span>
 							<span v-else :title="o.diag_error || ''"><StatusBadge kind="diag" :value="o.diag" /></span>
 						</td>
-						<td class="act"><button class="x" title="Remove from the campaign" :disabled="!!busy" @click="setCampaign(o.operation_id, o.pass_code, null)"><v-icon name="close" x-small /></button></td>
+						<td class="act"><button v-if="!readonly" class="x" title="Remove from the campaign" :disabled="!!busy" @click="setCampaign(o.operation_id, o.pass_code, null)"><v-icon name="close" x-small /></button></td>
 					</tr>
 				</tbody>
 			</table>
-			<p v-else class="d1-cempty">No operations yet. Add them below.</p>
+			<p v-else class="d1-cempty">{{ readonly ? 'No operations yet.' : 'No operations yet. Add them below.' }}</p>
 			<p v-if="rows.length > LIST_CAP" class="d1-ccap">Showing the first {{ LIST_CAP }} of {{ rows.length }} operations. The matrix above has them all.</p>
 		</LoadState>
 		<PickerBox
+			v-if="!readonly"
 			v-model="search"
 			:placeholder="category ? `Add ${category} operations…` : 'Add operations…'"
 			:filter-label="category ? `filtered: ${category}` : undefined"

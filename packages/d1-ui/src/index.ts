@@ -49,6 +49,8 @@ export { useRequestGate } from './composables/useRequestGate';
 export { LIST_CAP, useSections } from './composables/useSections';
 export type { SectionState } from './composables/useSections';
 export { useFieldDefs } from './composables/useFieldDefs';
+export { useCanUpdate } from './composables/useCanUpdate';
+export { NOT_OWNER_MESSAGE, NOT_YOUR_RECORD_MESSAGE } from './canUpdate';
 
 // Components
 export { default as RecordHeader } from './components/RecordHeader.vue';

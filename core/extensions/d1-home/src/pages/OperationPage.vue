@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue';
 import {
-	EditDrawer, KeyValueGrid, LoadState, NotVisible, RecordHeader, RecordLink, Section, asRecord, dataStudioRoute,
+	EditDrawer, useCanUpdate, KeyValueGrid, LoadState, NotVisible, RecordHeader, RecordLink, Section, asRecord, dataStudioRoute,
 	formatDate, formatQuantity, processLabel, type KeyValue,
 } from '@d1/ui';
 import { useOperationData } from './operation/useOperationData';
@@ -16,6 +16,9 @@ const props = defineProps<{ id: string }>();
 const { operation, loading, notVisible, error, params, force, fast, files, shared, reload } = useOperationData(toRef(props, 'id'));
 
 const editing = ref(false);
+// Edit is offered unless the server says this user may not change the record (an investigator
+// or a reader through a sample may read it but not edit it).
+const { canUpdate } = useCanUpdate('manufacturing_operations', toRef(props, 'id'));
 
 const op = computed(() => operation.value);
 const code = computed(() => op.value?.pass_code || 'Operation');
@@ -78,7 +81,7 @@ const openReport = () => window.open(`/d1-report/operation/${encodeURIComponent(
 						<span v-if="asRecord(op.equipment_id)">Machine: {{ asRecord(op.equipment_id)!.equipment_name }}</span>
 					</template>
 					<template #actions>
-						<v-button small @click="editing = true"><v-icon name="edit" small left />Edit</v-button>
+						<v-button v-if="canUpdate !== false" small @click="editing = true"><v-icon name="edit" small left />Edit</v-button>
 						<v-button small secondary @click="openReport"><v-icon name="picture_as_pdf" small left />Report</v-button>
 						<v-button small secondary :to="studioTo"><v-icon name="open_in_new" small left />Data Studio</v-button>
 					</template>
