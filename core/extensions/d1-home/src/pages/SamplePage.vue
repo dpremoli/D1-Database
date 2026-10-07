@@ -92,6 +92,11 @@ const openReportPage = () => openReport(`/d1-report/sample/${encodeURIComponent(
 				</Section>
 
 				<Section title="Life of the sample">
+					<template #actions>
+						<v-button small secondary :to="`/d1-lab-dashboard/graph?sample=${encodeURIComponent(id)}`">
+							<v-icon name="hub" small left />Open lineage graph
+						</v-button>
+					</template>
 					<LoadState :loading="trace.loading" :error="trace.error">
 						<LifeStrip :items="life" />
 						<p v-for="n in notes" :key="n" class="note">{{ n }}</p>

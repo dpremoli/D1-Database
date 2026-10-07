@@ -104,14 +104,25 @@ export function useSampleData(id: Ref<string>) {
 					limit: LIST_CAP + 1,
 				}),
 			),
-			fill(tests, token, 'tests', () =>
-				getItems('test_sessions', {
-					filter: { sample_id: { _eq: sampleId } },
-					fields: ['session_id', 'test_type', 'test_category', 'session_date', 'status', 'equipment_id.equipment_name', 'operator_name'],
-					sort: ['session_date'],
-					limit: LIST_CAP + 1,
-				}),
-			),
+			fill(tests, token, 'tests', async () => {
+				const fields = ['session_id', 'test_type', 'test_category', 'session_date', 'status', 'equipment_id.equipment_name', 'operator_name'];
+				// A test made through the form records its target in the subject junction and leaves
+				// sample_id empty, so a sample's tests are those pointing at it either way.
+				const [direct, bySubject] = await Promise.all([
+					getItems('test_sessions', { filter: { sample_id: { _eq: sampleId } }, fields, sort: ['session_date'], limit: LIST_CAP + 1 }),
+					getItems('test_sessions_subject', {
+						filter: { _and: [{ collection: { _eq: 'physical_samples' } }, { item: { _eq: sampleId } }] },
+						fields: ['test_sessions_id'],
+						limit: LIST_CAP + 1,
+					}).catch((e) => (isNotVisible(e) ? [] : Promise.reject(e))),
+				]);
+				const have = new Set(direct.map((t: any) => t.session_id));
+				const missing = [...new Set(bySubject.map((r: any) => r.test_sessions_id as string))].filter((x) => !have.has(x));
+				const extra = missing.length
+					? await getItems('test_sessions', { filter: { session_id: { _in: missing } }, fields, limit: missing.length })
+					: [];
+				return [...direct, ...extra].sort((a: any, b: any) => String(a.session_date ?? '').localeCompare(String(b.session_date ?? '')));
+			}),
 			fill(campaigns, token, 'campaigns', () =>
 				getItems('campaign_samples', {
 					filter: { sample_id: { _eq: sampleId } },
