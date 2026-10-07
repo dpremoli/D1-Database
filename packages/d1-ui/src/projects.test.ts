@@ -78,22 +78,16 @@ describe('campaignProgress', () => {
 		{ campaign_id: 'm', campaign_type: 'machining_trial' },
 		{ campaign_id: 't', campaign_type: 'testing_campaign' },
 		{ campaign_id: 'e', campaign_type: 'machining_trial' },
+		{ campaign_id: 'i', campaign_type: 'imaging_analysis' },
 	];
-	const result = campaignProgress({
-		campaigns,
-		samplesByCampaign: new Map([['m', 4], ['t', 2]]),
+	const forceRows = {
 		operations: [
 			{ operation_id: 'o1', campaign_id: 'm', process_category: 'machining' },
 			{ operation_id: 'o2', campaign_id: 'm', process_category: 'machining' },
 			{ operation_id: 'o3', campaign_id: 'm', process_category: 'machining' },
 			{ operation_id: 'o4', campaign_id: 'm', process_category: 'machining' },
 			{ operation_id: 'o5', campaign_id: 'm', process_category: 'imaging' },
-		],
-		tests: [
-			{ campaign_id: 't', status: 'analysed' },
-			{ campaign_id: 't', status: 'processed' },
-			{ campaign_id: 't', status: 'failed' },
-			{ campaign_id: 'm', status: 'registered' },
+			{ operation_id: 'o6', campaign_id: 'i', process_category: 'machining' },
 		],
 		analyses: [
 			{ operation_id: 'o1', status: 'done' },
@@ -101,9 +95,20 @@ describe('campaignProgress', () => {
 			{ operation_id: 'o2', status: 'done' },
 			{ operation_id: 'o2', status: 'error' },
 			{ operation_id: 'o3', status: 'skipped' },
+			{ operation_id: 'o6', status: 'done' },
 		],
-	});
-	it('counts samples, operations and tests per campaign', () => {
+		truncated: false,
+	};
+	const base = {
+		campaigns,
+		samplesByCampaign: new Map([['m', 4], ['t', 2]]),
+		operationsByCampaign: new Map([['m', 5], ['i', 1]]),
+		testsByCampaign: new Map([['t', 3], ['m', 1]]),
+		testsDoneByCampaign: new Map([['t', 2]]),
+		forceRows,
+	};
+	const result = campaignProgress(base);
+	it('takes the counts as given and defaults missing campaigns to 0', () => {
 		expect(result.get('m')).toMatchObject({ samples: 4, operations: 5, tests: 1 });
 		expect(result.get('t')).toMatchObject({ samples: 2, operations: 0, tests: 3 });
 		expect(result.get('e')).toMatchObject({ samples: 0, operations: 0, tests: 0 });
@@ -111,13 +116,28 @@ describe('campaignProgress', () => {
 	it('machining trial: analysed over machining operations, skipped and non-machining left out', () => {
 		// o1 done, o2 has an error (open), o3 all skipped (left out), o4 no files yet (counted, not done),
 		// o5 imaging with no files (left out)
-		expect(result.get('m')!.progress).toEqual({ label: 'Force analysed', done: 1, total: 3 });
+		expect(result.get('m')!.progress).toEqual({ kind: 'bar', label: 'Force analysed', done: 1, total: 3 });
 	});
 	it('testing campaign: tests complete over all tests', () => {
-		expect(result.get('t')!.progress).toEqual({ label: 'Tests complete', done: 2, total: 3 });
+		expect(result.get('t')!.progress).toEqual({ kind: 'bar', label: 'Tests complete', done: 2, total: 3 });
 	});
 	it('an empty campaign has a 0 / 0 bar, not NaN', () => {
-		expect(result.get('e')!.progress.total).toBe(0);
+		expect(result.get('e')!.progress).toEqual({ kind: 'bar', label: 'Force analysed', done: 0, total: 0 });
+	});
+	it('imaging / analysis campaigns are not treated as machining trials', () => {
+		expect(result.get('i')!.progress).toEqual({ kind: 'none' });
+	});
+	it('a capped force read shows unavailable, never a wrong bar', () => {
+		const r = campaignProgress({ ...base, forceRows: { ...forceRows, truncated: true } });
+		expect(r.get('m')!.progress).toEqual({ kind: 'unavailable', label: 'Force analysed', reason: 'truncated' });
+		// the testing bar does not depend on the capped read
+		expect(r.get('t')!.progress).toMatchObject({ kind: 'bar', done: 2, total: 3 });
+	});
+	it('a refused read shows unavailable for the bars that need it', () => {
+		const r = campaignProgress({ ...base, forceRows: null, testsDoneByCampaign: null });
+		expect(r.get('m')!.progress).toEqual({ kind: 'unavailable', label: 'Force analysed', reason: 'forbidden' });
+		expect(r.get('t')!.progress).toEqual({ kind: 'unavailable', label: 'Tests complete', reason: 'forbidden' });
+		expect(r.get('m')!.operations).toBe(5);
 	});
 });
 

@@ -1,7 +1,8 @@
 import { onBeforeUnmount, ref, watch, type Ref } from 'vue';
 import {
-	DEFAULT_WEEKS, campaignProgress, countsByKey, errorText, isNotVisible, useItems, useRequestGate, weeklyActivity,
-	type CampaignProgress, type WeeklyActivity,
+	DEFAULT_WEEKS, TEST_DONE_STATUSES, campaignProgress, countsByKey, errorText, isNotVisible, operationCategoryFor, useItems,
+	useRequestGate, weeklyActivity,
+	type CampaignProgress, type ForceRows, type WeeklyActivity,
 } from '@d1/ui';
 import { fetchActivityRows } from './activityData';
 
@@ -11,6 +12,7 @@ import { fetchActivityRows } from './activityData';
 // parallel and fails on its own, so one forbidden collection does not blank the page.
 
 export const LIST_CAP = 200;
+// Cap of the row reads behind the machining progress bar; past it the bar is withheld, not wrong.
 const PROGRESS_ROW_CAP = 5000;
 
 export interface Block<T> {
@@ -106,40 +108,47 @@ export function useProjectData(id: Ref<string>) {
 				return { data: fallback, ok: false };
 			}
 		};
-		const [samples, ops, tests, analyses] = await Promise.all([
-			soft(() => getItems('campaign_samples', { aggregate: { count: '*' }, groupBy: ['campaign_id'], filter: inProject, limit: -1 }), [] as any[]),
-			soft(() => getItems('manufacturing_operations', {
-				filter: { campaign_id: { project_id: { _eq: projectId } } },
-				fields: ['operation_id', 'campaign_id', 'process_category'],
-				limit: PROGRESS_ROW_CAP,
-			}), [] as any[]),
-			soft(() => getItems('test_sessions', {
-				filter: { campaign_id: { project_id: { _eq: projectId } } },
-				fields: ['campaign_id', 'status'],
-				limit: PROGRESS_ROW_CAP,
-			}), [] as any[]),
-			soft(() => getItems('machining_force_analysis', {
-				filter: { operation_id: { campaign_id: { project_id: { _eq: projectId } } } },
-				fields: ['operation_id', 'status'],
-				limit: PROGRESS_ROW_CAP,
-			}), [] as any[]),
+		// Counts are exact: `aggregate[count]` grouped by campaign, not a capped row read. Only the
+		// force-analysis states need rows (one operation can have several force files), so only
+		// machining trials read rows, and a read that hits the cap says so instead of drawing a bar.
+		const grouped = (collection: string, filter: Record<string, unknown>) =>
+			getItems(collection, { aggregate: { count: '*' }, groupBy: ['campaign_id'], filter, limit: -1 });
+		const hasMachining = rows.some((c: any) => operationCategoryFor(c.campaign_type) === 'machining');
+		const machining = (path: Record<string, unknown>) => ({ _and: [path, { campaign_id: { campaign_type: { _eq: 'machining_trial' } } }] });
+		const [samples, ops, tests, testsDone, force] = await Promise.all([
+			soft(() => grouped('campaign_samples', inProject), [] as any[]),
+			soft(() => grouped('manufacturing_operations', inProject), [] as any[]),
+			soft(() => grouped('test_sessions', inProject), [] as any[]),
+			soft(() => grouped('test_sessions', { _and: [inProject, { status: { _in: TEST_DONE_STATUSES } }] }), [] as any[]),
+			soft(async (): Promise<ForceRows> => {
+				if (!hasMachining) return { operations: [], analyses: [], truncated: false };
+				const [operations, analyses] = await Promise.all([
+					getItems('manufacturing_operations', {
+						filter: machining(inProject),
+						fields: ['operation_id', 'campaign_id', 'process_category'],
+						limit: PROGRESS_ROW_CAP,
+					}),
+					getItems('machining_force_analysis', {
+						filter: { operation_id: machining(inProject) },
+						fields: ['operation_id', 'status'],
+						limit: PROGRESS_ROW_CAP,
+					}),
+				]);
+				return { operations, analyses, truncated: operations.length >= PROGRESS_ROW_CAP || analyses.length >= PROGRESS_ROW_CAP };
+			}, null as ForceRows | null),
 		]);
-		const complete = samples.ok && ops.ok && tests.ok;
-		const stats = complete
+		// Without the three counts there is nothing to show on a card; the bars degrade on their own.
+		const stats = samples.ok && ops.ok && tests.ok
 			? campaignProgress({
 					campaigns: rows,
 					samplesByCampaign: countsByKey(samples.data, 'campaign_id'),
-					operations: ops.data,
-					tests: tests.data,
-					// Without force-analysis access the machining bar would read 0 / n: leave it out.
-					analyses: analyses.data,
+					operationsByCampaign: countsByKey(ops.data, 'campaign_id'),
+					testsByCampaign: countsByKey(tests.data, 'campaign_id'),
+					testsDoneByCampaign: testsDone.ok ? countsByKey(testsDone.data, 'campaign_id') : null,
+					forceRows: force.ok ? force.data : null,
 				})
 			: null;
-		return rows.map((c: any) => {
-			const s = stats?.get(c.campaign_id) ?? null;
-			if (s && !analyses.ok && c.campaign_type !== 'testing_campaign') s.progress = { label: 'Force analysed', done: 0, total: 0 };
-			return { ...c, stats: s };
-		});
+		return rows.map((c: any) => ({ ...c, stats: stats?.get(c.campaign_id) ?? null }));
 	}
 
 	async function loadEquipment(projectId: string): Promise<EquipmentUse[]> {

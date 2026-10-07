@@ -46,11 +46,14 @@ const dates = (c: any) => {
 							<span><b>{{ c.stats.operations }}</b> operations</span>
 							<span><b>{{ c.stats.tests }}</b> tests</span>
 						</div>
-						<div v-if="c.stats.progress.total" class="progress">
+						<div v-if="c.stats.progress.kind === 'bar' && c.stats.progress.total" class="progress">
 							<span class="p-label">{{ c.stats.progress.label }}</span>
 							<ProgressBar :value="c.stats.progress.done" :max="c.stats.progress.total" />
 						</div>
-						<div v-else class="no-progress">No {{ c.campaign_type === 'testing_campaign' ? 'tests' : 'machining operations' }} to track yet</div>
+						<div v-else-if="c.stats.progress.kind === 'unavailable'" class="no-progress">
+							{{ c.stats.progress.label }}: progress unavailable ({{ c.stats.progress.reason === 'truncated' ? 'too many records' : 'no access to the data' }})
+						</div>
+						<div v-else-if="c.stats.progress.kind === 'bar'" class="no-progress">No {{ c.campaign_type === 'testing_campaign' ? 'tests' : 'machining operations' }} to track yet</div>
 					</template>
 					<div v-else class="no-progress">Counts unavailable</div>
 				</router-link>

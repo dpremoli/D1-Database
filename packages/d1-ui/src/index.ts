@@ -46,7 +46,7 @@ export type { WeekInfo, WeeklyActivity } from './activity';
 export { default as Sparkline } from './components/Sparkline.vue';
 export { projectRole, projectStatusLabel, filterProjects, campaignProgress, countsByKey } from './projects';
 export type {
-	ProjectRow, ProjectRole, RoleFilter, StatusFilter, ProjectFilters, CampaignProgress,
+	ProjectRow, ProjectRole, RoleFilter, StatusFilter, ProjectFilters, CampaignProgress, ProgressState, ForceRows,
 } from './projects';
 export {
 	CURRENT_USER, ownedByMe, coOwnedByMe, samplesMine, projectsMine, campaignsMine, withForceFile,
