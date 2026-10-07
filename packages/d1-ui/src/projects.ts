@@ -5,6 +5,9 @@
 // row whose `user_id` is the login), investigators are the M2M alias `secondary_investigators`
 // whose `user_id` is a directus_users id. Nothing here reads the hidden legacy columns.
 
+import { analysisState } from './campaign/rollup';
+import { operationCategoryFor } from './campaign/campaignType';
+
 export type ProjectRole = 'pi' | 'investigator';
 // 'all' = every project the user can read; 'any' = projects where the user is PI or investigator.
 export type RoleFilter = 'all' | 'any' | ProjectRole;
@@ -62,10 +65,6 @@ export function filterProjects<T extends ProjectRow>(
 
 // ── Per-campaign counts and progress ────────────────────────────────────────────────────────────
 
-// test_sessions.status is the lifecycle from migration 20260619000013; a test is complete once its
-// data is processed or analysed.
-const TEST_DONE = ['processed', 'analysed'];
-
 export interface CampaignLite {
 	campaign_id: string;
 	campaign_type?: string | null;
@@ -75,14 +74,20 @@ export interface OpLite {
 	campaign_id?: string | null;
 	process_category?: string | null;
 }
-export interface TestLite {
-	campaign_id?: string | null;
-	status?: string | null;
-}
 export interface AnalysisLite {
 	operation_id: string;
 	status?: string | null;
 }
+
+/**
+ * The progress bar of a campaign card. `unavailable` is shown instead of a bar that would be wrong:
+ * `truncated` when a capped row read hit its cap, `forbidden` when the role cannot read the data.
+ * `none` for a campaign type with no bar (imaging / analysis).
+ */
+export type ProgressState =
+	| { kind: 'bar'; label: string; done: number; total: number }
+	| { kind: 'unavailable'; label: string; reason: 'truncated' | 'forbidden' }
+	| { kind: 'none' };
 
 export interface CampaignProgress {
 	campaign_id: string;
@@ -90,55 +95,76 @@ export interface CampaignProgress {
 	operations: number;
 	tests: number;
 	/** The progress bar: what "done" means depends on the campaign type. */
-	progress: { label: string; done: number; total: number };
+	progress: ProgressState;
 }
 
-// One operation can have several force files; it counts as analysed when none is still queued,
-// processing or in error and at least one is done (worst-first, as the campaign overview does).
-function operationAnalysis(rows: ReadonlyArray<AnalysisLite>): 'none' | 'done' | 'skipped' | 'open' {
-	const s = rows.map((r) => r.status).filter(Boolean);
-	if (!s.length) return 'none';
-	if (s.some((x) => x === 'error' || x === 'processing' || x === 'pending')) return 'open';
-	return s.includes('done') ? 'done' : 'skipped';
+/** Row reads behind the machining "force analysed" bar. Null when they could not be read at all. */
+export interface ForceRows {
+	operations: ReadonlyArray<OpLite>;
+	analyses: ReadonlyArray<AnalysisLite>;
+	/** A read hit its row cap, so the rows are not the full set. */
+	truncated: boolean;
 }
 
-// Machining trials show "analysed n / m" over their machining operations (an operation whose files
-// were all skipped is left out, otherwise the bar could never fill); testing campaigns show
-// "tests complete n / m". `samplesByCampaign` comes from the campaign_samples junction.
+// The counts are exact (`aggregate[count]` grouped by campaign) and passed in as maps; only the
+// force-analysis states need rows. Machining trials show "force analysed n / m" over their
+// machining operations (an operation whose files were all skipped is left out, otherwise the bar
+// could never fill); testing campaigns show "tests complete n / m"; other types have no bar. The
+// type decides through operationCategoryFor(), the same mapping the campaign pickers use.
 export function campaignProgress(input: {
 	campaigns: ReadonlyArray<CampaignLite>;
 	samplesByCampaign: ReadonlyMap<string, number>;
-	operations: ReadonlyArray<OpLite>;
-	tests: ReadonlyArray<TestLite>;
-	analyses: ReadonlyArray<AnalysisLite>;
+	operationsByCampaign: ReadonlyMap<string, number>;
+	testsByCampaign: ReadonlyMap<string, number>;
+	/** Tests in a done status per campaign; null when that read failed. */
+	testsDoneByCampaign: ReadonlyMap<string, number> | null;
+	forceRows: ForceRows | null;
 }): Map<string, CampaignProgress> {
 	const analysesByOp = new Map<string, AnalysisLite[]>();
-	for (const a of input.analyses) {
-		const list = analysesByOp.get(a.operation_id);
-		if (list) list.push(a);
-		else analysesByOp.set(a.operation_id, [a]);
+	const opsByCampaign = new Map<string, OpLite[]>();
+	if (input.forceRows) {
+		for (const a of input.forceRows.analyses) {
+			const list = analysesByOp.get(a.operation_id);
+			if (list) list.push(a);
+			else analysesByOp.set(a.operation_id, [a]);
+		}
+		for (const o of input.forceRows.operations) {
+			if (!o.campaign_id) continue;
+			const list = opsByCampaign.get(o.campaign_id);
+			if (list) list.push(o);
+			else opsByCampaign.set(o.campaign_id, [o]);
+		}
 	}
 	const out = new Map<string, CampaignProgress>();
 	for (const c of input.campaigns) {
-		const ops = input.operations.filter((o) => o.campaign_id === c.campaign_id);
-		const tests = input.tests.filter((t) => t.campaign_id === c.campaign_id);
-		let progress: CampaignProgress['progress'];
+		const tests = input.testsByCampaign.get(c.campaign_id) ?? 0;
+		let progress: ProgressState = { kind: 'none' };
 		if (c.campaign_type === 'testing_campaign') {
-			progress = {
-				label: 'Tests complete',
-				done: tests.filter((t) => TEST_DONE.includes(t.status ?? '')).length,
-				total: tests.length,
-			};
-		} else {
-			const states = ops.map((o) => ({ o, state: operationAnalysis(analysesByOp.get(o.operation_id) ?? []) }));
-			const counted = states.filter(({ o, state }) => (o.process_category === 'machining' || state !== 'none') && state !== 'skipped');
-			progress = { label: 'Force analysed', done: counted.filter((x) => x.state === 'done').length, total: counted.length };
+			const label = 'Tests complete';
+			progress = input.testsDoneByCampaign
+				? { kind: 'bar', label, done: input.testsDoneByCampaign.get(c.campaign_id) ?? 0, total: tests }
+				: { kind: 'unavailable', label, reason: 'forbidden' };
+		} else if (operationCategoryFor(c.campaign_type) === 'machining') {
+			const label = 'Force analysed';
+			const force = input.forceRows;
+			if (!force) progress = { kind: 'unavailable', label, reason: 'forbidden' };
+			else if (force.truncated) progress = { kind: 'unavailable', label, reason: 'truncated' };
+			else {
+				const states = (opsByCampaign.get(c.campaign_id) ?? []).map((o) => ({
+					o,
+					state: analysisState(analysesByOp.get(o.operation_id) ?? []),
+				}));
+				const counted = states.filter(
+					({ o, state }) => (o.process_category === 'machining' || state !== 'none') && state !== 'skipped',
+				);
+				progress = { kind: 'bar', label, done: counted.filter((x) => x.state === 'done').length, total: counted.length };
+			}
 		}
 		out.set(c.campaign_id, {
 			campaign_id: c.campaign_id,
 			samples: input.samplesByCampaign.get(c.campaign_id) ?? 0,
-			operations: ops.length,
-			tests: tests.length,
+			operations: input.operationsByCampaign.get(c.campaign_id) ?? 0,
+			tests,
 			progress,
 		});
 	}

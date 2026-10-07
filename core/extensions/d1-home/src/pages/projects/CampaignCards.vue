@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { LoadState, ProgressBar, Section, formatDate, humanise, recordRoute } from '@d1/ui';
+import { LoadState, ProgressBar, Section, campaignTypeLabel, collectionRoute, formatDate, humanise, recordRoute } from '@d1/ui';
 import type { Block } from './useProjectData';
 import { LIST_CAP } from './useProjectData';
 import { computed } from 'vue';
@@ -11,8 +11,6 @@ const props = defineProps<{ campaigns: Block<any[]> }>();
 
 const rows = computed(() => props.campaigns.data.slice(0, LIST_CAP));
 const capped = computed(() => props.campaigns.data.length > LIST_CAP);
-const typeLabel = (t: string | null | undefined) =>
-	t === 'machining_trial' ? 'Machining trial' : t === 'testing_campaign' ? 'Testing campaign' : humanise(t ?? 'Campaign');
 const dates = (c: any) => {
 	const a = formatDate(c.start_date);
 	const b = formatDate(c.end_date);
@@ -32,7 +30,7 @@ const dates = (c: any) => {
 				<router-link v-for="c in rows" :key="c.campaign_id" :to="recordRoute('campaigns', c.campaign_id)" class="card">
 					<div class="top">
 						<span class="code">{{ c.campaign_code || c.name }}</span>
-						<span class="type">{{ typeLabel(c.campaign_type) }}</span>
+						<span class="type">{{ campaignTypeLabel(c.campaign_type) }}</span>
 					</div>
 					<div v-if="c.campaign_code" class="name">{{ c.name }}</div>
 					<div class="meta">
@@ -46,16 +44,19 @@ const dates = (c: any) => {
 							<span><b>{{ c.stats.operations }}</b> operations</span>
 							<span><b>{{ c.stats.tests }}</b> tests</span>
 						</div>
-						<div v-if="c.stats.progress.total" class="progress">
+						<div v-if="c.stats.progress.kind === 'bar' && c.stats.progress.total" class="progress">
 							<span class="p-label">{{ c.stats.progress.label }}</span>
 							<ProgressBar :value="c.stats.progress.done" :max="c.stats.progress.total" />
 						</div>
-						<div v-else class="no-progress">No {{ c.campaign_type === 'testing_campaign' ? 'tests' : 'machining operations' }} to track yet</div>
+						<div v-else-if="c.stats.progress.kind === 'unavailable'" class="no-progress">
+							{{ c.stats.progress.label }}: progress unavailable ({{ c.stats.progress.reason === 'truncated' ? 'too many records' : 'no access to the data' }})
+						</div>
+						<div v-else-if="c.stats.progress.kind === 'bar'" class="no-progress">No {{ c.campaign_type === 'testing_campaign' ? 'tests' : 'machining operations' }} to track yet</div>
 					</template>
 					<div v-else class="no-progress">Counts unavailable</div>
 				</router-link>
 			</div>
-			<p v-if="capped" class="cap">Showing the first {{ LIST_CAP }} campaigns. <router-link to="/content/campaigns">Open the Data Studio list</router-link> for the rest.</p>
+			<p v-if="capped" class="cap">Showing the first {{ LIST_CAP }} campaigns. <router-link :to="collectionRoute('campaigns')">Open the collection in the Data Studio (unfiltered)</router-link> for the rest.</p>
 		</LoadState>
 	</Section>
 </template>

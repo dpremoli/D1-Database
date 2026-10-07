@@ -7,21 +7,27 @@ const SAMPLES_BOOKMARK_NAME = 'Samples';
 
 type Api = { get: (url: string, config?: any) => Promise<any> };
 
-export async function samplesBookmarkLink(api: Api): Promise<string> {
+// The id of a named bookmark on a collection, or null when there is none (or the role cannot read
+// presets). Prefers the global bookmark, then a role's, then the user's own.
+export async function bookmarkId(api: Api, collection: string, name: string): Promise<number | null> {
 	try {
 		const res = await api.get('/presets', {
 			params: {
-				filter: { bookmark: { _eq: SAMPLES_BOOKMARK_NAME }, collection: { _eq: 'physical_samples' } },
+				filter: { bookmark: { _eq: name }, collection: { _eq: collection } },
 				fields: ['id', 'user', 'role'],
 				sort: ['id'],
 				limit: -1,
 			},
 		});
 		const rows: { id: number; user: string | null; role: string | null }[] = res.data.data ?? [];
-		// Prefer the global bookmark, then a role's, then the user's own.
 		const pick = rows.find((r) => !r.user && !r.role) ?? rows.find((r) => !r.user) ?? rows[0];
-		return pick ? `${SAMPLES_LIST}?bookmark=${pick.id}` : SAMPLES_LIST;
+		return pick ? pick.id : null;
 	} catch {
-		return SAMPLES_LIST;
+		return null;
 	}
+}
+
+export async function samplesBookmarkLink(api: Api): Promise<string> {
+	const id = await bookmarkId(api, 'physical_samples', SAMPLES_BOOKMARK_NAME);
+	return id === null ? SAMPLES_LIST : `${SAMPLES_LIST}?bookmark=${id}`;
 }

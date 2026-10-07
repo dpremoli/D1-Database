@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import { LoadState, errorText, useItems, useRequestGate } from '@d1/ui';
+import { useApi } from '@directus/extensions-sdk';
+import { LoadState, collectionRoute, errorText, useItems, useRequestGate } from '@d1/ui';
+import { bookmarkId } from './samplesBookmark';
 import { ATTENTION, ATTENTION_LIST_LIMIT, type AttentionDef, type AttentionItem } from './attention';
 
 // Counts of things that need a look. Each tile loads its own count (a role that cannot read one
@@ -10,6 +12,7 @@ import { ATTENTION, ATTENTION_LIST_LIMIT, type AttentionDef, type AttentionItem 
 const props = defineProps<{ isAdmin: boolean }>();
 
 const { getItems } = useItems();
+const api = useApi();
 const gate = useRequestGate();
 
 const defs = computed(() => ATTENTION.filter((d) => !d.adminOnly || props.isAdmin));
@@ -52,11 +55,30 @@ async function toggle(def: AttentionDef) {
 }
 
 const openDef = computed(() => defs.value.find((d) => d.key === open.value) ?? null);
+// A tile whose filter exists as a Data Studio bookmark ("Failed") links to that filtered view,
+// found by name since its id differs between installs. Without it the link is the plain, unfiltered
+// collection and says so.
+const bookmarkIds = ref<Record<string, number>>({});
+const moreLink = computed(() => {
+	const d = openDef.value;
+	if (!d) return null;
+	const id = bookmarkIds.value[d.key];
+	return id === undefined
+		? { to: collectionRoute(d.collection), text: 'Open the collection in the Data Studio (unfiltered)' }
+		: { to: `/content/${d.collection}?bookmark=${id}`, text: `Open the "${d.bookmark}" bookmark in the Data Studio` };
+});
 const openCount = computed(() => (open.value ? (state.value[open.value]?.count ?? 0) : 0));
 
 onMounted(() => {
 	const token = gate.begin();
-	for (const d of defs.value) loadCount(d, token);
+	for (const d of defs.value) {
+		loadCount(d, token);
+		if (d.bookmark) {
+			bookmarkId(api, d.collection, d.bookmark).then((id) => {
+				if (id !== null) bookmarkIds.value = { ...bookmarkIds.value, [d.key]: id };
+			});
+		}
+	}
 });
 onBeforeUnmount(() => {
 	gate.cancel();
@@ -94,9 +116,9 @@ const show = (s: TileState | undefined) => (!s || s.loading ? '…' : s.count ==
 						<span v-if="i.sub" class="i-sub">{{ i.sub }}</span>
 					</li>
 				</ul>
-				<p v-if="openCount > list.items.length" class="more">
+				<p v-if="moreLink && openCount > list.items.length" class="more">
 					Showing {{ list.items.length }} of {{ openCount }}.
-					<router-link :to="`/content/${openDef.collection}`">Open the full list in the Data Studio</router-link>
+					<router-link :to="moreLink.to">{{ moreLink.text }}</router-link>
 				</p>
 			</LoadState>
 		</div>

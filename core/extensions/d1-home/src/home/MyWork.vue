@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { LoadState, Section, StatusBadge, formatDate, humanise, projectStatusLabel, recordRoute } from '@d1/ui';
+import { LoadState, Section, StatusBadge, campaignTypeLabel, formatDate, humanise, projectStatusLabel, recordRoute } from '@d1/ui';
 import { CARD_LIMIT, SAMPLE_LIMIT, useMyWork } from './useMyWork';
 
 // Projects where I am PI or investigator, campaigns I own and my newest samples, as cards. Every card is a link to its
 // Explorer page; the header of each group links to the full list.
-const { projects, campaigns, samples, hasPerson, partial } = useMyWork();
-const typeLabel = (t: string | null | undefined) =>
-	t === 'machining_trial' ? 'Machining trial' : t === 'testing_campaign' ? 'Testing campaign' : humanise(t ?? 'Campaign');
+const { projects, campaigns, samples, hasPerson, partialProjects, partialSamples } = useMyWork();
 </script>
 
 <template>
@@ -18,11 +16,11 @@ const typeLabel = (t: string | null | undefined) =>
 
 		<p v-if="hasPerson === false" class="notice" role="note">
 			Your login is not linked to a person record, so samples and campaigns you own cannot be found.
-			Ask an admin to link it on the <router-link to="/home/people">People</router-link> page. Projects where you are
-			PI, and samples where you are a co-owner, still show.
+			Ask an admin to link it on the <router-link to="/home/people">People</router-link> page. Projects where you are an
+			investigator, and samples you co-own, still show.
 		</p>
-		<p v-if="partial" class="notice" role="note">{{ partial }}</p>
 
+		<p v-if="partialProjects" class="notice" role="note">{{ partialProjects }}</p>
 		<Section
 			title="My projects (PI or investigator)"
 			:count="projects.loading ? null : projects.data.length"
@@ -55,7 +53,7 @@ const typeLabel = (t: string | null | undefined) =>
 					<router-link v-for="c in campaigns.data" :key="c.campaign_id" :to="recordRoute('campaigns', c.campaign_id)" class="card">
 						<span class="c-top">
 							<span class="c-code">{{ c.campaign_code || c.name }}</span>
-							<span class="c-tag">{{ typeLabel(c.campaign_type) }}</span>
+							<span class="c-tag">{{ campaignTypeLabel(c.campaign_type) }}</span>
 						</span>
 						<span v-if="c.campaign_code" class="c-name">{{ c.name }}</span>
 						<span class="c-meta">
@@ -67,6 +65,7 @@ const typeLabel = (t: string | null | undefined) =>
 			</LoadState>
 		</Section>
 
+		<p v-if="partialSamples" class="notice" role="note">{{ partialSamples }}</p>
 		<Section
 			title="My latest samples"
 			:count="samples.loading ? null : samples.data.length"

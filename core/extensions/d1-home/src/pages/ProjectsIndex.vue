@@ -11,7 +11,7 @@ import ProjectCard from './projects/ProjectCard.vue';
 const { useUserStore } = useStores();
 const userId = computed<string | null>(() => (useUserStore().currentUser as any)?.id ?? null);
 
-const { projects, loading, error, campaignCounts, sampleCounts, countsError, activity, activityError, truncated, rolesError } =
+const { projects, loading, error, campaignCounts, sampleCounts, campaignCountsError, sampleCountsError, activity, activityError, truncated, rolesError } =
 	useProjectsIndex();
 
 const role = ref<RoleFilter>('all');
@@ -21,8 +21,7 @@ const query = ref('');
 const visible = computed(() =>
 	filterProjects(projects.value, { role: role.value, status: status.value, query: query.value }, userId.value),
 );
-const countOrNull = (m: Map<string, number>, id: string) =>
-	countsError.value ? null : (m.get(id) ?? 0);
+const countOrNull = (m: Map<string, number>, failed: string, id: string) => (failed ? null : (m.get(id) ?? 0));
 
 const roleOptions: { value: RoleFilter; label: string }[] = [
 	{ value: 'all', label: 'All projects' },
@@ -75,7 +74,8 @@ const statusOptions: { value: StatusFilter; label: string }[] = [
 					<span v-if="projects.length >= PROJECT_CAP">Only the first {{ PROJECT_CAP }} are loaded.</span>
 				</p>
 				<p v-if="role !== 'all' && !userId" class="note">Your user could not be identified, so role filters match nothing.</p>
-				<p v-if="countsError" class="note" role="alert">{{ countsError }}</p>
+				<p v-if="campaignCountsError" class="note" role="alert">{{ campaignCountsError }}</p>
+				<p v-if="sampleCountsError" class="note" role="alert">{{ sampleCountsError }}</p>
 				<p v-if="activityError" class="note" role="alert">{{ activityError }}</p>
 				<p v-if="rolesError" class="note" role="alert">{{ rolesError }}</p>
 				<p v-if="truncated" class="note">The activity charts are based on the newest records only (the lab has more than the page loads).</p>
@@ -86,8 +86,8 @@ const statusOptions: { value: StatusFilter; label: string }[] = [
 						:key="p.project_id"
 						:project="p"
 						:role="projectRole(p, userId)"
-						:campaigns="countOrNull(campaignCounts, p.project_id)"
-						:samples="countOrNull(sampleCounts, p.project_id)"
+						:campaigns="countOrNull(campaignCounts, campaignCountsError, p.project_id)"
+						:samples="countOrNull(sampleCounts, sampleCountsError, p.project_id)"
 						:activity="activity.get(p.project_id) ?? null"
 					/>
 				</div>
