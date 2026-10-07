@@ -605,7 +605,9 @@ INSERT INTO directus_fields (collection, field, special, interface, options, dis
 ('projects','secondary_investigators',    'm2m','list-m2m','{"template":"{{user_id.first_name}} {{user_id.last_name}}","junction_field":"user_id"}','related-values','{"template":"{{user_id.first_name}} {{user_id.last_name}}"}',false,false,12,'full',false,'[{"language":"en-US","translation":"Secondary Investigators"}]'),
 ('projects','created_at','date-created','datetime',NULL,'datetime',NULL,true,true,20,'half',false,NULL),
 ('projects','updated_at','date-updated','datetime',NULL,'datetime',NULL,true,true,21,'half',false,NULL),
-('projects','version',NULL,'input',NULL,'raw',NULL,true,true,22,'half',false,NULL);
+('projects','version',NULL,'input',NULL,'raw',NULL,true,true,22,'half',false,NULL),
+-- hidden O2M alias over physical_samples.project_id: lets a permission filter say "owns a sample in this project" (ADR-0011)
+('projects','samples','o2m','list-o2m','{"enableCreate":false,"enableSelect":false}','related-values',NULL,true,true,23,'full',false,NULL);
 
 -- ── test_sessions ─────────────────────────────────────────────────────────────
 INSERT INTO directus_fields (collection, field, special, interface, options, display, display_options, readonly, hidden, sort, width, required, translations) VALUES
@@ -817,7 +819,8 @@ INSERT INTO directus_relations (many_collection, many_field, one_collection, one
 -- physical_samples FK references (nullable → nullify is fine)
 ('physical_samples',          'material_id',     'materials',                  'physical_samples',         'nullify'),
 ('physical_samples',          'primary_method_id','manufacturing_methods',     NULL,                       'nullify'),
-('physical_samples',          'project_id',       'projects',                   NULL,                       'nullify'),
+-- one_field 'samples': the hidden alias the Lab Member project read rule (ADR-0011) filters on
+('physical_samples',          'project_id',       'projects',                   'samples',                  'nullify'),
 -- manufacturing_operations
 -- sample_id NOT NULL → delete operation when sample is deleted
 ('manufacturing_operations',  'sample_id',        'physical_samples',           'manufacturing_operations',  'delete'),
