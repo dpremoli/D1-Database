@@ -16,7 +16,14 @@ import { useRequestGate } from '../composables/useRequestGate';
 // Directus source: components/register.ts registers VForm and VDrawer globally, and useSystem()
 // provides useFieldsStore through useStores()). If either is ever missing, the drawer does not
 // open and the page goes to the Data Studio form instead.
-const props = defineProps<{ modelValue: boolean; collection: string; primaryKey: string; title?: string }>();
+const props = defineProps<{
+	modelValue: boolean;
+	collection: string;
+	primaryKey: string;
+	title?: string;
+	/** Fields left out of the form because the page shows them itself. */
+	hiddenFields?: string[];
+}>();
 const emit = defineEmits<{ (e: 'update:modelValue', open: boolean): void; (e: 'saved'): void }>();
 
 const api = useApi();
@@ -39,7 +46,7 @@ const confirmDiscard = ref(false);
 const fields = computed<FieldDef[]>(() => {
 	if (!formAvailable) return [];
 	const all = stores.useFieldsStore().getFieldsForCollectionSorted(props.collection) as FieldDef[];
-	return formFields(all, item.value);
+	return formFields(all, item.value, props.hiddenFields);
 });
 const hasEdits = computed(() => buildPatch(edits.value) !== null);
 

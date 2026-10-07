@@ -15,6 +15,11 @@ describe('formFields', () => {
 		expect(formFields(defs, item).map((f) => f.field)).toEqual(['sample_id', 'sample_code', 'data_files_open']);
 	});
 
+	it('leaves out the fields a page asks to hide', () => {
+		const item = { sample_id: 'a', sample_code: 'X' };
+		expect(formFields(defs, item, ['data_files_open', 'sample_code']).map((f) => f.field)).toEqual(['sample_id']);
+	});
+
 	it('shows nothing before the item has loaded', () => {
 		expect(formFields(defs, null)).toEqual([]);
 	});

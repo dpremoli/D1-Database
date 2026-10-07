@@ -38,3 +38,5 @@ export type { OverviewInput } from './campaign/rollup';
 export { isForbidden, isDuplicate } from './campaign/errors';
 export { buildMatrix } from './campaign/matrix';
 export type { Matrix, MatrixCell, MatrixColumn, MatrixInput, MatrixRow, CellKind } from './campaign/matrix';
+export { campaignTypeLabel, operationCategoryFor, CAMPAIGN_TYPE_LABEL } from './campaign/campaignType';
+export { default as CampaignWorkbench } from './campaign/CampaignWorkbench.vue';

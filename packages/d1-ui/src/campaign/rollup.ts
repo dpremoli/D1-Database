@@ -170,3 +170,5 @@ export function buildOverview({ samples = [], operations = [], tests = [], analy
 		testRows,
 	};
 }
+
+export type Overview = ReturnType<typeof buildOverview>;

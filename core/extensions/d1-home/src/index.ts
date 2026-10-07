@@ -4,6 +4,7 @@ import RegisterSample from './register-sample.vue';
 import PeopleView from './people.vue';
 import PlaceholderPage from './pages/PlaceholderPage.vue';
 import SamplePage from './pages/SamplePage.vue';
+import CampaignPage from './pages/CampaignPage.vue';
 
 // A friendly landing page for lab users plus guided task screens, so day-to-day
 // work starts somewhere warm and simple instead of a raw collection form.
@@ -30,7 +31,7 @@ export default defineModule({
 		{ path: 'people', component: PeopleView },
 		{ path: 'projects', ...placeholder('projects', 'Projects') },
 		{ path: 'projects/:id', ...placeholder('projects', 'Project') },
-		{ path: 'campaigns/:id', ...placeholder('campaigns', 'Campaign') },
+		{ path: 'campaigns/:id', component: CampaignPage, props: true },
 		{ path: 'samples/:id', component: SamplePage, props: true },
 		{ path: 'operations/:id', ...placeholder('manufacturing_operations', 'Operation') },
 		{ path: 'tests/:id', ...placeholder('test_sessions', 'Test session') },
