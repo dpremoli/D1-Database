@@ -18,7 +18,7 @@ BEGIN;
 -- by an earlier version of this script (which omitted the flag) without touching a
 -- bar curated in the UI, since the UI always writes the flag.
 -- Home is first and the Data Studio (content) follows the dashboards, the order migration
--- 20261006000136 gives an existing bar (docs/superpowers/specs/2026-10-06-explorer-pages-design.md).
+-- 20261007000138 gives an existing bar (docs/superpowers/specs/2026-10-06-explorer-pages-design.md).
 UPDATE directus_settings SET module_bar = '[
   {"type":"module","id":"home","enabled":true},
   {"type":"module","id":"users","enabled":true},

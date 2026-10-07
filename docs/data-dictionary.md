@@ -217,7 +217,7 @@ after parsing.
 | Column | Type | Description |
 |---|---|---|
 | `session_id` | UUID PK | |
-| `sample_id` | UUID FK | Primary sample under test: derived from `test_sessions_subject` by a trigger (migration `…137`); do not write directly |
+| `sample_id` | UUID FK | Primary sample under test: derived from `test_sessions_subject` by a trigger (migration `…139`); do not write directly |
 | `equipment_id` | UUID FK | Test rig used |
 | `insert_edge_id` | UUID FK | Primary cutting edge involved (machining tests): derived from `test_sessions_subject`; do not write directly |
 | `project_id` | UUID FK | Optional project grouping |
@@ -232,10 +232,16 @@ after parsing.
 
 Since Phase 1: what a test targets is recorded through the `test_sessions_subject`
 M2A junction (a sample, an insert edge, …). `sample_id` and `insert_edge_id` are a
-denormalised *primary subject*: since migration `…137` a trigger on the junction sets
+denormalised *primary subject*: since migration `…139` a trigger on the junction sets
 them to the first (lowest junction id) `physical_samples` / `insert_edges` subject, so
 form-created tests are found by readers that filter on `sample_id`. A test with several
-samples shows only the first there; read the junction for all of them. Typed per-test
+samples shows only the first there; read the junction for all of them. Deleting a
+sample no longer cascades to its tests (migration `…139`): the sample leaves each test's
+subject list and the next sample becomes primary; a test is deleted with the sample only when
+that was its last subject (no other sample, no insert edge). Deleting an insert edge that a
+test names, in the junction or in `insert_edge_id`, is refused with "… is the subject of test
+<id>; remove it from the test first", and so is deleting a cutting insert or tool box whose
+cascade reaches such an edge: remove the edge from the test first. Typed per-test
 parameters are inline columns prefixed by test type (`tensile_*`, `hardness_*`, `sem_*`,
 `xrd_*`, …).
 
