@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
-import { formatDate, recordRoute } from '@d1/ui';
+import { errorText, formatDate, recordRoute } from '@d1/ui';
 import { samplesBookmarkLink, SAMPLES_LIST } from './samplesBookmark';
 
 // Recent activity: samples, operations and tests merged into one feed, each tagged with its kind,
@@ -13,47 +13,70 @@ const KIND_LABEL: Record<Kind, string> = { sample: 'Sample', operation: 'Operati
 const api = useApi();
 const recent = ref<Activity[]>([]);
 const samplesLink = ref(SAMPLES_LIST);
+const error = ref('');
+
+// Each source loads on its own: one the role cannot read leaves the others in the feed, and the
+// failure is named instead of showing an empty feed that claims "No activity yet".
+const SOURCES: { label: string; read: () => Promise<Activity[]> }[] = [
+	{
+		label: 'samples',
+		read: async () => {
+			const res = await api.get('/items/physical_samples', {
+				params: { sort: '-created_at', limit: 6, fields: ['sample_id', 'sample_code', 'form', 'created_at', 'material_id.common_name'] },
+			});
+			return (res.data.data ?? []).map((r: any) => ({
+				kind: 'sample' as const, id: r.sample_id, code: r.sample_code,
+				meta: r.material_id?.common_name || r.form || '—', date: r.created_at,
+				to: recordRoute('physical_samples', r.sample_id),
+			}));
+		},
+	},
+	{
+		label: 'operations',
+		read: async () => {
+			const res = await api.get('/items/manufacturing_operations', {
+				params: { sort: '-created_at', limit: 8, fields: ['operation_id', 'pass_code', 'created_at', 'process_category', 'sample_id.sample_code'] },
+			});
+			return (res.data.data ?? []).map((r: any) => {
+				const isFast = r.process_category === 'sintering';
+				return {
+					kind: isFast ? ('fast' as const) : ('operation' as const),
+					id: r.operation_id, code: r.pass_code || r.sample_id?.sample_code || '—',
+					meta: r.sample_id?.sample_code || '—', date: r.created_at,
+					to: isFast ? `/d1-fast-dashboard?operation=${r.operation_id}` : recordRoute('manufacturing_operations', r.operation_id),
+				};
+			});
+		},
+	},
+	{
+		label: 'tests',
+		read: async () => {
+			const res = await api.get('/items/test_sessions', {
+				params: { sort: '-created_at', limit: 6, fields: ['session_id', 'test_type', 'created_at', 'sample_id.sample_code'] },
+			});
+			return (res.data.data ?? []).map((r: any) => ({
+				kind: 'test' as const, id: r.session_id, code: r.test_type || 'Test',
+				meta: r.sample_id?.sample_code || '—', date: r.created_at,
+				to: recordRoute('test_sessions', r.session_id),
+			}));
+		},
+	},
+];
 
 onMounted(async () => {
 	samplesBookmarkLink(api).then((to) => (samplesLink.value = to));
-	try {
-		const [samplesRes, opsRes, testsRes] = await Promise.all([
-			api.get('/items/physical_samples', {
-				params: { sort: '-created_at', limit: 6, fields: ['sample_id', 'sample_code', 'form', 'created_at', 'material_id.common_name'] },
-			}),
-			api.get('/items/manufacturing_operations', {
-				params: { sort: '-created_at', limit: 8, fields: ['operation_id', 'pass_code', 'created_at', 'process_category', 'sample_id.sample_code'] },
-			}),
-			api.get('/items/test_sessions', {
-				params: { sort: '-created_at', limit: 6, fields: ['session_id', 'test_type', 'created_at', 'sample_id.sample_code'] },
-			}),
-		]);
-		const samples: Activity[] = (samplesRes.data.data ?? []).map((r: any) => ({
-			kind: 'sample', id: r.sample_id, code: r.sample_code,
-			meta: r.material_id?.common_name || r.form || '—', date: r.created_at,
-			to: recordRoute('physical_samples', r.sample_id),
-		}));
-		const ops: Activity[] = (opsRes.data.data ?? []).map((r: any) => {
-			const isFast = r.process_category === 'sintering';
-			return {
-				kind: isFast ? ('fast' as const) : ('operation' as const),
-				id: r.operation_id, code: r.pass_code || r.sample_id?.sample_code || '—',
-				meta: r.sample_id?.sample_code || '—', date: r.created_at,
-				to: isFast ? `/d1-fast-dashboard?operation=${r.operation_id}` : recordRoute('manufacturing_operations', r.operation_id),
-			};
-		});
-		const tests: Activity[] = (testsRes.data.data ?? []).map((r: any) => ({
-			kind: 'test', id: r.session_id, code: r.test_type || 'Test',
-			meta: r.sample_id?.sample_code || '—', date: r.created_at,
-			to: recordRoute('test_sessions', r.session_id),
-		}));
-		recent.value = [...samples, ...ops, ...tests]
-			.filter((a) => a.date)
-			.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-			.slice(0, 9);
-	} catch {
-		recent.value = [];
-	}
+	const results = await Promise.allSettled(SOURCES.map((s) => s.read()));
+	const failed: string[] = [];
+	const merged: Activity[] = [];
+	results.forEach((r, i) => {
+		if (r.status === 'fulfilled') merged.push(...r.value);
+		else failed.push(`${SOURCES[i].label} (${errorText(r.reason)})`);
+	});
+	recent.value = merged
+		.filter((a) => a.date)
+		.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+		.slice(0, 9);
+	error.value = failed.length ? `Could not load recent ${failed.join(', ')}.` : '';
 });
 </script>
 
@@ -63,6 +86,7 @@ onMounted(async () => {
 			<h2 id="recent-h">Recent activity</h2>
 			<router-link :to="samplesLink" class="link">View samples →</router-link>
 		</div>
+		<p v-if="error" class="error" role="alert">{{ error }}</p>
 		<div v-if="recent.length" class="recent-grid">
 			<router-link v-for="r in recent" :key="`${r.kind}-${r.id}`" :to="r.to" class="rcard">
 				<span class="r-top">
@@ -73,7 +97,7 @@ onMounted(async () => {
 				<span class="r-meta">{{ r.meta }}</span>
 			</router-link>
 		</div>
-		<p v-else class="empty">No activity yet.</p>
+		<p v-else-if="!error" class="empty">No activity yet.</p>
 	</section>
 </template>
 
@@ -100,4 +124,5 @@ onMounted(async () => {
 .r-meta { font-size: 12.5px; color: var(--theme--foreground-subdued); }
 .r-date { font-size: 11px; color: var(--theme--foreground-subdued); }
 .empty { color: var(--theme--foreground-subdued); }
+.error { margin: 0 0 12px; font-size: 13px; color: var(--theme--danger); }
 </style>
