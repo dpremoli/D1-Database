@@ -1,6 +1,7 @@
 import { onBeforeUnmount, ref, type Ref } from 'vue';
 import {
-	CURRENT_USER, campaignsMine, errorText, ownedByMe, projectsMine, samplesMine, useItems, useRequestGate,
+	CURRENT_USER, campaignsMine, errorText, isForbidden, isNotVisible, ownedByMe, projectsMine, samplesMine, useItems,
+	useRequestGate,
 } from '@d1/ui';
 
 // "My work" on Home: the projects where I am PI or investigator, the campaigns I own and my newest samples, read as the
@@ -28,8 +29,9 @@ export function useMyWork() {
 	// saying out loud rather than showing three empty lists.
 	const hasPerson = ref<boolean | null>(null);
 	// Set when the co-owner / investigator half of a filter could not be applied (a role that may
-	// not read the junction): the list then shows ownership / PI only.
-	const partial = ref('');
+	// not read the junction): that list then shows ownership / PI only. One note per list.
+	const partialProjects = ref('');
+	const partialSamples = ref('');
 
 	async function fill<T>(target: Ref<Block<T>>, token: number, what: string, read: () => Promise<T>) {
 		target.value = { ...target.value, loading: true, error: '' };
@@ -41,19 +43,30 @@ export function useMyWork() {
 		}
 	}
 
-	// Try the full filter; if Directus refuses it, fall back to the owner-only half.
-	async function withFallback(collection: string, full: Record<string, unknown>, fallback: Record<string, unknown>, params: Record<string, unknown>, note: string) {
+	// Try the full filter; if Directus refuses it (403 / not visible), fall back to the owner-only
+	// half and set the note. Any other failure (network, 5xx, a bad filter) is rethrown so the
+	// section shows the real error instead of a quietly narrower list.
+	async function withFallback(
+		collection: string,
+		full: Record<string, unknown>,
+		fallback: Record<string, unknown>,
+		params: Record<string, unknown>,
+		onFallback: () => void,
+	) {
 		try {
 			return await getItems(collection, { ...params, filter: full });
-		} catch {
-			partial.value = note;
-			return getItems(collection, { ...params, filter: fallback });
+		} catch (e: any) {
+			if (!isForbidden(e) && !isNotVisible(e)) throw e;
+			const rows = await getItems(collection, { ...params, filter: fallback });
+			onFallback();
+			return rows;
 		}
 	}
 
 	async function load() {
 		const token = gate.begin();
-		partial.value = '';
+		partialProjects.value = '';
+		partialSamples.value = '';
 		await Promise.all([
 			(async () => {
 				try {
@@ -73,7 +86,7 @@ export function useMyWork() {
 						sort: ['project_code'],
 						limit: CARD_LIMIT,
 					},
-					'Projects where you are an investigator may be missing: you cannot read the investigator list.',
+					() => { if (gate.isCurrent(token)) partialProjects.value = 'Projects where you are an investigator may be missing: you cannot read the investigator list.'; },
 				),
 			),
 			fill(campaigns, token, 'your campaigns', () =>
@@ -94,7 +107,7 @@ export function useMyWork() {
 						sort: ['-updated_at'],
 						limit: SAMPLE_LIMIT,
 					},
-					'Samples you co-own may be missing: you cannot read the co-owner list.',
+					() => { if (gate.isCurrent(token)) partialSamples.value = 'Samples you co-own may be missing: you cannot read the co-owner list.'; },
 				),
 			),
 		]);
@@ -102,5 +115,5 @@ export function useMyWork() {
 
 	load();
 	onBeforeUnmount(() => gate.cancel());
-	return { projects, campaigns, samples, hasPerson, partial, reload: load };
+	return { projects, campaigns, samples, hasPerson, partialProjects, partialSamples, reload: load };
 }

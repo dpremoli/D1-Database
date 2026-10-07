@@ -4,7 +4,7 @@ import { CARD_LIMIT, SAMPLE_LIMIT, useMyWork } from './useMyWork';
 
 // Projects where I am PI or investigator, campaigns I own and my newest samples, as cards. Every card is a link to its
 // Explorer page; the header of each group links to the full list.
-const { projects, campaigns, samples, hasPerson, partial } = useMyWork();
+const { projects, campaigns, samples, hasPerson, partialProjects, partialSamples } = useMyWork();
 const typeLabel = (t: string | null | undefined) =>
 	t === 'machining_trial' ? 'Machining trial' : t === 'testing_campaign' ? 'Testing campaign' : humanise(t ?? 'Campaign');
 </script>
@@ -21,8 +21,8 @@ const typeLabel = (t: string | null | undefined) =>
 			Ask an admin to link it on the <router-link to="/home/people">People</router-link> page. Projects where you are
 			PI, and samples where you are a co-owner, still show.
 		</p>
-		<p v-if="partial" class="notice" role="note">{{ partial }}</p>
 
+		<p v-if="partialProjects" class="notice" role="note">{{ partialProjects }}</p>
 		<Section
 			title="My projects (PI or investigator)"
 			:count="projects.loading ? null : projects.data.length"
@@ -67,6 +67,7 @@ const typeLabel = (t: string | null | undefined) =>
 			</LoadState>
 		</Section>
 
+		<p v-if="partialSamples" class="notice" role="note">{{ partialSamples }}</p>
 		<Section
 			title="My latest samples"
 			:count="samples.loading ? null : samples.data.length"
