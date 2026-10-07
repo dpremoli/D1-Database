@@ -877,6 +877,7 @@ function teardownRenderer() {
 	frame.cancel();
 	ro?.disconnect();
 	cropThrottle.cancel();
+	longPress.cancel();   // a canvas swap loses the old canvas's pointerups: forget its touches
 	controls?.dispose();
 	pointsGeom?.dispose(); pointsMat?.dispose(); discTex?.dispose();
 	gpuGeom?.dispose(); gpuMat?.dispose(); colormapTex?.dispose();

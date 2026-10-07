@@ -596,6 +596,7 @@ function boot() {
 // memory) while the operator was on the Record page (review 3.6).
 function teardownGL() {
 	loadToken.cancel();
+	longPress.cancel();   // a canvas swap loses the old canvas's pointerups: forget its touches
 	// The stage watcher is already stopped on unmount: say "idle" directly so the host's busy bar clears.
 	if (stage.value) emit('stage', null);
 	stage.value = null;

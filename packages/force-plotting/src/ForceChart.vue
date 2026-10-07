@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, onDeactivated, ref } from 'vue';
 import { hoverIndexAt } from './hoverIndex';
-import { createLongPress, TOUCH_MENU_OFFSET_PX } from './longPress';
+import { createLongPress, isTouchContextMenu, TOUCH_MENU_OFFSET_PX } from './longPress';
 import { markInView, markTagText } from './chartMark';
 import { displayUnit, yAxisTitle, type ChartSnapshot } from './chartExport';
 
@@ -368,8 +368,8 @@ function onContextMenu(ev: MouseEvent) {
 	ev.preventDefault();
 	// A touch hold opens the menu itself (longPress below). Android Chrome also raises `contextmenu`
 	// for the same hold, so take it here too or the menu would open twice (and once for a drift the
-	// hold has already rejected as a pan).
-	if (longPress.touching) return;
+	// hold has already rejected as a pan). Never a mouse right-click, even with a finger down.
+	if (isTouchContextMenu(ev, longPress.touching)) return;
 	openMenu(ev.clientX, ev.clientY);
 }
 function openMenu(clientX: number, clientY: number, menuOffset = 0) {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createLongPress, type PressEvent } from './longPress';
+import { createLongPress, isTouchContextMenu, type PressEvent } from './longPress';
 
 const touch = (id: number, x: number, y: number): PressEvent => ({ pointerId: id, pointerType: 'touch', clientX: x, clientY: y });
 
@@ -107,5 +107,45 @@ describe('createLongPress', () => {
 		expect(lp.touching).toBe(false);
 		vi.advanceTimersByTime(1000);
 		expect(onPress).not.toHaveBeenCalled();
+	});
+
+	it('a primary touch starts a new gesture: a stale pointer left by a lost pointerup does not block it', () => {
+		const onPress = vi.fn();
+		const lp = createLongPress(onPress);
+		lp.down({ ...touch(1, 10, 10), isPrimary: true });   // its pointerup never arrives (canvas swapped)
+		lp.down({ ...touch(2, 50, 50), isPrimary: true });   // a new gesture
+		expect(lp.touching).toBe(true);
+		vi.advanceTimersByTime(500);
+		expect(onPress).toHaveBeenCalledOnce();
+		expect(onPress).toHaveBeenCalledWith(50, 50);
+		lp.up({ ...touch(2, 50, 50), isPrimary: true });
+		expect(lp.touching).toBe(false);   // pointer 1 was forgotten, not left behind
+	});
+	it('a non-primary second finger still cancels the hold', () => {
+		const onPress = vi.fn();
+		const lp = createLongPress(onPress);
+		lp.down({ ...touch(1, 10, 10), isPrimary: true });
+		lp.down({ ...touch(2, 50, 50), isPrimary: false });
+		vi.advanceTimersByTime(2000);
+		expect(onPress).not.toHaveBeenCalled();
+	});
+	it('cancel() forgets every pointer', () => {
+		const lp = createLongPress(vi.fn());
+		lp.down({ ...touch(1, 10, 10), isPrimary: true });
+		lp.cancel();
+		expect(lp.touching).toBe(false);
+	});
+});
+
+describe('isTouchContextMenu', () => {
+	const ev = (pointerType?: string) => ({ pointerType }) as unknown as MouseEvent;
+	it('swallows the echo of a touch hold only while a touch is down', () => {
+		expect(isTouchContextMenu(ev('touch'), true)).toBe(true);
+		expect(isTouchContextMenu(ev(undefined), true)).toBe(true);   // browsers whose contextmenu has no pointerType
+		expect(isTouchContextMenu(ev('touch'), false)).toBe(false);
+	});
+	it('never swallows a mouse right-click, even with a finger down', () => {
+		expect(isTouchContextMenu(ev('mouse'), true)).toBe(false);
+		expect(isTouchContextMenu(ev('mouse'), false)).toBe(false);
 	});
 });
