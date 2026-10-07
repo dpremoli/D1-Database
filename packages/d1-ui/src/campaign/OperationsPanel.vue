@@ -10,6 +10,7 @@ import RecordLink from '../components/RecordLink.vue';
 import Section from '../components/Section.vue';
 import StatusBadge from '../components/StatusBadge.vue';
 import PickerBox from './PickerBox.vue';
+import { campaignAssignPatch, lostRaceMessage } from './assign';
 import { operationCategoryFor } from './campaignType';
 import { LIST_CAP, type CampaignSection } from './useCampaignData';
 
@@ -77,17 +78,22 @@ async function runSearch() {
 	}
 }
 
-// A failed add/remove is shown and leaves the lists as the server has them (we reload either way),
-// instead of an unhandled rejection that looks like nothing happened.
+// The change is conditional so two people (or two tabs) cannot take the same operation: adding
+// only touches an operation that is still in no campaign, removing only one that is in this
+// campaign (campaignAssignPatch). Directus answers a batch update with the rows it changed, so an
+// empty answer means someone got there first. A failed add/remove is shown and leaves the lists as
+// the server has them (we reload either way), instead of an unhandled rejection.
 async function setCampaign(id: string, passCode: string | null, campaign: string | null) {
 	if (busy.value) return;
 	busy.value = id;
 	actionError.value = '';
+	const label = passCode || 'the operation';
 	try {
-		await api.patch(`/items/manufacturing_operations/${id}`, { campaign_id: campaign });
-		if (campaign) results.value = results.value.filter((r) => r.operation_id !== id);
+		const res = await api.patch('/items/manufacturing_operations', campaignAssignPatch('operation_id', id, props.campaignId, campaign));
+		actionError.value = lostRaceMessage(res.data?.data, !!campaign, label) ?? '';
+		results.value = results.value.filter((r) => r.operation_id !== id);
 	} catch (e) {
-		actionError.value = `Could not ${campaign ? 'add' : 'remove'} ${passCode || 'the operation'}: ${errorText(e)}`;
+		actionError.value = `Could not ${campaign ? 'add' : 'remove'} ${label}: ${errorText(e)}`;
 	} finally {
 		busy.value = null;
 	}
