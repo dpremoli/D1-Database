@@ -88,6 +88,9 @@ that need attention.
 - **Data**: linked files, the data-file URI and size, capture software and frequency. **Summary
   Statistics (auto)** and **Plot URIs (auto)** are filled in by processing plugins.
 
+Operations, tests, campaigns and projects each open as a formatted page from Home and from every
+link; see [Explorer pages](explorer-pages.md).
+
 ## Campaigns
 
 A **campaign** groups the operations or tests of one piece of work under a project. It is either

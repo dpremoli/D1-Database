@@ -165,9 +165,9 @@ test('orderRows: requested order, ids then codes, one label per sample', () => {
 test('sampleRecordUrl: the QR opens the app record (sign-in required), never a public route', () => {
 	assert.equal(
 		sampleRecordUrl('https://lims.example.org/', uuid(1)),
-		`https://lims.example.org/admin/content/physical_samples/${uuid(1)}`
+		`https://lims.example.org/admin/home/samples/${uuid(1)}`
 	);
-	assert.equal(sampleRecordUrl('https://lims.example.org', 'a/b'), 'https://lims.example.org/admin/content/physical_samples/a%2Fb');
+	assert.equal(sampleRecordUrl('https://lims.example.org', 'a/b'), 'https://lims.example.org/admin/home/samples/a%2Fb');
 	assert.ok(!/d1-report|\/items\//.test(sampleRecordUrl('https://x', uuid(1))));
 });
 

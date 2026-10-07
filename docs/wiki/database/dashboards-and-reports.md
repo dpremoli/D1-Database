@@ -159,7 +159,10 @@ Direct URL: `/d1-report/label?ids=<uuid,uuid,...>` (and/or `&codes=<sample code,
 `&layout=a4-21|single-50x25`, `&start=<1-based position>`. It needs a signed-in session, like the
 reports; without one it answers 401. Bad ids, layouts or counts answer 400.
 
-**Scan to open.** The QR code encodes `<PUBLIC_URL>/admin/content/physical_samples/<sample id>`.
+**Scan to open.** The QR code encodes `<PUBLIC_URL>/admin/home/samples/<sample id>`, the sample's
+Explorer page (operation and test reports use `/admin/home/operations/<id>` and
+`/admin/home/tests/<id>`). Labels printed before the Explorer pages existed encode
+`/admin/content/physical_samples/<id>`, the Data Studio form, which still works.
 Scanning it with a phone opens that record in the Directus app, which is usable on a small
 screen. A phone that is not signed in is sent to the sign-in page and then to the record. The QR
 carries only the link: no sample data is public, and what the person sees is limited by their

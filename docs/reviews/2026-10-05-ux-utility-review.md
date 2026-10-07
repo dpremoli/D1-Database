@@ -161,8 +161,8 @@ in [`docs/runbooks/physical-test-backlog.md`](../runbooks/physical-test-backlog.
   - [ ] "New operation for this sample": nothing can prefill the operation form yet
 - [ ] **D8** Clone / bulk create / copy-from-last
 - [x] **D9** Next sample number from the database — #123 (`next_sample_code_number()`, `d1-next-number`)
-- [ ] **D10** Per-user home page and "needs attention" tiles
-- [x] **D11** Campaign overview — #127 (counts, progress, pickers)
+- [x] **D10** Per-user home page and "needs attention" tiles — Explorer pages E3 (PR pending)
+- [x] **D11** Campaign overview — #127 (counts, progress, pickers); full Campaign page with the sample × step matrix in Explorer pages E2 (PR pending)
 - [x] **D12** Saved filters — #125 (7 global bookmarks, migration 135; kept by `configure_directus.sql` re-runs)
 - [ ] **D13** Notifications on processing finish/fail *(idea)*
 - [ ] **D14** Note search UI

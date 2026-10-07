@@ -74,6 +74,7 @@ above. Claude Code loads them on its own when a task matches, or you can type
 | `adr` | Writing an ADR or a design spec and updating its index |
 | `ci-local` | Running the CI checks the changed files touch, before committing |
 | `force-app-conventions` | Background knowledge Claude loads when touching force-app files: invariants, architecture, formats |
+| `directus-ui-conventions` | Background knowledge Claude loads when touching the Directus front end (Explorer pages, Home, `@d1/ui`): invariants and checks |
 | `force-scaffold` | Adding a panel, endpoint, channel, format change or diagnostics step across every file it needs |
 | `force-app-verify` | Running the force app hardware-free (sim backend + real UI in headless Chromium) to prove a change works |
 | `force-debug-capture` | Investigating a bad recording from a bug report, capture folder or log, ending in a report |
@@ -84,7 +85,11 @@ above. Claude Code loads them on its own when a task matches, or you can type
 
 [`.claude/agents/force-app-reviewer.md`](./.claude/agents/force-app-reviewer.md) is a read-only
 review subagent with `force-app-conventions` preloaded. It keeps shared notes in
-`.claude/agent-memory/force-app-reviewer/`. [`.claude/settings.json`](./.claude/settings.json)
+`.claude/agent-memory/force-app-reviewer/`. Two implementation profiles run plan streams in their
+own worktrees: [`force-plotting-implementer`](./.claude/agents/force-plotting-implementer.md)
+(`packages/force-plotting`) and [`directus-ui-implementer`](./.claude/agents/directus-ui-implementer.md)
+(the Directus front end, with `directus-ui-conventions` preloaded), and
+[`directus-ui-reviewer`](./.claude/agents/directus-ui-reviewer.md) is its read-only reviewer. [`.claude/settings.json`](./.claude/settings.json)
 logs each skill use to the gitignored `.claude/skill-usage.log`
 (`cut -f2 .claude/skill-usage.log | sort | uniq -c`), so unused skills can be pruned. The rest of
 `.claude/` (local settings, memory, plans) stays gitignored, and so does any skill's

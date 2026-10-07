@@ -17,14 +17,17 @@ BEGIN;
 -- it: without it the rail renders empty. The third condition repairs a bar written
 -- by an earlier version of this script (which omitted the flag) without touching a
 -- bar curated in the UI, since the UI always writes the flag.
+-- Home is first and the Data Studio (content) follows the dashboards, the order migration
+-- 20261007000138 gives an existing bar (docs/superpowers/specs/2026-10-06-explorer-pages-design.md).
 UPDATE directus_settings SET module_bar = '[
-  {"type":"module","id":"content","enabled":true},
+  {"type":"module","id":"home","enabled":true},
   {"type":"module","id":"users","enabled":true},
   {"type":"module","id":"files","enabled":true},
   {"type":"module","id":"insights","enabled":true},
   {"type":"module","id":"d1-lab-dashboard","enabled":true},
   {"type":"module","id":"d1-force-dashboard","enabled":true},
   {"type":"module","id":"d1-fast-dashboard","enabled":true},
+  {"type":"module","id":"content","enabled":true},
   {"type":"module","id":"settings","enabled":true}
 ]' WHERE module_bar IS NULL
       OR module_bar::text NOT LIKE '%d1-lab-dashboard%'

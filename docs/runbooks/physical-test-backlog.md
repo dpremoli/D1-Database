@@ -143,6 +143,246 @@ named in the step.
   read test sessions, so a normal add never shows the "already in another campaign" note. Since:
   this batch (PR TBD).
 
+### Explorer pages (Home module)
+Restart Directus after `npm ci` and `npm run build:extensions` at the repo root so
+the rebuilt `d1-home`, `d1-lab-dashboard` and `d1-composition-bar` load, and apply migrations 138 and 139.
+
+- [ ] **E1 — edit drawer saves through real interfaces.** On a sample page click **Edit**. Expect:
+  the drawer shows the same form as Content (sample code builder, material and project pickers,
+  geometry preview, linked files), with the record's values. Change the nickname and the form's
+  dimensions, press the tick: the drawer closes, the page shows the new values and the geometry
+  drawing redraws. Change a field through a custom interface (pick another material or machine)
+  and save: it is stored (check the Content form and Revisions). Press Cancel after an edit: a
+  "Discard your changes?" dialog appears. Check that `v-form` and `useFieldsStore` really are
+  available: if the drawer never opens and the browser goes to the Content form instead, that is
+  the guard in `EditDrawer` firing, and the spec's Editing section needs revising. Since: Explorer
+  pages E1 (PR pending).
+- [ ] **E1 — edit conflict and errors.** Open **Edit** on a sample, then change the same sample in
+  another tab (any field) and save it there. Back in the drawer, change a field and save: a warning
+  says someone else saved, with **Discard mine and reload** and **Save anyway**; both work. Clear a
+  required field (the sample code) and save: the Directus error text shows in the drawer and
+  nothing is saved. As a role that may not update samples: the save error is shown, not a blank
+  drawer. Since: Explorer pages E1 (PR pending).
+- [ ] **E1 — landing module after login.** Sign in as a Lab Member and as an admin from a fresh
+  browser session. Expect: Home is the first icon on the module bar, Content (the Data Studio)
+  follows the three dashboards. Note which page the app opens after login: Home (first module) or
+  Content. If it is Content, Directus does not land on the first module; the spec's "app.after
+  redirect" is then a follow-up decision. Check that a bar curated in Settings > Appearance that
+  already listed Home keeps it, first. `dbmate down` removes Home and moves Content to the front.
+  Since: Explorer pages E1 (PR pending).
+- [ ] **E1 — module bar order.** After migration 138 the bar reads Home, User Directory, File
+  Library, Insights, Lab Dashboard, Force Analysis, FAST Analysis, Content, Settings (for a bar
+  that had the shipped order), and every icon still opens its module. On a fresh install
+  (`scripts/configure_all.sh`) the same order is created. Since: Explorer pages E1 (PR pending).
+- [ ] **E1 — Sample page on real data.** Open `/admin/home/samples/<id>` for a sample with a parent,
+  children, a raw stock lot, machining and FAST operations, tests and linked archive files. Expect:
+  the header (code, nickname, status, project and campaign links, owner), the geometry drawing at
+  the right proportions, the material's composition bar equal to the material form's, a measured
+  mass or an "estimated" one, the life strip in the right order (stock, parents oldest first, this
+  sample centred, operations and tests by date, children) with every item a link, **View forces** on
+  machining operations and **View FAST** on sintering ones opening the right run, and the file
+  rows' copy-path buttons giving the same paths as the sample form. Narrow the browser below
+  ~640 px wide (or open the page in a split view): the strip becomes a vertical list. **Print
+  label** and **Report** open in a new tab. Operations and tests that you click open their
+  Explorer pages (see the E4 items below). Dark theme: the page is readable. Since: Explorer pages E1 (PR pending).
+- [ ] **E1 — Sample page with hidden relatives.** As a role whose item filter hides some of that
+  sample's relatives, operations or tests, open the page. Expect: the life strip shows only what
+  the role can open, with dashed "N not visible to you" markers where something was dropped (and
+  "via a sample you cannot see" on a relative reached only through a hidden one); the Operations
+  and Tests tables show only readable rows. A sample the role cannot read, and a made-up id, both
+  show "Not found or not visible to you" with a link back to Home. Since: Explorer pages E1 (PR
+  pending).
+- [ ] **E1 — links from Home and the dashboards.** On Home, the recent-activity sample cards and, in
+  the Lab Dashboard, "Open sample" and the timeline entries open the Sample page; operation and test
+  links open their Explorer pages (E4).
+  FAST runs on Home still open the FAST dashboard. Since: Explorer pages E1 (PR pending).
+
+#### Campaign page (E2)
+- [ ] **E2 — Campaign page on a real campaign with force data.** Open `/admin/home/campaigns/<id>` for
+  a machining trial whose operations have force files in several states (done, pending, an error,
+  one with every file skipped, one with several files for one operation). Expect: the header shows
+  code, name, type, project breadcrumb, owner, status, dates and, where set, default equipment and
+  material; the tiles and bars equal the D11 hand counts above; in the matrix each operation cell's
+  colour matches the worst of its files (`error > processing > queued > analysed > skipped`), the
+  corner dot matches the Diagnostics state, hovering an error cell shows the real
+  `error_message`, and clicking any cell opens that operation (or test) page. Samples are in
+  natural order, a sample with no operations is an empty row, and a sample that only appears
+  through an operation shows the "not in list" icon. A testing campaign shows one column per test
+  type with the session status colour. As a role that cannot read `machining_force_analysis`, the
+  page loads, operation cells show no state, and a note says why. A made-up id, and a campaign the
+  role cannot read, show "Not found or not visible to you". Since: Explorer pages E2 (PR pending).
+- [ ] **E2 — pickers on the page and on the Data Studio form.** On the page add a sample by code, a
+  test session that is in no campaign, and an operation (a machining trial only offers machining
+  operations); each appears in the lists and the matrix, the counts rise, and the matrix gains a
+  column or row. Remove each again. Repeat on the campaign's Data Studio form (the panel there is
+  the same component, without the matrix) and check the page reflects the change after a reload.
+  Check the race cases of the D11 pickers item still behave. Since: Explorer pages E2 (PR pending).
+- [ ] **E2 — Edit drawer on a campaign.** *Edit* opens the campaign's own form with the owner,
+  project and type fields working, and without the operations panel (it is already in the page
+  body); saving refreshes the header. Since: Explorer pages E2 (PR pending).
+- [ ] **E2 — matrix with 50+ samples.** Open (or build in a scratch project) a campaign with 50 or
+  more samples and 10 or more steps. Expect: the page renders in a second or two, the matrix scrolls
+  sideways and down with the sample column and the column headings staying in place, the legend is
+  readable in the light and dark themes, and the sample and operation lists show the first 200 rows
+  with a note when there are more. Since: Explorer pages E2 (PR pending).
+
+#### Projects and Home (E3)
+- [ ] **E3 — Home for a user with a people row.** Sign in as a Lab Member whose `people` row has
+  `user_id` set, who is PI of one project, investigator on another, owns a campaign and owns and
+  co-owns samples. Expect: *My projects* lists both projects, *Campaigns I own* the campaign, *My
+  latest samples* the ten most recently updated samples they own or co-own (compare with the Data
+  Studio *My samples* bookmark plus a `co_owners` filter), no "not linked" notice. Since: Explorer
+  pages E3 (PR pending).
+- [ ] **E3 — Home for a user without a people row.** Sign in as a user with no `people` row. Expect:
+  the notice that the login is not linked to a person record, empty owned lists, and projects
+  where they are PI (none, since PI is a people row) or samples they co-own still shown; no error
+  banner. Also as a role that cannot read `project_investigators` or `sample_co_owners`: the lists
+  fall back to ownership only with a one-line note, never a blank Home. Since: Explorer pages E3
+  (PR pending).
+- [ ] **E3 — needs-attention counts match Data Studio filters.** Compare each Home tile with the
+  same filter in the Data Studio: *Failed test sessions* equals the *Failed* bookmark on Test
+  Sessions; *Force analysis errors on my operations* equals Manufacturing Operations filtered by
+  owner = you and Force Analyses (`force_analyses`) any status = error; *Operations with force
+  files still pending* the same with status = pending; *Samples with no owner* (admin only) equals
+  Samples with Owner empty. Click each tile: the list under the tiles shows up to 10 records that
+  open their Explorer pages, and "Open the full list" opens the collection. Check that the
+  `$CURRENT_USER` filter resolves from the browser (the tile for your own operations is not 0 when
+  an owned operation has an errored force file). The *Samples with no owner* tile must be absent
+  for a Lab Member and present for an admin: if it is missing for an admin, the admin flag is not
+  where `home.vue` looks (`userStore.isAdmin`, `currentUser.admin_access`). Since: Explorer pages
+  E3 (PR pending).
+- [ ] **E3 — Projects index.** Open `/admin/home/projects` (Home > *All projects*). Expect one card
+  per readable project, with the campaign and sample counts equal to the Data Studio lists filtered
+  by project, the PI name, and "You are PI" / "You are investigator" badges that match the project
+  form. *My role* (PI, investigator, either), *Status* and the code/name search narrow the cards.
+  Since: Explorer pages E3 (PR pending).
+- [ ] **E3 — Project page.** Open a project with campaigns and loose records. Expect: tiles equal
+  hand counts, each campaign card's counts and progress bar (force analysed n / m for a machining
+  trial, tests complete n / m for a testing campaign) agree with the campaign's own page, the
+  "not in a campaign" lists contain exactly the project's records with no campaign, *Equipment
+  used* lists the equipment of the project's operations, *Edit* saves through the drawer, and a
+  project the role cannot read shows "Not found or not visible to you". For a role that cannot
+  read `machining_force_analysis`, `project_investigators` or `campaign_samples` only that part
+  shows a note. Since: Explorer pages E3 (PR pending).
+- [ ] **E3 — sparkline on real data.** On the index and on a project that has work in the last six
+  months: the weekly lines match a hand count of operations (`operation_date`) and tests
+  (`session_date`) per ISO week (hover a week for its numbers), weeks with nothing are 0, a project
+  that spans New Year has no gap, and in dark theme both lines and the dashed test line are
+  readable. With more than 5000 operations or tests in 26 weeks the "newest records only" note
+  appears. Since: Explorer pages E3 (PR pending).
+- [ ] **E3-fix — exact campaign counts, refusals and links.** On a project with campaigns of each
+  type (machining trial, testing campaign, imaging / analysis): the cards' operation and test
+  counts equal the Data Studio counts filtered by campaign (they come from `aggregate[count]`
+  grouped by `campaign_id`, so they stay exact above 5000 rows); the machining trial's *Force
+  analysed* bar and the testing campaign's *Tests complete* bar match the campaign's own page;
+  the imaging / analysis card shows counts and no bar. As a role that cannot read
+  `machining_force_analysis` the machining card says "progress unavailable (no access to the
+  data)" and the counts stay. On Home as a role that cannot read `project_investigators` the
+  projects list shows its own one-line note, and the samples list shows none unless
+  `sample_co_owners` is also refused; a server error (stop Directus mid-load) shows the real error in
+  the section, not a silently shorter list. As a role that cannot read `test_sessions` the recent
+  activity feed still shows samples and operations, with a one-line note naming tests. In *Needs
+  attention*, with more than 10 failed test sessions, the link under "Showing 10 of N" opens the
+  Test Sessions list with the *Failed* bookmark applied, and the other tiles say "Open the
+  collection in the Data Studio (unfiltered)". Since: Explorer pages E3-fix (PR pending).
+
+#### Operation and Test pages (E4)
+After `npm ci` and `npm run build:extensions` at the repo root, restart Directus: `d1-project-items`
+and `d1-fast-dashboard` are now built from the root with the other workspace extensions, and
+`d1-report` is rebuilt in its own folder (`npm ci && npm run build`).
+
+- [ ] **E4 — parameters per process category on real data.** Open `/admin/home/operations/<id>` for
+  one operation of each category you have (machining, FAST sintering, heat treatment, deformation,
+  additive, sample preparation). Expect: the Parameters grid shows only that category's fields, with
+  the same labels and values as the Content form's panel, the unit after each measured value (the
+  field's suffix: mm, rpm, kN, °C ...), select fields by their label (cooling method "Water quench",
+  not `water_quench`), toggles as Yes / No, and a very small number readable (not "0"). Fields left
+  empty are not listed. An operation with no process category says so. Sample preparation has no
+  parameter columns, so it shows the empty line. Repeat for a test of each type you have (tensile,
+  hardness, charpy, compression, SEM, XRD, tribology, fatigue, CT ...) on `/admin/home/tests/<id>`.
+  Since: Explorer pages E4 (PR pending).
+- [ ] **E4 — operation page states.** On a machining operation with several `.mat` files in
+  different states: each file shows its Analysis and Diagnostics badges, the error text of a failed
+  one, and **View forces** opens the Force dashboard on that operation. On a FAST operation the FAST
+  run block shows status, recipe, duration and rows, and **View FAST** opens that run. A sample that
+  was cut or sintered shows as Input and, for FAST or additive steps, the new sample as Output with
+  working links. Linked files show the same copy-path buttons as the sample form. As a Lab Member
+  there is no error about "network-share files". **Edit** opens the operation's Content form in the
+  drawer, the category's parameter fields appear, and saving refreshes the page. **Report** opens
+  in a new tab. An operation the role cannot read, and a made-up id, show "Not found or not visible
+  to you". Dark theme readable. Since: Explorer pages E4 (PR pending).
+- [ ] **E4 — real worker summary_stats.** Open a test session that the heavy-data worker and the
+  analysis worker have both processed. Expect Results with a "Basic statistics" group (samples,
+  sample rate, duration, a Channels table of min, max, mean, std per channel) and an "FFT analysis"
+  group (RMS, dominant frequency with Hz, a Top frequencies table, band energy rows), matching the
+  JSON in the Content form; a processed-only session shows just the first group. A test still
+  `registered` says the workers have not produced results. A test with older flat `summary_stats`
+  shows them under "Summary". Since: Explorer pages E4 (PR pending).
+- [ ] **E4 — test subject and the Sample page's Tests.** Create a test through the Content form
+  (pick the sample in the Subject field, so `sample_id` stays empty). Expect: its Test page shows
+  the sample under Subject and in the breadcrumb, and the **Sample page lists the test** under
+  Tests (this was missed before E4). A test whose subject is an insert edge shows the edge as a
+  link to its Content form. Since: Explorer pages E4 (PR pending).
+- [ ] **E4 — QR scan opens the Sample page.** Print a label (Sample page > Print label, or
+  `/d1-report/label`) from the rebuilt app and scan it with a phone that is not signed in. Expect:
+  the sign-in page, then `/admin/home/samples/<id>` (the Explorer page, usable on a phone). An old
+  printed label (encodes `/admin/content/physical_samples/<id>`) still opens the Content form. The
+  QR and the sample link on an operation report and a test report open the Explorer pages. Needs
+  `PUBLIC_URL` set to an address the phone can reach. Since: Explorer pages E4 (PR pending).
+- [ ] **E4 — Force and FAST dashboards land on the Explorer.** In the Force dashboard use the "open
+  record" action on an operation and on a sample: both open `/admin/home/operations/<id>` and
+  `/admin/home/samples/<id>`, and Back returns to the dashboard. In the FAST dashboard **Open** on
+  a run opens the Operation page; opening the recipe still opens its Content form. Since: Explorer
+  pages E4 (PR pending).
+- [ ] **E4 — project items links and lineage graph.** In a project's Content form, the Project
+  items panel shows operation and sample codes as links to their Explorer pages (equipment, tools,
+  inserts and materials open their Content forms); as a role that cannot read some of the
+  operations, those rows stay plain text and the panel still lists them. On a Sample page,
+  **Open lineage graph** opens the Lab Dashboard graph centred on that sample, with its operations,
+  tests and neighbours, and reloading the graph URL (`?sample=<id>`) does the same. Since:
+  Explorer pages E4 (PR pending).
+- [ ] **E4-fix — the subject trigger on real data (migration 139).** Apply the migration to the
+  real database (`dbmate up`) and check the back-fill: `SELECT count(*) FROM test_sessions t WHERE
+  t.sample_id IS NULL AND EXISTS (SELECT 1 FROM test_sessions_subject s WHERE s.test_sessions_id =
+  t.session_id AND s.collection = 'physical_samples')` returns 0 (unless such a subject names a
+  sample that no longer exists). Then create a test through the Content form, picking a sample in
+  Subject. Expect, for that new test: `sample_id` is filled in the table; it appears in the
+  campaign's matrix on the Campaign page (if the sample is in the campaign); the sample report
+  (Generate PDF) lists it under tests; the Lab Dashboard lineage graph and the Sample dashboard
+  show it; the sample's timeline (`f_sample_timeline`) has its entry; and the Tests panel search by
+  the sample code finds it. Add a second sample to the same test: nothing changes in those views
+  (only the first sample is primary), but the Sample page of the second sample lists the test.
+  Remove the first subject: the second takes over. Changing a subject adds no extra audit row on
+  the test besides the one `sample_id` update. Deleting subjects (also migration 139): delete the
+  first sample of a test that has two samples. Expect the test to survive, the second sample to be
+  its `sample_id` and the Sample page of the second sample to list it. Delete a test's only sample
+  in a scratch project: the test goes with it. Try deleting an insert edge that a test lists under
+  Subject (or the cutting insert or tool box above it): Directus shows the error "insert edge ...
+  is the subject of test ...; remove it from the test first", and after removing the edge from the
+  test the delete works. Back-fill on a real database (E4-mig2, same migration, so before it is
+  applied): list tests whose `sample_id` is no longer in their junction samples (`SELECT t.session_id
+  FROM test_sessions t JOIN test_sessions_subject s ON s.test_sessions_id = t.session_id AND
+  s.collection = 'physical_samples' WHERE t.sample_id IS NOT NULL AND lower(s.item) <>
+  t.sample_id::text`): those are swapped samples; after `dbmate up` none of them gains a junction
+  row for the old sample and each one's `sample_id` equals its junction sample. Since: Explorer
+  pages E4-fix (PR pending).
+- [ ] **E4-fix — project items link by row_id.** In a project whose operations include two with the
+  same pass code (or any project with many operations), open the Project items panel. Expect every
+  operation and sample row to link to the right record (hover or click: the Operation page of that
+  very operation, not another with the same code), tools, edges, inserts, materials and equipment
+  open their Content forms, and a project with more than 1000 operations still links its rows.
+  Rows from a campaign-only operation (operation has no project, campaign has) link too; an
+  operation of another project does not appear. Since: Explorer pages E4-fix (PR pending).
+- [ ] **E-final: campaign pickers set the project; project counts agree with campaign cards.** In
+  a campaign that belongs to a project, add an operation, a test session and a sample that have no
+  project (Operations, Tests and Samples panels). Expect each record's `project_id` to become the
+  campaign's project (check in the Content form). Add one that already has another project:
+  it keeps its own. Open the Project page: the Operations, Tests and Samples tiles, the Equipment
+  used list and the Activity sparkline include those records even for ones added before this
+  change (project empty, campaign set), and the totals are not smaller than the campaign cards'
+  sums. Add an operation that someone else just added elsewhere (two tabs): the panel says
+  "... is already in another campaign." and nothing changes. Since: Explorer pages E-final (PR pending).
+
 ## B. Force rig (NI-DAQ, Lab Amp, packaged Windows app)
 
 Install the current release from the update feed on the acquisition PC. Use a real sample and

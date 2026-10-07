@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useApi, useStores } from '@directus/extensions-sdk';
 import { useRouter } from 'vue-router';
+import { recordRoute } from '@d1/ui';
 import { buildGeometry, dimsText, FORMS, FORM_FIELDS, PRESETS, fieldLabel } from './geometry';
 
 const api = useApi();
@@ -155,7 +156,7 @@ onMounted(async () => {
 				<h2>Sample registered</h2>
 				<p class="code">{{ created.code }}</p>
 				<div class="done-actions">
-					<v-button @click="go(`/content/physical_samples/${created.id}`)"><v-icon name="open_in_new" left />Open record</v-button>
+					<v-button @click="go(recordRoute('physical_samples', created.id))"><v-icon name="open_in_new" left />Open record</v-button>
 					<v-button secondary @click="openReport(created.id)"><v-icon name="picture_as_pdf" left />PDF</v-button>
 					<v-button secondary @click="resetForm"><v-icon name="add" left />Register another</v-button>
 				</div>

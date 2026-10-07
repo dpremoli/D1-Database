@@ -23,17 +23,18 @@ From left to right:
 
    | Icon | Module | What it is |
    |---|---|---|
-   | cube | **Content** | every collection (table) and its records |
+   | house | **Home** | the landing page, the formatted record pages and the guided *Register a sample* ([below](#the-home-page)) |
    | people | **User Directory** | Directus user accounts |
    | folder | **File Library** | uploaded files and indexed archive files |
    | chart | **Insights** | Directus's own dashboards |
    | grid | **Lab Dashboard** | the D1 overview of samples, machining and FAST ([Dashboards](dashboards-and-reports.md#lab-dashboard)) |
    | line chart | **Force Analysis** | the machining force dashboard ([Force data](force-data.md)) |
    | gauge | **FAST Analysis** | sintering traces ([FAST sintering data](fast-data.md)) |
+   | cube | **Content** | the Data Studio: every collection (table) and its records |
    | cog | **Settings** | data model, roles, policies (administrators only) |
 
-   **Home**, **Force Crawler** and **Ask the Database** are also modules. They are reached from
-   the Home page's tiles rather than the rail.
+   **Force Crawler** and **Ask the Database** are also modules. They are reached from the Home
+   page's tiles rather than the rail.
 
 2. **The navigation panel**: in Content, the collections grouped into folders (*Inventory*,
    *Manufacturing Operations*, *Manufacturing Methods*…). Type in *Search Collection…* to find
@@ -46,10 +47,30 @@ From left to right:
 
 ![Home](../images/database/home.png)
 
-**Home** is the landing page. It has quick actions (*Register a sample*, *Log an operation*,
-*Ask the database*, *Manage people*, *Dashboards*, *Force Analysis*, *FAST Analysis*, *Force
-Crawler*), counts of samples, machining operations, FAST runs, tests and campaigns, and the most
-recent activity.
+**Home** is the landing page, and it is about **your** work. From top to bottom:
+
+1. **Quick actions.** Five big buttons for what you do every day: *Register a sample*, *Log an
+   operation*, *Ask the database*, *Print labels* and *Dashboards*. Below them, a **More** row
+   reaches the rest: *Projects*, *People*, *Force Analysis*, *FAST Analysis* and *Force Crawler*.
+2. **Needs attention.** Counts of things that want a look: force analyses in error on your
+   operations, failed test sessions, operations whose force files are still queued, and (for
+   administrators) samples with no owner. Click a tile and the matching records (the first ten)
+   list right under it, each one a link to its page.
+3. **My work.** Cards for the projects where you are PI or an investigator, the campaigns you
+   own, and the samples you own or co-own (latest first). A section says so when it is empty
+   rather than hiding.
+4. **Lab at a glance.** The lab-wide counts of samples, machining operations, FAST runs, tests
+   and campaigns. Each opens its list.
+5. **Recent activity.** The newest samples, operations and tests, each tagged with its kind. A FAST
+   run opens its Operation page and also offers a link to the FAST dashboard.
+
+A section that your role cannot read shows a short notice and the rest of Home still works.
+
+Records you click on Home, and on every page below, open as **formatted pages** rather than
+Content forms: the Projects index, **Project**, **Campaign**, **Sample**, **Operation** and
+**Test** pages. They are described in [Explorer pages](explorer-pages.md). Each page has an
+*Open in Data Studio* button, and Content stays available for everything else: it is after the
+dashboards on the rail.
 
 ## Working with records
 

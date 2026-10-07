@@ -41,15 +41,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import cytoscape from 'cytoscape';
-import { useD1Items } from '../composables/useD1Items';
-import { useRequestGate, errorText } from '../composables/useRequestGate';
+import { useItems, useRequestGate, errorText } from '@d1/ui';
 
 const props = defineProps<{ standalone?: boolean }>();
 const emit = defineEmits<{ (e: 'select', payload: { collection: string; id: string }): void }>();
 
-const { getItems, getItem } = useD1Items();
+const { getItems, getItem } = useItems();
+const route = useRoute();
 
 const graphEl = ref<HTMLElement | null>(null);
 const loading = ref(false);
@@ -162,7 +163,18 @@ onMounted(() => {
 		loadNeighbors(collection, id);
 		emit('select', { collection, id });
 	});
+
+	openLinkedSample();
 });
+
+// Deep link from the Sample page ("Open lineage graph"): /d1-lab-dashboard/graph?sample=<sample_id>
+// opens the graph on that sample. Only the standalone graph reads it; the copy embedded in the
+// sample dashboard is driven by clicks there.
+function openLinkedSample() {
+	const sample = route.query.sample;
+	if (props.standalone && typeof sample === 'string' && sample) loadNeighbors('physical_samples', sample);
+}
+watch(() => route.query.sample, () => openLinkedSample());
 
 onBeforeUnmount(() => {
 	loadGate.cancel();
