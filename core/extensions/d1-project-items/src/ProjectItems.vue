@@ -8,6 +8,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
+import { RecordLink, ROLLUP_OPERATION_FIELDS, rollupKey, rollupTargets, type RollupTarget } from '@d1/ui';
 
 const props = defineProps<{ primaryKey?: string | number | null }>();
 const api = useApi();
@@ -16,6 +17,9 @@ interface Row { row_id: string; kind: string; code: string; detail: string; camp
 const rows = ref<Row[]>([]);
 const campaigns = ref<Record<string, { code: string; name: string }>>({});
 const loading = ref(false);
+// code -> record, so each row can link to its page. project_rollup rows hold no record id.
+const targets = ref<Map<string, RollupTarget>>(new Map());
+const target = (r: Row) => targets.value.get(rollupKey(r.kind, r.code));
 
 // Group order + labels/icons for the sections we know about; unknown kinds fall through.
 const KINDS: { key: string; label: string; icon: string }[] = [
@@ -33,8 +37,9 @@ const campaignColor = ref<Record<string, string>>({});
 
 async function load() {
 	const pk = props.primaryKey;
-	if (!pk || pk === '+') { rows.value = []; return; }
+	if (!pk || pk === '+') { rows.value = []; targets.value = new Map(); return; }
 	loading.value = true;
+	targets.value = new Map();
 	try {
 		const res = await api.get('/items/project_rollup', {
 			params: { filter: { project_id: { _eq: pk } }, fields: ['row_id', 'kind', 'code', 'detail', 'campaign_id'], limit: -1 },
@@ -52,6 +57,21 @@ async function load() {
 			campaignColor.value = col;
 		}
 	} catch { rows.value = []; } finally { loading.value = false; }
+	await loadTargets(pk);
+}
+
+// Links are an extra: a failure here leaves the rows as plain text instead of hiding them.
+async function loadTargets(pk: string | number) {
+	try {
+		const res = await api.get('/items/manufacturing_operations', {
+			params: {
+				filter: { _or: [{ project_id: { _eq: pk } }, { campaign_id: { project_id: { _eq: pk } } }] },
+				fields: ROLLUP_OPERATION_FIELDS,
+				limit: -1,
+			},
+		});
+		if (props.primaryKey === pk) targets.value = rollupTargets(res.data?.data);
+	} catch { /* rows stay unlinked */ }
 }
 onMounted(load);
 watch(() => props.primaryKey, load);
@@ -83,7 +103,8 @@ function campaignLabel(id: string) { return campaigns.value[id]?.name || campaig
 				<div class="pi-sec-head"><v-icon :name="sec.icon" x-small /> {{ sec.label }} <span class="pi-n">{{ sec.items.length }}</span></div>
 				<div class="pi-items">
 					<div v-for="it in sec.items" :key="it.row_id" class="pi-item">
-						<span class="pi-code mono">{{ it.code || '—' }}</span>
+						<RecordLink v-if="target(it)" :collection="target(it)!.collection" :id="target(it)!.id" class="pi-code mono">{{ it.code || '—' }}</RecordLink>
+						<span v-else class="pi-code mono">{{ it.code || '—' }}</span>
 						<span v-if="it.detail" class="pi-detail">{{ it.detail }}</span>
 						<span v-if="it.campaign_id" class="pi-tag" :style="{ background: campaignColor[it.campaign_id] }" :title="'Inherited from ' + campaignLabel(it.campaign_id)">{{ campaignLabel(it.campaign_id) }}</span>
 					</div>

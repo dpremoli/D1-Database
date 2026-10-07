@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 import { useRoute, useRouter } from 'vue-router';
+import { recordRoute } from '@d1/ui';
 import FastChart from './FastChart.vue';
 import { type SeriesMeta, type Trace, loadTrace } from './fastCache';
 import { buildOpMeta, buildRecipe, buildStats, dataQuality } from './fastMeta';
@@ -10,9 +11,9 @@ const api = useApi();
 const route = useRoute();
 const router = useRouter();
 
-// Open the selected operation's record form (mirrors the force dashboard's "Open").
-function openOpForm() { if (selectedId.value) router.push(`/content/manufacturing_operations/${selectedId.value}`); }
-function openRecipe() { const r = recipe.value; if (r?.id) router.push(`/content/fast_recipes/${r.id}`); }
+// Open the selected operation's record (its Explorer page; mirrors the force dashboard's "Open").
+function openOpForm() { if (selectedId.value) router.push(recordRoute('manufacturing_operations', selectedId.value)); }
+function openRecipe() { const r = recipe.value; if (r?.id) router.push(recordRoute('fast_recipes', r.id)); }
 
 // ---------------------------------------------------------------- state
 const loading = ref(true);
