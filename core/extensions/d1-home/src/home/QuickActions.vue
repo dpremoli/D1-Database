@@ -45,7 +45,7 @@ const router = useRouter();
 
 <style scoped>
 .grid { display: grid; gap: 14px; }
-.actions { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.actions { grid-template-columns: repeat(auto-fit, minmax(188px, 1fr)); }
 .card {
 	border: 1px solid var(--theme--border-color-subdued);
 	background: var(--theme--background);
