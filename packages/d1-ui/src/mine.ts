@@ -27,6 +27,13 @@ export const projectsMine: Filter = {
 	],
 };
 
+// "The signed-in user is this project's PI or one of its investigators": one row (or none) from
+// /items/projects. project_rollup is readable only by them (ADR-0011), so an empty roll-up is
+// either an empty project or this check failing.
+export const projectInvestigatorFilter = (projectId: string | number): Filter => ({
+	_and: [{ project_id: { _eq: projectId } }, projectsMine],
+});
+
 export const campaignsMine: Filter = ownedByMe;
 
 // Force analysis: operations with at least one force file in the given state, via the O2M alias

@@ -39,7 +39,7 @@ export { fetchActivityRows } from './activityRows';
 export { projectRole, projectStatusLabel, filterProjects, campaignProgress, countsByKey } from './projects';
 export type { ProjectRow, ProjectRole, RoleFilter, StatusFilter, CampaignProgress, ForceRows } from './projects';
 export {
-	CURRENT_USER, ownedByMe, samplesMine, projectsMine, campaignsMine, forceErrorOnMyOperations, forcePendingOperations,
+	CURRENT_USER, projectInvestigatorFilter, ownedByMe, samplesMine, projectsMine, campaignsMine, forceErrorOnMyOperations, forcePendingOperations,
 	failedTests, ownerlessSamples,
 } from './mine';
 
