@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue';
 import {
-	CampaignWorkbench, EditDrawer, LoadState, RecordHeader, RecordLink,
+	CampaignWorkbench, EditDrawer, LoadState, RecordHeader, RecordLink, StatusBadge,
 	campaignTypeLabel, dataStudioRoute, formatDate,
 } from '@d1/ui';
 import { useCampaignRecord } from './campaign/useCampaignRecord';
@@ -52,7 +52,7 @@ const dates = computed(() => {
 						</template>
 					</template>
 					<template #status>
-						<span v-if="campaign.status" class="status">{{ campaign.status }}</span>
+						<StatusBadge kind="campaign" :value="campaign.status" />
 					</template>
 					<template #meta>
 						<span v-if="campaign.project_id?.project_name">{{ campaign.project_id.project_name }}</span>
@@ -94,15 +94,6 @@ const dates = computed(() => {
 }
 .campaign-page :deep(.crumbs a) { color: var(--theme--primary); text-decoration: none; font-weight: 600; }
 .campaign-page :deep(.crumbs a:hover) { text-decoration: underline; }
-.status {
-	padding: 1px 9px;
-	border-radius: 99px;
-	font-size: 11.5px;
-	font-weight: 650;
-	line-height: 1.6;
-	color: var(--theme--foreground-subdued);
-	background: var(--theme--background-normal);
-}
 .notes { margin: 14px 0 0; font-size: 13.5px; color: var(--theme--foreground-subdued); white-space: pre-wrap; }
 .campaign-page :deep(.d1-progress-block) { margin-top: 22px; }
 .not-found {
