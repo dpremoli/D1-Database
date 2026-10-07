@@ -30,7 +30,7 @@ import {
 } from './cloudPick';
 import { nearestIndex } from './hoverIndex';
 import { createPendingReveal } from './pendingReveal';
-import { mappableWindow, parseOctreeBuild, type OctreeBuild } from './octreeBuild';
+import { mappableWindow, noGeometryReason, parseOctreeBuild, type OctreeBuild } from './octreeBuild';
 import { createMapProjector } from './mapProjector';
 import { createLongPress, TOUCH_MENU_OFFSET_PX } from './longPress';
 import { spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
@@ -490,7 +490,11 @@ function pickAt(clientX: number, clientY: number, menuOffset = 0) {
 	if (!canvasEl.value || !camera) return;
 	const base = { clientX: clientX + menuOffset, clientY: clientY + menuOffset };   // where the menu opens; the pick stays under the finger
 	const g = octreeGeometry();
-	if (!g) { emit('pointmenu', { ...base, point: null, reason: 'no-cache' }); return; }
+	if (!g) {
+		// The cache is here but the manifest fetch hasn't settled: the geometry isn't known yet, which is not "no cache".
+		emit('pointmenu', { ...base, point: null, reason: noGeometryReason(!!props.sampleCache?.N, buildReady) });
+		return;
+	}
 	if (!g.win) { emit('pointmenu', { ...base, point: null, reason: 'outside-cache' }); return; }
 	const c = g.c;
 	const r = canvasEl.value.getBoundingClientRect();

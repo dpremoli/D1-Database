@@ -75,3 +75,11 @@ export function mappableWindow(c: Cache, build?: OctreeBuild | null): { start: n
 	const start = Math.max(lo, w.start), end = Math.min(hi, w.end);
 	return end >= start ? { start, end } : null;
 }
+
+/**
+ * Why the octree map has no geometry to pick with: 'no-cache' (no sample cache for this cut), or
+ * 'loading' (the cache is here but the build manifest fetch hasn't settled, so the geometry isn't known yet).
+ */
+export function noGeometryReason(haveCache: boolean, buildReady: boolean): 'no-cache' | 'loading' {
+	return haveCache && !buildReady ? 'loading' : 'no-cache';
+}

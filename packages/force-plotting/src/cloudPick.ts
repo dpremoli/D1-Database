@@ -35,7 +35,7 @@ export interface PointInfo {
 export interface PointMenuEvent {
 	clientX: number; clientY: number;
 	point: PointInfo | null;   // null: nothing under the cursor, or the pick can't resolve a sample
-	reason?: 'gridded' | 'no-cache' | 'outside-crop' | 'outside-cache';   // why the time items are unavailable
+	reason?: 'gridded' | 'no-cache' | 'outside-crop' | 'outside-cache' | 'loading';   // why the time items are unavailable
 }
 
 /**

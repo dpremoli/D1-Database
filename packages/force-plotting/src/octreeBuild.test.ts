@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildWindowF32, cacheCoversBuild, mappableWindow, parseOctreeBuild } from './octreeBuild';
+import { noGeometryReason, buildWindowF32, cacheCoversBuild, mappableWindow, parseOctreeBuild } from './octreeBuild';
 import type { Cache } from './liveCache';
 
 const good = {
@@ -95,5 +95,13 @@ describe('float32 window and revs_cs', () => {
 		expect(mappableWindow(c, exact)).toEqual({ start: c.t[0], end: Math.fround(3.867) });
 		expect(mappableWindow(c, legacy)).toBeNull();           // no revs_cs: the anchor needs a sample
 		expect(mappableWindow(cacheOf(5, 6), exact)).toBeNull();   // no overlap at all
+	});
+});
+
+describe('noGeometryReason', () => {
+	it('is loading only while the manifest is pending and a cache is there', () => {
+		expect(noGeometryReason(true, false)).toBe('loading');
+		expect(noGeometryReason(false, false)).toBe('no-cache');
+		expect(noGeometryReason(false, true)).toBe('no-cache');
 	});
 });
