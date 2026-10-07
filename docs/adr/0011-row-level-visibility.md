@@ -47,17 +47,29 @@ UUID columns are hidden backups (`20260703000062_people_directus_meta.sql`) and 
 
 Decisions after the review of the first implementation (2026-10-07):
 
-5. **Self-grant is blocked.** Three junctions grant visibility when a row is written: a
+5. **Self-grant is blocked.** Four junctions grant visibility when a row is written: a
    `sample_co_owners` row (the co-owner reads and edits the sample), a `project_investigators` row
-   (the investigator reads everything in the project) and a `campaign_samples` row (the campaign's
-   owner reads the sample). Directus does not filter create, so a member could grant themselves
-   access by creating one. The `d1-access-guard` hook (below) refuses a create, or an update that
-   repoints the parent key, unless the caller may **update the parent**: the sample for
-   `sample_co_owners`, the project (its PI) for `project_investigators`, and for `campaign_samples`
+   (the investigator reads everything in the project), a `campaign_samples` row (the campaign's
+   owner reads the sample) and a `test_sessions_subject` row. The last one is indirect: migration 139
+   keeps `test_sessions.sample_id` equal to the first sample of the test's subject rows (lowest
+   junction id), and the test read and update rules go through `sample_id`, so a member who added a
+   subject row naming **their own** sample to a colleague's test (choosing a low id for the row) would
+   become that test's reader and editor. Directus does not filter create, so a member could grant
+   themselves access by creating one. The `d1-access-guard` hook (below) refuses a create, or an
+   update that repoints the parent key, unless the caller may **update the parent**: the sample for
+   `sample_co_owners`, the project (its PI) for `project_investigators`, the test (its owner, or an
+   owner or co-owner of its sample) for `test_sessions_subject`, and for `campaign_samples`
    **both** the campaign (its owner) **and** the sample (owner or co-owner of it). The sample half is
    the ruling for campaigns: without it a campaign owner could add any sample to their campaign and
    read it. A sample owner who wants a sample in someone else's campaign makes that person its
    co-owner, who then adds it. Deleting a `campaign_samples` row stays open to either side.
+   For a subject row the guard does **not** also require that the caller can read the sample (or
+   insert edge) it names. Naming a sample you cannot read gives you nothing (the test is already
+   yours to update, `sample_id` reads back as hidden, no rule grants a sample through a test); its
+   effect is that the **sample's** owner and co-owners can then read and edit your test, which is the
+   same trade as adding them as collaborators and is visible on the test. A member who does not want
+   that does not add the subject. Any later rule that reads a record **through a derived column**
+   needs the junction it is derived from in `guards`; a pytest enforces this for `sample_id`.
 6. **The audit log is for admins only.** Lab Member has no grant on `audit_logs`: it holds the old
    and new values of every change, including records the member cannot see, and has no owner column
    to filter on. No extension reads it as a member (checked).
@@ -67,7 +79,13 @@ Decisions after the review of the first implementation (2026-10-07):
    project, and a sample that is in a campaign of the project. A project is also readable by the
    owner of an operation or test in it, so that owner's breadcrumb is not dead.
 8. **A project's PI defaults to its creator** (`d1-default-owner`), like the owner of the other
-   records, so the creator can edit what they made.
+   records, so the creator can edit what they made. **The creator wins over inheritance.**
+   `campaign-inherit` used to copy a project's PI onto a new campaign and a campaign's owner onto a
+   new operation or test, and as it loads before `d1-default-owner` (alphabetical) the copy was in
+   place first and the creator never became the owner, so a member who made an operation in a
+   colleague's campaign could not see or edit it afterwards. `campaign-inherit` now copies the
+   project, default equipment and default material only; the owner of a new record is its creator
+   unless the form or API names someone else.
 9. **People cannot be relinked by members.** `people.user_id` decides who a person *is*, so freeing
    your login and attaching it to a colleague's row would hand you all their records. Lab Members can
    read People, create a row with no login or with their own, and update every column **except**
@@ -117,9 +135,11 @@ the project is read-only):
 campaigns by their owner; projects by their PI.
 
 **Create:** any member, with no filter (Directus does not apply item filters to create), except the
-three junctions that grant visibility, which the `d1-access-guard` hook checks (decision 5). The
+four junctions that grant visibility, which the `d1-access-guard` hook checks (decision 5). The
 `d1-default-owner` hook makes the creator the owner of a new sample, operation, test or
-campaign, and the PI of a new project, so the creator can read and edit what they just made.
+campaign, and the PI of a new project, so the creator can read and edit what they just made. The
+creator is the owner even in a campaign or project owned by someone else: `campaign-inherit` copies
+the campaign's project and defaults, never its owner (decision 8).
 
 **Child rows follow the parent.** Read follows the parent's read rule, update and delete follow
 the parent's update rule:
@@ -130,7 +150,7 @@ the parent's update rule:
 | `sample_genealogy` | read: either the child or the parent sample; update and delete: the child sample's update rule |
 | `campaign_samples` | read: the campaign's or the sample's read rule; update and delete: the campaign's owner or the sample's owner or co-owner; create (or repointing a key): the campaign's update rule **and** the sample's update rule (guard) |
 | `operation_data_files`, `machining_force_analysis`, `fast_run_data` | the operation (`operation_id`); `fast_run_data` has read only and `machining_force_analysis` has no delete, as before |
-| `session_data_files`, `test_sessions_subject` | the test (`session_id`, `test_sessions_id`) |
+| `session_data_files`, `test_sessions_subject` | the test (`session_id`, `test_sessions_id`); creating a `test_sessions_subject` row (or repointing its test) needs the test's update rule (guard) |
 | `project_investigators` | read: the project's read rule; update and delete: the project's PI; create (or repointing the project): the project's update rule, i.e. the PI (guard) |
 | `project_rollup` (read only) | the project's PI and investigators only |
 
@@ -177,16 +197,34 @@ The rules are documented by intent in `docs/wiki/database/roles-and-permissions.
 drop-Directus drill (ADR-0002) can re-implement them.
 
 **The guard hook.** `core/extensions/d1-access-guard` (a plain `index.js` hook, like
-`d1-default-owner`) registers `items.create` and `items.update` filters for the three junctions of
+`d1-default-owner`) registers `items.create` and `items.update` filters for the four junctions of
 decision 5. It reads `rules.json`, which `gen_access_rules.py --write` generates from the
 `guards` section of `access_rules.json` and which holds each parent's **own update filter**, so the
 rule is written once. The hook runs `ItemsService.readByQuery` on the parent with the caller's
 accountability (and the request's transaction, so a parent created in the same request is found),
 the key and that filter with `$CURRENT_USER` substituted, and refuses with a 403 `FORBIDDEN` when no
-row comes back. Admins and calls with no accountability (flows, scripts, other extensions) are not
+row comes back **and** the parent was not inserted by this same transaction (below). Admins and calls with no accountability (flows, scripts, other extensions) are not
 checked; every other caller is, whatever their policy. On update only a parent key that actually
-changes is checked. A payload that creates a brand-new parent in the same request has no key to check
-and passes (the caller is creating that record). A drift check (`gen_access_rules.py --check`, in
+changes is checked (a key sent with its current value is not a change); for a junction with more
+than one guard (`campaign_samples`) a change to either key checks **every** guard on the row as it
+will be after the update, so moving a row to another campaign needs the sample's update rule and
+moving it to another sample needs the campaign's.
+
+**Creating a parent and its junction rows in one save** (a project with investigators, a sample with
+co-owners, a campaign with samples, a test with subjects) must work even when the creator names
+someone else as owner or PI, in which case the new row's update rule does not hold for them. Directus
+inserts the parent first and then runs the junction's create filter inside the same transaction, so
+when the update rule refuses, the hook asks the database whether that parent row was **inserted by
+the current transaction**: `SELECT <key> FROM <parent> WHERE <key> = $1 AND xmin = pg_current_xact_id()::xid`
+on `context.database` (the request's transaction). A match passes; a row that merely exists, or one that
+was only updated by someone else earlier, has another `xmin` and goes by the update rule, so a member
+still cannot attach themselves to a record they did not just make. This is per parent: for
+`campaign_samples` the campaign may be new while the sample still needs its own update rule, unless
+that sample is new too. A parent created inside a savepoint has the sub-transaction's id and is not
+recognised, which refuses (fails closed); Directus does not use savepoints. A residual case: a row
+that a trigger *updates* in the same transaction as the junction insert also carries that `xmin`;
+no trigger does this to a record the caller could not already change. A payload that nests a parent
+with no key has nothing to check and passes (the caller is creating that record). A drift check (`gen_access_rules.py --check`, in
 pre-commit, phase1 and pytest) fails when `rules.json` is stale. It guards the Directus API, as
 everything here does: SQL imports (`migrate_legacy.py`) are not checked.
 
@@ -248,7 +286,7 @@ Two schema changes make the filters expressible:
   `subject` alias cannot be traversed cheaply in a filter.
 - **`directus_files` is unchanged.** Any member can read any file, and `/assets/<id>` serves the
   bytes. The Phase 9 export-control item covers it.
-- **Create is filtered only for the three visibility junctions.** Directus ignores item filters on
+- **Create is filtered only for the four visibility junctions.** Directus ignores item filters on
   create; the guard hook (decision 5) closes the junctions, and only on the Directus API. Other
   create paths (a SQL import, `migrate_legacy.py`) are not checked, and neither is a record's own
   foreign key: a member who sets a sample's, operation's, test's or campaign's `project_id` to a
@@ -319,8 +357,12 @@ Two schema changes make the filters expressible:
   and the path resolver.
 - `core/extensions/d1-default-owner/index.test.mjs`: the hook defaults the owner on samples,
   operations, tests and campaigns, and the PI on projects.
-- `core/extensions/d1-access-guard/index.test.mjs`: creates and parent-key updates of the three
-  junctions are refused without the right (campaign_samples: campaign and sample), allowed with it,
+- `core/extensions/campaign-inherit/index.test.mjs`: both hooks run in load order on a campaign with a
+  `project_id` and on an operation and a test with a `campaign_id`; the creator is the owner, the
+  project, equipment and material still inherit, and an owner named in the payload is kept.
+- `core/extensions/d1-access-guard/index.test.mjs`: creates and parent-key updates of the four
+  junctions are refused without the right (campaign_samples: campaign and sample, also when only one
+  key is repointed), allowed with it,
   admins and internal calls bypass, and the read runs as the caller. Owner changes on a sample,
   operation or test: refused for a co-owner, allowed for the owner and for an admin, a payload
   without the owner field or with the unchanged owner is not checked, batch updates are checked per

@@ -43,7 +43,6 @@ Projects & campaigns
   campaigns                    machining trial or testing campaign under a project
   campaign_samples             M2M: samples in a campaign
   project_rollup               read-only cache of v_project_rollup, rebuilt by trigger
-  lab_member_permissions_backup  transient: the Lab Member permission rows migration 141 saved (its down restores and drops it)
 
 Raw-material provenance
   raw_stock_lots               inbound material ledger
@@ -105,6 +104,12 @@ Views (v_ prefix — LLM query targets)
   v_schema_dictionary        table/column COMMENTs as a queryable dictionary
   v_llm_query_targets        allow-list menu of views the LLM may query
   v_embeddings_source_notes  every embeddable note (embedding backfill source)
+
+Private schema (not exposed)
+  d1_private.*               migration bookkeeping that is not data: the Lab Member permission rows
+                             migration 141 saved and the aliases it added (its down restores and
+                             drops them). Not in this dictionary, not scanned by Directus, no grants
+                             to the LLM role or the Directus roles.
 ```
 
 ---

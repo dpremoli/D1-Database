@@ -266,6 +266,10 @@ def test_guards_cover_every_junction_that_grants_visibility():
             if "secondary_investigators" in path:
                 grants.add("project_investigators")
             parts = path.split(".")
+            # test_sessions.sample_id is derived from the first sample of the test_sessions_subject
+            # junction (migration 139), so a read path through it is a junction grant too
+            if _c == "test_sessions" and parts[0] == "sample_id":
+                grants.add("test_sessions_subject")
             # `campaigns._some.campaign_id` on a sample, `samples._some.sample_id` on a campaign
             for a, b in zip(parts, parts[2:]):
                 if (a, b) in (("campaigns", "campaign_id"), ("samples", "sample_id")):
@@ -279,6 +283,7 @@ def test_guards_cover_every_junction_that_grants_visibility():
     ]
     assert [c["parent"] for c in rules["sample_co_owners"]] == ["physical_samples"]
     assert [c["parent"] for c in rules["project_investigators"]] == ["projects"]
+    assert [c["parent"] for c in rules["test_sessions_subject"]] == ["test_sessions"]
     # the filter shipped to the hook is the parent's update row, word for word
     for junction, checks in rules.items():
         for c in checks:

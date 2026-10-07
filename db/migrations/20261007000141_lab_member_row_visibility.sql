@@ -18,7 +18,7 @@
 -- a new migration that pastes the regenerated rows.
 --
 -- What the rows do, per collection (see the ADR for the exact rules):
---   * Rows are backed up first (lab_member_permissions_backup, kept until `down`): every Lab Member
+--   * Rows are backed up first (d1_private.lab_member_permissions_backup, kept until `down`): every Lab Member
 --     row of a ruled collection, of people and of audit_logs, so that `down` restores them exactly.
 --   * UPDATE of an existing Lab Member row sets its `permissions` filter. `validation` and `fields`
 --     are only set where the rules define them (people), so a field list a deployment narrowed by
@@ -46,6 +46,27 @@
 --     or clear its cache, to pick them up.
 --   * A NOTICE with how many records have no owner. They stay visible only through their project,
 --     campaign or co-owners until someone assigns an owner (scripts/transfer_sample_ownership.py).
+
+-- 0. A private schema for what this migration keeps for its own `down`. It is not `public`, so the
+-- tables in it are not in v_schema_dictionary (the Ask-DB prompt), not in Directus' collection scan
+-- (the Data Studio) and not readable by the LLM role or the Directus database user: nothing is
+-- granted on the schema, and the default privileges that hand out new tables apply to `public` only.
+CREATE SCHEMA IF NOT EXISTS d1_private;
+COMMENT ON SCHEMA d1_private IS
+    'Internal bookkeeping of migrations (backups they restore in `migrate:down`). Never exposed: no grants to d1_llm_readonly or the Directus roles, and not scanned by Directus or v_schema_dictionary.';
+REVOKE ALL ON SCHEMA d1_private FROM PUBLIC;
+
+-- What `up` changed in the Directus metadata that `down` must undo again: the hidden projects
+-- aliases (relation `one_field` and the field row). Only a change `up` made itself is recorded, so a
+-- deployment that already had an alias keeps it when this migration is reversed.
+CREATE TABLE IF NOT EXISTS d1_private.lab_member_row_visibility_changes (
+    kind       TEXT NOT NULL CHECK (kind IN ('relation_alias', 'alias_field')),
+    collection TEXT NOT NULL,
+    field      TEXT NOT NULL,
+    PRIMARY KEY (kind, collection, field)
+);
+COMMENT ON TABLE d1_private.lab_member_row_visibility_changes IS
+    'ADR-0011 migration 20261007000141: the projects alias metadata it added (relation_alias: many_collection + many_field whose one_field it set; alias_field: the directus_fields row it inserted). `migrate:down` undoes exactly these and drops the table.';
 
 -- 1. Indexes behind the filters.
 CREATE INDEX IF NOT EXISTS idx_physical_samples_owner_person_id ON physical_samples (owner_person_id);
@@ -120,6 +141,10 @@ BEGIN
             INSERT INTO directus_relations
                 (many_collection, many_field, one_collection, one_field, junction_field, one_deselect_action)
             VALUES (r.many_collection, r.many_field, r.one_collection, r.one_field, r.junction_field, r.deselect);
+            IF r.one_collection = 'projects' AND r.one_field IN ('samples', 'operations', 'sessions') THEN
+                INSERT INTO d1_private.lab_member_row_visibility_changes (kind, collection, field)
+                VALUES ('relation_alias', r.many_collection, r.many_field) ON CONFLICT DO NOTHING;
+            END IF;
         ELSIF existing.one_collection IS DISTINCT FROM r.one_collection THEN
             RAISE EXCEPTION 'ADR-0011: directus_relations has %.% -> % but the row filters need -> %',
                 r.many_collection, r.many_field, existing.one_collection, r.one_collection;
@@ -136,11 +161,16 @@ BEGIN
                     r.one_collection, r.one_field, r.many_collection, r.many_field;
             END IF;
             UPDATE directus_relations SET one_field = r.one_field WHERE id = existing.id;
+            IF r.one_collection = 'projects' AND r.one_field IN ('samples', 'operations', 'sessions') THEN
+                INSERT INTO d1_private.lab_member_row_visibility_changes (kind, collection, field)
+                VALUES ('relation_alias', r.many_collection, r.many_field) ON CONFLICT DO NOTHING;
+            END IF;
         END IF;
     END LOOP;
 END
 $$;
 
+WITH inserted AS (
 INSERT INTO directus_fields (collection, field, special, interface, options, display, readonly, hidden, sort, width, note)
 SELECT v.collection, v.field, v.special, v.interface, v.options::json, 'related-values', v.hidden, v.hidden, v.sort, 'full', v.note
 FROM (VALUES
@@ -158,17 +188,23 @@ FROM (VALUES
 ) AS v(collection, field, special, interface, options, hidden, sort, note)
 WHERE NOT EXISTS (
     SELECT 1 FROM directus_fields f WHERE f.collection = v.collection AND f.field = v.field
-);
+)
+RETURNING collection, field
+)
+INSERT INTO d1_private.lab_member_row_visibility_changes (kind, collection, field)
+SELECT 'alias_field', collection, field FROM inserted
+WHERE collection = 'projects' AND field IN ('samples', 'operations', 'sessions')
+ON CONFLICT DO NOTHING;
 
 -- 3. Back up the Lab Member rows this migration changes, once (a second run keeps the first backup).
 DO $$
 BEGIN
-    IF to_regclass('public.lab_member_permissions_backup') IS NULL THEN
-        CREATE TABLE lab_member_permissions_backup AS
+    IF to_regclass('d1_private.lab_member_permissions_backup') IS NULL THEN
+        CREATE TABLE d1_private.lab_member_permissions_backup AS
         SELECT * FROM directus_permissions
         WHERE policy = '20000002-0000-0000-0000-000000000002'
           AND collection IN ('physical_samples', 'manufacturing_operations', 'test_sessions', 'campaigns', 'projects', 'sample_co_owners', 'sample_stock_provenance', 'sample_data_files', 'sample_genealogy', 'campaign_samples', 'operation_data_files', 'machining_force_analysis', 'fast_run_data', 'session_data_files', 'test_sessions_subject', 'project_investigators', 'project_rollup', 'people', 'audit_logs');
-        COMMENT ON TABLE lab_member_permissions_backup IS
+        COMMENT ON TABLE d1_private.lab_member_permissions_backup IS
             'ADR-0011 migration 20261007000141: the Lab Member directus_permissions rows (of the collections it changes) as they were before it ran. `migrate:down` restores them and drops this table.';
     END IF;
 END
@@ -306,16 +342,19 @@ $$;
 -- migrate:down
 -- Back to the Lab Member grants as they were before this migration: every Lab Member row of the
 -- collections it changed (the ruled ones, people and audit_logs) is deleted and the rows saved in
--- lab_member_permissions_backup are put back, ids included, then the backup table is dropped.
+-- d1_private.lab_member_permissions_backup are put back, ids included, then the backup table is
+-- dropped (and the d1_private schema, when nothing else lives in it).
 -- A row a deployment added by hand for one of those collections after the migration goes with the
--- delete. The indexes are dropped; the hidden aliases projects.samples, projects.operations and
--- projects.sessions are removed from the relations and the field list. Relations and other alias
--- fields this migration added because they were missing are metadata corrections and stay.
+-- delete. The indexes are dropped. The hidden aliases projects.samples, projects.operations and
+-- projects.sessions are removed from the relations and the field list only where `up` set or
+-- inserted them (d1_private.lab_member_row_visibility_changes), so an alias that was already there
+-- stays. Relations and the other alias fields this migration added because they were missing
+-- (co_owners, the campaign samples and so on) are metadata corrections and stay.
 
 DO $$
 BEGIN
-    IF to_regclass('public.lab_member_permissions_backup') IS NULL THEN
-        RAISE EXCEPTION 'ADR-0011: lab_member_permissions_backup is missing, so the Lab Member rows cannot be restored';
+    IF to_regclass('d1_private.lab_member_permissions_backup') IS NULL THEN
+        RAISE EXCEPTION 'ADR-0011: d1_private.lab_member_permissions_backup is missing, so the Lab Member rows cannot be restored';
     END IF;
 END
 $$;
@@ -326,19 +365,38 @@ WHERE policy = '20000002-0000-0000-0000-000000000002'
 
 INSERT INTO directus_permissions (id, collection, action, permissions, validation, presets, fields, policy)
 SELECT id, collection, action, permissions, validation, presets, fields, policy
-FROM lab_member_permissions_backup;
+FROM d1_private.lab_member_permissions_backup;
 
-DROP TABLE lab_member_permissions_backup;
+DROP TABLE d1_private.lab_member_permissions_backup;
 
-DELETE FROM directus_fields
-WHERE collection = 'projects' AND field IN ('samples', 'operations', 'sessions');
-UPDATE directus_relations
-SET one_field = NULL
-WHERE (many_collection, many_field, one_collection, one_field) IN (
-    ('physical_samples', 'project_id', 'projects', 'samples'),
-    ('manufacturing_operations', 'project_id', 'projects', 'operations'),
-    ('test_sessions', 'project_id', 'projects', 'sessions')
-);
+DO $$
+BEGIN
+    IF to_regclass('d1_private.lab_member_row_visibility_changes') IS NOT NULL THEN
+        DELETE FROM directus_fields AS f
+        USING d1_private.lab_member_row_visibility_changes AS c
+        WHERE c.kind = 'alias_field' AND f.collection = c.collection AND f.field = c.field
+          AND f.collection = 'projects' AND f.field IN ('samples', 'operations', 'sessions');
+        UPDATE directus_relations AS r
+        SET one_field = NULL
+        FROM d1_private.lab_member_row_visibility_changes AS c
+        WHERE c.kind = 'relation_alias' AND r.many_collection = c.collection AND r.many_field = c.field
+          AND r.one_collection = 'projects' AND r.one_field IN ('samples', 'operations', 'sessions');
+        DROP TABLE d1_private.lab_member_row_visibility_changes;
+    END IF;
+END
+$$;
+
+-- The schema goes too, unless something else has been put in it since.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_class AS c INNER JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'd1_private'
+    ) THEN
+        DROP SCHEMA IF EXISTS d1_private;
+    END IF;
+END
+$$;
 
 DROP INDEX IF EXISTS idx_sample_co_owners_user_id;
 DROP INDEX IF EXISTS idx_project_investigators_user_id;

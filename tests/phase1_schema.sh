@@ -593,9 +593,9 @@ grep -qx 'shadow:0' <<<"$sp_out" && grep -qx 'real:1' <<<"$sp_out" \
 echo "== Audit coverage: every business table, keyed by its primary key (review 5.3) =="
 # Tables deliberately NOT audited: the log itself, dbmate bookkeeping, Directus system tables,
 # derived caches (project_rollup, semantic_embeddings), the crawler's heartbeat row,
-# audit_log_actors (the actor side-table of the log itself) and lab_member_permissions_backup
-# (migration 141's copy of Directus permission rows, dropped by its down).
-AUDIT_EXCLUDED="'audit_logs','audit_log_actors','schema_migrations','project_rollup','semantic_embeddings','force_crawler_state','lab_member_permissions_backup'"
+# audit_log_actors (the actor side-table of the log itself). Migration 141's backup of Directus
+# permission rows lives in the private schema d1_private, so this public-schema check never sees it.
+AUDIT_EXCLUDED="'audit_logs','audit_log_actors','schema_migrations','project_rollup','semantic_embeddings','force_crawler_state'"
 run_eq "every business table has an audit trigger (missing: none)" \
     "SELECT coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '')
      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -1947,8 +1947,12 @@ INSERT INTO directus_relations (many_collection, many_field, one_collection, one
 DELETE FROM directus_relations WHERE (many_collection, many_field) IN
   (('physical_samples','owner_person_id'), ('campaigns','owner_person_id'), ('campaign_samples','campaign_id'));
 UPDATE directus_relations SET one_field = NULL
-  WHERE many_collection IN ('manufacturing_operations','test_sessions') AND many_field = 'project_id';
+  WHERE many_collection = 'manufacturing_operations' AND many_field = 'project_id';
+UPDATE directus_relations SET one_field = 'sessions'
+  WHERE many_collection = 'test_sessions' AND many_field = 'project_id';
 DELETE FROM directus_fields WHERE collection = 'projects' AND field IN ('samples','operations','sessions');
+INSERT INTO directus_fields (collection, field, special, interface, hidden, readonly, note)
+  VALUES ('projects', 'sessions', 'o2m', 'list-o2m', TRUE, TRUE, 'pre-existing alias (test seed)');
 INSERT INTO physical_samples (sample_code) VALUES ('TEST-NOOWNER-001');
 "
 rv_out=$($PSQL 2>&1 <<SQL
@@ -1957,7 +1961,8 @@ CREATE TEMP TABLE _gen AS
   SELECT * FROM json_to_recordset(\$rules\$$rules_json\$rules\$::json)
     AS x(collection text, action text, permissions jsonb, validation jsonb, fields text, ruled boolean);
 $rv_down
-SELECT 'dn0_backup_table:' || coalesce(to_regclass('public.lab_member_permissions_backup')::text, 'gone');
+SELECT 'dn0_backup_table:' || coalesce(to_regclass('d1_private.lab_member_permissions_backup')::text, 'gone');
+SELECT 'dn0_schema:' || coalesce((SELECT nspname FROM pg_namespace WHERE nspname = 'd1_private'), 'gone');
 $rv_seed
 $rv_up
 SELECT 'up_sample_read_filtered:' || (permissions::jsonb ? '_or') FROM directus_permissions WHERE policy='$LM' AND collection='physical_samples' AND action='read';
@@ -1978,12 +1983,20 @@ SELECT 'up_exact:' || count(*) FROM _gen g JOIN directus_permissions p
   ON p.policy = '$LM' AND p.collection = g.collection AND p.action = g.action AND p.permissions::jsonb = g.permissions
  AND (g.fields = '*' OR p.fields = g.fields) AND (g.validation = '{}'::jsonb OR p.validation::jsonb = g.validation)
  WHERE g.ruled;
-SELECT 'up_backup_rows:' || count(*) FROM lab_member_permissions_backup;
+SELECT 'up_backup_rows:' || count(*) FROM d1_private.lab_member_permissions_backup;
 SELECT 'up_backup_exact:' || count(*) FROM (
-  (SELECT to_jsonb(b) FROM before_rows b WHERE b.collection IN $rv_ruled EXCEPT SELECT to_jsonb(k) FROM lab_member_permissions_backup k)
+  (SELECT to_jsonb(b) FROM before_rows b WHERE b.collection IN $rv_ruled EXCEPT SELECT to_jsonb(k) FROM d1_private.lab_member_permissions_backup k)
   UNION ALL
-  (SELECT to_jsonb(k) FROM lab_member_permissions_backup k EXCEPT SELECT to_jsonb(b) FROM before_rows b)) x;
-SELECT 'up_backup_commented:' || (obj_description('public.lab_member_permissions_backup'::regclass, 'pg_class') IS NOT NULL);
+  (SELECT to_jsonb(k) FROM d1_private.lab_member_permissions_backup k EXCEPT SELECT to_jsonb(b) FROM before_rows b)) x;
+SELECT 'up_backup_commented:' || (obj_description('d1_private.lab_member_permissions_backup'::regclass, 'pg_class') IS NOT NULL);
+SELECT 'up_backup_not_public:' || coalesce(to_regclass('public.lab_member_permissions_backup')::text, 'absent');
+SELECT 'up_backup_in_dictionary:' || count(*) FROM v_schema_dictionary WHERE object_name LIKE 'lab\_member\_%';
+SELECT 'up_backup_in_targets:' || count(*) FROM v_llm_query_targets WHERE view_name LIKE 'lab\_member%';
+SELECT 'up_private_schema_commented:' || (obj_description('d1_private'::regnamespace, 'pg_namespace') IS NOT NULL);
+SELECT 'up_llm_usage:' || has_schema_privilege('d1_llm_readonly', 'd1_private', 'USAGE');
+SELECT 'up_llm_select:' || has_table_privilege('d1_llm_readonly', 'd1_private.lab_member_permissions_backup', 'SELECT');
+SELECT 'up_public_usage:' || has_schema_privilege('public', 'd1_private', 'USAGE');
+SELECT 'up_changes:' || string_agg(kind || '/' || collection || '.' || field, ',' ORDER BY kind, collection, field) FROM d1_private.lab_member_row_visibility_changes;
 SELECT 'up_rel_owner:' || count(*) FROM directus_relations WHERE (many_collection, many_field, one_collection) IN
   (('physical_samples','owner_person_id','people'), ('campaigns','owner_person_id','people'), ('campaign_samples','campaign_id','campaigns'));
 SELECT 'up_alias:' || one_field FROM directus_relations WHERE many_collection='physical_samples' AND many_field='project_id';
@@ -1994,8 +2007,9 @@ $rv_up
 SELECT 'up_idempotent:' || count(*) FROM directus_permissions WHERE policy='$LM' AND collection IN ('physical_samples','campaigns','project_rollup','projects');
 SELECT 'up_idempotent_alias:' || count(*) FROM directus_fields WHERE collection='projects' AND field IN ('samples','operations','sessions');
 SELECT 'up_idempotent_relations:' || count(*) FROM directus_relations WHERE many_collection='physical_samples' AND many_field='owner_person_id';
-SELECT 'up2_backup_still_old:' || count(*) FROM lab_member_permissions_backup WHERE coalesce(permissions::jsonb, '{}'::jsonb) <> '{}'::jsonb;
-SELECT 'up2_backup_rows:' || count(*) FROM lab_member_permissions_backup;
+SELECT 'up2_backup_still_old:' || count(*) FROM d1_private.lab_member_permissions_backup WHERE coalesce(permissions::jsonb, '{}'::jsonb) <> '{}'::jsonb;
+SELECT 'up2_backup_rows:' || count(*) FROM d1_private.lab_member_permissions_backup;
+SELECT 'up2_changes:' || count(*) FROM d1_private.lab_member_row_visibility_changes;
 $rv_down
 SELECT 'dn_exact:' || count(*) FROM (
   (SELECT to_jsonb(b) FROM before_rows b EXCEPT SELECT to_jsonb(p) FROM directus_permissions p WHERE p.policy = '$LM')
@@ -2007,16 +2021,21 @@ SELECT 'dn_people_actions:' || string_agg(action, ',' ORDER BY action) FROM dire
 SELECT 'dn_other_policy:' || count(*) FROM directus_permissions WHERE policy='20000002-0000-0000-0000-000000000001' AND collection='physical_samples';
 SELECT 'dn_materials:' || count(*) FROM directus_permissions WHERE policy='$LM' AND collection='materials';
 SELECT 'dn_filters_left:' || count(*) FROM directus_permissions WHERE policy='$LM' AND permissions::jsonb <> '{}'::jsonb;
-SELECT 'dn_backup_table:' || coalesce(to_regclass('public.lab_member_permissions_backup')::text, 'gone');
+SELECT 'dn_backup_table:' || coalesce(to_regclass('d1_private.lab_member_permissions_backup')::text, 'gone');
+SELECT 'dn_changes_table:' || coalesce(to_regclass('d1_private.lab_member_row_visibility_changes')::text, 'gone');
+SELECT 'dn_schema:' || coalesce((SELECT nspname FROM pg_namespace WHERE nspname = 'd1_private'), 'gone');
 SELECT 'dn_alias:' || coalesce(one_field, 'null') FROM directus_relations WHERE many_collection='physical_samples' AND many_field='project_id';
 SELECT 'dn_alias_ops:' || coalesce(one_field, 'null') FROM directus_relations WHERE many_collection='manufacturing_operations' AND many_field='project_id';
-SELECT 'dn_alias_fields:' || count(*) FROM directus_fields WHERE collection='projects' AND field IN ('samples','operations','sessions');
+SELECT 'dn_alias_tests:' || coalesce(one_field, 'null') FROM directus_relations WHERE many_collection='test_sessions' AND many_field='project_id';
+SELECT 'dn_alias_sessions_field:' || note FROM directus_fields WHERE collection='projects' AND field='sessions';
+SELECT 'dn_alias_fields:' || string_agg(field, ',' ORDER BY field) FROM directus_fields WHERE collection='projects' AND field IN ('samples','operations','sessions');
 SELECT 'dn_indexes:' || count(*) FROM pg_indexes WHERE indexname LIKE 'idx\_%\_owner\_person\_id' OR indexname IN ('idx_physical_samples_project_id','idx_sample_co_owners_user_id','idx_project_investigators_user_id');
 ROLLBACK;
 SQL
 )
 rv_check() { grep -qxF -- "$1" <<<"$rv_out" && ok "$2" || bad "$2 (psql output: $rv_out)"; }
 rv_check "dn0_backup_table:gone" "(setup) down drops the backup table"
+rv_check "dn0_schema:gone" "(setup) down drops the private schema once it is empty"
 rv_check "up_sample_read_filtered:true" "up: an unfiltered sample read row gets the filter"
 rv_check 'up_sample_delete:{"owner_person_id":{"user_id":{"_eq":"$CURRENT_USER"}}}' "up: sample delete is owner-only"
 rv_check "up_hand_fields:sample_id,sample_code" "up: a field list narrowed by hand on a collection without custom rows is kept"
@@ -2037,6 +2056,14 @@ n_backup=$(grep -o '^up_backup_rows:[0-9]*' <<<"$rv_out" | cut -d: -f2)
 [[ "${n_backup:-0}" -eq 9 ]] && ok "up: the backup holds the 9 seeded Lab Member rows of the changed collections" || bad "up: backup has ${n_backup:-?} rows, want 9 (psql output: $rv_out)"
 rv_check "up_backup_exact:0" "up: the backup rows equal the rows before the migration, ids included"
 rv_check "up_backup_commented:true" "up: the backup table has a comment"
+rv_check "up_backup_not_public:absent" "up: the backup is not a public table (Directus would list it as a collection)"
+rv_check "up_backup_in_dictionary:0" "up: the backup and change-log tables are not in v_schema_dictionary (the Ask-DB prompt)"
+rv_check "up_backup_in_targets:0" "up: nothing of the backup is a v_llm_query_targets entry"
+rv_check "up_private_schema_commented:true" "up: the d1_private schema has a comment"
+rv_check "up_llm_usage:false" "up: the LLM role has no USAGE on d1_private"
+rv_check "up_llm_select:false" "up: the LLM role cannot read the backup"
+rv_check "up_public_usage:false" "up: PUBLIC has no USAGE on d1_private"
+rv_check "up_changes:alias_field/projects.operations,alias_field/projects.samples,relation_alias/manufacturing_operations.project_id,relation_alias/physical_samples.project_id" "up: records the aliases it set (not the test_sessions one that already existed)"
 rv_check "up_rel_owner:3" "up: the deleted owner_person_id and campaign_samples.campaign_id relations are inserted again"
 rv_check "up_alias:samples" "up: physical_samples.project_id gets the one_field alias 'samples'"
 rv_check "up_alias_ops:operations" "up: manufacturing_operations.project_id gets the alias 'operations'"
@@ -2046,6 +2073,7 @@ rv_check "up_idempotent_alias:3" "up is idempotent (three alias fields)"
 rv_check "up_idempotent_relations:1" "up is idempotent (one owner_person_id relation)"
 rv_check "up2_backup_still_old:0" "a second up keeps the first backup (the pre-migration rows)"
 rv_check "up2_backup_rows:$n_backup" "a second up does not add backup rows"
+rv_check "up2_changes:4" "a second up does not add change rows"
 grep -q "ownerless records.*physical_samples=[1-9]" <<<"$rv_out" && ok "up: reports ownerless samples in a NOTICE" || bad "up: no ownerless NOTICE (psql output: $rv_out)"
 rv_check "dn_exact:0" "down: the Lab Member rows are exactly as before (ids, filters, fields, presets)"
 rv_check 'dn_hand_fields:sample_id,sample_code {"owner":1}' "down: a hand-narrowed field list and its presets come back"
@@ -2055,9 +2083,13 @@ rv_check "dn_materials:1" "down: reference data rows are kept"
 rv_check "dn_other_policy:1" "down: another policy's rows are kept"
 rv_check "dn_filters_left:0" "down: no Lab Member row keeps a filter"
 rv_check "dn_backup_table:gone" "down: the backup table is dropped"
+rv_check "dn_changes_table:gone" "down: the change log is dropped"
+rv_check "dn_schema:gone" "down: the empty private schema is dropped"
 rv_check "dn_alias:null" "down: the relation alias is removed"
 rv_check "dn_alias_ops:null" "down: the operations alias is removed"
-rv_check "dn_alias_fields:0" "down: the alias fields are removed"
+rv_check "dn_alias_tests:sessions" "down: an alias that existed before up (test_sessions.project_id -> sessions) is kept"
+rv_check "dn_alias_sessions_field:pre-existing alias (test seed)" "down: the alias field row that existed before up is kept untouched"
+rv_check "dn_alias_fields:sessions" "down: only the alias fields up inserted are removed"
 rv_check "dn_indexes:0" "down: the indexes are dropped"
 n_up=$(grep -o '^up_idempotent:[0-9]*' <<<"$rv_out" | cut -d: -f2)
 [[ "${n_up:-0}" -eq 13 ]] && ok "up is idempotent (a second run leaves 13 rows for four collections)" || bad "up is not idempotent (psql output: $rv_out)"
