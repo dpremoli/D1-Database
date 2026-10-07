@@ -103,10 +103,24 @@ named in the step.
   `SELECT count(DISTINCT sample_id) FROM f_trace_ancestors('<id>')` minus the sample itself. On a
   real database, time `GET /d1-trace/sample/<id>` for the sample with the largest genealogy: it
   answers within the 8 s limit, or with "this sample's genealogy is too large to trace" (503)
-  shown in the tab; either way Postgres is not left running the query (`pg_stat_activity`). The
-  functions enumerate paths, so only the 8 s timeout bounds them (the real fix is a migration that
-  walks nodes). With more than 500 ancestors, descendants or events the tab says only the nearest
-  500 relatives / newest 500 operations and tests are shown. Since: this batch (PR TBD).
+  shown in the tab; either way Postgres is not left running the query (`pg_stat_activity`). Since
+  migration 136 the functions walk samples, not paths, so the 503 should no longer happen (the 8 s
+  deadline stays as a safety net; see the next item). With more than 500 ancestors, descendants
+  or events the tab says only the nearest 500 relatives / newest 500 operations and tests are
+  shown. Since: this batch (PR TBD).
+- [ ] **Genealogy functions on the deepest real genealogy (migrations 136 and 137, f_trace_*
+  visit each sample once, parent index).** Before deploying, as a restricted role, note the
+  `hidden` counts and `through_hidden` flags from `GET /d1-trace/sample/<id>` for a sample with a
+  diamond genealogy (two parents sharing a grandparent). After deploying, on the real database
+  find the sample with the largest genealogy (most rows when walking `sample_genealogy`, or the
+  deepest chain). Run `SELECT count(*), max(depth) FROM f_trace_ancestors('<id>')` and the
+  descendants one, and `GET /d1-trace/sample/<id>` (and the Timeline tab). Expect: each answers
+  in well under a second with `count(*) = count(DISTINCT sample_id)`, and the diamond sample's
+  hidden counts and flags are as noted. To compare with the old definitions, do it on a restored
+  copy, never on the live database: there, create the old bodies from the `-- migrate:down`
+  section of `20261006000136` under other names (`old_trace_ancestors` / `old_trace_descendants`),
+  and, if the genealogy is small enough for path enumeration, check that the distinct
+  `sample_id`s and `min(depth)` per sample match. Since: this batch (PR TBD).
 - [ ] **D11 — campaign overview counts.** Open a machining trial and a testing campaign that have
   real data. Expect: sample, operation and test-session counts equal a hand count in the
   collection lists; "Force analysed n / m" equals the machining operations whose
@@ -247,11 +261,14 @@ tool; a test cut on scrap stock is fine.
 - [ ] **P6 — cutting metrics.** On a real turning cut with the operation sheet beside you: open
   Signal statistics (compute), then Cutting metrics. Check Fc, Pc and kc against a hand calculation
   from the sheet (vc = π·D·n/1000, Pc = Fc·vc/60, kc = Fc/(ap·f)) and the kc against the literature
-  range for the material. Confirm which dynamometer axis really is the main cutting force, then fix
-  the assumed default mapping (Fc=Fz, Ff=Fx, Fp=Fy) if it is wrong. Check that an OD cut (`MT-O`) uses the Diameter box unchanged
-  for vc and that a facing cut (`MT-F`, also one with a saved crop) uses D at the window midpoint,
-  matching the radial axis of the plots. Check "—" with a reason on an
-  operation with no feed or depth, and on a milling op. Since: this batch (PR TBD).
+  range for the material. Confirm the axis mapping per workholding and operation type on the rig
+  (the owner's standard, the default, is Fc = Fx, Fp = Fz, Ff = Fy): pick the right mapping for
+  each type and check it is remembered for that type only and the CSV `axis_map` matches (it
+  holds the Fc/Ff/Fp axes as a key, e.g. `Fx/Fy/Fz` for the standard). Check that an OD cut
+  (`MT-O`) uses the Diameter box unchanged for vc and that a facing cut (`MT-F`, also one with a
+  saved crop) uses D at the window midpoint, matching the radial axis of the plots. Check "—"
+  with a reason on an operation with no feed or depth, and on a milling op. Since #127 (new default and per-subtype
+  memory: this batch, PR TBD).
 
 ### Earlier issues that need the rig (from the 2026-10-02 batch)
 - [ ] **#84** Real DAQmx error text and codes (‑200077); whether the chassis or the module limits the

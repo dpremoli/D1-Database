@@ -29,6 +29,6 @@ describe('statsCsvColumns', () => {
 		const cols = statsCsvColumns(() => stats, () => cm);
 		const csv = toCsv(cols, [{ axis: 'Fx', ...ax }]).split('\r\n');
 		expect(csv[0].split(',').slice(-12)).toEqual(['resultant_mean_N', 'resultant_peak_N', 'Fc_mean_N', 'Fc_peak_N', 'Ff_mean_N', 'Ff_peak_N', 'Fp_mean_N', 'Fp_peak_N', 'vc_m_per_min', 'Pc_W', 'kc_N_per_mm2', 'axis_map']);
-		expect(csv[1].endsWith(',1200,1,1190,1210,5,9,600,700,200,250,100,120,314.5,,3000,Fz/Fx/Fy')).toBe(true);
+		expect(csv[1].endsWith(',1200,1,1190,1210,5,9,600,700,200,250,100,120,314.5,,3000,Fx/Fy/Fz')).toBe(true);
 	});
 });

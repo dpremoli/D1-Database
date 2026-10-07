@@ -30,19 +30,30 @@ in Pc (the feed velocity is orders of magnitude below vc), the standard approxim
 apparent value for this one cut, not a material constant (it depends on chip thickness, tool
 geometry and wear).
 
-## Axis mapping (an assumption, shown in the UI)
+## Axis mapping (owner's standard, selectable, remembered per operation type)
 
 The repo does not define it. `process_force.m` and `docs/force-file-standards.md` only say Fx and
 Fy are the two horizontal plate axes and Fz the sum of the four vertical corners. `angle.ts` /
 `toFixedFrame` is the milling (RCD, rotating-frame) transform and says nothing about turning
-directions. The mapping depends on how the plate is mounted under the tool post.
+directions. The mapping depends on how the plate is mounted and on the workholding and operation.
 
-Default: **Fc (tangential, main cutting) = Fz, Ff (feed) = Fx, Fp (passive/radial) = Fy.**
-Reasoning: the tool post sits on the plate, the tool tip is above the workpiece centre line, and
-the main cutting force pushes the tool vertically, which is the plate's z. Confidence: medium for
-Fc = Fz, low for the Fx/Fy split. The card therefore carries a select ("Axis mapping") with all six
-assignments, the choice is remembered in localStorage, and every tooltip and the CSV (`axis_map`
-column) name the mapping used. Operators confirm it once on a real cut (physical test backlog).
+Decision (2026-10-06, owner: "Axis mapping can change depending on the work holding and machining
+operation. Standard is Fz as Fp and Fx as Fc."): the default is
+**Fc (tangential, main cutting) = Fx, Ff (feed) = Fy, Fp (passive/radial) = Fz.** This replaces the
+earlier guess (Fc = Fz, Ff = Fx, Fp = Fy).
+
+- The card carries a select ("Axis mapping") with all six assignments and states the mapping in
+  use, with a note that it depends on workholding and operation.
+- The choice is remembered **per saved operation subtype** (MT-F, MT-O, ...; empty is `default`,
+  any other subtype, recognised or not, gets its own entry; an unsaved edit of the Subtype field
+  does not change the key) in localStorage key `d1.cuttingAxisMapBySubtype`, a JSON object
+  `{ "MT-F": "Fz/Fx/Fy", ... }`. Subtypes without an entry use the standard. Unreadable or invalid
+  entries are ignored. The old single key `d1.cuttingAxisMap` was chosen against the old default
+  and is removed on first load.
+- Every tooltip and the CSV (`axis_map` column) name the mapping used.
+- Workholding itself is not modelled (it is not recorded with the operation); out of scope. The
+  per-subtype memory is the proxy. Operators confirm the mapping per workholding and operation on
+  the rig (physical test backlog, P6).
 
 For face turning the feed and passive roles swap relative to longitudinal turning (feed is radial,
 passive is along the spindle). Labels follow ISO 3002 (Fc, Ff, Fp); the select exists because the
