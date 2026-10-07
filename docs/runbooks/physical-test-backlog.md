@@ -429,7 +429,8 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
 
 #### Row-level visibility (E5, ADR-0011)
 
-Setup for every item: migrations 140 and 141 applied and Directus **restarted** (it reads relations
+Setup for every item: migrations 140 and 141 applied and Directus **restarted right after applying them**
+(`docs/runbooks/upgrade-2026-10-row-level-visibility.md`; flush Redis, `docker restart`) (it reads relations
 at start-up, and 141 adds the hidden `projects.samples`, `operations` and `sessions` aliases, and the
 `d1-access-guard` hook is loaded at start-up too). Two Lab Member users with a People
 row each (`user_id` set): **A** and **B**, unrelated, plus a Lab Admin. Note the NOTICE that
