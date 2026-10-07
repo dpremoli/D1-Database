@@ -57,14 +57,30 @@ const OWNER_GUARDS = RULES.ownerGuards ?? {};
 const CURRENT_USER = '$CURRENT_USER';
 
 // The shape of a Directus ForbiddenError (status 403, code FORBIDDEN), without importing the package.
-function forbidden(reason) {
+// `reason` is shown to the person who made the request, so it is plain words (no table names, ids or
+// ADR numbers). Directus's own 403 also carries `extensions.reason` ("You don't have permission to
+// perform ... for collection ..."), so the guard marks its errors with `source` and gives the
+// details as fields (`kind`, `collection`, `parent`, `id`): a client that wants to word the refusal
+// itself keys on those, and one that does not shows `reason`.
+const SOURCE = 'd1-access-guard';
+
+function forbidden(reason, details = {}) {
   const err = new Error(reason);
   err.name = 'DirectusError';
   err.status = 403;
   err.code = 'FORBIDDEN';
-  err.extensions = { code: 'FORBIDDEN', reason };
+  err.extensions = { code: 'FORBIDDEN', reason, source: SOURCE, ...details };
   return err;
 }
+
+// What a refused junction row says, by the parent record the caller may not change.
+const PARENT_MESSAGES = {
+  physical_samples: 'You can only add this to a sample you own or co-own.',
+  campaigns: "Only the campaign's owner can add samples to it.",
+  projects: "Only the project's principal investigator can add investigators to it.",
+  test_sessions: 'You can only change the samples of a test you own, or of a test on a sample you own or co-own.',
+};
+const OWNER_NOUNS = { physical_samples: 'sample', manufacturing_operations: 'operation', test_sessions: 'test' };
 
 const isDenied = (err) => err?.code === 'FORBIDDEN' || err?.status === 403;
 const isBlank = (value) => value === undefined || value === null || value === '';
@@ -136,10 +152,12 @@ export default ({ filter }, { services }) => {
       const id = parentKey(item[check.field], check.key);
       if (id === null || id === undefined) continue; // not set (the database refuses it) or a new parent
       if (!(await canUpdate(check, id, context)) && !(await createdInThisTransaction(check, id, context))) {
-        throw forbidden(
-          `You can only change ${collection} rows for a ${check.parent} record you may update ` +
-            `(you are not allowed to update ${check.parent} ${id}). This controls who can see the record (ADR-0011).`,
-        );
+        throw forbidden(PARENT_MESSAGES[check.parent] ?? 'You cannot change this record.', {
+          kind: 'junction',
+          collection,
+          parent: check.parent,
+          id: String(id),
+        });
       }
     }
   }
@@ -160,10 +178,12 @@ export default ({ filter }, { services }) => {
       const had = current.get(String(key));
       if (known && (isBlank(had) ? next === null : String(had) === String(next))) continue;
       if (!(await canUpdate({ parent: collection, key: guard.key, filter: guard.filter }, key, context))) {
-        throw forbidden(
-          `Only the owner of a ${collection} record can change who owns it (you do not own ${collection} ${key}). ` +
-            'Whoever owns a record may delete it (ADR-0011).',
-        );
+        // Whoever owns a record may delete it, which is why only the owner may hand it over.
+        throw forbidden(`Only the ${OWNER_NOUNS[collection] ?? 'record'}'s owner can hand it to someone else.`, {
+          kind: 'owner',
+          collection,
+          id: String(key),
+        });
       }
     }
   }

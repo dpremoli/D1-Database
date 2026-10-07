@@ -66,11 +66,18 @@ const ctx = (overrides = {}) => ({
   accountability: member,
   ...overrides,
 });
+// A refusal as the guard throws it: a 403 FORBIDDEN carrying the marker and structured details, with
+// a user-facing message in plain words. `re` matches "<parent or collection> <id>" of the details
+// (which record was refused); the message itself never names tables, ids or ADRs.
 const denied = (re) => (err) => {
   assert.equal(err.status, 403);
   assert.equal(err.code, 'FORBIDDEN');
   assert.equal(err.extensions.code, 'FORBIDDEN');
-  assert.match(err.message, re);
+  assert.equal(err.extensions.source, 'd1-access-guard');
+  assert.ok(['junction', 'owner'].includes(err.extensions.kind), err.extensions.kind);
+  assert.match(`${err.extensions.parent ?? err.extensions.collection} ${err.extensions.id}`, re);
+  assert.equal(err.extensions.reason, err.message);
+  assert.doesNotMatch(err.message, /_|ADR|[0-9a-f]{8}-|\b(s|p|c|t|k|o)\d\b/i, 'the message is plain words');
   return true;
 };
 
@@ -657,4 +664,43 @@ test('owner change: collections without an owner guard, and creates, are left al
   await filters['items.create']({ owner_person_id: 'p2' }, { collection: 'physical_samples' }, ctx({ database }));
   assert.equal(log.reads.length, 0);
   assert.equal(database.calls.length, 0);
+});
+
+// ---- what the person sees --------------------------------------------------------------------------
+
+const refusal = (promise) => promise.then(() => assert.fail('expected a refusal'), (err) => err);
+
+test('refusal texts and details, by what was refused', async () => {
+  const { filters } = mount({ canUpdate: () => false });
+  const create = (collection, payload) => refusal(filters['items.create'](payload, { collection }, ctx()));
+  const cases = [
+    ['sample_co_owners', { sample_id: 's1', user_id: 'u' }, 'You can only add this to a sample you own or co-own.', 'physical_samples'],
+    ['campaign_samples', { campaign_id: 'c1', sample_id: 's1' }, "Only the campaign's owner can add samples to it.", 'campaigns'],
+    ['project_investigators', { project_id: 'p1', user_id: 'u' }, "Only the project's principal investigator can add investigators to it.", 'projects'],
+    ['test_sessions_subject', { test_sessions_id: 't1', collection: 'physical_samples', item: 'x' }, 'You can only change the samples of a test you own, or of a test on a sample you own or co-own.', 'test_sessions'],
+  ];
+  for (const [collection, payload, message, parent] of cases) {
+    const err = await create(collection, payload);
+    assert.equal(err.message, message);
+    assert.equal(err.name, 'DirectusError');
+    assert.deepEqual(
+      { ...err.extensions, id: undefined },
+      { code: 'FORBIDDEN', reason: message, source: 'd1-access-guard', kind: 'junction', collection, parent, id: undefined },
+    );
+  }
+});
+
+test('refusal text of an owner change, by record', async () => {
+  const { filters } = mount({ canUpdate: () => false });
+  const nouns = { physical_samples: ['sample_id', 'sample'], manufacturing_operations: ['operation_id', 'operation'], test_sessions: ['session_id', 'test'] };
+  for (const [collection, [pk, noun]] of Object.entries(nouns)) {
+    const database = ownerDb([{ [pk]: 'k1', owner_person_id: 'p1' }]);
+    const err = await refusal(
+      filters['items.update']({ owner_person_id: 'p2' }, { collection, keys: ['k1'] }, ctx({ database })),
+    );
+    assert.equal(err.message, `Only the ${noun}'s owner can hand it to someone else.`);
+    assert.deepEqual(err.extensions, {
+      code: 'FORBIDDEN', reason: err.message, source: 'd1-access-guard', kind: 'owner', collection, id: 'k1',
+    });
+  }
 });
