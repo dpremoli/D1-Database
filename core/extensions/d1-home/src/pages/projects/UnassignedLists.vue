@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { LoadState, RecordLink, Section, StatusBadge, formatDate, processLabel } from '@d1/ui';
+import { LoadState, RecordLink, Section, StatusBadge, collectionRoute, formatDate, processLabel } from '@d1/ui';
 import { LIST_CAP, type Block } from './useProjectData';
 
 // "Not in a campaign": records that carry this project but no campaign. Three short lists, each
@@ -29,7 +29,7 @@ const isEmpty = (b: Block<any[]>) => !b.loading && !b.error && !b.data.length;
 					</tr>
 				</tbody>
 			</table>
-			<p v-if="capped(props.samples)" class="cap">Showing the first {{ LIST_CAP }}. <router-link to="/content/physical_samples">Open the Data Studio list</router-link> for the rest.</p>
+			<p v-if="capped(props.samples)" class="cap">Showing the first {{ LIST_CAP }}. <router-link :to="collectionRoute('physical_samples')">Open the collection in the Data Studio (unfiltered)</router-link> for the rest.</p>
 		</LoadState>
 	</Section>
 
@@ -46,7 +46,7 @@ const isEmpty = (b: Block<any[]>) => !b.loading && !b.error && !b.data.length;
 					</tr>
 				</tbody>
 			</table>
-			<p v-if="capped(props.operations)" class="cap">Showing the newest {{ LIST_CAP }}. <router-link to="/content/manufacturing_operations">Open the Data Studio list</router-link> for the rest.</p>
+			<p v-if="capped(props.operations)" class="cap">Showing the newest {{ LIST_CAP }}. <router-link :to="collectionRoute('manufacturing_operations')">Open the collection in the Data Studio (unfiltered)</router-link> for the rest.</p>
 		</LoadState>
 	</Section>
 
@@ -63,7 +63,7 @@ const isEmpty = (b: Block<any[]>) => !b.loading && !b.error && !b.data.length;
 					</tr>
 				</tbody>
 			</table>
-			<p v-if="capped(props.tests)" class="cap">Showing the newest {{ LIST_CAP }}. <router-link to="/content/test_sessions">Open the Data Studio list</router-link> for the rest.</p>
+			<p v-if="capped(props.tests)" class="cap">Showing the newest {{ LIST_CAP }}. <router-link :to="collectionRoute('test_sessions')">Open the collection in the Data Studio (unfiltered)</router-link> for the rest.</p>
 		</LoadState>
 	</Section>
 </template>

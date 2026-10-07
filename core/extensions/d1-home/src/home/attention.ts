@@ -28,6 +28,8 @@ export interface AttentionDef {
 	fields: string[];
 	sort: string[];
 	adminOnly?: boolean;
+	/** Name of an existing Data Studio bookmark on `collection` that applies the same filter. */
+	bookmark?: string;
 	toItem: (row: any) => AttentionItem;
 }
 
@@ -57,6 +59,7 @@ export const ATTENTION: AttentionDef[] = [
 		icon: 'report',
 		collection: 'test_sessions',
 		filter: failedTests,
+		bookmark: 'Failed',
 		fields: ['session_id', 'test_type', 'session_date', 'sample_id.sample_code'],
 		sort: ['-session_date'],
 		toItem: (r) => ({
