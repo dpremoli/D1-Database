@@ -1782,6 +1782,135 @@ co_check "up_meta:true/true" "up: the legacy column is hidden and read-only in D
 co_check "up_idempotent:1" "up is idempotent (one Directus field row)"
 co_check "views_ok:1" "views over physical_samples still work after the rename"
 
+echo "== Lab Member row-level visibility (ADR-0011) =="
+# CI has no live Directus, so the stored permission JSON is what can be tested: the Lab Member rows
+# must carry exactly the filters scripts/gen_access_rules.py generates from scripts/access_rules.json.
+LM=20000002-0000-0000-0000-000000000002
+rules_json=$(python3 scripts/gen_access_rules.py --json)
+python3 scripts/gen_access_rules.py --check >/dev/null 2>&1 \
+    && ok "configure_users_and_policies.sql carries the generated rows (no drift from access_rules.json)" \
+    || bad "configure_users_and_policies.sql differs from access_rules.json (run gen_access_rules.py --write)"
+rl_out=$($PSQL 2>&1 <<SQL
+CREATE TEMP TABLE _gen AS
+  SELECT * FROM json_to_recordset(\$rules\$$rules_json\$rules\$::json)
+    AS x(collection text, action text, permissions jsonb, fields text, ruled boolean);
+SELECT 'generated:' || count(*) FROM _gen WHERE ruled;
+SELECT 'exact:' || count(*) FROM _gen g JOIN directus_permissions p
+  ON p.policy = '$LM' AND p.collection = g.collection AND p.action = g.action
+ AND p.permissions::jsonb = g.permissions AND p.fields = g.fields
+ WHERE g.ruled;
+SELECT 'filtered_rows:' || count(*) FROM _gen WHERE ruled AND permissions <> '{}'::jsonb;
+SELECT 'stray:' || count(*) FROM directus_permissions p
+ WHERE p.policy = '$LM' AND p.permissions::jsonb <> '{}'::jsonb
+   AND NOT EXISTS (SELECT 1 FROM _gen g WHERE g.collection = p.collection AND g.action = p.action
+                   AND g.permissions = p.permissions::jsonb);
+SELECT 'reference_filtered:' || count(*) FROM directus_permissions
+ WHERE policy = '$LM' AND permissions::jsonb <> '{}'::jsonb
+   AND collection IN ('materials','material_iso_classifications','alloying_elements','material_alloying_elements',
+                      'equipment','tools','tool_boxes','cutting_inserts','insert_edges','insert_types',
+                      'raw_stock_lots','manufacturing_methods','people','facilities','fast_recipes',
+                      'directus_files','audit_logs');
+SELECT 'ref_in_rules:' || count(*) FROM _gen WHERE ruled AND collection IN ('materials','equipment','people','raw_stock_lots');
+SELECT 'sample_read_has_co_owners:' || count(*) FROM directus_permissions
+ WHERE policy = '$LM' AND collection = 'physical_samples' AND action = 'read'
+   AND permissions::jsonb @> '{"_or":[{"co_owners":{"_some":{"user_id":{"_eq":"\$CURRENT_USER"}}}}]}'::jsonb;
+SELECT 'rollup_read:' || permissions::text FROM directus_permissions
+ WHERE policy = '$LM' AND collection = 'project_rollup' AND action = 'read';
+SQL
+)
+rl_check() { grep -qxF -- "$1" <<<"$rl_out" && ok "$2" || bad "$2 (psql output: $rl_out)"; }
+gen_n=$(grep -o '^generated:[0-9]*' <<<"$rl_out" | cut -d: -f2)
+[[ "${gen_n:-0}" -gt 40 ]] && rl_check "exact:$gen_n" "every ruled Lab Member row carries exactly the generated permissions ($gen_n rows)" \
+    || bad "the generator produced too few rules (psql output: $rl_out)"
+rl_check "stray:0" "no Lab Member row carries a filter that access_rules.json does not generate"
+rl_check "reference_filtered:0" "reference data, directus_files and audit_logs stay unfiltered"
+rl_check "ref_in_rules:0" "materials, equipment, people and raw_stock_lots have no rules"
+rl_check "sample_read_has_co_owners:1" "the sample read filter matches co_owners._some.user_id (the M2M alias)"
+rl_check 'rollup_read:{"_or":[{"project_id":{"principal_investigator_person":{"user_id":{"_eq":"$CURRENT_USER"}}}},{"project_id":{"secondary_investigators":{"_some":{"user_id":{"_eq":"$CURRENT_USER"}}}}}]}' \
+    "project_rollup is readable only by the project's PI and investigators"
+for idx in idx_physical_samples_owner_person_id idx_physical_samples_project_id \
+    idx_manufacturing_operations_owner_person_id idx_manufacturing_operations_project_id \
+    idx_test_sessions_owner_person_id idx_test_sessions_project_id idx_campaigns_owner_person_id \
+    idx_projects_principal_investigator_person idx_project_investigators_user_id idx_sample_co_owners_user_id
+do
+    run "index $idx exists" "SELECT indexname FROM pg_indexes WHERE schemaname='public' AND indexname='$idx'"
+done
+
+# The migration itself: seed what the old script left (unfiltered rows, a hand-added campaigns row,
+# an unrelated row, another policy's row), run up twice, assert, run down, assert, ROLLBACK.
+RV=db/migrations/20261007000141_lab_member_row_visibility.sql
+rv_up=$(awk '/-- migrate:up/{f=1;next}/-- migrate:down/{f=0}f' "$RV")
+rv_down=$(awk '/-- migrate:down/{f=1;next}f' "$RV")
+rv_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+DELETE FROM directus_permissions WHERE policy = '$LM'
+  AND collection IN ('physical_samples','campaigns','project_rollup','projects','machining_force_analysis','materials','fast_run_data');
+INSERT INTO directus_permissions (policy, collection, action, permissions, validation, fields) VALUES
+  ('$LM','physical_samples','read',NULL,NULL,'*'),
+  ('$LM','physical_samples','delete',NULL,NULL,'*'),
+  ('$LM','machining_force_analysis','update','{}','{}','*'),
+  ('$LM','campaigns','read','{}','{}','*'),
+  ('$LM','materials','read','{}','{}','*'),
+  ('20000002-0000-0000-0000-000000000001','physical_samples','read','{}','{}','*');
+DELETE FROM directus_relations WHERE many_collection = 'physical_samples' AND many_field = 'project_id';
+INSERT INTO directus_relations (many_collection, many_field, one_collection, one_field)
+  VALUES ('physical_samples', 'project_id', 'projects', NULL);
+DELETE FROM directus_fields WHERE collection = 'projects' AND field = 'samples';
+INSERT INTO physical_samples (sample_code) VALUES ('TEST-NOOWNER-001');
+$rv_up
+SELECT 'up_sample_read_filtered:' || (permissions::jsonb ? '_or') FROM directus_permissions WHERE policy='$LM' AND collection='physical_samples' AND action='read';
+SELECT 'up_sample_delete:' || permissions::text FROM directus_permissions WHERE policy='$LM' AND collection='physical_samples' AND action='delete';
+SELECT 'up_sample_create_inserted:' || permissions::text FROM directus_permissions WHERE policy='$LM' AND collection='physical_samples' AND action='create';
+SELECT 'up_campaigns_read_rows:' || count(*) FROM directus_permissions WHERE policy='$LM' AND collection='campaigns' AND action='read';
+SELECT 'up_campaigns_read_filtered:' || (permissions::jsonb ? '_or') FROM directus_permissions WHERE policy='$LM' AND collection='campaigns' AND action='read';
+SELECT 'up_materials:' || permissions::text FROM directus_permissions WHERE policy='$LM' AND collection='materials';
+SELECT 'up_other_policy:' || permissions::text FROM directus_permissions WHERE policy='20000002-0000-0000-0000-000000000001' AND collection='physical_samples';
+SELECT 'up_rollup_rows:' || count(*) FROM directus_permissions WHERE policy='$LM' AND collection='project_rollup';
+SELECT 'up_fast_run_data_actions:' || string_agg(action, ',' ORDER BY action) FROM directus_permissions WHERE policy='$LM' AND collection='fast_run_data';
+SELECT 'up_alias:' || one_field FROM directus_relations WHERE many_collection='physical_samples' AND many_field='project_id';
+SELECT 'up_alias_field:' || hidden || '/' || readonly FROM directus_fields WHERE collection='projects' AND field='samples';
+$rv_up
+SELECT 'up_idempotent:' || count(*) FROM directus_permissions WHERE policy='$LM' AND collection IN ('physical_samples','campaigns','project_rollup','projects');
+SELECT 'up_idempotent_alias:' || count(*) FROM directus_fields WHERE collection='projects' AND field='samples';
+$rv_down
+SELECT 'dn_sample_read:' || permissions::text FROM directus_permissions WHERE policy='$LM' AND collection='physical_samples' AND action='read';
+SELECT 'dn_projects_delete:' || permissions::text FROM directus_permissions WHERE policy='$LM' AND collection='projects' AND action='delete';
+SELECT 'dn_new_collections:' || count(*) FROM directus_permissions WHERE policy='$LM' AND collection IN ('campaigns','campaign_samples','project_investigators','project_rollup','sample_data_files','operation_data_files','session_data_files');
+SELECT 'dn_materials:' || count(*) FROM directus_permissions WHERE policy='$LM' AND collection='materials';
+SELECT 'dn_other_policy:' || count(*) FROM directus_permissions WHERE policy='20000002-0000-0000-0000-000000000001' AND collection='physical_samples';
+SELECT 'dn_filters_left:' || count(*) FROM directus_permissions WHERE policy='$LM' AND permissions::jsonb <> '{}'::jsonb;
+SELECT 'dn_alias:' || coalesce(one_field, 'null') FROM directus_relations WHERE many_collection='physical_samples' AND many_field='project_id';
+SELECT 'dn_alias_field:' || count(*) FROM directus_fields WHERE collection='projects' AND field='samples';
+SELECT 'dn_indexes:' || count(*) FROM pg_indexes WHERE indexname LIKE 'idx\_%\_owner\_person\_id' OR indexname IN ('idx_physical_samples_project_id','idx_sample_co_owners_user_id','idx_project_investigators_user_id');
+ROLLBACK;
+SQL
+)
+rv_check() { grep -qxF -- "$1" <<<"$rv_out" && ok "$2" || bad "$2 (psql output: $rv_out)"; }
+rv_check "up_sample_read_filtered:true" "up: an unfiltered sample read row gets the filter"
+rv_check 'up_sample_delete:{"owner_person_id":{"user_id":{"_eq":"$CURRENT_USER"}}}' "up: sample delete is owner-only"
+rv_check "up_sample_create_inserted:{}" "up: a missing create row is inserted, unfiltered"
+rv_check "up_campaigns_read_rows:1" "up: a hand-added campaigns row is updated, not duplicated"
+rv_check "up_campaigns_read_filtered:true" "up: campaigns read is filtered"
+rv_check "up_materials:{}" "up: reference data rows are not touched"
+rv_check "up_other_policy:{}" "up: another policy's rows are not touched"
+rv_check "up_rollup_rows:1" "up: project_rollup gets a read row"
+rv_check "up_fast_run_data_actions:read" "up: fast_run_data stays read-only"
+rv_check "up_alias:samples" "up: physical_samples.project_id gets the one_field alias 'samples'"
+rv_check "up_alias_field:true/true" "up: the projects.samples alias field is hidden and read-only"
+rv_check "up_idempotent_alias:1" "up is idempotent (one alias field)"
+grep -q "ownerless records.*physical_samples=[1-9]" <<<"$rv_out" && ok "up: reports ownerless samples in a NOTICE" || bad "up: no ownerless NOTICE (psql output: $rv_out)"
+rv_check "dn_sample_read:{}" "down: sample read is unfiltered again"
+rv_check "dn_projects_delete:{}" "down: project delete is unfiltered again"
+rv_check "dn_new_collections:0" "down: rows for collections granted by the migration are removed"
+rv_check "dn_materials:1" "down: reference data rows are kept"
+rv_check "dn_other_policy:1" "down: another policy's rows are kept"
+rv_check "dn_filters_left:0" "down: no Lab Member row keeps a filter"
+rv_check "dn_alias:null" "down: the relation alias is removed"
+rv_check "dn_alias_field:0" "down: the alias field is removed"
+rv_check "dn_indexes:0" "down: the indexes are dropped"
+n_up=$(grep -o '^up_idempotent:[0-9]*' <<<"$rv_out" | cut -d: -f2)
+[[ "${n_up:-0}" -eq 13 ]] && ok "up is idempotent (a second run leaves 13 rows for four collections)" || bad "up is not idempotent (psql output: $rv_out)"
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy

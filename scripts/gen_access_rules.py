@@ -4,9 +4,11 @@
 access_rules.json is the single source of the row-level visibility rules. This script turns it into
 `directus_permissions` rows and keeps the two places that carry them in step:
 
-  --json     print every Lab Member row as JSON (tests compare the database with this)
+  --json     print every Lab Member row as JSON, with a `ruled` flag for the collections that
+             have rules (tests compare the database with this)
   --sql      print the INSERT statement, between its BEGIN/END GENERATED markers
-  --values   print only the filtered rows as `(collection, action, filter)` VALUES lines, to paste
+  --values   print every row of the collections that have rules as `(collection, action, filter)`
+             VALUES lines, to paste
              into the migration that applies a rule change (a migration is a snapshot, so it embeds
              the rules as they were on the day it was written)
   --write    replace the marked block in scripts/configure_users_and_policies.sql
@@ -180,7 +182,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.json:
-        print(json.dumps(rows, indent=1))
+        ruled = set(doc["rules"])
+        print(
+            json.dumps(
+                [{**r, "ruled": r["collection"] in ruled} for r in rows], indent=1
+            )
+        )
     elif args.sql:
         print(sql_block(rows))
     elif args.values:
