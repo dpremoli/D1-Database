@@ -400,6 +400,12 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   owner or a co-owner can change this record." when removing). Two tabs adding the same free
   operation as its owner still says "... is already in another campaign." Since: Explorer pages
   E5-fix-ui (PR pending).
+- [ ] **E5-r2-ui: a refused save shows the server's reason.** As a co-owner (not owner) of a sample,
+  open the sample page, **Edit**, change the **Owner** and save. Expect the d1-access-guard's own
+  message (what it refused and who may do it), not the generic "Only the owner or a co-owner can
+  change this record.". As B, an investigator who cannot edit, force a save on a campaign (Data
+  Studio form) and on a project: the text names the campaign's owner / the project's PI when the
+  server gives no reason of its own. Since: Explorer pages E5-r2-ui (PR pending).
 - [ ] **E5-fix-ui: hidden relatives are named, not shown as empty.** As B (sees one sample of A's
   campaign through a test, not A's other samples): open an operation whose input sample B cannot
   see. Expect "Not visible to you" next to **Input**, not "No sample is linked". A test whose sample

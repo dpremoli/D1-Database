@@ -100,7 +100,7 @@ async function setCampaign(id: string, passCode: string | null, campaign: string
 		}
 		results.value = results.value.filter((r) => r.operation_id !== id);
 	} catch (e) {
-		actionError.value = forbiddenWriteMessage(e, !!campaign) ?? `Could not ${campaign ? 'add' : 'remove'} ${label}: ${errorText(e)}`;
+		actionError.value = forbiddenWriteMessage(e, !!campaign, 'manufacturing_operations') ?? `Could not ${campaign ? 'add' : 'remove'} ${label}: ${errorText(e)}`;
 	} finally {
 		busy.value = null;
 	}

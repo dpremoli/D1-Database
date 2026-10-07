@@ -10,7 +10,7 @@
 //     conditional request (`project_id _null`), because one batch body cannot be per-row.
 
 import { errorText, isForbidden } from '../format';
-import { itemPermissionsUrl, NOT_OWNER_MESSAGE, NOT_YOUR_RECORD_MESSAGE, updateAccess } from '../canUpdate';
+import { forbiddenReason, itemPermissionsUrl, notOwnerMessage, NOT_YOUR_RECORD_MESSAGE, updateAccess } from '../canUpdate';
 
 export interface BatchPatch {
 	query: { filter: Record<string, unknown> };
@@ -34,21 +34,28 @@ export function projectInheritPatch(pk: string, id: string, projectId: string): 
 // An empty answer has two causes that look the same: someone got there first, or the user's update
 // rule (row-level visibility, ADR-0011) does not cover the record, so the batch matched nothing.
 // `canUpdate` (from the item-permissions endpoint) tells them apart; false means "not permitted".
-export function lostRaceMessage(changed: unknown, adding: boolean, label: string, canUpdate?: boolean | null): string | null {
+export function lostRaceMessage(
+	changed: unknown,
+	adding: boolean,
+	label: string,
+	canUpdate?: boolean | null,
+	collection?: string,
+): string | null {
 	if (!Array.isArray(changed) || changed.length) return null;
-	if (canUpdate === false) return `${label}: ${notPermittedMessage(adding)}`;
+	if (canUpdate === false) return `${label}: ${notPermittedMessage(adding, collection)}`;
 	return adding ? `${label} is already in another campaign.` : `${label} is no longer in this campaign.`;
 }
 
 // What to tell a user whose write was refused: adding needs a record they own or co-own, changing
-// or removing needs the owner or a co-owner.
-export function notPermittedMessage(adding: boolean): string {
-	return adding ? NOT_YOUR_RECORD_MESSAGE : NOT_OWNER_MESSAGE;
+// or removing needs whoever may change the record in `collection` (its owner, co-owner or PI).
+export function notPermittedMessage(adding: boolean, collection?: string): string {
+	return adding ? NOT_YOUR_RECORD_MESSAGE : notOwnerMessage(collection);
 }
 
 // A refused write (403) as text, null for any other failure (the caller shows errorText then).
-export function forbiddenWriteMessage(e: unknown, adding: boolean): string | null {
-	return isForbidden(e) ? notPermittedMessage(adding) : null;
+// The server's own reason (d1-access-guard) wins over the generic text.
+export function forbiddenWriteMessage(e: unknown, adding: boolean, collection?: string): string | null {
+	return isForbidden(e) ? (forbiddenReason(e) ?? notPermittedMessage(adding, collection)) : null;
 }
 
 interface Api {
@@ -75,7 +82,7 @@ export async function changeOutcomeMessage(
 	label: string,
 ): Promise<string | null> {
 	if (!Array.isArray(changed) || changed.length) return null;
-	return lostRaceMessage(changed, adding, label, await readCanUpdate(api, collection, id));
+	return lostRaceMessage(changed, adding, label, await readCanUpdate(api, collection, id), collection);
 }
 
 // The project of campaign `campaignId` as the signed-in user sees it; null when it has none or the

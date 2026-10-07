@@ -102,7 +102,7 @@ async function add(id: string, code?: string | null) {
 	} catch (e) {
 		// Already linked (another tab, or a stale list): not an error, the reload shows it.
 		if (isDuplicate(e)) results.value = results.value.filter((r) => r.sample_id !== id);
-		else actionError.value = forbiddenWriteMessage(e, true) ?? `Could not add ${code || 'the sample'}: ${errorText(e)}`;
+		else actionError.value = forbiddenWriteMessage(e, true, 'campaigns') ?? `Could not add ${code || 'the sample'}: ${errorText(e)}`;
 	} finally {
 		busy.value = null;
 	}
@@ -117,7 +117,7 @@ async function remove(id: string, code?: string | null) {
 	try {
 		await api.delete(`/items/campaign_samples/${jid}`);
 	} catch (e) {
-		actionError.value = forbiddenWriteMessage(e, false) ?? `Could not remove ${code || 'the sample'}: ${errorText(e)}`;
+		actionError.value = forbiddenWriteMessage(e, false, 'campaigns') ?? `Could not remove ${code || 'the sample'}: ${errorText(e)}`;
 	} finally {
 		busy.value = null;
 	}
