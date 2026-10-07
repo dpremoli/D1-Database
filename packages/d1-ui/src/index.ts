@@ -12,6 +12,7 @@ export { analysisLink, processLabel } from './process';
 export type { AnalysisLink } from './process';
 export { rollupOperationsFilter, ROLLUP_OPERATION_FIELDS, rollupTargets } from './rollupLinks';
 export type { RollupTarget } from './rollupLinks';
+export { readHiddenLinks } from './hiddenLinks';
 export { projectScopeFilter, sampleProjectScopeFilter } from './projectScope';
 
 // Display helpers and error predicates
@@ -60,6 +61,7 @@ export { default as RecordLink } from './components/RecordLink.vue';
 export { default as Section } from './components/Section.vue';
 export { default as LoadState } from './components/LoadState.vue';
 export { default as NotVisible } from './components/NotVisible.vue';
+export { default as HiddenLink } from './components/HiddenLink.vue';
 export { default as KeyValueGrid } from './components/KeyValueGrid.vue';
 export type { KeyValue } from './components/KeyValueGrid.vue';
 export { default as ProgressBar } from './components/ProgressBar.vue';

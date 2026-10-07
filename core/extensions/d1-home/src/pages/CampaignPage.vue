@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue';
 import {
-	CampaignWorkbench, EditDrawer, useCanUpdate, LoadState, NotVisible, RecordHeader, RecordLink, StatusBadge,
+	CampaignWorkbench, EditDrawer, HiddenLink, useCanUpdate, LoadState, NotVisible, RecordHeader, RecordLink, StatusBadge,
 	campaignTypeLabel, dataStudioRoute, formatDate,
 } from '@d1/ui';
 import { useCampaignRecord } from './campaign/useCampaignRecord';
@@ -11,7 +11,7 @@ import { useCampaignRecord } from './campaign/useCampaignRecord';
 // docs/superpowers/specs/2026-10-06-explorer-pages-design.md, "Campaign".
 const props = defineProps<{ id: string }>();
 
-const { campaign, loading, notVisible, error, reload } = useCampaignRecord(toRef(props, 'id'));
+const { campaign, loading, notVisible, error, hidden, reload } = useCampaignRecord(toRef(props, 'id'));
 const editing = ref(false);
 // Edit is offered unless the server says this user may not change the record (an investigator
 // or a reader through a sample may read it but not edit it).
@@ -47,6 +47,9 @@ const dates = computed(() => {
 							<RecordLink collection="projects" :id="campaign.project_id.project_id">
 								{{ campaign.project_id.project_code || campaign.project_id.project_name || 'Project' }}
 							</RecordLink>
+						</template>
+						<template v-else-if="hidden.project_id">
+							<span>›</span><HiddenLink label="Project" />
 						</template>
 					</template>
 					<template #status>

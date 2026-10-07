@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue';
 import {
-	EditDrawer, useCanUpdate, LoadState, NotVisible, RecordHeader, RecordLink, Section, StatusBadge,
+	EditDrawer, HiddenLink, useCanUpdate, LoadState, NotVisible, RecordHeader, RecordLink, Section, StatusBadge,
 	buildLife, dataStudioRoute, truncatedNotes,
 } from '@d1/ui';
 import { useSampleData } from './sample/useSampleData';
@@ -14,7 +14,7 @@ import SampleFiles from './sample/SampleFiles.vue';
 // link to its own page. Design: docs/superpowers/specs/2026-10-06-explorer-pages-design.md.
 const props = defineProps<{ id: string }>();
 
-const { sample, loading, notVisible, error, elements, campaigns, operations, tests, files, trace, reload } =
+const { sample, loading, notVisible, error, elements, campaigns, operations, tests, files, trace, hidden, reload } =
 	useSampleData(toRef(props, 'id'));
 
 const editing = ref(false);
@@ -33,6 +33,9 @@ const coOwners = computed(() =>
 		.join(', '),
 );
 const campaignRows = computed(() => campaigns.value.data.map((c: any) => c.campaign_id).filter((c: any) => c?.campaign_id));
+// A campaign link whose campaign the user may not read: the junction row is visible through the
+// sample, the campaign comes back as null (row-level visibility, ADR-0011).
+const hiddenCampaigns = computed(() => campaigns.value.data.length - campaignRows.value.length);
 
 // /d1-report/* are endpoint pages (printable HTML), not app routes: open them in a new tab, same
 // session, as the Home page does.
@@ -60,9 +63,15 @@ const openReportPage = () => openReport(`/d1-report/sample/${encodeURIComponent(
 								{{ sample.project_id.project_code }}
 							</RecordLink>
 						</template>
+						<template v-else-if="hidden.data.project_id">
+							<span>›</span><HiddenLink label="Project" />
+						</template>
 						<template v-for="c in campaignRows" :key="c.campaign_id">
 							<span>›</span>
 							<RecordLink collection="campaigns" :id="c.campaign_id">{{ c.campaign_code || c.name || 'Campaign' }}</RecordLink>
+						</template>
+						<template v-if="hiddenCampaigns > 0">
+							<span>›</span><HiddenLink :label="hiddenCampaigns === 1 ? 'Campaign' : `${hiddenCampaigns} campaigns`" />
 						</template>
 					</template>
 					<template #status><StatusBadge kind="sample" :value="sample.current_status" /></template>

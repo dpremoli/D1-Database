@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue';
 import {
-	EditDrawer, useCanUpdate, KeyValueGrid, LoadState, NotVisible, RecordHeader, RecordLink, Section, asRecord, dataStudioRoute,
+	EditDrawer, HiddenLink, useCanUpdate, KeyValueGrid, LoadState, NotVisible, RecordHeader, RecordLink, Section, asRecord, dataStudioRoute,
 	formatDate, formatQuantity, processLabel, type KeyValue,
 } from '@d1/ui';
 import { useOperationData } from './operation/useOperationData';
@@ -13,7 +13,7 @@ import SampleFiles from './sample/SampleFiles.vue';
 // and files. Design: docs/superpowers/specs/2026-10-06-explorer-pages-design.md ("Operation").
 const props = defineProps<{ id: string }>();
 
-const { operation, loading, notVisible, error, params, force, fast, files, shared, reload } = useOperationData(toRef(props, 'id'));
+const { operation, loading, notVisible, error, params, force, fast, files, shared, hidden, reload } = useOperationData(toRef(props, 'id'));
 
 const editing = ref(false);
 // Edit is offered unless the server says this user may not change the record (an investigator
@@ -65,9 +65,15 @@ const openReport = () => window.open(`/d1-report/operation/${encodeURIComponent(
 							<span>›</span>
 							<RecordLink collection="projects" :id="project.project_id">{{ project.project_code }}</RecordLink>
 						</template>
+						<template v-else-if="hidden.data.project_id">
+							<span>›</span><HiddenLink label="Project" />
+						</template>
 						<template v-if="campaign">
 							<span>›</span>
 							<RecordLink collection="campaigns" :id="campaign.campaign_id">{{ campaign.campaign_code || campaign.name || 'Campaign' }}</RecordLink>
+						</template>
+						<template v-else-if="hidden.data.campaign_id">
+							<span>›</span><HiddenLink label="Campaign" />
 						</template>
 						<template v-if="sample">
 							<span>›</span>
@@ -103,7 +109,12 @@ const openReport = () => window.open(`/d1-report/operation/${encodeURIComponent(
 					</LoadState>
 				</Section>
 
-				<OperationSamples :input="op.sample_id" :output="op.output_sample_id" />
+				<OperationSamples
+					:input="op.sample_id"
+					:output="op.output_sample_id"
+					:input-hidden="!!hidden.data.sample_id"
+					:output-hidden="!!hidden.data.output_sample_id"
+				/>
 
 				<OperationAnalysis :operation-id="id" :category="op.process_category" :force="force" :fast="fast" />
 
