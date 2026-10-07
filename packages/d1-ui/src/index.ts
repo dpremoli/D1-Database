@@ -40,3 +40,15 @@ export { buildMatrix } from './campaign/matrix';
 export type { Matrix, MatrixCell, MatrixColumn, MatrixInput, MatrixRow, CellKind } from './campaign/matrix';
 export { campaignTypeLabel, operationCategoryFor, CAMPAIGN_TYPE_LABEL } from './campaign/campaignType';
 export { default as CampaignWorkbench } from './campaign/CampaignWorkbench.vue';
+// E3 projects
+export { weeklyActivity, binWeekly, lastWeeks, windowStart, datesByKey, isoWeek, weekStart, DEFAULT_WEEKS } from './activity';
+export type { WeekInfo, WeeklyActivity } from './activity';
+export { default as Sparkline } from './components/Sparkline.vue';
+export { projectRole, projectStatusLabel, filterProjects, campaignProgress, countsByKey } from './projects';
+export type {
+	ProjectRow, ProjectRole, RoleFilter, StatusFilter, ProjectFilters, CampaignProgress,
+} from './projects';
+export {
+	CURRENT_USER, ownedByMe, coOwnedByMe, samplesMine, projectsMine, campaignsMine, withForceFile,
+	forceErrorOnMyOperations, forcePendingOperations, failedTests, ownerlessSamples,
+} from './mine';

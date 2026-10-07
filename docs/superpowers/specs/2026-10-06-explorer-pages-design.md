@@ -164,12 +164,24 @@ with a "show all" link.
 "Mine" means `owner_person_id.user_id = $CURRENT_USER` or co-owner. These are explicit filters,
 so Home is personal even before ADR-0011 is live.
 
+**Deviation (E3, 2026-10-07).** The Data Studio cannot be opened on an arbitrary filter from a
+link (only on a saved bookmark), and three of the four tiles have no bookmark. So a tile opens the
+matching records (first 10, each a link to its Explorer page) right under the tiles, with "Open
+the full list in the Data Studio" for the rest. The counts use the same filters
+(`packages/d1-ui/src/mine.ts`). A user whose login has no `people` row sees a notice instead of
+silently empty owned lists.
+
 ### Projects index
 
 A card grid with code, name, PI, status, dates, campaign count and sample count, plus a sparkline
-of operations and tests per week (last 26 weeks, from `aggregate` + `groupBy` on
-`week(operation_date)` / `week(session_date)`). Filters: *my role* (PI / investigator / any)
-and status. Search by code or name.
+of operations and tests per week (last 26 weeks). Filters: *my role* (all / PI or investigator /
+PI / investigator) and status (the project's `is_active`). Search by code or name.
+
+**Deviation (E3).** The sparkline bins on the client (`packages/d1-ui/src/activity.ts`), not with
+`aggregate` + `groupBy` on `week()`: the dates are TIMESTAMPTZ, and SQL `year()` and `week()`
+disagree at the turn of the year (1 January can be ISO week 53). The pages read only the date and
+project id of the rows inside the window, newest first, capped at 5000 per collection, and say so
+when the cap is hit. Counts per project do use `aggregate` + `groupBy=project_id`.
 
 ### Project
 
@@ -181,7 +193,10 @@ and status. Search by code or name.
 - **Activity:** the sparkline at full width.
 - **Equipment used:** distinct equipment from the project's operations.
 
-Reads the real collections (not `project_rollup`, which ADR-0011 restricts).
+Reads the real collections (not `project_rollup`, which ADR-0011 restricts). The investigators
+are read from `project_investigators` as a separate section, so a role that cannot read the
+junction still gets the page. There is no *Report* action yet: `d1-report` has sample, operation
+and test reports only.
 
 ### Campaign
 
