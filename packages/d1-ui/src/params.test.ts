@@ -77,11 +77,40 @@ describe('paramFields', () => {
 	});
 	it('understands _in, _or and rules on other fields', () => {
 		const f: ParamFieldDef = {
-			field: 'x',
+			field: 'am_layer_height_mm',
 			meta: { conditions: [{ hidden: false, rule: { _or: [{ process_category: { _in: ['machining', 'additive'] } }, { other: { _eq: 1 } }] } }] },
 		};
 		expect(paramFields([f], 'process_category', 'additive')).toHaveLength(1);
 		expect(paramFields([f], 'process_category', 'sintering')).toHaveLength(0);
+	});
+	it('ignores base fields that share the category condition (tool_id, nc_program_text ...)', () => {
+		const base = (field: string, type: string, special?: string[]): ParamFieldDef => ({
+			field,
+			type,
+			meta: { sort: 1, special, conditions: showWhen('process_category', 'machining') },
+		});
+		const withBase: ParamFieldDef[] = [
+			...defs,
+			base('tool_id', 'uuid', ['m2o']),
+			base('insert_edge_id', 'uuid', ['m2o']),
+			base('gcode_file', 'uuid', ['file']),
+			base('nc_program_text', 'text'),
+			base('operation_sequence', 'integer'),
+			base('capture_software', 'string'),
+			base('file_storage_pointer', 'string'),
+			// a prefixed relation or alias is still not a measured value
+			base('machining_tool_ref', 'uuid', ['m2o']),
+		];
+		expect(paramFields(withBase, 'process_category', 'machining').map((f) => f.field)).toEqual([
+			'machining_spindle_speed_rpm',
+			'machining_feed_mm_per_rev',
+			'machining_coolant_used',
+		]);
+		const noConditions = withBase.map((d) => ({ ...d, meta: { ...d.meta, conditions: null } }));
+		expect(paramFields(noConditions, 'process_category', 'machining')).toHaveLength(3);
+		expect(paramRows(withBase, { process_category: 'machining', tool_id: 'u-1', nc_program_text: 'G01 X0', machining_feed_mm_per_rev: 0.2 }, 'process_category').map((r) => r.field)).toEqual([
+			'machining_feed_mm_per_rev',
+		]);
 	});
 	it('works for test types through the test_type discriminator', () => {
 		const t: ParamFieldDef = { field: 'tensile_uts_mpa', meta: { conditions: showWhen('test_type', 'tensile') } };

@@ -20,6 +20,7 @@ export interface ParamFieldDef {
 		options?: { suffix?: string | null; choices?: { text?: string; value?: unknown }[] | null } | null;
 		translations?: { language?: string; translation?: string }[] | null;
 		conditions?: { rule?: unknown; hidden?: boolean }[] | null;
+		special?: string[] | string | null;
 	} | null;
 }
 
@@ -89,21 +90,33 @@ function shownFor(def: ParamFieldDef, discriminator: string, value: string): boo
 	return (def.meta?.conditions ?? []).some((c) => c?.hidden === false && ruleMatches(c.rule, discriminator, value) === true);
 }
 
+// Specials that mark a relation, file or presentation field rather than a measured value.
+const NON_PARAM_SPECIALS = new Set(['m2o', 'o2m', 'm2m', 'm2a', 'file', 'files', 'alias', 'no-data', 'translations']);
+
+function isValueField(def: ParamFieldDef): boolean {
+	const special = def.meta?.special;
+	const list = Array.isArray(special) ? special : typeof special === 'string' ? special.split(',') : [];
+	return !list.some((x) => NON_PARAM_SPECIALS.has(String(x).trim()));
+}
+
 // The fields that apply to a row with this process category / test type, in form order. A
-// presentation-only field (alias: no column behind it) never applies.
+// presentation-only field (alias: no column behind it) or a relation / file never applies, and
+// neither does a base column that merely shares a condition with the category: the machining
+// fields `tool_id`, `gcode_file` or `nc_program_text` are shown "when machining" too, but they
+// are not parameters. A parameter column always carries the category's prefix (machining_*,
+// tensile_* ...), so a condition-picked field must too.
 export function paramFields(
 	defs: ParamFieldDef[],
 	discriminator: 'process_category' | 'test_type',
 	value: string | null | undefined,
 ): ParamFieldDef[] {
 	if (!value) return [];
-	const columns = defs.filter((d) => d.schema !== null);
+	const prefix = paramPrefix(discriminator, value);
+	if (!prefix) return [];
+	const columns = defs.filter((d) => d.schema !== null && isValueField(d) && d.field.startsWith(prefix));
 	let picked = columns.filter((d) => shownFor(d, discriminator, value));
-	if (!picked.length) {
-		// No usable conditions (an older field registration): fall back to the column prefix.
-		const prefix = paramPrefix(discriminator, value);
-		picked = prefix ? columns.filter((d) => d.field.startsWith(prefix)) : [];
-	}
+	// No usable conditions (an older field registration): fall back to the column prefix.
+	if (!picked.length) picked = columns;
 	return [...picked].sort((a, b) => (a.meta?.sort ?? 0) - (b.meta?.sort ?? 0) || a.field.localeCompare(b.field));
 }
 
