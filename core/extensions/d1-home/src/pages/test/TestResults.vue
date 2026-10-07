@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { KeyValueGrid, Section, summaryCount, summaryGroups } from '@d1/ui';
+import { KeyValueGrid, Section, TEST_DONE_STATUSES, TEST_STATUS_ORDER, summaryCount, summaryGroups } from '@d1/ui';
 
 // `summary_stats` grouped by the top-level key each worker writes under (basic, fft_analysis ...):
 // scalars as a key-value grid, lists of records as small tables. See summary.ts in @d1/ui.
@@ -8,7 +8,10 @@ const props = defineProps<{ stats: unknown; status?: string | null }>();
 
 const groups = computed(() => summaryGroups(props.stats));
 const count = computed(() => summaryCount(groups.value));
-const pending = computed(() => ['registered', 'pending_processing', 'processing'].includes(props.status ?? ''));
+// Not finished and not failed: registered, pending_processing, processing and analysing.
+const pending = computed(
+	() => !!props.status && props.status !== 'failed' && TEST_STATUS_ORDER.includes(props.status) && !TEST_DONE_STATUSES.includes(props.status),
+);
 </script>
 
 <template>
