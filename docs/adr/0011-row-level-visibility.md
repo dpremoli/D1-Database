@@ -79,7 +79,13 @@ Decisions after the review of the first implementation (2026-10-07):
    project, and a sample that is in a campaign of the project. A project is also readable by the
    owner of an operation or test in it, so that owner's breadcrumb is not dead.
 8. **A project's PI defaults to its creator** (`d1-default-owner`), like the owner of the other
-   records, so the creator can edit what they made.
+   records, so the creator can edit what they made. **The creator wins over inheritance.**
+   `campaign-inherit` used to copy a project's PI onto a new campaign and a campaign's owner onto a
+   new operation or test, and as it loads before `d1-default-owner` (alphabetical) the copy was in
+   place first and the creator never became the owner, so a member who made an operation in a
+   colleague's campaign could not see or edit it afterwards. `campaign-inherit` now copies the
+   project, default equipment and default material only; the owner of a new record is its creator
+   unless the form or API names someone else.
 9. **People cannot be relinked by members.** `people.user_id` decides who a person *is*, so freeing
    your login and attaching it to a colleague's row would hand you all their records. Lab Members can
    read People, create a row with no login or with their own, and update every column **except**
@@ -131,7 +137,9 @@ campaigns by their owner; projects by their PI.
 **Create:** any member, with no filter (Directus does not apply item filters to create), except the
 four junctions that grant visibility, which the `d1-access-guard` hook checks (decision 5). The
 `d1-default-owner` hook makes the creator the owner of a new sample, operation, test or
-campaign, and the PI of a new project, so the creator can read and edit what they just made.
+campaign, and the PI of a new project, so the creator can read and edit what they just made. The
+creator is the owner even in a campaign or project owned by someone else: `campaign-inherit` copies
+the campaign's project and defaults, never its owner (decision 8).
 
 **Child rows follow the parent.** Read follows the parent's read rule, update and delete follow
 the parent's update rule:
@@ -331,6 +339,9 @@ Two schema changes make the filters expressible:
   and the path resolver.
 - `core/extensions/d1-default-owner/index.test.mjs`: the hook defaults the owner on samples,
   operations, tests and campaigns, and the PI on projects.
+- `core/extensions/campaign-inherit/index.test.mjs`: both hooks run in load order on a campaign with a
+  `project_id` and on an operation and a test with a `campaign_id`; the creator is the owner, the
+  project, equipment and material still inherit, and an owner named in the payload is kept.
 - `core/extensions/d1-access-guard/index.test.mjs`: creates and parent-key updates of the four
   junctions are refused without the right (campaign_samples: campaign and sample), allowed with it,
   admins and internal calls bypass, and the read runs as the caller. Owner changes on a sample,

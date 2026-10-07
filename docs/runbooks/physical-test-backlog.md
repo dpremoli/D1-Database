@@ -529,6 +529,12 @@ migration 141 prints about ownerless records.
   *Subject* field) still works. Naming a sample A cannot read on A's own test is allowed (A reads
   the test; SB's owner can then read and edit it): confirm and record that this is what you want
   (ADR-0011 decision 5). Since: Explorer pages E5 r2 (PR pending).
+- [ ] **E5 r2 — the creator owns what they make in someone else's campaign.** A owns campaign C in
+  project P (PI: PI). As B (a co-owner of a sample in C, so B may add an operation to it) create an
+  operation and a test with *Campaign* = C: both show *Owner: B* (not A, not PI), inherit the project,
+  and B can open and edit them afterwards; A sees them through the campaign. A new campaign created
+  by B under P shows *Owner: B*, not the PI. Choosing another owner explicitly in the form is kept.
+  Since: Explorer pages E5 r2 (PR pending).
 - [ ] **E5 fix — a PI sees the project's campaigns' records.** B is PI of project P2 and owns nothing
   else. A creates a campaign in P2, a sample in that campaign (the sample's own project left empty)
   and an operation and a test on it with no project of their own. B sees the campaign, the sample, the
