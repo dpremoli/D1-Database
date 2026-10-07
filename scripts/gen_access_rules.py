@@ -7,12 +7,19 @@ access_rules.json is the single source of the row-level visibility rules. This s
   --json     print every Lab Member row as JSON, with a `ruled` flag for the collections that
              have rules (tests compare the database with this)
   --sql      print the INSERT statement, between its BEGIN/END GENERATED markers
-  --values   print every row of the collections that have rules as `(collection, action, filter)`
-             VALUES lines, to paste
-             into the migration that applies a rule change (a migration is a snapshot, so it embeds
-             the rules as they were on the day it was written)
-  --write    replace the marked block in scripts/configure_users_and_policies.sql
-  --check    exit 1 when that block differs from what the rules generate (CI runs this)
+  --values   print every row of the collections that have rules (or custom rows) as
+             `(collection, action, filter, validation, fields)` VALUES lines, to paste into the
+             migration that applies a rule change (a migration is a snapshot, so it embeds the rules
+             as they were on the day it was written)
+  --hook     print the rules the d1-access-guard hook enforces (the parents' update filters)
+  --write    replace the marked block in scripts/configure_users_and_policies.sql and rewrite
+             core/extensions/d1-access-guard/rules.json
+  --check    exit 1 when either differs from what the rules generate (CI and pre-commit run this)
+  --resolve FILE
+             check that every path of every rule resolves, against the relations, columns and field
+             rows of a Directus database, given as JSON {"relations": [[many_collection, many_field,
+             one_collection, one_field], ...], "columns": ["table.column", ...],
+             "fields": ["collection.field", ...]} (tests/phase1_schema.sh dumps it)
 
 A rule is an OR of paths. Each path ends at a user column that must equal `$CURRENT_USER`, e.g.
 `co_owners._some.user_id` becomes `{"co_owners": {"_some": {"user_id": {"_eq": "$CURRENT_USER"}}}}`.
@@ -29,6 +36,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 RULES_FILE = HERE / "access_rules.json"
 SCRIPT_FILE = HERE / "configure_users_and_policies.sql"
+HOOK_RULES_FILE = HERE.parent / "core" / "extensions" / "d1-access-guard" / "rules.json"
 
 BEGIN = (
     "-- BEGIN GENERATED: Lab Member permissions "
@@ -81,17 +89,23 @@ def set_filter(sets: dict, name: str) -> dict:
 
 
 def build_rows(doc: dict) -> list[dict]:
-    """Every Lab Member row: filtered collections first, then the unfiltered grants."""
+    """Every Lab Member row: filtered collections first, then custom rows, then unfiltered grants."""
     sets, policy = doc["sets"], doc["policy"]
     rows: list[dict] = []
 
-    def row(collection: str, action: str, permissions: dict) -> dict:
+    def row(
+        collection: str,
+        action: str,
+        permissions: dict,
+        validation: dict | None = None,
+        fields: str = "*",
+    ) -> dict:
         return {
             "collection": collection,
             "action": action,
             "permissions": permissions,
-            "validation": {},
-            "fields": "*",
+            "validation": validation or {},
+            "fields": fields,
             "policy": policy,
         }
 
@@ -111,7 +125,33 @@ def build_rows(doc: dict) -> list[dict]:
                 )
             else:
                 rows.append(row(collection, action, set_filter(sets, rule)))
-    seen = {(r["collection"], r["action"]) for r in rows}
+    for collection, actions in doc.get("custom", {}).items():
+        if collection in doc["rules"]:
+            raise RulesError(f"{collection} is both ruled and custom")
+        unknown = set(actions) - set(ACTIONS)
+        if unknown:
+            raise RulesError(f"{collection}: unknown action(s) {sorted(unknown)}")
+        for action in ACTIONS:
+            if action not in actions:
+                continue
+            spec = actions[action]
+            extra = set(spec) - {"permissions", "validation", "fields"}
+            if extra:
+                raise RulesError(f"{collection}.{action}: unknown key(s) {sorted(extra)}")
+            if action == "create" and spec.get("permissions"):
+                raise RulesError(
+                    f"{collection}.create: Directus ignores item filters on create; use validation"
+                )
+            rows.append(
+                row(
+                    collection,
+                    action,
+                    spec.get("permissions", {}),
+                    spec.get("validation", {}),
+                    ",".join(spec["fields"]) if "fields" in spec else "*",
+                )
+            )
+    seen ={(r["collection"], r["action"]) for r in rows}
     for collection, actions in doc["unfiltered"].items():
         for action in actions:
             if action not in ACTIONS:
@@ -120,6 +160,11 @@ def build_rows(doc: dict) -> list[dict]:
                 raise RulesError(f"{collection}.{action} is both ruled and unfiltered")
             rows.append(row(collection, action, {}))
     return rows
+
+
+def ruled_collections(doc: dict) -> set[str]:
+    """Collections whose rows a migration must apply: filtered ones and the custom rows."""
+    return set(doc["rules"]) | set(doc.get("custom", {}))
 
 
 def compact(value: object) -> str:
@@ -144,10 +189,90 @@ def sql_block(rows: list[dict]) -> str:
 def migration_values(rows: list[dict], ruled: set[str]) -> str:
     """Every row of a collection that has rules (create rows included), as VALUES lines."""
     return ",\n".join(
-        f"    ('{r['collection']}', '{r['action']}', '{compact(r['permissions'])}')"
+        f"    ('{r['collection']}', '{r['action']}', '{compact(r['permissions'])}', "
+        f"'{compact(r['validation'])}', '{r['fields']}')"
         for r in rows
         if r["collection"] in ruled
     )
+
+
+def hook_rules(doc: dict) -> dict:
+    """What d1-access-guard enforces: per junction, the parents whose update rule the caller must pass."""
+    sets, rules = doc["sets"], doc["rules"]
+    guards: dict = {}
+    for junction, checks in doc.get("guards", {}).items():
+        if "create" not in rules.get(junction, {}):
+            raise RulesError(f"guard {junction}: not a ruled collection with a create row")
+        out = []
+        for check in checks:
+            parent, action = check["parent"], check.get("rule", "update")
+            rule = rules.get(parent, {}).get(action)
+            if rule is None or rule == "any":
+                raise RulesError(f"guard {junction}: {parent}.{action} has no filter")
+            out.append(
+                {
+                    "field": check["field"],
+                    "parent": parent,
+                    "key": check["key"],
+                    "filter": set_filter(sets, rule),
+                }
+            )
+        guards[junction] = out
+    return {
+        "_comment": "Generated by scripts/gen_access_rules.py --write from scripts/access_rules.json (guards). Do not edit by hand.",
+        "guards": guards,
+    }
+
+
+def hook_rules_text(doc: dict) -> str:
+    return json.dumps(hook_rules(doc), indent=2) + "\n"
+
+
+def resolve(doc: dict, db: dict) -> list[str]:
+    """Problems that stop a rule from working in Directus: a path that cannot be followed.
+
+    Walks every path of every rule from its collection. A relation field is followed through
+    `relations` (many side by `many_field`, one side by `one_field`); the many side must be a
+    column and the one side (an alias) a field row of its collection; the last part must be a column.
+    """
+    relations = [tuple(r) for r in db["relations"]]
+    columns, fields = set(db["columns"]), set(db["fields"])
+    problems: list[str] = []
+
+    def step(table: str, part: str) -> str | None:
+        for many_c, many_f, one_c, _one_f in relations:
+            if many_c == table and many_f == part and one_c:
+                return one_c if f"{table}.{part}" in columns else None
+        for many_c, _many_f, one_c, one_f in relations:
+            if one_c == table and one_f == part:
+                return many_c if f"{table}.{part}" in fields else None
+        return None
+
+    def walk(collection: str, label: str, path: str) -> None:
+        table = collection
+        parts = [p for p in path.split(".") if p != "_some"]
+        for part in parts[:-1]:
+            nxt = step(table, part)
+            if nxt is None:
+                problems.append(f"{label}: {path}: {table}.{part} is not a relation field Directus knows")
+                return
+            table = nxt
+        if f"{table}.{parts[-1]}" not in columns:
+            problems.append(f"{label}: {path}: {table}.{parts[-1]} is not a column")
+
+    for collection, actions in doc["rules"].items():
+        for action, rule in actions.items():
+            if rule == "any":
+                continue
+            for path in dict.fromkeys(expand(doc["sets"], rule)):
+                walk(collection, f"{collection}.{action}", path)
+    for junction, checks in doc.get("guards", {}).items():
+        for check in checks:
+            if step(junction, check["field"]) != check["parent"]:
+                problems.append(f"guard {junction}.{check['field']} is not a relation to {check['parent']}")
+            if f"{check['parent']}.{check['key']}" not in columns:
+                problems.append(f"guard {junction}: {check['parent']}.{check['key']} is not a column")
+    return problems
 
 
 def script_block(script_text: str) -> tuple[int, int]:
@@ -168,21 +293,24 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )
     mode = ap.add_mutually_exclusive_group(required=True)
-    for flag in ("json", "sql", "values", "write", "check"):
+    for flag in ("json", "sql", "values", "hook", "write", "check"):
         mode.add_argument(f"--{flag}", action="store_true")
+    mode.add_argument("--resolve", type=Path, metavar="FILE")
     ap.add_argument("--rules", type=Path, default=RULES_FILE)
     ap.add_argument("--script", type=Path, default=SCRIPT_FILE)
+    ap.add_argument("--hook-rules", type=Path, default=HOOK_RULES_FILE)
     args = ap.parse_args(argv)
 
     doc = load(args.rules)
     try:
         rows = build_rows(doc)
+        hook_text = hook_rules_text(doc)
     except RulesError as exc:
         print(f"access_rules: {exc}", file=sys.stderr)
         return 2
 
     if args.json:
-        ruled = set(doc["rules"])
+        ruled = ruled_collections(doc)
         print(
             json.dumps(
                 [{**r, "ruled": r["collection"] in ruled} for r in rows], indent=1
@@ -191,20 +319,39 @@ def main(argv: list[str] | None = None) -> int:
     elif args.sql:
         print(sql_block(rows))
     elif args.values:
-        print(migration_values(rows, set(doc["rules"])))
+        print(migration_values(rows, ruled_collections(doc)))
+    elif args.hook:
+        print(hook_text, end="")
+    elif args.resolve:
+        problems = resolve(doc, json.loads(args.resolve.read_text(encoding="utf-8")))
+        for problem in problems:
+            print(problem)
+        if problems:
+            return 1
+        print("every rule path resolves")
     elif args.write:
         text = args.script.read_text(encoding="utf-8")
         args.script.write_text(render_script(text, rows), encoding="utf-8")
+        args.hook_rules.parent.mkdir(parents=True, exist_ok=True)
+        args.hook_rules.write_text(hook_text, encoding="utf-8")
     else:
         text = args.script.read_text(encoding="utf-8")
+        stale = []
         if render_script(text, rows) != text:
+            stale.append(args.script.name)
+        have = args.hook_rules.read_text(encoding="utf-8") if args.hook_rules.exists() else ""
+        if have != hook_text:
+            stale.append(args.hook_rules.parent.name + "/" + args.hook_rules.name)
+        if stale:
             print(
-                f"{args.script.name} differs from {args.rules.name}: "
+                f"{', '.join(stale)} differ(s) from {args.rules.name}: "
                 "run `python3 scripts/gen_access_rules.py --write`",
                 file=sys.stderr,
             )
             return 1
-        print(f"{args.script.name} matches {args.rules.name} ({len(rows)} rows)")
+        print(
+            f"{args.script.name} and the d1-access-guard rules match {args.rules.name} ({len(rows)} rows)"
+        )
     return 0
 
 

@@ -8,7 +8,12 @@
     "($CURRENT_USER). {\"via\": \"sample_id\", \"set\": \"sample.read\"} prefixes every path of another set with a relation field; {\"set\": ...} includes it as is.",
     "'rules' lists, per collection and action, the set that filters it, or \"any\" for no filter. Directus does not apply item",
     "filters to create, so create is always \"any\". 'unfiltered' is every other Lab Member grant: reference data and the rows",
-    "added by later migrations. A new collection that holds lab data needs an entry in 'rules', not in 'unfiltered'."
+    "added by later migrations. A new collection that holds lab data needs an entry in 'rules', not in 'unfiltered'.",
+    "'custom' holds the rows that need more than a filter: per collection and action, any of permissions, validation and",
+    "fields (a list; written as the comma-separated text Directus stores). 'guards' lists the junctions whose rows grant",
+    "visibility: Directus does not filter create, so the d1-access-guard hook (core/extensions/d1-access-guard) refuses",
+    "to create or repoint one unless the caller passes the parent's update rule. gen_access_rules.py writes that rule",
+    "into core/extensions/d1-access-guard/rules.json. 'field' is the junction's FK to the parent, 'key' the parent's primary key."
   ],
   "policy": "20000002-0000-0000-0000-000000000002",
   "sets": {
@@ -18,7 +23,9 @@
       {"set": "sample.editors"},
       "project_id.principal_investigator_person.user_id",
       "project_id.secondary_investigators._some.user_id",
-      "campaigns._some.campaign_id.owner_person_id.user_id"
+      "campaigns._some.campaign_id.owner_person_id.user_id",
+      "campaigns._some.campaign_id.project_id.principal_investigator_person.user_id",
+      "campaigns._some.campaign_id.project_id.secondary_investigators._some.user_id"
     ],
     "record.owner": ["owner_person_id.user_id"],
     "record.update": ["owner_person_id.user_id", {"via": "sample_id", "set": "sample.editors"}],
@@ -27,7 +34,9 @@
       {"via": "sample_id", "set": "sample.read"},
       "project_id.principal_investigator_person.user_id",
       "project_id.secondary_investigators._some.user_id",
-      "campaign_id.owner_person_id.user_id"
+      "campaign_id.owner_person_id.user_id",
+      "campaign_id.project_id.principal_investigator_person.user_id",
+      "campaign_id.project_id.secondary_investigators._some.user_id"
     ],
     "campaign.owner": ["owner_person_id.user_id"],
     "campaign.read": [
@@ -44,7 +53,9 @@
       "secondary_investigators._some.user_id",
       "campaigns._some.owner_person_id.user_id",
       "samples._some.owner_person_id.user_id",
-      "samples._some.co_owners._some.user_id"
+      "samples._some.co_owners._some.user_id",
+      "operations._some.owner_person_id.user_id",
+      "sessions._some.owner_person_id.user_id"
     ],
     "link.sample.read": [{"via": "sample_id", "set": "sample.read"}],
     "link.sample.editors": [{"via": "sample_id", "set": "sample.editors"}],
@@ -90,6 +101,21 @@
     "project_investigators": {"create": "any", "read": "investigators.read", "update": "investigators.write", "delete": "investigators.write"},
     "project_rollup": {"read": "rollup.read"}
   },
+  "custom": {
+    "people": {
+      "create": {"validation": {"_or": [{"user_id": {"_null": true}}, {"user_id": {"_eq": "$CURRENT_USER"}}]}},
+      "read": {},
+      "update": {"fields": ["full_name", "email", "is_operator", "is_researcher", "active", "notes"]}
+    }
+  },
+  "guards": {
+    "sample_co_owners": [{"field": "sample_id", "parent": "physical_samples", "key": "sample_id", "rule": "update"}],
+    "project_investigators": [{"field": "project_id", "parent": "projects", "key": "project_id", "rule": "update"}],
+    "campaign_samples": [
+      {"field": "campaign_id", "parent": "campaigns", "key": "campaign_id", "rule": "update"},
+      {"field": "sample_id", "parent": "physical_samples", "key": "sample_id", "rule": "update"}
+    ]
+  },
   "unfiltered": {
     "machining_params": ["create", "read", "update", "delete"],
     "sintering_params": ["create", "read", "update", "delete"],
@@ -114,8 +140,6 @@
     "insert_types": ["create", "read", "update", "delete"],
     "raw_stock_lots": ["create", "read", "update", "delete"],
     "manufacturing_methods": ["create", "read", "update", "delete"],
-    "audit_logs": ["read"],
-    "people": ["create", "read", "update", "delete"],
     "facilities": ["read"],
     "fast_recipes": ["read"],
     "force_crawler_state": ["read"],
