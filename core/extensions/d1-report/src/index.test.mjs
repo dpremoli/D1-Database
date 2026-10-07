@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import endpoint from './index.js';
+import { adminRecordUrl } from './render.js';
 
 const SID = '11111111-1111-4111-8111-111111111111';
 const OP_A = '22222222-2222-4222-8222-222222222222';
@@ -241,4 +242,35 @@ test('test session: forbidden, missing and malformed ids are indistinguishable',
 	for (const r of rs) assert.deepEqual([r.out.status, r.out.body], [404, 'Test not found.']);
 	const ok = await get(open.routes, '/test/:id', TEST_ID, user);
 	assert.equal(ok.out.status, 200);
+});
+
+// ---- QR / in-report link target -------------------------------------------------------
+
+test('adminRecordUrl: records with an Explorer page open there', () => {
+	assert.equal(adminRecordUrl('https://lims.example.org', 'physical_samples', SID), `https://lims.example.org/admin/home/samples/${SID}`);
+	assert.equal(adminRecordUrl('https://lims.example.org', 'manufacturing_operations', OP_A), `https://lims.example.org/admin/home/operations/${OP_A}`);
+	assert.equal(adminRecordUrl('https://lims.example.org', 'test_sessions', TEST_ID), `https://lims.example.org/admin/home/tests/${TEST_ID}`);
+	assert.equal(adminRecordUrl('https://lims.example.org', 'campaigns', 'c1'), 'https://lims.example.org/admin/home/campaigns/c1');
+	assert.equal(adminRecordUrl('https://lims.example.org', 'projects', 'p1'), 'https://lims.example.org/admin/home/projects/p1');
+});
+
+test('adminRecordUrl: anything else goes to the Data Studio form', () => {
+	assert.equal(adminRecordUrl('https://lims.example.org', 'equipment', 'e1'), 'https://lims.example.org/admin/content/equipment/e1');
+});
+
+test('adminRecordUrl: trims trailing slashes and encodes the id', () => {
+	assert.equal(adminRecordUrl('https://lims.example.org///', 'physical_samples', 'a/b c'), 'https://lims.example.org/admin/home/samples/a%2Fb%20c');
+	assert.equal(adminRecordUrl('', 'physical_samples', 'x'), '/admin/home/samples/x');
+	assert.equal(adminRecordUrl(undefined, 'physical_samples', 'x'), '/admin/home/samples/x');
+});
+
+test('reports link back to the Explorer page of the record, not the Data Studio form', async () => {
+	const h = harness({ physical_samples: true, manufacturing_operations: true, test_sessions: true, people: true, sample_genealogy: true });
+	const sample = await get(h.routes, '/sample/:id', SID, user);
+	assert.ok(sample.out.body.includes(`/admin/home/samples/${SID}`), 'sample report');
+	assert.ok(!sample.out.body.includes('/admin/content/physical_samples/'), 'no Data Studio sample link left');
+	const op = await get(h.routes, '/operation/:id', OP_A, user);
+	assert.ok(op.out.body.includes(`/admin/home/operations/${OP_A}`), 'operation report QR target');
+	const t = await get(h.routes, '/test/:id', TEST_ID, user);
+	assert.ok(t.out.body.includes(`/admin/home/tests/${TEST_ID}`), 'test report QR target');
 });
