@@ -20,7 +20,7 @@ Delete this plan once the batch has shipped (see `docs/superpowers/README.md`).
 | Stream | Scope | Worktree / branch | State |
 |---|---|---|---|
 | E1 — Kit and Sample page | spec stage 1 | `agent-a75d68373a9795e38` | merged (`5fbba12`); coordinator fix: co-owner names, admin build docs. Lineage graph and QR action deferred to E4 |
-| E2 — Campaign page and matrix | spec stage 2 | `agent-ae4f2e67ae2684b1c` | in progress (`directus-ui-implementer` profile, read from the repo until the session reloads agents); earlier runs lost to a usage-limit stop, nothing committed |
+| E2 — Campaign page and matrix | spec stage 2 | `agent-ae4f2e67ae2684b1c` | merged; matrix columns = sequence N of process category (spec note); EditDrawer gained `hiddenFields` |
 | E3 — Projects, Project, Home "my work" | spec stage 3 (D10) | `agent-ac65ea5bc992c974e` | in progress (`directus-ui-implementer` profile, read from the repo until the session reloads agents); earlier runs lost to a usage-limit stop, nothing committed |
 | E4 — Operation and Test pages; links; QR target | spec stage 4 | `agent-a783b7731c3e45aa8` | in progress (`directus-ui-implementer` profile, read from the repo until the session reloads agents); earlier runs lost to a usage-limit stop, nothing committed |
 | E5 — Row-level visibility | ADR-0011 | — | waits for owner decisions |
