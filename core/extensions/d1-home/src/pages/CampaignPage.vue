@@ -15,7 +15,12 @@ const { campaign, loading, notVisible, error, hidden, reload } = useCampaignReco
 const editing = ref(false);
 // Edit is offered unless the server says this user may not change the record (an investigator
 // or a reader through a sample may read it but not edit it).
-const { canUpdate } = useCanUpdate('campaigns', toRef(props, 'id'));
+const { canUpdate, refresh: refreshCanUpdate } = useCanUpdate('campaigns', toRef(props, 'id'));
+// A save can change who may edit the record (the Owner field), so ask again.
+function onSaved() {
+	reload();
+	refreshCanUpdate();
+}
 
 const code = computed(() => campaign.value?.campaign_code || campaign.value?.name || 'Campaign');
 // The name is the subtitle only when the code is what the title shows.
@@ -70,7 +75,7 @@ const dates = computed(() => {
 
 				<p v-if="campaign.notes" class="notes">{{ campaign.notes }}</p>
 
-				<CampaignWorkbench :campaign-id="id" :campaign-type="campaign.campaign_type" />
+				<CampaignWorkbench :campaign-id="id" :campaign-type="campaign.campaign_type" :can-update="canUpdate" />
 
 				<EditDrawer
 					v-model="editing"
@@ -78,7 +83,7 @@ const dates = computed(() => {
 					:primary-key="id"
 					:title="`Edit ${code}`"
 					:hidden-fields="['campaign_operations']"
-					@saved="reload()"
+					@saved="onSaved"
 				/>
 			</template>
 		</div>

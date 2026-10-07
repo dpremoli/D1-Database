@@ -52,7 +52,9 @@ export { LIST_CAP, useSections } from './composables/useSections';
 export type { SectionState } from './composables/useSections';
 export { useFieldDefs } from './composables/useFieldDefs';
 export { useCanUpdate } from './composables/useCanUpdate';
-export { NOT_OWNER_MESSAGE, NOT_YOUR_RECORD_MESSAGE } from './canUpdate';
+export {
+	NOT_CAMPAIGN_OWNER_MESSAGE, NOT_OWNER_MESSAGE, NOT_PI_MESSAGE, NOT_YOUR_RECORD_MESSAGE, forbiddenReason, notOwnerMessage,
+} from './canUpdate';
 
 // Components
 export { default as RecordHeader } from './components/RecordHeader.vue';

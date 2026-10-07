@@ -20,7 +20,12 @@ const { sample, loading, notVisible, error, elements, campaigns, operations, tes
 const editing = ref(false);
 // Edit is offered unless the server says this user may not change the record (an investigator
 // or a reader through a sample may read it but not edit it).
-const { canUpdate } = useCanUpdate('physical_samples', toRef(props, 'id'));
+const { canUpdate, refresh: refreshCanUpdate } = useCanUpdate('physical_samples', toRef(props, 'id'));
+// A save can change who may edit the record (the Owner field), so ask again.
+function onSaved() {
+	reload();
+	refreshCanUpdate();
+}
 
 const code = computed(() => sample.value?.sample_code ?? 'Sample');
 const studioTo = computed(() => dataStudioRoute('physical_samples', props.id));
@@ -118,7 +123,7 @@ const openReportPage = () => openReport(`/d1-report/sample/${encodeURIComponent(
 					collection="physical_samples"
 					:primary-key="id"
 					:title="`Edit ${code}`"
-					@saved="reload()"
+					@saved="onSaved"
 				/>
 			</template>
 		</div>

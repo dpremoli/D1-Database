@@ -29,8 +29,8 @@ Since ADR-0011 a member sees only the records they are involved in. You can see 
 - you **own** it, or (for a sample) **co-own** it;
 - you are **PI or investigator** of its project, which also covers what belongs to that project
   through its campaigns (read-only);
-- you **own a campaign** it is in (a sample), or you own or co-own a sample in a campaign (the
-  campaign);
+- you **own a campaign**: its samples, operations and tests are visible to you; and you can see a
+  campaign when you own or co-own a sample in it;
 - it is an **operation or test** on a sample you can see.
 
 The pages show exactly that, so **counts are yours, not the lab's**: Home's *At a glance*, a
@@ -46,8 +46,10 @@ roll-up) is for its PI and investigators only; anyone else gets a line saying so
 operation or test, the owner of a campaign, the PI of a project. If you can read a record because
 you are an investigator, or because it sits in your campaign, the **Edit** button is not shown.
 On a campaign you cannot change, the sample, operation and test pickers and the remove buttons are
-hidden too. If a change is refused anyway, the page says *Only the owner or a co-owner can change
-this record.* (or *You can only add records you own or co-own.* in a picker). To let a colleague work
+hidden too. If a change is refused anyway, the page shows the server's reason (for example who may
+change the Owner) or, when it gives none, *Only the owner or a co-owner can change this record.*
+(*Only the campaign's owner can change it.* for a campaign, *Only the project's PI can change it.*
+for a project, and *You can only add records you own or co-own.* in a picker). To let a colleague work
 on a sample, add them as a co-owner. Linking a login to a person (the People page) is for
 administrators only, and so is the audit log. The rules are in
 [Roles and permissions](roles-and-permissions.md#who-can-see-and-change-which-records).

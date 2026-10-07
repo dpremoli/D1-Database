@@ -21,7 +21,12 @@ const {
 const editing = ref(false);
 // Edit is offered unless the server says this user may not change the record (an investigator
 // or a reader through a sample may read it but not edit it).
-const { canUpdate } = useCanUpdate('projects', toRef(props, 'id'));
+const { canUpdate, refresh: refreshCanUpdate } = useCanUpdate('projects', toRef(props, 'id'));
+// A save can change who may edit the record (the Owner field), so ask again.
+function onSaved() {
+	reload();
+	refreshCanUpdate();
+}
 const code = computed(() => project.value?.project_code ?? 'Project');
 const studioTo = computed(() => dataStudioRoute('projects', props.id));
 const active = computed(() => project.value?.is_active !== false);
@@ -116,7 +121,7 @@ const tilesDisabled = computed(() => counts.value.loading);
 					collection="projects"
 					:primary-key="id"
 					:title="`Edit ${code}`"
-					@saved="reload()"
+					@saved="onSaved"
 				/>
 			</template>
 		</div>

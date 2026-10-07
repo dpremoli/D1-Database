@@ -389,7 +389,7 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   of A's, A's campaign and the project. Expect: the page opens, but there is no **Edit** button
   (Report, Data Studio and the other buttons remain); as A the **Edit** button is there. As B, the
   campaign page has no pickers ("Add samples...", operations, tests) and no remove buttons, and says
-  only the owner or a co-owner can change the lists. Force it anyway (open the Data Studio form and
+  "Only the campaign's owner can change its lists." (campaigns have no co-owners). Force it anyway (open the Data Studio form and
   save, or `PATCH` the sample): the error reads as a refusal. Add B as a co-owner of the sample: B now
   sees **Edit**. Since: Explorer pages E5-fix-ui (PR pending).
 - [ ] **E5-fix-ui: pickers by a non-owner give the right message.** As user B on a campaign B owns,
@@ -400,6 +400,18 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   owner or a co-owner can change this record." when removing). Two tabs adding the same free
   operation as its owner still says "... is already in another campaign." Since: Explorer pages
   E5-fix-ui (PR pending).
+- [ ] **E5-r2-ui: a refused save shows the server's reason.** As a co-owner (not owner) of a sample,
+  open the sample page, **Edit**, change the **Owner** and save. Expect the d1-access-guard's own
+  message (what it refused and who may do it), not the generic "Only the owner or a co-owner can
+  change this record.". As B, an investigator who cannot edit, force a save on a campaign (Data
+  Studio form) and on a project: the text names the campaign's owner / the project's PI when the
+  server gives no reason of its own. Since: Explorer pages E5-r2-ui (PR pending).
+- [ ] **E5-r2-ui: Edit follows the record, one permissions request per page.** As a co-owner (not
+  owner) of a sample, open it, **Edit**, set the Owner to someone else and save: the **Edit** button
+  disappears without a reload. Open a record you can change, then follow a link to one you cannot
+  (browser Network tab): Edit does not carry over from the first. On a Campaign page there is a
+  single `GET /permissions/me/campaigns/<id>`, and the pickers vanish after you hand the campaign
+  over. Since: Explorer pages E5-r2-ui (PR pending).
 - [ ] **E5-fix-ui: hidden relatives are named, not shown as empty.** As B (sees one sample of A's
   campaign through a test, not A's other samples): open an operation whose input sample B cannot
   see. Expect "Not visible to you" next to **Input**, not "No sample is linked". A test whose sample
@@ -415,7 +427,8 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   this project yet." Since: Explorer pages E5-fix-ui (PR pending).
 - [ ] **E5-fix-ui: People page and register-sample.** As a Lab Member open People: the **App login**
   field is read-only with "An admin links logins." and saving a person does not change the login;
-  as an admin the login picker works. As a member whose login has no People row open **Register a
+  as an admin the login picker works. Opening an existing person as a member shows no **Delete**
+  button (admin only; Since: E5-r2-ui). As a member whose login has no People row open **Register a
   Sample**: it says up front that the login is not linked and the button refuses; as an admin
   without a People row it still registers. If the server answers the create with 204 (a member
   with a People row that somehow cannot read the sample) the page says "Created, but you can't see

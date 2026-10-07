@@ -53,6 +53,13 @@ describe('lostRaceMessage and permissions', () => {
 		expect(forbiddenWriteMessage({ response: { status: 403 } }, false)).toBe('Only the owner or a co-owner can change this record.');
 		expect(forbiddenWriteMessage({ response: { status: 500 } }, true)).toBeNull();
 	});
+	it("shows the guard's reason, else words the refusal for the collection", () => {
+		const reason = 'Only the campaign owner can edit its lists.';
+		const guard = { response: { status: 403, data: { errors: [{ message: reason, extensions: { code: 'FORBIDDEN', reason } }] } } };
+		expect(forbiddenWriteMessage(guard, false, 'campaigns')).toBe(reason);
+		expect(forbiddenWriteMessage({ response: { status: 403 } }, false, 'campaigns')).toBe("Only the campaign's owner can change it.");
+		expect(forbiddenWriteMessage({ response: { status: 403 } }, true, 'campaigns')).toBe('You can only add records you own or co-own.');
+	});
 });
 
 describe('changeOutcomeMessage', () => {

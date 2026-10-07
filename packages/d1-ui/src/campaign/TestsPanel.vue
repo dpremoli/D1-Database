@@ -97,7 +97,7 @@ async function setCampaign(id: string, campaign: string | null, label: string) {
 		}
 		results.value = results.value.filter((r) => r.session_id !== id);
 	} catch (e) {
-		actionError.value = forbiddenWriteMessage(e, !!campaign) ?? `Could not ${campaign ? 'add' : 'remove'} ${label}: ${errorText(e)}`;
+		actionError.value = forbiddenWriteMessage(e, !!campaign, 'test_sessions') ?? `Could not ${campaign ? 'add' : 'remove'} ${label}: ${errorText(e)}`;
 	} finally {
 		busy.value = null;
 	}

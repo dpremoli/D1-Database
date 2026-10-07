@@ -66,6 +66,19 @@ describe('saveErrors', () => {
 		expect(saveErrors(code)).toEqual(['Only the owner or a co-owner can change this record.']);
 	});
 
+	it("shows the guard's own reason for a refusal", () => {
+		const reason = 'Only the owner can change the owner.';
+		const e = { response: { status: 403, data: { errors: [{ message: reason, extensions: { code: 'FORBIDDEN', reason } }] } } };
+		expect(saveErrors(e, 'physical_samples')).toEqual([reason]);
+	});
+
+	it('words a reasonless refusal for the collection', () => {
+		const e = { response: { status: 403, data: { errors: [{ message: "You don't have permission to access this." }] } } };
+		expect(saveErrors(e, 'campaigns')).toEqual(["Only the campaign's owner can change it."]);
+		expect(saveErrors(e, 'projects')).toEqual(["Only the project's PI can change it."]);
+		expect(saveErrors(e, 'test_sessions')).toEqual(['Only the owner or a co-owner can change this record.']);
+	});
+
 	it('falls back to the error message', () => {
 		expect(saveErrors(new Error('offline'))).toEqual(['offline']);
 		expect(saveErrors({})).toEqual(['The record could not be saved.']);

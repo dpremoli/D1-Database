@@ -48,7 +48,7 @@ onMounted(async () => {
 <template>
 	<section aria-labelledby="stats-h">
 		<h2 id="stats-h" class="h">At a glance</h2>
-		<p class="sub">Counts of the records you can see: yours, ones you co-own, those of projects where you are PI or investigator (including through the project's campaigns), and the operations and tests of samples you can see.</p>
+		<p class="sub">Counts of the records you can see: yours, ones you co-own, those of projects where you are PI or investigator (including through the project's campaigns), campaigns you own with their samples, operations and tests, and the operations and tests of samples you can see.</p>
 		<div class="stats">
 			<button v-for="st in stats" :key="st.label" class="stat" @click="go(router, st.to)">
 				<v-icon :name="st.icon" class="s-icon" />

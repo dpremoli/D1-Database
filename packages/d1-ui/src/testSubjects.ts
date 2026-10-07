@@ -6,6 +6,10 @@
 // When the signed-in user may not read the target's collection, Directus gives the bare id in
 // `item` instead of an object; the subject is still listed, as a link without a label. A target
 // that row-level visibility hides comes back as null and is only counted (`hidden`).
+// A junction row whose target was deleted (test_sessions_subject.item has no foreign key) also comes
+// back as null and is counted as hidden too: telling the two apart would need a read of the target,
+// and Directus answers 403 for a missing row and a filtered one alike, so it cannot be told apart
+// for a non-admin; the raw key (a UUID of a sample that no longer exists) does not reveal it either.
 
 import { asRecord } from './format';
 
