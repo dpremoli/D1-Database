@@ -13,7 +13,7 @@
 //     puts 1 January 2027 into "week 53 of 2027", a bin that does not exist. Only the client can
 //     assign both from the same Monday.
 // So the pages read only the date (and the parent id) of the rows inside the window, newest first,
-// capped (see `ACTIVITY_ROW_CAP` in the page code), and bin here. Rows beyond the cap are the
+// capped (see `ACTIVITY_ROW_CAP` in activityRows.ts), and bin here. Rows beyond the cap are the
 // oldest ones, and the caller shows a "truncated" note.
 
 export const DEFAULT_WEEKS = 26;

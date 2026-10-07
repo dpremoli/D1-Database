@@ -17,6 +17,7 @@
 
 import { asRecord } from './format';
 import { md5 } from './md5';
+import { projectScopeFilter } from './projectScope';
 
 // project_rollup.kind -> the collection the record lives in (recordRoute() then decides the page).
 export const ROLLUP_COLLECTION: Record<string, string> = {
@@ -63,15 +64,9 @@ export function rollupRowId(kind: string, projectId: string | number, id: string
 }
 
 // The operations whose rollup rows belong to project `projectId`: its own, and those that only
-// reach it through their campaign (the view uses COALESCE(o.project_id, c.project_id)).
-export function rollupOperationsFilter(projectId: string | number) {
-	return {
-		_or: [
-			{ project_id: { _eq: projectId } },
-			{ _and: [{ project_id: { _null: true } }, { campaign_id: { project_id: { _eq: projectId } } }] },
-		],
-	};
-}
+// reach it through their campaign (the view uses COALESCE(o.project_id, c.project_id)). This is the
+// kit-wide "belongs to project" rule, see projectScope.ts.
+export const rollupOperationsFilter = projectScopeFilter;
 
 // row_id -> record, for every kind the operations can resolve. `ops` are the rows read with
 // ROLLUP_OPERATION_FIELDS and rollupOperationsFilter, `projectId` the project being viewed.

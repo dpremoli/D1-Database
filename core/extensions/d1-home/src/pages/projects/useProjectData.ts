@@ -1,10 +1,9 @@
 import { onBeforeUnmount, ref, watch, type Ref } from 'vue';
 import {
-	DEFAULT_WEEKS, TEST_DONE_STATUSES, campaignProgress, countsByKey, errorText, isNotVisible, operationCategoryFor, useItems,
-	useRequestGate, weeklyActivity,
+	DEFAULT_WEEKS, TEST_DONE_STATUSES, campaignProgress, countsByKey, errorText, fetchActivityRows, isNotVisible,
+	operationCategoryFor, projectScopeFilter, sampleProjectScopeFilter, useItems, useRequestGate, weeklyActivity,
 	type CampaignProgress, type ForceRows, type WeeklyActivity,
 } from '@d1/ui';
-import { fetchActivityRows } from './activityData';
 
 // Everything the Project page reads, as the signed-in user (so Directus permissions apply). Reads
 // the real collections, not `project_rollup`, which ADR-0011 restricts. The project decides between
@@ -155,7 +154,7 @@ export function useProjectData(id: Ref<string>) {
 		const groups = await getItems('manufacturing_operations', {
 			aggregate: { count: '*' },
 			groupBy: ['equipment_id'],
-			filter: { _and: [{ project_id: { _eq: projectId } }, { equipment_id: { _nnull: true } }] },
+			filter: { _and: [projectScopeFilter(projectId), { equipment_id: { _nnull: true } }] },
 			limit: -1,
 		});
 		const used = countsByKey(groups, 'equipment_id');
@@ -211,10 +210,12 @@ export function useProjectData(id: Ref<string>) {
 					.sort((a: string, b: string) => a.localeCompare(b));
 			}),
 			fill(counts, token, 'the totals', async () => {
+				// "Belongs to the project" is one rule (projectScope.ts): own project_id, else the
+				// campaign's. Samples also count when they are in one of the project's campaigns.
 				const [samples, operations, tests, campaignCount] = await Promise.all([
-					count('physical_samples', byProject),
-					count('manufacturing_operations', byProject),
-					count('test_sessions', byProject),
+					count('physical_samples', sampleProjectScopeFilter(projectId)),
+					count('manufacturing_operations', projectScopeFilter(projectId)),
+					count('test_sessions', projectScopeFilter(projectId)),
 					count('campaigns', byProject),
 				]);
 				return { samples, operations, tests, campaigns: campaignCount };

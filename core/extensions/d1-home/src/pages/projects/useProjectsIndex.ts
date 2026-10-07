@@ -1,9 +1,8 @@
 import { onBeforeUnmount, ref } from 'vue';
 import {
-	CURRENT_USER, countsByKey, datesByKey, errorText, useItems, useRequestGate, weeklyActivity, DEFAULT_WEEKS,
+	CURRENT_USER, countsByKey, datesByKey, errorText, fetchActivityRows, useItems, useRequestGate, weeklyActivity, DEFAULT_WEEKS,
 	type ProjectRow, type WeeklyActivity,
 } from '@d1/ui';
-import { fetchActivityRows } from './activityData';
 
 // Everything the Projects index reads, as the signed-in user. The project list is the page; the
 // counts, the activity and the user's investigator memberships load in parallel and fail on their
@@ -64,6 +63,12 @@ export function useProjectsIndex() {
 			if (gate.isCurrent(token)) loading.value = false;
 		}
 
+		// Known limit: a grouped aggregate cannot express the kit-wide "belongs to project" rule
+		// (own project_id, else the campaign's: projectScope.ts), so these counts group on the
+		// record's own project_id. Campaigns always have one; for samples that is right once the
+		// campaign pickers copy the campaign's project onto the sample (they do, when it has none),
+		// and legacy samples that only sit in a campaign are counted on the Project page, not here.
+		// The activity sparkline below is exact: it reads rows and applies the rule per row.
 		const grouped = (collection: string) =>
 			getItems(collection, {
 				aggregate: { count: '*' },

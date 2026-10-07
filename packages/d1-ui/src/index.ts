@@ -43,6 +43,9 @@ export { default as CampaignWorkbench } from './campaign/CampaignWorkbench.vue';
 // E3 projects
 export { weeklyActivity, binWeekly, lastWeeks, windowStart, datesByKey, isoWeek, weekStart, DEFAULT_WEEKS } from './activity';
 export type { WeekInfo, WeeklyActivity } from './activity';
+export { fetchActivityRows } from './activityRows';
+export type { ActivityRows } from './activityRows';
+export { projectScopeFilter, anyProjectFilter, sampleProjectScopeFilter, effectiveProjectId, effectiveProjectIdFields } from './projectScope';
 export { default as Sparkline } from './components/Sparkline.vue';
 export { projectRole, projectStatusLabel, filterProjects, campaignProgress, countsByKey } from './projects';
 export type {
