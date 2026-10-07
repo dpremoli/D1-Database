@@ -266,7 +266,7 @@ and test reports only.
   `test_sessions`, chosen by the same field conditions as the operation's).
 - **Subject:** the sample (or other target) from `test_sessions_subject`, which is where a test
   made through the form stores it. `test_sessions.sample_id` / `insert_edge_id` are a derived
-  *primary subject* (migration 137: a trigger copies the first sample and first insert edge of the
+  *primary subject* (migration 139: a trigger copies the first sample and first insert edge of the
   junction into them), so readers that filter on `sample_id` (campaign matrix, reports, lineage,
   timeline) also see form-created tests. A test with several samples is complete only in the
   junction, so the Sample page reads both (`sample_id` or a junction row) in one request.

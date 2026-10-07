@@ -145,7 +145,7 @@ named in the step.
 
 ### Explorer pages (Home module)
 Restart Directus after `npm ci` and `npm run build:extensions` at the repo root so
-the rebuilt `d1-home`, `d1-lab-dashboard` and `d1-composition-bar` load, and apply migration 136.
+the rebuilt `d1-home`, `d1-lab-dashboard` and `d1-composition-bar` load, and apply migrations 138 and 139.
 
 - [ ] **E1 — edit drawer saves through real interfaces.** On a sample page click **Edit**. Expect:
   the drawer shows the same form as Content (sample code builder, material and project pickers,
@@ -170,7 +170,7 @@ the rebuilt `d1-home`, `d1-lab-dashboard` and `d1-composition-bar` load, and app
   redirect" is then a follow-up decision. Check that a bar curated in Settings > Appearance that
   already listed Home keeps it, first. `dbmate down` removes Home and moves Content to the front.
   Since: Explorer pages E1 (PR pending).
-- [ ] **E1 — module bar order.** After migration 136 the bar reads Home, User Directory, File
+- [ ] **E1 — module bar order.** After migration 138 the bar reads Home, User Directory, File
   Library, Insights, Lab Dashboard, Force Analysis, FAST Analysis, Content, Settings (for a bar
   that had the shipped order), and every icon still opens its module. On a fresh install
   (`scripts/configure_all.sh`) the same order is created. Since: Explorer pages E1 (PR pending).
@@ -341,7 +341,7 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   **Open lineage graph** opens the Lab Dashboard graph centred on that sample, with its operations,
   tests and neighbours, and reloading the graph URL (`?sample=<id>`) does the same. Since:
   Explorer pages E4 (PR pending).
-- [ ] **E4-fix — the subject trigger on real data (migration 137).** Apply the migration to the
+- [ ] **E4-fix — the subject trigger on real data (migration 139).** Apply the migration to the
   real database (`dbmate up`) and check the back-fill: `SELECT count(*) FROM test_sessions t WHERE
   t.sample_id IS NULL AND EXISTS (SELECT 1 FROM test_sessions_subject s WHERE s.test_sessions_id =
   t.session_id AND s.collection = 'physical_samples')` returns 0 (unless such a subject names a

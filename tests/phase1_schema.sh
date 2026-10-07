@@ -1379,7 +1379,7 @@ echo "== Module bar: Home first, Data Studio after the dashboards =="
 # directus_settings is a stub in CI: seed the shipped bar, apply the migration's up then down in a
 # rolled-back transaction, and assert the order after each, plus the cases the shipped bar does not
 # cover (a curated bar that already lists home, no dashboards, a NULL bar).
-MB=db/migrations/20261006000136_module_bar_home_first.sql
+MB=db/migrations/20261007000138_module_bar_home_first.sql
 mb_up=$(awk '/-- migrate:up/{f=1;next}/-- migrate:down/{f=0}f' "$MB")
 mb_down=$(awk '/-- migrate:down/{f=1;next}f' "$MB")
 mb_ids='SELECT string_agg(e->>'"'"'id'"'"', '"'"','"'"') FROM directus_settings, json_array_elements(module_bar) e'
