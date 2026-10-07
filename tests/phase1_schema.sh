@@ -369,6 +369,14 @@ SELECT 'rollup_view:' || string_agg(split_part(code, '-', 1), '<' ORDER BY code)
 SELECT 'rollup_view_suffix:' || string_agg(substring(code FROM 'F[0-9]+$'), '<' ORDER BY code)
   FROM v_project_rollup WHERE kind = 'operation' AND code LIKE '%-TESTNATRU-MR-%';
 SELECT 'unique:' || count(*) FROM physical_samples WHERE sample_code = '10-TESTNAT-MF-2026-10-1';
+-- row_id formula: d1-project-items (packages/d1-ui/src/rollupLinks.ts) recomputes these hashes
+-- in the browser to link rollup rows to records, so the two must not drift apart.
+SELECT 'row_id_sample:' || (r.row_id = md5('sample:' || r.project_id::text || ':' || sa.sample_id::text))
+  FROM project_rollup r JOIN physical_samples sa ON sa.sample_code = r.code
+  WHERE r.kind = 'sample' AND r.code = 'TESTNAT-ROLLUP-SAMPLE';
+SELECT 'row_id_operation:' || (r.row_id = md5('operation:' || o.operation_id::text))
+  FROM project_rollup r JOIN manufacturing_operations o ON o.pass_code = r.code
+  WHERE r.kind = 'operation' AND r.code = '9-TESTNATRU-MF-1';
 $nat_down
 SELECT 'down_columns:' || count(*) FROM information_schema.columns
   WHERE table_schema = 'public' AND collation_name = 'natural_sort';
@@ -396,6 +404,8 @@ nat_check "suffix:F9<F10" "later digit runs too: ...-F9 < ...-F10"
 nat_check "view:9<10<99<151<1000" "views inherit the ordering (v_complete_sample_history)"
 nat_check "code_sort:00000009-TESTNAT-MF-2026-10-1" "code_sort keeps its zero-padded value"
 nat_check "unique:1" "equality is unchanged"
+nat_check "row_id_sample:true" "project_rollup.row_id of a sample is md5('sample:' || project || ':' || id) (client link matching)"
+nat_check "row_id_operation:true" "project_rollup.row_id of an operation is md5('operation:' || id) (client link matching)"
 nat_check "rollup_table:9<10<99<151<1000" "project_rollup (the Directus cache table) sorts by number: 9 < 10 < 99 < 151 < 1000"
 nat_check "rollup_table_suffix:F9<F10" "project_rollup: ...-F9 < ...-F10"
 nat_check "rollup_view:9<10<99<151<1000" "v_project_rollup sorts by number: 9 < 10 < 99 < 151 < 1000"
@@ -1406,6 +1416,115 @@ mb_check "down_exact:true" "down: the shipped bar is restored exactly"
 mb_check "curated:home=false,users=true,d1-force-dashboard=true,settings=true" "up: an existing Home entry moves first and keeps its enabled flag; content is not added"
 mb_check "no_dashboards:home,users,content" "up: without dashboards the Data Studio keeps its place"
 mb_check "null_kept:true" "a NULL module bar is left alone"
+
+echo "== Test subject junction keeps test_sessions.sample_id / insert_edge_id in step =="
+# Form-created tests only write test_sessions_subject; the trigger derives the primary subject.
+# Explicit junction ids pin "lowest id wins". Everything is rolled back.
+ps_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO physical_samples (sample_id, sample_code) VALUES
+    ('c0000000-0000-4000-8000-0000000001a1', 'TEST-PS-001'),
+    ('c0000000-0000-4000-8000-0000000001a2', 'TEST-PS-002');
+INSERT INTO people (person_id, full_name) VALUES ('c0000000-0000-4000-8000-0000000001b0', 'Primary Subject Owner');
+INSERT INTO tool_boxes (tool_box_id, tool_box_code, owner_person_id)
+VALUES ('c0000000-0000-4000-8000-0000000001b1', 'TEST-PS-BOX', 'c0000000-0000-4000-8000-0000000001b0');
+INSERT INTO cutting_inserts (insert_id, insert_code, tool_box_id)
+VALUES ('c0000000-0000-4000-8000-0000000001b2', 'TEST-PS-BOX-1', 'c0000000-0000-4000-8000-0000000001b1');
+INSERT INTO insert_edges (edge_id, edge_code, insert_id, edge_identifier)
+VALUES ('c0000000-0000-4000-8000-0000000001b3', 'TEST-PS-BOX-1A', 'c0000000-0000-4000-8000-0000000001b2', 'A');
+INSERT INTO test_sessions (session_id) VALUES
+    ('c0000000-0000-4000-8000-0000000001c1'), ('c0000000-0000-4000-8000-0000000001c2'),
+    ('c0000000-0000-4000-8000-0000000001c3');
+
+-- insert: the first sample subject becomes sample_id
+INSERT INTO test_sessions_subject (id, test_sessions_id, collection, item)
+VALUES ('00000000-0000-4000-8000-000000000002', 'c0000000-0000-4000-8000-0000000001c1', 'physical_samples', 'c0000000-0000-4000-8000-0000000001a1');
+SELECT 'insert:' || (sample_id = 'c0000000-0000-4000-8000-0000000001a1') || '/' || (insert_edge_id IS NULL) || '/v' || version
+  FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c1';
+
+-- a second sample with a higher id changes nothing and does not touch the test (no version bump)
+INSERT INTO test_sessions_subject (id, test_sessions_id, collection, item)
+VALUES ('00000000-0000-4000-8000-000000000003', 'c0000000-0000-4000-8000-0000000001c1', 'physical_samples', 'c0000000-0000-4000-8000-0000000001a2');
+SELECT 'second:' || (sample_id = 'c0000000-0000-4000-8000-0000000001a1') || '/v' || version
+  FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c1';
+
+-- a second sample with a LOWER id takes over
+INSERT INTO test_sessions_subject (id, test_sessions_id, collection, item)
+VALUES ('00000000-0000-4000-8000-000000000001', 'c0000000-0000-4000-8000-0000000001c2', 'physical_samples', 'c0000000-0000-4000-8000-0000000001a2');
+INSERT INTO test_sessions_subject (id, test_sessions_id, collection, item)
+VALUES ('00000000-0000-4000-8000-000000000004', 'c0000000-0000-4000-8000-0000000001c2', 'physical_samples', 'c0000000-0000-4000-8000-0000000001a1');
+SELECT 'lowest_id:' || (sample_id = 'c0000000-0000-4000-8000-0000000001a2')
+  FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c2';
+
+-- delete the primary: the next subject is promoted
+DELETE FROM test_sessions_subject WHERE id = '00000000-0000-4000-8000-000000000002';
+SELECT 'delete_primary:' || (sample_id = 'c0000000-0000-4000-8000-0000000001a2')
+  FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c1';
+-- delete the last subject: sample_id becomes NULL
+DELETE FROM test_sessions_subject WHERE id = '00000000-0000-4000-8000-000000000003';
+SELECT 'delete_last:' || (sample_id IS NULL)
+  FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c1';
+
+-- insert-edge subject fills insert_edge_id and leaves sample_id alone
+INSERT INTO test_sessions_subject (test_sessions_id, collection, item)
+VALUES ('c0000000-0000-4000-8000-0000000001c2', 'insert_edges', 'c0000000-0000-4000-8000-0000000001b3');
+SELECT 'edge:' || (insert_edge_id = 'c0000000-0000-4000-8000-0000000001b3') || '/' || (sample_id = 'c0000000-0000-4000-8000-0000000001a2')
+  FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c2';
+
+-- non-uuid item, unknown sample and unknown collection are ignored, with no error
+INSERT INTO test_sessions_subject (test_sessions_id, collection, item) VALUES
+    ('c0000000-0000-4000-8000-0000000001c3', 'physical_samples', 'not-a-uuid'),
+    ('c0000000-0000-4000-8000-0000000001c3', 'physical_samples', 'c0000000-0000-4000-8000-0000000001ff'),
+    ('c0000000-0000-4000-8000-0000000001c3', 'tools', 'c0000000-0000-4000-8000-0000000001a1'),
+    ('c0000000-0000-4000-8000-0000000001c3', 'insert_edges', 'nope');
+SELECT 'junk:' || (sample_id IS NULL) || '/' || (insert_edge_id IS NULL)
+  FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c3';
+-- a valid sample after the junk wins
+INSERT INTO test_sessions_subject (test_sessions_id, collection, item)
+VALUES ('c0000000-0000-4000-8000-0000000001c3', 'physical_samples', 'C0000000-0000-4000-8000-0000000001A1');
+SELECT 'after_junk:' || (sample_id = 'c0000000-0000-4000-8000-0000000001a1')
+  FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c3';
+
+-- moving a junction row to another test recomputes both the old and the new parent
+UPDATE test_sessions_subject SET test_sessions_id = 'c0000000-0000-4000-8000-0000000001c1'
+  WHERE test_sessions_id = 'c0000000-0000-4000-8000-0000000001c3' AND item = 'C0000000-0000-4000-8000-0000000001A1';
+SELECT 'move:' || (SELECT sample_id IS NULL FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c3')
+  || '/' || (SELECT sample_id = 'c0000000-0000-4000-8000-0000000001a1' FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c1');
+
+-- back-fill: a test whose junction rows were written with the trigger off is repaired
+ALTER TABLE test_sessions_subject DISABLE TRIGGER test_sessions_subject_sync_primary;
+INSERT INTO test_sessions (session_id) VALUES ('c0000000-0000-4000-8000-0000000001c4');
+INSERT INTO test_sessions_subject (test_sessions_id, collection, item)
+VALUES ('c0000000-0000-4000-8000-0000000001c4', 'physical_samples', 'c0000000-0000-4000-8000-0000000001a2');
+SELECT 'stale:' || (sample_id IS NULL) FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c4';
+ALTER TABLE test_sessions_subject ENABLE TRIGGER test_sessions_subject_sync_primary;
+SELECT sync_test_session_primary_subject(session_id) FROM test_sessions t
+  WHERE EXISTS (SELECT 1 FROM test_sessions_subject s WHERE s.test_sessions_id = t.session_id);
+SELECT 'backfill:' || (sample_id = 'c0000000-0000-4000-8000-0000000001a2')
+  FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c4';
+
+-- deleting a whole test cascades through the junction without error
+DELETE FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c2';
+SELECT 'cascade:' || count(*) FROM test_sessions WHERE session_id = 'c0000000-0000-4000-8000-0000000001c2';
+SELECT 'comments:' || count(*) FROM pg_description
+  WHERE description LIKE '%derived from test_sessions_subject (primary subject); do not write directly%';
+ROLLBACK;
+SQL
+)
+ps_check() { grep -qx "$1" <<<"$ps_out" && ok "$2" || bad "$2 (psql output: $ps_out)"; }
+ps_check "insert:true/true/v2" "insert: the first sample subject becomes sample_id"
+ps_check "second:true/v2" "a second sample subject with a higher id leaves sample_id and the test row untouched"
+ps_check "lowest_id:true" "the subject with the lowest junction id is the primary"
+ps_check "delete_primary:true" "deleting the primary subject promotes the next one"
+ps_check "delete_last:true" "deleting the last sample subject clears sample_id"
+ps_check "edge:true/true" "an insert_edges subject fills insert_edge_id and leaves sample_id alone"
+ps_check "junk:true/true" "non-uuid, unknown or wrong-collection items are ignored"
+ps_check "after_junk:true" "a valid sample after ignored junk still wins (uuid match is case-insensitive)"
+ps_check "move:true/true" "moving a junction row recomputes the old and the new test"
+ps_check "stale:true" "(setup) with the trigger off the junction alone leaves sample_id NULL"
+ps_check "backfill:true" "back-fill repairs a test from its junction rows"
+ps_check "cascade:0" "deleting a test cascades through the junction without error"
+ps_check "comments:5" "function, trigger function, trigger and columns carry the derived-column comment"
 
 echo "== Cleanup test rows =="
 $PSQL -c "

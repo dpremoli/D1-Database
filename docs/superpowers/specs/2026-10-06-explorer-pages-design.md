@@ -265,7 +265,11 @@ and test reports only.
 - **Parameters:** the test type's parameter fields (inline `tensile_*`, `hardness_*` ... columns on
   `test_sessions`, chosen by the same field conditions as the operation's).
 - **Subject:** the sample (or other target) from `test_sessions_subject`, which is where a test
-  made through the form stores it (`sample_id` stays empty); older rows use `sample_id`.
+  made through the form stores it. `test_sessions.sample_id` / `insert_edge_id` are a derived
+  *primary subject* (migration 137: a trigger copies the first sample and first insert edge of the
+  junction into them), so readers that filter on `sample_id` (campaign matrix, reports, lineage,
+  timeline) also see form-created tests. A test with several samples is complete only in the
+  junction, so the Sample page reads both (`sample_id` or a junction row) in one request.
 - **Results:** `summary_stats` rendered as a key–value grid, grouped by the namespaced key each
   worker writes.
 - **Files.**
@@ -288,9 +292,11 @@ small mapping repeats `recordRoute()`'s table. Printed labels keep working becau
 QR (the label carries it).
 
 **Project items:** `project_rollup` rows carry a hashed `row_id`, not the record id, so
-`d1-project-items` reads the project's operations (as the user) with their sample, machine, tool,
-edge, insert and material to resolve code → record (`rollupTargets()` in the kit). Rows it cannot
-resolve stay plain text.
+`d1-project-items` reads the project's operations (as the user, in pages, ids only) with their
+sample, machine, tool, edge, insert and material, and matches rollup rows to records by recomputing
+`row_id` client-side (`md5('operation:' || id)`, `md5('<kind>:' || project || ':' || id)`;
+`rollupTargets()` in the kit). Matching by `row_id` and not by code means a shared `pass_code`
+cannot link to the wrong operation. Rows it cannot resolve stay plain text.
 
 ## Error handling
 

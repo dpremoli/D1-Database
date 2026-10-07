@@ -8,7 +8,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
-import { RecordLink, ROLLUP_OPERATION_FIELDS, rollupKey, rollupTargets, type RollupTarget } from '@d1/ui';
+import { RecordLink, ROLLUP_OPERATION_FIELDS, rollupOperationsFilter, rollupTargets, type RollupTarget } from '@d1/ui';
 
 const props = defineProps<{ primaryKey?: string | number | null }>();
 const api = useApi();
@@ -17,9 +17,10 @@ interface Row { row_id: string; kind: string; code: string; detail: string; camp
 const rows = ref<Row[]>([]);
 const campaigns = ref<Record<string, { code: string; name: string }>>({});
 const loading = ref(false);
-// code -> record, so each row can link to its page. project_rollup rows hold no record id.
+// row_id -> record, so each row can link to its page. project_rollup rows hold no record id, but
+// their row_id is a hash of it that rollupTargets() recomputes.
 const targets = ref<Map<string, RollupTarget>>(new Map());
-const target = (r: Row) => targets.value.get(rollupKey(r.kind, r.code));
+const target = (r: Row) => targets.value.get(r.row_id);
 
 // Group order + labels/icons for the sections we know about; unknown kinds fall through.
 const KINDS: { key: string; label: string; icon: string }[] = [
@@ -60,17 +61,22 @@ async function load() {
 	await loadTargets(pk);
 }
 
-// Links are an extra: a failure here leaves the rows as plain text instead of hiding them.
+// Links are an extra: a failure here leaves the rows as plain text instead of hiding them. The
+// operations are read in pages of ids (no code or name), so a big project is not one huge request.
+const OPS_PAGE = 1000;
+const OPS_MAX_PAGES = 20;
 async function loadTargets(pk: string | number) {
 	try {
-		const res = await api.get('/items/manufacturing_operations', {
-			params: {
-				filter: { _or: [{ project_id: { _eq: pk } }, { campaign_id: { project_id: { _eq: pk } } }] },
-				fields: ROLLUP_OPERATION_FIELDS,
-				limit: -1,
-			},
-		});
-		if (props.primaryKey === pk) targets.value = rollupTargets(res.data?.data);
+		const ops: any[] = [];
+		for (let page = 1; page <= OPS_MAX_PAGES; page++) {
+			const res = await api.get('/items/manufacturing_operations', {
+				params: { filter: rollupOperationsFilter(pk), fields: ROLLUP_OPERATION_FIELDS, sort: ['operation_id'], limit: OPS_PAGE, page },
+			});
+			const batch: any[] = res.data?.data ?? [];
+			ops.push(...batch);
+			if (batch.length < OPS_PAGE) break;
+		}
+		if (props.primaryKey === pk) targets.value = rollupTargets(ops, pk);
 	} catch { /* rows stay unlinked */ }
 }
 onMounted(load);
