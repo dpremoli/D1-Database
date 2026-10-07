@@ -30,7 +30,9 @@ function mount({ canUpdate = () => true, readError = null } = {}) {
 
 // db(table).whereIn(pk, keys).select(...) -> the rows of `existing`.
 // db(table).where(column, id).whereRaw(sql).first(column) -> the row when `table:id` is in `created`
-// (the parent was inserted by this transaction), else undefined.
+// (the parent was written by this transaction), else undefined. An entry `table:id@N` is a row written
+// here whose OCC version is N (N > 1: it existed and was UPDATED here); a plain `table:id` was inserted
+// here (version 1). The fake applies the `version = 1` part of the SQL, as Postgres would.
 function fakeDb(existing = [], created = []) {
   const calls = [];
   const db = (table) => ({
@@ -44,7 +46,11 @@ function fakeDb(existing = [], created = []) {
       whereRaw: (sql) => ({
         first: async (selected) => {
           calls.push({ table, column, id, sql, selected });
-          return created.includes(`${table}:${id}`) ? { [column]: id } : undefined;
+          const entry = created.find((c) => c === `${table}:${id}` || c.startsWith(`${table}:${id}@`));
+          if (!entry) return undefined;
+          const version = entry.includes('@') ? Number(entry.split('@')[1]) : 1;
+          if (/version\s*=\s*1/.test(sql) && version !== 1) return undefined;
+          return { [column]: id };
         },
       }),
     }),
@@ -226,7 +232,22 @@ test('a parent inserted by this transaction passes without its update rule (proj
   assert.equal(database.calls.length, 1);
   const [call] = database.calls;
   assert.deepEqual([call.table, call.column, call.id, call.selected], ['projects', 'project_id', 'p-new', 'project_id']);
-  assert.match(call.sql, /xmin\s*=\s*pg_current_xact_id\(\)::xid/);
+  assert.match(call.sql, /xmin\s*=\s*pg_current_xact_id\(\)::xid\s+AND\s+version\s*=\s*1/);
+});
+
+test('a pre-existing parent merely UPDATED in this transaction is not "created here" (xmin alone would match)', async () => {
+  const { filters } = mount({ canUpdate: () => false });
+  // Same xmin as ours, but OCC version 2: it existed before and an FK action or trigger updated it.
+  const database = fakeDb([], ['projects:p-old@2', 'physical_samples:s-old@5', 'test_sessions:t-old@2', 'campaigns:c-old@3']);
+  const cases = [
+    ['project_investigators', { project_id: 'p-old', user_id: 'user-1' }, /projects p-old/],
+    ['sample_co_owners', { sample_id: 's-old', user_id: 'user-1' }, /physical_samples s-old/],
+    ['test_sessions_subject', { test_sessions_id: 't-old', collection: 'physical_samples', item: 'x' }, /test_sessions t-old/],
+    ['campaign_samples', { campaign_id: 'c-old', sample_id: 's1' }, /campaigns c-old/],
+  ];
+  for (const [collection, payload, re] of cases) {
+    await assert.rejects(filters['items.create'](payload, { collection }, ctx({ database })), denied(re), collection);
+  }
 });
 
 test('a parent that merely exists is not "created here": the update rule decides (self-grant stays closed)', async () => {

@@ -40,8 +40,10 @@
 // transaction, so its update rule may not hold for the creator (they named someone else as owner or
 // PI), yet the creator is the one making that record. A parent key therefore also passes when the
 // parent row was inserted by the current transaction (Postgres: its xmin is this transaction's id),
-// without checking its update rule. Only a row INSERTED here can match, one that merely exists
-// cannot, so this never lets a member attach themselves to a record someone else made. The sample of
+// without checking its update rule. Only a row INSERTED here and never updated since can match
+// (xmin is this transaction AND the OCC version is still 1), so neither a row that merely exists nor
+// a pre-existing row that was updated in this transaction (by this request, an FK action or a
+// trigger) qualifies, and this never lets a member attach themselves to a record someone else made. The sample of
 // a campaign_samples row is still checked (it is a different row) unless it is new too. A row
 // created inside a savepoint carries the sub-transaction id and is not recognised: that fails closed
 // (refused); Directus does not use savepoints.
@@ -108,13 +110,20 @@ export default ({ filter }, { services }) => {
     }
   }
 
-  // True when the parent row was inserted by the transaction this request runs in. xmin is the id of
-  // the inserting transaction; pg_current_xact_id() is ours (cast to the 32-bit xid xmin uses).
+  // True when the parent row was INSERTED by the transaction this request runs in and not updated
+  // since. xmin is the id of the transaction that last wrote the row (insert or update), and
+  // pg_current_xact_id() is ours (cast to the 32-bit xid xmin uses), so xmin alone also matches a
+  // pre-existing row merely UPDATED here (by this request, an FK action or a trigger side effect).
+  // Every guarded parent (physical_samples, projects, campaigns, test_sessions) carries the OCC
+  // `version` column, which starts at 1 and which occ_update_trigger_function() raises on every
+  // update, so `version = 1` separates "inserted here, never updated" from "updated here". A parent
+  // without that column would make this query fail, which refuses the write (fails closed); the
+  // phase1 suite checks that all four have it and its trigger.
   async function createdInThisTransaction(check, id, context) {
     const row = await context
       .database(check.parent)
       .where(check.key, id)
-      .whereRaw('xmin = pg_current_xact_id()::xid')
+      .whereRaw('xmin = pg_current_xact_id()::xid AND version = 1')
       .first(check.key);
     return row !== undefined && row !== null;
   }
