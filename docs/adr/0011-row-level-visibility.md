@@ -299,6 +299,20 @@ Two schema changes make the filters expressible:
   owning something in a project is one of the ways to read the project. The same holds for
   `campaign_id` pointing at a campaign they cannot read: it makes the *record* readable to that
   campaign's owner, not the campaign to them.
+- **Create of child rows is unfiltered, by name.** Besides the four guarded junctions, these child
+  collections have an unfiltered create (their read, update and delete do follow the parent):
+  `sample_genealogy`, `sample_stock_provenance`, `sample_data_files`, `operation_data_files`,
+  `session_data_files` and `machining_force_analysis`. A member can therefore attach a row to a
+  sample, operation or test they cannot update (a file link, a genealogy edge, a force analysis).
+  No read is gained by doing so: the rows follow the parent's read rule, and the member's own
+  involvement filters do not look at them. They are not guarded because machine users (crawler,
+  workers, equipment nodes) write some of them, and a guard keyed on the parent's update rule
+  would refuse those.
+- **`campaign-inherit` reads campaigns with the root connection.** An operation or test created
+  with another person's `campaign_id` (one the member cannot read) inherits that campaign's
+  `project_id` when it names none, and so makes that **project row** readable to the member (owning
+  an operation in a project is one of the ways to read the project). It is the same accepted gap as
+  a hand-typed `project_id` above: the project row only, never its samples or other records.
 - **People need a `people` row.** A member without a `people` row linked by `user_id` owns
   nothing, because the hook cannot fill the owner, and sees only what others share with them. A
   member can create their own row (no login, or their own) but only an admin can link or relink a
