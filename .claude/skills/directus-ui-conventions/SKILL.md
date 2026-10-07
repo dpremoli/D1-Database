@@ -1,6 +1,6 @@
 ---
 name: directus-ui-conventions
-description: Background knowledge for any change to the custom Directus front end — the Explorer pages and Home (core/extensions/d1-home), the shared @d1/ui kit (packages/d1-ui), and the extensions that use it (d1-lab-dashboard, d1-campaign-ops, d1-project-items, d1-composition-bar). Load before editing or reviewing files there. It lists the invariants that recent bugs came from.
+description: Background knowledge for any change to the custom Directus front end — the Explorer pages and Home (core/extensions/d1-home), the shared @d1/ui kit (packages/d1-ui), and the extensions that use it (d1-lab-dashboard, d1-campaign-ops, d1-project-items, d1-composition-bar, d1-fast-dashboard). Load before editing or reviewing files there. It lists the invariants that recent bugs came from.
 user-invocable: false
 paths:
   - packages/d1-ui/**
@@ -9,6 +9,7 @@ paths:
   - core/extensions/d1-campaign-ops/**
   - core/extensions/d1-project-items/**
   - core/extensions/d1-composition-bar/**
+  - core/extensions/d1-fast-dashboard/**
 ---
 
 # Directus front end: what to know before changing it

@@ -263,7 +263,7 @@ jobs:
   # tests and typecheck, and a build of every Directus extension that imports it. Without the
   # builds a broken import in a page would only show up when someone rebuilds the extension.
   directus-ui:
-    name: Explorer UI (@d1/ui, home, lab dashboard, composition bar)
+    name: Explorer UI (@d1/ui and the six extensions that use it)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
