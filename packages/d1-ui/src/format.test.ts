@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { errorText, formatDate, formatNumber, asRecord, formatQuantity, isNotVisible } from './format';
+import { errorText, formatDate, formatNumber, asRecord, formatQuantity, isDuplicate, isForbidden, isNotVisible } from './format';
 
 describe('formatQuantity', () => {
 	it('trims trailing zeros of a database numeric string', () => {
@@ -70,5 +70,29 @@ describe('asRecord', () => {
 		expect(asRecord('uuid')).toBeNull();
 		expect(asRecord(null)).toBeNull();
 		expect(asRecord([1])).toBeNull();
+	});
+});
+
+describe('isForbidden and isDuplicate', () => {
+	it('isForbidden is true only for permission failures, not for other errors', () => {
+		const http = (status: number, code?: string) => ({ response: { status, data: { errors: [{ extensions: { code } }] } } });
+		expect(isForbidden(http(403, 'FORBIDDEN'))).toBe(true);
+		expect(isForbidden({ response: { status: 403 } })).toBe(true);
+		expect(isForbidden(http(200, 'FORBIDDEN'))).toBe(true);
+		expect(isForbidden(http(500, 'INTERNAL_SERVER_ERROR'))).toBe(false);
+		expect(isForbidden(http(503))).toBe(false);
+		expect(isForbidden(new Error('Network Error'))).toBe(false);
+		expect(isForbidden(undefined)).toBe(false);
+	});
+
+	it('isDuplicate recognises a unique-constraint failure', () => {
+		expect(isDuplicate({ response: { status: 400, data: { errors: [{ extensions: { code: 'RECORD_NOT_UNIQUE' } }] } } })).toBe(true);
+		expect(isDuplicate({ response: { status: 400, data: { errors: [{ extensions: { code: 'INVALID_PAYLOAD' } }] } } })).toBe(false);
+		expect(isDuplicate(new Error('x'))).toBe(false);
+	});
+
+	it('isForbidden is not isNotVisible: a 404 is a missing record, not a permission failure', () => {
+		expect(isForbidden({ response: { status: 404 } })).toBe(false);
+		expect(isNotVisible({ response: { status: 404 } })).toBe(true);
 	});
 });

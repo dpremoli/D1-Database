@@ -9,8 +9,7 @@
 //     d1-project-inherit rule), and a project it already has is never overwritten. That is a second,
 //     conditional request (`project_id _null`), because one batch body cannot be per-row.
 
-import { errorText } from '../format';
-import { isForbidden } from './errors';
+import { errorText, isForbidden } from '../format';
 
 export interface BatchPatch {
 	query: { filter: Record<string, unknown> };

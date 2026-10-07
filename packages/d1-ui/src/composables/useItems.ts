@@ -15,17 +15,5 @@ export function useItems() {
 		return data.data;
 	}
 
-	async function searchItems(
-		collection: string,
-		field: string,
-		query: string,
-		extra: Record<string, unknown> = {},
-	): Promise<any[]> {
-		return getItems(collection, {
-			...extra,
-			[`filter[${field}][_contains]`]: query,
-		});
-	}
-
-	return { getItems, getItem, searchItems };
+	return { getItems, getItem };
 }

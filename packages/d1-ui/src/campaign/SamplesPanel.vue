@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
-import { errorText } from '../format';
+import { errorText, isDuplicate } from '../format';
 import { useItems } from '../composables/useItems';
 import { useRequestGate } from '../composables/useRequestGate';
 import LoadState from '../components/LoadState.vue';
@@ -9,7 +9,6 @@ import RecordLink from '../components/RecordLink.vue';
 import Section from '../components/Section.vue';
 import PickerBox from './PickerBox.vue';
 import { inheritCampaignProject } from './assign';
-import { isDuplicate } from './errors';
 import { LIST_CAP, type SectionState } from '../composables/useSections';
 
 // The campaign's samples (the `campaign_samples` junction, plus samples that only appear through an

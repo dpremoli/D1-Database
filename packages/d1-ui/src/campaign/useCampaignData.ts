@@ -3,7 +3,7 @@ import { useItems } from '../composables/useItems';
 import { useRequestGate } from '../composables/useRequestGate';
 import { useSections } from '../composables/useSections';
 import { buildMatrix } from './matrix';
-import { isForbidden } from './errors';
+import { isForbidden } from '../format';
 import { buildOverview } from './rollup';
 
 // Everything the campaign overview needs, read as the signed-in user (so Directus permissions
