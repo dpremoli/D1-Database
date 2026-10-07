@@ -378,6 +378,16 @@ INSERT INTO directus_fields (collection, field, special, interface, options, dis
 -- Generated sort key (migration 085) kept for the Force App; hidden so it is not shown as a field.
 ('physical_samples','code_sort',NULL,'input',NULL,'raw',NULL,true,true,900,'half',false,NULL);
 
+-- The legacy AppSheet text column (renamed by migration 140) stays hidden and read-only. The DELETE
+-- above removed its row, so re-add it, but only where the column exists (the production snapshot
+-- no longer has it).
+INSERT INTO directus_fields (collection, field, hidden, readonly, note)
+SELECT 'physical_samples', 'co_owners_legacy', TRUE, TRUE, 'Legacy AppSheet text. Use the Co-owners field (sample_co_owners).'
+WHERE EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'physical_samples' AND column_name = 'co_owners_legacy'
+);
+
 -- ── equipment ─────────────────────────────────────────────────────────────────
 INSERT INTO directus_fields (collection, field, special, interface, options, display, display_options, readonly, hidden, sort, width, required, translations) VALUES
 ('equipment','equipment_id',   'uuid','input',NULL,'raw',NULL,true,true,1,'full',false,NULL),
@@ -607,7 +617,10 @@ INSERT INTO directus_fields (collection, field, special, interface, options, dis
 ('projects','updated_at','date-updated','datetime',NULL,'datetime',NULL,true,true,21,'half',false,NULL),
 ('projects','version',NULL,'input',NULL,'raw',NULL,true,true,22,'half',false,NULL),
 -- hidden O2M alias over physical_samples.project_id: lets a permission filter say "owns a sample in this project" (ADR-0011)
-('projects','samples','o2m','list-o2m','{"enableCreate":false,"enableSelect":false}','related-values',NULL,true,true,23,'full',false,NULL);
+('projects','samples','o2m','list-o2m','{"enableCreate":false,"enableSelect":false}','related-values',NULL,true,true,23,'full',false,NULL),
+-- the same for operations and tests: lets the project read rule say "owns an operation or test in it"
+('projects','operations','o2m','list-o2m','{"enableCreate":false,"enableSelect":false}','related-values',NULL,true,true,24,'full',false,NULL),
+('projects','sessions','o2m','list-o2m','{"enableCreate":false,"enableSelect":false}','related-values',NULL,true,true,25,'full',false,NULL);
 
 -- ── test_sessions ─────────────────────────────────────────────────────────────
 INSERT INTO directus_fields (collection, field, special, interface, options, display, display_options, readonly, hidden, sort, width, required, translations) VALUES
@@ -830,7 +843,7 @@ INSERT INTO directus_relations (many_collection, many_field, one_collection, one
 ('manufacturing_operations',  'method_id',        'manufacturing_methods',      'operations',                'nullify'),
 ('manufacturing_operations',  'tool_id',          'tools',                      NULL,                        'nullify'),
 ('manufacturing_operations',  'insert_edge_id',   'insert_edges',               NULL,                        'nullify'),
-('manufacturing_operations',  'project_id',       'projects',                   NULL,                        'nullify'),
+('manufacturing_operations',  'project_id',       'projects',                   'operations',                'nullify'),
 -- output sample (produced by the operation) → O2M back-link on physical_samples
 ('manufacturing_operations',  'output_sample_id', 'physical_samples',           'produced_by_operations',    'nullify'),
 -- tooling hierarchy
@@ -857,7 +870,17 @@ INSERT INTO directus_relations (many_collection, many_field, one_collection, one
 -- nullable FKs
 ('test_sessions',             'equipment_id',     'equipment',                   'test_sessions',            'nullify'),
 ('test_sessions',             'insert_edge_id',   'insert_edges',                NULL,                       'nullify'),
-('test_sessions',             'project_id',       'projects',                    NULL,                       'nullify'),
+('test_sessions',             'project_id',       'projects',                    'sessions',                 'nullify'),
+-- people links (migration 062). The row filters of ADR-0011 walk owner_person_id -> people.user_id, so
+-- these must survive this script (it deletes every relation of these collections above).
+('physical_samples',          'owner_person_id',    'people',                     NULL,                       'nullify'),
+('manufacturing_operations',  'owner_person_id',    'people',                     NULL,                       'nullify'),
+('manufacturing_operations',  'operator_person_id', 'people',                     NULL,                       'nullify'),
+('test_sessions',             'owner_person_id',    'people',                     NULL,                       'nullify'),
+('test_sessions',             'operator_person_id', 'people',                     NULL,                       'nullify'),
+('tool_boxes',                'owner_person_id',    'people',                     NULL,                       'nullify'),
+('cutting_inserts',           'owner_person_id',    'people',                     NULL,                       'nullify'),
+('insert_edges',              'owner_person_id',    'people',                     NULL,                       'nullify'),
 -- owner M2O to directus_users — no DB FK (Directus-only relation, keeps schema portable)
 ('tool_boxes',                'owner',             'directus_users',              NULL,                       'nullify'),
 ('cutting_inserts',           'owner',             'directus_users',              NULL,                       'nullify'),
