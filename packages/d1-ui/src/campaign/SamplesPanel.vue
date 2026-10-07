@@ -22,6 +22,8 @@ const props = defineProps<{
 	junction: SectionState<any[]>;
 	/** The user may not change this campaign: no picker, no add / remove buttons. */
 	readonly?: boolean;
+	/** Sample-list entries whose sample the user may not see (`overview.counts.hiddenSamples`). */
+	hiddenCount?: number;
 }>();
 const emit = defineEmits<{ (e: 'changed'): void }>();
 
@@ -146,7 +148,10 @@ async function remove(id: string, code?: string | null) {
 					</tr>
 				</tbody>
 			</table>
-			<p v-else class="d1-cempty">No samples yet.</p>
+			<p v-else-if="!hiddenCount" class="d1-cempty">No samples yet.</p>
+			<p v-if="hiddenCount" class="d1-cempty">
+				{{ hiddenCount }} {{ hiddenCount === 1 ? 'sample' : 'samples' }} not visible to you.
+			</p>
 			<p v-if="rows.length > LIST_CAP" class="d1-ccap">Showing the first {{ LIST_CAP }} of {{ rows.length }} samples. The matrix above has them all.</p>
 		</LoadState>
 		<PickerBox v-if="!readonly" v-model="search" placeholder="Add samples by code or nickname…" :searching="searching" :no-results="searched && !results.length" empty-text="No other samples match.">

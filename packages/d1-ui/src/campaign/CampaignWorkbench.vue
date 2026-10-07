@@ -43,7 +43,7 @@ defineExpose({ reload });
 		<Section v-if="showMatrix" title="Samples and steps" :count="matrix.rows.length">
 			<LoadState
 				:loading="(junction.loading || operations.loading || tests.loading) && !matrix.rows.length"
-				:empty="!matrix.rows.length"
+				:empty="!matrix.rows.length && !matrix.unplaced.samples"
 				empty-text="No samples, operations or tests in this campaign yet."
 			>
 				<CampaignMatrix :matrix="matrix" :force-hidden="analysisUnavailable" />
@@ -52,7 +52,7 @@ defineExpose({ reload });
 
 		<p v-if="readonly" class="d1-cnote">Only the owner or a co-owner can change this campaign's samples, operations and tests.</p>
 
-		<SamplesPanel :campaign-id="campaignId" :rows="overview.sampleRows" :junction="junction" :readonly="readonly" @changed="reload" />
+		<SamplesPanel :campaign-id="campaignId" :rows="overview.sampleRows" :junction="junction" :readonly="readonly" :hidden-count="overview.counts.hiddenSamples" @changed="reload" />
 		<OperationsPanel
 			:campaign-id="campaignId"
 			:campaign-type="campaignType"
