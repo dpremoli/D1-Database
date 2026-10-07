@@ -50,8 +50,8 @@ const first = (rows: any[], field: string) => (rows ?? []).map((r) => r?.[field]
 
 // The id of a related item that may arrive as an expanded object ({ sample_id, sample_code }) or a
 // bare id, or be null/absent when the caller cannot read it.
-const relId = (v: any, pk: string): string | null => (v && typeof v === 'object' ? (v[pk] ?? null) : (v ?? null));
-const relCode = (v: any): string | null => (v && typeof v === 'object' ? (v.sample_code ?? null) : null);
+export const relId = (v: any, pk: string): string | null => (v && typeof v === 'object' ? (v[pk] ?? null) : (v ?? null));
+export const relCode = (v: any): string | null => (v && typeof v === 'object' ? (v.sample_code ?? null) : null);
 
 export interface OverviewInput {
 	samples?: any[];

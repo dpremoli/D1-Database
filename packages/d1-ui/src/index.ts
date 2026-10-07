@@ -36,3 +36,5 @@ export { default as EditDrawer } from './components/EditDrawer.vue';
 export { buildOverview, analysisState, diagState, TEST_DONE_STATUSES, TEST_STATUS_ORDER } from './campaign/rollup';
 export type { OverviewInput } from './campaign/rollup';
 export { isForbidden, isDuplicate } from './campaign/errors';
+export { buildMatrix } from './campaign/matrix';
+export type { Matrix, MatrixCell, MatrixColumn, MatrixInput, MatrixRow, CellKind } from './campaign/matrix';
