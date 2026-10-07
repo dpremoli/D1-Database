@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_UNC_PREFIX, linkedFiles, parentUnc, toFileUri, toUnc } from './linkedFiles';
+import { DEFAULT_UNC_PREFIX, linkedFiles, parentUnc, shareFiles, toFileUri, toUnc } from './linkedFiles';
 
 describe('path helpers', () => {
 	it('maps an archive path to a UNC path, its folder and a file URI', () => {
@@ -46,5 +46,22 @@ describe('linkedFiles', () => {
 	it('handles no links at all', () => {
 		expect(linkedFiles(null)).toEqual([]);
 		expect(linkedFiles(undefined)).toEqual([]);
+	});
+});
+
+describe('shareFiles', () => {
+	it('turns operation_files rows into file rows with a copyable folder', () => {
+		const rows = shareFiles([
+			{ file_id: 'a', file_path: '\\\\host\\share\\runs\\one.mat', file_name: 'One' },
+			{ file_id: 'b', file_path: 'X:/runs/two.csv' },
+			{ file_id: 'c', file_path: '  ' },
+			null,
+		]);
+		expect(rows).toHaveLength(2);
+		expect(rows[0]).toMatchObject({ id: 'a', name: 'One', kind: 'archive', folder: '\\\\host\\share\\runs', fileUri: null });
+		expect(rows[1]).toMatchObject({ name: 'two.csv', folder: 'X:/runs' });
+	});
+	it('has no folder for a bare file name', () => {
+		expect(shareFiles([{ file_id: 'd', file_path: 'one.mat' }])[0].folder).toBeNull();
 	});
 });

@@ -169,9 +169,8 @@ the rebuilt `d1-home`, `d1-lab-dashboard` and `d1-composition-bar` load, and app
   machining operations and **View FAST** on sintering ones opening the right run, and the file
   rows' copy-path buttons giving the same paths as the sample form. Narrow the browser below
   ~640 px wide (or open the page in a split view): the strip becomes a vertical list. **Print
-  label** and **Report** open in a new tab. Operations and tests that you click open the
-  "not built yet" page with an *Open in Data Studio* button until stage 4. Dark theme: the page is
-  readable. Since: Explorer pages E1 (PR pending).
+  label** and **Report** open in a new tab. Operations and tests that you click open their
+  Explorer pages (see the E4 items below). Dark theme: the page is readable. Since: Explorer pages E1 (PR pending).
 - [ ] **E1 — Sample page with hidden relatives.** As a role whose item filter hides some of that
   sample's relatives, operations or tests, open the page. Expect: the life strip shows only what
   the role can open, with dashed "N not visible to you" markers where something was dropped (and
@@ -181,7 +180,7 @@ the rebuilt `d1-home`, `d1-lab-dashboard` and `d1-composition-bar` load, and app
   pending).
 - [ ] **E1 — links from Home and the dashboards.** On Home, the recent-activity sample cards and, in
   the Lab Dashboard, "Open sample" and the timeline entries open the Sample page; operation and test
-  links open the placeholder page whose *Open in Data Studio* button opens the right Content form.
+  links open their Explorer pages (E4).
   FAST runs on Home still open the FAST dashboard. Since: Explorer pages E1 (PR pending).
 
 #### Campaign page (E2)
@@ -272,6 +271,62 @@ the rebuilt `d1-home`, `d1-lab-dashboard` and `d1-composition-bar` load, and app
   attention*, with more than 10 failed test sessions, the link under "Showing 10 of N" opens the
   Test Sessions list with the *Failed* bookmark applied, and the other tiles say "Open the
   collection in the Data Studio (unfiltered)". Since: Explorer pages E3-fix (PR pending).
+
+#### Operation and Test pages (E4)
+After `npm ci` and `npm run build:extensions` at the repo root, restart Directus: `d1-project-items`
+and `d1-fast-dashboard` are now built from the root with the other workspace extensions, and
+`d1-report` is rebuilt in its own folder (`npm ci && npm run build`).
+
+- [ ] **E4 — parameters per process category on real data.** Open `/admin/home/operations/<id>` for
+  one operation of each category you have (machining, FAST sintering, heat treatment, deformation,
+  additive, sample preparation). Expect: the Parameters grid shows only that category's fields, with
+  the same labels and values as the Content form's panel, the unit after each measured value (the
+  field's suffix: mm, rpm, kN, °C ...), select fields by their label (cooling method "Water quench",
+  not `water_quench`), toggles as Yes / No, and a very small number readable (not "0"). Fields left
+  empty are not listed. An operation with no process category says so. Sample preparation has no
+  parameter columns, so it shows the empty line. Repeat for a test of each type you have (tensile,
+  hardness, charpy, compression, SEM, XRD, tribology, fatigue, CT ...) on `/admin/home/tests/<id>`.
+  Since: Explorer pages E4 (PR pending).
+- [ ] **E4 — operation page states.** On a machining operation with several `.mat` files in
+  different states: each file shows its Analysis and Diagnostics badges, the error text of a failed
+  one, and **View forces** opens the Force dashboard on that operation. On a FAST operation the FAST
+  run block shows status, recipe, duration and rows, and **View FAST** opens that run. A sample that
+  was cut or sintered shows as Input and, for FAST or additive steps, the new sample as Output with
+  working links. Linked files show the same copy-path buttons as the sample form. As a Lab Member
+  there is no error about "network-share files". **Edit** opens the operation's Content form in the
+  drawer, the category's parameter fields appear, and saving refreshes the page. **Report** opens
+  in a new tab. An operation the role cannot read, and a made-up id, show "Not found or not visible
+  to you". Dark theme readable. Since: Explorer pages E4 (PR pending).
+- [ ] **E4 — real worker summary_stats.** Open a test session that the heavy-data worker and the
+  analysis worker have both processed. Expect Results with a "Basic statistics" group (samples,
+  sample rate, duration, a Channels table of min, max, mean, std per channel) and an "FFT analysis"
+  group (RMS, dominant frequency with Hz, a Top frequencies table, band energy rows), matching the
+  JSON in the Content form; a processed-only session shows just the first group. A test still
+  `registered` says the workers have not produced results. A test with older flat `summary_stats`
+  shows them under "Summary". Since: Explorer pages E4 (PR pending).
+- [ ] **E4 — test subject and the Sample page's Tests.** Create a test through the Content form
+  (pick the sample in the Subject field, so `sample_id` stays empty). Expect: its Test page shows
+  the sample under Subject and in the breadcrumb, and the **Sample page lists the test** under
+  Tests (this was missed before E4). A test whose subject is an insert edge shows the edge as a
+  link to its Content form. Since: Explorer pages E4 (PR pending).
+- [ ] **E4 — QR scan opens the Sample page.** Print a label (Sample page > Print label, or
+  `/d1-report/label`) from the rebuilt app and scan it with a phone that is not signed in. Expect:
+  the sign-in page, then `/admin/home/samples/<id>` (the Explorer page, usable on a phone). An old
+  printed label (encodes `/admin/content/physical_samples/<id>`) still opens the Content form. The
+  QR and the sample link on an operation report and a test report open the Explorer pages. Needs
+  `PUBLIC_URL` set to an address the phone can reach. Since: Explorer pages E4 (PR pending).
+- [ ] **E4 — Force and FAST dashboards land on the Explorer.** In the Force dashboard use the "open
+  record" action on an operation and on a sample: both open `/admin/home/operations/<id>` and
+  `/admin/home/samples/<id>`, and Back returns to the dashboard. In the FAST dashboard **Open** on
+  a run opens the Operation page; opening the recipe still opens its Content form. Since: Explorer
+  pages E4 (PR pending).
+- [ ] **E4 — project items links and lineage graph.** In a project's Content form, the Project
+  items panel shows operation and sample codes as links to their Explorer pages (equipment, tools,
+  inserts and materials open their Content forms); as a role that cannot read some of the
+  operations, those rows stay plain text and the panel still lists them. On a Sample page,
+  **Open lineage graph** opens the Lab Dashboard graph centred on that sample, with its operations,
+  tests and neighbours, and reloading the graph URL (`?sample=<id>`) does the same. Since:
+  Explorer pages E4 (PR pending).
 
 ## B. Force rig (NI-DAQ, Lab Amp, packaged Windows app)
 

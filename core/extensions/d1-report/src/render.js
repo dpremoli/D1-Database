@@ -7,10 +7,26 @@
 
 import { buildGeometry } from './geometry';
 
+// Collections that have an Explorer page (the `home` module). This is the same mapping as
+// recordRoute() in packages/d1-ui; d1-report is built on its own and cannot import the kit, so
+// the table is repeated here. Keep the two in step.
+const EXPLORER_PAGES = {
+	physical_samples: 'samples',
+	manufacturing_operations: 'operations',
+	test_sessions: 'tests',
+	campaigns: 'campaigns',
+	projects: 'projects',
+};
+
 // The Directus app page for a record: what report QR codes, label QR codes and in-report links
-// open (sign-in required). `publicUrl` may carry trailing slashes.
+// open (sign-in required). A record with an Explorer page opens there (/admin/home/samples/<id>);
+// any other goes to its Data Studio form. Labels printed before the Explorer pages existed point
+// at /admin/content/..., which still works. `publicUrl` may carry trailing slashes.
 export function adminRecordUrl(publicUrl, collection, id) {
-	return `${String(publicUrl || '').replace(/\/+$/, '')}/admin/content/${collection}/${encodeURIComponent(String(id))}`;
+	const base = String(publicUrl || '').replace(/\/+$/, '');
+	const key = encodeURIComponent(String(id));
+	const page = EXPLORER_PAGES[collection];
+	return page ? `${base}/admin/home/${page}/${key}` : `${base}/admin/content/${collection}/${key}`;
 }
 
 export const esc = (v) =>

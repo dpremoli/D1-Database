@@ -59,3 +59,25 @@ export function linkedFiles(links: any[] | null | undefined, prefix = DEFAULT_UN
 	}
 	return out;
 }
+
+// `operation_files` rows: older links to a file on the network share, stored as a plain path
+// (a UNC path or a mapped-drive path) instead of a Directus file. Shown the same way as an
+// archive file, minus the open link (a bare path has no file:// form we can trust).
+export function shareFiles(rows: any[] | null | undefined): LinkedFile[] {
+	const out: LinkedFile[] = [];
+	for (const r of rows ?? []) {
+		const path = typeof r?.file_path === 'string' ? r.file_path.trim() : '';
+		if (!path) continue;
+		const folder = path.replace(/[\\/][^\\/]*$/, '');
+		const base = path.split(/[\\/]/).pop() || path;
+		out.push({
+			id: String(r.file_id ?? path),
+			name: r.file_name || base,
+			kind: 'archive',
+			unc: path,
+			folder: folder === path ? null : folder,
+			fileUri: null,
+		});
+	}
+	return out;
+}
