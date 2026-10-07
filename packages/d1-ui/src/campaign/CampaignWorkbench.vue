@@ -43,8 +43,8 @@ defineExpose({ reload });
 		<Section v-if="showMatrix" title="Samples and steps" :count="matrix.rows.length">
 			<LoadState
 				:loading="(junction.loading || operations.loading || tests.loading) && !matrix.rows.length"
-				:empty="!matrix.rows.length && !matrix.unplaced.samples"
-				empty-text="No samples, operations or tests in this campaign yet."
+				:empty="!matrix.rows.length"
+				:empty-text="overview.counts.hiddenSamples ? 'No samples, operations or tests you can see in this campaign yet.' : 'No samples, operations or tests in this campaign yet.'"
 			>
 				<CampaignMatrix :matrix="matrix" :force-hidden="analysisUnavailable" />
 			</LoadState>

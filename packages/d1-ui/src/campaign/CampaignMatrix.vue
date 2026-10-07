@@ -62,10 +62,6 @@ const LEGEND = [
 <template>
 	<div class="d1-matrix">
 		<p v-if="forceHidden" class="note">Force-analysis state is not visible to your role, so operations show no state.</p>
-		<p v-if="matrix.unplaced.samples" class="note">
-			{{ matrix.unplaced.samples }} {{ matrix.unplaced.samples === 1 ? 'sample' : 'samples' }} not visible to you, so
-			{{ matrix.unplaced.samples === 1 ? 'it has' : 'they have' }} no row.
-		</p>
 		<p v-if="matrix.unplaced.operations || matrix.unplaced.tests" class="note">
 			{{ matrix.unplaced.operations }} operation(s) and {{ matrix.unplaced.tests }} test(s) belong to samples you cannot see, so they have no row.
 		</p>
