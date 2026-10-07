@@ -1,7 +1,7 @@
 # FRM ↔ Signals linking
 
 **Date:** 2026-10-04
-**Status:** Implemented (PR #121); follow-ups (touch long-press, faster picks, the official crop and the build manifest) in `docs/superpowers/plans/2026-10-06-frm-linking-followups.md`. The MATLAB side is not executed anywhere automated: see the physical-test backlog.
+**Status:** Implemented (PR #121); follow-ups (touch long-press, faster picks, the official crop and the build manifest) in PR #129. The MATLAB side is not executed anywhere automated: see the physical-test backlog.
 **Scope decision:** the Plot dashboard (`ForceDashboard`), which is both the Force App's Plot page
 and Directus *Force Analysis*. Lite and Full/Gridded (octree) maps. The Record page is deferred.
 
