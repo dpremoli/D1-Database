@@ -1744,6 +1744,44 @@ dn_check "dn_fk:c" "down restores test_sessions_sample_fkey ON DELETE CASCADE"
 dn_check "dn_idx_gone:0" "down drops the three indexes"
 dn_check "dn_triggers_gone:0" "down drops the sync and delete triggers"
 
+echo "== physical_samples.co_owners is free for the M2M alias (ADR-0011) =="
+# The legacy TEXT column is renamed so that `co_owners._some.user_id` in a permission filter can
+# only mean the sample_co_owners junction. Run the migration's down then up in a rolled-back
+# transaction, with a legacy value seeded to prove the data survives both renames.
+CO=db/migrations/20261007000140_physical_samples_co_owners_legacy.sql
+co_up=$(awk '/-- migrate:up/{f=1;next}/-- migrate:down/{f=0}f' "$CO")
+co_down=$(awk '/-- migrate:down/{f=1;next}f' "$CO")
+run_eq "no real column named co_owners is left on physical_samples" \
+    "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='physical_samples' AND column_name='co_owners'" "0"
+run_eq "the legacy TEXT column is co_owners_legacy and has a comment" \
+    "SELECT count(*) FROM information_schema.columns c WHERE c.table_schema='public' AND c.table_name='physical_samples' AND c.column_name='co_owners_legacy' AND c.data_type='text' AND col_description('public.physical_samples'::regclass, c.ordinal_position) IS NOT NULL" "1"
+co_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO physical_samples (sample_code, co_owners_legacy) VALUES ('TEST-CO-001', 'a@example.org');
+$co_down
+SELECT 'dn_col:' || count(*) FROM information_schema.columns WHERE table_name='physical_samples' AND column_name='co_owners';
+SELECT 'dn_val:' || co_owners FROM physical_samples WHERE sample_code='TEST-CO-001';
+SELECT 'dn_meta:' || count(*) FROM directus_fields WHERE collection='physical_samples' AND field='co_owners_legacy';
+$co_up
+SELECT 'up_col:' || count(*) FROM information_schema.columns WHERE table_name='physical_samples' AND column_name='co_owners';
+SELECT 'up_val:' || co_owners_legacy FROM physical_samples WHERE sample_code='TEST-CO-001';
+SELECT 'up_meta:' || hidden || '/' || readonly FROM directus_fields WHERE collection='physical_samples' AND field='co_owners_legacy';
+$co_up
+SELECT 'up_idempotent:' || count(*) FROM directus_fields WHERE collection='physical_samples' AND field='co_owners_legacy';
+SELECT 'views_ok:' || count(*) FROM v_complete_sample_history WHERE sample_code='TEST-CO-001';
+ROLLBACK;
+SQL
+)
+co_check() { grep -qx "$1" <<<"$co_out" && ok "$2" || bad "$2 (psql output: $co_out)"; }
+co_check "dn_col:1" "down: the TEXT column is called co_owners again"
+co_check "dn_val:a@example.org" "down: the legacy value survives"
+co_check "dn_meta:0" "down: the hidden Directus field row is removed"
+co_check "up_col:0" "up: co_owners is renamed away"
+co_check "up_val:a@example.org" "up: the legacy value survives"
+co_check "up_meta:true/true" "up: the legacy column is hidden and read-only in Directus"
+co_check "up_idempotent:1" "up is idempotent (one Directus field row)"
+co_check "views_ok:1" "views over physical_samples still work after the rename"
+
 echo "== Cleanup test rows =="
 $PSQL -c "
     DELETE FROM sample_genealogy
