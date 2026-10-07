@@ -1880,6 +1880,8 @@ cfg_files=$(sed -n '/^FILES=(/,/^)/p' scripts/configure_all.sh | grep -o '[a-z_]
     || bad "could not read the FILES list of scripts/configure_all.sh"
 {
     echo "BEGIN;"
+    # the person pickers migration 062 registered, as the migrations leave them (compared after the scripts)
+    echo "CREATE TEMP TABLE people_pickers AS SELECT collection, field, special, interface, options::text AS options, display, display_options::text AS display_options, readonly, hidden, sort, width, required, translations::text AS translations FROM directus_fields WHERE field IN ('owner_person_id','operator_person_id','principal_investigator_person');"
     for f in $cfg_files; do sed -E '/^(BEGIN|COMMIT);[[:space:]]*$/d' "scripts/$f"; done
     echo '\t on'
     echo '\a'
@@ -1888,6 +1890,10 @@ cfg_files=$(sed -n '/^FILES=(/,/^)/p' scripts/configure_all.sh | grep -o '[a-z_]
     echo '\o'
     echo "SELECT 'b_legacy_field:' || hidden || '/' || readonly FROM directus_fields WHERE collection = 'physical_samples' AND field = 'co_owners_legacy';"
     echo "SELECT 'b_project_aliases:' || string_agg(field, ',' ORDER BY field) FROM directus_fields WHERE collection = 'projects' AND field IN ('samples','operations','sessions');"
+    echo "SELECT 'b_pickers_before:' || count(*) FROM people_pickers;"
+    echo "SELECT 'b_pickers_changed:' || count(*) FROM (SELECT * FROM people_pickers EXCEPT SELECT collection, field, special, interface, options::text, display, display_options::text, readonly, hidden, sort, width, required, translations::text FROM directus_fields) x;"
+    echo "SELECT 'b_picker_relations_lost:' || count(*) FROM (SELECT collection, field FROM people_pickers EXCEPT SELECT many_collection, many_field FROM directus_relations WHERE one_collection = 'people') x;"
+    echo "SELECT 'b_legacy_visible:' || count(*) FROM directus_fields WHERE NOT hidden AND ((collection, field) IN (('physical_samples','owner'),('manufacturing_operations','owner'),('test_sessions','owner'),('campaigns','owner'),('etchants','owner'),('prep_recipes','owner'),('tool_boxes','owner'),('cutting_inserts','owner'),('insert_edges','owner'),('manufacturing_operations','operator'),('test_sessions','operator')));"
     echo "ROLLBACK;"
 } > "$RES_DIR/configure.sql"
 cfg_out=$(psql "$DATABASE_URL" --no-psqlrc -X -q -v ON_ERROR_STOP=1 -f "$RES_DIR/configure.sql" 2>&1 | grep '^b_')
@@ -1898,6 +1904,16 @@ grep -qxF "b_legacy_field:true/true" <<<"$cfg_out" && ok "configure_directus.sql
     || bad "configure_directus.sql does not re-add the co_owners_legacy field row (output: $cfg_out)"
 grep -qxF "b_project_aliases:operations,samples,sessions" <<<"$cfg_out" && ok "configure_directus.sql keeps the hidden projects.samples, operations and sessions aliases" \
     || bad "configure_directus.sql loses a projects alias (output: $cfg_out)"
+# The Owner / Operator / PI pickers (m2o -> people, migration 062) must survive the scripts, which delete
+# the field rows of these collections; otherwise the forms fall back to a raw UUID input.
+grep -qxF "b_pickers_before:12" <<<"$cfg_out" && ok "the migrations leave 12 person picker field rows (owner, operator and PI)" \
+    || bad "expected 12 owner_person_id/operator_person_id/principal_investigator_person field rows after the migrations (output: $cfg_out)"
+grep -qxF "b_pickers_changed:0" <<<"$cfg_out" && ok "the configure scripts keep every person picker field row, with migration 062's interface, options, display, width, sort and translations" \
+    || bad "a configure script drops or changes a person picker field row (output: $cfg_out)"
+grep -qxF "b_picker_relations_lost:0" <<<"$cfg_out" && ok "the configure scripts keep a relation to people for every person picker" \
+    || bad "a configure script drops the people relation of a person picker (output: $cfg_out)"
+grep -qxF "b_legacy_visible:0" <<<"$cfg_out" && ok "the legacy owner and operator backup columns stay hidden after the configure scripts" \
+    || bad "a configure script makes a legacy owner/operator column visible again (output: $cfg_out)"
 rm -rf "$RES_DIR"
 
 # The migration itself. Down first (to the real pre-migration state), then seed what the old script
