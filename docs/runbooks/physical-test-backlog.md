@@ -184,6 +184,51 @@ the rebuilt `d1-home`, `d1-lab-dashboard` and `d1-composition-bar` load, and app
   links open the placeholder page whose *Open in Data Studio* button opens the right Content form.
   FAST runs on Home still open the FAST dashboard. Since: Explorer pages E1 (PR pending).
 
+#### Projects and Home (E3)
+- [ ] **E3 — Home for a user with a people row.** Sign in as a Lab Member whose `people` row has
+  `user_id` set, who is PI of one project, investigator on another, owns a campaign and owns and
+  co-owns samples. Expect: *My projects* lists both projects, *Campaigns I own* the campaign, *My
+  latest samples* the ten most recently updated samples they own or co-own (compare with the Data
+  Studio *My samples* bookmark plus a `co_owners` filter), no "not linked" notice. Since: Explorer
+  pages E3 (PR pending).
+- [ ] **E3 — Home for a user without a people row.** Sign in as a user with no `people` row. Expect:
+  the notice that the login is not linked to a person record, empty owned lists, and projects
+  where they are PI (none, since PI is a people row) or samples they co-own still shown; no error
+  banner. Also as a role that cannot read `project_investigators` or `sample_co_owners`: the lists
+  fall back to ownership only with a one-line note, never a blank Home. Since: Explorer pages E3
+  (PR pending).
+- [ ] **E3 — needs-attention counts match Data Studio filters.** Compare each Home tile with the
+  same filter in the Data Studio: *Failed test sessions* equals the *Failed* bookmark on Test
+  Sessions; *Force analysis errors on my operations* equals Manufacturing Operations filtered by
+  owner = you and Force Analyses (`force_analyses`) any status = error; *Operations with force
+  files still pending* the same with status = pending; *Samples with no owner* (admin only) equals
+  Samples with Owner empty. Click each tile: the list under the tiles shows up to 10 records that
+  open their Explorer pages, and "Open the full list" opens the collection. Check that the
+  `$CURRENT_USER` filter resolves from the browser (the tile for your own operations is not 0 when
+  an owned operation has an errored force file). The *Samples with no owner* tile must be absent
+  for a Lab Member and present for an admin: if it is missing for an admin, the admin flag is not
+  where `home.vue` looks (`userStore.isAdmin`, `currentUser.admin_access`). Since: Explorer pages
+  E3 (PR pending).
+- [ ] **E3 — Projects index.** Open `/admin/home/projects` (Home > *All projects*). Expect one card
+  per readable project, with the campaign and sample counts equal to the Data Studio lists filtered
+  by project, the PI name, and "You are PI" / "You are investigator" badges that match the project
+  form. *My role* (PI, investigator, either), *Status* and the code/name search narrow the cards.
+  Since: Explorer pages E3 (PR pending).
+- [ ] **E3 — Project page.** Open a project with campaigns and loose records. Expect: tiles equal
+  hand counts, each campaign card's counts and progress bar (force analysed n / m for a machining
+  trial, tests complete n / m for a testing campaign) agree with the campaign's own page, the
+  "not in a campaign" lists contain exactly the project's records with no campaign, *Equipment
+  used* lists the equipment of the project's operations, *Edit* saves through the drawer, and a
+  project the role cannot read shows "Not found or not visible to you". For a role that cannot
+  read `machining_force_analysis`, `project_investigators` or `campaign_samples` only that part
+  shows a note. Since: Explorer pages E3 (PR pending).
+- [ ] **E3 — sparkline on real data.** On the index and on a project that has work in the last six
+  months: the weekly lines match a hand count of operations (`operation_date`) and tests
+  (`session_date`) per ISO week (hover a week for its numbers), weeks with nothing are 0, a project
+  that spans New Year has no gap, and in dark theme both lines and the dashed test line are
+  readable. With more than 5000 operations or tests in 26 weeks the "newest records only" note
+  appears. Since: Explorer pages E3 (PR pending).
+
 ## B. Force rig (NI-DAQ, Lab Amp, packaged Windows app)
 
 Install the current release from the update feed on the acquisition PC. Use a real sample and
