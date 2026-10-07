@@ -3,10 +3,20 @@
 // `project_rollup` rows carry a hashed row_id, a kind and a display code, but not the id of the
 // record they describe, so there is nothing to link to. The project's operations do know them:
 // each operation names its sample, machine, tool, edge, insert and material. Reading those
-// (as the signed-in user, so only what they may see) gives code -> record for every kind, and a
-// rollup row whose record is not in the result simply stays plain text.
+// (as the signed-in user, so only what they may see) gives the ids, and the row_id is
+// recomputed here exactly as the database does (migration 20261002000116, v_project_rollup):
+//
+//   operation       md5('operation:' || operation_id)
+//   <other kinds>   md5('<prefix>:' || project_id || ':' || id)   prefix: tool, edge, insert,
+//                                                                 sample, material, equipment
+//
+// Matching by row_id and not by display code matters because a code can be shared
+// (manufacturing_operations.pass_code is neither unique nor required), and a code-keyed map would
+// link a row to whichever operation was read last. A rollup row whose record is not in the result
+// simply stays plain text.
 
 import { asRecord } from './format';
+import { md5 } from './md5';
 
 // project_rollup.kind -> the collection the record lives in (recordRoute() then decides the page).
 export const ROLLUP_COLLECTION: Record<string, string> = {
@@ -19,15 +29,26 @@ export const ROLLUP_COLLECTION: Record<string, string> = {
 	material: 'materials',
 };
 
-// What to read from the project's operations to resolve every kind above.
+// kind -> the prefix v_project_rollup hashes into row_id.
+export const ROLLUP_ROW_PREFIX: Record<string, string> = {
+	operation: 'operation',
+	tool: 'tool',
+	insert_edge: 'edge',
+	cutting_insert: 'insert',
+	sample: 'sample',
+	material: 'material',
+	equipment: 'equipment',
+};
+
+// What to read from the project's operations to resolve every kind above: ids only.
 export const ROLLUP_OPERATION_FIELDS = [
-	'operation_id', 'pass_code',
-	'sample_id.sample_id', 'sample_id.sample_code',
-	'equipment_id.equipment_id', 'equipment_id.equipment_code',
-	'tool_id.tool_id', 'tool_id.tool_code',
-	'insert_edge_id.edge_id', 'insert_edge_id.edge_code',
-	'insert_edge_id.insert_id.insert_id', 'insert_edge_id.insert_id.insert_code',
-	'material_id.material_id', 'material_id.alloy_code',
+	'operation_id',
+	'sample_id.sample_id',
+	'equipment_id.equipment_id',
+	'tool_id.tool_id',
+	'insert_edge_id.edge_id',
+	'insert_edge_id.insert_id.insert_id',
+	'material_id.material_id',
 ];
 
 export interface RollupTarget {
@@ -35,30 +56,40 @@ export interface RollupTarget {
 	id: string;
 }
 
-export const rollupKey = (kind: string, code: string | null | undefined) => `${kind}:${code ?? ''}`;
+// The project_rollup.row_id of the row for record `id` of `kind` in project `projectId`.
+export function rollupRowId(kind: string, projectId: string | number, id: string | number): string {
+	const prefix = ROLLUP_ROW_PREFIX[kind];
+	return md5(kind === 'operation' ? `${prefix}:${id}` : `${prefix}:${projectId}:${id}`);
+}
 
-// code -> record, for every kind the operations can resolve. `ops` are the rows read with
-// ROLLUP_OPERATION_FIELDS.
-export function rollupTargets(ops: any[] | null | undefined): Map<string, RollupTarget> {
+// The operations whose rollup rows belong to project `projectId`: its own, and those that only
+// reach it through their campaign (the view uses COALESCE(o.project_id, c.project_id)).
+export function rollupOperationsFilter(projectId: string | number) {
+	return {
+		_or: [
+			{ project_id: { _eq: projectId } },
+			{ _and: [{ project_id: { _null: true } }, { campaign_id: { project_id: { _eq: projectId } } }] },
+		],
+	};
+}
+
+// row_id -> record, for every kind the operations can resolve. `ops` are the rows read with
+// ROLLUP_OPERATION_FIELDS and rollupOperationsFilter, `projectId` the project being viewed.
+export function rollupTargets(ops: any[] | null | undefined, projectId: string | number): Map<string, RollupTarget> {
 	const out = new Map<string, RollupTarget>();
-	const add = (kind: string, code: unknown, id: unknown) => {
-		if (typeof code !== 'string' || !code || (typeof id !== 'string' && typeof id !== 'number')) return;
-		out.set(rollupKey(kind, code), { collection: ROLLUP_COLLECTION[kind], id: String(id) });
+	const add = (kind: string, id: unknown) => {
+		if (typeof id !== 'string' && typeof id !== 'number') return;
+		out.set(rollupRowId(kind, projectId, id), { collection: ROLLUP_COLLECTION[kind], id: String(id) });
 	};
 	for (const op of ops ?? []) {
-		add('operation', op?.pass_code, op?.operation_id);
-		const sample = asRecord(op?.sample_id);
-		add('sample', sample?.sample_code, sample?.sample_id);
-		const equipment = asRecord(op?.equipment_id);
-		add('equipment', equipment?.equipment_code, equipment?.equipment_id);
-		const tool = asRecord(op?.tool_id);
-		add('tool', tool?.tool_code, tool?.tool_id);
+		add('operation', op?.operation_id);
+		add('sample', asRecord(op?.sample_id)?.sample_id);
+		add('equipment', asRecord(op?.equipment_id)?.equipment_id);
+		add('tool', asRecord(op?.tool_id)?.tool_id);
 		const edge = asRecord(op?.insert_edge_id);
-		add('insert_edge', edge?.edge_code, edge?.edge_id);
-		const insert = asRecord(edge?.insert_id);
-		add('cutting_insert', insert?.insert_code, insert?.insert_id);
-		const material = asRecord(op?.material_id);
-		add('material', material?.alloy_code, material?.material_id);
+		add('insert_edge', edge?.edge_id);
+		add('cutting_insert', asRecord(edge?.insert_id)?.insert_id);
+		add('material', asRecord(op?.material_id)?.material_id);
 	}
 	return out;
 }

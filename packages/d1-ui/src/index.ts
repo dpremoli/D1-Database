@@ -60,6 +60,6 @@ export { labelAndUnit, summaryCount, summaryGroups } from './summary';
 export type { StatEntry, StatGroup, StatTable } from './summary';
 export { shareFiles } from './linkedFiles';
 export { default as NotVisible } from './components/NotVisible.vue';
-export { ROLLUP_COLLECTION, ROLLUP_OPERATION_FIELDS, rollupKey, rollupTargets } from './rollupLinks';
+export { ROLLUP_COLLECTION, ROLLUP_OPERATION_FIELDS, rollupOperationsFilter, rollupRowId, rollupTargets } from './rollupLinks';
 export type { RollupTarget } from './rollupLinks';
 export { useFieldDefs } from './composables/useFieldDefs';

@@ -369,6 +369,14 @@ SELECT 'rollup_view:' || string_agg(split_part(code, '-', 1), '<' ORDER BY code)
 SELECT 'rollup_view_suffix:' || string_agg(substring(code FROM 'F[0-9]+$'), '<' ORDER BY code)
   FROM v_project_rollup WHERE kind = 'operation' AND code LIKE '%-TESTNATRU-MR-%';
 SELECT 'unique:' || count(*) FROM physical_samples WHERE sample_code = '10-TESTNAT-MF-2026-10-1';
+-- row_id formula: d1-project-items (packages/d1-ui/src/rollupLinks.ts) recomputes these hashes
+-- in the browser to link rollup rows to records, so the two must not drift apart.
+SELECT 'row_id_sample:' || (r.row_id = md5('sample:' || r.project_id::text || ':' || sa.sample_id::text))
+  FROM project_rollup r JOIN physical_samples sa ON sa.sample_code = r.code
+  WHERE r.kind = 'sample' AND r.code = 'TESTNAT-ROLLUP-SAMPLE';
+SELECT 'row_id_operation:' || (r.row_id = md5('operation:' || o.operation_id::text))
+  FROM project_rollup r JOIN manufacturing_operations o ON o.pass_code = r.code
+  WHERE r.kind = 'operation' AND r.code = '9-TESTNATRU-MF-1';
 $nat_down
 SELECT 'down_columns:' || count(*) FROM information_schema.columns
   WHERE table_schema = 'public' AND collation_name = 'natural_sort';
@@ -396,6 +404,8 @@ nat_check "suffix:F9<F10" "later digit runs too: ...-F9 < ...-F10"
 nat_check "view:9<10<99<151<1000" "views inherit the ordering (v_complete_sample_history)"
 nat_check "code_sort:00000009-TESTNAT-MF-2026-10-1" "code_sort keeps its zero-padded value"
 nat_check "unique:1" "equality is unchanged"
+nat_check "row_id_sample:true" "project_rollup.row_id of a sample is md5('sample:' || project || ':' || id) (client link matching)"
+nat_check "row_id_operation:true" "project_rollup.row_id of an operation is md5('operation:' || id) (client link matching)"
 nat_check "rollup_table:9<10<99<151<1000" "project_rollup (the Directus cache table) sorts by number: 9 < 10 < 99 < 151 < 1000"
 nat_check "rollup_table_suffix:F9<F10" "project_rollup: ...-F9 < ...-F10"
 nat_check "rollup_view:9<10<99<151<1000" "v_project_rollup sorts by number: 9 < 10 < 99 < 151 < 1000"

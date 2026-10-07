@@ -292,9 +292,11 @@ small mapping repeats `recordRoute()`'s table. Printed labels keep working becau
 QR (the label carries it).
 
 **Project items:** `project_rollup` rows carry a hashed `row_id`, not the record id, so
-`d1-project-items` reads the project's operations (as the user) with their sample, machine, tool,
-edge, insert and material to resolve code → record (`rollupTargets()` in the kit). Rows it cannot
-resolve stay plain text.
+`d1-project-items` reads the project's operations (as the user, in pages, ids only) with their
+sample, machine, tool, edge, insert and material, and matches rollup rows to records by recomputing
+`row_id` client-side (`md5('operation:' || id)`, `md5('<kind>:' || project || ':' || id)`;
+`rollupTargets()` in the kit). Matching by `row_id` and not by code means a shared `pass_code`
+cannot link to the wrong operation. Rows it cannot resolve stay plain text.
 
 ## Error handling
 
