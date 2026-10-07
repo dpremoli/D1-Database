@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { errorText, formatDate, formatNumber, formatQuantity, isNotVisible } from './format';
+import { errorText, formatDate, formatNumber, asRecord, formatQuantity, isNotVisible } from './format';
 
 describe('formatQuantity', () => {
 	it('trims trailing zeros of a database numeric string', () => {
@@ -61,5 +61,14 @@ describe('isNotVisible', () => {
 		expect(isNotVisible({ response: { status: 404 } })).toBe(true);
 		expect(isNotVisible({ response: { status: 500 } })).toBe(false);
 		expect(isNotVisible(new Error('offline'))).toBe(false);
+	});
+});
+
+describe('asRecord', () => {
+	it('keeps an expanded relation and drops a bare id', () => {
+		expect(asRecord({ a: 1 })).toEqual({ a: 1 });
+		expect(asRecord('uuid')).toBeNull();
+		expect(asRecord(null)).toBeNull();
+		expect(asRecord([1])).toBeNull();
 	});
 });

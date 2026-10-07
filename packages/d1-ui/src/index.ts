@@ -33,9 +33,11 @@ export { default as CompositionBar } from './components/CompositionBar.vue';
 export { default as EditDrawer } from './components/EditDrawer.vue';
 
 // E4 operation/test
-export { formatQuantity } from './format';
+export { asRecord, formatQuantity } from './format';
 export { fieldLabel, fieldUnit, paramColumns, paramFields, paramPrefix, paramRows, OPERATION_PARAM_PREFIX } from './params';
 export type { ParamFieldDef, ParamRow } from './params';
 export { labelAndUnit, summaryCount, summaryGroups } from './summary';
 export type { StatEntry, StatGroup, StatTable } from './summary';
+export { shareFiles } from './linkedFiles';
+export { default as NotVisible } from './components/NotVisible.vue';
 export { useFieldDefs } from './composables/useFieldDefs';

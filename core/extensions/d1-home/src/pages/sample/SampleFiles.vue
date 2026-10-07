@@ -4,7 +4,8 @@ import { Section, LoadState, type LinkedFile } from '@d1/ui';
 
 // Linked data files, as the d1-archive-links interface shows them: files from the lab archive
 // get copy-path buttons (paste into Windows Explorer), files uploaded to Directus a download link.
-defineProps<{ files: LinkedFile[]; loading: boolean; error: string }>();
+// The Operation and Test pages reuse it with their own empty text.
+defineProps<{ files: LinkedFile[]; loading: boolean; error: string; emptyText?: string }>();
 
 const copiedKey = ref<string | null>(null);
 
@@ -25,7 +26,7 @@ async function copy(text: string, key: string) {
 </script>
 
 <template>
-	<Section title="Files" :count="loading ? null : files.length" :empty="!loading && !error && !files.length" empty-text="No files linked to this sample.">
+	<Section title="Files" :count="loading ? null : files.length" :empty="!loading && !error && !files.length" :empty-text="emptyText ?? 'No files linked to this sample.'">
 		<LoadState :loading="loading" :error="error">
 			<ul class="files">
 				<li v-for="f in files" :key="f.id" class="file">
@@ -45,7 +46,7 @@ async function copy(text: string, key: string) {
 							clickable small
 							@click="copy(f.folder, f.id + ':dir')"
 						/>
-						<a :href="f.fileUri ?? undefined" target="_blank" rel="noopener">
+						<a v-if="f.fileUri" :href="f.fileUri" target="_blank" rel="noopener">
 							<v-icon v-tooltip="'Open (only works with the d1file:// handler or a permissive browser)'" name="open_in_new" clickable small />
 						</a>
 					</template>

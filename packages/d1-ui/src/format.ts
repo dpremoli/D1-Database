@@ -43,3 +43,9 @@ export function formatQuantity(value: number | string | null | undefined): strin
 	const digits = abs >= 1000 ? 1 : abs >= 1 ? 3 : 5;
 	return n.toLocaleString(EN_GB, { maximumFractionDigits: digits });
 }
+
+// A related record read through `fields=rel.field`: an object when the user may read it, the bare
+// id (or null) when not. Pages show a link only for the object.
+export function asRecord(value: unknown): Record<string, any> | null {
+	return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, any>) : null;
+}
