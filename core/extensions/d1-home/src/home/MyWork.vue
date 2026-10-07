@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { LoadState, Section, StatusBadge, formatDate, humanise, projectStatusLabel, recordRoute } from '@d1/ui';
+import { LoadState, Section, StatusBadge, campaignTypeLabel, formatDate, humanise, projectStatusLabel, recordRoute } from '@d1/ui';
 import { CARD_LIMIT, SAMPLE_LIMIT, useMyWork } from './useMyWork';
 
 // Projects where I am PI or investigator, campaigns I own and my newest samples, as cards. Every card is a link to its
 // Explorer page; the header of each group links to the full list.
 const { projects, campaigns, samples, hasPerson, partialProjects, partialSamples } = useMyWork();
-const typeLabel = (t: string | null | undefined) =>
-	t === 'machining_trial' ? 'Machining trial' : t === 'testing_campaign' ? 'Testing campaign' : humanise(t ?? 'Campaign');
 </script>
 
 <template>
@@ -55,7 +53,7 @@ const typeLabel = (t: string | null | undefined) =>
 					<router-link v-for="c in campaigns.data" :key="c.campaign_id" :to="recordRoute('campaigns', c.campaign_id)" class="card">
 						<span class="c-top">
 							<span class="c-code">{{ c.campaign_code || c.name }}</span>
-							<span class="c-tag">{{ typeLabel(c.campaign_type) }}</span>
+							<span class="c-tag">{{ campaignTypeLabel(c.campaign_type) }}</span>
 						</span>
 						<span v-if="c.campaign_code" class="c-name">{{ c.name }}</span>
 						<span class="c-meta">
