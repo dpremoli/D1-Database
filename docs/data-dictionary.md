@@ -43,6 +43,7 @@ Projects & campaigns
   campaigns                    machining trial or testing campaign under a project
   campaign_samples             M2M: samples in a campaign
   project_rollup               read-only cache of v_project_rollup, rebuilt by trigger
+  lab_member_permissions_backup  transient: the Lab Member permission rows migration 141 saved (its down restores and drops it)
 
 Raw-material provenance
   raw_stock_lots               inbound material ledger
@@ -143,7 +144,7 @@ The central entity. Everything else points to or from here.
 | `current_status` | TEXT | Lifecycle: active \| consumed \| destroyed \| archived |
 | `manufactured_date` | DATE | Date sample was produced |
 | `export_controlled` | BOOLEAN | ITAR/ECJU flag; drives RBAC visibility |
-| `owner_person_id` | UUID FK | References `people.person_id`; the owner, who (with the co-owners) may edit and delete the sample ([ADR-0011](adr/0011-row-level-visibility.md)) |
+| `owner_person_id` | UUID FK | References `people.person_id`; the owner. Owner and co-owners may edit the sample; only the owner may delete it ([ADR-0011](adr/0011-row-level-visibility.md)) |
 | `co_owners_legacy` | TEXT | Legacy comma-separated co-owner e-mails from the AppSheet import (renamed from `co_owners`, migration `…140`). The live co-owners are the `sample_co_owners` rows, shown in Directus as the `co_owners` M2M field. Absent on databases that already dropped the column |
 | `version` | INTEGER | OCC version counter (incremented by trigger on UPDATE) |
 | `updated_at` | TIMESTAMPTZ | Auto-updated by OCC trigger |

@@ -386,12 +386,16 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
 #### Row-level visibility (E5, ADR-0011)
 
 Setup for every item: migrations 140 and 141 applied and Directus **restarted** (it reads relations
-at start-up, and 141 adds the hidden `projects.samples` alias). Two Lab Member users with a People
+at start-up, and 141 adds the hidden `projects.samples`, `operations` and `sessions` aliases, and the
+`d1-access-guard` hook is loaded at start-up too). Two Lab Member users with a People
 row each (`user_id` set): **A** and **B**, unrelated, plus a Lab Admin. Note the NOTICE that
 migration 141 prints about ownerless records.
 
 - [ ] **E5 — migrations 140 and 141 on the real database.** `dbmate up` applies cleanly and prints
-  `ADR-0011 ownerless records ...`; `dbmate down` twice then `up` again. In Settings → Access
+  `ADR-0011 ownerless records ...`; `dbmate down` twice then `up` again; before the `down`, copy the Lab Member rows (`SELECT * FROM
+  directus_permissions WHERE policy = '20000002-0000-0000-0000-000000000002' ORDER BY id`) and after it
+  compare: the same rows come back (ids, filters, fields), and the table
+  `lab_member_permissions_backup` is gone (it exists while 141 is applied). In Settings → Access
   Policies → Lab Member, `physical_samples` read shows the filter (owner, co-owners, project PI and
   investigators, campaign owner) and `materials` read has none. On a database that already dropped
   `physical_samples.co_owners` (the 2026-09 snapshot has no such column) nothing is renamed and
@@ -435,9 +439,9 @@ migration 141 prints about ownerless records.
   `physical_samples.co_owners_legacy` is not shown in the form. `GET
   /items/physical_samples?fields=co_owners.user_id` as the admin returns the junction rows. Since:
   Explorer pages E5 (PR pending).
-- [ ] **E5 — `projects.samples` alias.** After the Directus restart, `GET
-  /items/projects?fields=samples` as an admin lists sample ids, and a user who owns only a sample in
-  a project (no PI or investigator role) can open that project's page. If the project is invisible
+- [ ] **E5 — `projects.samples`, `operations` and `sessions` aliases.** After the Directus restart, `GET
+  /items/projects?fields=samples,operations,sessions` as an admin lists ids of each, and a user who owns only a sample, or
+  only an operation or a test, in a project (no PI or investigator role) can open that project's page. If the project is invisible
   to that user, Directus has not picked up the alias: restart it or clear its cache
   (`POST /utils/cache/clear`). Since: Explorer pages E5 (PR pending).
 - [ ] **E5 — project rollup.** As the project's PI the Project rollup list (the `d1-project-items`
@@ -457,8 +461,61 @@ migration 141 prints about ownerless records.
   and note which filter path costs. Since: Explorer pages E5 (PR pending).
 - [ ] **E5 — a member without a People row.** Create a Lab Member whose People row is missing or has
   no user: their new sample has no owner, and they cannot see it afterwards (the hook cannot fill
-  the owner). Linking the People row fixes it. Decide whether sign-up should create the row.
-  Since: Explorer pages E5 (PR pending).
+  the owner). The member can create their own People row in the Data Studio (leave *User* empty, or
+  pick themselves) and an admin can link it; linking fixes the records they make from then on.
+  Decide whether sign-up should create the row. Since: Explorer pages E5 (PR pending).
+- [ ] **E5 fix — nobody can grant themselves access (d1-access-guard).** Setup: A owns sample S and
+  project P (A is PI) and campaign C; B is unrelated, then made an **investigator** of P (so B can read S
+  if S is in P, but not edit it). As B, each of these answers **403 FORBIDDEN** and creates nothing:
+  `POST /items/sample_co_owners {"sample_id": S, "user_id": B}`; `POST /items/project_investigators
+  {"project_id": P, "user_id": B}`; `PATCH /items/sample_co_owners/<a row of another sample B can edit>
+  {"sample_id": S}`. Then B owns campaign C2: `POST /items/campaign_samples {"campaign_id": C2,
+  "sample_id": S}` is 403 (B cannot edit S), and works for a sample B owns. As A all of them work;
+  as the admin all of them work. Also: A creates a new sample with a co-owner in the **same form
+  save** (the Data Studio *Co-owners* field on a new sample), and a new project with an investigator,
+  and a new campaign with samples A owns: none is refused (the guard reads the parent inside the
+  request's transaction; if a nested create is wrongly refused, the hook's `database` is not the
+  transaction and that needs fixing). Remove B as investigator and re-add via A: works. Since:
+  Explorer pages E5 fix (PR pending).
+- [ ] **E5 fix — a PI sees the project's campaigns' records.** B is PI of project P2 and owns nothing
+  else. A creates a campaign in P2, a sample in that campaign (the sample's own project left empty)
+  and an operation and a test on it with no project of their own. B sees the campaign, the sample, the
+  operation and the test (read only, Save fails), and the Project page counts them. An operation
+  whose own project is empty but whose campaign is in P2 is visible to B too. Since: Explorer pages E5
+  fix (PR pending).
+- [ ] **E5 fix — an operation owner can open the project.** A owns an operation (or test) in project P
+  and nothing else there. A opens the operation: the breadcrumb's project link opens the Project page
+  (not "not visible to you"); A sees the project row but only A's own records in its counts. Since:
+  Explorer pages E5 fix (PR pending).
+- [ ] **E5 fix — a new project's PI is its creator.** As A (with a People row) create a project in the
+  Data Studio or the Explorer: *Principal Investigator* shows A without A choosing it, A can edit it
+  and sees it in the Projects index. Choosing another PI explicitly is kept. Since: Explorer pages E5
+  fix (PR pending).
+- [ ] **E5 fix — the audit log is admins only.** As B, `GET /items/audit_logs` answers 403 and the
+  Audit Logs collection is not in B's Data Studio navigation; as the admin it lists rows. Home,
+  the Explorer pages and `d1-trace` still work for B (nothing reads the log as a member). Since:
+  Explorer pages E5 fix (PR pending).
+- [ ] **E5 fix — nobody can take over another person's People row.** A has a People row linked to A's
+  login; B has one linked to B's. As B: `PATCH /items/people/<A's row> {"user_id": "<B's user id>"}`
+  and `{"user_id": null}` and `PATCH /items/people/<B's row> {"user_id": "<A's user id>"}` all answer
+  403, and neither login changes; `PATCH /items/people/<A's row> {"notes": "x"}` works (other
+  columns stay editable); `DELETE /items/people/<A's row>` is 403; `POST /items/people {"full_name":
+  "Z", "user_id": "<A's user id>"}` is 403 while `POST ... {"full_name": "Z"}` and `{"full_name": "Z",
+  "user_id": "<B's user id>"}` (only if B has no row yet) work. The People page's login picker is
+  hidden for B and shown for the admin, who can link and relink. As the admin none of the above is
+  refused. Since: Explorer pages E5 fix (PR pending).
+- [ ] **E5 fix — Lab Member reads still work after `configure_all.sh`.** Run
+  `scripts/configure_all.sh` against the real database (it restarts Directus), then as A and B
+  repeat a quick pass: A sees A's sample, operation, test, campaign and project in the Data Studio and
+  Explorer; B sees none of them; the sample form still shows *Co-owners* and the campaign form
+  *Samples*, and a sample's *Campaigns* field and the hidden `co_owners_legacy` stay as before.
+  Settings -> Data Model -> `physical_samples` shows `owner_person_id` -> People, `campaigns` ->
+  `owner_person_id`, and `campaign_samples` -> `campaigns` relations. (A re-run used to delete the
+  owner relations and every filter then failed.) Since: Explorer pages E5 fix (PR pending).
+- [ ] **E5 fix — the sample report hides projects the reader cannot open.** A owns sample S in project
+  P and B is a co-owner of S but not an investigator of P. As B open the sample report
+  (`/d1-report/sample/<S>`): the sample is there, but its Project line and the operations' and tests'
+  project column show nothing for P; as A (PI) they show P. Since: Explorer pages E5 fix (PR pending).
 - [ ] **E5 — a secondary sample of a multi-sample test (known gap).** B co-owns only the second
   sample of a test with two samples: B cannot see the test (it is matched through its first sample).
   Record whether this matters to the lab. Since: Explorer pages E5 (PR pending).
