@@ -6,6 +6,8 @@
 //   machining_force_analysis.status work-queue state (pending -> processing -> done | error | skipped)
 //   machining_force_analysis.diag_status  null | pending | processing | done | error
 //   physical_samples.current_status active | consumed | destroyed | archived
+//   campaigns.status                free TEXT; the Data Studio form offers planned | active | complete |
+//                                   on_hold, other values show humanised and neutral
 
 export type Tone = 'neutral' | 'info' | 'progress' | 'success' | 'warning' | 'danger';
 
@@ -14,17 +16,40 @@ export interface StatusStyle {
 	tone: Tone;
 }
 
-export type StatusKind = 'test' | 'force' | 'diag' | 'sample';
+export type StatusKind = 'test' | 'force' | 'diag' | 'sample' | 'campaign';
 
-export const TEST_STATUS: Record<string, StatusStyle> = {
-	registered: { label: 'Registered', tone: 'neutral' },
-	pending_processing: { label: 'Pending processing', tone: 'info' },
-	processing: { label: 'Processing', tone: 'progress' },
-	processed: { label: 'Processed', tone: 'success' },
-	analysing: { label: 'Analysing', tone: 'progress' },
-	analysed: { label: 'Analysed', tone: 'success' },
-	failed: { label: 'Failed', tone: 'danger' },
-};
+// The test-session lifecycle, defined once: every list below (chip order, "done" statuses, the
+// matrix's worst-first rank and cell glyph, the badge styles) is derived from this table.
+// `rank` orders statuses worst first (lowest = least advanced or failed), used to pick which test
+// a matrix cell shows when several share it. `done` means the data is processed or analysed
+// ('complete' was the retired pre-migration-0013 value and no longer exists).
+interface TestLifecycleStep extends StatusStyle {
+	value: string;
+	done: boolean;
+	rank: number;
+	glyph: string;
+}
+const TEST_LIFECYCLE: ReadonlyArray<TestLifecycleStep> = [
+	{ value: 'registered', label: 'Registered', tone: 'neutral', done: false, rank: 4, glyph: '–' },
+	{ value: 'pending_processing', label: 'Pending processing', tone: 'info', done: false, rank: 3, glyph: '◷' },
+	{ value: 'processing', label: 'Processing', tone: 'progress', done: false, rank: 1, glyph: '…' },
+	{ value: 'processed', label: 'Processed', tone: 'success', done: true, rank: 5, glyph: '✓' },
+	{ value: 'analysing', label: 'Analysing', tone: 'progress', done: false, rank: 2, glyph: '…' },
+	{ value: 'analysed', label: 'Analysed', tone: 'success', done: true, rank: 6, glyph: '✓' },
+	{ value: 'failed', label: 'Failed', tone: 'danger', done: false, rank: 0, glyph: '!' },
+];
+
+export const TEST_STATUS: Record<string, StatusStyle> = Object.fromEntries(
+	TEST_LIFECYCLE.map((t) => [t.value, { label: t.label, tone: t.tone }]),
+);
+/** Statuses in lifecycle order (chip order). */
+export const TEST_STATUS_ORDER: string[] = TEST_LIFECYCLE.map((t) => t.value);
+/** A test counts as complete once its data is processed or analysed. */
+export const TEST_DONE_STATUSES: string[] = TEST_LIFECYCLE.filter((t) => t.done).map((t) => t.value);
+/** Worst first; an unknown status sorts with 'registered'. */
+export const TEST_RANK: Record<string, number> = Object.fromEntries(TEST_LIFECYCLE.map((t) => [t.value, t.rank]));
+/** The matrix cell glyph of a test status. */
+export const TEST_GLYPH: Record<string, string> = Object.fromEntries(TEST_LIFECYCLE.map((t) => [t.value, t.glyph]));
 
 export const FORCE_STATUS: Record<string, StatusStyle> = {
 	pending: { label: 'Queued', tone: 'info' },
@@ -48,11 +73,19 @@ export const SAMPLE_STATUS: Record<string, StatusStyle> = {
 	archived: { label: 'Archived', tone: 'neutral' },
 };
 
+export const CAMPAIGN_STATUS: Record<string, StatusStyle> = {
+	planned: { label: 'Planned', tone: 'info' },
+	active: { label: 'Active', tone: 'success' },
+	complete: { label: 'Complete', tone: 'neutral' },
+	on_hold: { label: 'On hold', tone: 'warning' },
+};
+
 const VOCABULARIES: Record<StatusKind, Record<string, StatusStyle>> = {
 	test: TEST_STATUS,
 	force: FORCE_STATUS,
 	diag: DIAG_STATUS,
 	sample: SAMPLE_STATUS,
+	campaign: CAMPAIGN_STATUS,
 };
 
 // "pending_processing" -> "Pending processing"

@@ -15,6 +15,7 @@
 // with the Diagnostics build (`diag_status`) as a second marker. A test cell is the least advanced
 // session status of the tests in it (failed first, processed / analysed last).
 
+import { TEST_RANK } from '../status';
 import { analysisState, diagState, relCode, relId } from './rollup';
 
 export type CellKind = 'operation' | 'test';
@@ -71,16 +72,8 @@ export interface MatrixInput {
 	analyses?: any[];
 }
 
-// Least advanced first. An unknown status (added by a later migration) sorts with 'registered'.
-const TEST_RANK: Record<string, number> = {
-	failed: 0,
-	processing: 1,
-	analysing: 2,
-	pending_processing: 3,
-	registered: 4,
-	processed: 5,
-	analysed: 6,
-};
+// Least advanced first (TEST_RANK, from the lifecycle in status.ts). An unknown status (added by a
+// later migration) sorts with 'registered'.
 const testRank = (s: string | null | undefined) => TEST_RANK[s ?? ''] ?? TEST_RANK.registered;
 
 // Severity of a force-analysis state, for choosing which operation of a cell a click opens.

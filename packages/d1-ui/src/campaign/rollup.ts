@@ -6,20 +6,8 @@
 // machining_force_analysis rows of those operations. Design:
 // docs/superpowers/specs/2026-10-06-sample-timeline-and-campaign-overview-design.md
 
-// test_sessions.status is the lifecycle from migration 20260619000013:
-// registered | pending_processing | processing | processed | analysing | analysed | failed.
-// A test counts as complete once its data is processed or analysed ('complete' is the retired
-// pre-0013 value and no longer exists). Chips are listed in lifecycle order.
-export const TEST_DONE_STATUSES: string[] = ['processed', 'analysed'];
-export const TEST_STATUS_ORDER: string[] = [
-	'registered',
-	'pending_processing',
-	'processing',
-	'processed',
-	'analysing',
-	'analysed',
-	'failed',
-];
+// The test lifecycle (statuses, chip order, "done") is defined once in ../status.ts.
+import { TEST_DONE_STATUSES } from '../status';
 
 const worst = (s: string[]) => ['error', 'processing', 'pending'].find((k) => s.includes(k));
 
@@ -45,6 +33,15 @@ export function diagState(rows: any[] | null | undefined): string {
 	if (!s.length) return 'none';
 	return worst(s) ?? (s.includes('none') ? 'none' : 'done');
 }
+
+// Whether an operation is part of the "force analysed n / m" progress, given its rolled-up
+// analysis state (see analysisState). Force analysis only applies to machining operations (and
+// anything that already has a file), so the denominator is those, not every operation of an
+// imaging campaign. An operation whose files were all skipped is deliberately not analysed and is
+// left out as well, otherwise the bar could never reach 100%. One definition for the campaign
+// overview and the Project page's campaign cards.
+export const countsTowardForceProgress = (op: { process_category?: string | null }, state: string): boolean =>
+	(op.process_category === 'machining' || state !== 'none') && state !== 'skipped';
 
 const first = (rows: any[], field: string) => (rows ?? []).map((r) => r?.[field]).find(Boolean) ?? null;
 
@@ -127,13 +124,7 @@ export function buildOverview({ samples = [], operations = [], tests = [], analy
 		String(a.sample_code ?? '').localeCompare(String(b.sample_code ?? ''), undefined, { numeric: true }),
 	);
 
-	// Force analysis only applies to machining operations (and anything that already has a row), so
-	// the progress denominator is those, not every operation of an imaging campaign. An operation
-	// whose files were all skipped is deliberately not analysed and is left out as well, otherwise
-	// the bar could never reach 100%.
-	const forceOps = opRows.filter(
-		(o) => (o.process_category === 'machining' || o.analysis !== 'none') && o.analysis !== 'skipped',
-	);
+	const forceOps = opRows.filter((o) => countsTowardForceProgress(o, o.analysis));
 	const countBy = (rows: any[], key: string) => {
 		const out: Record<string, number> = {};
 		for (const r of rows) {

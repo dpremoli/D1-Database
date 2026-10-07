@@ -5,7 +5,7 @@
 // row whose `user_id` is the login), investigators are the M2M alias `secondary_investigators`
 // whose `user_id` is a directus_users id. Nothing here reads the hidden legacy columns.
 
-import { analysisState } from './campaign/rollup';
+import { analysisState, countsTowardForceProgress } from './campaign/rollup';
 import { operationCategoryFor } from './campaign/campaignType';
 
 export type ProjectRole = 'pi' | 'investigator';
@@ -154,9 +154,7 @@ export function campaignProgress(input: {
 					o,
 					state: analysisState(analysesByOp.get(o.operation_id) ?? []),
 				}));
-				const counted = states.filter(
-					({ o, state }) => (o.process_category === 'machining' || state !== 'none') && state !== 'skipped',
-				);
+				const counted = states.filter(({ o, state }) => countsTowardForceProgress(o, state));
 				progress = { kind: 'bar', label, done: counted.filter((x) => x.state === 'done').length, total: counted.length };
 			}
 		}

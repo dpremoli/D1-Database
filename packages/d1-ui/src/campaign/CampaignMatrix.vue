@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { recordRoute } from '../recordRoute';
-import { statusStyle } from '../status';
+import { TEST_GLYPH, statusStyle } from '../status';
 import RecordLink from '../components/RecordLink.vue';
 import type { Matrix, MatrixCell } from './matrix';
 
@@ -13,10 +13,6 @@ const props = defineProps<{ matrix: Matrix; forceHidden?: boolean }>();
 interface CellView { tone: string; glyph: string; diagTone: string | null; title: string }
 
 const GLYPH: Record<string, string> = { done: '✓', skipped: '–', error: '!', processing: '…', pending: '◷', none: '·' };
-
-const TEST_GLYPH: Record<string, string> = {
-	failed: '!', processed: '✓', analysed: '✓', processing: '…', analysing: '…', pending_processing: '◷',
-};
 
 function describe(cell: MatrixCell, sampleCode: string | null, columnLabel: string): CellView {
 	if (cell.kind === 'test') {

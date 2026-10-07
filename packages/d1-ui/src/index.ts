@@ -2,7 +2,10 @@
 // components, which use Directus theme variables and the app's global components only.
 
 export { recordRoute, collectionRoute, dataStudioRoute } from './recordRoute';
-export { statusStyle, humanise, TEST_STATUS, FORCE_STATUS, DIAG_STATUS, SAMPLE_STATUS } from './status';
+export {
+	statusStyle, humanise, TEST_STATUS, FORCE_STATUS, DIAG_STATUS, SAMPLE_STATUS, CAMPAIGN_STATUS, TEST_DONE_STATUSES,
+	TEST_STATUS_ORDER,
+} from './status';
 export type { StatusKind, StatusStyle, Tone } from './status';
 export { processLabel, analysisLink, PROCESS_LABEL } from './process';
 export type { AnalysisLink } from './process';
@@ -33,7 +36,7 @@ export { default as CompositionBar } from './components/CompositionBar.vue';
 export { default as EditDrawer } from './components/EditDrawer.vue';
 
 // E2 campaign
-export { buildOverview, analysisState, diagState, TEST_DONE_STATUSES, TEST_STATUS_ORDER } from './campaign/rollup';
+export { buildOverview, analysisState, diagState } from './campaign/rollup';
 export type { OverviewInput } from './campaign/rollup';
 export { isForbidden, isDuplicate } from './campaign/errors';
 export { buildMatrix } from './campaign/matrix';
