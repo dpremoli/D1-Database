@@ -47,15 +47,29 @@ From left to right:
 
 ![Home](../images/database/home.png)
 
-**Home** is the landing page. It has quick actions (*Register a sample*, *Log an operation*,
-*Ask the database*, *Manage people*, *Dashboards*, *Force Analysis*, *FAST Analysis*, *Force
-Crawler*), counts of samples, machining operations, FAST runs, tests and campaigns, and the most
-recent activity.
+**Home** is the landing page, and it is about **your** work. From top to bottom:
 
-Records on these pages open as **formatted pages** rather than Content forms. The first one built
-is the **Sample page** (`/admin/home/samples/<id>`, see [Samples](samples.md#the-sample-page));
-operations, tests, campaigns and projects will follow, and until then their links land on a page
-with an *Open in Data Studio* button. Content stays available for everything: it is after the
+1. **Quick actions.** Five big buttons for what you do every day: *Register a sample*, *Log an
+   operation*, *Ask the database*, *Print labels* and *Dashboards*. Below them, a **More** row
+   reaches the rest: *Projects*, *People*, *Force Analysis*, *FAST Analysis* and *Force Crawler*.
+2. **Needs attention.** Counts of things that want a look: force analyses in error on your
+   operations, failed test sessions, operations whose force files are still queued, and (for
+   administrators) samples with no owner. Click a tile and the matching records (the first ten)
+   list right under it, each one a link to its page.
+3. **My work.** Cards for the projects where you are PI or an investigator, the campaigns you
+   own, and the samples you own or co-own (latest first). A section says so when it is empty
+   rather than hiding.
+4. **Lab at a glance.** The lab-wide counts of samples, machining operations, FAST runs, tests
+   and campaigns. Each opens its list.
+5. **Recent activity.** The newest samples, operations and tests, each tagged with its kind. A FAST
+   run opens its Operation page and also offers a link to the FAST dashboard.
+
+A section that your role cannot read shows a short notice and the rest of Home still works.
+
+Records you click on Home, and on every page below, open as **formatted pages** rather than
+Content forms: the Projects index, **Project**, **Campaign**, **Sample**, **Operation** and
+**Test** pages. They are described in [Explorer pages](explorer-pages.md). Each page has an
+*Open in Data Studio* button, and Content stays available for everything else: it is after the
 dashboards on the rail.
 
 ## Working with records
