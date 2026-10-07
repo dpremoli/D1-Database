@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { LoadState, RecordLink, Section, StatusBadge, analysisLink, formatDate, processLabel } from '@d1/ui';
+import { LoadState, RecordLink, Section, StatusBadge, analysisLink, collectionRoute, formatDate, processLabel } from '@d1/ui';
 import { LIST_CAP, type Section as SectionState } from './useSampleData';
 
 // The sample's operations and tests as tables: each row links to its page, tests carry their
@@ -38,7 +38,7 @@ const testsCapped = computed(() => props.tests.data.length > LIST_CAP);
 			</table>
 			<p v-if="opsCapped" class="cap">
 				Showing the first {{ LIST_CAP }} operations.
-				<router-link to="/content/manufacturing_operations">Open the Data Studio list</router-link> for the rest.
+				<router-link :to="collectionRoute('manufacturing_operations')">Open the collection in the Data Studio (unfiltered)</router-link> for the rest.
 			</p>
 		</LoadState>
 	</Section>
@@ -61,7 +61,7 @@ const testsCapped = computed(() => props.tests.data.length > LIST_CAP);
 			</table>
 			<p v-if="testsCapped" class="cap">
 				Showing the first {{ LIST_CAP }} tests.
-				<router-link to="/content/test_sessions">Open the Data Studio list</router-link> for the rest.
+				<router-link :to="collectionRoute('test_sessions')">Open the collection in the Data Studio (unfiltered)</router-link> for the rest.
 			</p>
 		</LoadState>
 	</Section>
