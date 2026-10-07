@@ -439,7 +439,8 @@ migration 141 prints about ownerless records.
   `ADR-0011 ownerless records ...`; `dbmate down` twice then `up` again; before the `down`, copy the Lab Member rows (`SELECT * FROM
   directus_permissions WHERE policy = '20000002-0000-0000-0000-000000000002' ORDER BY id`) and after it
   compare: the same rows come back (ids, filters, fields), and the table
-  `lab_member_permissions_backup` is gone (it exists while 141 is applied). In Settings → Access
+  `d1_private.lab_member_permissions_backup` and its schema are gone (they exist while 141 is applied; they
+  are not a Data Studio collection and not in `v_schema_dictionary`). In Settings → Access
   Policies → Lab Member, `physical_samples` read shows the filter (owner, co-owners, project PI and
   investigators, campaign owner) and `materials` read has none. On a database that already dropped
   `physical_samples.co_owners` (the 2026-09 snapshot has no such column) nothing is renamed and
