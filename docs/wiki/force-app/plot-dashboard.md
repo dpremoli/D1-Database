@@ -194,8 +194,10 @@ Things to know:
   an edit: rebuild it to fix that.
 - **Official crop.** Once you save an official crop, Full and Gridded are rebuilt on the host with
   that window, and follow it when the rebuild finishes (a build already running when you save
-  finishes on the old window). If the live cache doesn't cover an octree's crop, the menu says
-  *The live cache doesn't cover this octree's crop*.
+  is redone afterwards with the new crop). If the crop starts before the live cache does, the map
+  covers the part both share. If they don't overlap at all, the menu says *The live cache doesn't
+  cover this octree's crop*; while the octree's details are still loading it says *The map is still
+  loading*.
 - **Gridded** views average samples into cells, so a right-click picks the *nearest sample to the
   spot*, not the cell. A gridded Lite view in 3D can't be picked at all; use the 2D view.
 - Right-drag still pans the map. Only a right-click that doesn't move opens the menu.

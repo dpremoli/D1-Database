@@ -1717,7 +1717,8 @@ async function saveCropAsOfficial() {
 	const invalidate: Record<string, any> = {};
 	const now = new Date().toISOString();
 	// 'error' is re-queued too: a failed build has nothing to keep, and the retry picks up the new crop.
-	// 'pending'/'processing' are left alone (already queued; a running build finishes on the old window).
+	// 'pending'/'processing' are left alone: a pending build reads the new crop when it starts, and the
+	// host re-queues a running one when it finishes (its done UPDATE sees the override changed).
 	const requeue = (st: unknown) => st === 'done' || st === 'error';
 	if (requeue(d.octree_status)) { invalidate.octree_status = 'pending'; invalidate.octree_requested_at = now; }
 	if (requeue(d.grid_octree_status)) { invalidate.grid_octree_status = 'pending'; invalidate.grid_octree_requested_at = now; }
@@ -1733,7 +1734,7 @@ async function saveCropAsOfficial() {
 		cropTouched.value = false;
 		pendingCrop.clear();   // the saved window is now the truth; a link's crop request must not re-apply
 		cropSavedMsg.value = (backToAuto ? 'Reverted to auto crop' : 'Saved as official crop')
-			+ (building ? ' (a build already running keeps the old window)' : '');
+			+ (building ? ' (the build in progress is redone with it afterwards)' : '');
 		window.setTimeout(() => { cropSavedMsg.value = ''; }, building ? 6000 : 2500);
 	} catch (e: any) {
 		cropSavedMsg.value = e?.response?.status === 403 ? 'Not permitted to save' : 'Save failed';
@@ -2214,6 +2215,7 @@ function openPointMenu(e: PointMenuEvent) {
 		: e.reason === 'gridded' ? 'Gridded 3D view averages samples'
 		: e.reason === 'no-cache' ? 'Needs this cut’s live cache'
 		: e.reason === 'outside-cache' ? 'The live cache doesn’t cover this octree’s crop'
+		: e.reason === 'loading' ? 'The map is still loading'
 		: 'No point under the cursor';
 	const items: ContextMenuItem[] = [
 		{ label: 'Show position in time', disabled: !p, hint, run: () => { if (p) showInTime(p.t); } },

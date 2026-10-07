@@ -32,6 +32,7 @@ MATLAB_JSON = {
     "cut_end_sec": 3.867,
     "crop_source": "override",
     "speed_mode": "measured",
+    "revs_cs": 1.5,
 }
 CONTRACT_KEYS = {
     "schema",
@@ -46,6 +47,7 @@ CONTRACT_KEYS = {
     "crop_source",
     "n_points",
     "built_at",
+    "revs_cs",
 }
 
 
@@ -54,6 +56,7 @@ class FakeConn:
 
     def __init__(self):
         self.sql = []
+        self.params = []
 
     def cursor(self, **_kw):
         conn = self
@@ -67,6 +70,7 @@ class FakeConn:
 
             def execute(self, sql, params=None):
                 conn.sql.append(sql)
+                conn.params.append(params)
 
             def fetchall(self):
                 return []
@@ -144,16 +148,16 @@ def stubbed(tmp_path, monkeypatch):
     return env
 
 
-def _octree(env, **row):
+def _octree(env, conn=None, **row):
     return fo.process_octree_row(
-        FakeConn(), _row(**row), "matlab", 60, {"series_points": 3000}, "potree"
+        conn or FakeConn(), _row(**row), "matlab", 60, {"series_points": 3000}, "potree"
     )
 
 
-def _grid(env, **row):
+def _grid(env, conn=None, **row):
     grid_opts = {"n": 128, "method": "splat", "cv_arm_step": 10}
     return fo.process_grid_row(
-        FakeConn(),
+        conn or FakeConn(),
         _row(**row),
         "matlab",
         60,
@@ -224,19 +228,75 @@ def test_manifest_published_with_contract_keys(stubbed, build, kind, sub):
     assert (stubbed.out / sub / "metadata.json").exists()
 
 
+def test_manifest_without_optional_revs_cs_still_publishes(stubbed):
+    del stubbed.matlab_json["revs_cs"]
+    assert _octree(stubbed) == "done"
+    m = json.loads((stubbed.out / "op-1" / "d1_build.json").read_text())
+    assert set(m) == CONTRACT_KEYS - {"revs_cs"}
+
+
 @pytest.mark.parametrize("build", [_octree, _grid])
 @pytest.mark.parametrize("case", ["missing", "malformed", "incomplete"])
-def test_missing_or_bad_matlab_json_publishes_no_manifest(stubbed, build, case, caplog):
+def test_missing_or_bad_matlab_json_fails_the_build(stubbed, build, case):
     if case == "missing":
         stubbed.matlab_json = None
     elif case == "malformed":
         stubbed.matlab_json_text = "not json"
     else:
         stubbed.matlab_json = {"feed": 1}
-    assert build(stubbed) == "done"  # a missing manifest never fails the build
-    assert not list(stubbed.out.rglob("d1_build.json"))
-    assert list(stubbed.out.rglob("metadata.json"))
-    assert any("d1_build.json" in r.getMessage() for r in caplog.records)
+    conn = FakeConn()
+    assert build(stubbed, conn=conn) == "error"
+    assert not list(stubbed.out.rglob("*"))  # nothing published
+    assert "_status='error'" in conn.sql[-1]
+    assert "manifest" in conn.params[-1][0]
+
+
+@pytest.mark.parametrize(("build", "sub"), [(_octree, "op-1"), (_grid, "grid/op-1")])
+def test_failed_build_keeps_the_previous_octree(stubbed, build, sub):
+    assert build(stubbed) == "done"
+    stubbed.matlab_json = None
+    assert build(stubbed) == "error"
+    assert (stubbed.out / sub / "d1_build.json").exists()
+
+
+@pytest.mark.parametrize(("build", "sub"), [(_octree, "op-1"), (_grid, "grid/op-1")])
+def test_manifest_written_before_metadata_and_stale_one_removed(
+    stubbed, monkeypatch, build, sub
+):
+    order = []
+    real_copy = fo.shutil.copy2
+
+    def spy(src, dst, *a, **k):
+        order.append(Path(dst).name)
+        if Path(dst).name == "metadata.json":
+            assert (Path(dst).parent / "d1_build.json").exists()
+        return real_copy(src, dst, *a, **k)
+
+    monkeypatch.setattr(fo.shutil, "copy2", spy)
+    stale = stubbed.out / sub
+    stale.mkdir(parents=True)
+    (stale / "d1_build.json").write_text('{"stale": 1}')
+    assert build(stubbed) == "done"
+    assert order[-1] == "metadata.json"
+    assert "stale" not in json.loads((stale / "d1_build.json").read_text())
+
+
+@pytest.mark.parametrize(
+    ("build", "col"), [(_octree, "octree"), (_grid, "grid_octree")]
+)
+def test_done_update_requeues_when_the_crop_changed_during_the_build(
+    stubbed, build, col
+):
+    conn = FakeConn()
+    assert build(stubbed, conn=conn, crop_start_idx_override=100) == "done"
+    sql, params = conn.sql[-1], conn.params[-1]
+    assert f"{col}_status=CASE WHEN crop_start_idx_override IS DISTINCT FROM %s" in sql
+    assert (
+        "OR crop_end_idx_override IS DISTINCT FROM %s THEN 'pending' ELSE 'done'" in sql
+    )
+    assert f"{col}_requested_at=CASE WHEN" in sql
+    # The values this build was claimed with go in twice (status, requested_at).
+    assert params[:4] == [100, None, 100, None]
 
 
 def test_process_file_never_carries_crop_keys(monkeypatch):

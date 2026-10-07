@@ -47,6 +47,7 @@ The published octree directory (`OCTREE_DIR/<op>/` and `OCTREE_DIR/grid/<op>/`, 
   "cut_start_sec": 0.264,        // t (the file's Time column) of the first octree sample: theta = 0 here
   "cut_end_sec": 3.867,          // t of the last octree sample
   "crop_source": "auto",         // "auto" (findchangepts) or "override" (the official crop)
+  "revs_cs": 12.34,              // OPTIONAL: cumulative raw revs at cut_start_sec, in the live cache's `revs` units (exact anchor; absent in older builds)
   "n_points": 18015,
   "built_at": "2026-10-06T12:00:00Z"
 }

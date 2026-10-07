@@ -49,26 +49,43 @@ decimated caches (compare, filtered) keep the true `t`. The dashboard holds one 
   the official crop can all be edited after a build, and the live cache's window is the auto cut,
   so reconstructing from the row would drift. Instead the host publishes **`d1_build.json`** next
   to `metadata.json` in both the octree and grid directories (`scripts/force_orchestrator.py`,
-  `_publish_build_manifest`; MATLAB writes the values it really used): `schema: 1`, `kind`,
-  `speed_mode`, `feed`, `diam`, `inner_diam`, `ppr`, `cut_start_sec` / `cut_end_sec` (on the same
-  axis as the live cache's `t`, so `spiralAnchor(cache, cut_start_sec)` anchors it exactly as
-  Lite does), `crop_source` (`auto` or `override`), `n_points`, `built_at`. `FrmOctree` fetches it
+  `_load_build_manifest` / `_publish_octree_dir`; MATLAB writes the values it really used):
+  `schema: 1`, `kind`, `speed_mode`, `feed`, `diam`, `inner_diam`, `ppr`, `cut_start_sec` /
+  `cut_end_sec` (on the same axis as the live cache's `t`), `crop_source` (`auto` or `override`),
+  `n_points`, `built_at`, and the optional **`revs_cs`**: the cumulative raw revolutions at
+  `cut_start_sec`, in exactly the units of the live cache's `revs` array (`revs_cum(cutstart)`, PPR
+  not applied; the map computes `r = (revs[i] - revs_cs) / ppr`). **MATLAB always writes its JSON, so
+  the manifest is required of a build:** a missing or unreadable one fails the build
+  (`octree_status = 'error'` with the reason) rather than publish an octree whose fallback geometry
+  may be wrong, and `d1_build.json` is written before `metadata.json` so a client that sees the
+  octree sees its manifest. `FrmOctree` fetches it
   (`no-store`) and `parseOctreeBuild()` accepts it only when well formed (schema 1, finite numbers,
   `ppr > 0`, end >= start); `octreePathParams(c, innerDiam, ppr, build)` then uses the manifest's
-  values and window instead of the row's. **Fallback:** an octree built before the manifest has none
-  (404), or the file is malformed: the map uses the cache window and the row's values, as before.
-  **Outside the cache:** if the build's cut start is before the cache's first sample (the cache
-  holds a later window), the anchor has no sample: picks answer `reason: 'outside-cache'` ("The live
-  cache doesn't cover this octree's crop"), rings hide and reveal returns false. `timeWindow()`
-  (the build window within the cache's `t` range) feeds the chart menu's "Outside the mapped window"
+  values and window instead of the row's. **Exact anchor.** The cache's `t` is float32 (and the
+  cache is decimated exactly for the long cuts that have octrees) while the manifest holds doubles,
+  so looking the start up in the cache anchors up to `step - 1` raw samples late, or skips `t[0]`.
+  With `revs_cs` the spiral anchor is `{ tCs: cut_start_sec, revsCs: revs_cs }`, no cache lookup:
+  exact for any decimation, an override starting between cache samples, or one starting before the
+  cache. The window is `Math.fround` of the build's ends (the cache's own precision). The mappable
+  window is **build window intersected with the cache**; `outside-cache` only when they don't
+  overlap. **Fallbacks:** an octree built before the manifest has none (404), or the file is
+  malformed: the map uses the cache window and the row's values, as before. A manifest without
+  `revs_cs` (built before it existed) anchors in the cache at `fround(cut_start_sec)`, which is
+  right for an undecimated cache and needs the cache to reach the cut start (else `outside-cache`).
+  While the manifest is still being fetched a pick answers `reason: 'loading'` ("The map is still
+  loading"). `timeWindow()` (the mappable window) feeds the chart menu's "Outside the mapped window"
   hint.
 - **Official crop in the octrees.** The orchestrator passes the saved crop override
   (`crop_start_idx_override / sample_rate`, likewise the end) to MATLAB for octree and grid builds
   only, and MATLAB cuts there (`crop_start_sec` / `crop_end_sec` options); the summary's `cut_*_idx`
   and the diagnostics path keep the auto window. So after saving an official crop and the rebuild,
-  Full and Gridded show the same window as the charts and Lite. `saveCropAsOfficial` re-queues
-  `done` and `error` builds; a build already running finishes on the old window and the confirmation
-  says so. **Not yet exercised:** the MATLAB changes have never run (no MATLAB in CI or the cloud
+  Full and Gridded show the same window as the charts and Lite. MATLAB applies the crop as one
+  unit (an unusable start rejects the end too) and reports `crop_source: "override"` only when the
+  window really changed. `saveCropAsOfficial` re-queues `done` and `error` builds. A crop saved while a
+  build is `processing` (or `pending` on a stale page) is caught by the orchestrator: its done
+  UPDATE sets the status back to `pending` (fresh `*_requested_at`) when the row's crop columns differ
+  from the values the build was claimed with, so the build is redone after it finishes, and the
+  confirmation says so. **Not yet exercised:** the MATLAB changes have never run (no MATLAB in CI or the cloud
   session); the backlog item must be ticked before relying on them.
 - **Right-click vs right-drag.** Right-drag pans the map (2D Lite as before, Full and 3D through
   OrbitControls), so the menu must only open for a press that doesn't move. `contextmenu` can't
@@ -77,7 +94,10 @@ decimated caches (compare, filtered) keep the true `t`. The dashboard holds one 
   `pointerdown` (`createClickTracker`).
 - **Touch long-press.** A single finger held still for ~500 ms (within a 10 px slop) opens the same
   menus: on the map (Lite 2D and 3D, Full) and on the env charts (`longPress.ts`). Moving, a
-  second finger, lifting or a cancel aborts it. The menu opens slightly down-right of the finger
+  second finger, lifting or a cancel aborts it. A new primary touch starts a fresh gesture (stale
+  pointers from a lost `pointerup` are forgotten), the views cancel it when their canvas is torn
+  down, and a chart only swallows the browser's `contextmenu` for a touch echo, never a mouse
+  right-click. The menu opens slightly down-right of the finger
   (`TOUCH_MENU_OFFSET_PX`) so the finger doesn't hide it; the pick stays under the finger.
 - **Host-agnostic.** The new `ContextMenu.vue` lives in `force-plotting` (invariant 10). No new
   panel type and no change to `RIGHT_KEY` (invariant 11).

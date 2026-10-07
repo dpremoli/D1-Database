@@ -30,10 +30,10 @@ import {
 } from './cloudPick';
 import { nearestIndex } from './hoverIndex';
 import { createPendingReveal } from './pendingReveal';
-import { mappableWindow, parseOctreeBuild, type OctreeBuild } from './octreeBuild';
+import { mappableWindow, noGeometryReason, parseOctreeBuild, type OctreeBuild } from './octreeBuild';
 import { createMapProjector } from './mapProjector';
 import { createLongPress, TOUCH_MENU_OFFSET_PX } from './longPress';
-import { spiralAnchor, spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
+import { spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
 import { shaderZ } from './octreePick';
 
 const props = defineProps<{
@@ -432,6 +432,7 @@ const longPress = createLongPress((x, y) => pickAt(x, y, TOUCH_MENU_OFFSET_PX));
 interface OctreeGeo {
 	c: Cache; innerDiam: number; ppr: number; build: OctreeBuild | null; path: TurningSpiralParams;
 	cs: number; ce: number; win: { start: number; end: number } | null; u: SpiralUniforms;
+	anchor: { tCs: number; revsCs: number };
 }
 let geo: OctreeGeo | null = null;
 let build: OctreeBuild | null = null;
@@ -447,7 +448,7 @@ function octreeGeometry(): OctreeGeo | null {
 	const cs = g.window.cropStartSec, ce = g.window.cropEndSec;
 	geo = {
 		c, innerDiam, ppr, build, path: g.path, cs, ce, win: mappableWindow(c, build),
-		u: spiralUniformValues({ ...g.path, ...spiralAnchor(c, cs) }),
+		anchor: g.anchor, u: spiralUniformValues({ ...g.path, ...g.anchor }),
 	};
 	return geo;
 }
@@ -489,7 +490,11 @@ function pickAt(clientX: number, clientY: number, menuOffset = 0) {
 	if (!canvasEl.value || !camera) return;
 	const base = { clientX: clientX + menuOffset, clientY: clientY + menuOffset };   // where the menu opens; the pick stays under the finger
 	const g = octreeGeometry();
-	if (!g) { emit('pointmenu', { ...base, point: null, reason: 'no-cache' }); return; }
+	if (!g) {
+		// The cache is here but the manifest fetch hasn't settled: the geometry isn't known yet, which is not "no cache".
+		emit('pointmenu', { ...base, point: null, reason: noGeometryReason(!!props.sampleCache?.N, buildReady) });
+		return;
+	}
 	if (!g.win) { emit('pointmenu', { ...base, point: null, reason: 'outside-cache' }); return; }
 	const c = g.c;
 	const r = canvasEl.value.getBoundingClientRect();
@@ -502,7 +507,7 @@ function pickAt(clientX: number, clientY: number, menuOffset = 0) {
 	// the height moves points, so a sample's distance from the click isn't its radius difference.
 	const cull = zMap.on ? null : proj.discAt(px, py, radius);
 	const hit = pickSpiral(c, g.path, g.cs, g.ce, 1, (x, y, i) => proj.project(x, y, zAt(i)),
-		px, py, radius, displayedKeepIndex(c[props.axis], props.colorScale), cull);
+		px, py, radius, displayedKeepIndex(c[props.axis], props.colorScale), cull, g.anchor);
 	emit('pointmenu', { ...base, point: hit ? pointInfo(c, hit.i, hit.x, hit.y, hit.rho) : null });
 }
 
@@ -595,6 +600,7 @@ function boot() {
 // memory) while the operator was on the Record page (review 3.6).
 function teardownGL() {
 	loadToken.cancel();
+	longPress.cancel();   // a canvas swap loses the old canvas's pointerups: forget its touches
 	// The stage watcher is already stopped on unmount: say "idle" directly so the host's busy bar clears.
 	if (stage.value) emit('stage', null);
 	stage.value = null;

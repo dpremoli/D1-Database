@@ -13,7 +13,18 @@
  */
 export const TOUCH_MENU_OFFSET_PX = 24;
 
-export interface PressEvent { pointerId: number; pointerType: string; clientX: number; clientY: number }
+// isPrimary is optional so hand-built events (tests) can omit it: absent means "not known to be a new gesture".
+export interface PressEvent { pointerId: number; pointerType: string; clientX: number; clientY: number; isPrimary?: boolean }
+
+/**
+ * Is this `contextmenu` the browser's echo of a touch hold (ours already opened the menu: swallow it)?
+ * Only while a touch is down, and never for a mouse: Chrome's contextmenu is a PointerEvent whose
+ * pointerType says which device raised it; other browsers send a plain MouseEvent (no pointerType),
+ * which can only be a touch echo while a finger is actually down.
+ */
+export function isTouchContextMenu(ev: MouseEvent, touching: boolean): boolean {
+	return touching && (ev as PointerEvent).pointerType !== 'mouse';
+}
 
 export function createLongPress(
 	onPress: (clientX: number, clientY: number) => void, holdMs = 500, slopPx = 10,
@@ -26,6 +37,10 @@ export function createLongPress(
 		/** A pointerdown. Starts the hold timer for a lone touch; a second finger cancels it for good. */
 		down(ev: PressEvent) {
 			if (!isTouch(ev)) return;
+			// The first finger of a gesture is `isPrimary`: it starts a new one, so any pointer still in the set
+			// is stale (its pointerup went to a canvas that was swapped out, or to another element) and would
+			// otherwise make every later hold look like a second finger.
+			if (ev.isPrimary) { down.clear(); stop(); }
 			down.add(ev.pointerId);
 			if (down.size > 1) { stop(); return; }   // a pan/pinch, not a hold (the timer only ever starts here)
 			id = ev.pointerId; x = x0 = ev.clientX; y = y0 = ev.clientY;
