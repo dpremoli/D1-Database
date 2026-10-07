@@ -14,12 +14,16 @@ interface CellView { tone: string; glyph: string; diagTone: string | null; title
 
 const GLYPH: Record<string, string> = { done: '✓', skipped: '–', error: '!', processing: '…', pending: '◷', none: '·' };
 
+const TEST_GLYPH: Record<string, string> = {
+	failed: '!', processed: '✓', analysed: '✓', processing: '…', analysing: '…', pending_processing: '◷',
+};
+
 function describe(cell: MatrixCell, sampleCode: string | null, columnLabel: string): CellView {
 	if (cell.kind === 'test') {
 		const st = statusStyle('test', cell.status);
 		return {
 			tone: st?.tone ?? 'neutral',
-			glyph: cell.status === 'failed' ? '!' : cell.status === 'processed' || cell.status === 'analysed' ? '✓' : '·',
+			glyph: TEST_GLYPH[cell.status] ?? '·',
 			diagTone: null,
 			title: `${sampleCode ?? 'Sample'} · ${cell.name}: ${st?.label ?? cell.status}${cell.count > 1 ? ` (worst of ${cell.count})` : ''}`,
 		};
