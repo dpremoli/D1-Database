@@ -389,7 +389,7 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   of A's, A's campaign and the project. Expect: the page opens, but there is no **Edit** button
   (Report, Data Studio and the other buttons remain); as A the **Edit** button is there. As B, the
   campaign page has no pickers ("Add samples...", operations, tests) and no remove buttons, and says
-  only the owner or a co-owner can change the lists. Force it anyway (open the Data Studio form and
+  "Only the campaign's owner can change its lists." (campaigns have no co-owners). Force it anyway (open the Data Studio form and
   save, or `PATCH` the sample): the error reads as a refusal. Add B as a co-owner of the sample: B now
   sees **Edit**. Since: Explorer pages E5-fix-ui (PR pending).
 - [ ] **E5-fix-ui: pickers by a non-owner give the right message.** As user B on a campaign B owns,

@@ -50,7 +50,7 @@ defineExpose({ reload });
 			</LoadState>
 		</Section>
 
-		<p v-if="readonly" class="d1-cnote">Only the owner or a co-owner can change this campaign's samples, operations and tests.</p>
+		<p v-if="readonly" class="d1-cnote">Only the campaign's owner can change its lists.</p>
 
 		<SamplesPanel :campaign-id="campaignId" :rows="overview.sampleRows" :junction="junction" :readonly="readonly" :hidden-count="overview.counts.hiddenSamples" @changed="reload" />
 		<OperationsPanel
