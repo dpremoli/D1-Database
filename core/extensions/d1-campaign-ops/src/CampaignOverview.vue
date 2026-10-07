@@ -5,12 +5,11 @@
  * pickers to add samples (campaign_samples junction) and test sessions (test_sessions.campaign_id).
  * Every read and write goes through the Directus API as the signed-in user, so their permissions
  * apply; a forbidden collection shows a note rather than failing the panel. The roll-up lives in
- * overview.js (unit tested). Design: docs/superpowers/specs/2026-10-06-sample-timeline-and-campaign-overview-design.md
+ * @d1/ui campaign/rollup.ts (unit tested). Design: docs/superpowers/specs/2026-10-06-sample-timeline-and-campaign-overview-design.md
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
-// @ts-ignore plain JS module, tested with node --test
-import { TEST_STATUS_ORDER, buildOverview, errMsg, isDuplicate, isForbidden } from './overview.js';
+import { TEST_STATUS_ORDER, buildOverview, errorText as errMsg, isDuplicate, isForbidden } from '@d1/ui';
 
 // `operations` is the campaign's operations as read by the parent (CampaignOps), which owns that
 // fetch and reloads it after an add or remove; a failed read is reported there.

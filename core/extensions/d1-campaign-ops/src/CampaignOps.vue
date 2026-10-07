@@ -8,8 +8,7 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
 import CampaignOverview from './CampaignOverview.vue';
-// @ts-ignore plain JS module, tested with node --test
-import { errMsg } from './overview.js';
+import { errorText as errMsg } from '@d1/ui';
 
 const props = defineProps<{ primaryKey?: string | number | null }>();
 const api = useApi();

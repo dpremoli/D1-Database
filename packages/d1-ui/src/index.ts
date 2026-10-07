@@ -31,3 +31,8 @@ export type { KeyValue } from './components/KeyValueGrid.vue';
 export { default as ProgressBar } from './components/ProgressBar.vue';
 export { default as CompositionBar } from './components/CompositionBar.vue';
 export { default as EditDrawer } from './components/EditDrawer.vue';
+
+// E2 campaign
+export { buildOverview, analysisState, diagState, TEST_DONE_STATUSES, TEST_STATUS_ORDER } from './campaign/rollup';
+export type { OverviewInput } from './campaign/rollup';
+export { isForbidden, isDuplicate } from './campaign/errors';
