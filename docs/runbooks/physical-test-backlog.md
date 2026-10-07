@@ -257,6 +257,21 @@ the rebuilt `d1-home`, `d1-lab-dashboard` and `d1-composition-bar` load, and app
   that spans New Year has no gap, and in dark theme both lines and the dashed test line are
   readable. With more than 5000 operations or tests in 26 weeks the "newest records only" note
   appears. Since: Explorer pages E3 (PR pending).
+- [ ] **E3-fix — exact campaign counts, refusals and links.** On a project with campaigns of each
+  type (machining trial, testing campaign, imaging / analysis): the cards' operation and test
+  counts equal the Data Studio counts filtered by campaign (they come from `aggregate[count]`
+  grouped by `campaign_id`, so they stay exact above 5000 rows); the machining trial's *Force
+  analysed* bar and the testing campaign's *Tests complete* bar match the campaign's own page;
+  the imaging / analysis card shows counts and no bar. As a role that cannot read
+  `machining_force_analysis` the machining card says "progress unavailable (no access to the
+  data)" and the counts stay. On Home as a role that cannot read `project_investigators` the
+  projects list shows its own one-line note, and the samples list shows none unless
+  `sample_co_owners` is also refused; a server error (stop Directus mid-load) shows the real error in
+  the section, not a silently shorter list. As a role that cannot read `test_sessions` the recent
+  activity feed still shows samples and operations, with a one-line note naming tests. In *Needs
+  attention*, with more than 10 failed test sessions, the link under "Showing 10 of N" opens the
+  Test Sessions list with the *Failed* bookmark applied, and the other tiles say "Open the
+  collection in the Data Studio (unfiltered)". Since: Explorer pages E3-fix (PR pending).
 
 ## B. Force rig (NI-DAQ, Lab Amp, packaged Windows app)
 
