@@ -62,4 +62,6 @@ export { shareFiles } from './linkedFiles';
 export { default as NotVisible } from './components/NotVisible.vue';
 export { ROLLUP_COLLECTION, ROLLUP_OPERATION_FIELDS, rollupOperationsFilter, rollupRowId, rollupTargets } from './rollupLinks';
 export type { RollupTarget } from './rollupLinks';
+export { splitSubjects, TEST_SUBJECT_FIELDS } from './testSubjects';
+export type { TestSubjects } from './testSubjects';
 export { useFieldDefs } from './composables/useFieldDefs';

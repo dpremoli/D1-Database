@@ -33,7 +33,7 @@ const samples = computed(() => {
 			</li>
 			<li v-for="o in subjects.others" :key="o.collection + o.item" class="row">
 				<span class="role">{{ humanise(o.collection.replace(/s$/, '')) }}</span>
-				<RecordLink :collection="o.collection" :id="o.item" class="code">{{ o.item.slice(0, 8) }}</RecordLink>
+				<RecordLink :collection="o.collection" :id="o.item" class="code">{{ o.label || o.item.slice(0, 8) }}</RecordLink>
 			</li>
 		</ul>
 	</Section>

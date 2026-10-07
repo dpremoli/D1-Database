@@ -1,7 +1,7 @@
 import { onBeforeUnmount, ref, watch, type Ref } from 'vue';
 import {
-	errorText, isNotVisible, linkedFiles, paramColumns, paramRows, useFieldDefs, useItems, useRequestGate,
-	type LinkedFile, type ParamRow,
+	errorText, isNotVisible, linkedFiles, paramColumns, paramRows, splitSubjects, TEST_SUBJECT_FIELDS, useFieldDefs, useItems,
+	useRequestGate, type LinkedFile, type ParamRow, type TestSubjects,
 } from '@d1/ui';
 
 // Everything the Test page reads, as the signed-in user. The test session decides between "page"
@@ -14,11 +14,7 @@ export interface Section<T> {
 	error: string;
 }
 
-export interface Subjects {
-	samples: any[];
-	/** Subjects that are not samples (an insert edge ...): collection and id only. */
-	others: { collection: string; item: string }[];
-}
+export type Subjects = TestSubjects;
 
 const section = <T>(initial: T) => ref<Section<T>>({ data: initial, loading: false, error: '' }) as Ref<Section<T>>;
 
@@ -34,8 +30,6 @@ const TEST_FIELDS = [
 	// instead (test_sessions_subject), so this is empty for those and `subjects` carries the sample.
 	'sample_id.sample_id', 'sample_id.sample_code', 'sample_id.nickname', 'sample_id.form', 'sample_id.current_status',
 ];
-
-const SAMPLE_FIELDS = ['sample_id', 'sample_code', 'nickname', 'form', 'current_status'];
 
 export function useTestData(id: Ref<string>) {
 	const { getItem, getItems } = useItems();
@@ -70,24 +64,21 @@ export function useTestData(id: Ref<string>) {
 		return paramRows(defs, { ...row, test_type: testType }, 'test_type');
 	}
 
+	// One read: the junction rows with each target's own fields (M2A syntax), so the samples need
+	// no second request.
 	async function readSubjects(sessionId: string): Promise<Subjects> {
-		let rows: any[];
 		try {
-			rows = await getItems('test_sessions_subject', {
+			const rows = await getItems('test_sessions_subject', {
 				filter: { test_sessions_id: { _eq: sessionId } },
-				fields: ['collection', 'item'],
+				fields: TEST_SUBJECT_FIELDS,
+				sort: ['id'],
 				limit: 50,
 			});
+			return splitSubjects(rows);
 		} catch (e) {
 			if (isNotVisible(e)) return { samples: [], others: [] };
 			throw e;
 		}
-		const sampleIds = rows.filter((r) => r.collection === 'physical_samples').map((r) => String(r.item));
-		const samples = sampleIds.length
-			? await getItems('physical_samples', { filter: { sample_id: { _in: sampleIds } }, fields: SAMPLE_FIELDS, limit: 50 })
-			: [];
-		const others = rows.filter((r) => r.collection !== 'physical_samples').map((r) => ({ collection: String(r.collection), item: String(r.item) }));
-		return { samples, others };
 	}
 
 	async function load() {
