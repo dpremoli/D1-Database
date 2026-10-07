@@ -383,6 +383,50 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   sums. Add an operation that someone else just added elsewhere (two tabs): the panel says
   "... is already in another campaign." and nothing changes. Since: Explorer pages E-final (PR pending).
 
+- [ ] **E5-fix-ui: Edit is hidden where you may not change the record.** Use user **A** (owner of a
+  sample, an operation, a test, a campaign and a project, or PI of the project) and user **B** (an
+  investigator of A's project, not an owner or co-owner). As B open A's sample, an operation or test
+  of A's, A's campaign and the project. Expect: the page opens, but there is no **Edit** button
+  (Report, Data Studio and the other buttons remain); as A the **Edit** button is there. As B, the
+  campaign page has no pickers ("Add samples...", operations, tests) and no remove buttons, and says
+  only the owner or a co-owner can change the lists. Force it anyway (open the Data Studio form and
+  save, or `PATCH` the sample): the error reads as a refusal. Add B as a co-owner of the sample: B now
+  sees **Edit**. Since: Explorer pages E5-fix-ui (PR pending).
+- [ ] **E5-fix-ui: pickers by a non-owner give the right message.** As user B on a campaign B owns,
+  search the Samples picker for a sample B can read but neither owns nor co-owns (one B sees only as
+  an investigator) and add it. Expect the create guard's refusal to read "You can only add records
+  you own or co-own.", not a generic Directus error and not "already in another campaign". Do the
+  same with an operation or test that B can read but not update: the same message (or "Only the
+  owner or a co-owner can change this record." when removing). Two tabs adding the same free
+  operation as its owner still says "... is already in another campaign." Since: Explorer pages
+  E5-fix-ui (PR pending).
+- [ ] **E5-fix-ui: hidden relatives are named, not shown as empty.** As B (sees one sample of A's
+  campaign through a test, not A's other samples): open an operation whose input sample B cannot
+  see. Expect "Not visible to you" next to **Input**, not "No sample is linked". A test whose sample
+  B cannot see shows "1 subject not visible to you". An operation or test in a project or campaign
+  B cannot read has a dashed "Project (not visible to you)" or "Campaign (not visible to you)" crumb.
+  On the campaign page, when the campaign has samples B cannot see, a line reads "N samples not
+  visible to you" under the tiles and in the Samples list, and N plus the visible samples equals the
+  count on the campaign's card. Since: Explorer pages E5-fix-ui (PR pending).
+- [ ] **E5-fix-ui: project items for a non-investigator.** As a user who owns one sample in a project
+  but is neither PI nor investigator, open the project's Content form and the *Project items* list.
+  Expect "Only the project's PI and investigators can see this list." For the PI, and for an admin,
+  the list shows; for a PI of a project with nothing assigned it still reads "No items assigned to
+  this project yet." Since: Explorer pages E5-fix-ui (PR pending).
+- [ ] **E5-fix-ui: People page and register-sample.** As a Lab Member open People: the **App login**
+  field is read-only with "An admin links logins." and saving a person does not change the login;
+  as an admin the login picker works. As a member whose login has no People row open **Register a
+  Sample**: it says up front that the login is not linked and the button refuses; as an admin
+  without a People row it still registers. If the server answers the create with 204 (a member
+  with a People row that somehow cannot read the sample) the page says "Created, but you can't see
+  it. Ask an admin to link your login to a People row." Since: Explorer pages E5-fix-ui (PR pending).
+- [ ] **E5-fix-ui: counts under relational filters return numbers.** As user B (member) open Home:
+  *At a glance* and *Needs attention* show numbers, not dashes; a project's tiles, the Projects index
+  cards and a campaign's tiles show numbers. These use `aggregate[count]` (and a `groupBy`) under the
+  row-level filters, which reach through other collections; a dash means Directus refused the
+  aggregate under that filter and the page needs another read. Since: Explorer pages E5-fix-ui (PR
+  pending).
+
 #### Row-level visibility (E5, ADR-0011)
 
 Setup for every item: migrations 140 and 141 applied and Directus **restarted** (it reads relations

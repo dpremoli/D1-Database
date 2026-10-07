@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { campaignAssignPatch, inheritCampaignProject, lostRaceMessage, projectInheritPatch, readCampaignProject } from './assign';
+import {
+	campaignAssignPatch, changeOutcomeMessage, forbiddenWriteMessage, inheritCampaignProject, lostRaceMessage, projectInheritPatch,
+	readCampaignProject, readCanUpdate,
+} from './assign';
 
 describe('campaignAssignPatch', () => {
 	it('adds only where the record is in no campaign', () => {
@@ -33,6 +36,37 @@ describe('lostRaceMessage', () => {
 	it('says who got there first', () => {
 		expect(lostRaceMessage([], true, 'OP-1')).toBe('OP-1 is already in another campaign.');
 		expect(lostRaceMessage([], false, 'OP-1')).toBe('OP-1 is no longer in this campaign.');
+	});
+});
+
+describe('lostRaceMessage and permissions', () => {
+	it('says "not permitted" instead of "lost the race" when the user may not update the record', () => {
+		expect(lostRaceMessage([], true, 'OP-1', false)).toBe('OP-1: You can only add records you own or co-own.');
+		expect(lostRaceMessage([], false, 'OP-1', false)).toBe('OP-1: Only the owner or a co-owner can change this record.');
+	});
+	it('keeps the race wording when the user may update, or it is unknown', () => {
+		expect(lostRaceMessage([], true, 'OP-1', true)).toBe('OP-1 is already in another campaign.');
+		expect(lostRaceMessage([], true, 'OP-1', null)).toBe('OP-1 is already in another campaign.');
+	});
+	it('maps a 403 to the not-permitted text and leaves other errors alone', () => {
+		expect(forbiddenWriteMessage({ response: { status: 403 } }, true)).toBe('You can only add records you own or co-own.');
+		expect(forbiddenWriteMessage({ response: { status: 403 } }, false)).toBe('Only the owner or a co-owner can change this record.');
+		expect(forbiddenWriteMessage({ response: { status: 500 } }, true)).toBeNull();
+	});
+});
+
+describe('changeOutcomeMessage', () => {
+	const perm = (access: unknown) => ({ get: vi.fn().mockResolvedValue({ data: { data: { update: { access } } } }), patch: vi.fn() });
+	it('asks nothing when a row changed', async () => {
+		const api = perm(false);
+		expect(await changeOutcomeMessage(api, 'test_sessions', 't1', [{ session_id: 't1' }], true, 'T')).toBeNull();
+		expect(api.get).not.toHaveBeenCalled();
+	});
+	it('tells lost race from not permitted on an empty answer', async () => {
+		expect(await changeOutcomeMessage(perm(false), 'test_sessions', 't1', [], true, 'T')).toContain('own or co-own');
+		expect(await changeOutcomeMessage(perm(true), 'test_sessions', 't1', [], true, 'T')).toBe('T is already in another campaign.');
+		const failing = { get: vi.fn().mockRejectedValue(new Error('x')), patch: vi.fn() };
+		expect(await readCanUpdate(failing, 'test_sessions', 't1')).toBeNull();
 	});
 });
 

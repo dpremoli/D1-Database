@@ -24,16 +24,37 @@ work. Lists show their first 200 rows and say when there are more.
 
 ## What you see
 
-Since ADR-0011 a member sees only the records they are involved in: those they own or co-own, and
-(read-only) those of projects where they are PI or investigator. The pages show exactly that, so
-**counts are yours, not the lab's**: Home's *At a glance*, a project's tiles and the Projects index
-count the records you can see, and a project you only touch through one sample shows only that
-sample. A related record you may not see is left out of its list (or reads *N not visible to you*
-in the lineage), and a record you may not see at all opens *Not found or not visible to you*.
-**Edit** works only where you may change the record (owners and co-owners; the PI for a project);
-elsewhere Save reports that you do not have permission. To let a colleague work on a sample, add
-them as a co-owner. The rules are in [Roles and permissions](roles-and-permissions.md#who-can-see-and-change-which-records).
+Since ADR-0011 a member sees only the records they are involved in. You can see a record when:
+
+- you **own** it, or (for a sample) **co-own** it;
+- you are **PI or investigator** of its project, which also covers what belongs to that project
+  through its campaigns (read-only);
+- you **own a campaign** it is in (a sample), or you own or co-own a sample in a campaign (the
+  campaign);
+- it is an **operation or test** on a sample you can see.
+
+The pages show exactly that, so **counts are yours, not the lab's**: Home's *At a glance*, a
+project's tiles and the Projects index count the records you can see, and a project you only touch
+through one sample shows only that sample. A campaign's *Samples* count can be lower than its card
+when some of its samples are not yours to see; the page then says *N samples not visible to you*.
+A related record you may not see is shown as *not visible to you* (a breadcrumb, an operation's
+input or output sample, a test's subject) instead of as empty, and a record you may not see at all
+opens *Not found or not visible to you*. The *Project items* list on the project's Content form (the
+roll-up) is for its PI and investigators only; anyone else gets a line saying so.
+
+**Edit** is offered only where you may change the record: owners and co-owners of a sample,
+operation or test, the owner of a campaign, the PI of a project. If you can read a record because
+you are an investigator, or because it sits in your campaign, the **Edit** button is not shown.
+On a campaign you cannot change, the sample, operation and test pickers and the remove buttons are
+hidden too. If a change is refused anyway, the page says *Only the owner or a co-owner can change
+this record.* (or *You can only add records you own or co-own.* in a picker). To let a colleague work
+on a sample, add them as a co-owner. Linking a login to a person (the People page) is for
+administrators only, and so is the audit log. The rules are in
+[Roles and permissions](roles-and-permissions.md#who-can-see-and-change-which-records).
 Administrators see everything.
+
+If your login is not linked to a People row you own nothing: *Register a sample* refuses up front,
+and Home says so. Ask an administrator to link it.
 
 ## Projects index
 
@@ -124,5 +145,6 @@ analysed, failed...) and the same breadcrumb. Sections:
 same custom widgets (sample code, machine picker, geometry preview...) as Content. **Save** writes
 the changes and the page refreshes behind the drawer; **Cancel** closes it. If someone else saved
 the record while the drawer was open, you are warned and nothing is overwritten until you reload.
-Fields your role may not read are left out. *New* records (a new operation, test or project) still
+If the server refuses the save, the drawer says who may change the record. Fields your role may
+not read are left out. *New* records (a new operation, test or project) still
 open the Content form.

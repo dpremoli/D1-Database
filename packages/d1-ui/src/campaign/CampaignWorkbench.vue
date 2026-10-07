@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { toRef } from 'vue';
+import { computed, toRef } from 'vue';
 import LoadState from '../components/LoadState.vue';
 import Section from '../components/Section.vue';
 import CampaignMatrix from './CampaignMatrix.vue';
@@ -8,6 +8,7 @@ import OperationsPanel from './OperationsPanel.vue';
 import SamplesPanel from './SamplesPanel.vue';
 import TestsPanel from './TestsPanel.vue';
 import { useCampaignData } from './useCampaignData';
+import { useCanUpdate } from '../composables/useCanUpdate';
 
 // Everything below a campaign's header: counts and progress, the sample x step matrix, the sample,
 // operation and test lists and their pickers. Used by the Campaign page and, without the matrix, by
@@ -19,6 +20,13 @@ const props = withDefaults(defineProps<{ campaignId: string; campaignType?: stri
 
 const data = useCampaignData(toRef(props, 'campaignId'));
 const { junction, operations, tests, analyses, analysisUnavailable, overview, matrix, reload } = data;
+
+// A user who can read the campaign but not change it (an investigator, someone who only sees it
+// through a sample) gets the lists without the pickers and remove buttons. Unknown (null) keeps
+// them: the server refuses a write the user may not make, and the panels say so.
+const campaignIdRef = toRef(props, 'campaignId');
+const { canUpdate } = useCanUpdate('campaigns', campaignIdRef);
+const readonly = computed(() => canUpdate.value === false);
 
 defineExpose({ reload });
 </script>
@@ -36,27 +44,31 @@ defineExpose({ reload });
 			<LoadState
 				:loading="(junction.loading || operations.loading || tests.loading) && !matrix.rows.length"
 				:empty="!matrix.rows.length"
-				empty-text="No samples, operations or tests in this campaign yet."
+				:empty-text="overview.counts.hiddenSamples ? 'No samples, operations or tests you can see in this campaign yet.' : 'No samples, operations or tests in this campaign yet.'"
 			>
 				<CampaignMatrix :matrix="matrix" :force-hidden="analysisUnavailable" />
 			</LoadState>
 		</Section>
 
-		<SamplesPanel :campaign-id="campaignId" :rows="overview.sampleRows" :junction="junction" @changed="reload" />
+		<p v-if="readonly" class="d1-cnote">Only the owner or a co-owner can change this campaign's samples, operations and tests.</p>
+
+		<SamplesPanel :campaign-id="campaignId" :rows="overview.sampleRows" :junction="junction" :readonly="readonly" :hidden-count="overview.counts.hiddenSamples" @changed="reload" />
 		<OperationsPanel
 			:campaign-id="campaignId"
 			:campaign-type="campaignType"
 			:rows="overview.opRows"
 			:section="operations"
 			:force-hidden="analysisUnavailable || !!analyses.error"
+			:readonly="readonly"
 			@changed="reload"
 		/>
-		<TestsPanel :campaign-id="campaignId" :rows="overview.testRows" :section="tests" @changed="reload" />
+		<TestsPanel :campaign-id="campaignId" :rows="overview.testRows" :section="tests" :readonly="readonly" @changed="reload" />
 	</div>
 </template>
 
 <style scoped>
 .d1-campaign :deep(.d1-cerr) { margin: 8px 0; font-size: 13px; color: var(--theme--danger); }
+.d1-campaign .d1-cnote { margin: 8px 0; font-size: 13px; color: var(--theme--foreground-subdued); }
 .d1-campaign :deep(.d1-cempty) { margin: 0; font-size: 13px; font-style: italic; color: var(--theme--foreground-subdued); }
 .d1-campaign :deep(.d1-ccap) { margin: 8px 0 0; font-size: 12.5px; color: var(--theme--foreground-subdued); }
 .d1-campaign :deep(.d1-ctable) { width: 100%; border-collapse: collapse; font-size: 13.5px; }
