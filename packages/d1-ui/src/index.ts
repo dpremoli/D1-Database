@@ -31,3 +31,8 @@ export type { KeyValue } from './components/KeyValueGrid.vue';
 export { default as ProgressBar } from './components/ProgressBar.vue';
 export { default as CompositionBar } from './components/CompositionBar.vue';
 export { default as EditDrawer } from './components/EditDrawer.vue';
+
+// E3 projects
+export { weeklyActivity, binWeekly, lastWeeks, windowStart, datesByKey, isoWeek, weekStart, DEFAULT_WEEKS } from './activity';
+export type { WeekInfo, WeeklyActivity } from './activity';
+export { default as Sparkline } from './components/Sparkline.vue';
