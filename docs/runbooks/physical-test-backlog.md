@@ -383,6 +383,86 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   sums. Add an operation that someone else just added elsewhere (two tabs): the panel says
   "... is already in another campaign." and nothing changes. Since: Explorer pages E-final (PR pending).
 
+#### Row-level visibility (E5, ADR-0011)
+
+Setup for every item: migrations 140 and 141 applied and Directus **restarted** (it reads relations
+at start-up, and 141 adds the hidden `projects.samples` alias). Two Lab Member users with a People
+row each (`user_id` set): **A** and **B**, unrelated, plus a Lab Admin. Note the NOTICE that
+migration 141 prints about ownerless records.
+
+- [ ] **E5 — migrations 140 and 141 on the real database.** `dbmate up` applies cleanly and prints
+  `ADR-0011 ownerless records ...`; `dbmate down` twice then `up` again. In Settings → Access
+  Policies → Lab Member, `physical_samples` read shows the filter (owner, co-owners, project PI and
+  investigators, campaign owner) and `materials` read has none. On a database that already dropped
+  `physical_samples.co_owners` (the 2026-09 snapshot has no such column) nothing is renamed and
+  nothing fails. Since: Explorer pages E5 (PR pending).
+- [ ] **E5 — the NULL-owner rows.** Record the counts the migration printed (samples, operations,
+  tests, campaigns, projects without a PI) and assign owners
+  (`scripts/transfer_sample_ownership.py` or the *Owner* field) before members rely on the filter.
+  Until then those records are visible only through a project, campaign or co-owner. Since:
+  Explorer pages E5 (PR pending).
+- [ ] **E5 — owner A sees it, unrelated B does not (every rule).** As A create a project (A as PI),
+  a campaign in it, a sample in the campaign (project set) and an operation and a test on the sample.
+  Each shows *Owner: A* without A choosing it (the `d1-default-owner` hook). As B (never added to
+  anything): the Home counts, the Projects index, the Data Studio lists (samples, operations, tests,
+  campaigns, projects) and the Explorer pages by direct URL all show none of them (*Not found or not
+  visible to you*); `GET /items/physical_samples/<id>` as B answers 403 or an empty result. As the
+  admin all are visible. Also check the child lists: the sample's co-owners, genealogy, stock
+  provenance, linked files, the operation's force analyses and the test's results are not readable
+  by B. Since: Explorer pages E5 (PR pending).
+- [ ] **E5 — B gains access.** Add B as a **co-owner** of the sample: B now sees the sample, its
+  operations and tests (Explorer pages and Data Studio) and can edit them. Remove B and add B as an
+  **investigator** of the project: B sees the project, its campaigns, samples, operations and tests
+  but **Save** in the Edit drawer fails with a permission error, and so does a PATCH. Remove B and
+  make B the **owner of a campaign** that contains the sample: B sees the sample and its
+  operations and tests (read only) and the project (via the campaign). Make B the owner of a
+  different sample in the project: B sees the project, but only B's own sample in its counts.
+  Since: Explorer pages E5 (PR pending).
+- [ ] **E5 — operator co-owner records a cut from the Force App.** A owns sample S. As A, add the rig
+  operator B as co-owner of S. In the Force App signed in as B, the sample list offers S; record a
+  cut and save with upload. Expect: no 403 on the operation, the two files or the
+  `machining_force_analysis` row; the operation is owned by B; A (owner of S) sees the operation,
+  its force analysis and the live cache; an unrelated user C does not. Before B is a co-owner, S is
+  not offered to B. Since: Explorer pages E5 (PR pending).
+- [ ] **E5 — update and delete are limited to owners.** For each of sample, operation, test,
+  campaign and project: the owner (PI for a project) can edit and delete; a co-owner of the sample
+  can edit the sample and its operations and tests but cannot delete the sample; an investigator
+  (read access through the project) gets a permission error on edit and delete; an admin can do
+  everything. Deleting a sample as its owner removes it and its dependent rows cleanly. Since:
+  Explorer pages E5 (PR pending).
+- [ ] **E5 — `co_owners._some` works after the rename.** The sample form still shows the *Co-owners*
+  field with names (not ids or an old comma list); adding B there is what grants B access above.
+  `physical_samples.co_owners_legacy` is not shown in the form. `GET
+  /items/physical_samples?fields=co_owners.user_id` as the admin returns the junction rows. Since:
+  Explorer pages E5 (PR pending).
+- [ ] **E5 — `projects.samples` alias.** After the Directus restart, `GET
+  /items/projects?fields=samples` as an admin lists sample ids, and a user who owns only a sample in
+  a project (no PI or investigator role) can open that project's page. If the project is invisible
+  to that user, Directus has not picked up the alias: restart it or clear its cache
+  (`POST /utils/cache/clear`). Since: Explorer pages E5 (PR pending).
+- [ ] **E5 — project rollup.** As the project's PI the Project rollup list (the `d1-project-items`
+  panel in the Data Studio form) shows the items; as an unrelated co-owner of one sample in it,
+  the panel is empty or reports it cannot read it. Since: Explorer pages E5 (PR pending).
+- [ ] **E5 — Ask-DB still answers over all data (known gap).** As B, ask "how many samples are
+  there?": the answer is the lab total, not B's visible count. This is the accepted gap in ADR-0011;
+  record the result so the owner can decide when to restrict Ask-DB. Since: Explorer pages E5 (PR
+  pending).
+- [ ] **E5 — the configure script keeps the filters.** Run `scripts/configure_users_and_policies.sql`
+  twice against the real database: the Lab Member rows still carry the filters (Access Policies →
+  Lab Member → `physical_samples` read), `directus_files` create/read and the Force App save from
+  the X2 item above still work. Since: Explorer pages E5 (PR pending).
+- [ ] **E5 — speed with real data.** As a member with many involved records, the Data Studio sample
+  list, Home and the Projects index load in a few seconds (the filters add relational subqueries
+  and the migration added the indexes behind them). If a list is slow, `EXPLAIN ANALYZE` the query
+  and note which filter path costs. Since: Explorer pages E5 (PR pending).
+- [ ] **E5 — a member without a People row.** Create a Lab Member whose People row is missing or has
+  no user: their new sample has no owner, and they cannot see it afterwards (the hook cannot fill
+  the owner). Linking the People row fixes it. Decide whether sign-up should create the row.
+  Since: Explorer pages E5 (PR pending).
+- [ ] **E5 — a secondary sample of a multi-sample test (known gap).** B co-owns only the second
+  sample of a test with two samples: B cannot see the test (it is matched through its first sample).
+  Record whether this matters to the lab. Since: Explorer pages E5 (PR pending).
+
 ## B. Force rig (NI-DAQ, Lab Amp, packaged Windows app)
 
 Install the current release from the update feed on the acquisition PC. Use a real sample and

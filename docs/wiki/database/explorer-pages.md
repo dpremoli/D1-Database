@@ -22,6 +22,19 @@ ordinary Content form of the record. Samples, operations and tests also have **R
 that loads on its own, so one part you may not read shows a short message and the others still
 work. Lists show their first 200 rows and say when there are more.
 
+## What you see
+
+Since ADR-0011 a member sees only the records they are involved in: those they own or co-own, and
+(read-only) those of projects where they are PI or investigator. The pages show exactly that, so
+**counts are yours, not the lab's**: Home's *At a glance*, a project's tiles and the Projects index
+count the records you can see, and a project you only touch through one sample shows only that
+sample. A related record you may not see is left out of its list (or reads *N not visible to you*
+in the lineage), and a record you may not see at all opens *Not found or not visible to you*.
+**Edit** works only where you may change the record (owners and co-owners; the PI for a project);
+elsewhere Save reports that you do not have permission. To let a colleague work on a sample, add
+them as a co-owner. The rules are in [Roles and permissions](roles-and-permissions.md#who-can-see-and-change-which-records).
+Administrators see everything.
+
 ## Projects index
 
 A card per project: code, name, principal investigator, status (*Active* or *Inactive*), dates,

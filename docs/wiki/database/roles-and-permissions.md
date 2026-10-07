@@ -20,7 +20,7 @@ manage people in the **User Directory**.
 |---|---|---|
 | **Administrator** | Administrator (admin access) | everything, including settings and the data model |
 | **Lab Admin** | Lab Admin (admin access) | full administrative access. For the people who run the lab database. |
-| **Lab Member** | Lab Member (app access) | uses the app; creates, reads, updates and deletes the lab collections (samples, operations, tests, tooling, campaigns…); reads the audit log. Later migrations named `*_lab_member_*.sql` widen it collection by collection. |
+| **Lab Member** | Lab Member (app access) | uses the app; creates records, and reads and changes the samples, operations, tests, campaigns and projects **they are involved in** ([see below](#who-can-see-and-change-which-records)); uses the shared reference data (materials, equipment, tooling…); reads the audit log. Later migrations named `*_lab_member_*.sql` widen it collection by collection. |
 | **Public** | Public | nothing (not signed in) |
 
 The roles and policies, and the lab's real user accounts, are created by
@@ -58,12 +58,101 @@ Lab Member cannot update or delete files, so a file cannot be replaced or remove
 operation row behind.
 
 **The `directus_files` read grant is unfiltered.** Any Lab Member can read any file, and
-`/assets/<id>` serves the bytes. **Phase 9 follow-up:** when the export-control row filter on
-`physical_samples` lands ([ADR-0005](../../adr/0005-directus-rbac-structure.md)), file reads must be
-filtered the same way, or `/assets/<id>` bypasses it.
+`/assets/<id>` serves the bytes, even though samples and operations are now filtered per person
+([ADR-0011](../../adr/0011-row-level-visibility.md) lists this as a known gap). **Phase 9
+follow-up:** the export-control filter must cover file reads, or `/assets/<id>` bypasses it.
 
 The production server may have been adjusted in the UI. If a rebuild loses a permission you rely
 on, record it in a migration.
+
+## Who can see and change which records
+
+Since [ADR-0011](../../adr/0011-row-level-visibility.md) a **Lab Member sees only the records they
+are involved in**. This is enforced by Directus permission filters on the Lab Member policy, so it
+holds everywhere: the Explorer pages, the Data Studio, the API, search, counts and reports. Lab
+Admins and the machine users (Operator, Researcher, Administrator) are not filtered.
+
+"You" below means the signed-in user. You are the **owner** of a record when its *Owner* field
+(`owner_person_id`, a row of **People**) is your own person. Your person is the People row whose
+*user* is your login, so every member needs one. You are a **co-owner** of a sample when you are
+listed in its *Co-owners* field. A project's **PI** and **investigators** are the *Principal
+Investigator* and *Secondary Investigators* fields of the project.
+
+### What you can see
+
+| Record | You can see it when |
+|---|---|
+| **Sample** | you own it, you co-own it, you are PI or investigator of its project, or you own a campaign it is in |
+| **Operation, test** | you own it, you can see the sample it acts on, you are PI or investigator of its project, or you own its campaign |
+| **Campaign** | you own it, you are PI or investigator of its project, or you own or co-own a sample in it |
+| **Project** | you are its PI or an investigator, you own a campaign in it, or you own or co-own a sample in it |
+| Files, links and results attached to a record (co-owner rows, genealogy, stock provenance, data files, force analyses, test subjects, campaign samples, project investigators) | you can see the record they belong to |
+| **Project rollup** (the generated list of what a project used) | you are the project's PI or an investigator |
+| Materials, equipment, methods, stock lots, tools, inserts, edges, recipes, people | everyone |
+
+### What you can change
+
+| Record | Edit | Delete | Create |
+|---|---|---|---|
+| Sample | owner or co-owner | owner | anyone |
+| Operation, test | its owner, or an owner or co-owner of the sample it acts on | its owner | anyone |
+| Campaign | owner | owner | anyone |
+| Project | PI | PI | anyone |
+| Attached rows | whoever may edit the record they belong to | same | anyone |
+
+Being PI or investigator of a project, or owning a campaign a sample is in, lets you **read** that
+sample, not edit it. A new sample, operation, test or campaign is created with you as its owner
+(the `d1-default-owner` hook), so you can always open what you just made. Changing the *Owner* of a
+record hands it over: you lose edit rights if you are not also a co-owner.
+
+### Adding a rig operator
+
+There is no technician role. To let someone record on a sample, **add them as a co-owner** of it:
+open the sample, *Co-owners*, add their user. They can then see and edit the sample and its
+operations and tests, and record new ones from the Force App. Add them as an *investigator* of a
+project instead if they should only read everything in it. A person without a login cannot own
+anything: create the user first, then link it on their People row.
+
+### Known limits
+
+- **Ask-DB** still answers over all lab data (its read-only database role is not filtered).
+- **A multi-sample test** is matched through its first sample only, so a co-owner of only a later
+  sample does not see the test.
+- **Files** (`directus_files`, `/assets/<id>`) are readable by every member.
+- **Audit log:** Lab Members can read the whole audit log.
+- **Records with no owner** are visible only through their project, campaign or co-owners. Assign an
+  owner (`scripts/transfer_sample_ownership.py`, or edit the field); the migration prints how many
+  there were when it ran.
+- **Creating** rows is not filtered (Directus ignores filters on create). A member who can read a
+  sample could add themselves as its co-owner, and so gain edit rights. The audit log records who
+  did it; an owner can remove the row.
+
+### Where the rules live
+
+The rules are data: [`scripts/access_rules.json`](../../../scripts/access_rules.json), one list of
+paths per collection and action, each ending in "this column is the signed-in user". The generator
+`scripts/gen_access_rules.py` turns it into the permission rows, and:
+
+- migration `20261007000141_lab_member_row_visibility.sql` applied them to the database;
+- `scripts/configure_users_and_policies.sql` carries the same rows between `BEGIN GENERATED` and
+  `END GENERATED` markers (that script deletes and re-inserts the policy's rows on every run);
+- `tests/phase1_schema.sh` and `tests/scripts/test_access_rules.py`, and a pre-commit hook, fail if
+  the stored rows or the script differ from the rules file.
+
+To change a rule: edit the JSON, run `python3 scripts/gen_access_rules.py --write`, and add a
+migration that applies the rows from `--values` (copy migration 141). A new collection that holds
+lab data needs an entry in `rules`, not in `unfiltered`.
+
+To re-implement them without Directus (the ADR-0002 drill), read the paths as joins: a sample row
+is visible when `owner_person_id` is a person whose `user_id` is the current user, **or** a
+`sample_co_owners` row for it has that `user_id`, **or** its project's `principal_investigator_person`
+or one of its `project_investigators` is that user, **or** one of its campaigns is owned by that
+user. Everything else in the tables above follows from the same four involvements.
+
+`physical_samples.co_owners` used to be both an old text column and this field. The text column is
+now `co_owners_legacy`, so a filter on `co_owners` can only mean the *Co-owners* field. The
+`projects.samples` field (hidden) exists only so the project rule can say "owns a sample in it";
+restart Directus after applying migration 141 so it picks the field up.
 
 ## The audit log
 
