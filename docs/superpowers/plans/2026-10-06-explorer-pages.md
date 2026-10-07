@@ -22,7 +22,7 @@ Delete this plan once the batch has shipped (see `docs/superpowers/README.md`).
 | E1 — Kit and Sample page | spec stage 1 | `agent-a75d68373a9795e38` | merged (`5fbba12`); coordinator fix: co-owner names, admin build docs. Lineage graph and QR action deferred to E4 |
 | E2 — Campaign page and matrix | spec stage 2 | `agent-ae4f2e67ae2684b1c` | merged; matrix columns = sequence N of process category (spec note); EditDrawer gained `hiddenFields` |
 | E3 — Projects, Project, Home "my work" | spec stage 3 (D10) | `agent-ac65ea5bc992c974e` | merged (`1107cb1`); `directus-ui-reviewer`: 0 blocking, 7 should-fix → E3-fix in `agent-ad01616309859b46c`, merged |
-| E4 — Operation and Test pages; links; QR target | spec stage 4 | `agent-a783b7731c3e45aa8` | done; in review (`directus-ui-reviewer`), incl. the test-subject (M2A) gap across E1–E3 readers |
+| E4 — Operation and Test pages; links; QR target | spec stage 4 | `agent-a783b7731c3e45aa8` | merged (`277f9fd`); review: 2 blocking (test-subject gap in E2 matrix and d1-report, not E4's code) + 7 should-fix → E4-fix in `agent-ad955fd903d43d8b4` (trigger migration syncing `test_sessions.sample_id` from `test_sessions_subject`), in progress |
 | E5 — Row-level visibility | ADR-0011 | — | waits for owner decisions |
 | /simplify, review, CI, PR | all | main checkout | — |
 
