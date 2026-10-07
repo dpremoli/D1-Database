@@ -343,19 +343,86 @@ test('update: a key sent with its current value is not a change', async () => {
   assert.equal(log.reads.length, 0);
 });
 
-test('update: only the repointed campaign_samples key is checked', async () => {
-  const { filters, log } = mount({ canUpdate: (c) => c === 'campaigns' });
+// campaign_samples grants through the PAIR of keys (campaign owner AND sample editor), so moving
+// either key re-checks both on the row as it will be after the update.
+test('update: repointing the campaign key of a campaign_samples row also needs the sample', async () => {
+  const meta = { collection: 'campaign_samples', keys: [5] };
   const database = fakeDb([{ id: 5, campaign_id: 'c1', sample_id: 's1' }]);
-  await filters['items.update'](
-    { campaign_id: 'c2', sample_id: 's1' },
-    { collection: 'campaign_samples', keys: [5] },
-    ctx({ database }),
-  );
-  assert.deepEqual(log.reads.map((r) => r.collection), ['campaigns']);
+  // owns the new campaign, may not edit the row's sample: refused (the old gap)
+  const noSample = mount({ canUpdate: (c) => c === 'campaigns' });
   await assert.rejects(
-    filters['items.update']({ sample_id: 's2' }, { collection: 'campaign_samples', keys: [5] }, ctx({ database })),
+    noSample.filters['items.update']({ campaign_id: 'c2' }, meta, ctx({ database })),
+    denied(/physical_samples s1/),
+  );
+  assert.deepEqual(noSample.log.reads.map((r) => [r.collection, r.query.filter._and[0]]), [
+    ['campaigns', { campaign_id: { _eq: 'c2' } }],
+    ['physical_samples', { sample_id: { _eq: 's1' } }],
+  ]);
+  // owns the new campaign and may edit the sample: allowed
+  const both = mount();
+  await both.filters['items.update']({ campaign_id: 'c2' }, meta, ctx({ database }));
+  assert.deepEqual(both.log.reads.map((r) => r.collection), ['campaigns', 'physical_samples']);
+});
+
+test('update: repointing the sample key of a campaign_samples row also needs the campaign', async () => {
+  const meta = { collection: 'campaign_samples', keys: [5] };
+  const database = fakeDb([{ id: 5, campaign_id: 'c1', sample_id: 's1' }]);
+  // may edit the new sample, does not own the row's campaign: refused
+  const noCampaign = mount({ canUpdate: (c) => c === 'physical_samples' });
+  await assert.rejects(
+    noCampaign.filters['items.update']({ sample_id: 's2' }, meta, ctx({ database })),
+    denied(/campaigns c1/),
+  );
+  const both = mount();
+  await both.filters['items.update']({ sample_id: 's2' }, meta, ctx({ database }));
+  assert.deepEqual(both.log.reads.map((r) => r.query.filter._and[0]), [
+    { campaign_id: { _eq: 'c1' } },
+    { sample_id: { _eq: 's2' } },
+  ]);
+});
+
+test('update: repointing both keys of a campaign_samples row checks the new pair', async () => {
+  const database = fakeDb([{ id: 5, campaign_id: 'c1', sample_id: 's1' }]);
+  const { filters, log } = mount({ canUpdate: (_c, id) => id !== 's2' });
+  await assert.rejects(
+    filters['items.update']({ campaign_id: 'c2', sample_id: 's2' }, { collection: 'campaign_samples', keys: [5] }, ctx({ database })),
     denied(/s2/),
   );
+  assert.deepEqual(log.reads.map((r) => r.query.filter._and[0]), [
+    { campaign_id: { _eq: 'c2' } },
+    { sample_id: { _eq: 's2' } },
+  ]);
+});
+
+test('update: a batch repoint checks the merged row of every key', async () => {
+  const database = fakeDb([
+    { id: 5, campaign_id: 'c1', sample_id: 's1' },
+    { id: 6, campaign_id: 'c1', sample_id: 's7' },
+  ]);
+  const { filters } = mount({ canUpdate: (c, id) => c === 'campaigns' || id !== 's7' });
+  await assert.rejects(
+    filters['items.update']({ campaign_id: 'c2' }, { collection: 'campaign_samples', keys: [5, 6] }, ctx({ database })),
+    denied(/s7/),
+  );
+});
+
+test('update: the junction row read selects every guarded column', async () => {
+  const database = fakeDb([{ id: 5, campaign_id: 'c1', sample_id: 's1' }]);
+  const { filters } = mount();
+  await filters['items.update']({ campaign_id: 'c2' }, { collection: 'campaign_samples', keys: [5] }, ctx({ database }));
+  assert.deepEqual(database.calls[0], {
+    table: 'campaign_samples',
+    column: 'id',
+    keys: [5],
+    columns: ['id', 'campaign_id', 'sample_id'],
+  });
+});
+
+test('update: a campaign_samples row sent with both keys unchanged checks nothing', async () => {
+  const { filters, log } = mount({ canUpdate: () => false });
+  const database = fakeDb([{ id: 5, campaign_id: 'c1', sample_id: 's1' }]);
+  await filters['items.update']({ campaign_id: 'c1', sample_id: 's1' }, { collection: 'campaign_samples', keys: [5] }, ctx({ database }));
+  assert.equal(log.reads.length, 0);
 });
 
 test('update: changing the person (user_id) or other columns checks nothing', async () => {

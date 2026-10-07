@@ -545,6 +545,12 @@ migration 141 prints about ownerless records.
   cannot edit, are still 403. If (1) to (4) are refused, Directus runs the nested junction create
   outside one transaction (or in a savepoint) and the hook needs another way to know the parent is
   new. Since: Explorer pages E5 r2 (PR pending).
+- [ ] **E5 r2 — repointing a `campaign_samples` row needs both sides.** B owns campaign C1 and a
+  sample S in it, and owns a second campaign C2; A owns sample T. `PATCH /items/campaign_samples/<row of
+  C1, S> {"sample_id": T}` answers 403 (B cannot edit T). Now a row (C1, S2) where B owns C1 but S2
+  belongs to A and B is not its co-owner: `PATCH {"campaign_id": C2}` answers 403 (the sample half is
+  checked on the moved row; before this fix only the campaign was). As A (owner of S2 and of the target
+  campaign) both PATCHes work. Since: Explorer pages E5 r2 (PR pending).
 - [ ] **E5 fix — a PI sees the project's campaigns' records.** B is PI of project P2 and owns nothing
   else. A creates a campaign in P2, a sample in that campaign (the sample's own project left empty)
   and an operation and a test on it with no project of their own. B sees the campaign, the sample, the

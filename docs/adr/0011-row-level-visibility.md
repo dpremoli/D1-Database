@@ -205,7 +205,10 @@ accountability (and the request's transaction, so a parent created in the same r
 the key and that filter with `$CURRENT_USER` substituted, and refuses with a 403 `FORBIDDEN` when no
 row comes back **and** the parent was not inserted by this same transaction (below). Admins and calls with no accountability (flows, scripts, other extensions) are not
 checked; every other caller is, whatever their policy. On update only a parent key that actually
-changes is checked.
+changes is checked (a key sent with its current value is not a change); for a junction with more
+than one guard (`campaign_samples`) a change to either key checks **every** guard on the row as it
+will be after the update, so moving a row to another campaign needs the sample's update rule and
+moving it to another sample needs the campaign's.
 
 **Creating a parent and its junction rows in one save** (a project with investigators, a sample with
 co-owners, a campaign with samples, a test with subjects) must work even when the creator names
@@ -358,7 +361,8 @@ Two schema changes make the filters expressible:
   `project_id` and on an operation and a test with a `campaign_id`; the creator is the owner, the
   project, equipment and material still inherit, and an owner named in the payload is kept.
 - `core/extensions/d1-access-guard/index.test.mjs`: creates and parent-key updates of the four
-  junctions are refused without the right (campaign_samples: campaign and sample), allowed with it,
+  junctions are refused without the right (campaign_samples: campaign and sample, also when only one
+  key is repointed), allowed with it,
   admins and internal calls bypass, and the read runs as the caller. Owner changes on a sample,
   operation or test: refused for a co-owner, allowed for the owner and for an admin, a payload
   without the owner field or with the unchanged owner is not checked, batch updates are checked per
