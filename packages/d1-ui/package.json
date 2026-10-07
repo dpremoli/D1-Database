@@ -7,7 +7,7 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./composition": "./src/composition.ts"
+    "./recordRoute": "./src/recordRoute.ts"
   },
   "scripts": {
     "test": "vitest run",

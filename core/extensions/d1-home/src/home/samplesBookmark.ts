@@ -2,7 +2,9 @@
 // "View samples" link goes to it rather than the bare collection, so users land on the same
 // curated view as the sidebar bookmark. It is found by name, since its id differs between
 // installs; if it is not found the link opens the collection's default view.
-export const SAMPLES_LIST = '/content/physical_samples';
+import { collectionRoute } from '@d1/ui';
+
+export const SAMPLES_LIST = collectionRoute('physical_samples');
 const SAMPLES_BOOKMARK_NAME = 'Samples';
 
 type Api = { get: (url: string, config?: any) => Promise<any> };
