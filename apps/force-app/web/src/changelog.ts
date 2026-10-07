@@ -23,6 +23,7 @@ export const CHANGELOG: ChangelogEntry[] = [
 			'Settings > Connectivity: Save keeps only what you changed, and Reset returns to the app\'s own settings.',
 			'Replays of cuts longer than ten minutes work, and the live backup keeps its data if a session is registered twice.',
 			'Plot page: right-click a point on the FRM map to show when it happened on the force charts (and to set the crop there); hovering or right-clicking the charts shows the spot on the map, in the Lite and Full views.',
+			'Plot page: on a touchscreen, hold a finger on the map or a force chart to open the same menu; picking a point is faster; the Full and Gridded views follow the official crop once rebuilt, and keep matching the charts after you change the inner diameter or pulses per rev.',
 		],
 	},
 	{

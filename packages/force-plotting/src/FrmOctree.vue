@@ -18,6 +18,7 @@ import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
 import LoadingOverlay from './LoadingOverlay.vue';
+import LinkRings from './LinkRings.vue';
 import { createLoadToken } from './loadToken';
 import { createGlLifecycle } from './glLifecycle';
 import { sameStage, stageInfo, streamStage, type LoadStage, type StageInfo } from './loadStage';
@@ -28,7 +29,11 @@ import {
 	type PointMenuEvent,
 } from './cloudPick';
 import { nearestIndex } from './hoverIndex';
-import { spiralAnchor, spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
+import { createPendingReveal } from './pendingReveal';
+import { mappableWindow, noGeometryReason, parseOctreeBuild, type OctreeBuild } from './octreeBuild';
+import { createMapProjector } from './mapProjector';
+import { createLongPress, TOUCH_MENU_OFFSET_PX } from './longPress';
+import { spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
 import { shaderZ } from './octreePick';
 
 const props = defineProps<{
@@ -57,7 +62,7 @@ const emit = defineEmits<{
 	(e: 'points', n: number): void;   // LOD-visible point count (for the resolution readout)
 	(e: 'zscale', v: number): void;   // 3-finger vertical swipe adjusts the Z exaggeration
 	(e: 'stage', v: StageInfo | null): void;   // what the view is busy with (null = idle), for the host's busy mark (#102)
-	(e: 'pointmenu', v: PointMenuEvent): void;   // right-click on the map (point null = nothing resolvable)
+	(e: 'pointmenu', v: PointMenuEvent): void;   // right-click or long-press on the map (point null = nothing resolvable)
 }>();
 
 const canvasEl = ref<HTMLCanvasElement | null>(null);
@@ -221,6 +226,18 @@ async function loadMeta(base: string): Promise<Record<string, [number, number]>>
 	return found;
 }
 
+// The octree's build manifest (d1_build.json): the geometry and cut window the host integrated it
+// with. null for an octree built before the manifest existed (404), an unreadable or malformed file:
+// the map then falls back to the cache window and the row's values. no-store, like metadata.json: a
+// stale copy would place picks against the previous build.
+async function loadBuild(base: string): Promise<OctreeBuild | null> {
+	try {
+		const res = await fetch(`${base}d1_build.json`, { cache: 'no-store' });
+		if (!res.ok) return null;
+		return parseOctreeBuild(await res.json());
+	} catch { return null; }
+}
+
 // Free the current octree: its node geometries, material and gradient texture. Reloading used to
 // just drop the reference (only unmount disposed), which leaked GPU memory on every op switch once
 // the component stayed mounted across them.
@@ -228,6 +245,7 @@ function disposeCloud() {
 	// The rings belong to the octree being dropped: the loop that updates them only runs while a
 	// pco exists, so without this the old operation's rings would sit frozen on the new load.
 	markRing.value = null; hoverRing.value = null;
+	build = null; buildReady = false;   // the next octree's manifest decides its geometry
 	if (pco) {
 		scene?.remove(pco);
 		try { pco.dispose(); } catch { /* already disposed */ }
@@ -255,9 +273,10 @@ async function load() {
 	const base = `${useForceHost().octreeUrl}/${props.octreePath}/`;
 	let pt: Potree | null = null, loaded: PointCloudOctree | null = null;
 	try {
-		const found = await loadMeta(base);
+		const [found, bld] = await Promise.all([loadMeta(base), loadBuild(base)]);
 		if (!loadToken.isCurrent(mine)) return;
 		Object.assign(ranges, found);
+		build = bld; buildReady = true;
 		pt = new Potree();
 		pt.maxNumNodesLoading = 12;   // parallelise node fetches so full-res streams in faster
 		// "Full-res" must mean full res: budget the LOD to cover the whole octree (a small
@@ -332,7 +351,7 @@ function setupGL() {
 		controls!.update();
 		if (pco && potree && renderer && camera) {
 			updateRings();   // before the render gate below: the rings follow the camera even on idle frames
-			if (pendingReveal != null) applyPendingReveal();   // moves the camera: next frame's rings follow
+			applyPendingReveal();   // moves the camera: next frame's rings follow
 			const r = potree.updatePointClouds([pco], camera, renderer);
 			const n = (r as any)?.numVisiblePoints ?? pointCount.value;
 			if (n !== lastVisibleN) { lastVisibleN = n; needsRender = true; lastChangeAt = performance.now(); }   // nodes streamed in/out
@@ -367,11 +386,13 @@ function onPtrDown(ev: PointerEvent) {
 	// OrbitControls pans on right-drag (2D and 3D): remember where the button went down so the
 	// release can tell a click (opens the menu) from a pan.
 	rightClick.down(ev);
+	longPress.down(ev);
 	if (ev.pointerType !== 'touch') return;
 	zPointers.set(ev.pointerId, ev.clientY);
 	if (zPointers.size === 3) { if (controls) controls.enabled = false; zBaseY = avgVals(zPointers); }
 }
 function onPtrMove(ev: PointerEvent) {
+	longPress.move(ev);
 	if (!zPointers.has(ev.pointerId)) return;
 	zPointers.set(ev.pointerId, ev.clientY);
 	if (zPointers.size >= 3 && props.zSeries && props.zSeries !== 'none') {
@@ -384,6 +405,7 @@ function onPtrMove(ev: PointerEvent) {
 }
 function onPtrUp(ev: PointerEvent) {
 	if (rightClick.up(ev)) pickAt(ev.clientX, ev.clientY);
+	longPress.up(ev);   // also cancels on pointercancel
 	zPointers.delete(ev.pointerId);
 	if (zPointers.size < 3 && controls) controls.enabled = true;
 }
@@ -396,20 +418,38 @@ function onPtrUp(ev: PointerEvent) {
 // streams the samples through the shader's own maths (pickSpiral, stride 1 over the whole cache,
 // which is the octree window), and rings and reveal place one sample in closed form.
 const rightClick = createClickTracker();
+// A one-finger hold opens the same menu on a touchscreen (longPress.ts). OrbitControls keeps its own
+// touch pan/dolly: a move or a second finger cancels the hold.
+const longPress = createLongPress((x, y) => pickAt(x, y, TOUCH_MENU_OFFSET_PX));
 
 // What the spiral maths needs, per (sampleCache, innerDiam, ppr): small objects only. The render
 // loop places rings every frame, so none of this may be rebuilt there.
-interface OctreeGeo { c: Cache; innerDiam: number; ppr: number; path: TurningSpiralParams; cs: number; ce: number; u: SpiralUniforms }
+// With the build manifest the geometry is the build's own (feed, diameters, ppr, window), and the
+// row's inner diameter / ppr are ignored: they may have been edited since. Without one (an older
+// octree) it is the cache window with the row's values. `win` is what can be mapped: the window
+// clipped to the cache's t range, null when the cache starts after the build's cut start (`covered`
+// false: the r = 0 anchor has no sample, so nothing can be placed).
+interface OctreeGeo {
+	c: Cache; innerDiam: number; ppr: number; build: OctreeBuild | null; path: TurningSpiralParams;
+	cs: number; ce: number; win: { start: number; end: number } | null; u: SpiralUniforms;
+	anchor: { tCs: number; revsCs: number };
+}
 let geo: OctreeGeo | null = null;
+let build: OctreeBuild | null = null;
+let buildReady = false;   // the manifest fetch has settled: before that, picks would use the wrong geometry
 function octreeGeometry(): OctreeGeo | null {
 	const c = props.sampleCache;
 	if (!c || !c.N) { geo = null; return null; }   // never keep a dropped cache (100+ MB) reachable
+	if (!buildReady) return null;
 	const innerDiam = props.innerDiam ?? 0, ppr = props.ppr ?? 1;
-	if (geo && geo.c === c && geo.innerDiam === innerDiam && geo.ppr === ppr) return geo;
-	const g = octreePathParams(c, innerDiam, ppr);
+	if (geo && geo.c === c && geo.innerDiam === innerDiam && geo.ppr === ppr && geo.build === build) return geo;
+	const g = octreePathParams(c, innerDiam, ppr, build);
 	if (g.path.kind !== 'turning_spiral') return null;
 	const cs = g.window.cropStartSec, ce = g.window.cropEndSec;
-	geo = { c, innerDiam, ppr, path: g.path, cs, ce, u: spiralUniformValues({ ...g.path, ...spiralAnchor(c, cs) }) };
+	geo = {
+		c, innerDiam, ppr, build, path: g.path, cs, ce, win: mappableWindow(c, build),
+		anchor: g.anchor, u: spiralUniformValues({ ...g.path, ...g.anchor }),
+	};
 	return geo;
 }
 
@@ -430,11 +470,14 @@ const zAt = (i: number) => (zMap.on ? shaderZ(zMap.series![i], zMap.r0, zMap.r1,
 
 const _v = new THREE.Vector3();
 const _pt = { px: 0, py: 0 };
-// _v (world) -> CSS px relative to the canvas in `out`; false when outside the view.
+const proj = createMapProjector();
+// _v (world) -> CSS px relative to the canvas in `out`; false when outside the view. For one-off
+// callers (rings, reveal): a pick folds the camera once (proj.setup) and projects per sample.
 function toScreen(v: THREE.Vector3, out: { px: number; py: number }): boolean {
-	v.project(camera!);
-	if (v.x < -1 || v.x > 1 || v.y < -1 || v.y > 1) return false;
-	out.px = (v.x + 1) / 2 * cssW; out.py = (1 - v.y) / 2 * cssH;
+	proj.setup(camera!, null, cssW, cssH);
+	const p = proj.project(v.x, v.y, v.z);
+	if (!p) return false;
+	out.px = p.px; out.py = p.py;
 	return true;
 }
 
@@ -443,29 +486,37 @@ function toScreen(v: THREE.Vector3, out: { px: number; py: number }): boolean {
 // (onPtrUp). OrbitControls adds its own pointerup listener on the same element without stopping
 // propagation, so ours still sees the release.
 function onContextMenu(ev: MouseEvent) { ev.preventDefault(); }
-function pickAt(clientX: number, clientY: number) {
+function pickAt(clientX: number, clientY: number, menuOffset = 0) {
 	if (!canvasEl.value || !camera) return;
-	const base = { clientX, clientY };
+	const base = { clientX: clientX + menuOffset, clientY: clientY + menuOffset };   // where the menu opens; the pick stays under the finger
 	const g = octreeGeometry();
-	if (!g) { emit('pointmenu', { ...base, point: null, reason: 'no-cache' }); return; }
+	if (!g) {
+		// The cache is here but the manifest fetch hasn't settled: the geometry isn't known yet, which is not "no cache".
+		emit('pointmenu', { ...base, point: null, reason: noGeometryReason(!!props.sampleCache?.N, buildReady) });
+		return;
+	}
+	if (!g.win) { emit('pointmenu', { ...base, point: null, reason: 'outside-cache' }); return; }
 	const c = g.c;
 	const r = canvasEl.value.getBoundingClientRect();
 	camera.updateMatrixWorld();   // controls.update() moved it since the last render
 	readZ(c);   // hoisted: read the uniforms once, not per sample
 	// Gridded octrees (`fill`) still pick the nearest SAMPLE to the spot: cells aren't samples.
-	const hit = pickSpiral(c, g.path, g.cs, g.ce, 1, (x, y, i) => {
-		_v.set(x, y, zAt(i));
-		return toScreen(_v, _pt) ? _pt : null;
-	}, clientX - r.left, clientY - r.top, pickRadius(props.pointSize), displayedKeepIndex(c[props.axis], props.colorScale));
+	proj.setup(camera, null, cssW, cssH);
+	const px = clientX - r.left, py = clientY - r.top, radius = pickRadius(props.pointSize);
+	// Only the flat top-down view can skip samples by radius: with a Z series the view tilts and
+	// the height moves points, so a sample's distance from the click isn't its radius difference.
+	const cull = zMap.on ? null : proj.discAt(px, py, radius);
+	const hit = pickSpiral(c, g.path, g.cs, g.ce, 1, (x, y, i) => proj.project(x, y, zAt(i)),
+		px, py, radius, displayedKeepIndex(c[props.axis], props.colorScale), cull, g.anchor);
 	emit('pointmenu', { ...base, point: hit ? pointInfo(c, hit.i, hit.x, hit.y, hit.rho) : null });
 }
 
 // World position of the sample at time `sec` into _v (Z as the shader draws it); false when there
-// is none (no cache, outside the octree's cut window, or past the inner-diameter cut-out).
+// is none (no cache, outside the octree's cut window or the cache's, or past the inner-diameter cut-out).
 const _pos: SpiralPos = { x: 0, y: 0, rho: 0, visible: false };
 function timeToWorld(sec: number | null | undefined): boolean {
 	const g = octreeGeometry();
-	if (sec == null || !g || sec < g.cs || sec > g.ce) return false;
+	if (sec == null || !g || !g.win || sec < g.win.start || sec > g.win.end) return false;
 	const c = g.c;
 	const i = nearestIndex(c.t, sec);
 	spiralPositionInto(g.u, c.t[i], c.revs[i], g.cs, g.ce, _pos);
@@ -501,23 +552,21 @@ function updateRings() {
 // the inner cut-out). While the view isn't ready (octree still loading, no sample cache yet) the
 // request is kept in `pendingReveal` and applied by the render loop once both exist, and true is
 // returned: the host asked in good faith and has nothing to retry.
-let pendingReveal: number | null = null;
+const pendingReveal = createPendingReveal();
 function revealTime(t: number): boolean {
 	const g = octreeGeometry();
-	if (g && (t < g.cs || t > g.ce)) { pendingReveal = null; return false; }
-	if (!g || !camera || !controls || !pco || loading.value) { pendingReveal = t; return true; }
-	pendingReveal = null;
+	if (g && (!g.win || t < g.win.start || t > g.win.end)) { pendingReveal.drop(); return false; }
+	if (!g || !camera || !controls || !pco || loading.value) { pendingReveal.hold(t); return true; }
+	pendingReveal.drop();
 	return revealNow(t);
 }
 function applyPendingReveal() {
-	const t = pendingReveal;
-	if (t == null || loading.value || !octreeGeometry()) return;
-	pendingReveal = null;
-	revealNow(t);
+	if (!pendingReveal.held || loading.value || !octreeGeometry()) return;   // none, or not ready: keep it for the next frame
+	revealNow(pendingReveal.take()!);
 }
 // A different octree or cache is a different cut: a reveal asked for the old one means nothing.
 // (Not when the cache goes from none to some: that is what the pending reveal waits for.)
-watch(() => props.sampleCache, (_n, old) => { if (old) pendingReveal = null; });
+watch(() => props.sampleCache, (_n, old) => { if (old) pendingReveal.drop(); });
 function revealNow(t: number): boolean {
 	if (!camera || !controls || !timeToWorld(t)) return false;
 	camera.updateMatrixWorld();
@@ -551,6 +600,7 @@ function boot() {
 // memory) while the operator was on the Record page (review 3.6).
 function teardownGL() {
 	loadToken.cancel();
+	longPress.cancel();   // a canvas swap loses the old canvas's pointerups: forget its touches
 	// The stage watcher is already stopped on unmount: say "idle" directly so the host's busy bar clears.
 	if (stage.value) emit('stage', null);
 	stage.value = null;
@@ -581,11 +631,11 @@ onMounted(() => {
 	ro = new ResizeObserver(() => { sizeCanvas(); frameCamera(); });
 	nextTick(boot);
 });
-onBeforeUnmount(() => life.unmount());
-onDeactivated(() => life.deactivate());
+onBeforeUnmount(() => { longPress.cancel(); life.unmount(); });
+onDeactivated(() => { longPress.cancel(); life.deactivate(); });   // a finger down as the page hides never sends its pointerup here
 onActivated(() => { life.activate(); });
 
-watch(() => props.octreePath, () => { pendingReveal = null; load(); });
+watch(() => props.octreePath, () => { pendingReveal.drop(); load(); });
 watch(() => props.axis, () => { if (material) { material.uniforms.uAxis.value = AXIS_IDX[props.axis] ?? 2; emitAutoRange(); } });
 // LUT bytes resync only when lutKey changes; saturation/displayed-range/grey-vs-hide are uniforms.
 watch(() => props.colorScale, (s) => {
@@ -624,7 +674,15 @@ function exportViewport(filename: string, subtitle?: string) {
 		axis: props.axis, subtitle, filename,
 	});
 }
-defineExpose({ currentBounds, exportViewport, revealTime });
+// The time span the map can place samples for (the build's window within the cache): the host uses it
+// to say why "Show position on map" is off.
+// undefined while that isn't known yet (no sample cache, manifest still loading); null when nothing
+// can be mapped (the cache doesn't reach the build's cut start, or doesn't overlap its window).
+function timeWindow(): { start: number; end: number } | null | undefined {
+	const g = octreeGeometry();
+	return g ? g.win : undefined;
+}
+defineExpose({ currentBounds, exportViewport, revealTime, timeWindow });
 </script>
 
 <template>
@@ -632,9 +690,8 @@ defineExpose({ currentBounds, exportViewport, revealTime });
 		<LoadingOverlay v-if="stage" :stage="stage" />
 		<div v-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
 		<canvas :key="canvasKey" v-show="!error" ref="canvasEl"></canvas>
-		<!-- linked-moment rings, same look and positioning as FrmCloud's .fc-ring; placed by updateRings() -->
-		<div v-if="markRing" class="fc-ring pin" :style="{ left: markRing.x + 'px', top: markRing.y + 'px' }"></div>
-		<div v-if="hoverRing" class="fc-ring hover" :style="{ left: hoverRing.x + 'px', top: hoverRing.y + 'px' }"></div>
+		<!-- linked-moment rings (shared with FrmCloud); placed by updateRings() -->
+		<LinkRings :pin="markRing" :hover="hoverRing" />
 		<span v-if="!loading && !error" class="fc-count">{{ pointCount.toLocaleString() }} pts (LOD)</span>
 	</div>
 </template>
@@ -643,10 +700,6 @@ defineExpose({ currentBounds, exportViewport, revealTime });
 .frm-octree { position: relative; width: 100%; height: 100%; min-height: 160px; background: var(--plot-bg, #0b1020); border-radius: 6px; overflow: hidden; }
 .frm-octree canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .frm-octree canvas:active { cursor: grabbing; }
-/* Kept identical to FrmCloud.vue's .fc-ring so a marker looks the same in Lite and Full. */
-.fc-ring { position: absolute; border-radius: 50%; box-sizing: border-box; pointer-events: none; transform: translate(-50%, -50%); }
-.fc-ring.pin { width: 12px; height: 12px; background: var(--accent, #38bdf8); border: 2px solid var(--text, #fff); box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
-.fc-ring.hover { width: 10px; height: 10px; border: 1.5px solid var(--accent, #38bdf8); opacity: 0.8; box-shadow: 0 0 0 1px rgba(0,0,0,0.4); }
 .fc-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-dim, #94a3b8); }
 .fc-msg.err { color: var(--danger, #fca5a5); font-size: var(--fs-sm, 12px); padding: 12px; text-align: center; }
 .fc-count { position: absolute; right: 6px; bottom: 4px; font-size: var(--fs-xs, 11px); color: var(--text-dim, rgba(255,255,255,0.6)); font-variant-numeric: tabular-nums; }

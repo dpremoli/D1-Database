@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { buildPath, type TurningSpiralParams } from './path';
 import { idxOfTime, type Cache } from './liveCache';
 import {
-	buildStaticAttributes, computeSpiralVertexJS, phase0Samples, spiralPositionInto, spiralUniformValues,
+	buildStaticAttributes, computeSpiralVertexJS, phase0Samples, spiralPlaceInto, spiralPositionInto, spiralRadiusInto, spiralUniformValues,
 	type SpiralPos, type SpiralUniformParams,
 } from './frmCloudShader';
 
@@ -200,6 +200,21 @@ describe('frmCloudShader: spiralPositionInto matches computeSpiralVertexJS', () 
 				const ref = computeSpiralVertexJS(cache.t[i], cache.revs[i], p, 5, 15);
 				spiralPositionInto(u, cache.t[i], cache.revs[i], 5, 15, out);
 				expect(out).toEqual(ref);
+			}
+		});
+		it(`${p.speedMode}: the radius step alone gives rho and visibility, and the place step finishes x, y`, () => {
+			const u = spiralUniformValues(p);
+			const whole: SpiralPos = { x: 0, y: 0, rho: 0, visible: false };
+			const split: SpiralPos = { x: 123, y: 456, rho: 0, visible: false };
+			for (let i = 0; i < cache.N; i += 7) {
+				spiralPositionInto(u, cache.t[i], cache.revs[i], 5, 15, whole);
+				split.x = 123; split.y = 456;
+				const r = spiralRadiusInto(u, cache.t[i], cache.revs[i], 5, 15, split);
+				expect(split.rho).toBe(whole.rho);
+				expect(split.visible).toBe(whole.visible);
+				expect([split.x, split.y]).toEqual([123, 456]);   // no trig yet
+				spiralPlaceInto(r, split);
+				expect(split).toEqual(whole);
 			}
 		});
 	}

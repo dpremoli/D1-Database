@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, onDeactivated, ref } from 'vue';
 import { hoverIndexAt } from './hoverIndex';
+import { createLongPress, isTouchContextMenu, TOUCH_MENU_OFFSET_PX } from './longPress';
 import { markInView, markTagText } from './chartMark';
 import { displayUnit, yAxisTitle, type ChartSnapshot } from './chartExport';
 
@@ -92,7 +93,9 @@ onMounted(() => {
 	});
 	if (bodyEl.value) ro.observe(bodyEl.value);
 });
-onBeforeUnmount(() => { ro?.disconnect(); if (rafId) cancelAnimationFrame(rafId); });
+onBeforeUnmount(() => { longPress.cancel(); ro?.disconnect(); if (rafId) cancelAnimationFrame(rafId); });
+// The Plot page is kept alive: a finger down as it hides never sends its pointerup here.
+onDeactivated(() => longPress.cancel());
 
 function niceNum(v: number): string {
 	const a = Math.abs(v);
@@ -324,7 +327,7 @@ let pendingHoverEv: MouseEvent | null = null;
 // The bucket under a pointer, shared by the hover crosshair and the right-click menu so both
 // always agree. The plot spans the visible window [x0, x1], not the whole record, so map into
 // that and find the nearest sample by value (see hoverIndex.ts).
-function bucketAt(ev: MouseEvent): number | null {
+function bucketAt(ev: { clientX: number }): number | null {
 	const g = geom.value, svg = svgEl.value;
 	if (!g || !svg) return null;
 	const r = svg.getBoundingClientRect();
@@ -363,14 +366,29 @@ function onContextMenu(ev: MouseEvent) {
 	const g = geom.value;
 	if (!g || !props.menu) return;
 	ev.preventDefault();
+	// A touch hold opens the menu itself (longPress below). Android Chrome also raises `contextmenu`
+	// for the same hold, so take it here too or the menu would open twice (and once for a drift the
+	// hold has already rejected as a pan). Never a mouse right-click, even with a finger down.
+	if (isTouchContextMenu(ev, longPress.touching)) return;
+	openMenu(ev.clientX, ev.clientY);
+}
+function openMenu(clientX: number, clientY: number, menuOffset = 0) {
+	const g = geom.value;
+	if (!g || !props.menu) return;
 	let x: number | null = null;
 	if (props.kind === 'env') {
-		const i = bucketAt(ev);
+		const i = bucketAt({ clientX });
 		if (i == null) return;
 		x = g.xs[i];
 	}
-	emit('chartmenu', { clientX: ev.clientX, clientY: ev.clientY, x, snapshot });
+	emit('chartmenu', { clientX: clientX + menuOffset, clientY: clientY + menuOffset, x, snapshot });
 }
+// Touch has no right button and iOS Safari no `contextmenu`: a one-finger hold opens the same menu.
+// The svg's pointer handlers below are the zoom box's; these wrap them and only add the hold.
+const longPress = createLongPress((x, y) => openMenu(x, y, TOUCH_MENU_OFFSET_PX));
+function onSvgDown(ev: PointerEvent) { longPress.down(ev); onZoomDown(ev); }
+function onSvgMove(ev: PointerEvent) { longPress.move(ev); onZoomMove(ev); }
+function onSvgUp(ev: PointerEvent) { longPress.up(ev); onZoomUp(ev); }
 // The chart as the image exporter wants it: the props, not the on-screen geometry, so the file
 // is laid out for a report and not for this panel's pixel size.
 function snapshot(): ChartSnapshot {
@@ -495,7 +513,7 @@ function onWheel(ev: WheelEvent) {
 		<svg
 			ref="svgEl" v-if="geom" :viewBox="`0 0 ${geom.W} ${geom.Hh}`" class="chart-svg" :class="{ zoomtool: zoomTool }"
 			preserveAspectRatio="none" @mousemove="onMove" @mouseleave="onLeave" @wheel="onWheel" @contextmenu="onContextMenu"
-			@pointerdown="onZoomDown" @pointermove="onZoomMove" @pointerup="onZoomUp" @pointercancel="onZoomUp"
+			@pointerdown="onSvgDown" @pointermove="onSvgMove" @pointerup="onSvgUp" @pointercancel="onSvgUp"
 		>
 			<line v-for="(t, i) in geom.yticks" :key="'gy' + i" :x1="ML" :x2="geom.W - MR" :y1="t.y" :y2="t.y" class="fc-grid" stroke-width="0.5" />
 			<line v-for="(t, i) in geom.xticks" :key="'gx' + i" :x1="t.x" :x2="t.x" :y1="MT_EFF" :y2="geom.Hh - MB" class="fc-grid" stroke-width="0.5" />

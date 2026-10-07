@@ -17,8 +17,9 @@
 import type { Cache } from './liveCache';
 import type { PathParams, PathWindow } from './path';
 import { nearestIndex } from './hoverIndex';
+import { buildWindowF32, type OctreeBuild } from './octreeBuild';
 import {
-	phase0Samples, spiralAnchor, spiralPositionInto, spiralUniformValues,
+	phase0Samples, spiralAnchor, spiralPlaceInto, spiralPositionInto, spiralRadiusInto, spiralUniformValues,
 	type SpiralPos, type SpiralUniformParams,
 } from './frmCloudShader';
 
@@ -34,7 +35,7 @@ export interface PointInfo {
 export interface PointMenuEvent {
 	clientX: number; clientY: number;
 	point: PointInfo | null;   // null: nothing under the cursor, or the pick can't resolve a sample
-	reason?: 'gridded' | 'no-cache' | 'outside-crop';   // why the time items are unavailable
+	reason?: 'gridded' | 'no-cache' | 'outside-crop' | 'outside-cache' | 'loading';   // why the time items are unavailable
 }
 
 /**
@@ -158,21 +159,35 @@ export function displayedKeepIndex(
  * `project` map (x, y, cache index) to canvas px (null = not drawn), and return the winner with its
  * position recomputed. This is what both map views use for a right-click: a full path costs ~20 B
  * per sample (about 100 MB at 5M), too much to build and drop on every click.
+ *
+ * `cull` (flat views only: Lite 2D, octree top-down) is the click's world point and a world radius
+ * that covers the pick radius (MapProjector.discAt). A spiral is centred on the origin, so a sample
+ * at radius rho is at least |rho - rhoClick| from the click; one further than `cull.r` can't be
+ * within the pick radius, and is skipped right after the radius step, before the cos/sin, the
+ * projection and the keep() test. Same winner as without it, for a fraction of the work.
+ *
+ * `anchor` is the spiral's r = 0 point; by default the cache sample at the crop start (spiralAnchor).
+ * The octree passes the host's own (octreePathParams), which needs no sample at the start.
  */
 export function pickSpiral(
 	c: Cache, p: Omit<SpiralUniformParams, 'tCs' | 'revsCs'>, cropStart: number, cropEnd: number, stride: number,
 	project: (x: number, y: number, i: number) => { px: number; py: number } | null,
 	px: number, py: number, radiusPx: number, keep?: (i: number) => boolean,
+	cull?: { x: number; y: number; r: number } | null,
+	anchor: { tCs: number; revsCs: number } = spiralAnchor(c, cropStart),
 ): { i: number; x: number; y: number; rho: number } | null {
 	const s = phase0Samples(c, cropStart, cropEnd, stride);
 	if (!s.n) return null;
-	const u = spiralUniformValues({ ...p, ...spiralAnchor(c, cropStart) });
+	const u = spiralUniformValues({ ...p, ...anchor });
 	const out: SpiralPos = { x: 0, y: 0, rho: 0, visible: false };
 	const at = (j: number) => (s.k0 + j) * s.stride;
+	const rhoClick = cull ? Math.hypot(cull.x, cull.y) : 0, rhoReach = cull ? cull.r : 0;
 	const j = pickNearest(s.n, (j) => {
 		const i = at(j);
-		spiralPositionInto(u, c.t[i], c.revs[i], cropStart, cropEnd, out);
-		return out.visible ? project(out.x, out.y, i) : null;
+		const r = spiralRadiusInto(u, c.t[i], c.revs[i], cropStart, cropEnd, out);
+		if (!out.visible || (cull && Math.abs(out.rho - rhoClick) > rhoReach)) return null;
+		spiralPlaceInto(r, out);
+		return project(out.x, out.y, i);
 	}, px, py, radiusPx, keep && ((j) => keep(at(j))));
 	if (j === null) return null;
 	const i = at(j);
@@ -188,24 +203,43 @@ export function settleRing(
 }
 
 /**
- * The path and window that reproduce the octree's own geometry from a live cache: measured
- * tacho speed, the feed and diameter the cache header carries (the same values the octree was
- * built with), and the whole cache as the window. `rpm` is unused by measured mode; it is set to
- * the last sample's for completeness.
+ * The path, window and r = 0 anchor that reproduce the octree's own geometry from a live cache:
+ * measured tacho speed, and the feed, diameters and ppr the octree was built with.
  *
- * Window: the live cache IS the octree's window by construction (write_live_cache keeps only the
- * auto-cut samples), so the window is the cache's own first and last `t`. It is NOT csSec/ceSec:
- * those are (cutstart-1)/Fs and (cutend-1)/Fs, which equal t[0]/t[N-1] only while the cache's Time
- * column is exactly (n-1)/Fs; any other Time base would move the spiral's r = 0 anchor off the
- * first sample, and every ring and pick would sit off the octree's points.
+ * With the build manifest (`build`, d1_build.json) those come from it, and the window is its
+ * [cut_start_sec, cut_end_sec] rounded to float32 (the cache's own t precision, see buildWindowF32):
+ * the cut the host actually integrated, which differs from the cache's whenever the official crop
+ * changed after the live cache was written, or inner diameter / ppr were edited after the build.
+ * The anchor is then the manifest's own { cut_start_sec, revs_cs } when it has revs_cs: exact for any
+ * cache decimation or crop start, with no cache sample needed at the start. Without revs_cs (an older
+ * manifest) it is looked up in the cache at the window start, so the caller checks cacheCoversBuild().
+ *
+ * Without a manifest (an octree built before it existed) the cache's header feed and diameter, the
+ * given innerDiam and ppr, and the whole cache as the window: the live cache IS the octree's window
+ * by construction (write_live_cache keeps only the auto-cut samples), so the window is the cache's own
+ * first and last `t`. It is NOT csSec/ceSec: those are (cutstart-1)/Fs and (cutend-1)/Fs, which equal
+ * t[0]/t[N-1] only while the cache's Time column is exactly (n-1)/Fs; any other Time base would move
+ * the spiral's r = 0 anchor off the first sample, and every ring and pick would sit off the octree's
+ * points. `rpm` is unused by measured mode; it is set to the last sample's for completeness.
  */
-export function octreePathParams(c: Cache, innerDiam: number, ppr: number): { path: PathParams; window: PathWindow } {
+export function octreePathParams(
+	c: Cache, innerDiam: number, ppr: number, build?: OctreeBuild | null,
+): { path: PathParams; window: PathWindow; anchor: { tCs: number; revsCs: number } } {
 	const rpm = c.rpm && c.rpm.length ? c.rpm[c.rpm.length - 1] : 0;
-	return {
-		path: {
-			kind: 'turning_spiral', feed: c.feed, diam: c.diam, innerDiam,
-			speedMode: 'measured', rpm, vc: 0, timeScale: 1, ppr,
-		},
-		window: { cropStartSec: c.N ? c.t[0] : 0, cropEndSec: c.N ? c.t[c.N - 1] : 0, stride: 1 },
+	const path: PathParams = {
+		kind: 'turning_spiral', feed: build ? build.feed : c.feed, diam: build ? build.diam : c.diam,
+		innerDiam: build ? build.innerDiam : innerDiam,
+		speedMode: 'measured', rpm, vc: 0, timeScale: 1, ppr: build ? build.ppr : ppr,
 	};
+	let window: PathWindow;
+	if (build) {
+		const w = buildWindowF32(build);
+		window = { cropStartSec: w.start, cropEndSec: w.end, stride: 1 };
+	} else {
+		window = { cropStartSec: c.N ? c.t[0] : 0, cropEndSec: c.N ? c.t[c.N - 1] : 0, stride: 1 };
+	}
+	const anchor = build && build.revsCs !== undefined
+		? { tCs: build.cutStartSec, revsCs: build.revsCs }
+		: spiralAnchor(c, window.cropStartSec);
+	return { path, window, anchor };
 }
