@@ -8,6 +8,7 @@ import LoadState from '../components/LoadState.vue';
 import RecordLink from '../components/RecordLink.vue';
 import Section from '../components/Section.vue';
 import PickerBox from './PickerBox.vue';
+import { inheritCampaignProject } from './assign';
 import { isDuplicate } from './errors';
 import { LIST_CAP, type CampaignSection } from './useCampaignData';
 
@@ -91,6 +92,9 @@ async function add(id: string, code?: string | null) {
 	actionError.value = '';
 	try {
 		await api.post('/items/campaign_samples', { campaign_id: props.campaignId, sample_id: id });
+		// A sample added to a campaign also gets the campaign's project when it has none (never
+		// overwriting one).
+		actionError.value = await inheritCampaignProject(api, 'physical_samples', 'sample_id', id, props.campaignId, code || 'The sample');
 		results.value = results.value.filter((r) => r.sample_id !== id);
 	} catch (e) {
 		// Already linked (another tab, or a stale list): not an error, the reload shows it.

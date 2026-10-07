@@ -10,7 +10,7 @@ import RecordLink from '../components/RecordLink.vue';
 import Section from '../components/Section.vue';
 import StatusBadge from '../components/StatusBadge.vue';
 import PickerBox from './PickerBox.vue';
-import { campaignAssignPatch, lostRaceMessage } from './assign';
+import { campaignAssignPatch, inheritCampaignProject, lostRaceMessage } from './assign';
 import { operationCategoryFor } from './campaignType';
 import { LIST_CAP, type CampaignSection } from './useCampaignData';
 
@@ -91,6 +91,11 @@ async function setCampaign(id: string, passCode: string | null, campaign: string
 	try {
 		const res = await api.patch('/items/manufacturing_operations', campaignAssignPatch('operation_id', id, props.campaignId, campaign));
 		actionError.value = lostRaceMessage(res.data?.data, !!campaign, label) ?? '';
+		// An operation added to a campaign also gets the campaign's project when it has none
+		// (never overwriting one), so project-scoped counts do not depend on the fallback.
+		if (campaign && !actionError.value) {
+			actionError.value = await inheritCampaignProject(api, 'manufacturing_operations', 'operation_id', id, campaign, label);
+		}
 		results.value = results.value.filter((r) => r.operation_id !== id);
 	} catch (e) {
 		actionError.value = `Could not ${campaign ? 'add' : 'remove'} ${label}: ${errorText(e)}`;

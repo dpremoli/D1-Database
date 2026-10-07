@@ -9,7 +9,7 @@ import RecordLink from '../components/RecordLink.vue';
 import Section from '../components/Section.vue';
 import StatusBadge from '../components/StatusBadge.vue';
 import PickerBox from './PickerBox.vue';
-import { campaignAssignPatch, lostRaceMessage } from './assign';
+import { campaignAssignPatch, inheritCampaignProject, lostRaceMessage } from './assign';
 import { LIST_CAP, type CampaignSection } from './useCampaignData';
 
 // The campaign's test sessions and the picker that adds sessions that are in no campaign yet.
@@ -84,6 +84,11 @@ async function setCampaign(id: string, campaign: string | null, label: string) {
 	try {
 		const res = await api.patch('/items/test_sessions', campaignAssignPatch('session_id', id, props.campaignId, campaign));
 		actionError.value = lostRaceMessage(res.data?.data, !!campaign, label) ?? '';
+		// A session added to a campaign also gets the campaign's project when it has none (never
+		// overwriting one), so project-scoped counts do not depend on the fallback.
+		if (campaign && !actionError.value) {
+			actionError.value = await inheritCampaignProject(api, 'test_sessions', 'session_id', id, campaign, label);
+		}
 		results.value = results.value.filter((r) => r.session_id !== id);
 	} catch (e) {
 		actionError.value = `Could not ${campaign ? 'add' : 'remove'} ${label}: ${errorText(e)}`;
