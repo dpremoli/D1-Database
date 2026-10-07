@@ -33,7 +33,7 @@ import { createPendingReveal } from './pendingReveal';
 import { mappableWindow, parseOctreeBuild, type OctreeBuild } from './octreeBuild';
 import { createMapProjector } from './mapProjector';
 import { createLongPress, TOUCH_MENU_OFFSET_PX } from './longPress';
-import { spiralAnchor, spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
+import { spiralPositionInto, spiralUniformValues, type SpiralPos, type SpiralUniforms } from './frmCloudShader';
 import { shaderZ } from './octreePick';
 
 const props = defineProps<{
@@ -432,6 +432,7 @@ const longPress = createLongPress((x, y) => pickAt(x, y, TOUCH_MENU_OFFSET_PX));
 interface OctreeGeo {
 	c: Cache; innerDiam: number; ppr: number; build: OctreeBuild | null; path: TurningSpiralParams;
 	cs: number; ce: number; win: { start: number; end: number } | null; u: SpiralUniforms;
+	anchor: { tCs: number; revsCs: number };
 }
 let geo: OctreeGeo | null = null;
 let build: OctreeBuild | null = null;
@@ -447,7 +448,7 @@ function octreeGeometry(): OctreeGeo | null {
 	const cs = g.window.cropStartSec, ce = g.window.cropEndSec;
 	geo = {
 		c, innerDiam, ppr, build, path: g.path, cs, ce, win: mappableWindow(c, build),
-		u: spiralUniformValues({ ...g.path, ...spiralAnchor(c, cs) }),
+		anchor: g.anchor, u: spiralUniformValues({ ...g.path, ...g.anchor }),
 	};
 	return geo;
 }
@@ -502,7 +503,7 @@ function pickAt(clientX: number, clientY: number, menuOffset = 0) {
 	// the height moves points, so a sample's distance from the click isn't its radius difference.
 	const cull = zMap.on ? null : proj.discAt(px, py, radius);
 	const hit = pickSpiral(c, g.path, g.cs, g.ce, 1, (x, y, i) => proj.project(x, y, zAt(i)),
-		px, py, radius, displayedKeepIndex(c[props.axis], props.colorScale), cull);
+		px, py, radius, displayedKeepIndex(c[props.axis], props.colorScale), cull, g.anchor);
 	emit('pointmenu', { ...base, point: hit ? pointInfo(c, hit.i, hit.x, hit.y, hit.rho) : null });
 }
 

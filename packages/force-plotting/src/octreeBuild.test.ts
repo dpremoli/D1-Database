@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cacheCoversBuild, mappableWindow, parseOctreeBuild } from './octreeBuild';
+import { buildWindowF32, cacheCoversBuild, mappableWindow, parseOctreeBuild } from './octreeBuild';
 import type { Cache } from './liveCache';
 
 const good = {
@@ -18,6 +18,12 @@ describe('parseOctreeBuild', () => {
 		expect(parseOctreeBuild(good)).toEqual({
 			feed: 0.05, diam: 80, innerDiam: 10, ppr: 2, cutStartSec: 0.264, cutEndSec: 3.867,
 		});
+	});
+	it('reads revs_cs when present and finite, and treats a malformed one as absent', () => {
+		expect(parseOctreeBuild({ ...good, revs_cs: 12.5 })!.revsCs).toBe(12.5);
+		expect(parseOctreeBuild({ ...good, revs_cs: 0 })!.revsCs).toBe(0);
+		expect('revsCs' in parseOctreeBuild(good)!).toBe(false);
+		for (const bad of ['1', NaN, Infinity, null]) expect(parseOctreeBuild({ ...good, revs_cs: bad })!.revsCs).toBeUndefined();
 	});
 	it('accepts a zero-length window and a zero inner diameter', () => {
 		expect(parseOctreeBuild({ ...good, inner_diam: 0, cut_end_sec: 0.264 })).not.toBeNull();
@@ -59,11 +65,35 @@ describe('cacheCoversBuild / mappableWindow', () => {
 		expect(mappableWindow(c, build)).toBeNull();
 	});
 	it('clips the window to the cache and the build', () => {
-		expect(mappableWindow(cacheOf(0.1, 4), build)).toEqual({ start: 0.264, end: 3.867 });
+		expect(mappableWindow(cacheOf(0.1, 4), build)).toEqual({ start: Math.fround(0.264), end: Math.fround(3.867) });
 		const c = cacheOf(0.264, 3, 101);
 		const w = mappableWindow(c, build)!;
 		expect(w.start).toBeCloseTo(0.264, 6);   // the build's start, or t[0] a float32 rounding away
 		expect(w.end).toBe(c.t[c.N - 1]);
 		expect(mappableWindow(cacheOf(5, 6), build)).toBeNull();
+	});
+});
+
+describe('float32 window and revs_cs', () => {
+	const legacy = parseOctreeBuild(good)!;
+	const exact = parseOctreeBuild({ ...good, revs_cs: 3.25 })!;
+	it('rounds the build window the way the cache stores t', () => {
+		expect(buildWindowF32(legacy)).toEqual({ start: Math.fround(0.264), end: Math.fround(3.867) });
+	});
+	it('includes a float32 t[0] that rounded below the double start', () => {
+		let k = 6758; while (!(Math.fround(k / 25600) < k / 25600)) k++;
+		const t0 = k / 25600;                          // not a float32 value
+		expect(Math.fround(t0)).toBeLessThan(t0);      // the case the double comparison got wrong
+		const c = cacheOf(Math.fround(t0), 3.867, 101);
+		const b = { ...legacy, cutStartSec: t0 };
+		expect(cacheCoversBuild(c, b)).toBe(true);
+		expect(mappableWindow(c, b)!.start).toBe(c.t[0]);
+	});
+	it('with revs_cs a crop starting before the cache maps the overlap', () => {
+		const c = cacheOf(1, 4);
+		expect(cacheCoversBuild(c, exact)).toBe(true);
+		expect(mappableWindow(c, exact)).toEqual({ start: c.t[0], end: Math.fround(3.867) });
+		expect(mappableWindow(c, legacy)).toBeNull();           // no revs_cs: the anchor needs a sample
+		expect(mappableWindow(cacheOf(5, 6), exact)).toBeNull();   // no overlap at all
 	});
 });
