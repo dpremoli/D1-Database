@@ -2,7 +2,7 @@
 import { computed, ref, toRef } from 'vue';
 import {
 	EditDrawer, KeyValueGrid, LoadState, NotVisible, RecordHeader, RecordLink, Section, asRecord, dataStudioRoute,
-	formatDate, formatQuantity, processLabel, recordRoute, type KeyValue,
+	formatDate, formatQuantity, processLabel, type KeyValue,
 } from '@d1/ui';
 import { useOperationData } from './operation/useOperationData';
 import OperationSamples from './operation/OperationSamples.vue';
@@ -28,14 +28,9 @@ const operatorText = computed(() => asRecord(op.value?.operator_person_id)?.full
 const overview = computed<KeyValue[]>(() => {
 	const o = op.value;
 	if (!o) return [];
-	const s = asRecord(o.sample_id);
-	const out = asRecord(o.output_sample_id);
-	const eq = asRecord(o.equipment_id);
+	// Samples and machine are in the header and the samples section, so not repeated here.
 	return [
-		{ label: 'Input sample', value: s?.sample_code, mono: true, to: s ? recordRoute('physical_samples', s.sample_id) : undefined },
-		{ label: 'Output sample', value: out?.sample_code, mono: true, to: out ? recordRoute('physical_samples', out.sample_id) : undefined },
 		{ label: 'Method', value: asRecord(o.method_id)?.method_name },
-		{ label: 'Machine', value: eq?.equipment_name },
 		{ label: 'Step', value: o.operation_sequence },
 		{ label: 'Capture software', value: o.capture_software },
 		{ label: 'Capture frequency', value: formatQuantity(o.capture_frequency_khz), unit: 'kHz' },
@@ -96,7 +91,7 @@ const openReport = () => window.open(`/d1-report/operation/${encodeURIComponent(
 
 				<Section
 					title="Parameters"
-					:count="params.loading ? null : params.data.length"
+					:count="params.loading ? null : params.data.length || null"
 					:empty="!params.loading && !params.error && !params.data.length"
 					:empty-text="op.process_category ? 'No parameters recorded for this operation.' : 'This operation has no process category, so no parameter set applies.'"
 				>

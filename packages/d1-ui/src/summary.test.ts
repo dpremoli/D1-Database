@@ -70,6 +70,11 @@ describe('summaryGroups', () => {
 		expect(labels).toContain('Band energy › High › A');
 		expect(labels).toContain('RMS');
 	});
+	it('keeps a unit-looking suffix in the label when it is part of a nested key', () => {
+		const g = summaryGroups({ fft_analysis: { dominant_frequency_hz: 5, band_energy: { low_0_100_hz: 0.4 } } })[0];
+		expect(g.entries).toContainEqual({ label: 'Dominant frequency', value: '5', unit: 'Hz' });
+		expect(g.entries).toContainEqual({ label: 'Band energy › Low 0 100 Hz', value: '0.4', unit: '' });
+	});
 	it('counts what the page will show', () => {
 		expect(summaryCount(groups)).toBe(groups.reduce((n, g) => n + g.entries.length + g.tables.length, 0));
 		expect(summaryCount(groups)).toBeGreaterThan(8);

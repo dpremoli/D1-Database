@@ -41,7 +41,8 @@ const GROUP_TITLE: Record<string, string> = {
 	fft_analysis: 'FFT analysis',
 };
 
-const ACRONYM = new Set(['rms', 'fft', 'psd', 'snr', 'dc', 'uts', 'frf', 'rpm']);
+// Words shown in a fixed spelling.
+const WORD: Record<string, string> = { rms: 'RMS', fft: 'FFT', psd: 'PSD', snr: 'SNR', dc: 'DC', uts: 'UTS', frf: 'FRF', rpm: 'RPM', hz: 'Hz', khz: 'kHz' };
 
 // A trailing unit in a key name, as the workers and the parameter columns spell them.
 const UNIT_SUFFIX: [RegExp, string][] = [
@@ -64,7 +65,7 @@ function words(key: string): string {
 		.replace(/([a-z])([A-Z])/g, '$1 $2')
 		.trim()
 		.split(/\s+/)
-		.map((w) => (ACRONYM.has(w.toLowerCase()) ? w.toUpperCase() : w.toLowerCase()))
+		.map((w) => WORD[w.toLowerCase()] ?? w.toLowerCase())
 		.join(' ');
 	return text ? text.charAt(0).toUpperCase() + text.slice(1) : key;
 }
@@ -109,7 +110,10 @@ function walk(group: StatGroup, value: unknown, path: string[], unit: string, de
 			return;
 		}
 		for (const [k, v] of Object.entries(value)) {
-			const l = labelAndUnit(k);
+			// A unit suffix is only trusted on the keys directly under a namespace (`sample_rate_hz`).
+			// Deeper keys are often data, not quantities: in band_energy { low_0_100_hz: 0.4 } the
+			// "hz" names the band and the 0.4 is an energy, so those keep the key as their label.
+			const l = depth === 0 ? labelAndUnit(k) : { label: words(k), unit: '' };
 			walk(group, v, [...path, l.label], l.unit, depth + 1);
 		}
 		return;

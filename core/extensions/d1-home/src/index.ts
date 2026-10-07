@@ -5,6 +5,7 @@ import PeopleView from './people.vue';
 import PlaceholderPage from './pages/PlaceholderPage.vue';
 import SamplePage from './pages/SamplePage.vue';
 import OperationPage from './pages/OperationPage.vue';
+import TestPage from './pages/TestPage.vue';
 
 // A friendly landing page for lab users plus guided task screens, so day-to-day
 // work starts somewhere warm and simple instead of a raw collection form.
@@ -34,6 +35,6 @@ export default defineModule({
 		{ path: 'campaigns/:id', ...placeholder('campaigns', 'Campaign') },
 		{ path: 'samples/:id', component: SamplePage, props: true },
 		{ path: 'operations/:id', component: OperationPage, props: true },
-		{ path: 'tests/:id', ...placeholder('test_sessions', 'Test session') },
+		{ path: 'tests/:id', component: TestPage, props: true },
 	],
 });

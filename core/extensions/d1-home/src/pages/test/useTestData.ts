@@ -1,0 +1,142 @@
+import { onBeforeUnmount, ref, watch, type Ref } from 'vue';
+import {
+	errorText, isNotVisible, linkedFiles, paramColumns, paramRows, useFieldDefs, useItems, useRequestGate,
+	type LinkedFile, type ParamRow,
+} from '@d1/ui';
+
+// Everything the Test page reads, as the signed-in user. The test session decides between "page"
+// and "Not found or not visible to you"; every other block loads on its own (same pattern as the
+// Sample and Operation pages).
+
+export interface Section<T> {
+	data: T;
+	loading: boolean;
+	error: string;
+}
+
+export interface Subjects {
+	samples: any[];
+	/** Subjects that are not samples (an insert edge ...): collection and id only. */
+	others: { collection: string; item: string }[];
+}
+
+const section = <T>(initial: T) => ref<Section<T>>({ data: initial, loading: false, error: '' }) as Ref<Section<T>>;
+
+const TEST_FIELDS = [
+	'session_id', 'test_type', 'test_category', 'session_date', 'status', 'operator_name', 'notes',
+	'summary_stats', 'capture_software', 'capture_frequency_khz', 'file_size_gb', 'file_storage_pointer',
+	'equipment_id.equipment_id', 'equipment_id.equipment_name',
+	'project_id.project_id', 'project_id.project_code', 'project_id.project_name',
+	'campaign_id.campaign_id', 'campaign_id.campaign_code', 'campaign_id.name',
+	'owner_person_id.person_id', 'owner_person_id.full_name',
+	'operator_person_id.person_id', 'operator_person_id.full_name',
+	// The single-sample column. A test made through the form records its target as a subject row
+	// instead (test_sessions_subject), so this is empty for those and `subjects` carries the sample.
+	'sample_id.sample_id', 'sample_id.sample_code', 'sample_id.nickname', 'sample_id.form', 'sample_id.current_status',
+];
+
+const SAMPLE_FIELDS = ['sample_id', 'sample_code', 'nickname', 'form', 'current_status'];
+
+export function useTestData(id: Ref<string>) {
+	const { getItem, getItems } = useItems();
+	const { getFieldDefs } = useFieldDefs();
+	const gate = useRequestGate();
+
+	const test = ref<any | null>(null);
+	const loading = ref(false);
+	const notVisible = ref(false);
+	const error = ref('');
+
+	const params = section<ParamRow[]>([]);
+	const subjects = section<Subjects>({ samples: [], others: [] });
+	const files = section<LinkedFile[]>([]);
+
+	async function fill<T>(target: Ref<Section<T>>, token: number, what: string, read: () => Promise<T>) {
+		target.value = { ...target.value, loading: true, error: '' };
+		try {
+			const data = await read();
+			if (gate.isCurrent(token)) target.value = { data, loading: false, error: '' };
+		} catch (e: any) {
+			if (gate.isCurrent(token)) target.value = { ...target.value, loading: false, error: `Could not load ${what}: ${errorText(e)}` };
+		}
+	}
+
+	async function readParams(sessionId: string, testType: string | null): Promise<ParamRow[]> {
+		if (!testType) return [];
+		const defs = await getFieldDefs('test_sessions');
+		const columns = paramColumns(defs, 'test_type', testType);
+		if (!columns.length) return [];
+		const row = await getItem('test_sessions', sessionId, { fields: columns });
+		return paramRows(defs, { ...row, test_type: testType }, 'test_type');
+	}
+
+	async function readSubjects(sessionId: string): Promise<Subjects> {
+		let rows: any[];
+		try {
+			rows = await getItems('test_sessions_subject', {
+				filter: { test_sessions_id: { _eq: sessionId } },
+				fields: ['collection', 'item'],
+				limit: 50,
+			});
+		} catch (e) {
+			if (isNotVisible(e)) return { samples: [], others: [] };
+			throw e;
+		}
+		const sampleIds = rows.filter((r) => r.collection === 'physical_samples').map((r) => String(r.item));
+		const samples = sampleIds.length
+			? await getItems('physical_samples', { filter: { sample_id: { _in: sampleIds } }, fields: SAMPLE_FIELDS, limit: 50 })
+			: [];
+		const others = rows.filter((r) => r.collection !== 'physical_samples').map((r) => ({ collection: String(r.collection), item: String(r.item) }));
+		return { samples, others };
+	}
+
+	async function load() {
+		const token = gate.begin();
+		const sessionId = id.value;
+		notVisible.value = false;
+		error.value = '';
+		if (test.value?.session_id !== sessionId) {
+			test.value = null;
+			params.value = { data: [], loading: false, error: '' };
+			subjects.value = { data: { samples: [], others: [] }, loading: false, error: '' };
+			files.value = { data: [], loading: false, error: '' };
+		}
+		if (!sessionId) return;
+
+		loading.value = true;
+		try {
+			const row = await getItem('test_sessions', sessionId, { fields: TEST_FIELDS });
+			if (!gate.isCurrent(token)) return;
+			test.value = row;
+		} catch (e: any) {
+			if (!gate.isCurrent(token)) return;
+			if (isNotVisible(e)) notVisible.value = true;
+			else error.value = `Could not load this test: ${errorText(e)}`;
+			return;
+		} finally {
+			if (gate.isCurrent(token)) loading.value = false;
+		}
+
+		const testType: string | null = test.value?.test_type ?? null;
+		await Promise.all([
+			fill(params, token, 'the parameters', () => readParams(sessionId, testType)),
+			fill(subjects, token, 'the test subject', () => readSubjects(sessionId)),
+			fill(files, token, 'linked files', async () => {
+				const item = await getItem('test_sessions', sessionId, {
+					fields: [
+						'data_files.directus_files_id.id',
+						'data_files.directus_files_id.title',
+						'data_files.directus_files_id.filename_download',
+						'data_files.directus_files_id.metadata',
+					],
+				});
+				return linkedFiles(item?.data_files);
+			}),
+		]);
+	}
+
+	watch(id, load, { immediate: true });
+	onBeforeUnmount(() => gate.cancel());
+
+	return { test, loading, notVisible, error, params, subjects, files, reload: load };
+}
