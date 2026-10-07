@@ -126,6 +126,29 @@ n3 = read_bin_n(octp3, hex2dec('44314F43'), 1);
 assert(n3 <= round((ce - cs) * Fs) + 2, 'octree has %d pts, more than the crop window', n3);
 assert(read_bin_n(octp3, hex2dec('44314F43'), 1) < octN, 'crop must shorten the cloud');
 
+% revs_cs is the cumulative raw revolutions at the window start, in the units of the live
+% cache's `revs` array: for the auto run (cache step 1) it equals the cache's first revs value
+% (float32), and the crop run's revs_cs is larger (it starts later).
+revsA = read_d1lc_col(cachep, 6);
+assert(abs(bj.revs_cs - double(revsA(1))) <= 1e-4 * max(1, abs(bj.revs_cs)), ...
+    'revs_cs %g != live cache revs(1) %g', bj.revs_cs, revsA(1));
+assert(b3.revs_cs > bj.revs_cs, 'crop starts later -> larger revs_cs');
+
+% Crop is one unit: an unusable start rejects an otherwise valid end (and vice versa), and a
+% crop that does not change the window stays crop_source auto.
+tmp4b = tempname; mkdir(tmp4b);
+octp4b = fullfile(tmp4b, 'cloud.bin');
+process_force(matp, tmp4b, struct('octree_out', octp4b, 'crop_start_sec', 1e6, 'crop_end_sec', ce));
+b4b = jsondecode(fileread([octp4b '.json']));
+assert(strcmp(b4b.crop_source, 'auto'), 'bad start + valid end must reject the whole crop');
+assert(read_bin_n(octp4b, hex2dec('44314F43'), 1) == octN, 'rejected crop must equal the auto cloud');
+tmp4c = tempname; mkdir(tmp4c);
+octp4c = fullfile(tmp4c, 'cloud.bin');
+process_force(matp, tmp4c, struct('octree_out', octp4c, 'crop_start_sec', bj.cut_start_sec, ...
+    'crop_end_sec', bj.cut_end_sec));
+b4c = jsondecode(fileread([octp4c '.json']));
+assert(strcmp(b4c.crop_source, 'auto'), 'a crop equal to the auto window must stay auto');
+
 % Degenerate window (start past the end of the file): falls back to auto, never empty.
 tmp4 = tempname; mkdir(tmp4);
 octp4 = fullfile(tmp4, 'cloud.bin');
@@ -167,4 +190,16 @@ c = onCleanup(@() fclose(fid));
 hdr = fread(fid, n_before + 1, 'uint32');
 assert(hdr(1) == magic, 'bad magic %#x in %s (expected %#x)', hdr(1), path, magic);
 n = hdr(end);
+end
+
+function v = read_d1lc_col(path, col)
+%READ_D1LC_COL  Column `col` (1=t, 2=Fx, 3=Fy, 4=Fz, 5=rpm, 6=revs_cum) of a live_cache.bin.
+fid = fopen(path, 'r', 'l');
+assert(fid >= 0, 'cannot open %s', path);
+c = onCleanup(@() fclose(fid));
+hdr = fread(fid, 3, 'uint32');
+assert(hdr(1) == hex2dec('44314C43'), 'bad D1LC magic in %s', path);
+fread(fid, 5, 'single');
+all = fread(fid, [hdr(3) 6], 'single');
+v = all(:, col);
 end
