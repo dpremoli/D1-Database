@@ -10,7 +10,8 @@
 --   * content: moved to just after the last of the three dashboards that is listed; left where it
 --     is when none is listed, and not added when the bar does not list it;
 --   * everything else keeps its relative order.
--- A NULL bar (Directus' own default) is left alone. Running it twice changes nothing.
+-- An entry with no id is kept where it is; a duplicate home entry is dropped (the first one is
+-- kept). A NULL bar (Directus' own default) is left alone. Running it twice changes nothing.
 
 UPDATE directus_settings s
    SET module_bar = (
@@ -24,10 +25,10 @@ UPDATE directus_settings s
        placed AS (
            -- 0: home first (its existing entry if there is one, else a new enabled one)
            SELECT 0 AS pos,
-                  COALESCE((SELECT elem FROM cur WHERE elem->>'id' = 'home'),
+                  COALESCE((SELECT elem FROM cur WHERE elem->>'id' = 'home' ORDER BY ord LIMIT 1),
                            '{"type":"module","id":"home","enabled":true}'::jsonb) AS elem
            UNION ALL
-           SELECT ord * 10, elem FROM cur WHERE elem->>'id' NOT IN ('home', 'content')
+           SELECT ord * 10, elem FROM cur WHERE COALESCE(elem->>'id', '') NOT IN ('home', 'content')
            UNION ALL
            -- content: five places after the last dashboard (entries sit 10 apart), else unchanged
            SELECT COALESCE(dash.last_ord * 10 + 5, cur.ord * 10), cur.elem
@@ -51,7 +52,7 @@ UPDATE directus_settings s
        placed AS (
            SELECT 0 AS pos, elem FROM cur WHERE elem->>'id' = 'content'
            UNION ALL
-           SELECT ord * 10, elem FROM cur WHERE elem->>'id' NOT IN ('home', 'content')
+           SELECT ord * 10, elem FROM cur WHERE COALESCE(elem->>'id', '') NOT IN ('home', 'content')
        )
        SELECT jsonb_agg(elem ORDER BY pos) FROM placed
    )::json
