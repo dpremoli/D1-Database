@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue';
 import {
-	CampaignWorkbench, EditDrawer, LoadState, RecordHeader, RecordLink, StatusBadge,
+	CampaignWorkbench, EditDrawer, LoadState, NotVisible, RecordHeader, RecordLink, StatusBadge,
 	campaignTypeLabel, dataStudioRoute, formatDate,
 } from '@d1/ui';
 import { useCampaignRecord } from './campaign/useCampaignRecord';
@@ -31,12 +31,7 @@ const dates = computed(() => {
 		<div class="campaign-page">
 			<LoadState v-if="loading && !campaign" loading loading-text="Loading campaign…" />
 
-			<div v-else-if="notVisible" class="not-found">
-				<v-icon name="lock" large />
-				<h2>Not found or not visible to you</h2>
-				<p>This campaign does not exist, or you do not have permission to see it.</p>
-				<v-button to="/home">Back to Home</v-button>
-			</div>
+			<NotVisible v-else-if="notVisible" what="campaign" />
 
 			<LoadState v-else-if="error" :error="error" />
 
@@ -96,16 +91,4 @@ const dates = computed(() => {
 .campaign-page :deep(.crumbs a:hover) { text-decoration: underline; }
 .notes { margin: 14px 0 0; font-size: 13.5px; color: var(--theme--foreground-subdued); white-space: pre-wrap; }
 .campaign-page :deep(.d1-progress-block) { margin-top: 22px; }
-.not-found {
-	max-width: 520px;
-	margin: 64px auto;
-	text-align: center;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 10px;
-}
-.not-found :deep(.v-icon) { --v-icon-color: var(--theme--foreground-subdued); }
-.not-found h2 { margin: 6px 0 0; font-size: 20px; }
-.not-found p { margin: 0 0 12px; color: var(--theme--foreground-subdued); }
 </style>
