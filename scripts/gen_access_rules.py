@@ -137,7 +137,9 @@ def build_rows(doc: dict) -> list[dict]:
             spec = actions[action]
             extra = set(spec) - {"permissions", "validation", "fields"}
             if extra:
-                raise RulesError(f"{collection}.{action}: unknown key(s) {sorted(extra)}")
+                raise RulesError(
+                    f"{collection}.{action}: unknown key(s) {sorted(extra)}"
+                )
             if action == "create" and spec.get("permissions"):
                 raise RulesError(
                     f"{collection}.create: Directus ignores item filters on create; use validation"
@@ -151,7 +153,7 @@ def build_rows(doc: dict) -> list[dict]:
                     ",".join(spec["fields"]) if "fields" in spec else "*",
                 )
             )
-    seen ={(r["collection"], r["action"]) for r in rows}
+    seen = {(r["collection"], r["action"]) for r in rows}
     for collection, actions in doc["unfiltered"].items():
         for action in actions:
             if action not in ACTIONS:
@@ -202,7 +204,9 @@ def hook_rules(doc: dict) -> dict:
     guards: dict = {}
     for junction, checks in doc.get("guards", {}).items():
         if "create" not in rules.get(junction, {}):
-            raise RulesError(f"guard {junction}: not a ruled collection with a create row")
+            raise RulesError(
+                f"guard {junction}: not a ruled collection with a create row"
+            )
         out = []
         for check in checks:
             parent, action = check["parent"], check.get("rule", "update")
@@ -254,7 +258,9 @@ def resolve(doc: dict, db: dict) -> list[str]:
         for part in parts[:-1]:
             nxt = step(table, part)
             if nxt is None:
-                problems.append(f"{label}: {path}: {table}.{part} is not a relation field Directus knows")
+                problems.append(
+                    f"{label}: {path}: {table}.{part} is not a relation field Directus knows"
+                )
                 return
             table = nxt
         if f"{table}.{parts[-1]}" not in columns:
@@ -269,9 +275,13 @@ def resolve(doc: dict, db: dict) -> list[str]:
     for junction, checks in doc.get("guards", {}).items():
         for check in checks:
             if step(junction, check["field"]) != check["parent"]:
-                problems.append(f"guard {junction}.{check['field']} is not a relation to {check['parent']}")
+                problems.append(
+                    f"guard {junction}.{check['field']} is not a relation to {check['parent']}"
+                )
             if f"{check['parent']}.{check['key']}" not in columns:
-                problems.append(f"guard {junction}: {check['parent']}.{check['key']} is not a column")
+                problems.append(
+                    f"guard {junction}: {check['parent']}.{check['key']} is not a column"
+                )
     return problems
 
 
@@ -339,7 +349,11 @@ def main(argv: list[str] | None = None) -> int:
         stale = []
         if render_script(text, rows) != text:
             stale.append(args.script.name)
-        have = args.hook_rules.read_text(encoding="utf-8") if args.hook_rules.exists() else ""
+        have = (
+            args.hook_rules.read_text(encoding="utf-8")
+            if args.hook_rules.exists()
+            else ""
+        )
         if have != hook_text:
             stale.append(args.hook_rules.parent.name + "/" + args.hook_rules.name)
         if stale:

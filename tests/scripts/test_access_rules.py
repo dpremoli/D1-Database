@@ -204,8 +204,14 @@ def test_pi_reaches_records_through_the_project_campaigns():
         paths = _paths(collection, "read")
         assert pi in paths and inv in paths, collection
     sample = _paths("physical_samples", "read")
-    assert "campaigns._some.campaign_id.project_id.principal_investigator_person.user_id" in sample
-    assert "campaigns._some.campaign_id.project_id.secondary_investigators._some.user_id" in sample
+    assert (
+        "campaigns._some.campaign_id.project_id.principal_investigator_person.user_id"
+        in sample
+    )
+    assert (
+        "campaigns._some.campaign_id.project_id.secondary_investigators._some.user_id"
+        in sample
+    )
     # still read-only: no update or delete filter goes through a project
     for collection in ("physical_samples", "manufacturing_operations", "test_sessions"):
         for action in ("update", "delete"):
@@ -267,13 +273,19 @@ def test_guards_cover_every_junction_that_grants_visibility():
     assert grants == set(DOC["guards"])
     rules = gen.hook_rules(DOC)["guards"]
     assert set(rules) == set(DOC["guards"])
-    assert [c["parent"] for c in rules["campaign_samples"]] == ["campaigns", "physical_samples"]
+    assert [c["parent"] for c in rules["campaign_samples"]] == [
+        "campaigns",
+        "physical_samples",
+    ]
     assert [c["parent"] for c in rules["sample_co_owners"]] == ["physical_samples"]
     assert [c["parent"] for c in rules["project_investigators"]] == ["projects"]
     # the filter shipped to the hook is the parent's update row, word for word
     for junction, checks in rules.items():
         for c in checks:
-            assert c["filter"] == BY_KEY[(c["parent"], "update")]["permissions"], (junction, c)
+            assert c["filter"] == BY_KEY[(c["parent"], "update")]["permissions"], (
+                junction,
+                c,
+            )
 
 
 def test_hook_rules_file_is_current_and_drift_is_detected(tmp_path):
@@ -290,7 +302,12 @@ def test_guard_rejects_a_parent_without_an_update_filter():
         **DOC,
         "guards": {
             "sample_co_owners": [
-                {"field": "sample_id", "parent": "fast_run_data", "key": "x", "rule": "update"}
+                {
+                    "field": "sample_id",
+                    "parent": "fast_run_data",
+                    "key": "x",
+                    "rule": "update",
+                }
             ]
         },
     }
@@ -311,7 +328,12 @@ def _directus(drop=()):
         if alias:
             fields.add(f"{one}.{alias}")
 
-    for t in ("physical_samples", "manufacturing_operations", "test_sessions", "campaigns"):
+    for t in (
+        "physical_samples",
+        "manufacturing_operations",
+        "test_sessions",
+        "campaigns",
+    ):
         m2o(t, "owner_person_id", "people")
     m2o("projects", "principal_investigator_person", "people")
     m2o("physical_samples", "project_id", "projects", "samples")
@@ -338,11 +360,23 @@ def _directus(drop=()):
         ("project_rollup", "project_id", "projects"),
     ]:
         m2o(t, f, one)
-    cols |= {"people.user_id", "sample_co_owners.user_id", "project_investigators.user_id"}
-    cols |= {"physical_samples.sample_id", "campaigns.campaign_id", "projects.project_id"}
+    cols |= {
+        "people.user_id",
+        "sample_co_owners.user_id",
+        "project_investigators.user_id",
+    }
+    cols |= {
+        "physical_samples.sample_id",
+        "campaigns.campaign_id",
+        "projects.project_id",
+    }
     for key in drop:
         rel.pop(key)
-    return {"relations": list(rel.values()), "columns": sorted(cols), "fields": sorted(fields)}
+    return {
+        "relations": list(rel.values()),
+        "columns": sorted(cols),
+        "fields": sorted(fields),
+    }
 
 
 def test_resolver_accepts_a_complete_database():
@@ -381,7 +415,9 @@ def test_resolver_checks_the_guards_too():
 def test_resolve_command_exit_codes(tmp_path):
     good, bad = tmp_path / "good.json", tmp_path / "bad.json"
     good.write_text(json.dumps(_directus()), encoding="utf-8")
-    bad.write_text(json.dumps(_directus(drop=[("campaigns", "owner_person_id")])), encoding="utf-8")
+    bad.write_text(
+        json.dumps(_directus(drop=[("campaigns", "owner_person_id")])), encoding="utf-8"
+    )
     assert gen.main(["--resolve", str(good)]) == 0
     assert gen.main(["--resolve", str(bad)]) == 1
 
