@@ -220,17 +220,26 @@ Reads the real collections (not `project_rollup`, which ADR-0011 restricts).
 
 - **Header:** pass code, process category, date, owner, operator, equipment, then the sample
   (workpiece) and campaign.
-- **Parameters:** the matching `*_params` row as a key–value grid, with units from field notes.
+- **Parameters:** the category's parameter fields as a key–value grid, with units from the field
+  suffix. (The `*_params` tables no longer exist: migration 20260623000032 flattened them into
+  inline columns, `machining_*`, `sintering_*`, `ht_*` ... on `manufacturing_operations`. The page
+  reads the field definitions and keeps the fields whose "show when `process_category` = x"
+  condition matches, falling back to the column prefix.)
 - **Inputs and outputs:** samples consumed and produced (`produced_by_operations`).
-- **Force analysis:** each file's `status` / `diag_status`, error text, and "View forces" /
-  "Diagnostics". Cutting metrics stay in the Force dashboard.
+- **Force analysis:** each file's `status` / `diag_status`, error text, and one "View forces"
+  button for the operation (the dashboard opens an operation, not a file; the diagnostics are a
+  badge, with no separate link). FAST operations show the imported run and "View FAST". Cutting
+  metrics stay in the Force dashboard.
 - **Files.**
 
 ### Test session
 
 - **Header:** test type and category, date, status, owner, operator, equipment, then the sample
   and campaign.
-- **Parameters:** the matching test params row.
+- **Parameters:** the test type's parameter fields (inline `tensile_*`, `hardness_*` ... columns on
+  `test_sessions`, chosen by the same field conditions as the operation's).
+- **Subject:** the sample (or other target) from `test_sessions_subject`, which is where a test
+  made through the form stores it (`sample_id` stays empty); older rows use `sample_id`.
 - **Results:** `summary_stats` rendered as a key–value grid, grouped by the namespaced key each
   worker writes.
 - **Files.**
@@ -246,8 +255,16 @@ Reads the real collections (not `project_rollup`, which ADR-0011 restricts).
 - the Force and FAST dashboards' `openRecord` host callbacks (`DirectusForceDashboard.vue`,
   `FastDashboard.vue`).
 
-**QR labels:** `d1-report`'s `adminRecordUrl()` points new labels at `/admin/home/samples/<id>`.
-Printed labels keep working because `/admin/content/...` still exists.
+**QR labels:** `d1-report`'s `adminRecordUrl()` points new labels at `/admin/home/samples/<id>`
+(reports use `/admin/home/operations|tests/<id>`). `d1-report` cannot import the kit, so its
+small mapping repeats `recordRoute()`'s table. Printed labels keep working because
+`/admin/content/...` still exists. The Sample page has no separate QR button: Print label is the
+QR (the label carries it).
+
+**Project items:** `project_rollup` rows carry a hashed `row_id`, not the record id, so
+`d1-project-items` reads the project's operations (as the user) with their sample, machine, tool,
+edge, insert and material to resolve code → record (`rollupTargets()` in the kit). Rows it cannot
+resolve stay plain text.
 
 ## Error handling
 
