@@ -1,13 +1,11 @@
 import { onBeforeUnmount, ref, watch, type Ref } from 'vue';
 import { useApi } from '@directus/extensions-sdk';
-import { errorText, isNotVisible, useItems, useRequestGate, type LinkedFile, linkedFiles, type TraceResponse } from '@d1/ui';
+import { LIST_CAP, errorText, isNotVisible, useItems, useRequestGate, useSections, type LinkedFile, type SectionState, linkedFiles, type TraceResponse } from '@d1/ui';
 
 // Everything the Sample page reads, as the signed-in user (so Directus permissions apply). The
 // sample itself decides between "page" and "Not found or not visible to you"; everything else is a
 // section that loads in parallel and fails on its own, so one slow or forbidden list does not blank
 // the page.
-
-export const LIST_CAP = 200;
 
 const SAMPLE_FIELDS = [
 	'sample_id', 'sample_code', 'nickname', 'form', 'current_status', 'item_type', 'stock_category',
@@ -23,18 +21,11 @@ const SAMPLE_FIELDS = [
 	'primary_method_id.method_id', 'primary_method_id.method_name',
 ];
 
-export interface Section<T> {
-	data: T;
-	loading: boolean;
-	error: string;
-}
-
-const section = <T>(initial: T) => ref<Section<T>>({ data: initial, loading: false, error: '' }) as Ref<Section<T>>;
-
 export function useSampleData(id: Ref<string>) {
 	const api = useApi();
 	const { getItem, getItems } = useItems();
 	const gate = useRequestGate();
+	const { section, fill } = useSections(gate);
 
 	const sample = ref<any | null>(null);
 	const loading = ref(false);
@@ -48,19 +39,6 @@ export function useSampleData(id: Ref<string>) {
 	const files = section<LinkedFile[]>([]);
 	const trace = section<TraceResponse | null>(null);
 
-	// Runs one section's request; a stale answer (the user moved to another sample) is dropped.
-	async function fill<T>(target: Ref<Section<T>>, token: number, what: string, read: () => Promise<T>) {
-		target.value = { ...target.value, loading: true, error: '' };
-		try {
-			const data = await read();
-			if (gate.isCurrent(token)) target.value = { data, loading: false, error: '' };
-		} catch (e: any) {
-			if (!gate.isCurrent(token)) return;
-			// d1-trace answers 404 for a sample the user cannot read; the page already handles that.
-			target.value = { ...target.value, loading: false, error: `Could not load ${what}: ${errorText(e)}` };
-		}
-	}
-
 	async function load() {
 		const token = gate.begin();
 		const sampleId = id.value;
@@ -70,7 +48,7 @@ export function useSampleData(id: Ref<string>) {
 		// arrives; moving to another sample starts from a clean page.
 		if (sample.value?.sample_id !== sampleId) {
 			sample.value = null;
-			for (const s of [elements, campaigns, operations, tests, files, trace] as Ref<Section<any>>[]) {
+			for (const s of [elements, campaigns, operations, tests, files, trace] as Ref<SectionState<any>>[]) {
 				s.value = { data: s === trace ? null : [], loading: false, error: '' };
 			}
 		}

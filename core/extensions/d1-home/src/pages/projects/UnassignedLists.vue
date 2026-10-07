@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { LoadState, RecordLink, Section, StatusBadge, collectionRoute, formatDate, processLabel } from '@d1/ui';
-import { LIST_CAP, type Block } from './useProjectData';
+import {
+	LIST_CAP, LoadState, RecordLink, Section, StatusBadge, collectionRoute, formatDate, processLabel, type SectionState,
+} from '@d1/ui';
 
 // "Not in a campaign": records that carry this project but no campaign. Three short lists, each
 // loading on its own and capped at LIST_CAP with a pointer to the Data Studio for the rest.
-const props = defineProps<{ samples: Block<any[]>; operations: Block<any[]>; tests: Block<any[]> }>();
+const props = defineProps<{ samples: SectionState<any[]>; operations: SectionState<any[]>; tests: SectionState<any[]> }>();
 
-const cap = <T,>(b: Block<T[]>) => b.data.slice(0, LIST_CAP);
-const capped = (b: Block<any[]>) => b.data.length > LIST_CAP;
+const cap = <T,>(b: SectionState<T[]>) => b.data.slice(0, LIST_CAP);
+const capped = (b: SectionState<any[]>) => b.data.length > LIST_CAP;
 const sampleRows = computed(() => cap(props.samples));
 const opRows = computed(() => cap(props.operations));
 const testRows = computed(() => cap(props.tests));
-const isEmpty = (b: Block<any[]>) => !b.loading && !b.error && !b.data.length;
+const isEmpty = (b: SectionState<any[]>) => !b.loading && !b.error && !b.data.length;
 </script>
 
 <template>

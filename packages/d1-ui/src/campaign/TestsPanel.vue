@@ -10,10 +10,10 @@ import Section from '../components/Section.vue';
 import StatusBadge from '../components/StatusBadge.vue';
 import PickerBox from './PickerBox.vue';
 import { campaignAssignPatch, inheritCampaignProject, lostRaceMessage } from './assign';
-import { LIST_CAP, type CampaignSection } from './useCampaignData';
+import { LIST_CAP, type SectionState } from '../composables/useSections';
 
 // The campaign's test sessions and the picker that adds sessions that are in no campaign yet.
-const props = defineProps<{ campaignId: string; rows: any[]; section: CampaignSection<any[]> }>();
+const props = defineProps<{ campaignId: string; rows: any[]; section: SectionState<any[]> }>();
 const emit = defineEmits<{ (e: 'changed'): void }>();
 
 const api = useApi();

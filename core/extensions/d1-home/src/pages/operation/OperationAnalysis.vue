@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { LoadState, Section, StatusBadge, analysisLink, formatDate, formatQuantity } from '@d1/ui';
-import { FORCE_CAP, type Section as SectionState } from './useOperationData';
+import { LIST_CAP, LoadState, Section, StatusBadge, analysisLink, formatDate, formatQuantity, type SectionState } from '@d1/ui';
 
 // Analysis of the operation's data: the force analysis of each .mat file (machining) or the
 // imported FAST trace (sintering), with the dashboard that plots it. Cutting metrics stay in the
@@ -14,9 +13,9 @@ const props = defineProps<{
 }>();
 
 const link = computed(() => analysisLink(props.operationId, props.category));
-const capped = computed(() => props.force.data.length > FORCE_CAP);
+const capped = computed(() => props.force.data.length > LIST_CAP);
 const rows = computed(() =>
-	props.force.data.slice(0, FORCE_CAP).sort((a, b) => fileName(a).localeCompare(fileName(b), undefined, { numeric: true })),
+	props.force.data.slice(0, LIST_CAP).sort((a, b) => fileName(a).localeCompare(fileName(b), undefined, { numeric: true })),
 );
 const fileName = (r: any) => r?.directus_files_id?.filename_download || r?.directus_files_id?.title || '(file)';
 const isMachining = computed(() => props.category === 'machining');
@@ -35,7 +34,7 @@ const isMachining = computed(() => props.category === 'machining');
 		</template>
 		<LoadState :loading="force.loading" :error="force.error">
 			<p v-if="capped" class="capped">
-				Showing the first {{ FORCE_CAP }} force files. Open the Force dashboard for the rest.
+				Showing the first {{ LIST_CAP }} force files. Open the Force dashboard for the rest.
 			</p>
 			<table class="d1-table">
 				<thead><tr><th>File</th><th>Analysis</th><th>Diagnostics</th><th>Processed</th></tr></thead>

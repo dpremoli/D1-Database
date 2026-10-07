@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue';
-import { errorText } from '../format';
 import { useItems } from '../composables/useItems';
 import { useRequestGate } from '../composables/useRequestGate';
+import { useSections } from '../composables/useSections';
 import { buildMatrix } from './matrix';
 import { isForbidden } from './errors';
 import { buildOverview } from './rollup';
@@ -10,45 +10,17 @@ import { buildOverview } from './rollup';
 // apply). The four reads run in parallel and each fails on its own: a role that may not read
 // `machining_force_analysis` still sees the samples, operations and tests, with a note.
 
-export const LIST_CAP = 200;
-
-export interface CampaignSection<T> {
-	data: T;
-	loading: boolean;
-	error: string;
-}
-
-const section = <T>(data: T): CampaignSection<T> => ({ data, loading: false, error: '' });
-
 export function useCampaignData(campaignId: Ref<string>) {
 	const { getItems } = useItems();
 	const gate = useRequestGate();
+	const { section, fill } = useSections(gate);
 
-	const junction = ref(section<any[]>([]));
-	const operations = ref(section<any[]>([]));
-	const tests = ref(section<any[]>([]));
-	const analyses = ref(section<any[]>([]));
+	const junction = section<any[]>([]);
+	const operations = section<any[]>([]);
+	const tests = section<any[]>([]);
+	const analyses = section<any[]>([]);
 	// No access to the force-analysis table is a normal state for some roles: say so, don't alarm.
 	const analysisUnavailable = ref(false);
-
-	async function fill<T>(
-		target: Ref<CampaignSection<T[]>>,
-		token: number,
-		what: string,
-		read: () => Promise<T[]>,
-		onError?: (e: unknown) => boolean,
-	) {
-		target.value = { ...target.value, loading: true, error: '' };
-		try {
-			const data = await read();
-			if (gate.isCurrent(token)) target.value = { data, loading: false, error: '' };
-		} catch (e) {
-			if (!gate.isCurrent(token)) return;
-			// `handled` means the caller turned the failure into a state of its own (no error line).
-			const handled = onError?.(e) ?? false;
-			target.value = { data: [], loading: false, error: handled ? '' : `Could not load ${what}: ${errorText(e)}` };
-		}
-	}
 
 	async function load() {
 		const token = gate.begin();
@@ -102,10 +74,7 @@ export function useCampaignData(campaignId: Ref<string>) {
 	}
 
 	function reset() {
-		junction.value = section([]);
-		operations.value = section([]);
-		tests.value = section([]);
-		analyses.value = section([]);
+		for (const s of [junction, operations, tests, analyses]) s.value = { data: [], loading: false, error: '' };
 	}
 
 	watch(

@@ -1,8 +1,8 @@
 import { onBeforeUnmount, ref, watch, type Ref } from 'vue';
 import {
-	DEFAULT_WEEKS, TEST_DONE_STATUSES, campaignProgress, countsByKey, errorText, fetchActivityRows, isNotVisible,
-	operationCategoryFor, projectScopeFilter, sampleProjectScopeFilter, useItems, useRequestGate, weeklyActivity,
-	type CampaignProgress, type ForceRows, type WeeklyActivity,
+	DEFAULT_WEEKS, LIST_CAP, TEST_DONE_STATUSES, campaignProgress, countsByKey, errorText, fetchActivityRows, isNotVisible,
+	operationCategoryFor, projectScopeFilter, sampleProjectScopeFilter, useItems, useRequestGate, useSections, weeklyActivity,
+	type CampaignProgress, type ForceRows, type SectionState, type WeeklyActivity,
 } from '@d1/ui';
 
 // Everything the Project page reads, as the signed-in user (so Directus permissions apply). Reads
@@ -10,16 +10,8 @@ import {
 // "page" and "Not found or not visible to you"; every other block is a section that loads in
 // parallel and fails on its own, so one forbidden collection does not blank the page.
 
-export const LIST_CAP = 200;
 // Cap of the row reads behind the machining progress bar; past it the bar is withheld, not wrong.
 const PROGRESS_ROW_CAP = 5000;
-
-export interface Block<T> {
-	data: T;
-	loading: boolean;
-	error: string;
-}
-const block = <T>(initial: T) => ref<Block<T>>({ data: initial, loading: false, error: '' }) as Ref<Block<T>>;
 
 const PROJECT_FIELDS = [
 	'project_id', 'project_code', 'project_name', 'description', 'document_number', 'is_active',
@@ -49,6 +41,7 @@ export interface EquipmentUse {
 export function useProjectData(id: Ref<string>) {
 	const { getItems, getItem } = useItems();
 	const gate = useRequestGate();
+	const { section: block, fill } = useSections(gate);
 
 	const project = ref<any | null>(null);
 	const loading = ref(false);
@@ -64,17 +57,7 @@ export function useProjectData(id: Ref<string>) {
 	const activity = block<Activity>({ data: null, truncated: false });
 	const equipment = block<EquipmentUse[]>([]);
 
-	const all = [investigators, counts, campaigns, looseSamples, looseOperations, looseTests, activity, equipment] as Ref<Block<any>>[];
-
-	async function fill<T>(target: Ref<Block<T>>, token: number, what: string, read: () => Promise<T>) {
-		target.value = { ...target.value, loading: true, error: '' };
-		try {
-			const data = await read();
-			if (gate.isCurrent(token)) target.value = { data, loading: false, error: '' };
-		} catch (e: any) {
-			if (gate.isCurrent(token)) target.value = { ...target.value, loading: false, error: `Could not load ${what}: ${errorText(e)}` };
-		}
-	}
+	const all = [investigators, counts, campaigns, looseSamples, looseOperations, looseTests, activity, equipment] as Ref<SectionState<any>>[];
 
 	const count = async (collection: string, filter: Record<string, unknown>): Promise<number | null> => {
 		try {

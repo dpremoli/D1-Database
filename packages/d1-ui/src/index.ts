@@ -22,6 +22,8 @@ export type { LifeItem, LifeKind, TraceResponse } from './life';
 
 export { useItems } from './composables/useItems';
 export { useRequestGate } from './composables/useRequestGate';
+export { LIST_CAP, useSections } from './composables/useSections';
+export type { SectionState } from './composables/useSections';
 
 export { default as RecordHeader } from './components/RecordHeader.vue';
 export { default as StatTile } from './components/StatTile.vue';

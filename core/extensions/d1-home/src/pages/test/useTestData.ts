@@ -1,22 +1,12 @@
 import { onBeforeUnmount, ref, watch, type Ref } from 'vue';
 import {
 	errorText, isNotVisible, linkedFiles, paramColumns, paramRows, splitSubjects, TEST_SUBJECT_FIELDS, useFieldDefs, useItems,
-	useRequestGate, type LinkedFile, type ParamRow, type TestSubjects,
+	useRequestGate, useSections, type LinkedFile, type ParamRow, type TestSubjects,
 } from '@d1/ui';
 
 // Everything the Test page reads, as the signed-in user. The test session decides between "page"
 // and "Not found or not visible to you"; every other block loads on its own (same pattern as the
 // Sample and Operation pages).
-
-export interface Section<T> {
-	data: T;
-	loading: boolean;
-	error: string;
-}
-
-export type Subjects = TestSubjects;
-
-const section = <T>(initial: T) => ref<Section<T>>({ data: initial, loading: false, error: '' }) as Ref<Section<T>>;
 
 const TEST_FIELDS = [
 	'session_id', 'test_type', 'test_category', 'session_date', 'status', 'operator_name', 'notes',
@@ -35,6 +25,7 @@ export function useTestData(id: Ref<string>) {
 	const { getItem, getItems } = useItems();
 	const { getFieldDefs } = useFieldDefs();
 	const gate = useRequestGate();
+	const { section, fill } = useSections(gate);
 
 	const test = ref<any | null>(null);
 	const loading = ref(false);
@@ -42,18 +33,8 @@ export function useTestData(id: Ref<string>) {
 	const error = ref('');
 
 	const params = section<ParamRow[]>([]);
-	const subjects = section<Subjects>({ samples: [], others: [] });
+	const subjects = section<TestSubjects>({ samples: [], others: [] });
 	const files = section<LinkedFile[]>([]);
-
-	async function fill<T>(target: Ref<Section<T>>, token: number, what: string, read: () => Promise<T>) {
-		target.value = { ...target.value, loading: true, error: '' };
-		try {
-			const data = await read();
-			if (gate.isCurrent(token)) target.value = { data, loading: false, error: '' };
-		} catch (e: any) {
-			if (gate.isCurrent(token)) target.value = { ...target.value, loading: false, error: `Could not load ${what}: ${errorText(e)}` };
-		}
-	}
 
 	async function readParams(sessionId: string, testType: string | null): Promise<ParamRow[]> {
 		if (!testType) return [];
@@ -66,7 +47,7 @@ export function useTestData(id: Ref<string>) {
 
 	// One read: the junction rows with each target's own fields (M2A syntax), so the samples need
 	// no second request.
-	async function readSubjects(sessionId: string): Promise<Subjects> {
+	async function readSubjects(sessionId: string): Promise<TestSubjects> {
 		try {
 			const rows = await getItems('test_sessions_subject', {
 				filter: { test_sessions_id: { _eq: sessionId } },

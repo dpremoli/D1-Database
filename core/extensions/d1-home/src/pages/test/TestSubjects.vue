@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { RecordLink, Section, StatusBadge, asRecord, humanise } from '@d1/ui';
-import type { Subjects } from './useTestData';
+import { RecordLink, Section, StatusBadge, asRecord, humanise, type TestSubjects } from '@d1/ui';
 
 // What the test was run on. A test made through the form points at its target through the subject
 // junction (a sample or, for tool tests, an insert edge); older rows carry a single sample_id.
 // Both are shown, without repeating a sample that appears in each.
-const props = defineProps<{ sample: unknown; subjects: Subjects }>();
+const props = defineProps<{ sample: unknown; subjects: TestSubjects }>();
 
 const samples = computed(() => {
 	const out = [...props.subjects.samples];

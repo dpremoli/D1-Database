@@ -12,7 +12,7 @@ import StatusBadge from '../components/StatusBadge.vue';
 import PickerBox from './PickerBox.vue';
 import { campaignAssignPatch, inheritCampaignProject, lostRaceMessage } from './assign';
 import { operationCategoryFor } from './campaignType';
-import { LIST_CAP, type CampaignSection } from './useCampaignData';
+import { LIST_CAP, type SectionState } from '../composables/useSections';
 
 // The campaign's operations with their force-analysis and diagnostics state, and the picker that
 // assigns operations (sets manufacturing_operations.campaign_id). The picker's search is
@@ -22,7 +22,7 @@ const props = defineProps<{
 	campaignType?: string | null;
 	/** `overview.opRows` */
 	rows: any[];
-	section: CampaignSection<any[]>;
+	section: SectionState<any[]>;
 	/** The role may not read the force-analysis table: show a dash instead of "not analysed". */
 	forceHidden?: boolean;
 }>();

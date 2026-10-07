@@ -10,7 +10,7 @@ import Section from '../components/Section.vue';
 import PickerBox from './PickerBox.vue';
 import { inheritCampaignProject } from './assign';
 import { isDuplicate } from './errors';
-import { LIST_CAP, type CampaignSection } from './useCampaignData';
+import { LIST_CAP, type SectionState } from '../composables/useSections';
 
 // The campaign's samples (the `campaign_samples` junction, plus samples that only appear through an
 // operation or test, flagged) and the picker that adds samples to the junction. Removing deletes
@@ -20,7 +20,7 @@ const props = defineProps<{
 	/** `overview.sampleRows` */
 	rows: any[];
 	/** The junction rows (their own ids are needed to remove a sample). */
-	junction: CampaignSection<any[]>;
+	junction: SectionState<any[]>;
 }>();
 const emit = defineEmits<{ (e: 'changed'): void }>();
 
