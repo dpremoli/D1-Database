@@ -1398,6 +1398,9 @@ SELECT 'down_exact:' || (module_bar::jsonb = '$mb_shipped'::jsonb) FROM directus
 UPDATE directus_settings SET module_bar = '[{"type":"module","id":"users","enabled":true},{"type":"module","id":"home","enabled":false},{"type":"module","id":"d1-force-dashboard","enabled":true},{"type":"module","id":"settings","enabled":true}]';
 $mb_up
 SELECT 'curated:' || string_agg((e->>'id') || '=' || (e->>'enabled'), ',') FROM directus_settings, json_array_elements(module_bar) e;
+UPDATE directus_settings SET module_bar = '[{"type":"module","enabled":true},{"type":"module","id":"home","enabled":false},{"type":"module","id":"users","enabled":true},{"type":"module","id":"home","enabled":true}]';
+$mb_up
+SELECT 'idless_dup_home:' || string_agg(COALESCE(e->>'id', '?') || '=' || (e->>'enabled'), ',') FROM directus_settings, json_array_elements(module_bar) e;
 UPDATE directus_settings SET module_bar = '[{"type":"module","id":"users","enabled":true},{"type":"module","id":"content","enabled":true}]';
 $mb_up
 SELECT 'no_dashboards:' || ($mb_ids);
@@ -1414,6 +1417,7 @@ mb_check "up_again:home,users,files,insights,d1-lab-dashboard,d1-force-dashboard
 mb_check "down:content,users,files,insights,d1-lab-dashboard,d1-force-dashboard,d1-fast-dashboard,settings" "down: Home removed, Data Studio back at the front"
 mb_check "down_exact:true" "down: the shipped bar is restored exactly"
 mb_check "curated:home=false,users=true,d1-force-dashboard=true,settings=true" "up: an existing Home entry moves first and keeps its enabled flag; content is not added"
+mb_check "idless_dup_home:home=false,?=true,users=true" "up: an entry with no id is kept, and a duplicate home entry is dropped (the first one wins)"
 mb_check "no_dashboards:home,users,content" "up: without dashboards the Data Studio keeps its place"
 mb_check "null_kept:true" "a NULL module bar is left alone"
 
@@ -1525,6 +1529,141 @@ ps_check "stale:true" "(setup) with the trigger off the junction alone leaves sa
 ps_check "backfill:true" "back-fill repairs a test from its junction rows"
 ps_check "cascade:0" "deleting a test cascades through the junction without error"
 ps_check "comments:5" "function, trigger function, trigger and columns carry the derived-column comment"
+
+echo "== Deleting samples and edges that are test subjects =="
+# Same fixture style as above; every row is rolled back. The back-fill statements are extracted
+# from the migration so the direct-value case runs the real SQL.
+PS=db/migrations/20261007000139_test_sessions_primary_subject_sync.sql
+ps_backfill=$(awk '/^-- Back-fill\./{f=1}/^-- Deleting a sample\./{f=0}f' "$PS")
+ds_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO physical_samples (sample_id, sample_code) VALUES
+    ('d0000000-0000-4000-8000-0000000001a1', 'TEST-DS-001'),
+    ('d0000000-0000-4000-8000-0000000001a2', 'TEST-DS-002'),
+    ('d0000000-0000-4000-8000-0000000001a3', 'TEST-DS-003'),
+    ('d0000000-0000-4000-8000-0000000001a4', 'TEST-DS-004'),
+    ('d0000000-0000-4000-8000-0000000001a5', 'TEST-DS-005'),
+    ('d0000000-0000-4000-8000-0000000001a6', 'TEST-DS-006');
+INSERT INTO people (person_id, full_name) VALUES ('d0000000-0000-4000-8000-0000000001b0', 'Delete Subject Owner');
+INSERT INTO tool_boxes (tool_box_id, tool_box_code, owner_person_id)
+VALUES ('d0000000-0000-4000-8000-0000000001b1', 'TEST-DS-BOX', 'd0000000-0000-4000-8000-0000000001b0');
+INSERT INTO cutting_inserts (insert_id, insert_code, tool_box_id)
+VALUES ('d0000000-0000-4000-8000-0000000001b2', 'TEST-DS-BOX-1', 'd0000000-0000-4000-8000-0000000001b1');
+INSERT INTO insert_edges (edge_id, edge_code, insert_id, edge_identifier)
+VALUES ('d0000000-0000-4000-8000-0000000001b3', 'TEST-DS-BOX-1A', 'd0000000-0000-4000-8000-0000000001b2', 'A');
+INSERT INTO test_sessions (session_id) VALUES
+    ('d0000000-0000-4000-8000-0000000001c1'), ('d0000000-0000-4000-8000-0000000001c2'),
+    ('d0000000-0000-4000-8000-0000000001c3'), ('d0000000-0000-4000-8000-0000000001c4');
+
+-- c1: samples a1 (primary, lowest junction id) and a2.  c2: lone sample a3.
+-- c3: samples a4 (primary) and a5 (item in upper case), plus edge b3.
+INSERT INTO test_sessions_subject (id, test_sessions_id, collection, item) VALUES
+    ('00000000-0000-4000-8000-0000000000d1', 'd0000000-0000-4000-8000-0000000001c1', 'physical_samples', 'd0000000-0000-4000-8000-0000000001a1'),
+    ('00000000-0000-4000-8000-0000000000d2', 'd0000000-0000-4000-8000-0000000001c1', 'physical_samples', 'd0000000-0000-4000-8000-0000000001a2'),
+    ('00000000-0000-4000-8000-0000000000d3', 'd0000000-0000-4000-8000-0000000001c2', 'physical_samples', 'd0000000-0000-4000-8000-0000000001a3'),
+    ('00000000-0000-4000-8000-0000000000d4', 'd0000000-0000-4000-8000-0000000001c3', 'physical_samples', 'd0000000-0000-4000-8000-0000000001a4'),
+    ('00000000-0000-4000-8000-0000000000d5', 'd0000000-0000-4000-8000-0000000001c3', 'physical_samples', 'D0000000-0000-4000-8000-0000000001A5'),
+    ('00000000-0000-4000-8000-0000000000d6', 'd0000000-0000-4000-8000-0000000001c3', 'insert_edges', 'd0000000-0000-4000-8000-0000000001b3');
+-- c4: a legacy test written with the column only (no junction row)
+UPDATE test_sessions SET sample_id = 'd0000000-0000-4000-8000-0000000001a6' WHERE session_id = 'd0000000-0000-4000-8000-0000000001c4';
+
+-- delete the primary sample of a two-sample test: the test survives and a2 is promoted
+DELETE FROM physical_samples WHERE sample_id = 'd0000000-0000-4000-8000-0000000001a1';
+SELECT 'del_primary:' || (SELECT count(*) FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000001c1')
+    || '/' || (SELECT sample_id = 'd0000000-0000-4000-8000-0000000001a2' FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000001c1')
+    || '/' || (SELECT count(*) FROM test_sessions_subject WHERE test_sessions_id = 'd0000000-0000-4000-8000-0000000001c1');
+
+-- delete a lone sample: the test goes with it
+DELETE FROM physical_samples WHERE sample_id = 'd0000000-0000-4000-8000-0000000001a3';
+SELECT 'del_lone:' || (SELECT count(*) FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000001c2')
+    || '/' || (SELECT count(*) FROM test_sessions_subject WHERE test_sessions_id = 'd0000000-0000-4000-8000-0000000001c2');
+
+-- delete a secondary sample: its junction row goes, the primary is unchanged
+DELETE FROM physical_samples WHERE sample_id = 'd0000000-0000-4000-8000-0000000001a5';
+SELECT 'del_secondary:' || (SELECT count(*) FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000001c3')
+    || '/' || (SELECT sample_id = 'd0000000-0000-4000-8000-0000000001a4' FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000001c3')
+    || '/' || (SELECT count(*) FROM test_sessions_subject WHERE test_sessions_id = 'd0000000-0000-4000-8000-0000000001c3');
+
+-- delete the last sample of a test that also has an edge subject: the test survives, sample_id NULL
+DELETE FROM physical_samples WHERE sample_id = 'd0000000-0000-4000-8000-0000000001a4';
+SELECT 'del_sample_keeps_edge:' || (SELECT count(*) FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000001c3')
+    || '/' || (SELECT sample_id IS NULL FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000001c3')
+    || '/' || (SELECT insert_edge_id = 'd0000000-0000-4000-8000-0000000001b3' FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000001c3');
+
+-- delete the sample of a legacy column-only test: the test is deleted, as the cascade used to do
+DELETE FROM physical_samples WHERE sample_id = 'd0000000-0000-4000-8000-0000000001a6';
+SELECT 'del_legacy:' || count(*) FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000001c4';
+
+SELECT 'fk:' || confdeltype::text FROM pg_constraint WHERE conname = 'test_sessions_sample_fkey';
+SELECT 'other_sample:' || count(*) FROM physical_samples WHERE sample_id = 'd0000000-0000-4000-8000-0000000001a2';
+ROLLBACK;
+SQL
+)
+ds_check() { grep -qx "$1" <<<"$ds_out" && ok "$2" || bad "$2 (psql output: $ds_out)"; }
+ds_check "del_primary:1/true/1" "deleting the primary sample of a two-sample test keeps the test and promotes the next sample"
+ds_check "del_lone:0/0" "deleting a test's only sample deletes the test (and its junction rows)"
+ds_check "del_secondary:1/true/2" "deleting a secondary sample removes its junction row and leaves the primary"
+ds_check "del_sample_keeps_edge:1/true/true" "deleting a test's last sample keeps a test that still has an edge subject"
+ds_check "del_legacy:0" "deleting the sample of a column-only test deletes the test, as before"
+ds_check "fk:n" "test_sessions_sample_fkey is ON DELETE SET NULL"
+ds_check "other_sample:1" "the test's other sample is not deleted"
+
+# An edge named by a junction row cannot be deleted; an unreferenced one can. A failed statement
+# aborts the transaction, so each case is its own run.
+ed_run() { $PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO people (person_id, full_name) VALUES ('d0000000-0000-4000-8000-0000000002b0', 'Delete Edge Owner');
+INSERT INTO tool_boxes (tool_box_id, tool_box_code, owner_person_id)
+VALUES ('d0000000-0000-4000-8000-0000000002b1', 'TEST-DE-BOX', 'd0000000-0000-4000-8000-0000000002b0');
+INSERT INTO cutting_inserts (insert_id, insert_code, tool_box_id)
+VALUES ('d0000000-0000-4000-8000-0000000002b2', 'TEST-DE-BOX-1', 'd0000000-0000-4000-8000-0000000002b1');
+INSERT INTO insert_edges (edge_id, edge_code, insert_id, edge_identifier) VALUES
+    ('d0000000-0000-4000-8000-0000000002b3', 'TEST-DE-BOX-1A', 'd0000000-0000-4000-8000-0000000002b2', 'A'),
+    ('d0000000-0000-4000-8000-0000000002b4', 'TEST-DE-BOX-1B', 'd0000000-0000-4000-8000-0000000002b2', 'B');
+INSERT INTO test_sessions (session_id) VALUES ('d0000000-0000-4000-8000-0000000002c1');
+INSERT INTO test_sessions_subject (test_sessions_id, collection, item)
+VALUES ('d0000000-0000-4000-8000-0000000002c1', 'insert_edges', 'D0000000-0000-4000-8000-0000000002B3');
+$1
+ROLLBACK;
+SQL
+}
+ed_out=$(ed_run "DELETE FROM insert_edges WHERE edge_id = 'd0000000-0000-4000-8000-0000000002b3';")
+grep -q "is the subject of test d0000000-0000-4000-8000-0000000002c1; remove it from the test first" <<<"$ed_out" \
+    && ok "deleting an edge named by a junction row raises a clear error" || bad "edge delete was not refused (output: $ed_out)"
+ed_out=$(ed_run "DELETE FROM insert_edges WHERE edge_id = 'd0000000-0000-4000-8000-0000000002b4'; SELECT 'free_edge_deleted:' || count(*) FROM insert_edges WHERE edge_id = 'd0000000-0000-4000-8000-0000000002b4';")
+grep -qx "free_edge_deleted:0" <<<"$ed_out" && ok "an edge no test names can still be deleted" || bad "free edge delete failed (output: $ed_out)"
+ed_out=$(ed_run "DELETE FROM cutting_inserts WHERE insert_id = 'd0000000-0000-4000-8000-0000000002b2';")
+grep -q "is the subject of test" <<<"$ed_out" \
+    && ok "a cascade from the cutting insert that reaches a subject edge is refused too" || bad "cascade from cutting insert was not refused (output: $ed_out)"
+
+# Back-fill must not overwrite a direct value: a test with a direct sample_id and only an edge in
+# the junction keeps its sample (the migration copies it into the junction first).
+bf_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('d0000000-0000-4000-8000-0000000003a1', 'TEST-BF-001');
+INSERT INTO people (person_id, full_name) VALUES ('d0000000-0000-4000-8000-0000000003b0', 'Backfill Owner');
+INSERT INTO tool_boxes (tool_box_id, tool_box_code, owner_person_id)
+VALUES ('d0000000-0000-4000-8000-0000000003b1', 'TEST-BF-BOX', 'd0000000-0000-4000-8000-0000000003b0');
+INSERT INTO cutting_inserts (insert_id, insert_code, tool_box_id)
+VALUES ('d0000000-0000-4000-8000-0000000003b2', 'TEST-BF-BOX-1', 'd0000000-0000-4000-8000-0000000003b1');
+INSERT INTO insert_edges (edge_id, edge_code, insert_id, edge_identifier)
+VALUES ('d0000000-0000-4000-8000-0000000003b3', 'TEST-BF-BOX-1A', 'd0000000-0000-4000-8000-0000000003b2', 'A');
+-- the state to repair: written while the sync trigger was not there yet
+ALTER TABLE test_sessions_subject DISABLE TRIGGER test_sessions_subject_sync_primary;
+INSERT INTO test_sessions (session_id, sample_id) VALUES ('d0000000-0000-4000-8000-0000000003c1', 'd0000000-0000-4000-8000-0000000003a1');
+INSERT INTO test_sessions_subject (test_sessions_id, collection, item)
+VALUES ('d0000000-0000-4000-8000-0000000003c1', 'insert_edges', 'd0000000-0000-4000-8000-0000000003b3');
+ALTER TABLE test_sessions_subject ENABLE TRIGGER test_sessions_subject_sync_primary;
+$ps_backfill
+SELECT 'bf_keeps_direct:' || (sample_id = 'd0000000-0000-4000-8000-0000000003a1') || '/' || (insert_edge_id = 'd0000000-0000-4000-8000-0000000003b3')
+  FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000003c1';
+SELECT 'bf_junction:' || count(*) FROM test_sessions_subject WHERE test_sessions_id = 'd0000000-0000-4000-8000-0000000003c1';
+ROLLBACK;
+SQL
+)
+bf_check() { grep -qx "$1" <<<"$bf_out" && ok "$2" || bad "$2 (psql output: $bf_out)"; }
+bf_check "bf_keeps_direct:true/true" "back-fill keeps a direct sample_id when the junction only had an edge"
+bf_check "bf_junction:2" "back-fill copies the direct sample and edge into the junction"
 
 echo "== Cleanup test rows =="
 $PSQL -c "

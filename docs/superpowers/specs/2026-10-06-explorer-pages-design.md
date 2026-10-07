@@ -270,6 +270,14 @@ and test reports only.
   junction into them), so readers that filter on `sample_id` (campaign matrix, reports, lineage,
   timeline) also see form-created tests. A test with several samples is complete only in the
   junction, so the Sample page reads both (`sample_id` or a junction row) in one request.
+  **Deleting subjects:** `test_sessions_sample_fkey` is ON DELETE SET NULL, and a BEFORE DELETE
+  trigger on `physical_samples` removes the sample from every test's junction (the next sample is
+  promoted) and deletes only the tests left with no subject at all (migration 023's "a test belongs
+  to its sample", kept for the last sample). A sample delete therefore never destroys a test that
+  has another sample or an insert edge. Deleting an insert edge that a test names is refused by a
+  BEFORE DELETE trigger (as `test_sessions_insert_edge_fkey` does for the column), which also stops
+  a cutting insert or tool box delete whose cascade reaches such an edge: remove it from the test
+  first.
 - **Results:** `summary_stats` rendered as a key–value grid, grouped by the namespaced key each
   worker writes.
 - **Files.**

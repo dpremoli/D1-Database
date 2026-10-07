@@ -353,7 +353,13 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   the sample code finds it. Add a second sample to the same test: nothing changes in those views
   (only the first sample is primary), but the Sample page of the second sample lists the test.
   Remove the first subject: the second takes over. Changing a subject adds no extra audit row on
-  the test besides the one `sample_id` update. Since: Explorer pages E4-fix (PR pending).
+  the test besides the one `sample_id` update. Deleting subjects (also migration 139): delete the
+  first sample of a test that has two samples. Expect the test to survive, the second sample to be
+  its `sample_id` and the Sample page of the second sample to list it. Delete a test's only sample
+  in a scratch project: the test goes with it. Try deleting an insert edge that a test lists under
+  Subject (or the cutting insert or tool box above it): Directus shows the error "insert edge ...
+  is the subject of test ...; remove it from the test first", and after removing the edge from the
+  test the delete works. Since: Explorer pages E4-fix (PR pending).
 - [ ] **E4-fix — project items link by row_id.** In a project whose operations include two with the
   same pass code (or any project with many operations), open the Project items panel. Expect every
   operation and sample row to link to the right record (hover or click: the Operation page of that
