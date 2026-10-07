@@ -36,3 +36,11 @@ export { default as EditDrawer } from './components/EditDrawer.vue';
 export { weeklyActivity, binWeekly, lastWeeks, windowStart, datesByKey, isoWeek, weekStart, DEFAULT_WEEKS } from './activity';
 export type { WeekInfo, WeeklyActivity } from './activity';
 export { default as Sparkline } from './components/Sparkline.vue';
+export { projectRole, projectStatusLabel, filterProjects, campaignProgress, countsByKey } from './projects';
+export type {
+	ProjectRow, ProjectRole, RoleFilter, StatusFilter, ProjectFilters, CampaignProgress,
+} from './projects';
+export {
+	CURRENT_USER, ownedByMe, coOwnedByMe, samplesMine, projectsMine, campaignsMine, withForceFile,
+	forceErrorOnMyOperations, forcePendingOperations, failedTests, ownerlessSamples,
+} from './mine';
