@@ -8,6 +8,8 @@ export interface KeyValue {
 	mono?: boolean;
 	/** Makes the value a link to this app route. */
 	to?: string;
+	/** Unit shown after the value in a subdued colour (`mm`, `MPa`). */
+	unit?: string;
 }
 
 // Label/value pairs in a responsive grid. Empty values are left out unless `showEmpty`, so a page
@@ -26,6 +28,7 @@ const text = (v: KeyValue['value']) => (v === null || v === undefined || v === '
 			<dd :class="{ mono: i.mono }">
 				<router-link v-if="i.to" :to="i.to" class="link">{{ text(i.value) }}</router-link>
 				<template v-else>{{ text(i.value) }}</template>
+				<span v-if="i.unit && text(i.value) !== '—'" class="unit">{{ i.unit }}</span>
 			</dd>
 		</div>
 	</dl>
@@ -43,6 +46,7 @@ dt {
 }
 dd { margin: 2px 0 0; font-size: 14px; overflow-wrap: anywhere; }
 .mono { font-family: var(--theme--fonts--monospace--font-family, monospace); }
+.unit { margin-left: 4px; font-size: 12px; color: var(--theme--foreground-subdued); }
 .link { color: var(--theme--primary); font-weight: 600; text-decoration: none; }
 .link:hover { text-decoration: underline; }
 </style>

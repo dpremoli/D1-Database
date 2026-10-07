@@ -1,5 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { errorText, formatDate, formatNumber, isNotVisible } from './format';
+import { errorText, formatDate, formatNumber, formatQuantity, isNotVisible } from './format';
+
+describe('formatQuantity', () => {
+	it('trims trailing zeros of a database numeric string', () => {
+		expect(formatQuantity('12.5000')).toBe('12.5');
+		expect(formatQuantity('20.000')).toBe('20');
+	});
+	it('keeps small values readable instead of rounding them to zero', () => {
+		expect(formatQuantity(0.05)).toBe('0.05');
+		expect(formatQuantity('0.000001')).toBe('1e-6');
+		expect(formatQuantity(0.0000125)).toBe('1.25e-5');
+	});
+	it('limits the decimals of large values and groups the thousands', () => {
+		expect(formatQuantity(1234.5678)).toBe('1,234.6');
+		expect(formatQuantity(25600)).toBe('25,600');
+	});
+	it('handles zero, negatives and non-numbers', () => {
+		expect(formatQuantity(0)).toBe('0');
+		expect(formatQuantity(-3.25)).toBe('-3.25');
+		expect(formatQuantity(null)).toBe('');
+		expect(formatQuantity('abc')).toBe('');
+	});
+});
 
 describe('formatDate', () => {
 	it('formats an ISO date for en-GB', () => {

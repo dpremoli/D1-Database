@@ -31,3 +31,11 @@ export type { KeyValue } from './components/KeyValueGrid.vue';
 export { default as ProgressBar } from './components/ProgressBar.vue';
 export { default as CompositionBar } from './components/CompositionBar.vue';
 export { default as EditDrawer } from './components/EditDrawer.vue';
+
+// E4 operation/test
+export { formatQuantity } from './format';
+export { fieldLabel, fieldUnit, paramColumns, paramFields, paramPrefix, paramRows, OPERATION_PARAM_PREFIX } from './params';
+export type { ParamFieldDef, ParamRow } from './params';
+export { labelAndUnit, summaryCount, summaryGroups } from './summary';
+export type { StatEntry, StatGroup, StatTable } from './summary';
+export { useFieldDefs } from './composables/useFieldDefs';
