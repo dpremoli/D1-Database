@@ -1,13 +1,15 @@
 import { onBeforeUnmount, ref } from 'vue';
 import {
-	countsByKey, datesByKey, errorText, useItems, useRequestGate, weeklyActivity, DEFAULT_WEEKS,
+	CURRENT_USER, countsByKey, datesByKey, errorText, useItems, useRequestGate, weeklyActivity, DEFAULT_WEEKS,
 	type ProjectRow, type WeeklyActivity,
 } from '@d1/ui';
 import { fetchActivityRows } from './activityData';
 
 // Everything the Projects index reads, as the signed-in user. The project list is the page; the
-// counts and the activity are decoration that loads in parallel and fails on its own, so a role
-// that cannot read samples still gets its project cards.
+// counts, the activity and the user's investigator memberships load in parallel and fail on their
+// own, so a role that cannot read samples (or the project_investigators junction) still gets its
+// project cards. The junction is not part of the project read for the same reason: a field the
+// role may not read would fail the whole request.
 
 export const PROJECT_CAP = 500;
 
@@ -21,7 +23,6 @@ const PROJECT_FIELDS = [
 	'project_id', 'project_code', 'project_name', 'is_active', 'start_date', 'end_date',
 	'principal_investigator_person.person_id', 'principal_investigator_person.full_name',
 	'principal_investigator_person.user_id',
-	'secondary_investigators.user_id',
 ];
 
 export function useProjectsIndex() {
@@ -38,6 +39,7 @@ export function useProjectsIndex() {
 	const activity = ref(new Map<string, WeeklyActivity>());
 	const activityError = ref('');
 	const truncated = ref(false);
+	const rolesError = ref('');
 
 	async function load() {
 		const token = gate.begin();
@@ -45,6 +47,7 @@ export function useProjectsIndex() {
 		error.value = '';
 		countsError.value = '';
 		activityError.value = '';
+		rolesError.value = '';
 		try {
 			const rows = await getItems('projects', { fields: PROJECT_FIELDS, sort: ['project_code'], limit: PROJECT_CAP });
 			if (!gate.isCurrent(token)) return;
@@ -67,6 +70,23 @@ export function useProjectsIndex() {
 			});
 
 		await Promise.all([
+			(async () => {
+				// Only the signed-in user's own rows: enough to mark "you are investigator".
+				try {
+					const mine = await getItems('project_investigators', {
+						filter: { user_id: { _eq: CURRENT_USER } },
+						fields: ['project_id', 'user_id'],
+						limit: -1,
+					});
+					if (!gate.isCurrent(token)) return;
+					const byProject = new Map(mine.map((m: any) => [String(m.project_id), m.user_id]));
+					projects.value = projects.value.map((p) =>
+						byProject.has(p.project_id) ? { ...p, secondary_investigators: [{ user_id: byProject.get(p.project_id) }] } : p,
+					);
+				} catch (e: any) {
+					if (gate.isCurrent(token)) rolesError.value = `Could not check your investigator roles: ${errorText(e)}`;
+				}
+			})(),
 			(async () => {
 				try {
 					const [campaigns, samples] = await Promise.all([grouped('campaigns'), grouped('physical_samples')]);
@@ -100,5 +120,5 @@ export function useProjectsIndex() {
 	load();
 	onBeforeUnmount(() => gate.cancel());
 
-	return { projects, loading, error, campaignCounts, sampleCounts, countsError, activity, activityError, truncated, reload: load };
+	return { projects, loading, error, campaignCounts, sampleCounts, countsError, activity, activityError, truncated, rolesError, reload: load };
 }

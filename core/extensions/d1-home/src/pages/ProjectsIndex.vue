@@ -11,7 +11,7 @@ import ProjectCard from './projects/ProjectCard.vue';
 const { useUserStore } = useStores();
 const userId = computed<string | null>(() => (useUserStore().currentUser as any)?.id ?? null);
 
-const { projects, loading, error, campaignCounts, sampleCounts, countsError, activity, activityError, truncated } =
+const { projects, loading, error, campaignCounts, sampleCounts, countsError, activity, activityError, truncated, rolesError } =
 	useProjectsIndex();
 
 const role = ref<RoleFilter>('all');
@@ -77,6 +77,7 @@ const statusOptions: { value: StatusFilter; label: string }[] = [
 				<p v-if="role !== 'all' && !userId" class="note">Your user could not be identified, so role filters match nothing.</p>
 				<p v-if="countsError" class="note" role="alert">{{ countsError }}</p>
 				<p v-if="activityError" class="note" role="alert">{{ activityError }}</p>
+				<p v-if="rolesError" class="note" role="alert">{{ rolesError }}</p>
 				<p v-if="truncated" class="note">The activity charts are based on the newest records only (the lab has more than the page loads).</p>
 				<LoadState v-if="!visible.length" empty empty-text="No project matches these filters." />
 				<div v-else class="grid">
