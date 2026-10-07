@@ -39,7 +39,7 @@ has '^(db/|tests/phase(1|6|7)_|scripts/ci/)' && {
 for p in $(grep -oE '^(plugins|apps/force-app)/[^/]+/' <<<"$files" | sort -u); do
   [[ -f "$p/Dockerfile" ]] || continue
   n="$(basename "$p")"; ctx="$p"; [[ "$n" == diag-service ]] && ctx=.
-  echo "docker build -t d1-$n -f ${p}Dockerfile $ctx   # CI: images (tests run inside it, except diag-service)"
+  echo "docker build -t d1-$n -f ${p}Dockerfile $ctx   # CI: images (tests run inside it, except diag- and filter-service)"
 done
 has '^plugins/llm-text-to-sql/' && echo "docker run --rm d1-llm-text-to-sql python eval/run_eval.py"
 for p in $(grep -oE '^plugins/[^/]+/' <<<"$files" | sort -u | cut -d/ -f2); do

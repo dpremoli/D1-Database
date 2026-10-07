@@ -8,13 +8,14 @@
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 
 // Service images: built from their Dockerfile, then `test` runs inside the image. `always` keeps
-// the three images that CI has always built running on every PR, as before. diag-service's tests
-// read fixtures from tests/scripts/diag, which is not in its image: the host job runs them.
+// the three images that CI has always built running on every PR, as before. diag-service's and
+// filter-service's tests read files outside their image (tests/scripts/diag fixtures; the
+// backend's own d1lc.py, to check the two parsers agree): the force-app-python job runs them.
 const IMAGES = [
   { name: 'Heavy-data worker (docker build + unit tests)', image: 'd1-heavy-data-worker', context: 'plugins/heavy-data-worker', test: 'python -m pytest tests/ -q --tb=short', always: true },
   { name: 'Analysis worker (docker build + unit tests)', image: 'd1-analysis-worker', context: 'plugins/analysis-worker', test: 'python -m pytest tests/ -q --tb=short', always: true },
   { name: 'Text-to-SQL plugin (docker build + guard tests)', image: 'd1-llm-text-to-sql', context: 'plugins/llm-text-to-sql', test: 'python -m pytest tests/ -q --tb=short', always: true },
-  { name: 'Filter service (docker build + unit tests)', image: 'd1-filter-service', context: 'plugins/filter-service', test: 'python -m pytest tests/ -q --tb=short' },
+  { name: 'Filter service (docker build)', image: 'd1-filter-service', context: 'plugins/filter-service', test: '' },
   { name: 'Diagnostics service (docker build)', image: 'd1-diag-service', context: '.', dockerfile: 'plugins/diag-service/Dockerfile', watch: ['plugins/diag-service/', 'scripts/diag/'], test: '' },
   { name: 'Plugin template (docker build + unit tests)', image: 'd1-plugin-template', context: 'plugins/plugin-template', test: 'python -m pytest tests/ -q --tb=short' },
   { name: 'Force-app backup server (docker build + unit tests)', image: 'd1-backup-server', context: 'apps/force-app/backup-server', test: 'python -m pytest -q --tb=short' },

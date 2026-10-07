@@ -60,7 +60,7 @@ Things worth knowing:
 | Foundation smoke test | `tests/phase0_smoke.sh`, including `docker compose config` |
 | Schema migrations | Migrations and seed apply. Then the phase 1/6/7 schema tests run. Then [`migration_roundtrip.sh`](../scripts/ci/migration_roundtrip.sh) rolls back **every** migration (each down must succeed), fails on any table, view, function, type or schema left behind, and applies them all again |
 | Scripts and diagnostics | `tests/scripts` against a real database, including the diag goldens. A skipped DB test fails the job |
-| Service images | Each Dockerfile in `docker-compose.yml` builds, and its tests run inside the image |
+| Service images | Each Dockerfile in `docker-compose.yml` builds, and its tests run inside the image (diag-service and filter-service tests read files outside their image, so Force app Python runs them) |
 | Directus extension *name* | Each extension with its own lockfile installs, builds and passes its own tests, exactly as on the server |
 | Force app JS | `@d1/force-plotting`, `force-app-web` and `force-app-desktop` tests, typechecks and builds |
 | Explorer UI | `@d1/ui` tests, typechecks of the Explorer pages, the lab dashboard and the campaign interface, and the workspace extension builds |
