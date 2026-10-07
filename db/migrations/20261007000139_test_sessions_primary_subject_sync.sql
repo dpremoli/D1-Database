@@ -116,21 +116,42 @@ COMMENT ON COLUMN test_sessions.insert_edge_id IS
 -- the columns from the junction: without this a test with a direct sample and an edge-only junction
 -- would lose its sample). Then derive the columns for every test that has junction rows. Tests
 -- with no junction row keep whatever a direct writer put in sample_id / insert_edge_id.
+--
+-- The re-copy must not resurrect what users removed in the form: since 064 the columns are hidden,
+-- so a test whose sample was swapped X -> Y keeps a stale sample_id = X, and copying it back would
+-- add X to the subject list again. So a column value is copied only when
+--   * the test has NO junction row of that collection at all (the column is then the only record
+--     of the subject: a legacy or directly written test), and
+--   * audit_logs does not show that very (test, item) junction row being deleted (a test whose
+--     only sample was removed in the form, leaving an edge subject, also has a stale column).
+-- audit_logs is read by table_name / action_type / row_before: see migrations 009 and 121.
 INSERT INTO test_sessions_subject (test_sessions_id, collection, item)
-SELECT session_id, 'physical_samples', sample_id::text
-FROM test_sessions
-WHERE sample_id IS NOT NULL
+SELECT t.session_id, 'physical_samples', t.sample_id::text
+FROM test_sessions t
+WHERE t.sample_id IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM test_sessions_subject s
-                  WHERE s.test_sessions_id = test_sessions.session_id
-                    AND s.collection = 'physical_samples' AND lower(s.item) = test_sessions.sample_id::text);
+                  WHERE s.test_sessions_id = t.session_id
+                    AND s.collection = 'physical_samples')
+  AND NOT EXISTS (SELECT 1 FROM audit_logs a
+                  WHERE a.table_name = 'test_sessions_subject'
+                    AND a.action_type = 'DELETE'
+                    AND a.row_before ->> 'test_sessions_id' = t.session_id::text
+                    AND a.row_before ->> 'collection' = 'physical_samples'
+                    AND lower(a.row_before ->> 'item') = t.sample_id::text);
 
 INSERT INTO test_sessions_subject (test_sessions_id, collection, item)
-SELECT session_id, 'insert_edges', insert_edge_id::text
-FROM test_sessions
-WHERE insert_edge_id IS NOT NULL
+SELECT t.session_id, 'insert_edges', t.insert_edge_id::text
+FROM test_sessions t
+WHERE t.insert_edge_id IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM test_sessions_subject s
-                  WHERE s.test_sessions_id = test_sessions.session_id
-                    AND s.collection = 'insert_edges' AND lower(s.item) = test_sessions.insert_edge_id::text);
+                  WHERE s.test_sessions_id = t.session_id
+                    AND s.collection = 'insert_edges')
+  AND NOT EXISTS (SELECT 1 FROM audit_logs a
+                  WHERE a.table_name = 'test_sessions_subject'
+                    AND a.action_type = 'DELETE'
+                    AND a.row_before ->> 'test_sessions_id' = t.session_id::text
+                    AND a.row_before ->> 'collection' = 'insert_edges'
+                    AND lower(a.row_before ->> 'item') = t.insert_edge_id::text);
 
 SELECT sync_test_session_primary_subject(t.session_id)
 FROM test_sessions t
@@ -144,11 +165,12 @@ WHERE EXISTS (SELECT 1 FROM test_sessions_subject s WHERE s.test_sessions_id = t
 -- primary depends on random junction uuids. The FK becomes ON DELETE SET NULL, and a BEFORE
 -- DELETE trigger on physical_samples keeps the original intent: a test is deleted with its
 -- sample only when that sample was its last subject.
---   1. every junction row naming the sample is deleted; the sync trigger above then promotes the
---      test's next sample as primary;
---   2. a test that was affected (its sample_id was this sample, or it lost a junction row) and
---      has no subject left at all (no physical_samples or insert_edges junction row, no
---      insert_edge_id) is deleted, as the cascade used to do. Its junction rows go with it.
+--   1. a test that names the sample (sample_id, or a junction row) and has no other subject
+--      (no other junction row of any collection, no insert_edge_id) is deleted, as the cascade
+--      used to do; its junction rows go with it. This runs first so that a doomed test is not
+--      UPDATEd (by the sync below, with an audit row) just before it is deleted;
+--   2. the sample's junction rows are deleted from the surviving tests; the sync trigger above
+--      then promotes each test's next sample as primary.
 -- BEFORE, not AFTER: the foreign key's SET NULL action runs after the row is deleted and would
 -- already have blanked sample_id, so an AFTER trigger could no longer tell which tests used the
 -- sample directly (legacy tests with no junction row). Running before the delete also means the
@@ -157,30 +179,23 @@ CREATE OR REPLACE FUNCTION trg_physical_samples_delete_test_subjects()
     RETURNS TRIGGER
     LANGUAGE plpgsql
 AS $$
-DECLARE
-    v_tests UUID[];
 BEGIN
-    SELECT COALESCE(array_agg(DISTINCT t.session_id), '{}')
-      INTO v_tests
-      FROM test_sessions t
-     WHERE t.sample_id = OLD.sample_id;
-
-    WITH del AS (
-        DELETE FROM test_sessions_subject s
-         WHERE s.collection = 'physical_samples'
-           AND lower(s.item) = OLD.sample_id::text
-        RETURNING s.test_sessions_id
-    )
-    SELECT v_tests || COALESCE(array_agg(DISTINCT del.test_sessions_id), '{}')
-      INTO v_tests
-      FROM del;
-
     DELETE FROM test_sessions t
-     WHERE t.session_id = ANY (v_tests)
+     WHERE t.session_id IN (SELECT x.session_id FROM test_sessions x
+                            WHERE x.sample_id = OLD.sample_id
+                            UNION
+                            SELECT s.test_sessions_id FROM test_sessions_subject s
+                            WHERE s.collection = 'physical_samples'
+                              AND lower(s.item) = OLD.sample_id::text)
        AND t.insert_edge_id IS NULL
        AND NOT EXISTS (SELECT 1 FROM test_sessions_subject s
                        WHERE s.test_sessions_id = t.session_id
-                         AND s.collection IN ('physical_samples', 'insert_edges'));
+                         AND NOT (s.collection = 'physical_samples'
+                                  AND lower(s.item) = OLD.sample_id::text));
+
+    DELETE FROM test_sessions_subject s
+     WHERE s.collection = 'physical_samples'
+       AND lower(s.item) = OLD.sample_id::text;
     RETURN OLD;
 END;
 $$;
@@ -201,6 +216,21 @@ ALTER TABLE test_sessions
         FOREIGN KEY (sample_id)
         REFERENCES physical_samples (sample_id)
         ON DELETE SET NULL;
+
+-- Indexes for the lookups above. The sample FK's SET NULL action and trigger step 1 find tests by
+-- sample_id, and the insert-edge delete check by insert_edge_id (neither column had an index);
+-- both delete triggers match junction items with lower(item), which the existing
+-- (collection, item) index cannot serve.
+CREATE INDEX test_sessions_sample_id_idx ON test_sessions (sample_id);
+CREATE INDEX test_sessions_insert_edge_id_idx ON test_sessions (insert_edge_id);
+CREATE INDEX test_sessions_subject_target_lower_idx ON test_sessions_subject (collection, lower(item));
+
+COMMENT ON INDEX test_sessions_sample_id_idx IS
+    'Finds the tests of a sample: the ON DELETE SET NULL action of test_sessions_sample_fkey and the physical_samples delete trigger.';
+COMMENT ON INDEX test_sessions_insert_edge_id_idx IS
+    'Finds the tests of an insert edge: test_sessions_insert_edge_fkey checks and the insert_edges delete trigger.';
+COMMENT ON INDEX test_sessions_subject_target_lower_idx IS
+    'Case-insensitive junction lookup by (collection, lower(item)), used by the physical_samples and insert_edges delete triggers.';
 
 -- Deleting an insert edge.
 --
@@ -244,6 +274,18 @@ COMMENT ON TRIGGER insert_edges_block_subject_delete ON insert_edges IS
 -- The values the trigger back-filled are left in place: they are correct data and the columns are
 -- nullable, so nothing needs undoing. The column comments return to the originals (migration 008).
 -- The sample foreign key returns to ON DELETE CASCADE (migration 023) and the delete triggers go.
+-- Rollback keeps the other derived values (sample_id of one-sample tests, insert_edge_id, the
+-- junction rows copied by the back-fill), but a test with several samples had sample_id NULL
+-- before this migration: with its derived primary sample left in place the restored cascade
+-- would delete the whole test (and its links to the other samples) when that sample is deleted.
+-- So sample_id is cleared on those tests first.
+UPDATE test_sessions t
+SET sample_id = NULL
+WHERE (SELECT count(*) FROM test_sessions_subject s
+       WHERE s.test_sessions_id = t.session_id AND s.collection = 'physical_samples') > 1;
+DROP INDEX IF EXISTS test_sessions_subject_target_lower_idx;
+DROP INDEX IF EXISTS test_sessions_insert_edge_id_idx;
+DROP INDEX IF EXISTS test_sessions_sample_id_idx;
 DROP TRIGGER IF EXISTS insert_edges_block_subject_delete ON insert_edges;
 DROP FUNCTION IF EXISTS trg_insert_edges_block_subject_delete();
 DROP TRIGGER IF EXISTS physical_samples_delete_test_subjects ON physical_samples;

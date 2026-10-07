@@ -1573,10 +1573,14 @@ SELECT 'del_primary:' || (SELECT count(*) FROM test_sessions WHERE session_id = 
     || '/' || (SELECT sample_id = 'd0000000-0000-4000-8000-0000000001a2' FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000001c1')
     || '/' || (SELECT count(*) FROM test_sessions_subject WHERE test_sessions_id = 'd0000000-0000-4000-8000-0000000001c1');
 
--- delete a lone sample: the test goes with it
+-- delete a lone sample: the test goes with it, and its audit trail shows the DELETE without a
+-- preceding UPDATE (the trigger deletes doomed tests before it edits the survivors)
+SELECT COALESCE(max(log_id), 0) AS lid FROM audit_logs \gset
 DELETE FROM physical_samples WHERE sample_id = 'd0000000-0000-4000-8000-0000000001a3';
 SELECT 'del_lone:' || (SELECT count(*) FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000001c2')
     || '/' || (SELECT count(*) FROM test_sessions_subject WHERE test_sessions_id = 'd0000000-0000-4000-8000-0000000001c2');
+SELECT 'del_lone_audit:' || count(*) FILTER (WHERE action_type = 'UPDATE') || '/' || count(*) FILTER (WHERE action_type = 'DELETE')
+  FROM audit_logs WHERE table_name = 'test_sessions' AND record_id = 'd0000000-0000-4000-8000-0000000001c2' AND log_id > :lid;
 
 -- delete a secondary sample: its junction row goes, the primary is unchanged
 DELETE FROM physical_samples WHERE sample_id = 'd0000000-0000-4000-8000-0000000001a5';
@@ -1602,6 +1606,7 @@ SQL
 ds_check() { grep -qx "$1" <<<"$ds_out" && ok "$2" || bad "$2 (psql output: $ds_out)"; }
 ds_check "del_primary:1/true/1" "deleting the primary sample of a two-sample test keeps the test and promotes the next sample"
 ds_check "del_lone:0/0" "deleting a test's only sample deletes the test (and its junction rows)"
+ds_check "del_lone_audit:0/1" "deleting a test's only sample leaves no UPDATE of the doomed test in the audit trail, only its DELETE"
 ds_check "del_secondary:1/true/2" "deleting a secondary sample removes its junction row and leaves the primary"
 ds_check "del_sample_keeps_edge:1/true/true" "deleting a test's last sample keeps a test that still has an edge subject"
 ds_check "del_legacy:0" "deleting the sample of a column-only test deletes the test, as before"
@@ -1653,17 +1658,91 @@ ALTER TABLE test_sessions_subject DISABLE TRIGGER test_sessions_subject_sync_pri
 INSERT INTO test_sessions (session_id, sample_id) VALUES ('d0000000-0000-4000-8000-0000000003c1', 'd0000000-0000-4000-8000-0000000003a1');
 INSERT INTO test_sessions_subject (test_sessions_id, collection, item)
 VALUES ('d0000000-0000-4000-8000-0000000003c1', 'insert_edges', 'd0000000-0000-4000-8000-0000000003b3');
+-- swap X -> Y in the (hidden) form: sample_id keeps the stale X, the junction only has Y
+INSERT INTO physical_samples (sample_id, sample_code) VALUES
+    ('d0000000-0000-4000-8000-0000000003a2', 'TEST-BF-002'), ('d0000000-0000-4000-8000-0000000003a3', 'TEST-BF-003');
+INSERT INTO test_sessions (session_id, sample_id) VALUES ('d0000000-0000-4000-8000-0000000003c2', 'd0000000-0000-4000-8000-0000000003a2');
+INSERT INTO test_sessions_subject (test_sessions_id, collection, item)
+VALUES ('d0000000-0000-4000-8000-0000000003c2', 'physical_samples', 'd0000000-0000-4000-8000-0000000003a3');
+-- the audit trail shows a sample removed from a test that now only has an edge subject
+INSERT INTO test_sessions (session_id, sample_id) VALUES ('d0000000-0000-4000-8000-0000000003c3', 'd0000000-0000-4000-8000-0000000003a2');
+INSERT INTO test_sessions_subject (id, test_sessions_id, collection, item)
+VALUES ('00000000-0000-4000-8000-0000000003d1', 'd0000000-0000-4000-8000-0000000003c3', 'physical_samples', 'D0000000-0000-4000-8000-0000000003A2');
+DELETE FROM test_sessions_subject WHERE id = '00000000-0000-4000-8000-0000000003d1';
+INSERT INTO test_sessions_subject (test_sessions_id, collection, item)
+VALUES ('d0000000-0000-4000-8000-0000000003c3', 'insert_edges', 'd0000000-0000-4000-8000-0000000003b3');
 ALTER TABLE test_sessions_subject ENABLE TRIGGER test_sessions_subject_sync_primary;
 $ps_backfill
 SELECT 'bf_keeps_direct:' || (sample_id = 'd0000000-0000-4000-8000-0000000003a1') || '/' || (insert_edge_id = 'd0000000-0000-4000-8000-0000000003b3')
   FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000003c1';
 SELECT 'bf_junction:' || count(*) FROM test_sessions_subject WHERE test_sessions_id = 'd0000000-0000-4000-8000-0000000003c1';
+SELECT 'bf_swap:' || (sample_id = 'd0000000-0000-4000-8000-0000000003a3')
+    || '/' || (SELECT count(*) FROM test_sessions_subject WHERE test_sessions_id = 'd0000000-0000-4000-8000-0000000003c2')
+    || '/' || (SELECT count(*) FROM test_sessions_subject WHERE test_sessions_id = 'd0000000-0000-4000-8000-0000000003c2' AND lower(item) = 'd0000000-0000-4000-8000-0000000003a2')
+  FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000003c2';
+SELECT 'bf_audited_removal:' || (sample_id IS NULL)
+    || '/' || (SELECT count(*) FROM test_sessions_subject WHERE test_sessions_id = 'd0000000-0000-4000-8000-0000000003c3' AND collection = 'physical_samples')
+  FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000003c3';
 ROLLBACK;
 SQL
 )
 bf_check() { grep -qx "$1" <<<"$bf_out" && ok "$2" || bad "$2 (psql output: $bf_out)"; }
 bf_check "bf_keeps_direct:true/true" "back-fill keeps a direct sample_id when the junction only had an edge"
 bf_check "bf_junction:2" "back-fill copies the direct sample and edge into the junction"
+bf_check "bf_swap:true/1/0" "back-fill does not resurrect a swapped-out sample: the stale sample_id is not copied back and becomes the junction's sample"
+bf_check "bf_audited_removal:true/0" "back-fill does not copy back a sample the audit trail shows was removed from the test's subjects"
+
+# Rolling the migration back: indexes serve the trigger lookups, the down section keeps multi-sample
+# tests alive once the cascade is back, and everything it created is gone.
+ps_down=$(awk '/^-- migrate:down/{f=1;next}f' "$PS")
+dn_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+INSERT INTO physical_samples (sample_id, sample_code) VALUES
+    ('d0000000-0000-4000-8000-0000000004a1', 'TEST-DN-001'), ('d0000000-0000-4000-8000-0000000004a2', 'TEST-DN-002'),
+    ('d0000000-0000-4000-8000-0000000004a3', 'TEST-DN-003');
+INSERT INTO test_sessions (session_id) VALUES
+    ('d0000000-0000-4000-8000-0000000004c1'), ('d0000000-0000-4000-8000-0000000004c2');
+INSERT INTO test_sessions_subject (id, test_sessions_id, collection, item) VALUES
+    ('00000000-0000-4000-8000-0000000004d1', 'd0000000-0000-4000-8000-0000000004c1', 'physical_samples', 'd0000000-0000-4000-8000-0000000004a1'),
+    ('00000000-0000-4000-8000-0000000004d2', 'd0000000-0000-4000-8000-0000000004c1', 'physical_samples', 'd0000000-0000-4000-8000-0000000004a2'),
+    ('00000000-0000-4000-8000-0000000004d3', 'd0000000-0000-4000-8000-0000000004c2', 'physical_samples', 'd0000000-0000-4000-8000-0000000004a3');
+SELECT 'dn_pre:' || (SELECT sample_id = 'd0000000-0000-4000-8000-0000000004a1' FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000004c1');
+SELECT 'dn_idx_comments:' || count(*) FROM pg_class c JOIN pg_description d ON d.objoid = c.oid
+  WHERE c.relname IN ('test_sessions_sample_id_idx', 'test_sessions_insert_edge_id_idx', 'test_sessions_subject_target_lower_idx');
+-- the indexes serve the lookups of the delete triggers and of the foreign key action
+SET LOCAL enable_seqscan = off;
+EXPLAIN SELECT 1 FROM test_sessions WHERE sample_id = 'd0000000-0000-4000-8000-0000000004a1';
+EXPLAIN SELECT 1 FROM test_sessions WHERE insert_edge_id = 'd0000000-0000-4000-8000-0000000004a1';
+EXPLAIN SELECT 1 FROM test_sessions_subject s WHERE s.collection = 'insert_edges' AND lower(s.item) = 'x';
+EXPLAIN DELETE FROM test_sessions_subject s WHERE s.collection = 'physical_samples' AND lower(s.item) = 'x';
+RESET enable_seqscan;
+$ps_down
+SELECT 'dn_cleared:' || (SELECT sample_id IS NULL FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000004c1')
+    || '/' || (SELECT sample_id = 'd0000000-0000-4000-8000-0000000004a3' FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000004c2');
+-- the restored cascade must not delete the multi-sample test
+DELETE FROM physical_samples WHERE sample_id = 'd0000000-0000-4000-8000-0000000004a1';
+SELECT 'dn_survives:' || count(*) FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000004c1';
+-- and a one-sample test is cascade-deleted with its sample, as before 139
+DELETE FROM physical_samples WHERE sample_id = 'd0000000-0000-4000-8000-0000000004a3';
+SELECT 'dn_cascade:' || count(*) FROM test_sessions WHERE session_id = 'd0000000-0000-4000-8000-0000000004c2';
+SELECT 'dn_fk:' || confdeltype::text FROM pg_constraint WHERE conname = 'test_sessions_sample_fkey';
+SELECT 'dn_idx_gone:' || count(*) FROM pg_indexes WHERE indexname IN ('test_sessions_sample_id_idx', 'test_sessions_insert_edge_id_idx', 'test_sessions_subject_target_lower_idx');
+SELECT 'dn_triggers_gone:' || count(*) FROM pg_trigger WHERE tgname IN ('physical_samples_delete_test_subjects', 'insert_edges_block_subject_delete', 'test_sessions_subject_sync_primary');
+ROLLBACK;
+SQL
+)
+dn_check() { grep -qx "$1" <<<"$dn_out" && ok "$2" || bad "$2 (psql output: $dn_out)"; }
+dn_check "dn_pre:true" "(setup) the two-sample test has its derived primary sample before the rollback"
+dn_check "dn_idx_comments:3" "the three new indexes carry comments"
+for idx in test_sessions_sample_id_idx test_sessions_insert_edge_id_idx test_sessions_subject_target_lower_idx; do
+    grep -q "using $idx" <<<"$dn_out" && ok "the planner can use $idx for the trigger lookups" || bad "$idx is not used (psql output: $dn_out)"
+done
+dn_check "dn_cleared:true/true" "down clears sample_id on a multi-sample test and keeps it on a one-sample test"
+dn_check "dn_survives:1" "after down, deleting a multi-sample test's first sample no longer deletes the test"
+dn_check "dn_cascade:0" "after down, a one-sample test is deleted with its sample (the restored cascade)"
+dn_check "dn_fk:c" "down restores test_sessions_sample_fkey ON DELETE CASCADE"
+dn_check "dn_idx_gone:0" "down drops the three indexes"
+dn_check "dn_triggers_gone:0" "down drops the sync and delete triggers"
 
 echo "== Cleanup test rows =="
 $PSQL -c "

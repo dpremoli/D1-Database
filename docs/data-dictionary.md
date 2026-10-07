@@ -235,7 +235,9 @@ M2A junction (a sample, an insert edge, …). `sample_id` and `insert_edge_id` a
 denormalised *primary subject*: since migration `…139` a trigger on the junction sets
 them to the first (lowest junction id) `physical_samples` / `insert_edges` subject, so
 form-created tests are found by readers that filter on `sample_id`. A test with several
-samples shows only the first there; read the junction for all of them. Deleting a
+samples shows only the first there; read the junction for all of them. The migration's
+back-fill copies a direct `sample_id` / `insert_edge_id` into the junction only for a test with no
+junction row of that kind, and never one that the audit log shows was removed from the test. Deleting a
 sample no longer cascades to its tests (migration `…139`): the sample leaves each test's
 subject list and the next sample becomes primary; a test is deleted with the sample only when
 that was its last subject (no other sample, no insert edge). Deleting an insert edge that a

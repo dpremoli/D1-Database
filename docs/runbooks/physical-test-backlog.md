@@ -359,7 +359,13 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   in a scratch project: the test goes with it. Try deleting an insert edge that a test lists under
   Subject (or the cutting insert or tool box above it): Directus shows the error "insert edge ...
   is the subject of test ...; remove it from the test first", and after removing the edge from the
-  test the delete works. Since: Explorer pages E4-fix (PR pending).
+  test the delete works. Back-fill on a real database (E4-mig2, same migration, so before it is
+  applied): list tests whose `sample_id` is no longer in their junction samples (`SELECT t.session_id
+  FROM test_sessions t JOIN test_sessions_subject s ON s.test_sessions_id = t.session_id AND
+  s.collection = 'physical_samples' WHERE t.sample_id IS NOT NULL AND lower(s.item) <>
+  t.sample_id::text`): those are swapped samples; after `dbmate up` none of them gains a junction
+  row for the old sample and each one's `sample_id` equals its junction sample. Since: Explorer
+  pages E4-fix (PR pending).
 - [ ] **E4-fix — project items link by row_id.** In a project whose operations include two with the
   same pass code (or any project with many operations), open the Project items panel. Expect every
   operation and sample row to link to the right record (hover or click: the Operation page of that
