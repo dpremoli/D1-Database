@@ -1,0 +1,124 @@
+{
+  "_comment": [
+    "Single source of the Lab Member row-level visibility rules (ADR-0011, docs/adr/0011-row-level-visibility.md).",
+    "scripts/gen_access_rules.py turns this file into the Lab Member directus_permissions rows. Its output is pasted into",
+    "scripts/configure_users_and_policies.sql (gen_access_rules.py --write) and into the migration that applies it;",
+    "tests/phase1_schema.sh and tests/scripts/test_access_rules.py fail when either drifts from this file.",
+    "A rule is a set of paths, OR-ed together. Each path ends at a user column that must equal the signed-in user",
+    "($CURRENT_USER). {\"via\": \"sample_id\", \"set\": \"sample.read\"} prefixes every path of another set with a relation field; {"set": ...} includes it as is.",
+    "'rules' lists, per collection and action, the set that filters it, or \"any\" for no filter. Directus does not apply item",
+    "filters to create, so create is always \"any\". 'unfiltered' is every other Lab Member grant: reference data and the rows",
+    "added by later migrations. A new collection that holds lab data needs an entry in 'rules', not in 'unfiltered'."
+  ],
+  "policy": "20000002-0000-0000-0000-000000000002",
+  "sets": {
+    "sample.owner": ["owner_person_id.user_id"],
+    "sample.editors": ["owner_person_id.user_id", "co_owners._some.user_id"],
+    "sample.read": [
+      {"set": "sample.editors"},
+      "project_id.principal_investigator_person.user_id",
+      "project_id.secondary_investigators._some.user_id",
+      "campaigns._some.campaign_id.owner_person_id.user_id"
+    ],
+    "record.owner": ["owner_person_id.user_id"],
+    "record.update": ["owner_person_id.user_id", {"via": "sample_id", "set": "sample.editors"}],
+    "record.read": [
+      "owner_person_id.user_id",
+      {"via": "sample_id", "set": "sample.read"},
+      "project_id.principal_investigator_person.user_id",
+      "project_id.secondary_investigators._some.user_id",
+      "campaign_id.owner_person_id.user_id"
+    ],
+    "campaign.owner": ["owner_person_id.user_id"],
+    "campaign.read": [
+      "owner_person_id.user_id",
+      "project_id.principal_investigator_person.user_id",
+      "project_id.secondary_investigators._some.user_id",
+      "samples._some.sample_id.owner_person_id.user_id",
+      "samples._some.sample_id.co_owners._some.user_id"
+    ],
+    "project.pi": ["principal_investigator_person.user_id"],
+    "project.investigators": ["principal_investigator_person.user_id", "secondary_investigators._some.user_id"],
+    "project.read": [
+      "principal_investigator_person.user_id",
+      "secondary_investigators._some.user_id",
+      "campaigns._some.owner_person_id.user_id",
+      "samples._some.owner_person_id.user_id",
+      "samples._some.co_owners._some.user_id"
+    ],
+    "link.sample.read": [{"via": "sample_id", "set": "sample.read"}],
+    "link.sample.editors": [{"via": "sample_id", "set": "sample.editors"}],
+    "genealogy.read": [
+      {"via": "child_sample_id", "set": "sample.read"},
+      {"via": "parent_sample_id", "set": "sample.read"}
+    ],
+    "genealogy.write": [{"via": "child_sample_id", "set": "sample.editors"}],
+    "campaign_samples.read": [
+      {"via": "campaign_id", "set": "campaign.read"},
+      {"via": "sample_id", "set": "sample.read"}
+    ],
+    "campaign_samples.write": [
+      {"via": "campaign_id", "set": "campaign.owner"},
+      {"via": "sample_id", "set": "sample.editors"}
+    ],
+    "operation.read": [{"via": "operation_id", "set": "record.read"}],
+    "operation.update": [{"via": "operation_id", "set": "record.update"}],
+    "session.read": [{"via": "session_id", "set": "record.read"}],
+    "session.update": [{"via": "session_id", "set": "record.update"}],
+    "subject.read": [{"via": "test_sessions_id", "set": "record.read"}],
+    "subject.update": [{"via": "test_sessions_id", "set": "record.update"}],
+    "investigators.read": [{"via": "project_id", "set": "project.read"}],
+    "investigators.write": [{"via": "project_id", "set": "project.pi"}],
+    "rollup.read": [{"via": "project_id", "set": "project.investigators"}]
+  },
+  "rules": {
+    "physical_samples": {"create": "any", "read": "sample.read", "update": "sample.editors", "delete": "sample.owner"},
+    "manufacturing_operations": {"create": "any", "read": "record.read", "update": "record.update", "delete": "record.owner"},
+    "test_sessions": {"create": "any", "read": "record.read", "update": "record.update", "delete": "record.owner"},
+    "campaigns": {"create": "any", "read": "campaign.read", "update": "campaign.owner", "delete": "campaign.owner"},
+    "projects": {"create": "any", "read": "project.read", "update": "project.pi", "delete": "project.pi"},
+    "sample_co_owners": {"create": "any", "read": "link.sample.read", "update": "link.sample.editors", "delete": "link.sample.editors"},
+    "sample_stock_provenance": {"create": "any", "read": "link.sample.read", "update": "link.sample.editors", "delete": "link.sample.editors"},
+    "sample_data_files": {"create": "any", "read": "link.sample.read", "update": "link.sample.editors", "delete": "link.sample.editors"},
+    "sample_genealogy": {"create": "any", "read": "genealogy.read", "update": "genealogy.write", "delete": "genealogy.write"},
+    "campaign_samples": {"create": "any", "read": "campaign_samples.read", "update": "campaign_samples.write", "delete": "campaign_samples.write"},
+    "operation_data_files": {"create": "any", "read": "operation.read", "update": "operation.update", "delete": "operation.update"},
+    "machining_force_analysis": {"create": "any", "read": "operation.read", "update": "operation.update"},
+    "fast_run_data": {"read": "operation.read"},
+    "session_data_files": {"create": "any", "read": "session.read", "update": "session.update", "delete": "session.update"},
+    "test_sessions_subject": {"create": "any", "read": "subject.read", "update": "subject.update", "delete": "subject.update"},
+    "project_investigators": {"create": "any", "read": "investigators.read", "update": "investigators.write", "delete": "investigators.write"},
+    "project_rollup": {"read": "rollup.read"}
+  },
+  "unfiltered": {
+    "machining_params": ["create", "read", "update", "delete"],
+    "sintering_params": ["create", "read", "update", "delete"],
+    "heat_treatment_params": ["create", "read", "update", "delete"],
+    "deformation_params": ["create", "read", "update", "delete"],
+    "am_params": ["create", "read", "update", "delete"],
+    "tensile_test_params": ["create", "read", "update", "delete"],
+    "hardness_test_params": ["create", "read", "update", "delete"],
+    "charpy_test_params": ["create", "read", "update", "delete"],
+    "compression_test_params": ["create", "read", "update", "delete"],
+    "sem_params": ["create", "read", "update", "delete"],
+    "xrd_params": ["create", "read", "update", "delete"],
+    "materials": ["create", "read", "update", "delete"],
+    "material_iso_classifications": ["create", "read", "update", "delete"],
+    "alloying_elements": ["create", "read", "update", "delete"],
+    "material_alloying_elements": ["create", "read", "update", "delete"],
+    "equipment": ["create", "read", "update", "delete"],
+    "tools": ["create", "read", "update", "delete"],
+    "tool_boxes": ["create", "read", "update", "delete"],
+    "cutting_inserts": ["create", "read", "update", "delete"],
+    "insert_edges": ["create", "read", "update", "delete"],
+    "insert_types": ["create", "read", "update", "delete"],
+    "raw_stock_lots": ["create", "read", "update", "delete"],
+    "manufacturing_methods": ["create", "read", "update", "delete"],
+    "audit_logs": ["read"],
+    "people": ["create", "read", "update", "delete"],
+    "facilities": ["read"],
+    "fast_recipes": ["read"],
+    "force_crawler_state": ["read"],
+    "directus_files": ["create", "read"]
+  }
+}
