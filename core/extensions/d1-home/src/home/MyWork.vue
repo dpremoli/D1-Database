@@ -18,8 +18,8 @@ const typeLabel = (t: string | null | undefined) =>
 
 		<p v-if="hasPerson === false" class="notice" role="note">
 			Your login is not linked to a person record, so samples and campaigns you own cannot be found.
-			Ask an admin to link it on the <router-link to="/home/people">People</router-link> page. Projects where you are
-			PI, and samples where you are a co-owner, still show.
+			Ask an admin to link it on the <router-link to="/home/people">People</router-link> page. Projects where you are an
+			investigator, and samples you co-own, still show.
 		</p>
 
 		<p v-if="partialProjects" class="notice" role="note">{{ partialProjects }}</p>
