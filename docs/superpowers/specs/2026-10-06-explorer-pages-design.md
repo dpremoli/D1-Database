@@ -196,6 +196,17 @@ Reads the real collections (not `project_rollup`, which ADR-0011 restricts).
 - **Lists:** samples, operations and tests, plus the existing pickers (add samples / test
   sessions, assign operations), which are still the right editing tool here.
 
+**Finding (stage 2, 2026-10-07): how the matrix and the shared panel were built.**
+- `operation_sequence` is numbered per sample, so a matrix column is "sequence N of process
+  category C" (the same step lines up across samples). An operation with no sequence gets its own
+  column, labelled with its `pass_code`. Tests share a column per `test_type`.
+- `CampaignOverview` and the pickers became the kit's `CampaignWorkbench`
+  (`packages/d1-ui/src/campaign/`). The Campaign page shows it with the matrix; the
+  `d1-campaign-ops` interface on the Data Studio form is a thin wrapper that shows it without the
+  matrix.
+- `EditDrawer` gained a `hiddenFields` prop: the page's Edit form leaves out the
+  `campaign_operations` panel, which is already in the page body.
+
 ### Sample
 
 - **Header:**

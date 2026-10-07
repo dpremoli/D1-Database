@@ -1,5 +1,5 @@
-// Pure roll-up logic for the campaign overview panel (no Vue, no network), so it can be unit
-// tested with `node --test core/extensions/d1-campaign-ops/index.test.mjs`.
+// Pure roll-up logic for the campaign overview (no Vue, no network), unit tested with vitest.
+// Moved from d1-campaign-ops/src/overview.js with its behaviour unchanged.
 //
 // Inputs are the rows the panel reads through the Directus API (so the user's permissions already
 // applied): the campaign_samples junction, the campaign's operations, its test sessions and the
@@ -10,8 +10,8 @@
 // registered | pending_processing | processing | processed | analysing | analysed | failed.
 // A test counts as complete once its data is processed or analysed ('complete' is the retired
 // pre-0013 value and no longer exists). Chips are listed in lifecycle order.
-export const TEST_DONE_STATUSES = ['processed', 'analysed'];
-export const TEST_STATUS_ORDER = [
+export const TEST_DONE_STATUSES: string[] = ['processed', 'analysed'];
+export const TEST_STATUS_ORDER: string[] = [
 	'registered',
 	'pending_processing',
 	'processing',
@@ -21,11 +21,11 @@ export const TEST_STATUS_ORDER = [
 	'failed',
 ];
 
-const worst = (s) => ['error', 'processing', 'pending'].find((k) => s.includes(k));
+const worst = (s: string[]) => ['error', 'processing', 'pending'].find((k) => s.includes(k));
 
 // One operation can have several force files (one machining_force_analysis row each). Roll the rows
 // up to one state, worst first: error > processing > pending > done > skipped, 'none' when no rows.
-export function analysisState(rows) {
+export function analysisState(rows: any[] | null | undefined): string {
 	const s = (rows ?? []).map((r) => r?.status).filter(Boolean);
 	if (!s.length) return 'none';
 	return worst(s) ?? (s.includes('done') ? 'done' : 'skipped');
@@ -37,7 +37,7 @@ export function analysisState(rows) {
 // when there are no rows at all. Rows that can never be built do not count against it: a file whose
 // analysis was skipped, and one whose analysis errored without ever getting a diag_status (the
 // analysis column already shows that error), so one built file plus one skipped file reads 'done'.
-export function diagState(rows) {
+export function diagState(rows: any[] | null | undefined): string {
 	const buildable = (rows ?? []).filter(
 		(r) => r?.status !== 'skipped' && !(r?.status === 'error' && r?.diag_status == null),
 	);
@@ -46,20 +46,28 @@ export function diagState(rows) {
 	return worst(s) ?? (s.includes('none') ? 'none' : 'done');
 }
 
-const first = (rows, field) => (rows ?? []).map((r) => r?.[field]).find(Boolean) ?? null;
+const first = (rows: any[], field: string) => (rows ?? []).map((r) => r?.[field]).find(Boolean) ?? null;
 
 // The id of a related item that may arrive as an expanded object ({ sample_id, sample_code }) or a
 // bare id, or be null/absent when the caller cannot read it.
-const relId = (v, pk) => (v && typeof v === 'object' ? (v[pk] ?? null) : (v ?? null));
-const relCode = (v) => (v && typeof v === 'object' ? (v.sample_code ?? null) : null);
+export const relId = (v: any, pk: string): string | null => (v && typeof v === 'object' ? (v[pk] ?? null) : (v ?? null));
+export const relCode = (v: any): string | null => (v && typeof v === 'object' ? (v.sample_code ?? null) : null);
 
-export function buildOverview({ samples = [], operations = [], tests = [], analyses = [] }) {
-	const byOp = new Map();
+export interface OverviewInput {
+	samples?: any[];
+	operations?: any[];
+	tests?: any[];
+	analyses?: any[];
+}
+
+export function buildOverview({ samples = [], operations = [], tests = [], analyses = [] }: OverviewInput) {
+	const byOp = new Map<string, any[]>();
 	for (const a of analyses) {
 		const k = relId(a.operation_id, 'operation_id');
 		if (!k) continue;
-		if (!byOp.has(k)) byOp.set(k, []);
-		byOp.get(k).push(a);
+		let list = byOp.get(k);
+		if (!list) byOp.set(k, (list = []));
+		list.push(a);
 	}
 
 	const opRows = operations.map((o) => {
@@ -79,8 +87,15 @@ export function buildOverview({ samples = [], operations = [], tests = [], analy
 
 	// Samples: the junction rows, plus any sample that only appears through an operation or test of
 	// this campaign (flagged `member: false` so it can be added to the list).
-	const sampleMap = new Map();
-	const touch = (id, code, member) => {
+	interface SampleRow {
+		sample_id: string;
+		sample_code: string | null;
+		member: boolean;
+		operations: number;
+		tests: number;
+	}
+	const sampleMap = new Map<string, SampleRow>();
+	const touch = (id: string | null, code: string | null, member: boolean): SampleRow | null => {
 		if (!id) return null;
 		let s = sampleMap.get(id);
 		if (!s) {
@@ -119,8 +134,8 @@ export function buildOverview({ samples = [], operations = [], tests = [], analy
 	const forceOps = opRows.filter(
 		(o) => (o.process_category === 'machining' || o.analysis !== 'none') && o.analysis !== 'skipped',
 	);
-	const countBy = (rows, key) => {
-		const out = {};
+	const countBy = (rows: any[], key: string) => {
+		const out: Record<string, number> = {};
 		for (const r of rows) {
 			const k = r[key] ?? 'unknown';
 			out[k] = (out[k] ?? 0) + 1;
@@ -130,7 +145,7 @@ export function buildOverview({ samples = [], operations = [], tests = [], analy
 	const analysed = forceOps.filter((o) => o.analysis === 'done').length;
 	const diagBuilt = forceOps.filter((o) => o.diag === 'done').length;
 	const testsComplete = testRows.filter((t) => TEST_DONE_STATUSES.includes(t.status)).length;
-	const pct = (n, d) => (d ? Math.round((100 * n) / d) : 0);
+	const pct = (n: number, d: number) => (d ? Math.round((100 * n) / d) : 0);
 
 	return {
 		counts: {
@@ -156,20 +171,4 @@ export function buildOverview({ samples = [], operations = [], tests = [], analy
 	};
 }
 
-// Text for a visible error from an Axios/Directus failure.
-export function errMsg(e) {
-	return e?.response?.data?.errors?.[0]?.message || e?.message || 'request failed';
-}
-
-const errCode = (e) => e?.response?.data?.errors?.[0]?.extensions?.code;
-
-// An Axios/Directus failure that means "your role may not read this" (as opposed to a network or
-// server error): HTTP 403 or the FORBIDDEN error code.
-export function isForbidden(e) {
-	return e?.response?.status === 403 || errCode(e) === 'FORBIDDEN';
-}
-
-// An Axios/Directus failure for a unique-constraint violation (the row already exists).
-export function isDuplicate(e) {
-	return errCode(e) === 'RECORD_NOT_UNIQUE';
-}
+export type Overview = ReturnType<typeof buildOverview>;

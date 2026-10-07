@@ -10,7 +10,8 @@
     "core/extensions/d1-force-dashboard",
     "core/extensions/d1-home",
     "core/extensions/d1-lab-dashboard",
-    "core/extensions/d1-composition-bar"
+    "core/extensions/d1-composition-bar",
+    "core/extensions/d1-campaign-ops"
   ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
@@ -18,6 +19,6 @@
     "build:web": "npm run build -w force-app-web",
     "build:web:desktop": "npm run build:desktop -w force-app-web",
     "build:extension": "npm run build -w directus-extension-d1-force-dashboard",
-    "build:extensions": "npm run build -w directus-extension-d1-home -w directus-extension-d1-lab-dashboard -w directus-extension-d1-composition-bar"
+    "build:extensions": "npm run build -w directus-extension-d1-home -w directus-extension-d1-lab-dashboard -w directus-extension-d1-composition-bar -w directus-extension-d1-campaign-ops"
   }
 }

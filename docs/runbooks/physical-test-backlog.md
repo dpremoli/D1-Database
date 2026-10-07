@@ -184,6 +184,35 @@ the rebuilt `d1-home`, `d1-lab-dashboard` and `d1-composition-bar` load, and app
   links open the placeholder page whose *Open in Data Studio* button opens the right Content form.
   FAST runs on Home still open the FAST dashboard. Since: Explorer pages E1 (PR pending).
 
+#### Campaign page (E2)
+- [ ] **E2 — Campaign page on a real campaign with force data.** Open `/admin/home/campaigns/<id>` for
+  a machining trial whose operations have force files in several states (done, pending, an error,
+  one with every file skipped, one with several files for one operation). Expect: the header shows
+  code, name, type, project breadcrumb, owner, status, dates and, where set, default equipment and
+  material; the tiles and bars equal the D11 hand counts above; in the matrix each operation cell's
+  colour matches the worst of its files (`error > processing > queued > analysed > skipped`), the
+  corner dot matches the Diagnostics state, hovering an error cell shows the real
+  `error_message`, and clicking any cell opens that operation (or test) page. Samples are in
+  natural order, a sample with no operations is an empty row, and a sample that only appears
+  through an operation shows the "not in list" icon. A testing campaign shows one column per test
+  type with the session status colour. As a role that cannot read `machining_force_analysis`, the
+  page loads, operation cells show no state, and a note says why. A made-up id, and a campaign the
+  role cannot read, show "Not found or not visible to you". Since: Explorer pages E2 (PR pending).
+- [ ] **E2 — pickers on the page and on the Data Studio form.** On the page add a sample by code, a
+  test session that is in no campaign, and an operation (a machining trial only offers machining
+  operations); each appears in the lists and the matrix, the counts rise, and the matrix gains a
+  column or row. Remove each again. Repeat on the campaign's Data Studio form (the panel there is
+  the same component, without the matrix) and check the page reflects the change after a reload.
+  Check the race cases of the D11 pickers item still behave. Since: Explorer pages E2 (PR pending).
+- [ ] **E2 — Edit drawer on a campaign.** *Edit* opens the campaign's own form with the owner,
+  project and type fields working, and without the operations panel (it is already in the page
+  body); saving refreshes the header. Since: Explorer pages E2 (PR pending).
+- [ ] **E2 — matrix with 50+ samples.** Open (or build in a scratch project) a campaign with 50 or
+  more samples and 10 or more steps. Expect: the page renders in a second or two, the matrix scrolls
+  sideways and down with the sample column and the column headings staying in place, the legend is
+  readable in the light and dark themes, and the sample and operation lists show the first 200 rows
+  with a note when there are more. Since: Explorer pages E2 (PR pending).
+
 ## B. Force rig (NI-DAQ, Lab Amp, packaged Windows app)
 
 Install the current release from the update feed on the acquisition PC. Use a real sample and

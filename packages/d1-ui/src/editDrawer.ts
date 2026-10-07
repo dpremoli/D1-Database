@@ -12,11 +12,12 @@ export interface FieldDef {
 // column behind them (the buttons, the geometry preview, the file links, the composition bar):
 // those exist only as interfaces and are never in the item. Directus returns only the fields the
 // role may read, so a key missing from the item is one the user may not see; hiding it matches
-// what the Data Studio form does.
-export function formFields(fields: FieldDef[], item: Record<string, unknown> | null): FieldDef[] {
+// what the Data Studio form does. `hidden` names fields a page already shows itself and does not
+// want twice (the Campaign page has the d1-campaign-ops panel in its body).
+export function formFields(fields: FieldDef[], item: Record<string, unknown> | null, hidden: string[] = []): FieldDef[] {
 	if (!item) return [];
 	return fields.filter((f) => {
-		if (f.meta?.system) return false;
+		if (f.meta?.system || hidden.includes(f.field)) return false;
 		if (f.schema === null || f.schema === undefined) return true; // alias / presentation
 		return f.field in item;
 	});
