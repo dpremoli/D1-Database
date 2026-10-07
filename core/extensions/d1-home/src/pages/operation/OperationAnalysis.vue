@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { LoadState, Section, StatusBadge, analysisLink, formatDate, formatQuantity } from '@d1/ui';
-import type { Section as SectionState } from './useOperationData';
+import { FORCE_CAP, type Section as SectionState } from './useOperationData';
 
 // Analysis of the operation's data: the force analysis of each .mat file (machining) or the
 // imported FAST trace (sintering), with the dashboard that plots it. Cutting metrics stay in the
@@ -14,8 +14,9 @@ const props = defineProps<{
 }>();
 
 const link = computed(() => analysisLink(props.operationId, props.category));
+const capped = computed(() => props.force.data.length > FORCE_CAP);
 const rows = computed(() =>
-	[...props.force.data].sort((a, b) => fileName(a).localeCompare(fileName(b), undefined, { numeric: true })),
+	props.force.data.slice(0, FORCE_CAP).sort((a, b) => fileName(a).localeCompare(fileName(b), undefined, { numeric: true })),
 );
 const fileName = (r: any) => r?.directus_files_id?.filename_download || r?.directus_files_id?.title || '(file)';
 const isMachining = computed(() => props.category === 'machining');
@@ -33,6 +34,9 @@ const isMachining = computed(() => props.category === 'machining');
 			<v-button small secondary :to="link.to"><v-icon name="show_chart" small left />{{ link.label }}</v-button>
 		</template>
 		<LoadState :loading="force.loading" :error="force.error">
+			<p v-if="capped" class="capped">
+				Showing the first {{ FORCE_CAP }} force files. Open the Force dashboard for the rest.
+			</p>
 			<table class="d1-table">
 				<thead><tr><th>File</th><th>Analysis</th><th>Diagnostics</th><th>Processed</th></tr></thead>
 				<tbody>
@@ -92,6 +96,7 @@ const isMachining = computed(() => props.category === 'machining');
 }
 .d1-table td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--theme--border-color-subdued); vertical-align: middle; }
 .file { overflow-wrap: anywhere; font-family: var(--theme--fonts--monospace--font-family, monospace); font-size: 12.5px; }
+.capped { margin: 0 0 8px; font-size: 12.5px; color: var(--theme--foreground-subdued); }
 .errors td { padding-top: 0; }
 .err { margin: 0 0 4px; font-size: 12.5px; color: var(--theme--danger); overflow-wrap: anywhere; }
 .fast { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; font-size: 13.5px; }

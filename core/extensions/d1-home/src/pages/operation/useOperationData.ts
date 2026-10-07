@@ -8,6 +8,9 @@ import {
 // "page" and "Not found or not visible to you"; every other block is a section that loads in
 // parallel and fails on its own (same pattern as the Sample page).
 
+// Force analyses shown for one operation. One more is read so the page can say when it stops short.
+export const FORCE_CAP = 200;
+
 export interface Section<T> {
 	data: T;
 	loading: boolean;
@@ -108,7 +111,8 @@ export function useOperationData(id: Ref<string>) {
 						'id', 'status', 'diag_status', 'error_message', 'diag_error', 'processed_at',
 						'directus_files_id.id', 'directus_files_id.filename_download', 'directus_files_id.title',
 					],
-					limit: 200,
+					sort: ['id'],
+					limit: FORCE_CAP + 1,
 				}),
 			),
 			fill(fast, token, 'the FAST run', async () => {
