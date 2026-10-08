@@ -1011,9 +1011,27 @@ when picked up):
   "Start next cut"; the next cut has sequence +1, an empty chips ref, new-edge off and a new Cut ID.
   Press "Clear for next cut" first instead: Start reads "Start" and the sequence moves on only once.
   Since the 0.1.36 batch PR.
-- [ ] **#194 long-cut note.** Record past the .mat limit (about 6 min at 51.2 kHz with 10 columns):
-  the save dialog explains the limit in minutes and calls the .csv a reduced-resolution preview;
-  database upload and the full-resolution raw file still work. Since the 0.1.36 batch PR.
+- [ ] **#194 long cuts get a v7.3 .mat.** Record past the v5 limit (about 6 min at 51.2 kHz with 10
+  columns) on the rig PC: finalize writes `capture.mat` as MATLAB v7.3 in acceptable time and disk;
+  the save dialog says so. In MATLAB, `load('capture.mat')` and `matfile` give the same DATA,
+  VariableNames and metadata as a v5 capture; `process_force.m` bakes it. Upload the multi-GB .mat
+  through Directus (check `FILES_MAX_UPLOAD_SIZE`, the Caddy body limit, and that the app doesn't run
+  out of memory) and Bake it from the Plot page. The frozen backend loads h5py. Since the 0.1.36
+  batch PR.
+- [ ] **#184 Start FRM now.** On a real cut where the detector stays silent ("Detect cut start" on),
+  press Start FRM now: the FRM spiral starts from that moment, the Cut cell shows a time and
+  summary.json says `cut_start_source: "manual"`. The button disappears when the detector fires
+  first; a double press shows the refusal text. Since the 0.1.36 batch PR.
+- [ ] **#195 Re-assign channels.** Unplug or swap a 9234 module: the Channels pre-flight item fails
+  naming the missing ports, Re-assign maps to the real `cDAQ1ModN` ports, and is refused during a
+  recording. A fresh config with no force channels bound warns the same way. Since the 0.1.36 batch PR.
+- [ ] **#197 update notifications.** Packaged app: a toast when an update has downloaded and the
+  window is minimised or behind another window, and clicking it brings the app forward. After
+  install, `schtasks /query /tn ForceAppUpdateCheck` shows a logon and a daily trigger with no UAC
+  prompt. With the app closed and a newer version on the feed, the scheduled run shows a toast and
+  no window or backend; clicking it opens the app. With the app running, the scheduled run exits
+  without touching the window. Turning the toggle off in Settings > About removes the task;
+  uninstalling removes it too. Since the 0.1.36 batch PR.
 - [ ] **#197 update prompt (packaged app).** With an update downloaded while the sign-in page is
   showing, typing the password shows no dialog and keeps focus. After sign-in the in-app card
   appears in the corner; Enter in a text field does not install; "Not now" hides it until the next
