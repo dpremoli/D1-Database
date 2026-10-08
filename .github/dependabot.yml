@@ -24,6 +24,11 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 3
+    # @directus/extensions-sdk pins vue exactly. A newer vue in the workspaces installs a second
+    # copy beside the SDK's, and vue-router's types then reject app.use(router) (#140). Move vue
+    # when the SDK does.
+    ignore:
+      - dependency-name: vue
     groups:
       npm-workspace:
         update-types: [minor, patch]

@@ -10,7 +10,7 @@
 		"@directus/extensions-sdk": "^17",
 		"@vue/compiler-sfc": "^3",
 		"typescript": "^5",
-		"vue": "^3.5.43"
+		"vue": "^3"
 	},
 	"directus:extension": {
 		"type": "interface",
