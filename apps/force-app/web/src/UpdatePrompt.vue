@@ -20,6 +20,9 @@ const show = computed(() => shouldShowUpdatePrompt({
 	recording: props.recording,
 	routePath: route.path,
 }));
+// On the Record page the corner is where the Start/Stop panel can be docked (it can sit on either
+// edge, and the layout buttons are bottom-right too), so the card goes bottom-centre there.
+const onRecord = computed(() => route.path === '/record' || route.path.startsWith('/record/'));
 const version = computed(() => ('version' in status.value ? status.value.version : ''));
 const notes = computed(() => (status.value.state === 'downloaded' ? status.value.notes : ''));
 
@@ -63,7 +66,7 @@ onBeforeUnmount(() => { gone = true; unsubscribe?.(); unsubscribe = null; });
 </script>
 
 <template>
-	<aside v-if="show" class="upd" role="status" aria-live="polite" aria-label="Update ready">
+	<aside v-if="show" class="upd" :class="{ 'on-record': onRecord }" role="status" aria-live="polite" aria-label="Update ready">
 		<div class="upd-head">
 			<span class="material-symbols-rounded upd-icon">system_update_alt</span>
 			<div class="upd-title">
@@ -98,6 +101,7 @@ onBeforeUnmount(() => { gone = true; unsubscribe?.(); unsubscribe = null; });
 	color: var(--text); background: var(--bg-2); border: 1px solid var(--border-2); border-radius: var(--radius);
 	box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
 }
+.upd.on-record { right: auto; left: 50%; transform: translateX(-50%); }
 .upd-head { display: flex; gap: 10px; align-items: flex-start; }
 .upd-icon { color: var(--accent); font-size: var(--icon-lg); }
 .upd-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

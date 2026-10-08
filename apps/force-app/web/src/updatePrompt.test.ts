@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { nextPromptStatus, shouldShowUpdatePrompt, type UpdatePromptInput } from './updatePrompt';
 
@@ -58,5 +60,16 @@ describe('nextPromptStatus', () => {
 	});
 	it('passes everything through when nothing is downloaded', () => {
 		expect(nextPromptStatus({ state: 'idle' }, { state: 'checking' })).toEqual({ state: 'checking' });
+	});
+});
+
+// The Record panel (Start/Stop) can be docked at either edge and the layout buttons sit bottom-right,
+// so on /record the card must not use the bottom-right corner. Scoped CSS has no layout in jsdom, so
+// this pins the source: the on-record variant frees `right` and is centred.
+describe('UpdatePrompt on the Record page', () => {
+	const src = readFileSync(fileURLToPath(new URL('./UpdatePrompt.vue', import.meta.url)), 'utf8');
+	it('is switched to a bottom-centre position on /record', () => {
+		expect(src).toMatch(/route\.path === '\/record'/);
+		expect(src).toMatch(/\.upd\.on-record\s*\{[^}]*right:\s*auto;[^}]*left:\s*50%;[^}]*translateX\(-50%\)/);
 	});
 });
