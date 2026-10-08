@@ -4,6 +4,7 @@ import type { RecordClient } from './liveClient';
 import { channelColor } from './types';
 import { theme } from '../theme';
 import { DEFAULT_WINDOW_SEC, splitAtGaps, windowView } from './plotWindow';
+import { onCanvasRevival } from './canvasRevival';
 import { axisLabel, channelLabel, tachoMissingNote } from './tachoSignal';
 
 // windowSec is this plot's OWN view window (#105/#34): it slices that much out of the client's
@@ -197,8 +198,15 @@ function draw() {
 // applyTheme() sets the ref before the [data-theme] attribute, but this watcher runs after both.
 watch(theme, () => { lastN = -1; palCache = null; });
 
-onMounted(() => { resize(); window.addEventListener('resize', resize); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); draw(); nextTick(resize); });
-onBeforeUnmount(() => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize); ro?.disconnect(); });
+// #189: a canvas the browser discarded while the window was hidden stays blank, because draw()
+// skips frames whose data has not changed. Restoring the context, becoming visible and regaining
+// focus all go through resize(), which re-sizes the canvas and invalidates that skip cache.
+let stopRevival: (() => void) | null = null;
+onMounted(() => {
+	resize(); window.addEventListener('resize', resize); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); draw(); nextTick(resize);
+	stopRevival = onCanvasRevival(canvasEl.value, document, window, resize);
+});
+onBeforeUnmount(() => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize); ro?.disconnect(); stopRevival?.(); });
 </script>
 
 <template>

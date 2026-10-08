@@ -7,6 +7,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Cache } from '@d1/force-plotting';
 import { channelColor } from './types';
 import { theme } from '../theme';
+import { onCanvasRevival } from './canvasRevival';
 import { decimateMinMax, seriesRange, shouldDecimate } from './traceDecimate';
 import { cacheTachoKind, channelLabel, finishedPlotModel, TACHO, type FinishedPlotModel } from './tachoSignal';
 
@@ -294,8 +295,15 @@ watch(() => props.channels, () => scheduleDraw());
 watch(() => [props.cropStartSec, props.cropEndSec], () => scheduleDraw());
 watch(theme, () => scheduleDraw());
 
-onMounted(() => { resize(); window.addEventListener('resize', resize); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); nextTick(resize); });
-onBeforeUnmount(() => { window.removeEventListener('resize', resize); ro?.disconnect(); if (raf) cancelAnimationFrame(raf); });
+// #189: this plot redraws only on props/theme/resize, so a canvas the browser discarded while the
+// window was hidden stayed blank. Restoring the context, becoming visible and regaining focus go
+// through resize(), which re-sizes the canvas, drops the cached layer and schedules a draw.
+let stopRevival: (() => void) | null = null;
+onMounted(() => {
+	resize(); window.addEventListener('resize', resize); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); nextTick(resize);
+	stopRevival = onCanvasRevival(canvasEl.value, document, window, resize);
+});
+onBeforeUnmount(() => { window.removeEventListener('resize', resize); ro?.disconnect(); stopRevival?.(); if (raf) cancelAnimationFrame(raf); });
 </script>
 
 <template>
