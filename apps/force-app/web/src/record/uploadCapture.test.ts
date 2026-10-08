@@ -258,3 +258,26 @@ describe('uploadCaptureColdStart with a partial analysis row already in the data
 		await expect(uploadCaptureColdStart(info)).rejects.toThrow(/linking the capture failed/);
 	});
 });
+
+// #190: the error text must not claim "both files uploaded" when the .mat was skipped.
+describe('uploadCaptureColdStart failure text for the analysis insert', () => {
+	const failAnalysis = () => post.mockImplementation((url: string) => {
+		if (url === '/items/manufacturing_operations') return Promise.resolve({ data: { data: { operation_id: 'op-9' } } });
+		if (url === '/files') return Promise.resolve({ data: { data: { id: 'file-1' } } });
+		return Promise.reject(Object.assign(new Error('x'), { response: { status: 400, data: { errors: [{ message: 'Value can\'t be null' }] } } }));
+	});
+
+	it('says the .mat was skipped (over the size limit) when mat_written is false', async () => {
+		failAnalysis();
+		const err = await uploadCaptureColdStart({ ...BASE_INFO, matWritten: false, cfg: { source: 'nidaq', extra_metadata: {} } }).catch((e) => e);
+		expect(err.message).toMatch(/linking the capture failed - 400/);
+		expect(err.message).toMatch(/size limit/);
+		expect(err.message).not.toMatch(/both files/);
+	});
+
+	it('still says both files uploaded when a .mat was written', async () => {
+		failAnalysis();
+		const err = await uploadCaptureColdStart({ ...BASE_INFO, matWritten: true, cfg: { source: 'nidaq', extra_metadata: {} } }).catch((e) => e);
+		expect(err.message).toMatch(/both files uploaded/);
+	});
+});

@@ -288,6 +288,19 @@ describe('workspace.uploadCutToDatabase() with an unknown summary', () => {
 		expect(dx.post.mock.calls.find((c) => c[0] === '/items/machining_force_analysis')![1].directus_files_id).toBeNull();
 	});
 
+	it('a failed insert for an over-size cut says the .mat was skipped, not "both files uploaded" (#190)', async () => {
+		replies['/captures/cap-up/summary'] = { body: { mat_written: false } };
+		dx.post.mockImplementation(async (url: string) => {
+			if (url === '/items/manufacturing_operations') return { data: { data: { operation_id: 'op-s' } } };
+			if (url === '/files') return { data: { data: { id: `file-${++fileN}` } } };
+			throw Object.assign(new Error('x'), { response: { status: 400, data: { errors: [{ message: 'Value can\'t be null' }] } } });
+		});
+		const w = await noSummary();
+		const err = await w.uploadCutToDatabase().catch((e) => e);
+		expect(err.message).toMatch(/size limit/);
+		expect(err.message).not.toMatch(/both files/);
+	});
+
 	it('fails retryably, without logging a run, when the summary cannot be read', async () => {
 		replies['/captures/cap-up/summary'] = { ok: false, status: 503 };
 		const w = await noSummary();

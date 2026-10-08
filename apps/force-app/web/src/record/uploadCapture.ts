@@ -34,6 +34,15 @@ export function directusErrorMessage(e: any): string {
 	return e?.message || String(e);
 }
 
+// The error shown when the machining_force_analysis insert fails. A cut over the recorder's .mat size
+// limit has no capture.mat, so only the live cache was uploaded: say so instead of "both files".
+export function analysisCreateFailure(e: any, opId: string, matWritten: boolean): Error {
+	const uploaded = matWritten
+		? 'and both files uploaded'
+		: 'and the live cache uploaded (no capture.mat: the cut is over the recorder\'s .mat size limit, so it was skipped)';
+	return new Error(`linking the capture failed - ${directusErrorMessage(e)} (the run was logged as operation ${opId}, ${uploaded}, but the analysis record could not be created)`);
+}
+
 // extra_metadata's machining-detail fields are stored as strings (they're plain <input> v-models);
 // Directus wants numbers or null.
 export function numOrNull(s: unknown): number | null {
@@ -215,7 +224,7 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 		});
 		progress.analysisDone = true;
 	} catch (e: any) {
-		throw new Error(`linking the capture failed - ${directusErrorMessage(e)} (the run was logged as operation ${opId}, and both files uploaded, but the analysis record could not be created)`);
+		throw analysisCreateFailure(e, opId, matWritten);
 	}
 	return opId;
 }

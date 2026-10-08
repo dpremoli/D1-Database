@@ -13,7 +13,7 @@ import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
 import { loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
 import { clearSetupPrefs, defaultSetupPrefs, loadSetupPrefs, pickSetup, saveSetupPrefs, type SetupPrefs } from './setupPrefs';
-import { directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
+import { analysisCreateFailure, directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
 import { adoptExistingAnalysis, analysisAlreadyLinked, ensureOperation, needsBlobs, uploadProgress } from './uploadResume';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
 import { isFetchFailure } from '../netErrors';
@@ -816,7 +816,7 @@ export function createWorkspace() {
 		});
 		progress.analysisDone = true;
 		} catch (e: any) {
-			throw new Error(`linking the capture failed - ${directusErrorMessage(e)} (the run was logged as operation ${opId}, and both files uploaded, but the analysis record could not be created)`);
+			throw analysisCreateFailure(e, opId, matWritten);
 		}
 		return opId;
 	}
