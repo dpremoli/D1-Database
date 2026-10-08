@@ -16,16 +16,16 @@
   "dependencies": {
     "@d1/force-plotting": "*",
     "@d1/ui": "*",
-    "axios": "^1.7.9",
+    "axios": "^1.20.0",
     "grid-layout-plus": "^1.1.1",
-    "material-symbols": "^0.47.5",
+    "material-symbols": "^0.47.6",
     "potree-core": "^2.0.4",
-    "three": "^0.160.0",
+    "three": "^0.186.1",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
-    "@types/three": "^0.160.0",
+    "@types/three": "^0.186.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "typescript": "^7.0.2",
     "vite": "^6.0.7",
