@@ -417,11 +417,12 @@ export function createWorkspace() {
 	const isDone = computed(() => st.state === 'done');
 	const locked = computed(() => isRecording.value || isFinalizing.value);
 	// #185: leaving the Record page used to close the stream even mid-cut, so nothing arrived while
-	// away and the trace joined old to new frames across the hole. While recording or finalizing the
-	// page now only marks the stream as released; it is closed once the cut is no longer running
-	// (or by the next claimStream() -> connect() on return, which keeps the open socket).
+	// away and the trace joined old to new frames across the hole. The workspace owns the stream: the
+	// page only acquires it on mount and releases it on unmount. While recording or finalizing a
+	// release is deferred until the cut is no longer running; acquiring again cancels it, and
+	// connect() keeps the socket it already has.
 	let streamReleased = false;
-	function claimStream() { streamReleased = false; }
+	function acquireStream() { streamReleased = false; client.connect(); }
 	function releaseStream() {
 		if (locked.value) { streamReleased = true; return; }
 		client.disconnect();
@@ -1120,7 +1121,7 @@ export function createWorkspace() {
 		client, source, setSource, nidaqChannels, cfg, meta, machining, plot, replay, st, busy, errMsg, finishedCache,
 		editCutStartSec, editCutEndSec,
 		isIdle, isRecording, isFinalizing, isDone, locked, sampleRateBlocker, startDisabled, stopDisabled, saveOpen,
-		mode, playback, rpmTarget, claimStream, releaseStream,
+		mode, playback, rpmTarget, acquireStream, releaseStream,
 		start, stop, newRun, dismissFailure, clearSetup, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase, saveCropLocally,
 		// 2d: Directus links + run write-back
 		link, logged, onSelectSample, logRunNow, syncStatus,

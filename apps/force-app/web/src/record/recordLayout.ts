@@ -27,15 +27,6 @@ export const DEFAULT_LAYOUT: RecordPanelInst[] = [
 
 export type DockSide = 'left' | 'right';
 
-/** Which edge the panel sits on, or null when it is somewhere in the middle (or not in the layout). */
-export function dockSideOf(layout: readonly LayoutItem[], id: string, cols: number = GRID_COLS): DockSide | null {
-	const p = layout.find((x) => x.i === id);
-	if (!p) return null;
-	if (p.x === 0) return 'left';
-	if (p.x + p.w === cols) return 'right';
-	return null;
-}
-
 /** The edge "Move panel to other side" sends it to: the far one, judged by where its centre is. */
 export function oppositeSide(layout: readonly LayoutItem[], id: string, cols: number = GRID_COLS): DockSide {
 	const p = layout.find((x) => x.i === id);

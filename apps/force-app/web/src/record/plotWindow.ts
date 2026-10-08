@@ -48,7 +48,7 @@ export function windowView(t: ArrayLike<number>, windowSec: number): { i0: numbe
 }
 
 /** A gap is a step in time longer than this many times the typical bin spacing (#185). */
-export const GAP_FACTOR = 3;
+const GAP_FACTOR = 3;
 
 /**
  * Typical spacing of the ascending time axis `t` over [from, to): the median step, estimated from

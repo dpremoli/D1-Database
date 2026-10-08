@@ -4,7 +4,7 @@ import type { RecordClient } from './liveClient';
 import { channelColor } from './types';
 import { theme } from '../theme';
 import { DEFAULT_WINDOW_SEC, splitAtGaps, windowView } from './plotWindow';
-import { onCanvasRevival } from './canvasRevival';
+import { useCanvasLifecycle } from './canvasLifecycle';
 import { axisLabel, channelLabel, tachoMissingNote } from './tachoSignal';
 
 // windowSec is this plot's OWN view window (#105/#34): it slices that much out of the client's
@@ -21,7 +21,6 @@ const tachoKind = () => props.client.status.tachoKind;
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 let raf = 0;
 let ctx: CanvasRenderingContext2D | null = null;
-let ro: ResizeObserver | null = null;
 
 // MB fits the tick labels (4-14px below the plot) AND the axis title under them; at 22 the
 // title was drawn top-aligned 4px above the canvas edge and always clipped to half its height.
@@ -198,15 +197,11 @@ function draw() {
 // applyTheme() sets the ref before the [data-theme] attribute, but this watcher runs after both.
 watch(theme, () => { lastN = -1; palCache = null; });
 
-// #189: a canvas the browser discarded while the window was hidden stays blank, because draw()
-// skips frames whose data has not changed. Restoring the context, becoming visible and regaining
-// focus all go through resize(), which re-sizes the canvas and invalidates that skip cache.
-let stopRevival: (() => void) | null = null;
-onMounted(() => {
-	resize(); window.addEventListener('resize', resize); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); draw(); nextTick(resize);
-	stopRevival = onCanvasRevival(canvasEl.value, document, window, resize);
-});
-onBeforeUnmount(() => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize); ro?.disconnect(); stopRevival?.(); });
+// Resize/restore/visibility handling (#189): see canvasLifecycle.ts. The loop redraws every frame,
+// so a repaint only has to defeat the unchanged-data skip.
+useCanvasLifecycle(canvasEl, { resize, repaint: () => { lastN = -1; } });
+onMounted(() => { resize(); draw(); nextTick(resize); });
+onBeforeUnmount(() => cancelAnimationFrame(raf));
 </script>
 
 <template>

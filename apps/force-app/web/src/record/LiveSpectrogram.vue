@@ -3,8 +3,9 @@
 // backend publishes (client.fftHistory). X = time (older left → newest right), Y = frequency
 // (0 bottom → Nyquist top), colour = amplitude (dB). Painted via an offscreen image the size of the
 // history grid, then stretched to the canvas — cheap even for ~150 frames × ~1024 bins.
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import type { RecordClient } from './liveClient';
+import { useCanvasLifecycle } from './canvasLifecycle';
 import { theme } from '../theme';
 import { DEFAULT_WINDOW_SEC } from './plotWindow';
 
@@ -15,7 +16,6 @@ const props = withDefaults(defineProps<{ client: RecordClient; channels?: string
 const FFT_PUBLISH_HZ = 1 / 0.3;
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
-let ro: ResizeObserver | null = null;
 const off = document.createElement('canvas');
 const offCtx = off.getContext('2d');
 
@@ -96,8 +96,8 @@ watch(() => props.client.fftSeq.value, draw);
 watch(() => props.windowSec, draw);
 watch(chan, draw);
 watch(theme, draw);
-onMounted(() => { resize(); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); });
-onBeforeUnmount(() => ro?.disconnect());
+useCanvasLifecycle(canvasEl, { resize, repaint: draw });   // also redraws after a hidden window (#189)
+onMounted(resize);
 </script>
 
 <template>

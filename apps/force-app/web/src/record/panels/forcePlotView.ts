@@ -18,7 +18,7 @@ export function forcePlotView(i: ForcePlotViewInput): 'finished' | 'live' {
 	return i.mode === 'time' && i.isDone && i.hasCache ? 'finished' : 'live';
 }
 
-/** The window-duration control: only for modes with a time axis, and not over the finished plot. */
+/** The window-duration control: only for modes with a time axis, and not over the finished plot (always 'time'). */
 export function showWindowControl(mode: string, view: 'finished' | 'live'): boolean {
-	return mode !== 'fft' && mode !== 'psd' && !(mode === 'time' && view === 'finished');
+	return mode !== 'fft' && mode !== 'psd' && view !== 'finished';
 }

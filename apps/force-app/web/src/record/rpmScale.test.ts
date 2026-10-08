@@ -63,6 +63,12 @@ describe('sparkline domain (#188)', () => {
 		return Math.max(...ys) - Math.min(...ys);
 	};
 
+	it('gives an empty history the minimum span from zero, without storing it', () => {
+		const tr = createSparkDomain({ minSpan: 20 });
+		expect(tr.update([], 0)).toEqual({ lo: 0, hi: 20 });
+		expect(tr.update([500, 510], 0).lo).toBeGreaterThan(400);
+	});
+
 	it('fills most of the box for a low RPM against a high target', () => {
 		const tr = createSparkDomain();
 		const dom = tr.update(hist, 0);

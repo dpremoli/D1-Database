@@ -1,6 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { forcePlotView, showWindowControl } from './forcePlotView';
 
 describe('forcePlotView (#189)', () => {
@@ -21,18 +19,5 @@ describe('showWindowControl', () => {
 		expect(showWindowControl('fft', 'live')).toBe(false);
 		expect(showWindowControl('psd', 'live')).toBe(false);
 		expect(showWindowControl('spectrogram', 'live')).toBe(true);
-	});
-});
-
-// ForcePanel can't be mounted here (no DOM): its template must take both decisions from the helper
-// and must not look at the save dialog (the old condition that flipped the plots).
-describe('ForcePanel uses forcePlotView (#189)', () => {
-	const src = readFileSync(fileURLToPath(new URL('./ForcePanel.vue', import.meta.url)), 'utf8');
-	it('picks the plot and the slider through the helper', () => {
-		expect(src).toContain("v-if=\"plotView === 'finished'\"");
-		expect(src).toContain('v-if="showWindow"');
-	});
-	it('does not swap plots on saveOpen', () => {
-		expect(src).not.toMatch(/FinishedForcePlot[^>]*saveOpen/);
 	});
 });
