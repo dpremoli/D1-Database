@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatSpan, matLimitSeconds, matSkipNote, MAT_MAX_BYTES } from './matLimit';
+import { formatSpan, matFormatNote, matLimitSeconds, matSkipNote, MAT_MAX_BYTES } from './matLimit';
 
 describe('matLimitSeconds (#194)', () => {
 	it('is the 1.5 GB cap divided by rate x columns x 8 bytes', () => {
@@ -61,5 +61,31 @@ describe('matSkipNote', () => {
 		expect(matSkipNote({ mat_written: true, fs: 1000 })).toBeNull();
 		expect(matSkipNote({ fs: 1000 })).toBeNull();
 		expect(matSkipNote(null)).toBeNull();
+	});
+});
+
+describe('v7.3 long cuts (#194)', () => {
+	const long = { mat_written: true, mat_format: 'v7.3', fs: 25_600, n: 25_600 * 900, channels: new Array(10).fill('c') };
+	it('shows a short saved-as-v7.3 line, not the over-limit note', () => {
+		expect(matSkipNote(long)).toBeNull();
+		const t = matFormatNote(long)!;
+		expect(t).toContain('Saved as MATLAB v7.3 (long cut)');
+		expect(t).toContain('MATLAB opens it with load()');
+	});
+	it('shows nothing special for a normal v5 file, an old summary or no summary', () => {
+		expect(matFormatNote({ mat_written: true, mat_format: 'v5' })).toBeNull();
+		expect(matFormatNote({ mat_written: true })).toBeNull();
+		expect(matFormatNote(null)).toBeNull();
+		expect(matFormatNote({ mat_written: false, mat_format: 'v7.3' })).toBeNull();
+	});
+	it('says no .mat was written because the v7.3 file failed, not because of the size limit', () => {
+		const t = matSkipNote({ ...long, mat_written: false, mat_format: null })!;
+		expect(t).toContain('MATLAB v7.3 file could not be written');
+		expect(t).toMatch(/free disk space/);
+		expect(t).toMatch(/full-resolution raw recording/);
+		expect(t).not.toMatch(/can't hold more than/);
+	});
+	it('keeps the minutes wording for a summary from before v7.3', () => {
+		expect(matSkipNote({ mat_written: false, fs: 25_600, n: 25_600 * 900, duration_sec: 900 })).toContain('about 12 min at 25.6 kHz');
 	});
 });

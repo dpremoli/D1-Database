@@ -13,7 +13,7 @@ import { useDialog } from '../../ui/useDialog';
 import { formatMegabytes } from '../../format';
 import { authStore } from '../../authStore';
 import { describeRecordingFailure } from '../recordingErrors';
-import { matSkipNote } from '../matLimit';
+import { matFormatNote, matSkipNote } from '../matLimit';
 import { spotlight } from '../../ui/spotlight';
 
 const w = useWorkspace();
@@ -48,12 +48,13 @@ const saveCsv = ref(false);
 // reads as "this will happen" and `save()` only tests uploadDb.
 watch(canUpload, (v) => { if (!v) uploadDb.value = false; });
 
-// finalize.py skips writing capture.mat for captures over its size limit (mat_written:false in the
-// summary) — matches the check in workspace.ts's uploadCutToDatabase. Untick (not just disable) for
+// finalize.py writes no capture.mat only when a long cut's MATLAB v7.3 file could not be written (no
+// free disk, a write error; mat_written:false in the summary, #194) — matches the check in workspace.ts's uploadCutToDatabase. Untick (not just disable) for
 // the same reason as uploadDb above: a checked-but-disabled box still reads as "this will happen".
 const matAvailable = computed(() => w.st.summary?.mat_written !== false);
 // #194: say why, in minutes at this capture's own rate (matLimit.ts), and what is still kept.
 const matNote = computed(() => matSkipNote(w.st.summary));
+const matV73Note = computed(() => matFormatNote(w.st.summary));
 watch(matAvailable, (v) => { if (!v) saveMat.value = false; });
 
 // Whether the operator dragged a crop handle away from the auto-detected default (#7) — gates the
@@ -318,6 +319,7 @@ function startNew() {
 						<div>
 							<span>Save a local copy (.mat)</span>
 							<small v-if="!matAvailable" data-testid="mat-skip-note">{{ matNote }}</small>
+							<small v-else-if="matV73Note" data-testid="mat-v73-note">{{ matV73Note }}</small>
 						</div>
 					</label>
 					<label class="scd-opt">
