@@ -12,8 +12,14 @@ import { fetchBusySession, fetchRecorderActivity, confirmQuit, type BusySession 
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
 import { initAutoUpdater, markRecorderStartFailed, startUpdateCheck } from './updater';
+import { APP_USER_MODEL_ID } from './updateNotify';
 import { classifyWindowOpen, guardNavigation, isAppSender, popoutKey } from './windowOpen';
 import { DEFAULT_MAIN_SIZE, DEFAULT_POPOUT_SIZE, WindowStateStore, placementFor } from './windowState';
+
+// Windows shows a toast only for an app whose AppUserModelID matches its Start-menu shortcut, which
+// electron-builder stamps with the appId (updateNotify.ts keeps the two equal). Packaged only: dev
+// runs the stock electron.exe, which has no such shortcut.
+if (process.platform === 'win32' && app.isPackaged) app.setAppUserModelId(APP_USER_MODEL_ID);
 
 const PREFERRED_PORT = 8200;
 const HEALTH_PATH = '/health';

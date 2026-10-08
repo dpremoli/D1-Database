@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Notification } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { formatReleaseNotes } from './releaseNotes';
+import { readyNotification, shouldNotifyReady } from './updateNotify';
 import { isAppSender, isAppUrl } from './windowOpen';
 
 export type UpdateStatus =
@@ -110,6 +111,31 @@ function attractAttention(): void {
   win.once('focus', () => { if (!win.isDestroyed()) win.flashFrame(false); });
 }
 
+// The Notification object must stay referenced, or it is collected and its click handler is lost.
+let readyToast: Notification | null = null;
+let notifiedVersion: string | null = null;
+
+/** An OS notification that the update is downloaded, for an operator who is not looking at the
+ * in-app card: the window is minimised, hidden or behind another one (#197). Once per version,
+ * never during a recording. Clicking it brings the window (and its card) forward. */
+function notifyReady(version: string, recording: boolean): void {
+  const win = getWindow?.() ?? null;
+  const alive = !!win && !win.isDestroyed();
+  if (!shouldNotifyReady({ version, notifiedVersion, recording, hasWindow: alive, focused: alive && win!.isFocused() })) return;
+  if (!Notification.isSupported()) return;
+  notifiedVersion = version;
+  const toast = new Notification(readyNotification(version));
+  toast.on('click', () => {
+    const w = getWindow?.();
+    if (!w || w.isDestroyed()) return;
+    if (w.isMinimized()) w.restore();
+    if (!w.isVisible()) w.show();
+    w.focus();
+  });
+  readyToast = toast;
+  toast.show();
+}
+
 function showUpdateDialog(version: string, notes: string): void {
   const choice = 'Choose "Not now" to keep working on the current version — you can install it anytime from Settings > About.';
   void dialog
@@ -156,6 +182,7 @@ function deferUntilIdle(version: string, notes: string): void {
       const p = pending;
       pending = null;
       if (!hasWindow()) showUpdateDialog(p.version, p.notes);
+      else notifyReady(p.version, false);
     }
   }, 60_000);
 }
@@ -166,7 +193,10 @@ async function offerUpdate(version: string, notes: string): Promise<void> {
     return;
   }
   // The renderer prompt is already showing (or waiting out a recording itself) from the push.
-  if (hasWindow()) return;
+  if (hasWindow()) {
+    notifyReady(version, false);
+    return;
+  }
   showUpdateDialog(version, notes);
 }
 

@@ -9,6 +9,8 @@ const h = vi.hoisted(() => ({
   quitAndInstall: vi.fn(),
   updater: null as any,
   windows: [] as any[],
+  toasts: [] as any[],
+  toastsSupported: false,
 }));
 
 vi.mock('electron', () => ({
@@ -16,7 +18,14 @@ vi.mock('electron', () => ({
   dialog: { showMessageBox: (...a: unknown[]) => h.showMessageBox(...a) },
   ipcMain: { handle: (ch: string, fn: (...a: unknown[]) => unknown) => { h.handlers.set(ch, fn); } },
   BrowserWindow: { getAllWindows: () => h.windows },
-  Notification: class { static isSupported() { return false; } show() {} },
+  Notification: class {
+    static isSupported() { return h.toastsSupported; }
+    handlers = new Map<string, () => void>();
+    shown = false;
+    constructor(public opts: any) { h.toasts.push(this); }
+    on(ev: string, fn: () => void) { this.handlers.set(ev, fn); }
+    show() { this.shown = true; }
+  },
 }));
 vi.mock('electron-updater', () => {
   const u: any = new EventEmitter();
@@ -47,6 +56,8 @@ beforeEach(() => {
   h.quitAndInstall.mockReset();
   h.updater?.removeAllListeners();
   h.windows = [];
+  h.toasts = [];
+  h.toastsSupported = false;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -120,7 +131,7 @@ describe('update prompt with a main window (#197)', () => {
     return {
       send,
       win: {
-        isDestroyed: () => false, isMinimized: () => false, isVisible: () => true,
+        isDestroyed: () => false, isMinimized: () => false, isVisible: () => true, isFocused: () => true,
         flashFrame: () => {}, once: () => {},
         webContents: { send, getURL: () => 'app://force/' },
       },
@@ -334,5 +345,78 @@ describe('update-downloaded dialog release notes (R13)', () => {
     const detail = await dialogDetail('x '.repeat(5000));
     expect(detail.length).toBeLessThan(2000);
     expect(detail).toContain('full notes: https://github.com/dpremoli/D1-Database/releases');
+  });
+});
+
+// #197: an operator who is not looking at the app (minimised, hidden, another window in front)
+// gets a Windows notification that the update is ready; clicking it brings the window back.
+describe('update-ready OS notification (#197)', () => {
+  function win(over: Record<string, unknown> = {}) {
+    return {
+      isDestroyed: () => false, isMinimized: () => false, isVisible: () => true, isFocused: () => true,
+      flashFrame: () => {}, once: () => {}, restore: vi.fn(), show: vi.fn(), focus: vi.fn(),
+      webContents: { send: vi.fn(), getURL: () => 'app://force/' },
+      ...over,
+    };
+  }
+  async function bootWin(w: unknown, isRecording: () => Promise<boolean> = async () => false) {
+    vi.resetModules();
+    h.handlers.clear();
+    h.toastsSupported = true;
+    const { initAutoUpdater } = await import('./updater');
+    initAutoUpdater(() => w as never, isRecording);
+  }
+
+  it('shows one notification when the window is not focused, titled with the version', async () => {
+    await bootWin(win({ isFocused: () => false, isMinimized: () => true }));
+    await downloaded();
+    expect(h.toasts).toHaveLength(1);
+    expect(h.toasts[0].shown).toBe(true);
+    expect(h.toasts[0].opts.title).toBe('Force App 2.0.0 is ready to install');
+    expect(h.toasts[0].opts.body).toBeTruthy();
+  });
+
+  it('shows none when the window is focused (the in-app card is in front)', async () => {
+    await bootWin(win());
+    await downloaded();
+    expect(h.toasts).toHaveLength(0);
+  });
+
+  it('shows none during a recording, and not later once idle either while the window is focused', async () => {
+    let busy = true;
+    await bootWin(win({ isFocused: () => false }), async () => busy);
+    await downloaded();
+    expect(h.toasts).toHaveLength(0);
+    busy = false;
+    await vi.advanceTimersByTimeAsync(60_000);   // the deferred offer fires once idle
+    expect(h.toasts).toHaveLength(1);
+  });
+
+  it('shows once per version: a second download event of the same version is silent, a newer one is not', async () => {
+    await bootWin(win({ isFocused: () => false }));
+    await downloaded();
+    await downloaded();
+    expect(h.toasts).toHaveLength(1);
+    h.updater.emit('update-downloaded', { version: '2.1.0' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.toasts).toHaveLength(2);
+    expect(h.toasts[1].opts.title).toContain('2.1.0');
+  });
+
+  it('shows none when there is no window (the native dialog is the fallback)', async () => {
+    await bootWin(null);
+    h.showMessageBox.mockResolvedValue({ response: 1 });
+    await downloaded();
+    expect(h.toasts).toHaveLength(0);
+  });
+
+  it('clicking it restores, shows and focuses the window', async () => {
+    const w = win({ isFocused: () => false, isMinimized: () => true, isVisible: () => false });
+    await bootWin(w);
+    await downloaded();
+    h.toasts[0].handlers.get('click')!();
+    expect(w.restore).toHaveBeenCalled();
+    expect(w.show).toHaveBeenCalled();
+    expect(w.focus).toHaveBeenCalled();
   });
 });
