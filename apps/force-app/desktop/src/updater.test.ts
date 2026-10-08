@@ -109,6 +109,71 @@ describe('updater recording gate', () => {
   });
 });
 
+// #197: with a window the update prompt is drawn in the app (UpdatePrompt.vue), never as a native
+// dialog that steals focus from whatever the operator is typing (the login password).
+describe('update prompt with a main window (#197)', () => {
+  function windowStub() {
+    const send = vi.fn();
+    return { send, win: { isDestroyed: () => false, webContents: { send } } };
+  }
+  async function bootWithWindow(isRecording: () => Promise<boolean>, win: unknown) {
+    vi.resetModules();
+    h.handlers.clear();
+    const { initAutoUpdater } = await import('./updater');
+    initAutoUpdater(() => win as never, isRecording);
+  }
+
+  it('sends update:status downloaded with the version and notes, and shows no native dialog', async () => {
+    const { send, win } = windowStub();
+    await bootWithWindow(async () => false, win);
+    h.updater.emit('update-downloaded', { version: '2.0.0', releaseNotes: '<ul><li>Fixed flat forces</li></ul>' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.showMessageBox).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith('update:status', { state: 'downloaded', version: '2.0.0', notes: '- Fixed flat forces' });
+  });
+
+  it('still sends the status, and no dialog, when a recording is running; the dialog never appears later either', async () => {
+    let busy = true;
+    const { send, win } = windowStub();
+    await bootWithWindow(async () => busy, win);
+    await downloaded();
+    expect(send).toHaveBeenCalledWith('update:status', expect.objectContaining({ state: 'downloaded', version: '2.0.0' }));
+    busy = false;
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(h.showMessageBox).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the native dialog when the window is gone', async () => {
+    const { win } = windowStub();
+    win.isDestroyed = () => true;
+    await bootWithWindow(async () => false, win);
+    h.showMessageBox.mockResolvedValue({ response: 1 });
+    await downloaded();
+    expect(h.showMessageBox).toHaveBeenCalledOnce();
+  });
+
+  it('falls back to the native dialog when there is no window at all', async () => {
+    await bootWithWindow(async () => false, null);
+    h.showMessageBox.mockResolvedValue({ response: 1 });
+    await downloaded();
+    expect(h.showMessageBox).toHaveBeenCalledOnce();
+  });
+
+  it('update:install (the prompt\'s button) still refuses while recording, and installs once idle', async () => {
+    let busy = true;
+    const { win } = windowStub();
+    await bootWithWindow(async () => busy, win);
+    await downloaded();
+    const install = h.handlers.get('update:install')!;
+    expect(await install(APP)).toMatchObject({ ok: false });
+    expect(h.quitAndInstall).not.toHaveBeenCalled();
+    busy = false;
+    expect(await install(APP)).toEqual({ ok: true });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.quitAndInstall).toHaveBeenCalledWith(true, true);
+  });
+});
+
 describe('startUpdateCheck before the updater is initialized', () => {
   it('says updates will be available once the recorder has started, while it is still starting', async () => {
     vi.resetModules();
