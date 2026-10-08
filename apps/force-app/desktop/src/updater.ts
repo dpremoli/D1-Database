@@ -9,7 +9,7 @@ export type UpdateStatus =
   | { state: 'available'; version: string }
   | { state: 'not-available' }
   | { state: 'downloading'; percent: number }
-  | { state: 'downloaded'; version: string }
+  | { state: 'downloaded'; version: string; notes: string }
   | { state: 'installing'; version: string }
   | { state: 'error'; message: string };
 
@@ -61,6 +61,15 @@ function performInstall(version: string): void {
   }, 800);
 }
 
+/** The native dialog is only the fallback for when the app has no window to show the prompt in.
+ * With a window the renderer's own prompt (UpdatePrompt.vue) shows it, driven by the
+ * 'update:status' push: a parentless native dialog pops up over whatever the operator is doing
+ * (#197: while typing a password at login), takes focus, and Enter on it installs. */
+function hasWindow(): boolean {
+  const win = getWindow?.();
+  return !!win && !win.isDestroyed();
+}
+
 function showUpdateDialog(version: string, notes: string): void {
   const choice = 'Choose "Not now" to keep working on the current version — you can install it anytime from Settings > About.';
   void dialog
@@ -106,7 +115,7 @@ function deferUntilIdle(version: string, notes: string): void {
       recheckTimer = null;
       const p = pending;
       pending = null;
-      showUpdateDialog(p.version, p.notes);
+      if (!hasWindow()) showUpdateDialog(p.version, p.notes);
     }
   }, 60_000);
 }
@@ -116,6 +125,8 @@ async function offerUpdate(version: string, notes: string): Promise<void> {
     deferUntilIdle(version, notes);
     return;
   }
+  // The renderer prompt is already showing (or waiting out a recording itself) from the push.
+  if (hasWindow()) return;
   showUpdateDialog(version, notes);
 }
 
@@ -175,8 +186,9 @@ export function initAutoUpdater(getMainWindow: () => BrowserWindow | null, recor
   autoUpdater.on('update-not-available', () => push({ state: 'not-available' }));
   autoUpdater.on('download-progress', (p) => push({ state: 'downloading', percent: Math.round(p.percent) }));
   autoUpdater.on('update-downloaded', (info) => {
-    push({ state: 'downloaded', version: info.version });
-    void offerUpdate(info.version, formatReleaseNotes(info.releaseNotes));
+    const notes = formatReleaseNotes(info.releaseNotes);
+    push({ state: 'downloaded', version: info.version, notes });
+    void offerUpdate(info.version, notes);
   });
   autoUpdater.on('error', (err) => {
     push({ state: 'error', message: err?.message || String(err) });
