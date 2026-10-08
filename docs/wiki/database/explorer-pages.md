@@ -42,14 +42,18 @@ input or output sample, a test's subject) instead of as empty, and a record you 
 opens *Not found or not visible to you*. The *Project items* list on the project's Content form (the
 roll-up) is for its PI and investigators only; anyone else gets a line saying so.
 
-**Edit** is offered only where you may change the record: owners and co-owners of a sample,
-operation or test, the owner of a campaign, the PI of a project. If you can read a record because
-you are an investigator, or because it sits in your campaign, the **Edit** button is not shown.
-On a campaign you cannot change, the sample, operation and test pickers and the remove buttons are
-hidden too. If a change is refused anyway, the page shows the server's reason (for example who may
-change the Owner) or, when it gives none, *Only the owner or a co-owner can change this record.*
-(*Only the campaign's owner can change it.* for a campaign, *Only the project's PI can change it.*
-for a project, and *You can only add records you own or co-own.* in a picker). To let a colleague work
+**Edit** is offered only where you may change the record: a sample's owner or co-owners, an
+operation's or test's owner or an owner or co-owner of the sample it acts on, the owner of a
+campaign, the PI of a project. If you can read a record because you are an investigator, or because
+it sits in your campaign, the **Edit** button is not shown. On a campaign you do not own, the sample
+picker is hidden (adding a sample needs the campaign's owner), with a note that operations and tests
+are moved by their own owner. The operation and test pickers stay, because moving an operation or
+test in or out of a campaign is a change to that operation or test, not to the campaign. If a
+change is refused anyway, the page words it in plain words: the owner-only refusals of the access
+guard (*Only the sample's owner can hand it to someone else.*), or, for Directus's own refusal, *Only
+the owner or a co-owner can change this record.* (*Only the campaign's owner can change it.* for a
+campaign, *Only the project's PI can change it.* for a project, *Only the owner of OP-12 (or of its
+sample) can move it.* for an operation or test in a campaign picker). To let a colleague work
 on a sample, add them as a co-owner. Linking a login to a person (the People page) is for
 administrators only, and so is the audit log. The rules are in
 [Roles and permissions](roles-and-permissions.md#who-can-see-and-change-which-records).
