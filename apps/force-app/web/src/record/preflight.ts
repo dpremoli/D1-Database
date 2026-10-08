@@ -138,8 +138,9 @@ export function channelConfigIssues(channels: ChannelLike[]): { fail: string[]; 
  *  business, and a simulated tree has no real inputs to miss. */
 export function missingFromChassis(physical: readonly string[], chassisInputs: readonly string[] | null | undefined): string[] {
 	if (!chassisInputs || !chassisInputs.length) return [];
-	const have = new Set(chassisInputs);
-	return [...new Set(physical)].filter((p) => !have.has(p));
+	// DAQmx takes "force1_mod1/ai0" for "Force1_Mod1/ai0": names differ only if they differ in more than case.
+	const have = new Set(chassisInputs.map((p) => p.toLowerCase()));
+	return [...new Set(physical)].filter((p) => !have.has(p.toLowerCase()));
 }
 
 export function computePreflight(i: PreflightInput): PreflightItem[] {

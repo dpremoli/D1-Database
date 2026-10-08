@@ -666,6 +666,10 @@ export class RecordClient {
 		const j = await res.json();
 		this.status.state = 'recording';
 		this.status.captureId = j.id;
+		// #199: the rate the recorder settled on. On NI-DAQ it is the driver's exact rate, which may
+		// differ a little from what was typed (17067 for 17,066.67 Hz).
+		const rate = Number(j.config?.sample_rate);
+		return Number.isFinite(rate) && rate > 0 ? rate : null;
 	}
 
 	// NOTE: there is deliberately no startReplay() here any more. Replaying an archived cut is

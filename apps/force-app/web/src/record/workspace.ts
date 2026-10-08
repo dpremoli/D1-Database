@@ -578,7 +578,10 @@ export function createWorkspace() {
 					await labamp.setMode('MEASURE');
 				} catch { /* amp unreachable — proceed anyway, gains were set at last range */ }
 				const chans = parseChannelList(nidaqChannels.value);
-				await client.start({ ...cfg, ...recordingPrefsPayload(), source: 'nidaq', nidaq_channels: chans, axis: plot.frmAxis, extra_metadata: metaObj() } as any);
+				const rate = await client.start({ ...cfg, ...recordingPrefsPayload(), source: 'nidaq', nidaq_channels: chans, axis: plot.frmAxis, extra_metadata: metaObj() } as any);
+				// #199: the database row and the crop indices are worked out from cfg.sample_rate, so
+				// it must be the rate the capture is stamped with.
+				if (rate != null) cfg.sample_rate = rate;
 			} else {
 				await client.start({ ...cfg, ...recordingPrefsPayload(), source: 'sim', axis: plot.frmAxis, extra_metadata: metaObj() } as any);
 			}

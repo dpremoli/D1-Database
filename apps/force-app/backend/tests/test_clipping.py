@@ -265,7 +265,13 @@ def test_input_range_v_is_the_smallest_of_the_devices_in_play():
         ]
     )
     assert nidaq_enum.input_range_v(["Force1/ai0", "Force2/ai1"], system=system) == 5.0
-    assert nidaq_enum.input_range_v(["Tacho/ai0"], system=system) == 10.0
+    assert nidaq_enum.input_range_v(["Tacho/ai0"], system=system) == 10.0  # only range it has
+    multi = SimpleNamespace(
+        devices=[SimpleNamespace(name="M", ai_voltage_rngs=[-0.2, 0.2, -5.0, 5.0, -10.0, 10.0])]
+    )
+    assert nidaq_enum.input_range_v(["M/ai0"], system=multi) == 5.0  # the task asks for +/-5 V
+    small = SimpleNamespace(devices=[SimpleNamespace(name="S", ai_voltage_rngs=[-1.0, 1.0])])
+    assert nidaq_enum.input_range_v(["S/ai0"], system=small) == 1.0
     assert nidaq_enum.input_range_v(["Nope/ai0"], system=system) is None
     assert nidaq_enum.input_range_v(["cDAQ1/ai0"], system=system) is None
 

@@ -806,6 +806,28 @@ describe('remembered setup (R1)', () => {
 	});
 });
 
+describe('workspace watchers outlive the Record page (#216)', () => {
+	// The force and tacho alarms are evaluated in a workspace watcher on the live frame counter.
+	// Built in the first RecordPage's scope it stopped when the operator opened Settings (to set
+	// the limit, say), and no alarm could fire for the rest of the session.
+	it('still evaluates the force alarm on a live frame after RecordPage unmounted', async () => {
+		vi.resetModules();
+		const { getWorkspace } = await import('./workspace');
+		const recordPage = effectScope();
+		const w = recordPage.run(() => getWorkspace())!;
+		recordPage.stop();
+		w.alarms.reset();
+		w.alarms.config.audioEnabled = false;
+		w.alarms.config.forceThreshold = 100;
+		w.st.state = 'recording';
+		w.st.peaks = { Fx: 0, Fy: 0, Fz: 250 };
+		w.client.frameSeq.value++;
+		await nextTick();
+		expect(w.alarms.active.map((a) => a.key)).toContain('force:Fz');
+		w.alarms.reset();
+	});
+});
+
 describe('stop on force alarm while busy', () => {
 	afterEach(() => {
 		alarmController.reset();

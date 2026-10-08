@@ -575,6 +575,44 @@ tool; a test cut on scrap stock is fine.
   with a reason on an operation with no feed or depth, and on a milling op. Since #127 (new default and per-subtype
   memory: this batch, PR TBD).
 
+### Re-checks for the 2026-10-08 fixes (#199, #200, #212 to #216)
+Run these on a packaged build that contains the branch `fix/rig-findings-2026-10-08` (PR TBD).
+The recorder side of #199, #200 and #214 was already checked on the rig on 2026-10-08 through the
+branch's own backend; the items below are what still needs the app window and hands.
+
+- [ ] **Before the first cut on the new build: look at the force limit and the cut-detect
+  threshold.** Live values are now newtons (#212). They used to be the summed volts, 10 to 20
+  times smaller on this rig, so a limit or threshold that was tuned by eye against the old live
+  plot is now that much stricter. Set them from the real forces of the cut.
+- [ ] **#212, #216: the force alarm trips.** Open Settings > Safety Alarms, set a limit (for
+  example 100 N), turn on "Stop the recording when the force alarm trips", go back to Record,
+  start an NI-DAQ cut and push on the dynamometer. Expect: the live plot and the Overview tiles
+  read the same newtons as the summary plot afterwards; the amber warning at 80 % of the limit;
+  the alarm at the limit; the cut stops with the alarm on top of the save dialog. Going to
+  Settings first matters: the alarm used to stop working once the Record page had been left.
+  Then press Alt and A during an alarm (R10).
+- [ ] **#199: a rate the modules cannot run.** With the sample rate at 25,000 Hz press Start.
+  Expect: no recording, a message that the modules would run at 25,600 Hz, the field changed to
+  25600 and highlighted; a second Start records, and the saved cut says 25,600 Hz in Plot.
+- [ ] **#200: clipping at 10 V on the NI 9234 modules (this is R5).** Set one channel to a small
+  range and push it past half of that range. Expect: the red banner, tile and badge name that
+  channel, and `channels_ranging.clipped` is true for it only. Then run auto-range after a cut:
+  the suggested ranges put the peak at a third of the range or less (headroom 1.5, doubled
+  because the modules read 5 of the amp's 10 V).
+- [ ] **#213: a channel that is not on the chassis.** On the NI-DAQ page point the tacho at a
+  module that is not fitted (or type such a name in the Record page's list). Expect: the Channels
+  chip is red and names the input. Put it back: green.
+- [ ] **#214: a folder you cannot write to.** Settings > General, choose
+  `C:\Windows\System32\config` as the capture folder. Expect: refused within a second with
+  "cannot write to", the folder setting unchanged.
+- [ ] **#215: pulled cables.** On Record with NI-DAQ selected, pull the Lab Amp's network cable:
+  the Lab Amp chip warns within about 10 seconds, and clears after plugging it back. Unplug the
+  chassis: the NI-DAQ source greys out within about 10 seconds, and returns after plugging it
+  back. Neither needs a visit to another page.
+- [ ] **#216: remembered metadata (this is R1/R3).** Open Settings and come back to Record, then
+  set Sample, Machine, Operator and operation type, quit and relaunch. Expect: all four are back,
+  with the cut parameters.
+
 ### Earlier issues that need the rig (from the 2026-10-02 batch)
 - [ ] **#84** Real DAQmx error text and codes (‑200077); whether the chassis or the module limits the
   rate; coerced rates on discrete-rate modules. — 2026-10-08, Claude (recorder API and DAQmx 24.5

@@ -236,6 +236,7 @@ describe('channels against the connected hardware (#213)', () => {
 
 	it('missingFromChassis lists unknown inputs once, and nothing without a real device list', () => {
 		expect(missingFromChassis(['a/ai0', 'x/ai0', 'x/ai0'], ['a/ai0'])).toEqual(['x/ai0']);
+		expect(missingFromChassis(['MOD1/AI0'], ['Mod1/ai0'])).toEqual([]); // DAQmx ignores case
 		expect(missingFromChassis(['x/ai0'], null)).toEqual([]);
 		expect(missingFromChassis(['x/ai0'], [])).toEqual([]);
 	});

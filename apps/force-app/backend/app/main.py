@@ -2551,8 +2551,9 @@ async def labamp_autorange_converge(body: dict) -> dict:
     currents = body.get("currents")
     hr = float(body.get("headroom") or _labamp_cfg.get("autorange_headroom", 1.5))
     nidaq, dac, eff, vfs = _daq()
-    hr = await run_in_threadpool(_autorange_headroom, hr, vfs)
-    recs = converge_ranges(peaks, clipped, currents, headroom=hr, bits=eff, fullscale_v=vfs)
+    # `hr` stays what was asked for (it is echoed in the reply, as GET /labamp/autorange does).
+    sized = await run_in_threadpool(_autorange_headroom, hr, vfs)
+    recs = converge_ranges(peaks, clipped, currents, headroom=sized, bits=eff, fullscale_v=vfs)
     status: dict[str, str] = {}
     if body.get("apply"):
         # Computing recommendations (above) is a pure read + math, safe anytime -- only writing

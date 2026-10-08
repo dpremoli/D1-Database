@@ -231,16 +231,24 @@ def sample_rate_limits(channels: list[str], system=None) -> dict:
 SAMPLE_RATE_REL_TOL = 1e-4
 
 
+# The span NidaqSource asks for on every channel: add_ai_voltage_chan's own default of +/-5 V.
+TASK_REQUEST_V = 5.0
+
+
 def input_range_v(channels: list[str], system=None) -> float | None:
-    """The largest voltage the modules behind `channels` can read (#200): each device's widest
-    input range, and the smallest of those across the devices in play. None when there is no real
-    DAQmx system to ask or the devices do not say."""
+    """The voltage at which the modules behind `channels` stop reading in the recorder's task
+    (#200), the smallest across the devices in play. DAQmx gives each channel the narrowest of
+    the module's ranges that covers the +/-5 V the task asks for, or the widest one it has when
+    none does: 5 V on an NI 9234 (its only range) and on a multi-range NI 9205, 10 V on a module
+    that only does +/-10 V. None when there is no real DAQmx system to ask or the devices do not
+    say."""
     limits = []
     for dev in _devices_behind(channels, system):
         # ai_voltage_rngs is flat: [low, high, low, high, ...]
         highs = _safe(lambda: [float(v) for v in dev.ai_voltage_rngs][1::2], [])
+        covering = [h for h in highs if h >= TASK_REQUEST_V]
         if highs:
-            limits.append(max(highs))
+            limits.append(min(covering) if covering else max(highs))
     return min(limits) if limits else None
 
 
