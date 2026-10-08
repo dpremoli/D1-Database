@@ -15,6 +15,7 @@ import { SUB_NAMES } from '../liveClient';
 import { channelColor } from '../types';
 import { theme } from '../../theme';
 import { appUrl } from '../../appUrl';
+import { buildPopoutQuery } from '../popoutQuery';
 import type { PlotMode } from '../plotModes';
 import { isRailed, shownRailed } from '../railing';
 import { forcePlotView, showWindowControl } from './forcePlotView';
@@ -89,7 +90,7 @@ const demandKey = {};
 watch([windowSec, mode], ([sec, m]) => w.client.setWindowDemand(demandKey, m === 'time' ? sec : null), { immediate: true });
 onBeforeUnmount(() => w.client.setWindowDemand(demandKey, null));
 function openLive() {
-	const q = new URLSearchParams({ mode: mode.value, channels: selected.value.join(','), window: String(windowSec.value) });
+	const q = buildPopoutQuery('force', { mode: mode.value, channels: selected.value, windowSec: windowSec.value });
 	window.open(appUrl(`/live/force?${q}`), '_blank', 'noopener,width=1400,height=900');
 }
 </script>

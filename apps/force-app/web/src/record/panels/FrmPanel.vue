@@ -6,6 +6,7 @@ import { useWorkspace } from '../workspace';
 import LiveFrm from '../LiveFrm.vue';
 import { FrmCloud, ColorScaleEditor, defaultScale, useAutoColorScale, withOpenDisplay, type ColorScale, type Histogram } from '@d1/force-plotting';
 import { appUrl } from '../../appUrl';
+import { buildPopoutQuery } from '../popoutQuery';
 import { FRM_STRIDES } from '../plotPrefs';
 const w = useWorkspace();
 const editorOpen = ref(false);
@@ -40,7 +41,7 @@ const colorDomainLo = computed(() => autoClimits.value?.cmin ?? 0);
 const colorDomainHi = computed(() => autoClimits.value?.cmax ?? 1);
 const colorHistogram = ref<Histogram | null>(null);
 function openLive() {
-	const q = new URLSearchParams({ colormap: w.plot.colormap, pointSize: String(w.plot.pointSize), frmAxis: w.plot.frmAxis, stride: String(w.plot.liveFrmStride) });
+	const q = buildPopoutQuery('frm', { colormap: w.plot.colormap, pointSize: w.plot.pointSize, frmAxis: w.plot.frmAxis, stride: w.plot.liveFrmStride });
 	window.open(appUrl(`/live/frm?${q}`), '_blank', 'noopener,width=1200,height=1000');
 }
 </script>
