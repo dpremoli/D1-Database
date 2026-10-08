@@ -259,6 +259,39 @@ describe('uploadCaptureColdStart with a partial analysis row already in the data
 	});
 });
 
+// #190: the crop the operator set survives into the analysis row of a retried / cold-start upload.
+describe('uploadCaptureColdStart crop override', () => {
+	const base = { ...BASE_INFO, cacheUrl: 'http://x/captures/cap-1/live_cache.bin', matWritten: false, cfg: { source: 'nidaq', extra_metadata: {} } };
+	const analysisBody = () => post.mock.calls.find(([u]) => u === '/items/machining_force_analysis')![1];
+
+	it('sends the override indices the caller passes', async () => {
+		await uploadCaptureColdStart({ ...base, cropStartIdx: 1000, cropEndIdx: 36_000_000 });
+		expect(analysisBody()).toMatchObject({ crop_start_idx_override: 1000, crop_end_idx_override: 36_000_000 });
+	});
+
+	it('reads the crop the recorder stored when the caller passes none (Settings > Local Captures)', async () => {
+		vi.stubGlobal('fetch', vi.fn(async (url: string) => (url.endsWith('/summary')
+			? { ok: true, json: async () => ({ fs: 51200, crop_start_idx_override: 2000, crop_end_idx_override: 3000 }) }
+			: { ok: true, blob: async () => new Blob(['x']) })));
+		await uploadCaptureColdStart(base);
+		expect(analysisBody()).toMatchObject({ crop_start_idx_override: 2000, crop_end_idx_override: 3000 });
+	});
+
+	it('sends no override when none was set, so auto-detection keeps deciding', async () => {
+		vi.stubGlobal('fetch', vi.fn(async (url: string) => (url.endsWith('/summary')
+			? { ok: true, json: async () => ({ fs: 51200 }) }
+			: { ok: true, blob: async () => new Blob(['x']) })));
+		await uploadCaptureColdStart(base);
+		expect(analysisBody()).not.toHaveProperty('crop_start_idx_override');
+		expect(analysisBody()).not.toHaveProperty('crop_end_idx_override');
+	});
+
+	it('an unreadable summary does not block the upload', async () => {
+		await uploadCaptureColdStart(base);   // the default fetch stub has no json()
+		expect(analysisBody()).not.toHaveProperty('crop_start_idx_override');
+	});
+});
+
 // #190: the error text must not claim "both files uploaded" when the .mat was skipped.
 describe('uploadCaptureColdStart failure text for the analysis insert', () => {
 	const failAnalysis = () => post.mockImplementation((url: string) => {

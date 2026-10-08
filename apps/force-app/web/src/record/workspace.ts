@@ -673,7 +673,7 @@ export function createWorkspace() {
 	function newRun(nextCut = true) {
 		client.reset(); finishedCache.value = null; errMsg.value = null; logged.value = false; saveOpen.value = false;
 		recordedStamp.value = null;
-		editCutStartSec.value = null; editCutEndSec.value = null;
+		editCutStartSec.value = null; editCutEndSec.value = null; savedCropKey = '';
 		// The early-warning banner belongs to the cut that just ended. Warnings only: reset() would
 		// also clear an alarm the operator has not acknowledged.
 		alarms.resetWarnings();
@@ -724,9 +724,43 @@ export function createWorkspace() {
 		logged.value = true;
 		return opId;
 	}
+	// The crop the operator set in the final summary, as full-rate sample indices. Both sides are
+	// returned (the dashboard only honours an override when both are set), and only when a handle
+	// was actually moved: untouched, auto-detection keeps deciding.
+	function cropOverrideIdx(): { start: number | null; end: number | null } {
+		const cache = finishedCache.value;
+		const s = editCutStartSec.value, e = editCutEndSec.value;
+		if (!cache || s == null || e == null || (s === cache.csSec && e === cache.ceSec)) return { start: null, end: null };
+		return { start: Math.round(s * cfg.sample_rate), end: Math.round(e * cfg.sample_rate) };
+	}
+	// #190: the edited crop used to live only in memory and in the Directus POST, so a failed upload
+	// (or a restart) lost it. Writing it to the capture's summary.json first means the local plot,
+	// a retry from Local Captures and a cold start all still have it. Best effort and never throws:
+	// an unreachable recorder must not block saving the files or the upload. Returns whether the
+	// recorder holds the current crop.
+	let savedCropKey = '';
+	async function saveCropLocally(): Promise<boolean> {
+		const id = st.captureId;
+		if (!id) return false;
+		const { start, end } = cropOverrideIdx();
+		if (start == null && savedCropKey === '') return true;   // never moved, nothing stored to clear
+		const key = `${id}:${start}:${end}`;
+		if (key === savedCropKey) return true;
+		try {
+			const r = await fetch(`${client.baseUrl}/captures/${id}/crop`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ crop_start_idx_override: start, crop_end_idx_override: end }),
+			});
+			if (!r.ok) return false;
+			savedCropKey = key;
+			return true;
+		} catch { return false; }
+	}
 	async function uploadCutToDatabase(): Promise<string> {
 		const id = st.captureId;
 		if (!id) throw new Error('no capture id for this recording');
+		await saveCropLocally();   // before anything that can fail
 		if (!hasServerSession()) throw new Error(OFFLINE_SESSION_UPLOAD_MESSAGE);
 		// Resume (review 2.2): a retry after a failed file upload or analysis insert continues from
 		// what the earlier attempt finished instead of inserting a second operation row.
@@ -785,16 +819,13 @@ export function createWorkspace() {
 		const series = cache ? buildSeriesEnvelope(cache) : null;
 		// Only an explicit override when the operator actually moved a handle in the save dialog —
 		// left untouched, editCutStartSec/editCutEndSec still equal the cache's own csSec/ceSec
-		// (seeded in loadFinished()), so this stays null and auto-detection keeps deciding, same as
-		// before this field existed.
+		// (seeded in loadFinished()), so this stays absent and auto-detection keeps deciding, same
+		// as before this field existed.
 		const cropOverride: Record<string, number | null> = {};
-		if (cache) {
-			if (editCutStartSec.value != null && editCutStartSec.value !== cache.csSec) {
-				cropOverride.crop_start_idx_override = Math.round(editCutStartSec.value * cfg.sample_rate);
-			}
-			if (editCutEndSec.value != null && editCutEndSec.value !== cache.ceSec) {
-				cropOverride.crop_end_idx_override = Math.round(editCutEndSec.value * cfg.sample_rate);
-			}
+		const crop = cropOverrideIdx();
+		if (crop.start != null && crop.end != null) {
+			cropOverride.crop_start_idx_override = crop.start;
+			cropOverride.crop_end_idx_override = crop.end;
 		}
 		try {
 		await api.post('/items/machining_force_analysis', {
@@ -1079,7 +1110,7 @@ export function createWorkspace() {
 		editCutStartSec, editCutEndSec,
 		isIdle, isRecording, isFinalizing, isDone, locked, sampleRateBlocker, startDisabled, stopDisabled, saveOpen,
 		mode, playback, rpmTarget,
-		start, stop, newRun, dismissFailure, clearSetup, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
+		start, stop, newRun, dismissFailure, clearSetup, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase, saveCropLocally,
 		// 2d: Directus links + run write-back
 		link, logged, onSelectSample, logRunNow, syncStatus,
 		searchSamples, searchOperators, searchEquipment, searchToolsForOp, searchEquipmentForOp, searchInserts, searchEdges,
