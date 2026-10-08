@@ -50,7 +50,9 @@ def test_old_config_with_retention_hours_still_loads(tmp_path, isolate_backup_co
     assert "retention_hours" not in json.loads(isolate_backup_config.read_text())
 
 
-def test_get_backup_config_suggests_url_without_saving(tmp_path, monkeypatch, isolate_backup_config):
+def test_get_backup_config_suggests_url_without_saving(
+    tmp_path, monkeypatch, isolate_backup_config
+):
     """The settings page pre-fills the lab's usual URL from `suggested_url` (#135); the suggestion is
     never saved, so a rig without a backup server isn't probed by the Doctor and `enabled` stays off."""
     from fastapi.testclient import TestClient

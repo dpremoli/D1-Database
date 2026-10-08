@@ -41,7 +41,10 @@ def _summary(path):
 
 def test_crop_is_stored_in_summary_and_served_by_the_summary_get(client, tmp_path):
     path = _capture(tmp_path)
-    r = client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": 1000, "crop_end_idx_override": 36_000_000})
+    r = client.put(
+        f"/captures/{CID}/crop",
+        json={"crop_start_idx_override": 1000, "crop_end_idx_override": 36_000_000},
+    )
     assert r.status_code == 200
     assert r.json() == {"crop_start_idx_override": 1000, "crop_end_idx_override": 36_000_000}
     assert _summary(path)["crop_start_idx_override"] == 1000
@@ -53,12 +56,19 @@ def test_crop_is_stored_in_summary_and_served_by_the_summary_get(client, tmp_pat
 
 def test_both_null_clears_the_stored_crop(client, tmp_path):
     path = _capture(tmp_path)
-    client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": 5, "crop_end_idx_override": 50})
-    r = client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": None, "crop_end_idx_override": None})
+    client.put(
+        f"/captures/{CID}/crop", json={"crop_start_idx_override": 5, "crop_end_idx_override": 50}
+    )
+    r = client.put(
+        f"/captures/{CID}/crop",
+        json={"crop_start_idx_override": None, "crop_end_idx_override": None},
+    )
     assert r.status_code == 200
     s = _summary(path)
     assert "crop_start_idx_override" not in s and "crop_end_idx_override" not in s
-    client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": 5, "crop_end_idx_override": 50})
+    client.put(
+        f"/captures/{CID}/crop", json={"crop_start_idx_override": 5, "crop_end_idx_override": 50}
+    )
     assert client.put(f"/captures/{CID}/crop", json={}).status_code == 200  # both omitted: same
     assert "crop_start_idx_override" not in _summary(path)
 
@@ -66,7 +76,9 @@ def test_both_null_clears_the_stored_crop(client, tmp_path):
 @pytest.mark.parametrize("body", [{"crop_start_idx_override": 7}, {"crop_end_idx_override": 50}])
 def test_one_side_alone_is_refused_and_keeps_the_stored_crop(client, tmp_path, body):
     path = _capture(tmp_path)
-    client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": 5, "crop_end_idx_override": 40})
+    client.put(
+        f"/captures/{CID}/crop", json={"crop_start_idx_override": 5, "crop_end_idx_override": 40}
+    )
     assert client.put(f"/captures/{CID}/crop", json=body).status_code == 422
     s = _summary(path)
     assert (s["crop_start_idx_override"], s["crop_end_idx_override"]) == (5, 40)
@@ -93,7 +105,9 @@ def test_out_of_range_crop_is_refused_and_nothing_is_written(client, tmp_path, b
 
 def test_the_whole_recording_is_a_valid_crop(client, tmp_path):
     _capture(tmp_path)
-    r = client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": 0, "crop_end_idx_override": N})
+    r = client.put(
+        f"/captures/{CID}/crop", json={"crop_start_idx_override": 0, "crop_end_idx_override": N}
+    )
     assert r.status_code == 200
 
 
@@ -112,7 +126,9 @@ def test_a_capture_folder_without_a_summary_is_404(client, tmp_path):
 def test_refused_while_that_capture_is_recording(client, tmp_path, monkeypatch):
     path = _capture(tmp_path)
     monkeypatch.setattr(main, "_session", SimpleNamespace(id=CID, state="recording"))
-    r = client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": 1, "crop_end_idx_override": 9})
+    r = client.put(
+        f"/captures/{CID}/crop", json={"crop_start_idx_override": 1, "crop_end_idx_override": 9}
+    )
     assert r.status_code == 409
     assert "crop_start_idx_override" not in _summary(path)
 

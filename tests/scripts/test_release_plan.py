@@ -78,13 +78,20 @@ def repo_tree(tmp_path, monkeypatch):
     """A minimal tree of what main() reads, with version 9.9.9 unreleased."""
     (tmp_path / "apps/force-app/desktop").mkdir(parents=True)
     (tmp_path / "apps/force-app/web/src").mkdir(parents=True)
-    (tmp_path / "apps/force-app/desktop/package.json").write_text(json.dumps({"version": "9.9.9"}))
+    (tmp_path / "apps/force-app/desktop/package.json").write_text(
+        json.dumps({"version": "9.9.9"})
+    )
     (tmp_path / "package-lock.json").write_text(
         json.dumps({"packages": {"apps/force-app/desktop": {"version": "9.9.9"}}})
     )
     (tmp_path / "apps/force-app/web/src/changelog.ts").write_text(CHANGELOG_TS)
     monkeypatch.chdir(tmp_path)
-    for k, v in {"EVENT": "pull_request", "REF": "refs/pull/1/merge", "SHA": "a" * 40, "REPO": ""}.items():
+    for k, v in {
+        "EVENT": "pull_request",
+        "REF": "refs/pull/1/merge",
+        "SHA": "a" * 40,
+        "REPO": "",
+    }.items():
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
@@ -97,7 +104,10 @@ def test_release_notes_file_has_fixed_heading(repo_tree, monkeypatch):
     release_plan.main()
     text = out.read_text(encoding="utf-8")
     assert text.startswith("Force App 9.9.9 (2026-10-08)\n")
-    assert "### Fixed\n\n- the FFT stayed blank until a channel chip was clicked.\n" in text
+    assert (
+        "### Fixed\n\n- the FFT stayed blank until a channel chip was clicked.\n"
+        in text
+    )
     assert "- Security: the relay token is no longer logged." in text
     assert text.rstrip().endswith("within about ten minutes.")
 
@@ -109,19 +119,24 @@ def test_real_changelog_notes_keep_every_fixed_note_under_fixed():
     assert notes
     groups = release_plan.group_notes(notes)
     assert sum(len(v) for v in groups.values()) == len(notes)
-    assert len(groups.get("Fixed", [])) >= sum(1 for n in notes if n.startswith("Fixed: "))
+    assert len(groups.get("Fixed", [])) >= sum(
+        1 for n in notes if n.startswith("Fixed: ")
+    )
 
 
 def test_web_and_release_plan_prefix_tables_match():
     """changelogGroups.ts (the in-app What's new) and release_plan.py (the GitHub Release body)
     each carry their own copy of the prefix table; a prefix added to one must be added to both."""
-    text = (ROOT / "apps/force-app/web/src/changelogGroups.ts").read_text(encoding="utf-8")
+    text = (ROOT / "apps/force-app/web/src/changelogGroups.ts").read_text(
+        encoding="utf-8"
+    )
     table = re.search(r"NOTE_PREFIXES[^=]*=\s*\{(.*?)\n\};", text, re.S)
     assert table, "NOTE_PREFIXES table not found in changelogGroups.ts"
     web = {
         name: (group.capitalize(), strip == "true")
         for name, group, strip in re.findall(
-            r"(\w+):\s*\{\s*group:\s*'(\w+)',\s*strip:\s*(true|false)\s*\}", table.group(1)
+            r"(\w+):\s*\{\s*group:\s*'(\w+)',\s*strip:\s*(true|false)\s*\}",
+            table.group(1),
         )
     }
     assert web, "no prefixes parsed from changelogGroups.ts"

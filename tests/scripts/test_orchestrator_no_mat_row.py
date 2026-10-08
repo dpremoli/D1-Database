@@ -18,13 +18,19 @@ import force_orchestrator as fo  # noqa: E402
 
 
 def _no_mat_row():
-    return {"id": "r1", "archive_path": None, "fingerprint": None, "live_render_points": 5000}
+    return {
+        "id": "r1",
+        "archive_path": None,
+        "fingerprint": None,
+        "live_render_points": 5000,
+    }
 
 
 def test_process_file_without_a_linked_mat_is_not_an_error(tmp_path):
-    with patch.dict(os.environ, {"FORCE_WORKDIR": str(tmp_path)}), patch.object(
-        fo, "run_matlab"
-    ) as matlab:
+    with (
+        patch.dict(os.environ, {"FORCE_WORKDIR": str(tmp_path)}),
+        patch.object(fo, "run_matlab") as matlab,
+    ):
         res = fo.process_file(_no_mat_row(), "matlab", 5, {})
     assert res["status"] == "no_mat"
     assert "no archive .mat linked" in res["message"]

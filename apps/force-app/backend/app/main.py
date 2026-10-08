@@ -2396,9 +2396,7 @@ def put_capture_crop(cid: str, body: CaptureCropPut) -> dict:
                     422, f"crop_start_idx_override must be 0 <= start < {n} samples"
                 )
             if not 0 < end <= n:
-                raise HTTPException(
-                    422, f"crop_end_idx_override must be 0 < end <= {n} samples"
-                )
+                raise HTTPException(422, f"crop_end_idx_override must be 0 < end <= {n} samples")
             if start >= end:
                 raise HTTPException(
                     422, "crop_start_idx_override must be before crop_end_idx_override"
