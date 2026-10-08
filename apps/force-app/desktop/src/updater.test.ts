@@ -114,7 +114,14 @@ describe('updater recording gate', () => {
 describe('update prompt with a main window (#197)', () => {
   function windowStub() {
     const send = vi.fn();
-    return { send, win: { isDestroyed: () => false, webContents: { send } } };
+    return {
+      send,
+      win: {
+        isDestroyed: () => false, isMinimized: () => false, isVisible: () => true,
+        flashFrame: () => {}, once: () => {},
+        webContents: { send, getURL: () => 'app://force/' },
+      },
+    };
   }
   async function bootWithWindow(isRecording: () => Promise<boolean>, win: unknown) {
     vi.resetModules();
@@ -141,6 +148,32 @@ describe('update prompt with a main window (#197)', () => {
     busy = false;
     await vi.advanceTimersByTimeAsync(120_000);
     expect(h.showMessageBox).not.toHaveBeenCalled();
+  });
+
+  it('flashes the taskbar button when the window is minimised or hidden, and stops on focus', async () => {
+    for (const [minimized, visible] of [[true, true], [false, false]] as const) {
+      const { win } = windowStub();
+      const flashFrame = vi.fn();
+      let onFocus: (() => void) | undefined;
+      Object.assign(win, {
+        isMinimized: () => minimized, isVisible: () => visible, flashFrame,
+        once: (ev: string, fn: () => void) => { if (ev === 'focus') onFocus = fn; },
+      });
+      await bootWithWindow(async () => false, win);
+      await downloaded();
+      expect(flashFrame).toHaveBeenCalledWith(true);
+      onFocus!();
+      expect(flashFrame).toHaveBeenLastCalledWith(false);
+    }
+  });
+
+  it('does not flash when the window is visible', async () => {
+    const { win } = windowStub();
+    const flashFrame = vi.fn();
+    Object.assign(win, { isMinimized: () => false, isVisible: () => true, flashFrame, once: vi.fn() });
+    await bootWithWindow(async () => false, win);
+    await downloaded();
+    expect(flashFrame).not.toHaveBeenCalled();
   });
 
   it('falls back to the native dialog when the window is gone', async () => {

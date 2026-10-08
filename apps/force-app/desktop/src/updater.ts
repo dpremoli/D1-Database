@@ -80,6 +80,17 @@ function hasWindow(): boolean {
   return !!win && !win.isDestroyed();
 }
 
+/** hasWindow() is also true for a minimised or hidden window, where the in-app card is drawn
+ * where nobody sees it (the old native dialog at least showed in the taskbar). Flash the taskbar
+ * button instead, and stop once the operator comes back to the window. */
+function attractAttention(): void {
+  const win = getWindow?.();
+  if (!win || win.isDestroyed()) return;
+  if (!win.isMinimized() && win.isVisible()) return;
+  win.flashFrame(true);
+  win.once('focus', () => { if (!win.isDestroyed()) win.flashFrame(false); });
+}
+
 function showUpdateDialog(version: string, notes: string): void {
   const choice = 'Choose "Not now" to keep working on the current version — you can install it anytime from Settings > About.';
   void dialog
@@ -198,6 +209,7 @@ export function initAutoUpdater(getMainWindow: () => BrowserWindow | null, recor
   autoUpdater.on('update-downloaded', (info) => {
     const notes = formatReleaseNotes(info.releaseNotes);
     push({ state: 'downloaded', version: info.version, notes });
+    attractAttention();
     void offerUpdate(info.version, notes);
   });
   autoUpdater.on('error', (err) => {
