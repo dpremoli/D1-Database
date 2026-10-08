@@ -1,5 +1,5 @@
 import { shell } from 'electron';
-import { popoutPlacement, type DisplayArea, type WindowStateStore } from './windowState';
+import { placementFor, type DisplayArea, type WindowStateStore } from './windowState';
 
 /** Stable key for remembering a pop-out's size/position: the pathname only, so every "Live Force"
  * pop-out (any mode/axes) shares one remembered geometry rather than one per query-string variant. */
@@ -61,7 +61,7 @@ export function classifyWindowOpen(
         // default. Setting these keys to undefined would still override that fallback with NaN.
         // x/y are dropped when the saved rect is on no current display or is the minimised
         // (-32000) origin, so a stale save cannot put a pop-out out of reach (#187).
-        ...popoutPlacement(saved, displays),
+        ...placementFor(saved, displays),
         webPreferences: { contextIsolation: true, nodeIntegration: false },
       },
     };
