@@ -12,7 +12,7 @@ import { getConfig } from '../config';
 import { FrmCloud, parseCache, useAutoColorScale, type Cache } from '@d1/force-plotting';
 import FinishedForcePlot from '../record/FinishedForcePlot.vue';
 import { uploadCaptureColdStart } from '../record/uploadCapture';
-import { cropOverrideForUpload, cropWindowSec } from '../record/cropOverride';
+import { cropWindowSec } from '../record/cropOverride';
 
 const route = useRoute();
 const router = useRouter();
@@ -60,7 +60,6 @@ async function retryUpload() {
 	retrying.value = true;
 	retryErr.value = null;
 	try {
-		const override = cropOverrideForUpload(summary.value, cache.value);
 		retryOpId.value = await uploadCaptureColdStart({
 			captureId: captureId.value,
 			matUrl: `${baseUrl}/captures/${captureId.value}/capture.mat`,
@@ -69,8 +68,7 @@ async function retryUpload() {
 			peaks: summary.value.peaks,
 			cache: cache.value,
 			matWritten: summary.value.mat_written,
-			cropStartIdx: override?.start ?? null,
-			cropEndIdx: override?.end ?? null,
+			summary: summary.value,
 		});
 	} catch (e: any) {
 		retryErr.value = e?.message || 'retry failed';

@@ -181,9 +181,12 @@ async function confirmSave() {
 	errMsg.value = null;
 	stage.value = 'saving';
 	try {
-		await w.saveCropLocally();   // #190: keep the adjusted crop on the recorder before anything can fail
+		// #190: keep the adjusted crop on the recorder (best effort, never throws). It runs alongside
+		// the downloads and must have landed before the upload, which can fail.
+		const cropSaved = w.saveCropLocally();
 		if (saveMat.value) downloadMat();
 		if (saveCsv.value) downloadCsv();
+		await cropSaved;
 		if (uploadDb.value) savedOpId.value = await w.uploadCutToDatabase();
 		stage.value = 'done';
 	} catch (e: any) {
