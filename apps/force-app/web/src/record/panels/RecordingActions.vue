@@ -119,8 +119,11 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
    until their labels clip. The 999:1 grow split keeps Start at its natural width while the two
    share a row; alone on its row it takes the whole width. */
 .actions-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
-.actions { flex: 1 0 auto; display: flex; justify-content: flex-end; gap: 8px; }
-.actions .btn { flex: 1 0 auto; justify-content: center; }
+/* Wraps: after a cut this holds "Start next cut" and "Clear for next cut", which together are wider
+   than the default ~220 px Record column ("Clear for ne" was clipped). Wrapped, each takes a full
+   row; Start stays first and keeps its colour. min-width: 0 lets the row shrink with the panel. */
+.actions { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.actions .btn { flex: 1 0 auto; min-width: 0; justify-content: center; }
 /* Acquisition's processing toggles — relocated from a Details card (see RecordingOptions.vue). */
 .segproc { flex: 999 0 auto; display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .segproc button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 4px; background: var(--bg-3); white-space: nowrap; border: none; border-right: 1px solid var(--border); color: var(--text-dim); font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.01em; cursor: pointer; }
