@@ -7,9 +7,9 @@
     "dev": "directus-extension build --watch"
   },
   "devDependencies": {
-    "@directus/extensions-sdk": "^17",
+    "@directus/extensions-sdk": "^18",
     "@vue/compiler-sfc": "^3",
-    "typescript": "^5",
+    "typescript": "^7",
     "vue": "^3"
   },
   "directus:extension": {
