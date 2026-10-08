@@ -48,7 +48,7 @@ don't edit the backlog, the changelog or the version; the coordinator does.
 | A — Upload and crop (P1) | #190 A+B | `agent-ad791c74b30c88930` | in progress |
 | B — Live and finished plots | #185 #189 #188 | `agent-adf2dbacd89896db7` | merged (`53919a8`..`60c07b6`); no jsdom, so component wiring is tested via pure modules + source assertions |
 | C — FFT and pop-outs | #186 #187 | `agent-a48f8683250a6d659` | merged (`7ff136c`, `8c30d9d`); `ensurePopoutReachable` untested (needs Electron) |
-| D — Settings, layout, release notes | #135 #136 #137 | `agent-ab54cf260692df0c3` | in progress |
+| D — Settings, layout, release notes | #135 #136 #137 | `agent-ab54cf260692df0c3` | merged (`e88352b`..`77c88f6`) |
 | Coordinator | merge, /simplify, debug, review, changelog 0.1.35, PR | main checkout | not started |
 
 ### A. Upload and crop — #190 (P1)
