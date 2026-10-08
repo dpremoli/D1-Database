@@ -14,7 +14,8 @@ run-name: >-
 #     "Dry run" builds and tests any branch, and keeps the installer as a run artifact, without
 #     publishing anything.
 #   * A PR that changes the version or the packaging gets the same Windows build as a dry run,
-#     so a release can't break for the first time after it is merged.
+#     so a release can't break for the first time after it is merged. Other PRs that reach this
+#     workflow (a lockfile bump) skip it: Windows minutes bill double.
 #   * Pushing a force-app-v* tag by hand still works, as before.
 #
 # Publishing = creating the GitHub Release (*.exe + latest.yml). d1-server's
@@ -24,9 +25,12 @@ on:
   push:
     branches: [main]
     tags: ['force-app-v*']
+  # The plan job then decides (release_plan.py pr_packaging_changes): only a PR that changes the
+  # version or the packaging gets the Windows build; a lockfile-only bump gets the checks alone.
   pull_request:
     paths:
       - apps/force-app/desktop/package.json
+      - package-lock.json
       - apps/force-app/desktop/electron-builder.yml
       - apps/force-app/backend/force-app-backend.spec
       - apps/force-app/backend/pyproject.toml
@@ -62,9 +66,11 @@ jobs:
       build: ${{ steps.plan.outputs.build }}
       publish: ${{ steps.plan.outputs.publish }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          # A PR is checked out as its merge commit: HEAD^1 is the base, for the packaging diff.
+          fetch-depth: 2
       - name: Decide what to do and check the release is consistent
         id: plan
         env:
@@ -94,7 +100,7 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Don't leave the token in .git/config where `npm ci` and every later step can read it.
           persist-credentials: false
@@ -104,7 +110,7 @@ jobs:
           node-version: '24'
           cache: 'npm'
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -117,7 +123,7 @@ jobs:
       # previous lockfile's cache after a dependency change (Playwright and electron-builder only
       # download what is missing). This replaces the old force-app-cache-warm workflow.
       - name: Cache electron-builder downloads
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~\AppData\Local\electron\Cache
@@ -126,7 +132,7 @@ jobs:
           restore-keys: electron-builder-${{ runner.os }}-
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~\AppData\Local\ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}

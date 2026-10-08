@@ -18,17 +18,24 @@ permissions:
   contents: read
 
 jobs:
-  # Which per-component builds this run needs (.github/scripts/ci-plan.mjs). Everything on main;
-  # on a PR, only the extensions and service images it touches.
+  # Which jobs this run needs (.github/scripts/ci-plan.mjs). Everything on main; on a PR, only the
+  # jobs whose inputs it touches. Minutes are billed per job and rounded up, so the many small
+  # components (extensions, images, Python services) run as loops inside one job each.
   plan:
     name: Plan
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      migrations: ${{ steps.plan.outputs.migrations }}
+      scripts: ${{ steps.plan.outputs.scripts }}
+      forceAppJs: ${{ steps.plan.outputs.forceAppJs }}
+      directusUi: ${{ steps.plan.outputs.directusUi }}
+      backend: ${{ steps.plan.outputs.backend }}
+      pyServices: ${{ steps.plan.outputs.pyServices }}
       images: ${{ steps.plan.outputs.images }}
       extensions: ${{ steps.plan.outputs.extensions }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           # A PR is checked out as its merge commit, whose first parent is the base branch tip:
@@ -47,18 +54,23 @@ jobs:
             node .github/scripts/ci-plan.mjs
           fi
 
+  # Always runs: the cheap checks share one job (one billed minute instead of four). Each step runs
+  # even if an earlier one failed, so one run reports every failure.
   lint:
-    name: Lint (pre-commit)
+    name: Lint and quick checks (pre-commit, geometry, foundation smoke, CI plan)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: actions/cache@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
@@ -66,41 +78,29 @@ jobs:
         run: |
           pip install pre-commit
           pre-commit run --all-files --show-diff-on-failure --color=always
-
-  geometry:
-    name: Sample geometry engine (unit tests)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-      - name: Vendored copies in sync
+      - name: "Geometry: vendored copies in sync"
+        if: ${{ !cancelled() }}
         run: bash scripts/sync_geometry.sh --check
-      - name: Unit tests
+      - name: "Geometry: unit tests"
+        if: ${{ !cancelled() }}
         run: node --experimental-strip-types --test core/extensions/d1-geometry-preview/test/geometry.test.ts
       - name: Extension endpoint tests
+        if: ${{ !cancelled() }}
         run: node --test core/extensions/*/index.test.mjs
       # d1-ask-db's and d1-report's own suites run in the `extensions` job, after their npm ci.
-
-  foundation:
-    name: Foundation smoke test
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-      - name: Validate repository foundation
+      - name: CI plan tests
+        if: ${{ !cancelled() }}
+        run: node --test .github/scripts/ci-plan.test.mjs
+      # docker compose is preinstalled on ubuntu-latest runners, so the compose-validation step
+      # inside the smoke test runs here too.
+      - name: Foundation smoke test
+        if: ${{ !cancelled() }}
         run: bash tests/phase0_smoke.sh
-      # docker compose is preinstalled on ubuntu-latest runners, so the
-      # compose-validation step inside the smoke test runs here too.
 
   migrations:
     name: Schema migrations (up + down + seed + schema tests)
+    needs: plan
+    if: needs.plan.outputs.migrations == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -120,7 +120,7 @@ jobs:
     env:
       DATABASE_URL: postgres://d1:ci_secret@localhost:5432/d1_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-db
@@ -141,6 +141,8 @@ jobs:
 
   script-tests:
     name: Scripts and diagnostics (pytest, incl. DB-level tests)
+    needs: plan
+    if: needs.plan.outputs.scripts == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
@@ -160,10 +162,10 @@ jobs:
     env:
       DATABASE_URL: postgres://d1:ci_secret@localhost:5432/d1_scripts?sslmode=disable
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -188,67 +190,72 @@ jobs:
           REQUIRE_DB_TESTS: "1"
         run: python -m pytest -q -rs tests/scripts
 
-  # Every service image in docker-compose.yml is built here, and its tests run inside it, so a
-  # broken Dockerfile or a dependency that won't install on the image's Python fails the PR rather
-  # than the next `docker compose build` on the server.
+  # Every service image in docker-compose.yml that the plan selected: built, then its tests run inside
+  # it, so a broken Dockerfile or a dependency that won't install on the image's Python fails the
+  # PR rather than the next `docker compose build` on the server.
   images:
-    name: ${{ matrix.name }}
+    name: Service images (docker build + tests)
     needs: plan
     if: needs.plan.outputs.images != '[]'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.plan.outputs.images) }}
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Build ${{ matrix.image }}
+      - name: Build each image and run its tests
         env:
-          IMAGE: ${{ matrix.image }}
-          DOCKERFILE: ${{ matrix.dockerfile }}
-          CONTEXT: ${{ matrix.context }}
-        run: docker build -t "$IMAGE" -f "$DOCKERFILE" "$CONTEXT"
-      - name: Run the tests inside the image
-        if: matrix.test != ''
-        env:
-          IMAGE: ${{ matrix.image }}
-          TEST: ${{ matrix.test }}
-        run: docker run --rm "$IMAGE" sh -c "$TEST"
+          IMAGES: ${{ needs.plan.outputs.images }}
+        run: |
+          failed=()
+          for i in $(seq 0 $(( $(jq length <<<"$IMAGES") - 1 ))); do
+            field() { jq -r ".[$i].$1" <<<"$IMAGES"; }
+            name=$(field name); image=$(field image); test=$(field test)
+            echo "::group::$name"
+            if docker build -t "$image" -f "$(field dockerfile)" "$(field context)" \
+               && { [[ -z "$test" ]] || docker run --rm "$image" sh -c "$test"; }; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"; echo "::error::$name failed"; failed+=("$name")
+            fi
+          done
+          (( ${#failed[@]} == 0 ))
 
   # The Directus extensions with their own lockfile, outside the npm workspace (ci-plan.mjs lists
-  # them). Each is installed and built exactly as on the server, plus its own tests if it has any.
+  # them). Each selected one is installed and built exactly as on the server, plus its own tests.
   extensions:
-    name: Directus extension ${{ matrix.name }}
+    name: Directus extensions (own lockfiles)
     needs: plan
     if: needs.plan.outputs.extensions != '[]'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.plan.outputs.extensions) }}
-    defaults:
-      run:
-        working-directory: ${{ matrix.dir }}
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: ${{ matrix.dir }}/package-lock.json
-      - run: npm ci --no-audit --no-fund
-      - name: Build
-        if: matrix.build
-        run: npm run build
-      - name: Test
-        if: matrix.test
-        run: npm test
+          cache-dependency-path: core/extensions/*/package-lock.json
+      - name: Install, build and test each extension
+        env:
+          EXTENSIONS: ${{ needs.plan.outputs.extensions }}
+        run: |
+          failed=()
+          for i in $(seq 0 $(( $(jq length <<<"$EXTENSIONS") - 1 ))); do
+            field() { jq -r ".[$i].$1" <<<"$EXTENSIONS"; }
+            name=$(field name); dir=$(field dir)
+            echo "::group::$name"
+            if ( cd "$dir" && npm ci --no-audit --no-fund \
+                 && { [[ $(field build) != true ]] || npm run build; } \
+                 && { [[ $(field test) != true ]] || npm test; } ); then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"; echo "::error::$name failed"; failed+=("$name")
+            fi
+          done
+          (( ${#failed[@]} == 0 ))
 
   # ---- Force app ------------------------------------------------------------------------------
   # The Windows-only parts (PyInstaller freeze, NSIS build, Playwright against the packaged app,
@@ -257,10 +264,12 @@ jobs:
 
   force-app-js:
     name: Force app JS (plotting, web, desktop, Directus dashboard)
+    needs: plan
+    if: needs.plan.outputs.forceAppJs == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-node@v6
@@ -292,10 +301,12 @@ jobs:
   # builds a broken import in a page would only show up when someone rebuilds the extension.
   directus-ui:
     name: Explorer UI (@d1/ui and the six extensions that use it)
+    needs: plan
+    if: needs.plan.outputs.directusUi == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-node@v6
@@ -316,59 +327,70 @@ jobs:
       - name: Build the Directus extensions that use @d1/ui
         run: npm run build:extensions
 
-  force-app-python:
-    name: Force app Python (${{ matrix.name }})
+  # Same Python and extras as the release build, which freezes the backend on 3.11 with the nidaq
+  # extra. Without the extra, nidaqmx-dependent paths took the "package not installed" branch here
+  # and only failed on the release runner (force-app-v0.1.34).
+  force-app-backend:
+    name: Force app Python (recorder backend)
+    needs: plan
+    if: needs.plan.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Same Python and extras as the release build, which freezes the backend on 3.11 with
-          # the nidaq extra. Without the extra, nidaqmx-dependent paths took the "package not
-          # installed" branch here and only failed on the release runner (force-app-v0.1.34).
-          - name: recorder backend
-            dir: apps/force-app/backend
-            python: "3.11"
-            install: -e .[dev,nidaq]
-            deps: apps/force-app/backend/pyproject.toml
-          # The services below run on python:3.12-slim (their Dockerfiles), so test on 3.12.
-          - name: backup-server
-            dir: apps/force-app/backup-server
-            python: "3.12"
-            install: -r requirements.txt
-            deps: apps/force-app/backup-server/requirements.txt
-          - name: bug-report-relay
-            dir: apps/force-app/bug-report-relay
-            python: "3.12"
-            install: -r requirements.txt
-            deps: apps/force-app/bug-report-relay/requirements.txt
-          - name: filter-service
-            dir: plugins/filter-service
-            python: "3.12"
-            install: -r requirements.txt
-            deps: plugins/filter-service/requirements.txt
-          - name: diag-service
-            dir: plugins/diag-service
-            python: "3.12"
-            install: -r requirements.txt
-            deps: plugins/diag-service/requirements.txt
     defaults:
       run:
-        working-directory: ${{ matrix.dir }}
+        working-directory: apps/force-app/backend
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.11"
           cache: pip
-          cache-dependency-path: ${{ matrix.deps }}
+          cache-dependency-path: apps/force-app/backend/pyproject.toml
       - name: Install dependencies
-        run: pip install ${{ matrix.install }}
+        run: pip install -e ".[dev,nidaq]"
       - name: Run tests
         run: python -m pytest
+
+  # The services run on python:3.12-slim (their Dockerfiles), so they are tested on 3.12, each in its
+  # own venv so their pins can't mix.
+  python-services:
+    name: Python services (backup server, bug-report relay, filter, diag)
+    needs: plan
+    if: needs.plan.outputs.pyServices != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            apps/force-app/backup-server/requirements.txt
+            apps/force-app/bug-report-relay/requirements.txt
+            plugins/filter-service/requirements.txt
+            plugins/diag-service/requirements.txt
+      - name: Install and test each service
+        env:
+          SERVICES: ${{ needs.plan.outputs.pyServices }}
+        run: |
+          failed=()
+          for i in $(seq 0 $(( $(jq length <<<"$SERVICES") - 1 ))); do
+            name=$(jq -r ".[$i].name" <<<"$SERVICES"); dir=$(jq -r ".[$i].dir" <<<"$SERVICES")
+            echo "::group::$name"
+            if python -m venv "$RUNNER_TEMP/venv-$name" \
+               && "$RUNNER_TEMP/venv-$name/bin/pip" install -q -r "$dir/requirements.txt" \
+               && ( cd "$dir" && "$RUNNER_TEMP/venv-$name/bin/python" -m pytest ); then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"; echo "::error::$name failed"; failed+=("$name")
+            fi
+          done
+          (( ${#failed[@]} == 0 ))
 
   # One check that stands for the whole run, for branch protection: require "CI passed" and
   # nothing else, and jobs can be added, renamed or skipped by the plan without editing the rule.
@@ -378,15 +400,14 @@ jobs:
     needs:
       - plan
       - lint
-      - geometry
-      - foundation
       - migrations
       - script-tests
       - images
       - extensions
       - force-app-js
       - directus-ui
-      - force-app-python
+      - force-app-backend
+      - python-services
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

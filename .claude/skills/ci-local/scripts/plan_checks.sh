@@ -48,8 +48,9 @@ for p in $(grep -oE '^plugins/[^/]+/' <<<"$files" | sort -u | cut -d/ -f2); do
   esac
 done
 
+has '^\.github/scripts/' && echo "node --test .github/scripts/ci-plan.test.mjs && python -m pytest -q tests/scripts/test_release_plan_gate.py   # CI: lint, script-tests"
 has '^scripts/.*\.py$|^tests/scripts/' && echo "python -m pytest tests/scripts -q   # CI: script-tests; *_golden_exactly may differ by machine"
-# Force app: ci.yml force-app-js / force-app-python run these on PRs; run them before pushing.
+# Force app: ci.yml force-app-js / force-app-backend / python-services run these on PRs; run them before pushing.
 has '^packages/force-plotting/' && echo "npm test -w @d1/force-plotting && npm run typecheck -w @d1/force-plotting   # CI: force-app-js"
 has '^(apps/force-app/web/|packages/force-plotting/)' && \
   echo "npm test -w force-app-web && npm run typecheck -w force-app-web && npm run lint:theme -w force-app-web   # CI: force-app-js"
@@ -58,14 +59,14 @@ has '^apps/force-app/desktop/' && \
 has '^core/extensions/d1-force-dashboard/' && echo "npm run build:extension   # CI: force-app-js"
 has '^(packages/d1-ui/|core/extensions/(d1-home|d1-lab-dashboard|d1-composition-bar|d1-campaign-ops|d1-project-items|d1-fast-dashboard)/)' && \
   echo "npm test -w @d1/ui && npm run typecheck -w @d1/ui && npm run typecheck -w directus-extension-d1-home -w directus-extension-d1-lab-dashboard -w directus-extension-d1-campaign-ops && npm run build:extensions   # CI: directus-ui"
-has '^apps/force-app/backend/' && echo "(cd apps/force-app/backend && pip install -e '.[dev,nidaq]' && python -m pytest -q)   # CI: force-app-python, with the nidaq extra like the release"
+has '^apps/force-app/backend/' && echo "(cd apps/force-app/backend && pip install -e '.[dev,nidaq]' && python -m pytest -q)   # CI: force-app-backend, with the nidaq extra like the release"
 for s in backup-server bug-report-relay; do
-  has "^apps/force-app/$s/" && echo "(cd apps/force-app/$s && python -m pytest -q)   # CI: force-app-python"
+  has "^apps/force-app/$s/" && echo "(cd apps/force-app/$s && python -m pytest -q)   # CI: python-services"
 done
 has '^(apps/force-app/(backend|web)/|packages/force-plotting/)' && \
   echo "# then the force-app-verify skill: sim recording over HTTP + through the UI"
 has '^apps/force-app/desktop/package\.json$|^apps/force-app/web/src/changelog\.ts$' && \
   echo "bash .claude/skills/force-app-release/scripts/preflight.sh --fast   # version/changelog/lockfile agree"
 has '^(apps/force-app/desktop/(package\.json|electron-builder\.yml)|apps/force-app/backend/(force-app-backend\.spec|pyproject\.toml))$' && \
-  echo "# the PR also runs force-app-release.yml as a Windows dry run; merging a version bump RELEASES it"
+  echo "# the PR also runs force-app-release.yml as a Windows dry run if it changes the version or packaging; merging a version bump RELEASES it"
 exit 0
