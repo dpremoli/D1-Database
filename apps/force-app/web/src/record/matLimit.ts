@@ -12,9 +12,10 @@ export function matLimitSeconds(fs: number, columns: number = DEFAULT_COLUMNS): 
 	return MAT_MAX_BYTES / (columns * BYTES_PER_VALUE) / fs;
 }
 
-/** "12 min", "1 min 30 s" style, rounded down so the limit is never overstated. */
-export function formatSpan(seconds: number): string {
-	const s = Math.max(0, Math.floor(seconds));
+/** "12 min", "1 min 30 s" style. Rounded down by default so a limit is never overstated;
+ * pass `round` for a measured length, so 7.99 s reads "8 s" like the dialog header. */
+export function formatSpan(seconds: number, round = false): string {
+	const s = Math.max(0, round ? Math.round(seconds) : Math.floor(seconds));
 	if (s < 60) return `${s} s`;
 	if (s < 600) {
 		const m = Math.floor(s / 60), r = s % 60;
@@ -41,12 +42,12 @@ export interface MatSummaryLike {
  */
 export function matSkipNote(summary: MatSummaryLike | null | undefined): string | null {
 	if (!summary || summary.mat_written !== false) return null;
-	const kept = 'The raw recording and the live cache are kept, and database upload and the .csv copy still work.';
+	const kept = 'The full-resolution raw recording is kept (in Local Captures), and database upload still works; the .csv option is a reduced-resolution preview.';
 	const fs = Number(summary.fs);
 	const columns = Array.isArray(summary.channels) && summary.channels.length ? summary.channels.length : DEFAULT_COLUMNS;
 	const limit = matLimitSeconds(fs, columns);
 	if (limit == null) return `This capture is too long for a .mat file (the format caps it at about 1.5 GB), so none was written. ${kept}`;
 	const dur = Number(summary.duration_sec) > 0 ? Number(summary.duration_sec) : (Number(summary.n) > 0 ? Number(summary.n) / fs : null);
-	const len = dur != null ? `, and this capture is ${formatSpan(dur)} long` : '';
+	const len = dur != null ? `, and this capture is ${formatSpan(dur, true)} long` : '';
 	return `A .mat file can't hold more than about ${formatSpan(limit)} at ${formatRate(fs)} with ${columns} columns${len}, so none was written. ${kept}`;
 }

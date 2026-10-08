@@ -25,6 +25,10 @@ describe('formatSpan', () => {
 		expect(formatSpan(120)).toBe('2 min');
 		expect(formatSpan(732.4)).toBe('12 min');
 	});
+	it('can round a measured length instead', () => {
+		expect(formatSpan(7.99, true)).toBe('8 s');
+		expect(formatSpan(7.99)).toBe('7 s');
+	});
 });
 
 describe('matSkipNote', () => {
@@ -33,11 +37,16 @@ describe('matSkipNote', () => {
 		const t = matSkipNote(big)!;
 		expect(t).toContain('about 12 min at 25.6 kHz with 10 columns');
 		expect(t).toContain('this capture is 15 min long');
-		expect(t).toMatch(/raw recording/);
-		expect(t).toMatch(/live cache/);
-		expect(t).toMatch(/upload/);
-		expect(t).toMatch(/\.csv/);
+		expect(t).toMatch(/full-resolution raw recording/);
+		expect(t).toMatch(/upload still works/);
+		expect(t).toMatch(/\.csv option is a reduced-resolution preview/);
+		expect(t).not.toMatch(/\.csv copy still work/);
 		expect(t).not.toContain('exceeds size limit');
+	});
+	it('rounds the capture length but floors the limit', () => {
+		const t = matSkipNote({ ...big, duration_sec: 7.99 })!;
+		expect(t).toContain('this capture is 8 s long');
+		expect(t).toContain('about 12 min at');
 	});
 	it('counts appended extra channels as columns', () => {
 		expect(matSkipNote({ ...big, channels: new Array(12).fill('c') })).toContain('with 12 columns');
