@@ -1,7 +1,7 @@
 // Shared state for the modular Recording workspace. Created once in RecordPage and provided to
 // every panel via inject(), so panels stay small and independent while sharing one RecordClient,
 // config, metadata, plot options, and the start/stop/replay actions.
-import { computed, inject, reactive, ref, shallowRef, watch, type InjectionKey } from 'vue';
+import { computed, effectScope, inject, reactive, ref, shallowRef, watch, type InjectionKey } from 'vue';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS, RecordClient } from './liveClient';
 import { api } from '../directusClient';
 import { buildSeriesEnvelope, debouncePublish, parseCache, type Cache } from '@d1/force-plotting';
@@ -1121,9 +1121,17 @@ export type Workspace = ReturnType<typeof createWorkspace>;
 // localStorage is not defined` in a plain Node/vitest environment with no DOM. getWorkspace() only
 // builds the instance the first time something actually needs it (RecordPage.vue's own mount,
 // same timing as before), then reuses it for the app's lifetime.
+//
+// #216: it must also be built in its OWN effect scope. Vue binds every watch() made while a
+// component's setup runs to that component, and stops it when the component unmounts. The first
+// RecordPage to mount built this singleton, so opening Settings or Plot (RecordPage unmounts) killed
+// every watcher in it for the rest of the session -- the remembered-setup saver (Sample, Machine,
+// Operator, operation type, cut parameters), the plot-prefs saver, the NI-DAQ channel saver and the
+// per-cut watchers -- while the singleton lived on and the next RecordPage reused it unwatched.
+// A detached scope ties them to the workspace's lifetime instead.
 let _workspace: Workspace | null = null;
 export function getWorkspace(): Workspace {
-	if (!_workspace) _workspace = createWorkspace();
+	if (!_workspace) _workspace = effectScope(true).run(createWorkspace)!;
 	return _workspace;
 }
 export const WORKSPACE: InjectionKey<Workspace> = Symbol('record-workspace');

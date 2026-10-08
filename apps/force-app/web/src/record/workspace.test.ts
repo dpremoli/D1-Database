@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { nextTick } from 'vue';
+import { effectScope, nextTick } from 'vue';
 
 // createWorkspace() start/stop/upload paths (stream-2 review 2.1, 2.2, 2.5, 2.7). Everything the
 // workspace talks to (Directus, the recorder, dialogs) is faked at the module boundary.
@@ -779,6 +779,30 @@ describe('remembered setup (R1)', () => {
 		await nextTick();
 		pageHide();
 		expect(localStorage.getItem(KEY)).toBeNull(); // an all-default setup is never written back
+	});
+
+	// #216: the shared workspace is built inside the first RecordPage's setup, and Vue ties every
+	// watch() made there to that component's scope. Leaving /record stopped them all, so Sample /
+	// Machine / Operator / operation type picked after coming back were never saved.
+	it('keeps remembering the setup after the Record page that built the workspace unmounts (#216)', async () => {
+		vi.resetModules();
+		const { getWorkspace } = await import('./workspace');
+		const recordPage = effectScope();           // what a mounted RecordPage's setup runs in
+		const w = recordPage.run(() => getWorkspace())!;
+		recordPage.stop();                          // the operator opens Settings: RecordPage unmounts
+		const again = effectScope();                // ...and comes back: a new mount reuses the singleton
+		expect(again.run(() => getWorkspace())).toBe(w);
+		w.link.sampleId = 's9'; w.link.sampleLabel = 'S-9';
+		w.link.equipmentId = 'e9'; w.link.equipmentLabel = 'Lathe 9';
+		w.link.operatorId = 'p9'; w.link.operatorLabel = 'Pat';
+		w.meta.op_type = 'MT-F';
+		await nextTick();
+		pageHide();                                  // quit / relaunch
+		expect(stored().link).toMatchObject({ sampleId: 's9', equipmentId: 'e9', operatorId: 'p9', operatorLabel: 'Pat' });
+		expect(stored().meta.op_type).toBe('MT-F');
+		const relaunched = await make();
+		expect(relaunched.link).toMatchObject({ sampleId: 's9', equipmentId: 'e9', operatorId: 'p9' });
+		expect(relaunched.meta.op_type).toBe('MT-F');
 	});
 });
 
