@@ -885,6 +885,52 @@ describe('remembered setup (R1)', () => {
 		pageHide();
 		expect(localStorage.getItem(KEY)).toBeNull(); // an all-default setup is never written back
 	});
+
+	// #216: the shared workspace is built inside the first RecordPage's setup, and Vue ties every
+	// watch() made there to that component's scope. Leaving /record stopped them all, so Sample /
+	// Machine / Operator / operation type picked after coming back were never saved.
+	it('keeps remembering the setup after the Record page that built the workspace unmounts (#216)', async () => {
+		vi.resetModules();
+		const { getWorkspace } = await import('./workspace');
+		const recordPage = effectScope();           // what a mounted RecordPage's setup runs in
+		const w = recordPage.run(() => getWorkspace())!;
+		recordPage.stop();                          // the operator opens Settings: RecordPage unmounts
+		const again = effectScope();                // ...and comes back: a new mount reuses the singleton
+		expect(again.run(() => getWorkspace())).toBe(w);
+		w.link.sampleId = 's9'; w.link.sampleLabel = 'S-9';
+		w.link.equipmentId = 'e9'; w.link.equipmentLabel = 'Lathe 9';
+		w.link.operatorId = 'p9'; w.link.operatorLabel = 'Pat';
+		w.meta.op_type = 'MT-F';
+		await nextTick();
+		pageHide();                                  // quit / relaunch
+		expect(stored().link).toMatchObject({ sampleId: 's9', equipmentId: 'e9', operatorId: 'p9', operatorLabel: 'Pat' });
+		expect(stored().meta.op_type).toBe('MT-F');
+		const relaunched = await make();
+		expect(relaunched.link).toMatchObject({ sampleId: 's9', equipmentId: 'e9', operatorId: 'p9' });
+		expect(relaunched.meta.op_type).toBe('MT-F');
+	});
+});
+
+describe('workspace watchers outlive the Record page (#216)', () => {
+	// The force and tacho alarms are evaluated in a workspace watcher on the live frame counter.
+	// Built in the first RecordPage's scope it stopped when the operator opened Settings (to set
+	// the limit, say), and no alarm could fire for the rest of the session.
+	it('still evaluates the force alarm on a live frame after RecordPage unmounted', async () => {
+		vi.resetModules();
+		const { getWorkspace } = await import('./workspace');
+		const recordPage = effectScope();
+		const w = recordPage.run(() => getWorkspace())!;
+		recordPage.stop();
+		w.alarms.reset();
+		w.alarms.config.audioEnabled = false;
+		w.alarms.config.forceThreshold = 100;
+		w.st.state = 'recording';
+		w.st.peaks = { Fx: 0, Fy: 0, Fz: 250 };
+		w.client.frameSeq.value++;
+		await nextTick();
+		expect(w.alarms.active.map((a) => a.key)).toContain('force:Fz');
+		w.alarms.reset();
+	});
 });
 
 describe('stop on force alarm while busy', () => {

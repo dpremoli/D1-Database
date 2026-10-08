@@ -20,7 +20,7 @@ import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, owne
 import { isFetchFailure } from '../netErrors';
 import { confirmAction } from '../ui/confirm';
 import { spotlight } from '../ui/spotlight';
-import { FIELD_FOCUS, StartRequestError, sampleRateIssue } from './recordingErrors';
+import { FIELD_FOCUS, StartRequestError, sampleRateIssue, suggestedSampleRate } from './recordingErrors';
 import { nidaqHardware } from './nidaqHardware';
 import { railBannerText } from './railing';
 import { computePreflight, isCustomChannelList, needsSampleConfirm, parseChannelList, type AmpReading, type ChannelLike } from './preflight';
@@ -342,6 +342,8 @@ export function createWorkspace() {
 		sampleRate: cfg.sample_rate,
 		channels: preflightReads.channels,
 		channelsCustom: customChannelList.value,
+		channelList: parseChannelList(nidaqChannels.value),
+		chassisInputs: nidaqHardware.physicalInputs,
 	}));
 	// A missing Sample is a warning, not a block: the first Start press shows "Start anyway".
 	const sampleConfirmOpen = ref(false);
@@ -590,7 +592,10 @@ export function createWorkspace() {
 					await labamp.setMode('MEASURE');
 				} catch { /* amp unreachable — proceed anyway, gains were set at last range */ }
 				const chans = parseChannelList(nidaqChannels.value);
-				await client.start({ ...cfg, ...recordingPrefsPayload(), source: 'nidaq', nidaq_channels: chans, axis: plot.frmAxis, extra_metadata: metaObj() } as any);
+				const rate = await client.start({ ...cfg, ...recordingPrefsPayload(), source: 'nidaq', nidaq_channels: chans, axis: plot.frmAxis, extra_metadata: metaObj() } as any);
+				// #199: the database row and the crop indices are worked out from cfg.sample_rate, so
+				// it must be the rate the capture is stamped with.
+				if (rate != null) cfg.sample_rate = rate;
 			} else {
 				await client.start({ ...cfg, ...recordingPrefsPayload(), source: 'sim', axis: plot.frmAxis, extra_metadata: metaObj() } as any);
 			}
@@ -604,6 +609,13 @@ export function createWorkspace() {
 			// #84: the backend named the field it refused (e.g. a sample rate above the hardware's
 			// maximum) — point at it rather than leaving the operator to find it.
 			const focusId = e instanceof StartRequestError && e.detail.field ? FIELD_FOCUS[e.detail.field] : undefined;
+			// #199: the hardware would have run at another rate. Take it, so the next Start records
+			// (and the cut is saved) at the rate really used; nothing has been recorded yet.
+			const rate = suggestedSampleRate(e);
+			if (rate != null) {
+				cfg.sample_rate = rate;
+				errMsg.value = `${m} The sample rate has been changed to it: press Start again.`;
+			}
 			if (focusId) spotlight(focusId);
 		} finally {
 			busy.value = false;
@@ -1155,6 +1167,14 @@ export type Workspace = ReturnType<typeof createWorkspace>;
 // localStorage is not defined` in a plain Node/vitest environment with no DOM. getWorkspace() only
 // builds the instance the first time something actually needs it (RecordPage.vue's own mount,
 // same timing as before), then reuses it for the app's lifetime.
+//
+// #216: it must also be built in its OWN effect scope. Vue binds every watch() made while a
+// component's setup runs to that component, and stops it when the component unmounts. The first
+// RecordPage to mount built this singleton, so opening Settings or Plot (RecordPage unmounts) killed
+// every watcher in it for the rest of the session -- the remembered-setup saver (Sample, Machine,
+// Operator, operation type, cut parameters), the plot-prefs saver, the NI-DAQ channel saver and the
+// per-cut watchers -- while the singleton lived on and the next RecordPage reused it unwatched.
+// A detached scope ties them to the workspace's lifetime instead.
 let _workspace: Workspace | null = null;
 export function getWorkspace(): Workspace {
 	// Detached scope: built inside RecordPage's setup, its watchers would otherwise belong to that

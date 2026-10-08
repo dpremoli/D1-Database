@@ -163,6 +163,12 @@ def test_streamed_finalize_matches_the_whole_array_one(tmp_path, monkeypatch, ca
     for key in old:
         if key in ("file_sizes_mb", "local_diag", "cut_window_sec", "duration_sec", "peaks"):
             continue
+        if key == "config":
+            # daq_input_range_v is newer than the frozen reference (#200); 0 means "not known".
+            now = dict(new[key])
+            assert now.pop("daq_input_range_v") == 0.0
+            assert now == {k: v for k, v in old[key].items() if k != "daq_input_range_v"}, key
+            continue
         assert new[key] == old[key], key
     np.testing.assert_allclose(new["cut_window_sec"], old["cut_window_sec"], rtol=F32_REL)
     np.testing.assert_allclose(new["duration_sec"], old["duration_sec"], rtol=F32_REL)

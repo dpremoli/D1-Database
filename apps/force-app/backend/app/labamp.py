@@ -34,6 +34,7 @@ class LabAmp(Protocol):
     mock: bool
 
     def ping(self) -> bool: ...
+    def probe(self) -> tuple[bool, str | None]: ...
     def get_operation_mode(self) -> str | None: ...
     def set_operation_mode(self, mode: str) -> None: ...
     def sensor_table(self, channels: int) -> list[dict]: ...
@@ -41,6 +42,10 @@ class LabAmp(Protocol):
     def signal_get(self, channels: list[int]) -> list[dict]: ...
     def set_range(self, channel: int, value: float) -> None: ...
     def channel_status(self, channels: int) -> dict[int, str]: ...
+
+
+# How long ping() waits for the amp before calling it unreachable.
+PING_TIMEOUT_SEC = 2.0
 
 
 class LabAmpClient:
@@ -54,9 +59,9 @@ class LabAmpClient:
         self.mock = False
         self._transport = transport  # injectable for tests (httpx.MockTransport)
 
-    def _post(self, path: str, body: dict) -> dict:
+    def _post(self, path: str, body: dict, timeout: float | None = None) -> dict:
         try:
-            with httpx.Client(timeout=self.timeout, transport=self._transport) as c:
+            with httpx.Client(timeout=timeout or self.timeout, transport=self._transport) as c:
                 r = c.post(f"{self.base_url}{path}", json=body)
         except httpx.HTTPError as e:
             raise LabAmpError(f"LabAmp unreachable at {self.base_url}: {e}") from e
@@ -70,15 +75,20 @@ class LabAmpClient:
             raise LabAmpError(f"LabAmp error result={j.get('result')} for {path}")
         return j.get("data") or j
 
-    def ping(self) -> bool:
+    def probe(self) -> tuple[bool, str | None]:
+        # A short wait: the amp answers this in about 0.3 s, and with its cable pulled the full
+        # timeout made /labamp/status, and so the Record page's Lab Amp chip, take 10 s to say
+        # "not reachable" (#215).
         try:
-            self.get_operation_mode()
-            return True
+            return True, self.get_operation_mode(timeout=min(self.timeout, PING_TIMEOUT_SEC))
         except LabAmpError:
-            return False
+            return False, None
 
-    def get_operation_mode(self) -> str | None:
-        data = self._post("/api/$/operationMode/get", {})
+    def ping(self) -> bool:
+        return self.probe()[0]
+
+    def get_operation_mode(self, timeout: float | None = None) -> str | None:
+        data = self._post("/api/$/operationMode/get", {}, timeout=timeout)
         return data.get("mode")
 
     def set_operation_mode(self, mode: str) -> None:
@@ -158,6 +168,9 @@ class MockLabAmp:
 
     def ping(self) -> bool:
         return True
+
+    def probe(self) -> tuple[bool, str | None]:
+        return True, self._mode
 
     def get_operation_mode(self) -> str | None:
         return self._mode

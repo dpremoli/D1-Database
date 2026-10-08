@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@types/three": "^0.186.0",
-    "typescript": "^5.7.3",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.10",
     "vue-tsc": "^2.2.0"
   }
