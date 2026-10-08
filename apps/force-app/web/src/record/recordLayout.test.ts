@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_LAYOUT, dockPanel, dockSideOf, oppositeSide, parseDismissedIds, parseSavedLayout } from './recordLayout';
+import { DEFAULT_LAYOUT, dockPanel, oppositeSide, parseDismissedIds, parseSavedLayout } from './recordLayout';
 
 const KNOWN = { options: {}, force: {}, frm: {} };
 const item = (i: string, type: string, extra: object = {}) => ({ i, type, x: 0, y: 0, w: 2, h: 2, ...extra });
@@ -100,13 +100,10 @@ describe('dockPanel (#136: move the Recording & Metadata panel to the other side
 		expect(noOverlaps(left)).toBe(true);
 	});
 
-	it('dockSideOf and oppositeSide say where the panel is and where the button sends it', () => {
-		expect(dockSideOf(DEFAULT_LAYOUT, 'options')).toBe('left');
+	it('oppositeSide says where the button sends the panel', () => {
 		expect(oppositeSide(DEFAULT_LAYOUT, 'options')).toBe('right');
 		const right = dockPanel(DEFAULT_LAYOUT, 'options', 'right', 12);
-		expect(dockSideOf(right, 'options')).toBe('right');
 		expect(oppositeSide(right, 'options')).toBe('left');
-		expect(dockSideOf(DEFAULT_LAYOUT, 'overview')).toBeNull();
-		expect(dockSideOf(DEFAULT_LAYOUT, 'nope')).toBeNull();
+		expect(oppositeSide(DEFAULT_LAYOUT, 'nope')).toBe('right');
 	});
 });

@@ -612,7 +612,7 @@ onBeforeUnmount(() => {
 				<button v-if="!narrow && hasType('options')" class="btn icon reset" title="Move the Recording &amp; Metadata panel to the other side" aria-label="Move Recording and Metadata panel to the other side" @click="moveOptionsPanel"><span class="material-symbols-rounded">swap_horiz</span></button>
 				<button class="btn icon reset" title="Reset panel layout" aria-label="Reset panel layout" @click="resetLayout"><span class="material-symbols-rounded">grid_view</span></button>
 			</div>
-		<GridLayout v-model:layout="displayLayout" :col-num="narrow ? 1 : 12" :row-height="rowHeight" :margin="[12, 12]"
+		<GridLayout v-model:layout="displayLayout" :col-num="narrow ? 1 : GRID_COLS" :row-height="rowHeight" :margin="[12, 12]"
 			:is-draggable="!narrow" :is-resizable="!narrow" :use-css-transforms="true" :vertical-compact="true">
 			<GridItem v-for="item in displayLayout" :key="item.i" :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i"
 				drag-allow-from=".panel-handle" :min-w="narrow ? 1 : 2" :min-h="3">
