@@ -14,7 +14,8 @@ run-name: >-
 #     "Dry run" builds and tests any branch, and keeps the installer as a run artifact, without
 #     publishing anything.
 #   * A PR that changes the version or the packaging gets the same Windows build as a dry run,
-#     so a release can't break for the first time after it is merged.
+#     so a release can't break for the first time after it is merged. Other PRs that reach this
+#     workflow (a lockfile bump) skip it: Windows minutes bill double.
 #   * Pushing a force-app-v* tag by hand still works, as before.
 #
 # Publishing = creating the GitHub Release (*.exe + latest.yml). d1-server's
@@ -24,9 +25,12 @@ on:
   push:
     branches: [main]
     tags: ['force-app-v*']
+  # The plan job then decides (release_plan.py pr_packaging_changes): only a PR that changes the
+  # version or the packaging gets the Windows build; a lockfile-only bump gets the checks alone.
   pull_request:
     paths:
       - apps/force-app/desktop/package.json
+      - package-lock.json
       - apps/force-app/desktop/electron-builder.yml
       - apps/force-app/backend/force-app-backend.spec
       - apps/force-app/backend/pyproject.toml
@@ -65,6 +69,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          # A PR is checked out as its merge commit: HEAD^1 is the base, for the packaging diff.
+          fetch-depth: 2
       - name: Decide what to do and check the release is consistent
         id: plan
         env:

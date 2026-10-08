@@ -12,8 +12,10 @@ polls Releases, not tags). So:
   workflow_dispatch     the button. Releases main's version if it has no Release; dry_run builds
                         and tests without publishing (any branch).
   pull_request          a dry run (build + every test, never publish) on PRs that change the
-                        version or the packaging. Fails early if the version would ship without
-                        its changelog entry.
+                        version or the packaging (pr_packaging_changes). Other PRs that start the
+                        workflow (a lockfile bump) only get the consistency checks: a Windows build
+                        bills about 36 minutes, and ci.yml tests the rest on Linux. Fails early if
+                        the version would ship without its changelog entry.
   push of a tag         a hand-pushed force-app-v* tag, as before. It must match package.json.
 
 Usage (CI): release_plan.py --notes <path>    env: EVENT, REF, SHA, DRY_RUN, REPO, GH_TOKEN
@@ -30,6 +32,18 @@ import sys
 DESKTOP_PKG = "apps/force-app/desktop/package.json"
 LOCKFILE = "package-lock.json"
 CHANGELOG = "apps/force-app/web/src/changelog.ts"
+# What a PR must change for its Windows dry run to be worth running: the packaging files, the
+# desktop package's version, entry point, scripts or runtime dependencies, or the tools that build
+# and smoke-test the installer (also when only the lockfile moves them).
+PACKAGING_FILES = (
+    "apps/force-app/desktop/electron-builder.yml",
+    "apps/force-app/backend/force-app-backend.spec",
+    "apps/force-app/backend/pyproject.toml",
+    ".github/workflows/force-app-release.yml",
+    ".github/scripts/release_plan.py",
+)
+PACKAGING_PKG_KEYS = ("version", "main", "scripts", "dependencies")
+PACKAGING_TOOLS = ("electron", "electron-builder", "electron-updater", "@playwright/test")
 BUMP_HINT = (
     'Bump the version and add its changelog entry first: ask Claude to "release the force app" '
     "(the force-app-release skill), merge that PR, and the release ships on its own."
@@ -64,6 +78,44 @@ def changelog_entry(text: str, version: str) -> tuple[str, list[str]] | None:
             s = single or double
             notes.append(re.sub(r"\\(.)", r"\1", s))
     return (date.group(1) if date else ""), notes
+
+
+def pr_build_reasons(
+    changed: list[str], old_pkg: dict, new_pkg: dict, old_lock: dict, new_lock: dict
+) -> list[str]:
+    """What in a PR's diff can break the packaged app (empty: skip the Windows dry run)."""
+    reasons = [f for f in PACKAGING_FILES if f in changed]
+    if DESKTOP_PKG in changed:
+        reasons += [
+            f"{DESKTOP_PKG} {k}" for k in PACKAGING_PKG_KEYS if old_pkg.get(k) != new_pkg.get(k)
+        ]
+        old_dev, new_dev = old_pkg.get("devDependencies", {}), new_pkg.get("devDependencies", {})
+        reasons += [f"{t} in {DESKTOP_PKG}" for t in PACKAGING_TOOLS if old_dev.get(t) != new_dev.get(t)]
+    if LOCKFILE in changed:
+        old_p, new_p = old_lock.get("packages", {}), new_lock.get("packages", {})
+        entries = ["apps/force-app/desktop", *(f"node_modules/{t}" for t in PACKAGING_TOOLS)]
+        reasons += [f"{e} in {LOCKFILE}" for e in entries if old_p.get(e) != new_p.get(e)]
+    return reasons
+
+
+def pr_packaging_changes() -> list[str]:
+    """pr_build_reasons for the checked-out PR merge commit, against its base (HEAD^1)."""
+    diff = sh("git", "diff", "--name-only", "HEAD^1", "HEAD")
+    if diff.returncode != 0:
+        return ["no base commit to diff against, so building to be safe"]
+
+    def at_base(path: str) -> dict:
+        r = sh("git", "show", f"HEAD^1:{path}")
+        return json.loads(r.stdout) if r.returncode == 0 else {}
+
+    changed = diff.stdout.split()
+    return pr_build_reasons(
+        changed,
+        at_base(DESKTOP_PKG) if DESKTOP_PKG in changed else {},
+        json.load(open(DESKTOP_PKG)),
+        at_base(LOCKFILE) if LOCKFILE in changed else {},
+        json.load(open(LOCKFILE)) if LOCKFILE in changed else {},
+    )
 
 
 def top_changelog_version(text: str) -> str | None:
@@ -121,8 +173,14 @@ def main() -> None:
 
     # build: run the Windows build and every test. publish: create the GitHub Release.
     if event == "pull_request":
-        build, publish = True, False
-        reason = f"dry run for a PR (main would {'not ' if released else ''}release {tag} on merge)"
+        changes = pr_packaging_changes()
+        build, publish = bool(changes), False
+        reason = (
+            f"dry run for a PR that changes {', '.join(changes)} "
+            f"(main would {'not ' if released else ''}release {tag} on merge)"
+            if changes
+            else "no Windows dry run: the PR changes neither the version nor the packaging"
+        )
     elif event == "push" and ref.startswith("refs/tags/"):
         pushed = ref.removeprefix("refs/tags/")
         if pushed != tag:
