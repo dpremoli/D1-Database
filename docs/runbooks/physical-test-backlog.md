@@ -388,24 +388,35 @@ and `d1-fast-dashboard` are now built from the root with the other workspace ext
   investigator of A's project, not an owner or co-owner). As B open A's sample, an operation or test
   of A's, A's campaign and the project. Expect: the page opens, but there is no **Edit** button
   (Report, Data Studio and the other buttons remain); as A the **Edit** button is there. As B, the
-  campaign page has no pickers ("Add samples...", operations, tests) and no remove buttons, and says
-  "Only the campaign's owner can change its lists." (campaigns have no co-owners). Force it anyway (open the Data Studio form and
-  save, or `PATCH` the sample): the error reads as a refusal. Add B as a co-owner of the sample: B now
+  campaign page has no **Add samples** picker or "add" button on samples listed only through an
+  operation or test, and says "Only the campaign's owner can add samples here. Operations and tests
+  are moved by their own owner." (campaigns have no co-owners); the operation and test pickers
+  stay (see the next item). Force an edit anyway (open the Data Studio form and
+  save, or `PATCH` the sample): the error reads as a refusal in plain words, not a generic or
+  developer text. Add B as a co-owner of the sample: B now
   sees **Edit**. Since: Explorer pages E5-fix-ui (PR pending).
 - [ ] **E5-fix-ui: pickers by a non-owner give the right message.** As user B on a campaign B owns,
   search the Samples picker for a sample B can read but neither owns nor co-owns (one B sees only as
-  an investigator) and add it. Expect the create guard's refusal to read "You can only add records
-  you own or co-own.", not a generic Directus error and not "already in another campaign". Do the
-  same with an operation or test that B can read but not update: the same message (or "Only the
-  owner or a co-owner can change this record." when removing). Two tabs adding the same free
-  operation as its owner still says "... is already in another campaign." Since: Explorer pages
-  E5-fix-ui (PR pending).
+  an investigator) and add it. Expect the create guard's refusal to read "You can only add this to a
+  sample you own or co-own.", not a generic Directus error, not a table name or id, and not "already
+  in another campaign". Do the same with an operation or test that B can read but not update (it is
+  an update of that operation or test, not of the campaign): "Only the owner of <code> (or of its
+  sample) can move it.", for add and for remove. As B on a campaign A owns, adding a sample says
+  "Only the campaign's owner can add samples to it."; removing a sample B neither co-owns nor owns the
+  campaign of says "Only the campaign's owner, or the sample's owner or a co-owner, can remove it."
+  As B on A's campaign, an operation B owns can still be added and removed (the picker is there).
+  Two tabs adding the same free operation as its owner still says "... is already in another
+  campaign." Since: Explorer pages E5-fix-ui (PR pending); wording E5-r3.
 - [ ] **E5-r2-ui: a refused save shows the server's reason.** As a co-owner (not owner) of a sample,
-  open the sample page, **Edit**, change the **Owner** and save. Expect the d1-access-guard's own
-  message (what it refused and who may do it), not the generic "Only the owner or a co-owner can
-  change this record.". As B, an investigator who cannot edit, force a save on a campaign (Data
-  Studio form) and on a project: the text names the campaign's owner / the project's PI when the
-  server gives no reason of its own. Since: Explorer pages E5-r2-ui (PR pending).
+  open the sample page, **Edit**, change the **Owner** and save. Expect "Only the sample's owner can
+  hand it to someone else." (the same for an operation or test: "Only the operation's owner ..."),
+  not the generic "Only the owner or a co-owner can change this record." and not Directus's own
+  "You don't have permission to perform "update" for collection ..." text. As B, an investigator who
+  cannot edit, force a save on a campaign (Data Studio form) and on a project: Directus's own 403
+  is replaced by "Only the campaign's owner can change it." / "Only the project's PI can change
+  it." (in the browser's Network tab the response is the stock 403 with `extensions.reason`; the
+  page must not show it). In the Network tab the guard's 403 carries `extensions.source:
+  "d1-access-guard"`, `kind` and `parent`. Since: Explorer pages E5-r2-ui (PR pending); wording E5-r3.
 - [ ] **E5-r2-ui: Edit follows the record, one permissions request per page.** As a co-owner (not
   owner) of a sample, open it, **Edit**, set the Owner to someone else and save: the **Edit** button
   disappears without a reload. Open a record you can change, then follow a link to one you cannot
@@ -539,11 +550,20 @@ migration 141 prints about ownerless records.
 - [ ] **E5 r2 — nobody can attach their sample to someone else's test (`test_sessions_subject`).** A
   owns test T (on A's sample SA); B owns sample SB and is unrelated to T. As B: `POST
   /items/test_sessions_subject {"test_sessions_id": T, "collection": "physical_samples", "item": SB}`
-  answers **403 FORBIDDEN** (message names the test), no row is created, and B still cannot read T.
+  answers **403 FORBIDDEN** ("You can only change the samples of a test you own, or of a test on a sample you own or co-own."), no row is created, and B still cannot read T.
   The same POST by A, or by the admin, works. A creating a **new test with a sample in the form** (the
   *Subject* field) still works. Naming a sample A cannot read on A's own test is allowed (A reads
   the test; SB's owner can then read and edit it): confirm and record that this is what you want
   (ADR-0011 decision 5). Since: Explorer pages E5 r2 (PR pending).
+- [ ] **E5-r3 — a parent merely updated in the request does not count as "created here".** As B,
+  create a *new* sample with a co-owner in the form (it works), a new project with investigators
+  (works) and a new campaign with samples (works): the guard now requires the parent to be
+  inserted by the request **and still at OCC version 1**. Then `POST /items/sample_co_owners
+  {"sample_id": <a sample of A's that B cannot update>, "user_id": <B's user>}` still answers 403
+  "You can only add this to a sample you own or co-own.". The "updated in the same transaction"
+  case itself is proven at SQL level in phase1 and in the node tests; this checks that the real
+  Directus nested create still passes the new `version = 1` condition. Since: Explorer pages E5-r3
+  (PR pending).
 - [ ] **E5 r2 — the creator owns what they make in someone else's campaign.** A owns campaign C in
   project P (PI: PI). As B (a co-owner of a sample in C, so B may add an operation to it) create an
   operation and a test with *Campaign* = C: both show *Owner: B* (not A, not PI), inherit the project,
