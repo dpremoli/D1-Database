@@ -1,10 +1,9 @@
 // Settings > About's "Notify me about updates when the app is closed" (#197): the preference, the
 // IPC the renderer toggles it through, and the startup sync that creates the scheduled task.
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { applyUpdateTask, type UpdateTaskDeps } from './updateTask';
+import { applyUpdateTask, runSchtasks, type UpdateTaskDeps } from './updateTask';
 
 /** `<userData>/desktop-prefs.json`. Absent or unreadable means the default: on. (Not config.json:
  * that file is served to the renderer as the runtime config.) */
@@ -34,10 +33,7 @@ export function makeUpdateTaskDeps(opts: { packaged: boolean; exePath: string })
     supported: process.platform === 'win32' && opts.packaged,
     exePath: opts.exePath,
     userId: process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${user}` : user,
-    exec: (args) =>
-      new Promise((resolve) => {
-        execFile('schtasks', args, { windowsHide: true }, (error, stdout) => resolve({ ok: !error, stdout: String(stdout ?? '') }));
-      }),
+    exec: runSchtasks,
     writeXml: (data) => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'force-app-task-'));
       const file = path.join(dir, 'update-check.xml');

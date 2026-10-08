@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-	attentionItems, channelConfigIssues, computePreflight, diskRunwayMinutes, formatRunway, isCustomChannelList, missingFromChassis, needsSampleConfirm,
+	attentionItems, channelConfigIssues, computePreflight, diskRunwayMinutes, formatRunway, isCustomChannelList, needsSampleConfirm,
 	type ChannelLike, type PreflightInput, type PreflightItem,
 } from './preflight';
+import { missingFromChassis } from './channelBindings';
 
 const CORE = ['Fx1', 'Fx2', 'Fy1', 'Fy2', 'Fz1', 'Fz2', 'Fz3', 'Fz4', 'Tacho'];
 const goodChannels = (): ChannelLike[] => CORE.map((name, i) => ({ name, physical: `cDAQ1Mod${1 + Math.floor(i / 4)}/ai${i % 4}`, source: 'hardware' }));

@@ -17,8 +17,6 @@ export interface ReadyNotifyInput {
   version: string;
   /** The last version a notification was shown for in this run of the app. */
   notifiedVersion: string | null;
-  /** A recording is running or still being saved: never interrupt it. */
-  recording: boolean;
   /** There is a main window at all. Without one the native dialog is the fallback. */
   hasWindow: boolean;
   /** The window has focus. False also covers minimised, hidden and behind another window. */
@@ -26,9 +24,9 @@ export interface ReadyNotifyInput {
 }
 
 /** Should "update ready" be shown as an OS notification now? Only when the operator is not
- * looking at the in-app card (window not focused), not mid-recording, once per version. */
+ * looking at the in-app card (window not focused), once per version. */
 export function shouldNotifyReady(i: ReadyNotifyInput): boolean {
-  return i.hasWindow && !i.focused && !i.recording && i.notifiedVersion !== i.version;
+  return i.hasWindow && !i.focused && i.notifiedVersion !== i.version;
 }
 
 export function readyNotification(version: string): { title: string; body: string } {

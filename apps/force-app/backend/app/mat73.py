@@ -136,11 +136,11 @@ class Mat73Writer:
             self._write_struct(parent, name, value)
         elif isinstance(value, str):
             self._write_char(parent, name, value)
-        elif isinstance(value, (list, tuple)) or (
+        elif isinstance(value, list | tuple) or (
             isinstance(value, np.ndarray) and value.dtype.kind in "OUS"
         ):
             items = list(value.ravel()) if isinstance(value, np.ndarray) else list(value)
-            if all(isinstance(v, (str, np.str_)) for v in items):
+            if all(isinstance(v, str | np.str_) for v in items):
                 self._write_cell_of_char(parent, name, [str(v) for v in items])
             else:
                 self._write_numeric(parent, name, np.asarray(value))
@@ -152,9 +152,8 @@ class Mat73Writer:
             cls, arr = "logical", arr.astype(np.uint8)
         else:
             cls = _CLASSES.get(arr.dtype)
-            if (
-                cls is None
-            ):  # anything exotic (object, complex, ...): store its text rather than fail
+            if cls is None:
+                # anything exotic (object, complex, ...): store its text rather than fail
                 self._write_char(parent, name, str(arr.tolist()))
                 return
         # scalar -> 1x1, 1-D -> a 1xN row, 2-D as is; HDF5 holds the transpose

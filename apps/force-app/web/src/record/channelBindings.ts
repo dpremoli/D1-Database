@@ -15,19 +15,25 @@ export interface MissingBinding { name: string; role: string; physical: string }
  *  real device list to compare with: an absent chassis is the NI-DAQ source button's business, and
  *  a simulated tree has no real inputs to miss. */
 export function missingFromChassis(physical: readonly string[], scan: readonly string[] | null | undefined): string[] {
-	if (!scan || !scan.length) return [];
-	// DAQmx takes "force1_mod1/ai0" for "Force1_Mod1/ai0": names differ only if they differ in more than case.
+	const has = scanHas(scan);
+	return has ? [...new Set(physical)].filter((p) => !has(p)) : [];
+}
+
+/** Does the scan have this port? Null when there is no scan to compare with. DAQmx takes
+ *  "force1_mod1/ai0" for "Force1_Mod1/ai0": names differ only if they differ in more than case. */
+function scanHas(scan: readonly string[] | null | undefined): ((p: string) => boolean) | null {
+	if (!scan || !scan.length) return null;
 	const have = new Set(scan.map((p) => p.toLowerCase()));
-	return [...new Set(physical)].filter((p) => !have.has(p.toLowerCase()));
+	return (p) => have.has(p.toLowerCase());
 }
 
 /** The hardware channels of a saved model that name a port the scan does not have, in model order,
  *  each with the role it plays. Virtual channels have no port. Empty when there is no scan. */
 export function missingBindings(bindings: readonly BoundChannel[], scan: readonly string[] | null | undefined): MissingBinding[] {
-	if (!scan || !scan.length) return [];
-	const have = new Set(scan.map((p) => p.toLowerCase()));
+	const has = scanHas(scan);
+	if (!has) return [];
 	return bindings
-		.filter((c) => c.physical && c.source !== 'virtual' && !have.has(String(c.physical).trim().toLowerCase()))
+		.filter((c) => c.physical && c.source !== 'virtual' && !has(String(c.physical).trim()))
 		.map((c) => ({ name: c.name, role: c.role || c.name, physical: String(c.physical).trim() }));
 }
 
@@ -60,12 +66,4 @@ export function reassignConfirmText(bindings: readonly BoundChannel[], scan: rea
 		: 'No force channel has an input assigned.';
 	const n = scan?.length ?? 0;
 	return `${now} Re-assign replaces the whole saved channel list (names, sensitivities, gains and virtual channels) with the automatic layout on the ${n} input${n === 1 ? '' : 's'} the NI-DAQ reports.`;
-}
-
-/** Why the pre-flight should offer Re-assign, or null when the bindings and the scan agree. */
-export type ReassignReason = 'missing' | 'unbound';
-export function reassignReason(bindings: readonly BoundChannel[], scan: readonly string[] | null | undefined): ReassignReason | null {
-	if (missingBindings(bindings, scan).length) return 'missing';
-	if (noForceBound(bindings, scan)) return 'unbound';
-	return null;
 }

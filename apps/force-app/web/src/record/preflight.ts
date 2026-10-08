@@ -10,8 +10,6 @@
 import { groupMissing, missingBindings, missingFromChassis, noForceBound, reassignConfirmText } from './channelBindings';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS, SUB_NAMES } from './liveClient';
 
-export { missingFromChassis };
-
 export type PreflightLevel = 'ok' | 'info' | 'warn' | 'fail' | 'skip';
 export type PreflightId = 'sample' | 'auth' | 'amp' | 'tacho' | 'disk' | 'channels';
 

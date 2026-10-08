@@ -2025,7 +2025,7 @@ async def record_cut_start() -> dict:
     """Start the live FRM now (#184), for when the causal cut detector never fires. Sets the cut
     origin at the latest acquired sample through the same path the detector uses. 409 when not
     recording or when a cut start is already set (auto or manual); never re-origins."""
-    if _session is None or _session.state != "recording":
+    if _session is None:
         raise HTTPException(409, "no recording in progress")
     try:
         mark = _session.mark_cut_start_now()

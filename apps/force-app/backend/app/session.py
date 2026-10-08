@@ -461,20 +461,20 @@ class RecordingSession:
             axes = sum_axes(data)
             for i, ax in enumerate(("Fx", "Fy", "Fz")):
                 self.peaks[i] = max(self.peaks[i], float(np.max(np.abs(axes[ax]))))
+            trace = self.decimator.process(t, axes)
+            # Per-sub-channel envelopes (the 8 dyno columns, plus any configured Aux/virtual extra)
+            # so the client can plot any single sensor live, not just the summed axes.
+            extra = self._extra_values(data, axes)
+            sub_cols = np.concatenate([data[:, :9], extra], axis=1) if extra.size else data[:, :9]
+            sub = self.decimator.process_cols(t, np.asarray(sub_cols, dtype=np.float64))
+            # Only what depends on the cut origin is under the lock, so a manual mark (#184) waits
+            # for one detect + FRM step, not the whole chunk.
             with self._cut_lock:
                 # Causal cut-start detection: reset the FRM spiral origin + tell the UI when it
                 # begins. (A manual mark has already flagged the detector, so it stays silent.)
                 ct = self.cut.update(t, np.abs(axes["Fz"]))
                 if ct is not None:
                     self._set_cut_start(ct, "auto", self.n_total + int(np.searchsorted(t, ct)))
-                trace = self.decimator.process(t, axes)
-                # Per-sub-channel envelopes (the 8 dyno columns, plus any configured Aux/virtual
-                # extra) so the client can plot any single sensor live, not just the summed axes.
-                extra = self._extra_values(data, axes)
-                sub_cols = (
-                    np.concatenate([data[:, :9], extra], axis=1) if extra.size else data[:, :9]
-                )
-                sub = self.decimator.process_cols(t, np.asarray(sub_cols, dtype=np.float64))
                 pts, rpm, tacho_ok = self.frm.process(t, axes, tacho_column(data))
                 self.n_total += t.size
                 self._t_last = float(t[-1])

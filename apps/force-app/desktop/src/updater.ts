@@ -116,12 +116,12 @@ let readyToast: Notification | null = null;
 let notifiedVersion: string | null = null;
 
 /** An OS notification that the update is downloaded, for an operator who is not looking at the
- * in-app card: the window is minimised, hidden or behind another one (#197). Once per version,
- * never during a recording. Clicking it brings the window (and its card) forward. */
-function notifyReady(version: string, recording: boolean): void {
+ * in-app card: the window is minimised, hidden or behind another one (#197). Once per version;
+ * callers only get here when no recording is running. Clicking it brings the window (and its card) forward. */
+function notifyReady(version: string): void {
   const win = getWindow?.() ?? null;
   const alive = !!win && !win.isDestroyed();
-  if (!shouldNotifyReady({ version, notifiedVersion, recording, hasWindow: alive, focused: alive && win!.isFocused() })) return;
+  if (!shouldNotifyReady({ version, notifiedVersion, hasWindow: alive, focused: alive && win!.isFocused() })) return;
   if (!Notification.isSupported()) return;
   notifiedVersion = version;
   const toast = new Notification(readyNotification(version));
@@ -182,7 +182,7 @@ function deferUntilIdle(version: string, notes: string): void {
       const p = pending;
       pending = null;
       if (!hasWindow()) showUpdateDialog(p.version, p.notes);
-      else notifyReady(p.version, false);
+      else notifyReady(p.version);
     }
   }, 60_000);
 }
@@ -194,7 +194,7 @@ async function offerUpdate(version: string, notes: string): Promise<void> {
   }
   // The renderer prompt is already showing (or waiting out a recording itself) from the push.
   if (hasWindow()) {
-    notifyReady(version, false);
+    notifyReady(version);
     return;
   }
   showUpdateDialog(version, notes);

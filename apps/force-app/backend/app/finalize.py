@@ -123,8 +123,10 @@ def _mat73_failure(n: int, mat_bytes: int, e: Exception) -> str:
 
 
 def _abort_mat73(writer: Mat73Writer | None, part: str) -> None:
+    """Drop a half-written v7.3 file. `writer` is None when it could not even be created."""
     if writer is not None:
-        writer.abort()
+        writer.abort()  # closes and deletes `part`
+        return
     try:
         os.remove(part)
     except OSError:

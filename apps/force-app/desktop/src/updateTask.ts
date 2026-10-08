@@ -5,12 +5,19 @@
 // Not the old auto-start task (scheduledTask.ts removes "ForceAppRecorderBackend"): that one
 // started a second recorder backend that fought the app for port 8200. This one never starts a
 // backend and never downloads anything; it only tells the operator an update exists.
+import { execFile } from 'node:child_process';
 import { UPDATE_CHECK_FLAG } from './updateNotify';
 
 export const UPDATE_TASK_NAME = 'ForceAppUpdateCheck';
 
 export interface ExecResult { ok: boolean; stdout: string }
 export type Exec = (args: string[]) => Promise<ExecResult>;
+
+/** Runs schtasks with no console window; never rejects. */
+export const runSchtasks: Exec = (args) =>
+  new Promise((resolve) => {
+    execFile('schtasks', args, { windowsHide: true }, (error, stdout) => resolve({ ok: !error, stdout: String(stdout ?? '') }));
+  });
 
 function xmlEscape(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');

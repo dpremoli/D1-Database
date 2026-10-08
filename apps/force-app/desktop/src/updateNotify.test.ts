@@ -3,12 +3,11 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { APP_USER_MODEL_ID, isUpdateCheckArgv, shouldNotifyReady } from './updateNotify';
 
-const base = { version: '2.0.0', notifiedVersion: null, recording: false, hasWindow: true, focused: false };
+const base = { version: '2.0.0', notifiedVersion: null, hasWindow: true, focused: false };
 
 describe('shouldNotifyReady', () => {
   it('notifies when the window is not focused', () => expect(shouldNotifyReady(base)).toBe(true));
   it('not when focused', () => expect(shouldNotifyReady({ ...base, focused: true })).toBe(false));
-  it('not while recording', () => expect(shouldNotifyReady({ ...base, recording: true })).toBe(false));
   it('not twice for the same version', () => expect(shouldNotifyReady({ ...base, notifiedVersion: '2.0.0' })).toBe(false));
   it('again for a newer version', () => expect(shouldNotifyReady({ ...base, notifiedVersion: '1.9.0' })).toBe(true));
   it('not without a window', () => expect(shouldNotifyReady({ ...base, hasWindow: false })).toBe(false));

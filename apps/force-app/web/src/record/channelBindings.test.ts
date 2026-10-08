@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	describeMissing, missingBindings, missingFromChassis, noForceBound, reassignConfirmText, reassignReason, type BoundChannel,
+	describeMissing, missingBindings, missingFromChassis, noForceBound, reassignConfirmText, type BoundChannel,
 } from './channelBindings';
 
 const CORE = ['Fx1', 'Fx2', 'Fy1', 'Fy2', 'Fz1', 'Fz2', 'Fz3', 'Fz4', 'Tacho'];
@@ -51,25 +51,18 @@ describe('missingBindings (#195)', () => {
 	});
 });
 
-describe('noForceBound / reassignReason (#195)', () => {
+describe('noForceBound (#195)', () => {
 	it('warns for empty bindings only when the scan has ports to give', () => {
 		const empty: BoundChannel[] = CORE.map((name) => ({ name, role: role(name), physical: null }));
 		expect(noForceBound(empty, ['cDAQ1Mod1/ai0'])).toBe(true);
 		expect(noForceBound([], ['cDAQ1Mod1/ai0'])).toBe(true);
 		expect(noForceBound(empty, [])).toBe(false);
 		expect(noForceBound(empty, null)).toBe(false);
-		expect(reassignReason(empty, ['cDAQ1Mod1/ai0'])).toBe('unbound');
 	});
 
 	it('one bound force channel is not "no force channels"', () => {
 		const b = bound().map((c, i) => (i === 0 ? c : { ...c, physical: null }));
 		expect(noForceBound(b, scanOf(bound()))).toBe(false);
-	});
-
-	it('is null when bindings and scan agree, and "missing" when a port is gone', () => {
-		const b = bound();
-		expect(reassignReason(b, scanOf(b))).toBeNull();
-		expect(reassignReason(b, scanOf(b).slice(1))).toBe('missing');
 	});
 });
 

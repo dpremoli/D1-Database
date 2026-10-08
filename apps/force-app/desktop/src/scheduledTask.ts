@@ -1,5 +1,5 @@
-import { execFile } from 'node:child_process';
 import { dialog } from 'electron';
+import { runSchtasks } from './updateTask';
 
 const TASK_NAME = 'ForceAppRecorderBackend';
 
@@ -11,14 +11,10 @@ export interface ScheduledTaskDeps {
 
 export function makeDefaultDeps(): ScheduledTaskDeps {
   return {
-    taskExists: () =>
-      new Promise((resolve) => {
-        execFile('schtasks', ['/query', '/tn', TASK_NAME], (error) => resolve(!error));
-      }),
-    removeTask: () =>
-      new Promise((resolve) => {
-        execFile('schtasks', ['/delete', '/tn', TASK_NAME, '/f'], () => resolve());
-      }),
+    taskExists: async () => (await runSchtasks(['/query', '/tn', TASK_NAME])).ok,
+    removeTask: async () => {
+      await runSchtasks(['/delete', '/tn', TASK_NAME, '/f']);
+    },
     confirm: async () => {
       const { response } = await dialog.showMessageBox({
         type: 'question',
