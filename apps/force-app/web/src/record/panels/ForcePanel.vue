@@ -135,7 +135,7 @@ function openLive() {
 		<div class="plot" @click="subsOpen = false">
 			<!-- Stays up while the save dialog is open (#189): switching to the rolling plot there made the
 				 panel jump between the whole cut and the last N seconds. -->
-			<FinishedForcePlot v-if="plotView === 'finished'" :cache="w.finishedCache.value!" :channels="selected" />
+			<FinishedForcePlot v-if="plotView === 'finished'" :cache="w.finishedCache.value!" :channels="selected" :paused="w.saveOpen.value" />
 			<LiveForcePlot v-else-if="mode === 'time'" :client="w.client" :channels="selected" :window-sec="windowSec" />
 			<LiveFft v-if="mode === 'fft' || mode === 'psd'" :client="w.client" :channels="selected" :scale="mode === 'psd' ? 'psd' : 'amp'" />
 			<LiveSpectrogram v-else-if="mode === 'spectrogram'" :client="w.client" :channels="selected" :window-sec="windowSec" />

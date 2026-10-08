@@ -8,6 +8,7 @@ import type { Cache } from '@d1/force-plotting';
 import { channelColor } from './types';
 import { theme } from '../theme';
 import { useCanvasLifecycle } from './canvasLifecycle';
+import { createDrawGate } from './drawGate';
 import { decimateMinMax, seriesRange, shouldDecimate } from './traceDecimate';
 import { cacheTachoKind, channelLabel, finishedPlotModel, TACHO, type FinishedPlotModel } from './tachoSignal';
 
@@ -20,6 +21,9 @@ const props = defineProps<{
 	cropStartSec?: number | null;
 	cropEndSec?: number | null;
 	cropEditable?: boolean;
+	// While true nothing is built or drawn (the plot is covered, e.g. by the Save dialog); it draws once
+	// when this turns false (#189).
+	paused?: boolean;
 }>();
 const emit = defineEmits<{
 	(e: 'update:cropStartSec', v: number): void;
@@ -27,6 +31,7 @@ const emit = defineEmits<{
 }>();
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
+const gate = createDrawGate(() => !!props.paused);
 
 // MB fits the tick labels (4-14px below the plot) AND the axis title under them; at 22 the
 // title was drawn top-aligned 4px above the canvas edge and always clipped to half its height.
@@ -286,13 +291,14 @@ function draw() {
 let raf = 0;
 function scheduleDraw() {
 	if (raf) return;
-	raf = requestAnimationFrame(() => { raf = 0; draw(); });
+	raf = requestAnimationFrame(() => { raf = 0; if (!gate.blocked()) draw(); });
 }
 
 watch(() => props.cache, () => scheduleDraw());
 watch(() => props.channels, () => scheduleDraw());
 watch(() => [props.cropStartSec, props.cropEndSec], () => scheduleDraw());
 watch(theme, () => scheduleDraw());
+watch(() => props.paused, () => { if (gate.takeDirty()) scheduleDraw(); });
 
 // Resize/restore/visibility handling (#189): see canvasLifecycle.ts. A repaint only re-blits the cached layer.
 useCanvasLifecycle(canvasEl, { resize, repaint: scheduleDraw });
