@@ -17,6 +17,7 @@ const w = useWorkspace();
 const hints = shortcutHints(isMacPlatform());
 const startKeys = hints[0].keys;
 const stopKeys = hints[1].keys;
+const newKeys = hints[3].keys;
 const hintsOpen = ref(false);
 
 // #84: a rate the assigned NI-DAQ modules can't do is caught here, before Start, instead of as a
@@ -66,13 +67,14 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
 			</div>
 			<div class="actions">
 				<button v-if="!w.locked.value" class="btn success start" :disabled="w.startDisabled.value"
-					:title="w.sampleRateBlocker.value || `Start (${startKeys})`" @click="w.requestStart()">
-					<span class="material-symbols-rounded">fiber_manual_record</span> Start
+					:title="w.sampleRateBlocker.value || (w.isDone.value ? `Start the next cut: steps the cut sequence and clears the Cut ID, chips and new-edge marks first (${startKeys})` : `Start (${startKeys})`)"
+					data-testid="start-btn" @click="w.requestStart()">
+					<span class="material-symbols-rounded">fiber_manual_record</span> {{ w.isDone.value ? 'Start next cut' : 'Start' }}
 				</button>
 				<button v-else class="btn danger stop" :disabled="w.stopDisabled.value" :title="`Stop (${stopKeys})`" @click="w.stop()">
 					<span class="material-symbols-rounded">stop</span> {{ w.isFinalizing.value ? 'Finalizing…' : 'Stop' }}
 				</button>
-				<button v-if="w.isDone.value" class="btn" @click="w.newRun()">New</button>
+				<button v-if="w.isDone.value" class="btn" data-testid="clear-next-cut" :title="`Clear for the next cut without recording: steps the cut sequence and clears the Cut ID, chips and new-edge marks (${newKeys})`" @click="w.newRun()">Clear for next cut</button>
 			</div>
 		</div>
 		<div v-if="w.mode.value !== 'playback'" class="kbd-hint">
