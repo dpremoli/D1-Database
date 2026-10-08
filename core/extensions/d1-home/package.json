@@ -7,12 +7,16 @@
     "dev": "directus-extension build --watch",
     "typecheck": "vue-tsc --noEmit"
   },
-  "keywords": ["directus", "directus-extension", "directus-custom-module"],
+  "keywords": [
+    "directus",
+    "directus-extension",
+    "directus-custom-module"
+  ],
   "devDependencies": {
     "@directus/extensions-sdk": "^17",
     "@vue/compiler-sfc": "^3",
     "typescript": "^5",
-    "vue": "^3",
+    "vue": "^3.5.43",
     "vue-tsc": "^2.2.0"
   },
   "directus:extension": {
