@@ -34,6 +34,7 @@ class LabAmp(Protocol):
     mock: bool
 
     def ping(self) -> bool: ...
+    def probe(self) -> tuple[bool, str | None]: ...
     def get_operation_mode(self) -> str | None: ...
     def set_operation_mode(self, mode: str) -> None: ...
     def sensor_table(self, channels: int) -> list[dict]: ...
@@ -74,18 +75,20 @@ class LabAmpClient:
             raise LabAmpError(f"LabAmp error result={j.get('result')} for {path}")
         return j.get("data") or j
 
-    def ping(self) -> bool:
+    def probe(self) -> tuple[bool, str | None]:
         # A short wait: the amp answers this in about 0.3 s, and with its cable pulled the full
         # timeout made /labamp/status, and so the Record page's Lab Amp chip, take 10 s to say
         # "not reachable" (#215).
         try:
-            self._post("/api/$/operationMode/get", {}, timeout=min(self.timeout, PING_TIMEOUT_SEC))
-            return True
+            return True, self.get_operation_mode(timeout=min(self.timeout, PING_TIMEOUT_SEC))
         except LabAmpError:
-            return False
+            return False, None
 
-    def get_operation_mode(self) -> str | None:
-        data = self._post("/api/$/operationMode/get", {})
+    def ping(self) -> bool:
+        return self.probe()[0]
+
+    def get_operation_mode(self, timeout: float | None = None) -> str | None:
+        data = self._post("/api/$/operationMode/get", {}, timeout=timeout)
         return data.get("mode")
 
     def set_operation_mode(self, mode: str) -> None:
@@ -165,6 +168,9 @@ class MockLabAmp:
 
     def ping(self) -> bool:
         return True
+
+    def probe(self) -> tuple[bool, str | None]:
+        return True, self._mode
 
     def get_operation_mode(self) -> str | None:
         return self._mode

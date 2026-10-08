@@ -201,46 +201,46 @@ def max_sample_rate(channels: list[str], system=None) -> float | None:
     return sample_rate_limits(channels, system=system)["max"]
 
 
+def _devices_behind(channels: list[str], system=None) -> list:
+    """The DAQmx devices (modules) that physical channel names like "Mod1/ai0" are on. Empty when
+    there is no real DAQmx system to ask or none of the names is on it."""
+    sysobj = system if system is not None else _local_system()
+    dev_names = {ch.split("/")[0] for ch in channels if "/" in ch}
+    if sysobj is None or not dev_names:
+        return []
+    return [d for d in _safe(lambda: list(sysobj.devices or []), []) if d.name in dev_names]
+
+
 def sample_rate_limits(channels: list[str], system=None) -> dict:
     """{"max": Hz | None, "min": Hz | None} for a set of physical channels — max_sample_rate's
     ceiling plus the matching floor (the highest ai_min_rate among the devices in play), for
     /record/start's pre-flight check (#84). Both None when there is no real DAQmx system to ask."""
-    out: dict = {"max": None, "min": None}
-    sysobj = system if system is not None else _local_system()
-    if sysobj is None:
-        return out
-    dev_names = {ch.split("/")[0] for ch in channels if "/" in ch}
-    if not dev_names:
-        return out
     maxes, mins = [], []
-    for dev in _safe(lambda: list(sysobj.devices or []), []):
-        if dev.name in dev_names:
-            rate = _safe(lambda: dev.ai_max_multi_chan_rate, None)
-            if rate:
-                maxes.append(float(rate))
-            floor = _safe(lambda: dev.ai_min_rate, None)
-            if floor:
-                mins.append(float(floor))
-    out["max"] = min(maxes) if maxes else None
-    out["min"] = max(mins) if mins else None
-    return out
+    for dev in _devices_behind(channels, system):
+        rate = _safe(lambda: dev.ai_max_multi_chan_rate, None)
+        if rate:
+            maxes.append(float(rate))
+        floor = _safe(lambda: dev.ai_min_rate, None)
+        if floor:
+            mins.append(float(floor))
+    return {"max": min(maxes) if maxes else None, "min": max(mins) if mins else None}
+
+
+# How far the driver's real rate may sit from the request and still be the same rate: typing
+# 17067 for an NI 9234's 17,066.67 Hz is not a different choice, 25,000 for 25,600 is.
+SAMPLE_RATE_REL_TOL = 1e-4
 
 
 def input_range_v(channels: list[str], system=None) -> float | None:
     """The largest voltage the modules behind `channels` can read (#200): each device's widest
     input range, and the smallest of those across the devices in play. None when there is no real
     DAQmx system to ask or the devices do not say."""
-    sysobj = system if system is not None else _local_system()
-    if sysobj is None:
-        return None
-    dev_names = {ch.split("/")[0] for ch in channels if "/" in ch}
     limits = []
-    for dev in _safe(lambda: list(sysobj.devices or []), []):
-        if dev.name in dev_names:
-            # ai_voltage_rngs is flat: [low, high, low, high, ...]
-            highs = _safe(lambda: [float(v) for v in dev.ai_voltage_rngs][1::2], [])
-            if highs:
-                limits.append(max(highs))
+    for dev in _devices_behind(channels, system):
+        # ai_voltage_rngs is flat: [low, high, low, high, ...]
+        highs = _safe(lambda: [float(v) for v in dev.ai_voltage_rngs][1::2], [])
+        if highs:
+            limits.append(max(highs))
     return min(limits) if limits else None
 
 

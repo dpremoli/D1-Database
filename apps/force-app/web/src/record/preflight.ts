@@ -34,6 +34,11 @@ export function parseChannelList(text: string): string[] {
 	return text.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
 }
 
+/** The physical inputs a saved channel model records from, in order (virtual channels have none). */
+export function modelPhysicals(model: readonly ChannelLike[]): string[] {
+	return model.filter((c) => c.physical && c.source !== 'virtual').map((c) => String(c.physical).trim());
+}
+
 /** Whether Start sends a list the backend will take literally, so the saved channel model is NOT
  *  what the Channels chip should speak for. Not custom: empty, the default placeholder list, or
  *  the saved model's own physical list (what first-boot autoassign writes into the Record page on
@@ -45,7 +50,7 @@ export function isCustomChannelList(text: string, defaults: readonly string[], m
 	const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 	if (same(chans, defaults)) return false;
 	if (model) {
-		const modelList = model.filter((c) => c.physical && c.source !== 'virtual').map((c) => String(c.physical).trim());
+		const modelList = modelPhysicals(model);
 		if (modelList.length > 0 && same(chans, modelList)) return false;
 	}
 	return true;
@@ -224,7 +229,7 @@ function channelsItem(i: PreflightInput): PreflightItem {
 	}
 	if (!channels) return { id: 'channels', label: 'Channels', level: 'skip', detail: 'Channel configuration not read yet.' };
 	const { fail, warn } = channelConfigIssues(channels);
-	fail.push(...notOnChassis(channels.filter((c) => c.physical && c.source !== 'virtual').map((c) => String(c.physical).trim())));
+	fail.push(...notOnChassis(modelPhysicals(channels)));
 	if (fail.length) return { id: 'channels', label: 'Channels', level: 'fail', focus, detail: `Channel configuration problem: ${fail.join('; ')}.` };
 	if (warn.length) {
 		return {

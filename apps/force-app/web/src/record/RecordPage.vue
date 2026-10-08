@@ -203,8 +203,9 @@ const diskGate = new IntervalGate(checkDisk, 30_000);
 // #215: the chassis is re-read on the same tick, whatever source is selected, so the NI-DAQ button
 // (and the Channels chip) follow a cable being pulled or plugged back in without a visit to
 // another page. 5 s, not the disk poll's 30: this is the wait before a cut, when the operator is
-// looking at these chips.
+// looking at these chips, and not at all while the window is hidden.
 const preflightGate = new IntervalGate(() => {
+	if (document.hidden) return;
 	void w.refreshPreflight();
 	void checkNidaqPresence(w.client.baseUrl);
 }, 5_000);

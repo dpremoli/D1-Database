@@ -21,6 +21,7 @@ import time
 import numpy as np
 
 from ..config import DEFAULT_NIDAQ_CHANNELS, SIGNAL_CHANNELS, ExtraChannel, RecordConfig
+from ..nidaq_enum import SAMPLE_RATE_REL_TOL
 
 log = logging.getLogger("force_app.nidaq")
 
@@ -128,7 +129,7 @@ class NidaqSource:
             # at exactly that (#199). /record/start settles the rate before this; a difference
             # here would stamp every sample with the wrong time, so it is a refusal, not a warning.
             actual = float(task.timing.samp_clk_rate)
-            if not math.isclose(actual, self.rate, rel_tol=1e-4):
+            if not math.isclose(actual, self.rate, rel_tol=SAMPLE_RATE_REL_TOL):
                 task.close()
                 raise ValueError(
                     f"the NI-DAQ would sample at {actual:,.1f} Hz, not the requested "

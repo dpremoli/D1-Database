@@ -2,22 +2,19 @@
 // the source and sample rate) and its footer (which owns Start). Module-level so both read one
 // answer instead of each fetching its own, and so it survives the panel remounting.
 import { reactive } from 'vue';
+import type { Devices } from '../nidaq/nidaqApi';
 
-interface DevicePorts { ports?: { physical?: string | null }[] }
-
-export interface NidaqDevicesReply {
-	simulated?: boolean;
+export interface NidaqDevicesReply extends Partial<Devices> {
 	runtime_available?: boolean;
 	hardware_present?: boolean;
 	nimax_simulated?: boolean;
-	chassis?: { modules?: DevicePorts[] }[];
-	standalone?: DevicePorts[];
 }
 
-/** Every physical input ("Mod1/ai0") in a /nidaq/devices tree. */
+/** Every analog input ("Mod1/ai0") in a /nidaq/devices tree. Counter inputs are not something a
+ *  recording channel can be wired to (the backend's channels._ai_ports draws the same line). */
 export function physicalInputs(d: NidaqDevicesReply): string[] {
-	const devices = [...(d.chassis ?? []).flatMap((c) => c.modules ?? []), ...(d.standalone ?? [])];
-	return devices.flatMap((dev) => dev.ports ?? []).map((p) => p.physical).filter((p): p is string => !!p);
+	const modules = [...(d.chassis ?? []).flatMap((c) => c.modules ?? []), ...(d.standalone ?? [])];
+	return modules.flatMap((m) => m.ports ?? []).filter((p) => p.kind === 'ai' && p.physical).map((p) => p.physical);
 }
 
 export const nidaqHardware = reactive({
@@ -53,7 +50,9 @@ export function applyNidaqDevices(d: NidaqDevicesReply): void {
 	nidaqHardware.hardwarePresent = !!d.hardware_present;
 	nidaqHardware.runtimeAvailable = !!d.runtime_available;
 	nidaqHardware.nimaxSimulated = !!d.nimax_simulated;
-	nidaqHardware.physicalInputs = d.hardware_present && !d.simulated ? physicalInputs(d) : null;
+	const inputs = d.hardware_present && !d.simulated ? physicalInputs(d) : null;
+	// Polled every few seconds: a new array for the same inputs would re-run the pre-flight each time.
+	if (inputs?.join() !== nidaqHardware.physicalInputs?.join()) nidaqHardware.physicalInputs = inputs;
 	nidaqHardware.checked = true;
 }
 

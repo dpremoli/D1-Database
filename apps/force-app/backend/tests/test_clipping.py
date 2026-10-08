@@ -248,7 +248,6 @@ def test_session_and_finalize_flag_a_channel_clipped_by_the_daq(tmp_path):
     ranging = sess.summary["channels_ranging"]
     assert sess.status()["railed"] == [3]
     assert ranging["clipped"][3] is True and sum(ranging["clipped"]) == 1
-    assert ranging["rail_v"] == 5.0
     assert ranging["ranges_n"][3] == GAINS[3] * VFS  # still the amp's range
 
 

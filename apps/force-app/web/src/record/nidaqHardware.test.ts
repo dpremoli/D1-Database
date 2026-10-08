@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyNidaqDevices, nidaqHardware, nidaqUnavailableReason, physicalInputs } from './nidaqHardware';
+import { applyNidaqDevices, nidaqHardware, nidaqUnavailableReason, physicalInputs, type NidaqDevicesReply } from './nidaqHardware';
 
 describe('applyNidaqDevices', () => {
 	it('updates the shared state, so a reload of the NI-DAQ page re-enables the source', () => {
@@ -35,13 +35,14 @@ describe('nidaqUnavailableReason', () => {
 });
 
 describe('physical inputs of the connected hardware (#213)', () => {
+	const port = (physical: string, kind = 'ai') => ({ id: physical.split('/')[1], kind, physical });
 	const tree = {
 		hardware_present: true, runtime_available: true, simulated: false,
-		chassis: [{ modules: [{ ports: [{ physical: 'Force1_Mod1/ai0' }, { physical: 'Force1_Mod1/ai1' }] }, { ports: [{ physical: 'Tacho_Mod3/ai0' }] }] }],
-		standalone: [{ ports: [{ physical: 'Dev1/ai0' }, { physical: null }] }],
-	};
+		chassis: [{ modules: [{ ports: [port('Force1_Mod1/ai0'), port('Force1_Mod1/ai1')] }, { ports: [port('Tacho_Mod3/ai0'), port('Tacho_Mod3/ctr0', 'ci')] }] }],
+		standalone: [{ ports: [port('Dev1/ai0')] }],
+	} as unknown as NidaqDevicesReply;
 
-	it('are collected from chassis modules and standalone devices', () => {
+	it('are the analog inputs of chassis modules and standalone devices', () => {
 		expect(physicalInputs(tree)).toEqual(['Force1_Mod1/ai0', 'Force1_Mod1/ai1', 'Tacho_Mod3/ai0', 'Dev1/ai0']);
 		expect(physicalInputs({})).toEqual([]);
 	});
@@ -49,6 +50,9 @@ describe('physical inputs of the connected hardware (#213)', () => {
 	it('are kept for a real device and dropped for the simulated tree or no device', () => {
 		applyNidaqDevices(tree);
 		expect(nidaqHardware.physicalInputs).toHaveLength(4);
+		const same = nidaqHardware.physicalInputs;
+		applyNidaqDevices(tree);
+		expect(nidaqHardware.physicalInputs).toBe(same); // polled: an unchanged list is not replaced
 		applyNidaqDevices({ ...tree, simulated: true });
 		expect(nidaqHardware.physicalInputs).toBeNull();
 		applyNidaqDevices({ ...tree, hardware_present: false });

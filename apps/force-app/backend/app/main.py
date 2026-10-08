@@ -1793,15 +1793,10 @@ def sample_rate_problem(rate: float, limits: dict) -> dict | None:
     }
 
 
-# How far the driver's real rate may sit from the request and still be the same rate: typing
-# 17067 for an NI 9234's 17,066.67 Hz is not a different choice, 25,000 for 25,600 is.
-SAMPLE_RATE_REL_TOL = 1e-4
-
-
 def coerced_rate_problem(rate: float, actual: float | None) -> dict | None:
     """A structured 400 detail when the hardware would sample at `actual` instead of `rate`
     (#199), else None. `suggested` is the rate to use, for the UI to put in the field."""
-    if actual is None or math.isclose(rate, actual, rel_tol=SAMPLE_RATE_REL_TOL):
+    if actual is None or math.isclose(rate, actual, rel_tol=nidaq_enum.SAMPLE_RATE_REL_TOL):
         return None
     return {
         "field": "sample_rate",
@@ -2398,13 +2393,9 @@ async def capture_mat(cid: str) -> FileResponse:
 @app.get("/labamp/status")
 async def labamp_status() -> dict:
     amp = _labamp
-    reachable = await run_in_threadpool(amp.ping)
-    mode = None
-    if reachable:
-        try:
-            mode = await run_in_threadpool(amp.get_operation_mode)
-        except LabAmpError:
-            pass
+    # One round-trip tells both: the Record page reads this every few seconds while waiting to
+    # Start, and the amp takes about 0.3 s per call.
+    reachable, mode = await run_in_threadpool(amp.probe)
     return {
         "reachable": reachable,
         "mode": mode,

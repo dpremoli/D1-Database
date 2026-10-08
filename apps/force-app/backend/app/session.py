@@ -18,7 +18,7 @@ from .acquisition.consumers import CutDetector, Decimator, FrmIntegrator
 from .acquisition.ring import Ring
 from .backup import BackupStreamer, mark_remote_deleted
 from .backup import load_config as load_backup_config
-from .clipping import RailDetector
+from .clipping import RailDetector, dyno_gain_array
 from .config import RecordConfig
 from .d1rw import RawWriter
 from .dsp import sum_axes, tacho_column, welch_spectra
@@ -93,8 +93,7 @@ class RecordingSession:
         self._rail_sent = 0.0
         # Volts -> N for the live view (#212), the same per-channel gains finalize applies. None
         # when there are none (sim/replay data is already in newtons).
-        gains = [float(g) for g in (cfg.dyno_gains or [])]
-        self._live_gains = np.array(gains[:8], dtype=np.float64) if len(gains) >= 8 else None
+        self._live_gains = dyno_gain_array(cfg.dyno_gains)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._finalize_thread: threading.Thread | None = None

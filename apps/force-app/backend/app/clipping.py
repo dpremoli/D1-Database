@@ -27,14 +27,22 @@ def near_full_scale(peak: np.ndarray, full_scale: np.ndarray) -> np.ndarray:
     return (full_scale > 0) & (peak >= RAIL_FRACTION * full_scale)
 
 
-def rail_volts(full_scale_v: float, input_limit_v: float | None = None) -> float:
+def dyno_gain_array(gains: list[float] | None) -> np.ndarray | None:
+    """The 8 per-channel volts-to-newtons gains (cfg.dyno_gains) as an array, or None when the
+    config has no full set: sim and replay data is already in newtons. The rail test, the live
+    view and finalize all take their gains through here, so they agree on what "has per-channel
+    gains" means."""
+    g = [float(x) for x in (gains or [])]
+    return np.array(g[:8], dtype=np.float64) if len(g) >= 8 else None
+
+
+def rail_volts(full_scale_v: float, input_limit_v: float = 0.0) -> float:
     """The voltage at which a sensor channel has no more to give (#200): the Lab Amp's analog
     full scale, or the input range of the NI-DAQ module reading it when that is smaller. An
     NI 9234 reads +/-5 V, so behind a 10 V amp output a channel stops at half its range, and a
-    rail test against the amp's 10 V never fires. `input_limit_v` of None or 0 means not known."""
+    rail test against the amp's 10 V never fires. `input_limit_v` of 0 means not known."""
     fs = float(full_scale_v or 10.0)
-    limit = float(input_limit_v or 0.0)
-    return min(fs, limit) if limit > 0 else fs
+    return min(fs, input_limit_v) if input_limit_v > 0 else fs
 
 
 class RailDetector:
@@ -46,12 +54,10 @@ class RailDetector:
     the life of the detector (one cut), growing monotonically.
     """
 
-    def __init__(
-        self, gains: list[float] | None, full_scale_v: float, input_limit_v: float | None = None
-    ):
-        g = [float(x) for x in (gains or [])]
-        self.enabled = len(g) >= 8
-        self._gains = np.array(g[:8], dtype=np.float64) if self.enabled else np.zeros(8)
+    def __init__(self, gains: list[float] | None, full_scale_v: float, input_limit_v: float = 0.0):
+        g = dyno_gain_array(gains)
+        self.enabled = g is not None
+        self._gains = g if g is not None else np.zeros(8)
         self._ranges = self._gains * rail_volts(full_scale_v, input_limit_v)
         self._latched = np.zeros(8, dtype=bool)
 
