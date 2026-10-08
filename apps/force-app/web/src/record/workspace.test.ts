@@ -969,3 +969,37 @@ describe('workspace.railBanner (R5)', () => {
 		expect(w.railBanner.value).toBeNull();
 	});
 });
+
+describe('workspace.releaseStream() (#185)', () => {
+	it('keeps the stream open when the page is left mid-cut, closing it once the cut is over', async () => {
+		const w = await make();
+		const disc = vi.spyOn(w.client, 'disconnect').mockImplementation(() => {});
+		w.st.state = 'recording';
+		w.releaseStream();
+		expect(disc).not.toHaveBeenCalled();
+		w.st.state = 'finalizing';
+		await nextTick();
+		expect(disc).not.toHaveBeenCalled();
+		w.st.state = 'done';
+		await nextTick();
+		expect(disc).toHaveBeenCalledTimes(1);
+	});
+
+	it('closes it at once when nothing is recording', async () => {
+		const w = await make();
+		const disc = vi.spyOn(w.client, 'disconnect').mockImplementation(() => {});
+		w.releaseStream();
+		expect(disc).toHaveBeenCalledTimes(1);
+	});
+
+	it('returning to the page cancels the deferred close', async () => {
+		const w = await make();
+		const disc = vi.spyOn(w.client, 'disconnect').mockImplementation(() => {});
+		w.st.state = 'recording';
+		w.releaseStream();
+		w.claimStream();
+		w.st.state = 'done';
+		await nextTick();
+		expect(disc).not.toHaveBeenCalled();
+	});
+});

@@ -416,6 +416,17 @@ export function createWorkspace() {
 	const isFinalizing = computed(() => st.state === 'finalizing');
 	const isDone = computed(() => st.state === 'done');
 	const locked = computed(() => isRecording.value || isFinalizing.value);
+	// #185: leaving the Record page used to close the stream even mid-cut, so nothing arrived while
+	// away and the trace joined old to new frames across the hole. While recording or finalizing the
+	// page now only marks the stream as released; it is closed once the cut is no longer running
+	// (or by the next claimStream() -> connect() on return, which keeps the open socket).
+	let streamReleased = false;
+	function claimStream() { streamReleased = false; }
+	function releaseStream() {
+		if (locked.value) { streamReleased = true; return; }
+		client.disconnect();
+	}
+	watch(locked, (l) => { if (!l && streamReleased) { streamReleased = false; client.disconnect(); } });
 	// #84: why Start can't be pressed for the chosen NI-DAQ sample rate (the hardware can't do it), or
 	// null. One computed for the footer's Start-disable and the red sample-rate tile, so they can't
 	// disagree.
@@ -1078,7 +1089,7 @@ export function createWorkspace() {
 		client, source, setSource, nidaqChannels, cfg, meta, machining, plot, replay, st, busy, errMsg, finishedCache,
 		editCutStartSec, editCutEndSec,
 		isIdle, isRecording, isFinalizing, isDone, locked, sampleRateBlocker, startDisabled, stopDisabled, saveOpen,
-		mode, playback, rpmTarget,
+		mode, playback, rpmTarget, claimStream, releaseStream,
 		start, stop, newRun, dismissFailure, clearSetup, loadFinished, searchCuts, pickReplayCut, metaObj, uploadCutToDatabase,
 		// 2d: Directus links + run write-back
 		link, logged, onSelectSample, logRunNow, syncStatus,
