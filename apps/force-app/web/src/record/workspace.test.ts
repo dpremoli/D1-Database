@@ -1115,6 +1115,22 @@ describe('workspace.requestStart() after a finished cut (#192)', () => {
 		expect(lastStartMeta().new_edge).toBe(true);
 	});
 
+	it.each([409, 400])('a Start that fails with %i and is then retried steps the sequence exactly once', async (status) => {
+		const w = await finishedCut();
+		let attempt = 0;
+		replies['/record/start'] = () => (++attempt === 1 ? { ok: false, status, text: 'refused' } : { body: { id: 'cap-next' } });
+		await w.requestStart();
+		expect(startPosts()).toBe(1);
+		expect(w.errMsg.value).toBeTruthy();
+		const afterFail = w.machining.operation_sequence;
+		await w.requestStart();                      // the operator presses Start again
+		expect(startPosts()).toBe(2);
+		expect(w.errMsg.value).toBeNull();
+		expect(afterFail).toBe('4');                 // stepped once by the first press
+		expect(lastStartMeta().operation_sequence).toBe('4');   // not stepped again by the retry
+		expect(w.machining.operation_sequence).toBe('4');
+	});
+
 	it('the "Start without a Sample" confirm path steps once, and only when it actually starts', async () => {
 		const w = await finishedCut();
 		w.link.sampleId = '';
