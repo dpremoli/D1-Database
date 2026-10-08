@@ -1,5 +1,8 @@
-// #194: why a capture has no .mat. finalize.py skips it when n x columns x 8 bytes is over
-// MAT_MAX_BYTES (MAT5's 32-bit size field); summary.json's fs, n and channels turn that into minutes.
+// #194: a cut over MAT_MAX_BYTES (n x columns x 8 bytes; MAT5's 32-bit size field) is written by
+// finalize.py as a MATLAB v7.3 file (summary.json's mat_format "v7.3"), so its .mat exists and bakes.
+// Only when that file could not be written (no free disk, a write error) is there no .mat, and the
+// note says so. A summary from before v7.3 (no mat_format key) with mat_written false was skipped by
+// the size limit alone: summary.json's fs, n and channels turn that into minutes.
 
 /** Mirror of MAT_MAX_BYTES in backend/app/finalize.py. Keep the two in step. */
 export const MAT_MAX_BYTES = 1_500_000_000;
@@ -30,19 +33,32 @@ function formatRate(fs: number): string {
 
 export interface MatSummaryLike {
 	mat_written?: boolean;
+	/** "v5" | "v7.3"; null when no .mat exists; absent in summaries from before v7.3 (#194). */
+	mat_format?: string | null;
 	fs?: number;
 	n?: number;
 	channels?: unknown[];
 	duration_sec?: number;
 }
 
+/** The short line under the .mat option for a long cut saved as MATLAB v7.3; null for any other file. */
+export function matFormatNote(summary: MatSummaryLike | null | undefined): string | null {
+	if (!summary || summary.mat_written === false || summary.mat_format !== 'v7.3') return null;
+	return 'Saved as MATLAB v7.3 (long cut): MATLAB opens it with load(); scipy.io.loadmat cannot read this format.';
+}
+
 /**
  * The note under the "Save a local copy (.mat)" option when finalize wrote no .mat; null when it
- * did (or the summary says nothing about it). Without a usable rate it still explains the limit.
+ * did (or the summary says nothing about it). A summary that has a mat_format key comes from a
+ * recorder that writes v7.3 for long cuts, so the size limit is not the reason: the file could not
+ * be written. Without a usable rate an older summary still gets the limit explained.
  */
 export function matSkipNote(summary: MatSummaryLike | null | undefined): string | null {
 	if (!summary || summary.mat_written !== false) return null;
 	const kept = 'The full-resolution raw recording is kept (in Local Captures), and database upload still works; the .csv option is a reduced-resolution preview.';
+	if ('mat_format' in summary) {
+		return `No .mat was written: this capture is too long for a standard .mat, and the MATLAB v7.3 file could not be written (not enough free disk space, or a write error - see the recorder log). ${kept}`;
+	}
 	const fs = Number(summary.fs);
 	const columns = Array.isArray(summary.channels) && summary.channels.length ? summary.channels.length : DEFAULT_COLUMNS;
 	const limit = matLimitSeconds(fs, columns);

@@ -159,6 +159,8 @@ def test_streamed_finalize_matches_the_whole_array_one(tmp_path, monkeypatch, ca
     # summary.json: same keys and values, with the documented tolerances.
     with open(os.path.join(new_dir, "summary.json")) as f:
         assert json.load(f) == new
+    # mat_format is newer than the frozen reference (#194): a normal cut stays a v5 file.
+    assert new.pop("mat_format") == "v5"
     assert list(new) == list(old)
     for key in old:
         if key in ("file_sizes_mb", "local_diag", "cut_window_sec", "duration_sec", "peaks"):
