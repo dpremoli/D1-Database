@@ -18,6 +18,7 @@ import { PLOT_MODES } from './plotModes';
 import { showWindowControl } from './panels/forcePlotView';
 import { buildPopoutQuery, CHANNEL_ORDER as ORDER, parsePopoutQuery, SUMMED_CHANNELS as SUMMED, type FrmAxis, type PolarAngle, type PolarRadius } from './popoutQuery';
 import { clampWindowSec, WINDOW_MAX_SEC, WINDOW_MIN_SEC, WINDOW_SLIDER_MAX_SEC } from './plotWindow';
+import { debounceFlush } from './debounceFlush';
 
 const route = useRoute();
 const panel = computed(() => String(route.params.panel || 'force'));
@@ -99,10 +100,25 @@ function syncUrl() {
 	});
 	try { history.replaceState(history.state, '', `${location.pathname}?${q}${location.hash}`); } catch { /* sandboxed or blocked: the settings just won't persist */ }
 }
-watch([mode, channels, viewWindowSec, colormap, pointSize, frmAxis, initStride, polarRadius, polarAngleSource], syncUrl, { immediate: true });
+// The first write is immediate (it normalises a junk URL); later changes are debounced, because
+// Chromium throttles history.replaceState (~200 calls / 10 s) and a fast slider drag could lose the
+// last value. A pending write is flushed on pagehide / beforeunload, so a clean quit keeps it.
+syncUrl();
+const urlSync = debounceFlush(syncUrl, 250);
+watch([mode, channels, viewWindowSec, colormap, pointSize, frmAxis, initStride, polarRadius, polarAngleSource], () => urlSync.call());
+const flushUrl = () => urlSync.flush();
 
-onMounted(() => { client.connectViaRelay(); });
-onBeforeUnmount(() => client.disconnect());
+onMounted(() => {
+	window.addEventListener('pagehide', flushUrl);
+	window.addEventListener('beforeunload', flushUrl);
+	client.connectViaRelay();
+});
+onBeforeUnmount(() => {
+	window.removeEventListener('pagehide', flushUrl);
+	window.removeEventListener('beforeunload', flushUrl);
+	urlSync.flush();
+	client.disconnect();
+});
 </script>
 
 <template>
