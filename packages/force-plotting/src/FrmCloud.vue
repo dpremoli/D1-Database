@@ -28,7 +28,6 @@ import { exportFrmFigure } from './frmExport';
 import { buildScaleLUT, colorizeValues, lutKey, type ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { histogramFrom, type Histogram } from './histogram';
-import LoadingOverlay from './LoadingOverlay.vue';
 import LinkRings from './LinkRings.vue';
 import { createLoadToken } from './loadToken';
 import { createFrameGate, createTrailingThrottle } from './frameScheduling';
@@ -1108,8 +1107,8 @@ function onUp(ev: PointerEvent) {
 
 <template>
 	<div class="frm-cloud">
-		<LoadingOverlay v-if="loading || stage" :stage="stage" />
-		<div v-else-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
+		<!-- No loading overlay here: the host draws one for every view type from @stage (#191). -->
+		<div v-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
 		<canvas :key="canvasKey" v-show="!loading && !error" ref="canvasEl"
 			:class="{ rect: rectTool }"
 			@wheel="onWheel" @contextmenu="onContextMenu" @pointerdown="onDown" @pointermove="onMove" @pointerup="onUp" @pointercancel="onUp"></canvas>
