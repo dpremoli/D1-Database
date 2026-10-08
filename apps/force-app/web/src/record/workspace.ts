@@ -752,13 +752,14 @@ export function createWorkspace() {
 	// save dialog, before anything that can fail; the PUT is idempotent.
 	async function saveCropLocally(): Promise<void> {
 		const id = st.captureId;
+		if (!id) return;
+		// Untouched handles PUT nulls, which clears an override an earlier (failed) save stored.
 		const crop = cropOverrideIdx();
-		if (!id || !crop) return;   // never moved, nothing stored to clear
 		try {
 			await readJson(await fetch(`${client.baseUrl}/captures/${id}/crop`, {
 				method: 'PUT',
 				headers: JSON_HEADERS,
-				body: JSON.stringify({ crop_start_idx_override: crop.start, crop_end_idx_override: crop.end }),
+				body: JSON.stringify({ crop_start_idx_override: crop?.start ?? null, crop_end_idx_override: crop?.end ?? null }),
 			}));
 		} catch { /* best effort */ }
 	}

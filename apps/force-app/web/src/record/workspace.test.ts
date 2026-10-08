@@ -323,7 +323,7 @@ describe('workspace crop kept locally (#190)', () => {
 			.toMatchObject({ crop_start_idx_override: 1000, crop_end_idx_override: 7000 });
 	});
 
-	it('untouched handles write nothing locally and send no override', async () => {
+	it('untouched handles clear any stored crop and send no override', async () => {
 		dx.post.mockImplementation(async (url: string) => (url === '/items/manufacturing_operations'
 			? { data: { data: { operation_id: 'op-c' } } }
 			: url === '/files' ? { data: { data: { id: `file-${++fileN}` } } } : { data: { data: {} } }));
@@ -331,7 +331,8 @@ describe('workspace crop kept locally (#190)', () => {
 		w.editCutStartSec.value = 1; w.editCutEndSec.value = 9;
 		await w.saveCropLocally();
 		await w.uploadCutToDatabase();
-		expect(putCalls()).toHaveLength(0);
+		expect(putCalls()).toHaveLength(1);
+		expect(JSON.parse(putCalls()[0][1].body)).toEqual({ crop_start_idx_override: null, crop_end_idx_override: null });
 		expect(dx.post.mock.calls.find((c) => c[0] === '/items/machining_force_analysis')![1]).not.toHaveProperty('crop_start_idx_override');
 	});
 
