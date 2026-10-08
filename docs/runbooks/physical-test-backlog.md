@@ -392,41 +392,92 @@ tool; a test cut on scrap stock is fine.
 - [ ] **R4 — pre-flight chips.** With the Lab Amp in MEASURE: Amp chip OK. In RESET: OK (Start
   cycles it). Unplugged/unreachable: warning. Channels chip checks the saved NI-DAQ model and goes
   to "fail" when a configured channel is missing from the chassis. Disk chip's "~N min" roughly
-  matches free space ÷ data rate. Since #124.
+  matches free space ÷ data rate. Since #124. — 2026-10-08, Claude (a second, isolated copy of the
+  installed 0.1.34 on the rig, stub sign-in): FAIL on the Channels chip, see #213. With
+  the tacho moved to a module that is not on the chassis the chip stays "ok" ("All force channels
+  and the tacho have an input"), or "not checked" when the Record page's list differs from the
+  model; Start then fails with DAQmx -200220. OK: Amp chip in MEASURE and in RESET (Start switched
+  the amp to MEASURE); Disk chip "48.9 GB free, about 13 h at 25,000 Hz x 10 channels" (13.3 h by
+  hand). The unplugged amp is still to do.
+  — 2026-10-08, DP at the rig: FAIL on the unplugged amp, see #215. With the amp's network cable pulled the
+  chip gave no warning; it only showed after opening the Connectivity Doctor and running it.
 - [ ] **R5 — live clipping.** Drive one channel to its rail (lower the amp range, or a known
   overload) at a Lab Amp full scale of 10 V, then 5 V. Expect the red banner naming that channel,
   the tile and badge, and after the cut `channels_ranging.clipped` true for the same channel only.
-  Since #124.
+  Since #124. — 2026-10-08, Claude: not run (nobody loaded a channel), but it cannot pass at 10 V on
+  this chassis: the force modules are NI 9234 (±5 V input), so a channel saturates at half its Lab
+  Amp range and never reaches the 99 % threshold, see #200. Today's cut `20261008-132200-fdb783`
+  reached 4.75 V on Fz3 with no warning possible.
+  — 2026-10-08, DP at the rig (captures read by Claude): FAIL at 10 V, see #200. Fz1 set to a 10 N
+  range and the dyno pushed by hand: no banner, tile or badge. In `20261008-170159-8a99b8` Fz1
+  sits flat at ±5.117 V (the NI 9234 limit) for 2.4 % of the cut and `channels_ranging.clipped` is
+  false for every channel. In `20261008-170349-b4c4d3` Fz2, Fz3 and Fz4 (200 N ranges) also stop
+  at 5.12 V, 102 N each, with no warning. The 5 V run is still to do.
 - [ ] **R6 — alarms on hardware.** Early warning at 80 % of the force limit (amber, no tone). With
   "Stop the recording when the force alarm trips" on, a trip stops the cut, the alarm stays on top
   of the save dialog and A acknowledges it. With a tone volume set, Windows volume is not changed.
-  Since #125.
+  Since #125. — 2026-10-08, DP at the rig (code and captures read by Claude): FAIL, see #212.
+  No early warning and no alarm, with hits saved as 308 N on Fz (more in truth, the channels
+  clipped). Cause: the live stream is the summed volts with no N/V gains applied (`sum_axes(data)`
+  in `session.py`), so the alarm compares volts with the newton limit. With 10 to 20 N/V gains
+  the live plot, live peaks and the cut-detect threshold read 10 to 20 times low, which is the
+  factor of ten DP saw between the live plot and the summary plot; only the saved files are in
+  newtons. Stop-on-alarm, A and the tone could not be checked.
 - [ ] **R10 — shortcuts in the packaged app.** Ctrl+Enter starts (through the pre-flight and alarm
   test), Ctrl+. stops, A acknowledges, Ctrl+N starts a new cut, Enter saves. Press Alt once, then
-  A during an alarm: A must still acknowledge (Alt opens menu mode on Windows). Since #125.
+  A during an alarm: A must still acknowledge (Alt opens menu mode on Windows). Since #125. —
+  2026-10-08, Claude (isolated copy of the installed 0.1.34, real NI-DAQ cuts, keys sent by
+  automation): partly run. Ctrl+Enter starts, through "Start anyway" (a click, when no Sample is
+  set) and the alarm test (once per session); Ctrl+. stops in about 1 s; Ctrl+N starts a new cut
+  once the save dialog is closed; Enter saves when a save option is ticked. A does not acknowledge
+  by itself: it opens "Silence this alarm?" with "Keep alerting" focused, so A then Enter keeps the
+  alarm; Silence has to be chosen. Decide whether that is the intended behaviour. Alt then A was
+  not run (an automated Alt does not open the menu), nor A with the save dialog open.
+  — 2026-10-08, DP at the rig: Alt then A could not be run, because the force alarm never came up
+  (see R6).
 - [ ] **R1/R3 — remembered setup.** Quit and relaunch: Sample, Machine, Operator, op type and cut
   parameters are back. Open a cut in Replay, then switch to NI-DAQ: the form shows your setup, not
-  the archived cut's sample, edge or sequence. New steps the sequence. Since #123.
-- [ ] **Leaving the page mid-cut.** Start a cut, go to Plot, come back after it ends: the save dialog
-  offers to save it. Since #123 (doc fix).
+  the archived cut's sample, edge or sequence. New steps the sequence. Since #123. — 2026-10-08,
+  Claude (isolated copy of the installed 0.1.34): only the cut parameters and the source were run;
+  spindle, feed, diameter, sample rate, pulses per rev and NI-DAQ came back after quit and
+  relaunch. Sample, Machine, Operator, op type, Replay and the sequence need a real sign-in.
+  — 2026-10-08, DP at the rig (signed in): FAIL, see #216. The metadata set before
+  quitting was not there after relaunch. Replay and the sequence were not run.
+- [x] **Leaving the page mid-cut.** Start a cut, go to Plot, come back after it ends: the save dialog
+  offers to save it. Since #123 (doc fix). — 2026-10-08, Claude (isolated copy of the installed
+  0.1.34, real NI-DAQ cut of 71.5 s): OK. The cut was ended through the recorder while Plot was
+  open (Ctrl+. only works on Record); back on Record the "Recording finished" dialog was there and
+  saved a local copy.
 
 ### Captures list (thousands of captures on the real drive)
-- [ ] **R9 — browse speed on the real capture drive.** With the capture drive holding about 1,000
+- [x] **R9 — browse speed on the real capture drive.** With the capture drive holding about 1,000
   or more captures (a network drive if that is what the lab uses; copy old captures in if needed),
   open Settings > Local Captures. Expect the first 200 rows within a few seconds, "Showing 200 of
   N" with the true N, and Load more adding the next page. Press Refresh again: a warm scan should
   be clearly faster than the first. Note both times and the drive type here. Since: this batch (PR
-  TBD).
+  TBD). — 2026-10-08, Claude (isolated copy of the installed 0.1.34; 1,208 captures in a scratch
+  folder on the rig's local C: drive, 1,200 of them small synthetic copies): OK. First page 2.5 s
+  cold and 0.05 s warm from the recorder, "Showing 200 of 1208", Load more to 400 in 1.1 s, Refresh
+  0.8 s. Not run on a network drive or with full-size captures.
 - [ ] **R9 — search, sort and filters at scale.** Search a sample name, a date (`2026-10-02`) and an
   id fragment: results match a hand check in File Explorer. Sort by Largest first: the top rows are
   the biggest folders. The Not uploaded and Uploaded chips keep loading pages and the footer's
   "checked" count makes sense. Needs a real Directus so the uploaded state is real. Since: this
-  batch (PR TBD).
+  batch (PR TBD). — 2026-10-08, Claude (same 1,208-capture set, checked against the folder):
+  partly run. A sample name gave 182 of 182, the date `2026-08-02` 13 of 13, an id fragment 1 of
+  1, and Largest first put the five biggest folders on top in the right order. The Not uploaded
+  and Uploaded chips need a real sign-in and were not run.
 - [ ] **R9 — bulk delete frees the space.** Select a handful of uploaded captures and Delete
   selected: the confirm's space total matches the drive's free space gained (Explorer or the
   "Free on drive" figure after Refresh), the folders are gone, and the remote backup copy is marked
   deleted rather than removed. Include one not-uploaded capture: the only-copy warning appears.
-  Cancel mid-run: the rest are untouched. Since: this batch (PR TBD).
+  Cancel mid-run: the rest are untouched. Since: this batch (PR TBD). — 2026-10-08, Claude
+  (isolated copy of the installed 0.1.34, five not-uploaded test captures): partly run. The
+  confirm said "Frees about 366.7 MB", equal to the five folders on disk, with the only-copy
+  warning for all five; the five folders went and the other 1,203 stayed. It took 39 s for five
+  captures: each delete is instant, the waits are between them. The remote copy was not marked:
+  the backup server on d1-server answers 404 on `/sessions/<id>/mark-deleted`, so redeploy it first
+  (section C). Uploaded captures, the free-space figure and Cancel mid-run were not run.
 - [ ] **R9 — cleanup never touches unsynced captures.** With real uploaded and not-uploaded
   captures older than N days, Free up space > Preview lists only captures that have a real
   `manufacturing_operations` row AND a `machining_force_analysis` row with `live_cache_file` (and
@@ -456,11 +507,25 @@ tool; a test cut on scrap stock is fine.
 - [ ] **R11 — Restart recorder.** Kill the backend (Task Manager): the Doctor's "Restart recorder"
   brings it back and the doctor goes green. While recording: it refuses. With the backend hung
   (not answering, still running): it asks first, default "Don't restart". The port is free after
-  restart (no "address in use"). Since #125.
+  restart (no "address in use"). Since #125. — 2026-10-08, Claude (isolated copy of the installed
+  0.1.34 with its own recorder; the restart was asked through the shell, not the button): partly
+  run. During a recording and while it was being saved the restart is refused with the reason and
+  the recorder is untouched; idle, it restarts in 2.4 s as a new process on the same port and the
+  doctor is all green. Killing that recorder mid-recording: back in 3.1 s on the same port, the
+  window was sent from Plot to Record, the banner offered the interrupted capture and Recover
+  restored all 312,320 rows. The button itself was never on screen: it only shows when the doctor
+  cannot reach the recorder, and the shell had already restarted it. The hung case is still to do.
 - [ ] **R13 — update prompt and Help menu.** Publish a test release with notes: the prompt shows them
   as plain text with the releases link. Alt shows the menu bar; Help → Check for Updates, Report a
   Bug, Open Captures Folder (opens the capture drive), About all work; Ctrl+Shift+L/B/O work.
-  Since #125.
+  Since #125. — 2026-10-08, Claude (isolated copy of the installed 0.1.34, menu items triggered
+  through the menu, not with the mouse): partly run. Help has Connectivity Doctor, View Logs,
+  Report a Bug, Open Captures Folder, Check for Updates and About, with Ctrl+Shift+L/B/O set.
+  Check for Updates opens Settings > About and says "You're up to date"; Report a Bug and View
+  Logs open their tabs. Not run: the update prompt (needs a test release), Alt, the three
+  shortcuts by keyboard, Open Captures Folder and About.
+  — 2026-10-08, DP at the rig (your own installed 0.1.34): Alt shows the menu bar and the keyboard
+  shortcuts work. The update prompt still needs a test release.
 
 ### Diagnostics page in the packaged app
 - [ ] **P10 — recipe dialogs and import/export.** In the packaged app, Save as (name + notes),
@@ -512,20 +577,48 @@ tool; a test cut on scrap stock is fine.
 
 ### Earlier issues that need the rig (from the 2026-10-02 batch)
 - [ ] **#84** Real DAQmx error text and codes (‑200077); whether the chassis or the module limits the
-  rate; coerced rates on discrete-rate modules.
-- [ ] **#86** NI-DAQ hot-plug, and whether NI MAX simulated devices count as "present".
-- [ ] **#109** Real Lab Amp latency.
-- [ ] **#96, #101** Explorer reveal and network-drive behaviour on Windows.
+  rate; coerced rates on discrete-rate modules. — 2026-10-08, Claude (recorder API and DAQmx 24.5
+  on the rig, app 0.1.34): FAIL on coerced rates, see #199. The NI 9234 runs at 51,200 / n Hz only
+  and DAQmx rounds any other request up without an error (25,000 runs at 25,600), while the capture
+  is stamped with the requested rate. The rest is OK: the modules limit the rate, not the chassis
+  (NI 9234 1,651.6 to 51,200 Hz, NI 9201 500 kHz, chassis 26.7 MHz); rates outside that are refused
+  with the structured 400 and no capture folder; raw codes are -200332 from 51,200 to 51,367 Hz,
+  -200077 above, and -200220 for a channel not on the chassis, which ends as `error_kind: "start"`
+  with the folder removed. The dialog and field focus in the app were not looked at.
+- [ ] **#86** NI-DAQ hot-plug, and whether NI MAX simulated devices count as "present". —
+  2026-10-08, Claude: only the plugged-in case was run. `/nidaq/devices` gives `simulated: false`,
+  `hardware_present: true`, `nimax_simulated: false` for the real cDAQ-9178. Unplugging and an NI MAX
+  simulated device are still to do.
+  — 2026-10-08, DP at the rig: FAIL on hot-plug, see #215. With the chassis unplugged the NI-DAQ source did
+  not grey out; it only changed after running the Connectivity Doctor. An NI MAX simulated device
+  is still to do.
+- [x] **#109** Real Lab Amp latency. — 2026-10-08, Claude (through the recorder, 15 calls each):
+  `/labamp/status` 0.57 s median (0.52 to 0.69; it asks the amp twice), `/labamp/sensors` 0.33 s
+  (0.31 to 0.44), a MEASURE or RESET switch about 1.0 s; a plain GET to the amp takes 22 ms. The
+  LabAmp page itself was not looked at.
+- [ ] **#96, #101** Explorer reveal and network-drive behaviour on Windows. — 2026-10-08, Claude
+  (isolated copy of the installed 0.1.34): FAIL on one case of #101, see #214. Choosing
+  an existing folder the user cannot write to (`C:\Windows\System32\config`) never answers: no
+  reply after 240 s, tried three times, the folder setting unchanged. Refused correctly: a missing
+  drive and a new folder under `C:\Program Files` (400 with the Windows error, 0.1 s), and any
+  change while a recording runs (409). #96: opening a folder outside the recording folder is
+  refused with a reason. Not run: a real reveal in Explorer, the folder picker, a network drive.
 - [ ] **#81** DAQ buffer overruns while a 12 GB finalize runs beside a live acquisition (held back:
   needs the chassis).
-- [ ] **#90** Packaged NSIS build and the Tailscale update feed (held back).
+- [ ] **#90** Packaged NSIS build and the Tailscale update feed (held back). — 2026-10-08, Claude:
+  the update path works (this rig took `ForceApp-Setup-0.1.34.exe` from the feed, see section C);
+  the downgrade itself is still to do.
 
 ### Release pipeline (CI/CD overhaul)
 - [ ] **NI-DAQmx detection on a PC without the driver.** Install the packaged app on a Windows PC
   with no NI-DAQmx driver (not the rig). Connectivity Doctor / self-check shows "NI-DAQmx runtime
   not available", not "driver detected"; starting an NI-DAQ recording and *Start tacho* answer
   "not available" instead of an internal error. On the rig, the same checks still report the
-  driver and record normally. Since: CI/CD overhaul (PR TBD).
+  driver and record normally. Since: CI/CD overhaul (PR TBD). — 2026-10-08, Claude: rig half OK on
+  the installed 0.1.34 (doctor: "NI-DAQmx driver detected", "1 device(s) detected: cDAQ1", healthy;
+  two NI-DAQ recordings ran to `done`; the tacho generator started on `cDAQ1/_ctr0`). With no
+  counter given it answers 500, because the default is the name `STAR_DAQ`. The PC without the
+  driver is still to do.
 
 ## C. d1-server and infrastructure
 
@@ -563,10 +656,18 @@ tool; a test cut on scrap stock is fine.
 - [ ] **#10** Figure-mode PNGs re-baked by MATLAB for cuts with a saved crop (held back).
 - [ ] **#97** Tailscale serve, phone access, live-DAQ load (held back; security model is an owner
   decision).
-- [ ] **First automated force-app release reaches the rigs.** After the CI/CD overhaul merges, the
+- [x] **First automated force-app release reaches the rigs.** After the CI/CD overhaul merges, the
   `force-app-release` run on `main` publishes Force App 0.1.34 (tag moved from the failed run's
   commit). Within ~10 minutes `auto-publish.log` on d1-server shows it published, and a rig on 0.1.31
-  is offered the update and installs it. Since: CI/CD overhaul (PR TBD).
+  is offered the update and installs it. Since: CI/CD overhaul (PR TBD). — 2026-10-08, Claude: OK,
+  seen from the rig. GitHub release published 00:46:27 UTC, on the feed at 00:49:44 UTC; this rig
+  downloaded the installer at 12:57 local (SHA-512 equals `latest.yml`) and runs 0.1.34.
+  `auto-publish.log` and the version the rig had before were not looked at.
+- [ ] **Redeploy the backup server (mark-deleted).** The `backup-server` container on d1-server is
+  older than the tombstone routes: `POST /backup-ingest/sessions/<id>/mark-deleted` answers 404, so
+  a capture deleted on a rig still reads as a complete backup (#91). Rebuild and restart it, then
+  delete a capture on a rig: the recorder's answer has `remote_marked_deleted: true` and the remote
+  list shows it as deleted. Found 2026-10-08 on the rig.
 - [ ] **Branch protection requires "CI passed".** In GitHub *Settings > Branches*, `main` requires
   the **CI passed** check. A PR with a failing job cannot merge. Since: CI/CD overhaul (PR TBD).
 
