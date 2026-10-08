@@ -31,6 +31,18 @@ const attention = computed(() => attentionItems(w.preflight.value));
 const LEVEL_ICON: Record<PreflightLevel, string> = {
 	ok: 'check_circle', info: 'info', warn: 'warning', fail: 'error', skip: 'radio_button_unchecked',
 };
+// #195: Re-assign channels asks first (the confirm names what will change), then runs the backend's
+// auto-assign and re-reads the pre-flight. Never offered mid-recording: the list is hidden while locked.
+const reassignAsk = ref(false);
+const reassignBusy = ref(false);
+const reassignErr = ref('');
+const reassignItem = computed(() => attention.value.find((it) => it.action?.kind === 'reassign') ?? null);
+async function runReassign() {
+	reassignBusy.value = true; reassignErr.value = '';
+	try { await w.reassignChannels(); reassignAsk.value = false; }
+	catch (e: any) { reassignErr.value = e?.message || 'Re-assign failed.'; }
+	finally { reassignBusy.value = false; }
+}
 function showMe(it: PreflightItem) {
 	const f = it.focus;
 	if (!f) return;
@@ -99,6 +111,16 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
 				{{ it.detail }}
 				<button v-if="it.focus" type="button" class="linkbtn" @click="showMe(it)">Show me</button>
 			</p>
+			<p v-if="reassignItem && !reassignAsk" class="pf-line">
+				<button type="button" class="btn sm" data-testid="preflight-reassign" :disabled="w.locked.value || reassignBusy"
+					@click="reassignErr = ''; reassignAsk = true">{{ reassignItem.action!.label }}</button>
+			</p>
+			<p v-if="reassignItem && reassignAsk" class="pf-confirm" role="alert" data-testid="preflight-reassign-confirm">
+				<span>{{ reassignItem.action!.confirm }}</span>
+				<button type="button" class="btn sm" data-testid="preflight-reassign-go" :disabled="w.locked.value || reassignBusy" @click="runReassign">Re-assign</button>
+				<button type="button" class="linkbtn" :disabled="reassignBusy" @click="reassignAsk = false">Cancel</button>
+			</p>
+			<p v-if="reassignErr" class="err">{{ reassignErr }}</p>
 			<p v-if="w.sampleConfirmOpen.value" class="pf-confirm" role="alert" data-testid="preflight-sample-confirm">
 				<span>Start without a Sample?</span>
 				<button type="button" class="btn sm" data-testid="start-anyway" @click="w.startAnyway()">Start anyway</button>
