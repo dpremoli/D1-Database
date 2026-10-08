@@ -91,6 +91,22 @@ describe('isOnSomeDisplay', () => {
   it('accepts anything when no displays are reported, rather than discarding placement', () => {
     expect(isOnSomeDisplay({ x: 10, y: 10, width: 800, height: 600 }, [])).toBe(true);
   });
+
+  it('rejects a window that only overlaps a display by a pixel or two', () => {
+    expect(isOnSomeDisplay({ x: 1919, y: 100, width: 800, height: 600 }, one)).toBe(false);
+    expect(isOnSomeDisplay({ x: -799, y: 100, width: 800, height: 600 }, one)).toBe(false);
+  });
+
+  it('rejects a window whose title bar is above or below the screen though its body overlaps', () => {
+    expect(isOnSomeDisplay({ x: 100, y: -300, width: 800, height: 600 }, one)).toBe(false);
+    expect(isOnSomeDisplay({ x: 100, y: 1075, width: 800, height: 600 }, one)).toBe(false);
+  });
+
+  it('accepts a window with enough of its title bar visible to grab', () => {
+    expect(isOnSomeDisplay({ x: 1820, y: 100, width: 800, height: 600 }, one)).toBe(true);
+    expect(isOnSomeDisplay({ x: 100, y: -10, width: 800, height: 600 }, one)).toBe(true);
+    expect(isOnSomeDisplay({ x: -700, y: 100, width: 800, height: 600 }, one)).toBe(true);
+  });
 });
 
 describe('isSaneBounds / saneSize / placementFor (#187)', () => {
@@ -116,6 +132,25 @@ describe('isSaneBounds / saneSize / placementFor (#187)', () => {
 
   it('keeps a sane rect that is on a present display', () => {
     expect(placementFor({ x: 40, y: 60, width: 1400, height: 900 }, screen1)).toEqual({ x: 40, y: 60, width: 1400, height: 900 });
+  });
+
+  it('clamps a size saved on a bigger display to the biggest display present (#187)', () => {
+    // 2560x1440 saved on a big monitor, reopened on a 1920x1080 one with x/y dropped.
+    const laptop = [{ x: 0, y: 0, width: 1920, height: 1080 }];
+    expect(placementFor({ x: 2600, y: 10, width: 2560, height: 1440 }, laptop)).toEqual({ width: 1920, height: 1080 });
+    expect(placementFor({ width: 2560, height: 1440 }, laptop)).toEqual({ width: 1920, height: 1080 });
+    // Only the oversized axis shrinks.
+    expect(placementFor({ x: 0, y: 0, width: 1500, height: 1440 }, laptop)).toEqual({ x: 0, y: 0, width: 1500, height: 1080 });
+  });
+
+  it('clamps to the largest display when several are present, and keeps size when none are reported', () => {
+    const mixed = [{ x: 0, y: 0, width: 1366, height: 768 }, { x: 1366, y: 0, width: 2560, height: 1400 }];
+    expect(placementFor({ width: 3000, height: 1600 }, mixed)).toEqual({ width: 2560, height: 1400 });
+    expect(placementFor({ width: 2560, height: 1440 }, [])).toEqual({ width: 2560, height: 1440 });
+  });
+
+  it('does not keep a position whose title bar is not reachable', () => {
+    expect(placementFor({ x: 1919, y: 10, width: 1400, height: 900 }, screen1)).toEqual({ width: 1400, height: 900 });
   });
 
   it('returns nothing when the size itself is unusable or nothing is saved', () => {

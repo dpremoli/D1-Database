@@ -79,6 +79,13 @@ describe('classifyWindowOpen', () => {
     expect(opts).toMatchObject({ x: 40, y: 60, width: 1400, height: 900 });
   });
 
+  it('clamps a pop-out saved on a bigger display so it fits this one (#187)', () => {
+    const store = fakeStore({ '/live/force': { x: 2700, y: 40, width: 2560, height: 1440 } });
+    const opts = classifyWindowOpen(details('app://force/live/force'), store, oneScreen).overrideBrowserWindowOptions;
+    expect(opts).toMatchObject({ width: oneScreen[0].width, height: oneScreen[0].height });
+    expect(opts).not.toHaveProperty('x');
+  });
+
   it('leaves bounds unset (falls back to the window.open() features string) when nothing is saved yet', () => {
     const result = classifyWindowOpen(details('app://force/live/frm'), fakeStore({}));
     expect(result.overrideBrowserWindowOptions).not.toHaveProperty('width');
