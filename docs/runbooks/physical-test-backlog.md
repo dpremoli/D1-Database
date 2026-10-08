@@ -576,7 +576,7 @@ tool; a test cut on scrap stock is fine.
   memory: this batch, PR TBD).
 
 ### Re-checks for the 2026-10-08 fixes (#199, #200, #212 to #216)
-Run these on a packaged build that contains the branch `fix/rig-findings-2026-10-08` (PR TBD).
+Run these on a packaged build that contains PR #217 (branch `fix/rig-findings-2026-10-08`).
 The recorder side of #199, #200 and #214 was already checked on the rig on 2026-10-08 through the
 branch's own backend; the items below are what still needs the app window and hands.
 
