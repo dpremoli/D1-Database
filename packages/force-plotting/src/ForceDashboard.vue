@@ -3,10 +3,11 @@ import { computed, nextTick, onActivated, onDeactivated, onMounted, onBeforeUnmo
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import { useRoute, useRouter } from 'vue-router';
 import ForceChart from './ForceChart.vue';
+import type { HoverSource } from './chartHover';
 import { pickMode, type FrmMode } from './frmMode';
 import { perKeyComputed } from './perKeyComputed';
 import LoadingOverlay from './LoadingOverlay.vue';
-import { sameStage, stageInfo, type LoadStage, type StageInfo } from './loadStage';
+import { frmOverlay, sameStage, stageInfo, type LoadStage, type OverlayMode, type StageInfo } from './loadStage';
 import { createLoadToken } from './loadToken';
 import { createActivationQueue, createOpGuard } from './opGuard';
 import SpectrumView from './SpectrumView.vue';
@@ -96,6 +97,9 @@ const CHART_MODES = [
 const SPECTRAL_MODES = ['psd', 'spectrogram', 'waterfall'] as const;
 const isSpectral = computed(() => (SPECTRAL_MODES as readonly string[]).includes(chartMode.value));
 const hoverIndex = ref<number | null>(null);   // shared across the 3 charts
+// What the charts get instead of the number (#100): a stable object, so a hover move re-renders only
+// each chart's crosshair layer, not the chart. See chartHover.ts.
+const hoverSource: HoverSource = { index: hoverIndex };
 const axis = ref<Axis>('Fz');
 
 // ---- Chart zoom -----------------------------------------------------------------
@@ -861,6 +865,11 @@ const frmBusy = computed(() => !!frmStage.value || (frmMode.value === 'figure' &
 // A renderer that unmounts mid-load (the view type changed) never reports idle: reset on a switch;
 // the one that replaces it reports its own stage.
 watch([frmMode, liveOn, octreeOn, compareOn, filteredSoloOn], () => { frmStage.value = null; });
+// The one loading overlay for the FRM area (#191): same look for Figure, Lite and Full. The view
+// that is actually mounted decides the mode (Full without an octree falls back), mirroring the
+// v-if chain in the template.
+const frmShownMode = computed<OverlayMode>(() => octreeOn.value ? 'full' : (compareOn.value || filteredSoloOn.value || liveOn.value) ? 'lite' : 'figure');
+const frmLoadOverlay = computed(() => frmOverlay(frmShownMode.value, frmStage.value?.stage ?? null, frmLoading.value, figStage.value));
 const frmCache = new Map<string, string>();
 
 // ---------------------------------------------------------------- layout state
@@ -2997,7 +3006,7 @@ function fmtDateTime(v: string | null | undefined) {
 									:chain="specChain" :axis="a" :mode="(chartMode as 'psd' | 'spectrogram' | 'waterfall')" :color="AXIS_COLOR[a]" />
 							</div>
 							<div v-else class="charts-col" :class="{ switching: loadingDetail }" :aria-busy="loadingDetail">
-								<ForceChart v-for="c in chartsFor(item)" v-bind="c" :key="c.key" :hover-index="hoverIndex" @hover="hoverIndex = $event"
+								<ForceChart v-for="c in chartsFor(item)" v-bind="c" :key="c.key" :hover="hoverSource" @hover="hoverIndex = $event"
 									:crop-editable="c.kind === 'env'" :active="c.key === axis"
 									:overlay="(chartMode === 'fft' && filtersOpen && c.kind === 'line' && c.key === axis) ? filterFftOverlay : null"
 									:view-start="zoomStart" :view-end="zoomEnd" :zoom-tool="rectZoomTool" @zoom="onChartZoom"
@@ -3171,15 +3180,16 @@ function fmtDateTime(v: string | null | undefined) {
 								<FrmCloud v-else-if="filteredSoloOn" ref="frmCloudRef" v-bind="cloudProps" :cache-override="filteredCache" :color-scale="colorScale" :mark-time="markTime" :hover-time="hoverTime" @pointmenu="openPointMenu"
 										:z-series="zSeries" :z-scale="zScale"
 										@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event"
-										@zscale="zScale = $event" />
+										@zscale="zScale = $event" @stage="frmStage = $event" />
 									<FrmCloud v-else-if="liveOn" ref="frmCloudRef" v-bind="cloudProps" :color-scale="colorScale" :mark-time="markTime" :hover-time="hoverTime" @pointmenu="openPointMenu"
 									:z-series="zSeries" :z-scale="zScale"
 									@loaded="onCloudLoaded" @climits="onClimits" @histogram="rendererHistogram = $event" @points="displayedPoints = $event"
 									@zscale="zScale = $event" @stage="frmStage = $event" />
-								<div v-else-if="frmLoading" class="fig-loading"><LoadingOverlay :stage="figStage" /></div>
+								<span v-else-if="frmLoading" class="fig-pending" aria-hidden="true"></span>
 								<img v-else-if="frmUrl" :src="frmUrl" :alt="`FRM ${axis}`" />
 								<div v-else class="empty">No {{ axis }} fingerprint</div>
 								<div v-if="octreeMsg && !liveOn" class="render-msg frm-render-msg">{{ octreeMsg }}</div>
+								<LoadingOverlay v-if="frmLoadOverlay" :stage="frmLoadOverlay.stage" />
 							</div>
 						</div>
 						</GridItem>
@@ -3569,7 +3579,6 @@ function fmtDateTime(v: string | null | undefined) {
 .segbtn.busy { position: relative; }
 .segbtn.busy::after { content: ''; position: absolute; left: 6px; right: 6px; bottom: 2px; height: 2px; border-radius: 2px; background: currentColor; opacity: 0.8; transform-origin: left; animation: seg-busy 1.1s ease-in-out infinite; }
 @keyframes seg-busy { 0%, 100% { transform: scaleX(0.15); } 50% { transform: scaleX(1); } }
-.fig-loading { position: relative; align-self: stretch; width: 100%; min-height: 160px; }
 .zslider { width: 70px; accent-color: var(--fp-accent); vertical-align: middle; cursor: pointer; }
 .stats-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm, 12px); margin: 6px 0 4px; }
 .stats-table th { text-align: right; font-size: var(--fs-xs, 11px); letter-spacing: 0.01em; color: var(--theme--foreground-subdued, #6b7684); padding: 2px 6px; }
@@ -3603,7 +3612,7 @@ function fmtDateTime(v: string | null | undefined) {
 .frm-compare > * { min-width: 0; min-height: 0; }
 .zsel { font: inherit; font-size: var(--fs-xs, 11px); font-weight: 650; padding: 3px 7px; border-radius: 8px; cursor: pointer;
 	border: 1px solid var(--theme--border-color, #d1d9e6); background: var(--theme--background, #fff); color: var(--theme--foreground, #334155); }
-.frm-img { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 220px; overflow: hidden; }
+.frm-img { position: relative; flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-width: 0; min-height: 220px; overflow: hidden; }
 .frm-img img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; border-radius: 8px; border: 1px solid var(--theme--border-color-subdued, #e7ebf0); }
 .layout.stacked .frm-img { aspect-ratio: 1 / 1; min-height: 0; flex: 0 0 auto; }
 .frm-img > .frm-cloud, .frm-img > .frm-octree { align-self: stretch; }

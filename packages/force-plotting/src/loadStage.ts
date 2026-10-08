@@ -7,8 +7,11 @@ export type LoadStage =
 	| { kind: 'open' }
 	| { kind: 'stream'; fraction: number | null };
 
-/** What a renderer reports to its host (e.g. for the busy mark on the active view-type button). */
-export interface StageInfo { label: string; progress: number | null }
+/**
+ * What a renderer reports to its host: the busy mark on the active view-type button (label,
+ * progress) and the host's loading overlay (the raw stage).
+ */
+export interface StageInfo { label: string; progress: number | null; stage: LoadStage }
 
 const mb = (n: number) => `${(n / 1048576).toFixed(n >= 10 * 1048576 ? 0 : 1)} MB`;
 const pct = (f: number) => `${Math.round(Math.max(0, Math.min(1, f)) * 100)}%`;
@@ -34,7 +37,7 @@ export function stageLabel(s: LoadStage): string {
 }
 
 export function stageInfo(s: LoadStage | null): StageInfo | null {
-	return s ? { label: stageLabel(s), progress: stageProgress(s) } : null;
+	return s ? { label: stageLabel(s), progress: stageProgress(s), stage: s } : null;
 }
 
 /**
@@ -54,4 +57,23 @@ export function sameStage(a: LoadStage | null, b: LoadStage | null): boolean {
 	if (a === b) return true;
 	if (!a || !b) return false;
 	return stageLabel(a) === stageLabel(b);
+}
+
+/** The FRM view that is on screen (after fallbacks), not just the one the user asked for. */
+export type OverlayMode = 'figure' | 'lite' | 'full';
+
+/**
+ * The one loading overlay the Plot page draws over the FRM area (#191), whichever view type is on
+ * screen. 'veil' is the centred spinner + label + progress bar; 'pill' is the small corner badge for
+ * a Full octree that is already showing its cloud while LOD nodes stream in.
+ *
+ * Lite and Full report their stage through `stage` (the renderer's @stage); Figure has no renderer,
+ * so its download shows while `figLoading` is set, from `figStage` (null = request not yet sized).
+ * The figure download only counts in Figure mode: the Figure PNG is also fetched in the background
+ * for Lite / Full, and must not label those views.
+ */
+export interface FrmOverlay { variant: 'veil' | 'pill'; stage: LoadStage }
+export function frmOverlay(mode: OverlayMode, stage: LoadStage | null, figLoading: boolean, figStage: LoadStage | null = null): FrmOverlay | null {
+	const s = mode === 'figure' ? (figLoading ? (figStage ?? { kind: 'download', loaded: 0, total: null, what: 'figure' }) : null) : stage;
+	return s ? { variant: s.kind === 'stream' ? 'pill' : 'veil', stage: s } : null;
 }
