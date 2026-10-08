@@ -49,7 +49,8 @@ don't edit the backlog, the changelog or the version; the coordinator does.
 | B — Live and finished plots | #185 #189 #188 | `agent-adf2dbacd89896db7` | merged (`53919a8`..`60c07b6`); no jsdom, so component wiring is tested via pure modules + source assertions |
 | C — FFT and pop-outs | #186 #187 | `agent-a48f8683250a6d659` | merged (`7ff136c`, `8c30d9d`); `ensurePopoutReachable` untested (needs Electron) |
 | D — Settings, layout, release notes | #135 #136 #137 | `agent-ab54cf260692df0c3` | merged (`e88352b`..`77c88f6`) |
-| Coordinator | merge, /simplify, debug, review, changelog 0.1.35, PR | main checkout | all streams merged; /simplify next |
+| /simplify fixes | crop/upload · stream/plots · FFT/desktop/notes | `agent-ad597db19cf601364`, `agent-a4c9bb20f328ab690`, `agent-a52c0889f3615aae7` | in progress; skipped: shared linkAnalysis(), NULL-file CHECK constraint, seq-based gaps, FFT `f` only on change |
+| Coordinator | merge, /simplify, debug, review, changelog 0.1.35, PR | main checkout | all streams merged; /simplify fixes running |
 
 ### A. Upload and crop — #190 (P1)
 - **Cause:** captures over `MAT_MAX_BYTES` (`finalize.py:59`, ~366 s at 51.2 kHz × 10 cols) skip
