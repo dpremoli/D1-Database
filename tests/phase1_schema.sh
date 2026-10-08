@@ -691,6 +691,57 @@ mfa_check "mfa_rows:2" "machining_force_analysis: INSERT and UPDATE are audited"
 mfa_check "mfa_big_omitted:0" "machining_force_analysis: series/fft/diag_metrics are left out of the snapshots"
 mfa_check "mfa_status_logged:done" "machining_force_analysis: ordinary columns are still logged"
 
+# Issue #190: a Force App cut over the recorder's .mat size limit has no .mat, so its analysis row
+# goes in with directus_files_id NULL. The column must accept that (several NULLs, UNIQUE kept), and
+# the down migration must refuse while such rows exist rather than silently deleting them.
+NUL=db/migrations/20261008000140_machining_force_analysis_file_nullable.sql
+nul_up=$(awk '/-- migrate:up/{f=1;next}/-- migrate:down/{f=0}f' "$NUL")
+nul_down=$(awk '/-- migrate:down/{f=1;next}f' "$NUL")
+nul_seed="INSERT INTO manufacturing_methods (method_id, method_code, method_name)
+VALUES ('c0000000-0000-4000-8000-0000000000a5', 'T-C-NF', 'nullable file test method');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('c0000000-0000-4000-8000-0000000000d4', 'TEST-NF-001');
+INSERT INTO manufacturing_operations (operation_id, method_id, sample_id, pass_code)
+VALUES ('c0000000-0000-4000-8000-0000000000c7', 'c0000000-0000-4000-8000-0000000000a5', 'c0000000-0000-4000-8000-0000000000d4', 'TEST-NF-OP');"
+nul_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+$nul_seed
+INSERT INTO machining_force_analysis (id, operation_id, directus_files_id, status)
+VALUES ('c0000000-0000-4000-8000-0000000000f4', 'c0000000-0000-4000-8000-0000000000c7', NULL, 'done'),
+       ('c0000000-0000-4000-8000-0000000000f5', 'c0000000-0000-4000-8000-0000000000c7', NULL, 'done');
+SELECT 'nul_rows:' || count(*) FROM machining_force_analysis WHERE operation_id = 'c0000000-0000-4000-8000-0000000000c7' AND directus_files_id IS NULL;
+SELECT 'nul_unique_kept:' || count(*) FROM pg_constraint WHERE conname = 'machining_force_analysis_file_unique';
+ROLLBACK;
+SQL
+)
+nul_check() { grep -qx "$1" <<<"$nul_out" && ok "$2" || bad "$2 (psql output: $nul_out)"; }
+nul_check "nul_rows:2" "machining_force_analysis: rows with a NULL directus_files_id insert (a cut with no .mat)"
+nul_check "nul_unique_kept:1" "machining_force_analysis: the UNIQUE constraint on directus_files_id is kept"
+nul_down_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+$nul_seed
+INSERT INTO machining_force_analysis (id, operation_id, directus_files_id, status)
+VALUES ('c0000000-0000-4000-8000-0000000000f4', 'c0000000-0000-4000-8000-0000000000c7', NULL, 'done');
+$nul_down
+ROLLBACK;
+SQL
+)
+grep -q "cannot restore NOT NULL" <<<"$nul_down_out" \
+    && ok "down: refuses while rows with no .mat file exist" \
+    || bad "down: refuses while rows with no .mat file exist (psql output: $nul_down_out)"
+nul_roundtrip=$($PSQL 2>&1 <<SQL
+BEGIN;
+DELETE FROM machining_force_analysis WHERE directus_files_id IS NULL;
+$nul_down
+SELECT 'down_nullable:' || is_nullable FROM information_schema.columns WHERE table_name = 'machining_force_analysis' AND column_name = 'directus_files_id';
+$nul_up
+SELECT 'up_nullable:' || is_nullable FROM information_schema.columns WHERE table_name = 'machining_force_analysis' AND column_name = 'directus_files_id';
+ROLLBACK;
+SQL
+)
+nul_rt() { grep -qx "$1" <<<"$nul_roundtrip" && ok "$2" || bad "$2 (psql output: $nul_roundtrip)"; }
+nul_rt "down_nullable:NO" "down: restores NOT NULL when no such rows exist"
+nul_rt "up_nullable:YES" "up: drops NOT NULL again"
+
 echo "== OCC triggers on every versioned table (review 5.4) =="
 # schema_migrations.version is dbmate's bookkeeping column, not an OCC version.
 run_eq "every table with a version column has an OCC BEFORE UPDATE trigger (missing: none)" \

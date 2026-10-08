@@ -503,6 +503,11 @@ def process_file(row, exe: str, timeout: int, matlab_opts: dict) -> dict:
         fchain = row.get("filter_chain")
         if fchain:
             matlab_opts = {**matlab_opts, "filter_chain": str(fchain)}
+        if not row.get("archive_path"):
+            # A Force App cut over the recorder's .mat size limit is saved with no source file
+            # (directus_files_id NULL, #190). discover() never queues one; this covers a row
+            # reset to pending by hand.
+            raise ValueError("no archive .mat linked to this analysis row")
         unc = unc_for(row["archive_path"])
         ok, err = run_matlab(exe, unc, outdir, timeout, matlab_opts)
         if not ok:
