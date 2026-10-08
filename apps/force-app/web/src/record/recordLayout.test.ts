@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseDismissedIds, parseSavedLayout } from './recordLayout';
+import { DEFAULT_LAYOUT, dockPanel, dockSideOf, oppositeSide, parseDismissedIds, parseSavedLayout } from './recordLayout';
 
 const KNOWN = { options: {}, force: {}, frm: {} };
 const item = (i: string, type: string, extra: object = {}) => ({ i, type, x: 0, y: 0, w: 2, h: 2, ...extra });
@@ -42,5 +42,71 @@ describe('parseDismissedIds (nit: JSON.parse outside try)', () => {
 		expect(parseDismissedIds('{"a":1}').size).toBe(0);
 		expect(parseDismissedIds(null).size).toBe(0);
 		expect([...parseDismissedIds('["a",3,null]')]).toEqual(['a']);
+	});
+});
+
+describe('dockPanel (#136: move the Recording & Metadata panel to the other side)', () => {
+	const overlaps = (a: { x: number; y: number; w: number; h: number }, b: typeof a) =>
+		a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+	const noOverlaps = (l: { i: string; x: number; y: number; w: number; h: number }[]) =>
+		l.every((a, n) => l.slice(n + 1).every((b) => !overlaps(a, b)));
+	const bottom = (l: { y: number; h: number }[]) => Math.max(...l.map((p) => p.y + p.h));
+	const byId = <T extends { i: string }>(l: T[], id: string): T => l.find((p) => p.i === id)!;
+
+	it('docks the full-height panel on the right and shifts the others across, same bottom row', () => {
+		const out = dockPanel(DEFAULT_LAYOUT, 'options', 'right', 12);
+		expect(byId(out, 'options').x).toBe(10);
+		for (const id of ['overview', 'force', 'tacho', 'frm', 'rpm']) {
+			expect(byId(out, id).x).toBe(byId(DEFAULT_LAYOUT, id).x - 2);
+			expect(byId(out, id).y).toBe(byId(DEFAULT_LAYOUT, id).y);
+			expect(byId(out, id).w).toBe(byId(DEFAULT_LAYOUT, id).w);
+		}
+		expect(noOverlaps(out)).toBe(true);
+		expect(bottom(out)).toBe(bottom(DEFAULT_LAYOUT));
+		// Columns 0-1 are not left empty: something starts at x=0.
+		expect(Math.min(...out.map((p) => p.x))).toBe(0);
+	});
+
+	it('docking back on the left restores the default', () => {
+		const right = dockPanel(DEFAULT_LAYOUT, 'options', 'right', 12);
+		expect(dockPanel(right, 'options', 'left', 12)).toEqual(DEFAULT_LAYOUT);
+	});
+
+	it('does not mutate its input and leaves an already-docked panel alone', () => {
+		const copy = JSON.parse(JSON.stringify(DEFAULT_LAYOUT));
+		const out = dockPanel(DEFAULT_LAYOUT, 'options', 'left', 12);
+		expect(DEFAULT_LAYOUT).toEqual(copy);
+		expect(out).toEqual(DEFAULT_LAYOUT);
+		expect(out).not.toBe(DEFAULT_LAYOUT);
+	});
+
+	it('keeps extra fields and ignores an unknown id', () => {
+		const out = dockPanel(DEFAULT_LAYOUT, 'options', 'right', 12);
+		expect(byId(out, 'tacho')).toMatchObject({ mode: 'time', channels: ['Tacho'] });
+		expect(dockPanel(DEFAULT_LAYOUT, 'nope', 'right', 12)).toEqual(DEFAULT_LAYOUT);
+	});
+
+	it('works for a panel in the middle of a row of panels', () => {
+		const l = [
+			{ i: 'a', type: 'frm', x: 0, y: 0, w: 4, h: 5 },
+			{ i: 'b', type: 'options', x: 4, y: 0, w: 2, h: 5 },
+			{ i: 'c', type: 'frm', x: 6, y: 0, w: 6, h: 5 },
+		];
+		const right = dockPanel(l, 'b', 'right', 12);
+		expect(right.map((p) => [p.i, p.x])).toEqual([['a', 0], ['b', 10], ['c', 4]]);
+		expect(noOverlaps(right)).toBe(true);
+		const left = dockPanel(l, 'b', 'left', 12);
+		expect(left.map((p) => [p.i, p.x])).toEqual([['a', 2], ['b', 0], ['c', 6]]);
+		expect(noOverlaps(left)).toBe(true);
+	});
+
+	it('dockSideOf and oppositeSide say where the panel is and where the button sends it', () => {
+		expect(dockSideOf(DEFAULT_LAYOUT, 'options')).toBe('left');
+		expect(oppositeSide(DEFAULT_LAYOUT, 'options')).toBe('right');
+		const right = dockPanel(DEFAULT_LAYOUT, 'options', 'right', 12);
+		expect(dockSideOf(right, 'options')).toBe('right');
+		expect(oppositeSide(right, 'options')).toBe('left');
+		expect(dockSideOf(DEFAULT_LAYOUT, 'overview')).toBeNull();
+		expect(dockSideOf(DEFAULT_LAYOUT, 'nope')).toBeNull();
 	});
 });
