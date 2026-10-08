@@ -15,7 +15,7 @@ import { SUB_NAMES } from '../liveClient';
 import { channelColor } from '../types';
 import { theme } from '../../theme';
 import { appUrl } from '../../appUrl';
-import { buildPopoutQuery } from '../popoutQuery';
+import { buildPopoutQuery, CHANNEL_ORDER as ORDER, SUMMED_CHANNELS as SUMMED } from '../popoutQuery';
 import type { PlotMode } from '../plotModes';
 import { isRailed, shownRailed } from '../railing';
 import { forcePlotView, showWindowControl } from './forcePlotView';
@@ -23,8 +23,6 @@ import { clampWindowSec, WINDOW_MAX_SEC, WINDOW_MIN_SEC, WINDOW_SLIDER_MAX_SEC }
 
 const props = defineProps<{ inst?: { mode?: PlotMode; channels?: string[]; axes?: string[]; windowSec?: number } }>();
 const w = useWorkspace();
-const SUMMED = ['Fx', 'Fy', 'Fz'];
-const ORDER = [...SUMMED, ...SUB_NAMES];
 
 const mode = computed<PlotMode>(() => props.inst?.mode ?? 'time');
 // Spectrogram/waterfall render a single channel; hint the user which one is shown.

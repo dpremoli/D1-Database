@@ -8,13 +8,13 @@
 import { COLORMAPS } from '@d1/force-plotting';
 import { SUB_NAMES } from './liveClient';
 import { PLOT_MODES } from './plotModes';
-import { FRM_STRIDES } from './plotPrefs';
+import { FRM_STRIDES, num, oneOf, type Axis, type PlotPrefs } from './plotPrefs';
 import { clampWindowSec, DEFAULT_WINDOW_SEC } from './plotWindow';
 
 export type PopoutPanel = 'force' | 'frm' | 'polar';
-export type FrmAxis = 'Fx' | 'Fy' | 'Fz';
-export type PolarRadius = 'Fz' | 'Fxy' | 'Mz';
-export type PolarAngle = 'tacho' | 'force_vector';
+export type FrmAxis = Axis;
+export type PolarRadius = PlotPrefs['polarRadius'];
+export type PolarAngle = PlotPrefs['polarAngleSource'];
 
 export interface PopoutState {
 	mode: string;
@@ -58,8 +58,9 @@ const PARAM: Record<keyof PopoutState, string> = {
 	pointSize: 'pointSize', frmAxis: 'frmAxis', stride: 'stride', radius: 'radius', angle: 'angle',
 };
 
-function oneOf<T extends string>(v: string | null, allowed: readonly T[], d: T): T {
-	return allowed.includes(v as T) ? (v as T) : d;
+/** A numeric URL parameter; NaN (so `num` falls back) for a missing or blank one. */
+function numParam(v: string | null): number {
+	return v !== null && v.trim() !== '' ? Number(v) : NaN;
 }
 
 /** Query string (or a URLSearchParams) -> a complete, valid state. Never throws. */
@@ -71,19 +72,15 @@ export function parsePopoutQuery(search: string | URLSearchParams): PopoutState 
 	const channels = CHANNEL_ORDER.filter((c) => picked.has(c));
 
 	const cm = q.get(PARAM.colormap);
-	const ps = q.get(PARAM.pointSize);
-	const psNum = ps !== null && ps.trim() !== '' ? Number(ps) : NaN;
-	const st = q.get(PARAM.stride);
-	const stNum = st !== null && st.trim() !== '' ? Number(st) : NaN;
 
 	return {
 		mode: oneOf(q.get(PARAM.mode), PLOT_MODES.map((m) => m.key as string), d.mode),
 		channels: channels.length ? channels : [...d.channels],
 		windowSec: clampWindowSec(q.get(PARAM.windowSec), d.windowSec),
 		colormap: cm !== null && Object.prototype.hasOwnProperty.call(COLORMAPS, cm) ? cm : d.colormap,
-		pointSize: Number.isFinite(psNum) ? Math.min(5, Math.max(1, psNum)) : d.pointSize,
+		pointSize: num(numParam(q.get(PARAM.pointSize)), 1, 5, d.pointSize),
 		frmAxis: oneOf(q.get(PARAM.frmAxis), ['Fx', 'Fy', 'Fz'] as const, d.frmAxis),
-		stride: FRM_STRIDES.includes(stNum) ? stNum : d.stride,
+		stride: oneOf(numParam(q.get(PARAM.stride)), FRM_STRIDES, d.stride),
 		radius: oneOf(q.get(PARAM.radius), ['Fz', 'Fxy', 'Mz'] as const, d.radius),
 		angle: oneOf(q.get(PARAM.angle), ['tacho', 'force_vector'] as const, d.angle),
 	};

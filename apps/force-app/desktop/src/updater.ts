@@ -61,10 +61,8 @@ function performInstall(version: string): void {
   }, 800);
 }
 
-/** The native dialog is only the fallback for when the app has no window to show the prompt in.
- * With a window the renderer's own prompt (UpdatePrompt.vue) shows it, driven by the
- * 'update:status' push: a parentless native dialog pops up over whatever the operator is doing
- * (#197: while typing a password at login), takes focus, and Enter on it installs. */
+/** The native dialog is only the fallback when there is no window: with one, the renderer's
+ * UpdatePrompt shows it from the 'update:status' push (#197: the dialog stole focus at login). */
 function hasWindow(): boolean {
   const win = getWindow?.();
   return !!win && !win.isDestroyed();

@@ -1,9 +1,6 @@
 <script setup lang="ts">
-// ForceChart's hover crosshair + dot (part="svg", inside the <svg>) and its readout (part="tip",
-// outside it), split out of the chart so a mouse move redraws only these (#100). The hover index is
-// shared by every open chart and changes on each move; ForceChart used to read it in its own
-// template, so every move re-rendered every chart's grid, ticks and paths. The index now arrives as
-// a stable HoverSource and is read only here, so ForceChart's render never subscribes to it.
+// ForceChart's hover crosshair + dot (part="svg", inside the <svg>) and readout (part="tip", outside
+// it), split out so a mouse move redraws only these (#100). The index is read only here; see chartHover.ts.
 import { computed } from 'vue';
 import { hoverPoint, type HoverGeom, type HoverSource } from './chartHover';
 

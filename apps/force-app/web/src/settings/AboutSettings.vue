@@ -4,19 +4,10 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { CHANGELOG } from '../changelog';
 import { groupNotes } from '../changelogGroups';
+import type { UpdateStatus } from '../electronBridge';
 
 // The changelog is static, so group each entry's notes once, not on every render.
 const ENTRIES = CHANGELOG.map((c) => ({ ...c, groups: groupNotes(c.notes) }));
-
-type UpdateStatus =
-	| { state: 'idle' }
-	| { state: 'checking' }
-	| { state: 'available'; version: string }
-	| { state: 'not-available' }
-	| { state: 'downloading'; percent: number }
-	| { state: 'downloaded'; version: string }
-	| { state: 'installing'; version: string }
-	| { state: 'error'; message: string };
 
 const isElectron = !!window.forceApp;
 const appVersion = ref('');

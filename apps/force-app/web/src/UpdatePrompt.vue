@@ -1,17 +1,16 @@
 <script setup lang="ts">
-// "A new version is ready" card, drawn in the app (#197). The main process used to open a native
-// dialog on update-downloaded, on any page: it popped up over the login password field, took focus
-// and Enter installed. This is a card in the corner instead: it is not modal, never takes focus, has
-// no key handlers (so Enter typed into a field can never reach it), and "Not now" is the quiet
-// default. It lives in AppShell, so it can never appear on /login, which is outside the shell.
+// "A new version is ready" card (#197). Replaces the native dialog that popped up over the login
+// password field, took focus, and installed on Enter. This one is non-modal, takes no focus, has no
+// key handlers, and lives in AppShell, so it can never appear on /login.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import { dismissedUpdateVersion, shouldShowUpdatePrompt, type UpdatePromptStatus } from './updatePrompt';
+import type { UpdateStatus } from './electronBridge';
+import { dismissedUpdateVersion, shouldShowUpdatePrompt } from './updatePrompt';
 
 const props = defineProps<{ recording: boolean }>();
 
 const route = useRoute();
-const status = ref<UpdatePromptStatus>({ state: 'idle' });
+const status = ref<UpdateStatus>({ state: 'idle' });
 const notice = ref('');
 const installing = ref(false);
 

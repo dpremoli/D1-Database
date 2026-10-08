@@ -97,8 +97,7 @@ const CHART_MODES = [
 const SPECTRAL_MODES = ['psd', 'spectrogram', 'waterfall'] as const;
 const isSpectral = computed(() => (SPECTRAL_MODES as readonly string[]).includes(chartMode.value));
 const hoverIndex = ref<number | null>(null);   // shared across the 3 charts
-// What the charts get instead of the number (#100): a stable object, so a hover move re-renders only
-// each chart's crosshair layer, not the chart. See chartHover.ts.
+// Charts get this instead of the number so a hover move redraws only their crosshair (#100).
 const hoverSource: HoverSource = { index: hoverIndex };
 const axis = ref<Axis>('Fz');
 
@@ -865,9 +864,8 @@ const frmBusy = computed(() => !!frmStage.value || (frmMode.value === 'figure' &
 // A renderer that unmounts mid-load (the view type changed) never reports idle: reset on a switch;
 // the one that replaces it reports its own stage.
 watch([frmMode, liveOn, octreeOn, compareOn, filteredSoloOn], () => { frmStage.value = null; });
-// The one loading overlay for the FRM area (#191): same look for Figure, Lite and Full. The view
-// that is actually mounted decides the mode (Full without an octree falls back), mirroring the
-// v-if chain in the template.
+// The one loading overlay for the FRM area (#191). The mode is the view actually mounted (Full
+// without an octree falls back), mirroring the v-if chain in the template.
 const frmShownMode = computed<OverlayMode>(() => octreeOn.value ? 'full' : (compareOn.value || filteredSoloOn.value || liveOn.value) ? 'lite' : 'figure');
 const frmLoadOverlay = computed(() => frmOverlay(frmShownMode.value, frmStage.value?.stage ?? null, frmLoading.value, figStage.value));
 const frmCache = new Map<string, string>();
@@ -3189,7 +3187,7 @@ function fmtDateTime(v: string | null | undefined) {
 								<img v-else-if="frmUrl" :src="frmUrl" :alt="`FRM ${axis}`" />
 								<div v-else class="empty">No {{ axis }} fingerprint</div>
 								<div v-if="octreeMsg && !liveOn" class="render-msg frm-render-msg">{{ octreeMsg }}</div>
-								<LoadingOverlay v-if="frmLoadOverlay" :stage="frmLoadOverlay.stage" />
+								<LoadingOverlay v-if="frmLoadOverlay" :stage="frmLoadOverlay" />
 							</div>
 						</div>
 						</GridItem>

@@ -23,9 +23,7 @@ const props = defineProps<{
 	xUnit?: string;
 	yUnit?: string;
 	logY?: boolean;
-	// The shared hover index (all charts scrub together), as a stable wrapper rather than a number:
-	// this component never reads it, only ChartHoverLayer does, so a mouse move redraws the crosshair
-	// alone (#100).
+	// The shared hover index (charts scrub together); only ChartHoverLayer reads it (#100).
 	hover?: HoverSource;
 	cropStart?: number | null;
 	cropEnd?: number | null;

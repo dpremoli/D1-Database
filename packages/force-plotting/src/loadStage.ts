@@ -63,17 +63,12 @@ export function sameStage(a: LoadStage | null, b: LoadStage | null): boolean {
 export type OverlayMode = 'figure' | 'lite' | 'full';
 
 /**
- * The one loading overlay the Plot page draws over the FRM area (#191), whichever view type is on
- * screen. 'veil' is the centred spinner + label + progress bar; 'pill' is the small corner badge for
- * a Full octree that is already showing its cloud while LOD nodes stream in.
- *
- * Lite and Full report their stage through `stage` (the renderer's @stage); Figure has no renderer,
- * so its download shows while `figLoading` is set, from `figStage` (null = request not yet sized).
- * The figure download only counts in Figure mode: the Figure PNG is also fetched in the background
- * for Lite / Full, and must not label those views.
+ * The stage the Plot page's one loading overlay shows over the FRM area (#191), or null for none.
+ * Lite and Full report theirs through `stage` (the renderer's @stage). Figure has no renderer, so it
+ * uses its download (`figStage`, null = not yet sized) while `figLoading`; that download only counts
+ * in Figure mode, since the PNG is also fetched in the background for Lite / Full.
  */
-export interface FrmOverlay { variant: 'veil' | 'pill'; stage: LoadStage }
-export function frmOverlay(mode: OverlayMode, stage: LoadStage | null, figLoading: boolean, figStage: LoadStage | null = null): FrmOverlay | null {
-	const s = mode === 'figure' ? (figLoading ? (figStage ?? { kind: 'download', loaded: 0, total: null, what: 'figure' }) : null) : stage;
-	return s ? { variant: s.kind === 'stream' ? 'pill' : 'veil', stage: s } : null;
+export function frmOverlay(mode: OverlayMode, stage: LoadStage | null, figLoading: boolean, figStage: LoadStage | null = null): LoadStage | null {
+	if (mode !== 'figure') return stage;
+	return figLoading ? (figStage ?? { kind: 'download', loaded: 0, total: null, what: 'figure' }) : null;
 }

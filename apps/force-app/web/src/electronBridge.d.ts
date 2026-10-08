@@ -3,7 +3,7 @@
 // read-only /app/ browser surface (infra/caddy/Caddyfile), where it is undefined.
 export {};
 
-type UpdateStatus =
+export type UpdateStatus =
   | { state: 'idle' }
   | { state: 'checking' }
   | { state: 'available'; version: string }

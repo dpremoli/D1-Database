@@ -16,7 +16,7 @@ import LiveFrm from './LiveFrm.vue';
 import { COLORMAPS, colormapLabel, PlotModeFlyout, useAutoColorScale, type ColorScale } from '@d1/force-plotting';
 import { PLOT_MODES } from './plotModes';
 import { showWindowControl } from './panels/forcePlotView';
-import { buildPopoutQuery, CHANNEL_ORDER, parsePopoutQuery, SUMMED_CHANNELS, type FrmAxis, type PolarAngle, type PolarRadius } from './popoutQuery';
+import { buildPopoutQuery, CHANNEL_ORDER as ORDER, parsePopoutQuery, SUMMED_CHANNELS as SUMMED, type FrmAxis, type PolarAngle, type PolarRadius } from './popoutQuery';
 import { clampWindowSec, WINDOW_MAX_SEC, WINDOW_MIN_SEC, WINDOW_SLIDER_MAX_SEC } from './plotWindow';
 
 const route = useRoute();
@@ -24,12 +24,9 @@ const panel = computed(() => String(route.params.panel || 'force'));
 const isFrm = computed(() => panel.value === 'frm');
 const isPolar = computed(() => panel.value === 'polar');
 
-// Seeded from the URL the window was opened (or restored) with; invalid or missing params fall back
-// to defaults. Changes made in this window are written back to the URL below (#108).
+// Seeded from the URL the window was opened (or restored) with; written back below (#108).
 const init = parsePopoutQuery(window.location.search);
 const mode = ref<string>(init.mode);
-const SUMMED = SUMMED_CHANNELS;
-const ORDER = CHANNEL_ORDER;
 const channels = ref<string[]>(init.channels);
 const windowSec = ref(init.windowSec);
 const initColormap = ref<string>(init.colormap);
@@ -90,10 +87,9 @@ const frmColorScale = computed<ColorScale>(() => ({ ...autoFrmScale.value, color
 // onMounted alone only ever set it once, from the URL the window was opened with.
 watch(title, (t) => { document.title = t; }, { immediate: true });
 
-// Write this window's settings back into its own URL. The desktop shell saves each pop-out's
-// current URL at quit and reopens it, so without this every change made in here was lost (#108).
-// replaceState, not a router push: no history entry, no re-render, and the path is kept as is.
-// Immediate, so a junk URL is normalised to the settings actually in use.
+// Write this window's settings back into its URL: the desktop shell reopens each pop-out from its
+// current URL, so without this every change was lost (#108). replaceState, not a router push; immediate,
+// so a junk URL is normalised.
 function syncUrl() {
 	const panelKey = isFrm.value ? 'frm' : isPolar.value ? 'polar' : 'force';
 	const q = buildPopoutQuery(panelKey, {

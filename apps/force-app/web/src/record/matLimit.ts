@@ -1,7 +1,5 @@
-// #194: why a capture has no .mat, in words an operator can act on. finalize.py skips the .mat when
-// n x columns x 8 bytes (float64) is over MAT_MAX_BYTES, because MAT5 stores an element size in a
-// 32-bit field. The summary.json it writes carries fs, n, channels and mat_skip_reason, so the
-// limit can be turned into minutes at this capture's own rate and column count.
+// #194: why a capture has no .mat. finalize.py skips it when n x columns x 8 bytes is over
+// MAT_MAX_BYTES (MAT5's 32-bit size field); summary.json's fs, n and channels turn that into minutes.
 
 /** Mirror of MAT_MAX_BYTES in backend/app/finalize.py. Keep the two in step. */
 export const MAT_MAX_BYTES = 1_500_000_000;

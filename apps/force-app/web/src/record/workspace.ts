@@ -576,11 +576,8 @@ export function createWorkspace() {
 		try {
 			if (!(await checkAlarmsBeforeStart())) return;
 			if (!(await checkDiskBeforeStart())) return;
-			// #192: Start on a finished cut is "Start next cut". The per-cut fields (sequence, Cut ID,
-			// chips, new edge) still describe the cut that just ended unless New already advanced them,
-			// so step them first, exactly as New does. Read here, after the prompts above, so a New
-			// pressed while one was open (state is idle by then) is not stepped twice. newRun() only
-			// resets the client side (no recorder call), so nothing is left to await before the start.
+			// #192: Start on a finished cut is "Start next cut": step the per-cut fields first, as New
+			// does. Checked after the prompts above so a New pressed during one isn't stepped twice.
 			if (st.state === 'done' && source.value !== 'replay') newRun();
 			errMsg.value = null; finishedCache.value = null;
 			alarms.reset();

@@ -64,16 +64,19 @@ describe('sameStage', () => {
 
 describe('frmOverlay (#191)', () => {
 	// The three view types used to mount the overlay differently (centred veil, corner pill, a
-	// 160px box); now every initial load is the same variant.
+	// 160px box); now every initial load is a veil.
 	it('gives the same full veil for a Figure download, a Lite download / build and a Full open', () => {
 		const fig = frmOverlay('figure', null, true, { kind: 'download', loaded: 10, total: 100, what: 'figure' });
 		const liteDl = frmOverlay('lite', { kind: 'download', loaded: 10, total: 100 }, false);
 		const liteBuild = frmOverlay('lite', { kind: 'build' }, false);
 		const fullOpen = frmOverlay('full', { kind: 'open' }, false);
-		for (const o of [fig, liteDl, liteBuild, fullOpen]) expect(o?.variant).toBe('veil');
+		for (const o of [fig, liteDl, liteBuild, fullOpen]) {
+			expect(o).not.toBeNull();
+			expect(o?.kind).not.toBe('stream');
+		}
 	});
 	it('keeps the corner pill only for Full streaming nodes into a cloud that is already visible', () => {
-		expect(frmOverlay('full', { kind: 'stream', fraction: 0.4 }, false)?.variant).toBe('pill');
+		expect(frmOverlay('full', { kind: 'stream', fraction: 0.4 }, false)?.kind).toBe('stream');
 	});
 	it('shows nothing once idle', () => {
 		expect(frmOverlay('lite', null, false)).toBeNull();
@@ -82,7 +85,7 @@ describe('frmOverlay (#191)', () => {
 	});
 	it('labels a Figure download that has no size yet', () => {
 		const o = frmOverlay('figure', null, true);
-		expect(o && stageLabel(o.stage)).toBe('Downloading figure…');
+		expect(o && stageLabel(o)).toBe('Downloading figure…');
 	});
 	it('ignores the background figure download while Lite / Full are on screen', () => {
 		expect(frmOverlay('lite', null, true, { kind: 'download', loaded: 1, total: 2, what: 'figure' })).toBeNull();

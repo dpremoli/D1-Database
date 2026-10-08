@@ -25,10 +25,10 @@ export function defaultPlotPrefs(): PlotPrefs {
 	};
 }
 
-function oneOf<T extends string | number>(v: unknown, allowed: readonly T[], d: T): T {
+export function oneOf<T extends string | number>(v: unknown, allowed: readonly T[], d: T): T {
 	return allowed.includes(v as T) ? (v as T) : d;
 }
-function num(v: unknown, lo: number, hi: number, d: number): number {
+export function num(v: unknown, lo: number, hi: number, d: number): number {
 	return typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d;
 }
 
