@@ -2348,6 +2348,51 @@ def patch_capture_metadata(cid: str, patch: CaptureMetadataPatch) -> dict:
     return summary
 
 
+class CaptureCropPut(BaseModel):
+    """The operator's cut window, as sample indices into the full-rate recording. PUT replaces both:
+    an omitted or null side clears that override (auto-detection decides again)."""
+
+    crop_start_idx_override: int | None = None
+    crop_end_idx_override: int | None = None
+
+
+@app.put("/captures/{cid}/crop")
+def put_capture_crop(cid: str, body: CaptureCropPut) -> dict:
+    """Keep the crop the operator set in the final summary, locally, so it survives a failed upload.
+
+    The edited window used to live only in memory and in the (possibly failing) Directus POST, and
+    it was gone after a restart (#190). Stored as `crop_start_idx_override` / `crop_end_idx_override`
+    in summary.json (same names as the machining_force_analysis columns, so an upload sends them
+    as they are); the raw recording and capture.mat are never touched."""
+    if not recovery.is_safe_id(cid):
+        raise HTTPException(400, "bad id")
+    if not os.path.isdir(os.path.join(CAPTURES_ROOT, cid)):
+        raise HTTPException(404, "not found")
+    if cid == _active_session_id():
+        raise HTTPException(409, "that recording is still in progress")
+    _refuse_if_capture_busy(cid)
+    path = _capture_file(cid, "summary.json")
+    start, end = body.crop_start_idx_override, body.crop_end_idx_override
+    with _summary_patch_lock:
+        with open(path) as f:
+            summary = json.load(f)
+        n = int(summary.get("n") or 0)
+        if start is not None and not 0 <= start < n:
+            raise HTTPException(422, f"crop_start_idx_override must be 0 <= start < {n} samples")
+        if end is not None and not 0 < end <= n:
+            raise HTTPException(422, f"crop_end_idx_override must be 0 < end <= {n} samples")
+        if start is not None and end is not None and start >= end:
+            raise HTTPException(422, "crop_start_idx_override must be before crop_end_idx_override")
+        for key, val in (("crop_start_idx_override", start), ("crop_end_idx_override", end)):
+            if val is None:
+                summary.pop(key, None)
+            else:
+                summary[key] = val
+        storage.atomic_write_json(path, summary, indent=2)
+    log.info("put_capture_crop: id=%s start=%s end=%s", cid, start, end)
+    return {"crop_start_idx_override": start, "crop_end_idx_override": end}
+
+
 @app.get("/captures/{cid}/live_cache.bin")
 async def capture_cache(cid: str) -> FileResponse:
     return FileResponse(_capture_file(cid, "live_cache.bin"), media_type="application/octet-stream")
