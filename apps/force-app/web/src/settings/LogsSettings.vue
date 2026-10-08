@@ -7,6 +7,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { getConfig } from '../config';
 import { describeFetchError } from '../netErrors';
+import { LOG_CATEGORIES, logCategory, type LogCategory } from './logCategory';
 
 interface LogRecord { ts: string; level: string; logger: string; message: string; }
 
@@ -23,6 +24,9 @@ const copied = ref(false);
 const LEVELS = ['', 'DEBUG', 'INFO', 'WARNING', 'ERROR'] as const;
 const level = ref<string>('');
 const search = ref('');
+// Client-side only: the backend filters by level/text, but a line's category is derived from its
+// logger and message, so this narrows the page already fetched.
+const category = ref<LogCategory | ''>('');
 const limit = ref(500);
 const autoRefresh = ref(false);
 const follow = ref(true);
@@ -115,7 +119,7 @@ onUnmounted(() => {
 });
 
 function copyAll() {
-	const text = records.value
+	const text = shown.value
 		.map((r) => `${r.ts} ${r.level} ${r.logger}: ${r.message}`)
 		.join('\n');
 	navigator.clipboard.writeText(text);
@@ -127,6 +131,10 @@ function downloadLog() {
 	// A plain link, not fetch+blob: the file can be large and this lets the browser stream it.
 	window.open(`${base()}/logs/download`, '_blank');
 }
+
+const shown = computed(() => category.value
+	? records.value.filter((r) => logCategory(r) === category.value)
+	: records.value);
 
 const counts = computed(() => {
 	const c = { WARNING: 0, ERROR: 0, CRITICAL: 0 } as Record<string, number>;
@@ -159,6 +167,13 @@ const problems = computed(() => counts.value.WARNING + counts.value.ERROR + coun
 				<span>Level</span>
 				<select v-model="level">
 					<option v-for="l in LEVELS" :key="l" :value="l">{{ l || 'All' }}</option>
+				</select>
+			</label>
+			<label class="tb-field">
+				<span>Type</span>
+				<select v-model="category">
+					<option value="">All</option>
+					<option v-for="c in LOG_CATEGORIES" :key="c.key" :value="c.key">{{ c.label }}</option>
 				</select>
 			</label>
 			<label class="tb-field grow">
@@ -194,7 +209,7 @@ const problems = computed(() => counts.value.WARNING + counts.value.ERROR + coun
 				{{ counts.ERROR + counts.CRITICAL }} error<span v-if="counts.ERROR + counts.CRITICAL !== 1">s</span>,
 				{{ counts.WARNING }} warning<span v-if="counts.WARNING !== 1">s</span>
 			</span>
-			<button class="btn" :disabled="!records.length" @click="copyAll">
+			<button class="btn" :disabled="!shown.length" @click="copyAll">
 				<span class="material-symbols-rounded">{{ copied ? 'check' : 'content_copy' }}</span>
 				{{ copied ? 'Copied' : 'Copy' }}
 			</button>
@@ -206,10 +221,10 @@ const problems = computed(() => counts.value.WARNING + counts.value.ERROR + coun
 		<p v-if="error" class="err">{{ error }}</p>
 
 		<div ref="listEl" class="loglist">
-			<div v-if="!records.length && !loading" class="empty">
-				{{ search || level ? 'No matching log entries.' : 'No log entries yet.' }}
+			<div v-if="!shown.length && !loading" class="empty">
+				{{ search || level || category ? 'No matching log entries.' : 'No log entries yet.' }}
 			</div>
-			<div v-for="(r, i) in records" :key="i" class="row" :class="r.level.toLowerCase()">
+			<div v-for="(r, i) in shown" :key="i" class="row" :class="[r.level.toLowerCase(), `cat-${logCategory(r)}`]">
 				<span class="ts">{{ r.ts.slice(11) || '—' }}</span>
 				<span class="lvl">{{ r.level }}</span>
 				<span class="mod">{{ r.logger.replace(/^force_app\./, '') }}</span>
@@ -257,7 +272,8 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 	border: 1px solid var(--border); border-radius: 9px; padding: 6px 0; }
 /* #45: the ts column was 62px, too narrow for "HH:MM:SS,mmm" (12 monospace chars, ~83px) at this
    font-size -- it overflowed into the level column next to it, reading as an overlap. */
-.row { display: grid; grid-template-columns: 86px 62px 78px 1fr; gap: 8px; padding: 2px 11px;
+.row { border-left: 3px solid var(--row-cat, transparent);
+	display: grid; grid-template-columns: 86px 62px 78px 1fr; gap: 8px; padding: 2px 11px 2px 8px;
 	font-family: var(--mono); font-size: var(--fs-sm); line-height: 1.5; align-items: baseline; }
 .row:hover { background: var(--surface); }
 .ts { color: var(--text-dim); font-variant-numeric: tabular-nums; }
@@ -268,6 +284,14 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 .row.warning .lvl { color: var(--warn); }
 .row.error .lvl, .row.critical .lvl { color: var(--danger); }
 .row.error, .row.critical { background: rgba(239,68,68,0.06); }
+/* Left border by category (#193). Theme tokens only, so it reads in both themes; the type colours
+   are the status/axis inks, and the UI purple is a mix of two of them rather than a new literal. */
+.row.cat-error { --row-cat: var(--danger); }
+.row.cat-warning { --row-cat: var(--warn); }
+.row.cat-network { --row-cat: var(--fz-ink); }
+.row.cat-ui { --row-cat: color-mix(in srgb, var(--fz-ink) 50%, var(--fx-ink)); }
+.row.cat-recording { --row-cat: var(--ok); }
+.row.cat-other { --row-cat: var(--border-2); }
 .row.debug { opacity: 0.65; }
 .empty { padding: 26px; text-align: center; color: var(--text-dim); font-size: var(--fs-md); }
 </style>
