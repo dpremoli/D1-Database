@@ -279,3 +279,23 @@ describe('reconcile relays what it adopts to pop-outs', () => {
 		expect(post).not.toHaveBeenCalled();
 	});
 });
+
+describe('RecordClient.connect() is idempotent (#185)', () => {
+	it('keeps the open socket when the page connects again on return', () => {
+		const c = new RecordClient();
+		c.connect();
+		(FakeWS.all[0] as any).readyState = 1;
+		c.connect();
+		expect(FakeWS.all).toHaveLength(1);
+		c.disconnect();
+	});
+
+	it('opens a fresh socket when the previous one is already closing', () => {
+		const c = new RecordClient();
+		c.connect();
+		(FakeWS.all[0] as any).readyState = 2;
+		c.connect();
+		expect(FakeWS.all).toHaveLength(2);
+		c.disconnect();
+	});
+});

@@ -183,7 +183,10 @@ export class RecordClient {
 		this.wantConnected = true;
 		this.reconnectAttempts = 0;
 		if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-		this.openSocket();
+		// Idempotent while a socket is connecting or open: the Record page calls connect() on every
+		// mount and no longer disconnects mid-recording (#185), so a second socket would double
+		// every frame in the trace.
+		if (!this.ws || this.ws.readyState > 1) this.openSocket();
 		// Close any channel from a previous connect() before replacing it — reconnecting otherwise
 		// leaks the old BroadcastChannel, which stays subscribed and keeps its handler alive.
 		this.relay?.close();
