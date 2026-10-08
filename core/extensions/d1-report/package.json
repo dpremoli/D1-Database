@@ -13,8 +13,8 @@
     "directus-custom-endpoint"
   ],
   "devDependencies": {
-    "@directus/extensions-sdk": "^17",
-    "typescript": "^5"
+    "@directus/extensions-sdk": "^18",
+    "typescript": "^7"
   },
   "dependencies": {
     "directus-extension-group-tabs-interface": "^2.1.0",
