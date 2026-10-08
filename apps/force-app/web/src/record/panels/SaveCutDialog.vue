@@ -13,6 +13,7 @@ import { useDialog } from '../../ui/useDialog';
 import { formatMegabytes } from '../../format';
 import { authStore } from '../../authStore';
 import { describeRecordingFailure } from '../recordingErrors';
+import { matSkipNote } from '../matLimit';
 import { spotlight } from '../../ui/spotlight';
 
 const w = useWorkspace();
@@ -51,6 +52,8 @@ watch(canUpload, (v) => { if (!v) uploadDb.value = false; });
 // summary) — matches the check in workspace.ts's uploadCutToDatabase. Untick (not just disable) for
 // the same reason as uploadDb above: a checked-but-disabled box still reads as "this will happen".
 const matAvailable = computed(() => w.st.summary?.mat_written !== false);
+// #194: say why, in minutes at this capture's own rate (matLimit.ts), and what is still kept.
+const matNote = computed(() => matSkipNote(w.st.summary));
 watch(matAvailable, (v) => { if (!v) saveMat.value = false; });
 
 // Whether the operator dragged a crop handle away from the auto-detected default (#7) — gates the
@@ -314,7 +317,7 @@ function startNew() {
 						<input type="checkbox" v-model="saveMat" :disabled="stage === 'saving' || !matAvailable" />
 						<div>
 							<span>Save a local copy (.mat)</span>
-							<small v-if="!matAvailable">exceeds size limit — not written for this capture</small>
+							<small v-if="!matAvailable" data-testid="mat-skip-note">{{ matNote }}</small>
 						</div>
 					</label>
 					<label class="scd-opt">
