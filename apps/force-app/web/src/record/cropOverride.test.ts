@@ -8,8 +8,8 @@ describe('cropWindowSec', () => {
 		expect(cropWindowSec({ fs: 1000, crop_start_idx_override: 2500, crop_end_idx_override: 7000 }, cache))
 			.toEqual({ startSec: 2.5, endSec: 7, overridden: true });
 	});
-	it('falls back to the cache detection for a side that is not stored', () => {
-		expect(cropWindowSec({ fs: 1000, crop_start_idx_override: 2500 }, cache)).toEqual({ startSec: 2.5, endSec: 9, overridden: true });
+	it('is the cache detection when only one side is stored: an override is both sides or neither', () => {
+		expect(cropWindowSec({ fs: 1000, crop_start_idx_override: 2500 }, cache)).toEqual({ startSec: 1, endSec: 9, overridden: false });
 	});
 	it('is the cache detection when nothing is stored or the rate is unknown', () => {
 		expect(cropWindowSec({ fs: 1000 }, cache)).toEqual({ startSec: 1, endSec: 9, overridden: false });
@@ -22,13 +22,14 @@ describe('cropWindowSec', () => {
 
 describe('cropOverrideForUpload', () => {
 	it('is null when nothing is stored', () => {
-		expect(cropOverrideForUpload({ fs: 1000 }, cache)).toBeNull();
+		expect(cropOverrideForUpload({ fs: 1000 })).toBeNull();
+		expect(cropOverrideForUpload(null)).toBeNull();
 	});
 	it('passes both stored sides through', () => {
-		expect(cropOverrideForUpload({ crop_start_idx_override: 1, crop_end_idx_override: 2 }, null)).toEqual({ start: 1, end: 2 });
+		expect(cropOverrideForUpload({ crop_start_idx_override: 1, crop_end_idx_override: 2 })).toEqual({ start: 1, end: 2 });
 	});
-	it('fills a missing side from the cache, since the dashboard needs both', () => {
-		expect(cropOverrideForUpload({ fs: 1000, crop_end_idx_override: 5000 }, cache)).toEqual({ start: 1000, end: 5000 });
-		expect(cropOverrideForUpload({ fs: 1000, crop_end_idx_override: 5000 }, null)).toBeNull();
+	it('is null for a half-set pair: nothing is filled in from the cache', () => {
+		expect(cropOverrideForUpload({ fs: 1000, crop_end_idx_override: 5000 })).toBeNull();
+		expect(cropOverrideForUpload({ fs: 1000, crop_start_idx_override: 5 })).toBeNull();
 	});
 });

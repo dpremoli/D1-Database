@@ -264,30 +264,28 @@ describe('uploadCaptureColdStart crop override', () => {
 	const base = { ...BASE_INFO, cacheUrl: 'http://x/captures/cap-1/live_cache.bin', matWritten: false, cfg: { source: 'nidaq', extra_metadata: {} } };
 	const analysisBody = () => post.mock.calls.find(([u]) => u === '/items/machining_force_analysis')![1];
 
-	it('sends the override indices the caller passes', async () => {
-		await uploadCaptureColdStart({ ...base, cropStartIdx: 1000, cropEndIdx: 36_000_000 });
+	it('sends the override the summary holds', async () => {
+		await uploadCaptureColdStart({ ...base, summary: { fs: 51200, crop_start_idx_override: 1000, crop_end_idx_override: 36_000_000 } });
 		expect(analysisBody()).toMatchObject({ crop_start_idx_override: 1000, crop_end_idx_override: 36_000_000 });
 	});
 
-	it('reads the crop the recorder stored when the caller passes none (Settings > Local Captures)', async () => {
-		vi.stubGlobal('fetch', vi.fn(async (url: string) => (url.endsWith('/summary')
-			? { ok: true, json: async () => ({ fs: 51200, crop_start_idx_override: 2000, crop_end_idx_override: 3000 }) }
-			: { ok: true, blob: async () => new Blob(['x']) })));
-		await uploadCaptureColdStart(base);
-		expect(analysisBody()).toMatchObject({ crop_start_idx_override: 2000, crop_end_idx_override: 3000 });
+	it('does not fetch the summary again, and sends no override without one', async () => {
+		const fetchMock = vi.fn(async (_url: string) => ({ ok: true, blob: async () => new Blob(['x']) }));
+		vi.stubGlobal('fetch', fetchMock);
+		await uploadCaptureColdStart({ ...base, summary: { fs: 51200 } });
+		expect(analysisBody()).not.toHaveProperty('crop_start_idx_override');
+		expect(analysisBody()).not.toHaveProperty('crop_end_idx_override');
+		expect(fetchMock.mock.calls.some(([u]) => u.endsWith('/summary'))).toBe(false);
 	});
 
-	it('sends no override when none was set, so auto-detection keeps deciding', async () => {
-		vi.stubGlobal('fetch', vi.fn(async (url: string) => (url.endsWith('/summary')
-			? { ok: true, json: async () => ({ fs: 51200 }) }
-			: { ok: true, blob: async () => new Blob(['x']) })));
-		await uploadCaptureColdStart(base);
+	it('sends no override for a half-set pair', async () => {
+		await uploadCaptureColdStart({ ...base, summary: { crop_start_idx_override: 5 } });
 		expect(analysisBody()).not.toHaveProperty('crop_start_idx_override');
 		expect(analysisBody()).not.toHaveProperty('crop_end_idx_override');
 	});
 
-	it('an unreadable summary does not block the upload', async () => {
-		await uploadCaptureColdStart(base);   // the default fetch stub has no json()
+	it('sends no override when the caller passes no summary', async () => {
+		await uploadCaptureColdStart(base);
 		expect(analysisBody()).not.toHaveProperty('crop_start_idx_override');
 	});
 });

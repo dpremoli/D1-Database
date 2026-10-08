@@ -12,7 +12,7 @@ import { api } from '../directusClient';
 import { resolveMachiningMethodId } from './directusLookups';
 import { buildSeriesEnvelope, parseCache, type Cache } from '@d1/force-plotting';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, hasServerSession, resolveOwnerPersonId, syncerFields } from '../recorder';
-import { cropOverrideForUpload } from './cropOverride';
+import { cropOverrideForUpload, type CropSummary } from './cropOverride';
 import { adoptExistingAnalysis, analysisAlreadyLinked, ensureOperation, needsBlobs, uploadProgress, type UploadProgress } from './uploadResume';
 
 export interface ColdUploadInfo {
@@ -23,10 +23,9 @@ export interface ColdUploadInfo {
 	peaks?: { Fx: number; Fy: number; Fz: number } | null;
 	cache?: Cache | null; // already-parsed live_cache, if the caller has it (avoids re-fetching)
 	matWritten?: boolean; // summary.json's top-level mat_written; false for captures over MAT_MAX_BYTES, which never got a capture.mat written
-	// The operator's saved crop (summary.json's crop_*_idx_override, written by PUT /captures/{id}/crop),
-	// as full-rate sample indices. Sent with the analysis row so a retry keeps what the save dialog set.
-	cropStartIdx?: number | null;
-	cropEndIdx?: number | null;
+	// summary.json as the caller holds it: its crop_*_idx_override (written by PUT /captures/{id}/crop,
+	// full-rate sample indices) go with the analysis row, so a retry keeps what the save dialog set.
+	summary?: CropSummary | null;
 }
 
 // Directus surfaces validation/constraint failures as a JSON body with an `errors[]` array; a bare
@@ -97,20 +96,6 @@ export async function uploadCaptureFiles(
 	if (m.status === 'rejected') throw m.reason;
 	if (c.status === 'rejected') throw c.reason;
 	return [m.value, c.value];
-}
-
-// The crop override to send with the analysis row (#190): what the caller passed, else whatever the
-// recorder stored for this capture (callers that only hand over URLs, like Settings > Local
-// Captures, get it too). Best effort: no stored crop, or an unreachable recorder, means "none".
-async function cropToUpload(info: ColdUploadInfo): Promise<{ start: number; end: number } | null> {
-	if (info.cropStartIdx !== undefined || info.cropEndIdx !== undefined) {
-		return info.cropStartIdx != null && info.cropEndIdx != null ? { start: info.cropStartIdx, end: info.cropEndIdx } : null;
-	}
-	try {
-		const r = await fetch(info.cacheUrl.replace(/\/live_cache\.bin$/, '/summary'));
-		if (!r.ok) return null;
-		return cropOverrideForUpload(await r.json(), info.cache ?? null);
-	} catch { return null; }
 }
 
 export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<string> {
@@ -224,7 +209,7 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 		series = buildSeriesEnvelope(cache);
 	} catch { /* best-effort — a missing series just means blank charts, not a failed upload */ }
 
-	const crop = await cropToUpload(info);
+	const crop = cropOverrideForUpload(info.summary);   // #190: the operator's crop, if one was saved
 	try {
 		await api.post('/items/machining_force_analysis', {
 			operation_id: opId,
