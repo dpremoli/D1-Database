@@ -3,6 +3,7 @@ import { computed, nextTick, onActivated, onDeactivated, onMounted, onBeforeUnmo
 import { GridLayout, GridItem } from 'grid-layout-plus';
 import { useRoute, useRouter } from 'vue-router';
 import ForceChart from './ForceChart.vue';
+import type { HoverSource } from './chartHover';
 import { pickMode, type FrmMode } from './frmMode';
 import { perKeyComputed } from './perKeyComputed';
 import LoadingOverlay from './LoadingOverlay.vue';
@@ -96,6 +97,9 @@ const CHART_MODES = [
 const SPECTRAL_MODES = ['psd', 'spectrogram', 'waterfall'] as const;
 const isSpectral = computed(() => (SPECTRAL_MODES as readonly string[]).includes(chartMode.value));
 const hoverIndex = ref<number | null>(null);   // shared across the 3 charts
+// What the charts get instead of the number (#100): a stable object, so a hover move re-renders only
+// each chart's crosshair layer, not the chart. See chartHover.ts.
+const hoverSource: HoverSource = { index: hoverIndex };
 const axis = ref<Axis>('Fz');
 
 // ---- Chart zoom -----------------------------------------------------------------
@@ -3002,7 +3006,7 @@ function fmtDateTime(v: string | null | undefined) {
 									:chain="specChain" :axis="a" :mode="(chartMode as 'psd' | 'spectrogram' | 'waterfall')" :color="AXIS_COLOR[a]" />
 							</div>
 							<div v-else class="charts-col" :class="{ switching: loadingDetail }" :aria-busy="loadingDetail">
-								<ForceChart v-for="c in chartsFor(item)" v-bind="c" :key="c.key" :hover-index="hoverIndex" @hover="hoverIndex = $event"
+								<ForceChart v-for="c in chartsFor(item)" v-bind="c" :key="c.key" :hover="hoverSource" @hover="hoverIndex = $event"
 									:crop-editable="c.kind === 'env'" :active="c.key === axis"
 									:overlay="(chartMode === 'fft' && filtersOpen && c.kind === 'line' && c.key === axis) ? filterFftOverlay : null"
 									:view-start="zoomStart" :view-end="zoomEnd" :zoom-tool="rectZoomTool" @zoom="onChartZoom"
