@@ -113,3 +113,10 @@ export function prefillServerUrl(current: string | null | undefined, suggested: 
 	const sug = (suggested ?? '').trim();
 	return sug ? { url: sug, suggested: true } : { url: '', suggested: false };
 }
+
+/** The URL a Save should send. While the field still shows the untouched suggestion and backups are
+ *  off, nothing is saved (''), so a Save that only leaves backups disabled can't make the Doctor probe
+ *  a server the rig may not have (#135). Enabling backups, or editing the field, makes it a real value. */
+export function serverUrlToSave(cfg: { enabled: boolean; server_url: string }, isSuggestion: boolean): string {
+	return isSuggestion && !cfg.enabled ? '' : cfg.server_url;
+}

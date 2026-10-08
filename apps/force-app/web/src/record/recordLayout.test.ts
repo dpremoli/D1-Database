@@ -100,6 +100,53 @@ describe('dockPanel (#136: move the Recording & Metadata panel to the other side
 		expect(noOverlaps(left)).toBe(true);
 	});
 
+	it('moves panels stacked in the same columns together with the docked one', () => {
+		const l = [
+			{ i: 'options', type: 'options', x: 0, y: 0, w: 2, h: 14 },
+			{ i: 'rpm', type: 'rpm', x: 0, y: 14, w: 2, h: 8 },
+			{ i: 'force', type: 'force', x: 2, y: 0, w: 6, h: 12 },
+			{ i: 'frm', type: 'frm', x: 8, y: 0, w: 4, h: 22 },
+		];
+		const out = dockPanel(l, 'options', 'right', 12);
+		expect(byId(out, 'options').x).toBe(10);
+		expect(byId(out, 'rpm')).toMatchObject({ x: 10, y: 14 });
+		expect(byId(out, 'force').x).toBe(0);
+		expect(byId(out, 'frm').x).toBe(6);
+		expect(noOverlaps(out)).toBe(true);
+		expect(bottom(out)).toBe(bottom(l));
+		const back = dockPanel(out, 'options', 'left', 12);
+		expect(back).toEqual(l);
+	});
+
+	it('keeps a narrower stacked panel at its offset inside the strip', () => {
+		const l = [
+			{ i: 'options', type: 'options', x: 0, y: 0, w: 3, h: 10 },
+			{ i: 'rpm', type: 'rpm', x: 1, y: 10, w: 2, h: 4 },
+			{ i: 'force', type: 'force', x: 3, y: 0, w: 9, h: 14 },
+		];
+		const out = dockPanel(l, 'options', 'right', 12);
+		expect(byId(out, 'options').x).toBe(9);
+		expect(byId(out, 'rpm').x).toBe(10);
+		expect(noOverlaps(out)).toBe(true);
+	});
+
+	it('mirrors the whole layout when a panel straddles the strip edge', () => {
+		const l = [
+			{ i: 'options', type: 'options', x: 0, y: 0, w: 2, h: 14 },
+			{ i: 'wide', type: 'force', x: 0, y: 14, w: 5, h: 6 },
+			{ i: 'force', type: 'force', x: 2, y: 0, w: 6, h: 14 },
+			{ i: 'frm', type: 'frm', x: 8, y: 0, w: 4, h: 14 },
+			{ i: 'rpm', type: 'rpm', x: 5, y: 14, w: 7, h: 6 },
+		];
+		const out = dockPanel(l, 'options', 'right', 12);
+		expect(byId(out, 'options').x).toBe(10);
+		expect(byId(out, 'wide').x).toBe(7);
+		expect(byId(out, 'rpm').x).toBe(0);
+		expect(noOverlaps(out)).toBe(true);
+		expect(bottom(out)).toBe(bottom(l));
+		for (const o of l) expect(byId(out, o.i)).toMatchObject({ y: o.y, w: o.w, h: o.h });
+	});
+
 	it('oppositeSide says where the button sends the panel', () => {
 		expect(oppositeSide(DEFAULT_LAYOUT, 'options')).toBe('right');
 		const right = dockPanel(DEFAULT_LAYOUT, 'options', 'right', 12);

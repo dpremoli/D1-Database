@@ -145,7 +145,7 @@ function goToDbPlot() {
 					<FrmCloud v-if="cache && summary" cache-file-id="" :cache-override="cache"
 						:axis="axis" :feed="cache.feed" :diam="cache.diam" :inner-diam="summary.config?.inner_diam ?? 0"
 						speed-mode="measured" :rpm="summary.config?.rpm ?? 0" :vc="0" :time-scale="1" :ppr="summary.config?.ppr ?? 1"
-						:crop-start-sec="crop?.startSec ?? cache.csSec" :crop-end-sec="crop?.endSec ?? cache.ceSec"
+						:crop-start-sec="crop!.startSec" :crop-end-sec="crop!.endSec"
 						:stride="1" :gridding="false" :grid-n="600" :point-size="2" :color-scale="colorScale"
 						pane-label="local" @climits="onClimits" />
 				</div>

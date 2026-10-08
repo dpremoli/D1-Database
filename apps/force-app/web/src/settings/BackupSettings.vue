@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { getConfig } from '../config';
 import { describeFetchError } from '../netErrors';
 import { confirmAction } from '../ui/confirm';
-import { backupStateLabel, listState, localStatusLabel, prefillServerUrl, restoreBlockedReason, type RemoteSession } from './backupLabels';
+import { backupStateLabel, listState, localStatusLabel, prefillServerUrl, restoreBlockedReason, serverUrlToSave, type RemoteSession } from './backupLabels';
 
 interface BackupConfig {
 	enabled: boolean;
@@ -59,12 +59,15 @@ async function saveConfig() {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				enabled: cfg.value.enabled,
-				server_url: cfg.value.server_url,
+				server_url: serverUrlToSave(cfg.value, urlIsSuggestion.value),
 			}),
 		});
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		Object.assign(cfg.value, await res.json());
-		urlIsSuggestion.value = false;
+		// Nothing was saved when the suggestion stayed untouched: keep showing it as a suggestion.
+		const pre = prefillServerUrl(cfg.value.server_url, cfg.value.suggested_url);
+		cfg.value.server_url = pre.url;
+		urlIsSuggestion.value = pre.suggested;
 		void loadSessions();
 		saved.value = true;
 		setTimeout(() => (saved.value = false), 2000);
@@ -162,7 +165,7 @@ onMounted(() => { void loadConfig(); void loadSessions(); });
 		<label class="field">
 			<span class="lbl">Backup server URL</span>
 			<input v-model="cfg.server_url" :placeholder="cfg.suggested_url || 'https://backup-host/backup-ingest'" spellcheck="false" @input="urlIsSuggestion = false" />
-			<span v-if="urlIsSuggestion" class="hint">Suggested — not saved yet. Press Save to keep it.</span>
+			<span v-if="urlIsSuggestion" class="hint">Suggested — not saved yet. Enable backups and press Save to keep it.</span>
 			<span class="hint">
 				The remote backup service endpoint. On the lab server it runs behind the shared proxy at
 				<code>/backup-ingest</code>; a directly-run server on its own port (e.g.
