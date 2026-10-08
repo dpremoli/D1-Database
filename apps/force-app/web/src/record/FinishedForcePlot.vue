@@ -7,7 +7,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Cache } from '@d1/force-plotting';
 import { channelColor } from './types';
 import { theme } from '../theme';
-import { onCanvasRevival } from './canvasRevival';
+import { useCanvasLifecycle } from './canvasLifecycle';
 import { decimateMinMax, seriesRange, shouldDecimate } from './traceDecimate';
 import { cacheTachoKind, channelLabel, finishedPlotModel, TACHO, type FinishedPlotModel } from './tachoSignal';
 
@@ -27,7 +27,6 @@ const emit = defineEmits<{
 }>();
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 let ctx: CanvasRenderingContext2D | null = null;
-let ro: ResizeObserver | null = null;
 
 // MB fits the tick labels (4-14px below the plot) AND the axis title under them; at 22 the
 // title was drawn top-aligned 4px above the canvas edge and always clipped to half its height.
@@ -295,15 +294,10 @@ watch(() => props.channels, () => scheduleDraw());
 watch(() => [props.cropStartSec, props.cropEndSec], () => scheduleDraw());
 watch(theme, () => scheduleDraw());
 
-// #189: this plot redraws only on props/theme/resize, so a canvas the browser discarded while the
-// window was hidden stayed blank. Restoring the context, becoming visible and regaining focus go
-// through resize(), which re-sizes the canvas, drops the cached layer and schedules a draw.
-let stopRevival: (() => void) | null = null;
-onMounted(() => {
-	resize(); window.addEventListener('resize', resize); ro = new ResizeObserver(resize); if (canvasEl.value) ro.observe(canvasEl.value); nextTick(resize);
-	stopRevival = onCanvasRevival(canvasEl.value, document, window, resize);
-});
-onBeforeUnmount(() => { window.removeEventListener('resize', resize); ro?.disconnect(); stopRevival?.(); if (raf) cancelAnimationFrame(raf); });
+// Resize/restore/visibility handling (#189): see canvasLifecycle.ts. A repaint only re-blits the cached layer.
+useCanvasLifecycle(canvasEl, { resize, repaint: scheduleDraw });
+onMounted(() => { resize(); nextTick(resize); });
+onBeforeUnmount(() => { if (raf) cancelAnimationFrame(raf); });
 </script>
 
 <template>
