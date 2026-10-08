@@ -43,6 +43,10 @@ class LabAmp(Protocol):
     def channel_status(self, channels: int) -> dict[int, str]: ...
 
 
+# How long ping() waits for the amp before calling it unreachable.
+PING_TIMEOUT_SEC = 2.0
+
+
 class LabAmpClient:
     """Real HTTP client against a physical LabAmp."""
 
@@ -54,9 +58,9 @@ class LabAmpClient:
         self.mock = False
         self._transport = transport  # injectable for tests (httpx.MockTransport)
 
-    def _post(self, path: str, body: dict) -> dict:
+    def _post(self, path: str, body: dict, timeout: float | None = None) -> dict:
         try:
-            with httpx.Client(timeout=self.timeout, transport=self._transport) as c:
+            with httpx.Client(timeout=timeout or self.timeout, transport=self._transport) as c:
                 r = c.post(f"{self.base_url}{path}", json=body)
         except httpx.HTTPError as e:
             raise LabAmpError(f"LabAmp unreachable at {self.base_url}: {e}") from e
@@ -71,8 +75,11 @@ class LabAmpClient:
         return j.get("data") or j
 
     def ping(self) -> bool:
+        # A short wait: the amp answers this in about 0.3 s, and with its cable pulled the full
+        # timeout made /labamp/status, and so the Record page's Lab Amp chip, take 10 s to say
+        # "not reachable" (#215).
         try:
-            self.get_operation_mode()
+            self._post("/api/$/operationMode/get", {}, timeout=min(self.timeout, PING_TIMEOUT_SEC))
             return True
         except LabAmpError:
             return False
