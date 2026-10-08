@@ -104,3 +104,12 @@ export function listState(o: { loaded: boolean; loading: boolean; error: string;
 	if (!o.loaded) return 'idle';
 	return o.count ? 'ready' : 'empty';
 }
+
+/** Fills an empty backup URL with the backend's suggested one (#135). `suggested` is true when the
+ *  returned URL is only a proposal that is not saved yet; a URL the user already saved is kept. */
+export function prefillServerUrl(current: string | null | undefined, suggested: string | null | undefined): { url: string; suggested: boolean } {
+	const cur = (current ?? '').trim();
+	if (cur) return { url: cur, suggested: false };
+	const sug = (suggested ?? '').trim();
+	return sug ? { url: sug, suggested: true } : { url: '', suggested: false };
+}

@@ -1491,6 +1491,9 @@ async def recovery_discard(session_id: str) -> dict:
 @app.get("/backup/config")
 async def backup_get_config() -> dict:
     cfg = backup_mod.load_config(CAPTURES_ROOT)
+    # Only a suggestion for the settings page to offer (#135): it is never saved, so the Doctor
+    # doesn't probe a backup server on a rig that has none.
+    cfg["suggested_url"] = DEFAULT_BACKUP_URL
     # Probe server if configured
     if cfg.get("server_url"):
         probe = await run_in_threadpool(backup_mod.probe_server, cfg["server_url"])
