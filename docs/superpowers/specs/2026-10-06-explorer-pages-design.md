@@ -1,10 +1,9 @@
 # Explorer pages: a custom front end over Directus
 
 **Date:** 2026-10-06
-**Status:** Implemented 2026-10-07 (PR pending); access restriction (ADR-0011) not built. Plan:
-[`plans/2026-10-06-explorer-pages.md`](../plans/2026-10-06-explorer-pages.md).
-Access rule: [ADR-0011](../../adr/0011-row-level-visibility.md) (proposed, not built: the pages
-show what the signed-in user's role may read today).
+**Status:** Implemented. Pages in PR #133 (2026-10-07); row-level visibility
+([ADR-0011](../../adr/0011-row-level-visibility.md), Accepted) in PR #168 (2026-10-08). Live
+checks are in [`physical-test-backlog.md`](../../runbooks/physical-test-backlog.md).
 
 ## Why
 
