@@ -66,6 +66,44 @@ def changelog_entry(text: str, version: str) -> tuple[str, list[str]] | None:
     return (date.group(1) if date else ""), notes
 
 
+# Release notes by category (#137). Same rules as apps/force-app/web/src/changelogGroups.ts, which
+# groups the in-app "What's new" list: a note's leading prefix picks the group.
+#   Fixed: / Security:  -> Fixed (Security keeps its prefix)    Improved:  -> Improved
+#   New: or no prefix   -> New
+NOTE_PREFIXES = {
+    "New": ("New", True),
+    "Improved": ("Improved", True),
+    "Fixed": ("Fixed", True),
+    "Security": ("Fixed", False),
+}
+NOTE_GROUPS = ("New", "Improved", "Fixed")
+
+
+def group_notes(notes: list[str]) -> dict[str, list[str]]:
+    """The notes split into New / Improved / Fixed, in that order, empty groups left out."""
+    groups: dict[str, list[str]] = {g: [] for g in NOTE_GROUPS}
+    for n in notes:
+        group, text = "New", n
+        m = re.match(r"([A-Za-z]+):\s+", n)
+        if m and m.group(1) in NOTE_PREFIXES:
+            group, strip = NOTE_PREFIXES[m.group(1)]
+            text = n[m.end() :] if strip else n
+        groups[group].append(text)
+    return {g: v for g, v in groups.items() if v}
+
+
+def render_notes(notes: list[str]) -> list[str]:
+    """Markdown lines for the release body: a ### heading per non-empty group, then its bullets."""
+    lines: list[str] = []
+    for group, items in group_notes(notes).items():
+        if lines:
+            lines.append("")
+        lines.append(f"### {group}")
+        lines.append("")
+        lines += [f"- {n}" for n in items]
+    return lines
+
+
 def top_changelog_version(text: str) -> str | None:
     m = re.search(r"version:\s*'([^']+)'", text)
     return m.group(1) if m else None
@@ -198,9 +236,7 @@ def main() -> None:
             "",
         ]
         lines += (
-            [f"- {n}" for n in entry[1]]
-            if entry and entry[1]
-            else ["- Maintenance release."]
+            render_notes(entry[1]) if entry and entry[1] else ["- Maintenance release."]
         )
         lines += [
             "",
