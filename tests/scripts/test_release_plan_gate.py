@@ -3,14 +3,15 @@
 
 import importlib.util
 import json
-import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-_spec = importlib.util.spec_from_file_location("release_plan", ROOT / ".github/scripts/release_plan.py")
+_spec = importlib.util.spec_from_file_location(
+    "release_plan", ROOT / ".github/scripts/release_plan.py"
+)
 rp = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rp)
 
@@ -19,7 +20,11 @@ PKG = {
     "main": "dist/main.js",
     "scripts": {"build": "tsc"},
     "dependencies": {"electron-updater": "^6.3.0"},
-    "devDependencies": {"electron": "^43.3.0", "typescript": "^5.7.3", "vitest": "^4.1.10"},
+    "devDependencies": {
+        "electron": "^43.3.0",
+        "typescript": "^5.7.3",
+        "vitest": "^4.1.10",
+    },
 }
 LOCK = {
     "packages": {
@@ -69,7 +74,9 @@ def test_version_entry_point_runtime_deps_and_packaging_tools_build(path, value)
 
 def test_a_lockfile_only_electron_bump_builds():
     lock = bump(LOCK, ["packages", "node_modules/electron"], {"version": "43.4.0"})
-    assert reasons([rp.LOCKFILE], new_lock=lock) == ["node_modules/electron in package-lock.json"]
+    assert reasons([rp.LOCKFILE], new_lock=lock) == [
+        "node_modules/electron in package-lock.json"
+    ]
 
 
 @pytest.mark.parametrize("path", rp.PACKAGING_FILES)
@@ -81,13 +88,16 @@ def git(cwd, *args):
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
 
 
-def test_pr_packaging_changes_diffs_the_merge_commit_against_its_base(tmp_path, monkeypatch):
+def test_pr_packaging_changes_diffs_the_merge_commit_against_its_base(
+    tmp_path, monkeypatch
+):
     for d in ("apps/force-app/desktop",):
         (tmp_path / d).mkdir(parents=True)
     (tmp_path / rp.DESKTOP_PKG).write_text(json.dumps(PKG))
     (tmp_path / rp.LOCKFILE).write_text(json.dumps(LOCK))
-    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
-    monkeypatch.setattr(os, "environ", {**os.environ, **env})
+    for k in ("GIT_AUTHOR", "GIT_COMMITTER"):
+        monkeypatch.setenv(f"{k}_NAME", "t")
+        monkeypatch.setenv(f"{k}_EMAIL", "t@t")
     git(tmp_path, "init", "-q")
     git(tmp_path, "add", ".")
     git(tmp_path, "commit", "-qm", "base")

@@ -43,7 +43,12 @@ PACKAGING_FILES = (
     ".github/scripts/release_plan.py",
 )
 PACKAGING_PKG_KEYS = ("version", "main", "scripts", "dependencies")
-PACKAGING_TOOLS = ("electron", "electron-builder", "electron-updater", "@playwright/test")
+PACKAGING_TOOLS = (
+    "electron",
+    "electron-builder",
+    "electron-updater",
+    "@playwright/test",
+)
 BUMP_HINT = (
     'Bump the version and add its changelog entry first: ask Claude to "release the force app" '
     "(the force-app-release skill), merge that PR, and the release ships on its own."
@@ -87,14 +92,28 @@ def pr_build_reasons(
     reasons = [f for f in PACKAGING_FILES if f in changed]
     if DESKTOP_PKG in changed:
         reasons += [
-            f"{DESKTOP_PKG} {k}" for k in PACKAGING_PKG_KEYS if old_pkg.get(k) != new_pkg.get(k)
+            f"{DESKTOP_PKG} {k}"
+            for k in PACKAGING_PKG_KEYS
+            if old_pkg.get(k) != new_pkg.get(k)
         ]
-        old_dev, new_dev = old_pkg.get("devDependencies", {}), new_pkg.get("devDependencies", {})
-        reasons += [f"{t} in {DESKTOP_PKG}" for t in PACKAGING_TOOLS if old_dev.get(t) != new_dev.get(t)]
+        old_dev, new_dev = (
+            old_pkg.get("devDependencies", {}),
+            new_pkg.get("devDependencies", {}),
+        )
+        reasons += [
+            f"{t} in {DESKTOP_PKG}"
+            for t in PACKAGING_TOOLS
+            if old_dev.get(t) != new_dev.get(t)
+        ]
     if LOCKFILE in changed:
         old_p, new_p = old_lock.get("packages", {}), new_lock.get("packages", {})
-        entries = ["apps/force-app/desktop", *(f"node_modules/{t}" for t in PACKAGING_TOOLS)]
-        reasons += [f"{e} in {LOCKFILE}" for e in entries if old_p.get(e) != new_p.get(e)]
+        entries = [
+            "apps/force-app/desktop",
+            *(f"node_modules/{t}" for t in PACKAGING_TOOLS),
+        ]
+        reasons += [
+            f"{e} in {LOCKFILE}" for e in entries if old_p.get(e) != new_p.get(e)
+        ]
     return reasons
 
 

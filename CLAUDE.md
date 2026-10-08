@@ -43,6 +43,9 @@ original brief, plus a summary of what is already committed and what is left unc
   `directus-ui-implementer`, `directus-ui-reviewer`, `force-plotting-implementer`, `force-app-reviewer`. They are in git,
   so they survive restarts, and they preload their area's conventions skill. If no profile fits
   the area, add one (and its conventions skill) and push it before launching.
+- **CI minutes.** Actions minutes are paid, billed per job and rounded up. Every push to an open PR
+  runs CI again, so open the PR when the branch is ready and fold plan or status-table commits into
+  the next code push rather than pushing them alone. See "Cost" in `docs/ci-cd.md`.
 - **Local-only config.** `.claude/skills/`, `.claude/agents/`, `.claude/agent-memory/`,
   `.claude/hooks/` and `.claude/settings.json` are committed. The rest of `.claude/` is
   gitignored (worktrees, local settings), so it exists only in the current container. Anything

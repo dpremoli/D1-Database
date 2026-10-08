@@ -349,7 +349,7 @@ jobs:
           cache: pip
           cache-dependency-path: apps/force-app/backend/pyproject.toml
       - name: Install dependencies
-        run: pip install -e .[dev,nidaq]
+        run: pip install -e ".[dev,nidaq]"
       - name: Run tests
         run: python -m pytest
 
