@@ -91,47 +91,41 @@ const MINIMISED_ORIGIN = -30000;
 const MIN_WINDOW_SIZE = 200;
 const MAX_WINDOW_SIZE = 20000;
 
+/** Window sizes used when nothing usable was saved. */
+export const DEFAULT_MAIN_SIZE = { width: 1500, height: 950 };
+export const DEFAULT_POPOUT_SIZE = { width: 1400, height: 900 };
+
+/** Is this a usable window size? False for a missing, zero or absurd width or height. */
+export function saneSize(width: unknown, height: unknown): boolean {
+  const ok = (v: unknown): boolean =>
+    typeof v === 'number' && Number.isFinite(v) && v >= MIN_WINDOW_SIZE && v <= MAX_WINDOW_SIZE;
+  return ok(width) && ok(height);
+}
+
 /** Could these bounds ever be a real placement? False for a missing/zero/absurd size, and for an
  * x or y at or beyond the minimised-window origin (#187). Read and write sides both use it, since
  * window-state.json may already hold a bad entry written by an older version. */
 export function isSaneBounds(b: unknown): b is WindowBounds {
   if (!b || typeof b !== 'object') return false;
   const { x, y, width, height } = b as Record<string, unknown>;
-  const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-  if (!num(width) || !num(height)) return false;
-  if (width < MIN_WINDOW_SIZE || height < MIN_WINDOW_SIZE) return false;
-  if (width > MAX_WINDOW_SIZE || height > MAX_WINDOW_SIZE) return false;
-  if (x !== undefined && (!num(x) || x <= MINIMISED_ORIGIN)) return false;
-  if (y !== undefined && (!num(y) || y <= MINIMISED_ORIGIN)) return false;
-  return true;
+  const coordOk = (v: unknown): boolean =>
+    v === undefined || (typeof v === 'number' && Number.isFinite(v) && v > MINIMISED_ORIGIN);
+  return saneSize(width, height) && coordOk(x) && coordOk(y);
 }
 
-/** The size/position options to open a pop-out with, from what was saved for its kind.
- * Size is kept when sane; x/y only when the rect also lands on a display the machine has now
- * (an undocked monitor leaves coordinates no screen covers). With no x/y Electron places the
- * window itself, so a stale position degrades to "centred", never to "off-screen" (#187). */
-export function popoutPlacement(
+/** The size/position options to open a window with (the main window or a pop-out), from what was
+ * saved for it. Size is kept when sane; x/y only when the rect also lands on a display the machine
+ * has now (an undocked monitor leaves coordinates no screen covers). With no x/y Electron places
+ * the window itself, so a stale position degrades to "centred", never to "off-screen" (#187). */
+export function placementFor(
   saved: unknown,
   displays: DisplayArea[],
 ): { x?: number; y?: number; width?: number; height?: number } {
   if (!saved || typeof saved !== 'object') return {};
   const b = saved as WindowBounds;
   // Size alone is usable even when the position is not, so test the size on its own first.
-  if (!isSaneBounds({ width: b.width, height: b.height })) return {};
+  if (!saneSize(b.width, b.height)) return {};
   const size = { width: b.width, height: b.height };
   if (!isSaneBounds(b) || b.x === undefined || b.y === undefined) return size;
   return isOnSomeDisplay(b, displays) ? { x: b.x, y: b.y, ...size } : size;
-}
-
-/** `bounds` moved to the middle of `area` (shrunk to fit if larger). Used when a pop-out still
- * ends up off every screen, so it can always be reached. */
-export function centredIn(bounds: { width: number; height: number }, area: DisplayArea): WindowBounds {
-  const width = Math.min(bounds.width, area.width);
-  const height = Math.min(bounds.height, area.height);
-  return {
-    x: Math.round(area.x + (area.width - width) / 2),
-    y: Math.round(area.y + (area.height - height) / 2),
-    width,
-    height,
-  };
 }

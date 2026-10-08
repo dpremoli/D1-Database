@@ -7,7 +7,8 @@
 //   "Improved: ..."  -> Improved
 //   "New: ..." or no prefix -> New
 //
-// release_plan.py groups the GitHub Release notes the same way; keep the two in step.
+// release_plan.py groups the GitHub Release notes the same way; keep the two in step
+// (tests/scripts/test_release_plan.py fails if the prefix tables drift apart).
 
 export type NoteGroupKey = 'new' | 'improved' | 'fixed';
 
@@ -27,16 +28,13 @@ export const NOTE_PREFIXES: Record<string, { group: NoteGroupKey; strip: boolean
 	Security: { group: 'fixed', strip: false },
 };
 
-const GROUPS: { key: NoteGroupKey; label: string }[] = [
-	{ key: 'new', label: 'New' },
-	{ key: 'improved', label: 'Improved' },
-	{ key: 'fixed', label: 'Fixed' },
-];
+/** Display order of the groups; the sub-heading is the key capitalised. */
+const GROUP_KEYS: readonly NoteGroupKey[] = ['new', 'improved', 'fixed'];
 
 const PREFIX_RE = /^([A-Za-z]+):\s+/;
 
 /** Which group a note belongs to, and the text to show for it (prefix removed where it is only a label). */
-export function classifyNote(note: string): { group: NoteGroupKey; text: string } {
+function classifyNote(note: string): { group: NoteGroupKey; text: string } {
 	const m = PREFIX_RE.exec(note);
 	if (m && Object.hasOwn(NOTE_PREFIXES, m[1])) {
 		const p = NOTE_PREFIXES[m[1]];
@@ -48,10 +46,14 @@ export function classifyNote(note: string): { group: NoteGroupKey; text: string 
 /** The notes split into New / Improved / Fixed, in that order, leaving out empty groups. Each
  *  group keeps the notes' original order. */
 export function groupNotes(notes: readonly string[]): NoteGroup[] {
-	const out: NoteGroup[] = GROUPS.map((g) => ({ ...g, notes: [] }));
+	const buckets: Record<NoteGroupKey, string[]> = { new: [], improved: [], fixed: [] };
 	for (const n of notes) {
 		const { group, text } = classifyNote(n);
-		out.find((g) => g.key === group)!.notes.push(text);
+		buckets[group].push(text);
 	}
-	return out.filter((g) => g.notes.length > 0);
+	return GROUP_KEYS.filter((key) => buckets[key].length > 0).map((key) => ({
+		key,
+		label: key[0].toUpperCase() + key.slice(1),
+		notes: buckets[key],
+	}));
 }

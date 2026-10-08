@@ -5,6 +5,9 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { CHANGELOG } from '../changelog';
 import { groupNotes } from '../changelogGroups';
 
+// The changelog is static, so group each entry's notes once, not on every render.
+const ENTRIES = CHANGELOG.map((c) => ({ ...c, groups: groupNotes(c.notes) }));
+
 type UpdateStatus =
 	| { state: 'idle' }
 	| { state: 'checking' }
@@ -128,14 +131,14 @@ onBeforeUnmount(() => { gone = true; unsubscribeStatus?.(); unsubscribeStatus = 
 		<!-- #44: this list only ever grows (one entry per release, never pruned), so without its own
 			 scroll area it eventually pushes the whole Settings window's height along with it. -->
 		<div class="changelog">
-			<div v-for="c in CHANGELOG" :key="c.version" class="entry" :class="{ current: isElectron && c.version === appVersion }">
+			<div v-for="c in ENTRIES" :key="c.version" class="entry" :class="{ current: isElectron && c.version === appVersion }">
 				<div class="entry-head">
 					<span class="entry-version">v{{ c.version }}</span>
 					<span v-if="isElectron && c.version === appVersion" class="badge current-badge">running now</span>
 					<span class="entry-date">{{ c.date }}</span>
 				</div>
 				<!-- #137: notes are grouped by their leading Fixed:/Improved:/New: prefix (changelogGroups.ts). -->
-				<template v-for="g in groupNotes(c.notes)" :key="g.key">
+				<template v-for="g in c.groups" :key="g.key">
 					<h4 class="group-head" :class="g.key">{{ g.label }}</h4>
 					<ul>
 						<li v-for="n in g.notes" :key="n">{{ n }}</li>

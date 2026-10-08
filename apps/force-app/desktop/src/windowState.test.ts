@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { WindowStateStore, centredIn, isOnSomeDisplay, isSaneBounds, popoutPlacement } from './windowState';
+import { WindowStateStore, isOnSomeDisplay, isSaneBounds, placementFor, saneSize } from './windowState';
 
 let dir: string;
 
@@ -93,7 +93,7 @@ describe('isOnSomeDisplay', () => {
   });
 });
 
-describe('isSaneBounds / popoutPlacement / centredIn (#187)', () => {
+describe('isSaneBounds / saneSize / placementFor (#187)', () => {
   const screen1 = [{ x: 0, y: 0, width: 1920, height: 1040 }];
 
   it('rejects the minimised origin and empty sizes, accepts ordinary bounds incl. a left monitor', () => {
@@ -107,25 +107,35 @@ describe('isSaneBounds / popoutPlacement / centredIn (#187)', () => {
   });
 
   it('drops x/y for the -32000 origin but keeps a sane size', () => {
-    expect(popoutPlacement({ x: -32000, y: -32000, width: 1400, height: 900 }, screen1)).toEqual({ width: 1400, height: 900 });
+    expect(placementFor({ x: -32000, y: -32000, width: 1400, height: 900 }, screen1)).toEqual({ width: 1400, height: 900 });
   });
 
   it('drops x/y for a rect on a monitor that is no longer there', () => {
-    expect(popoutPlacement({ x: -1800, y: 100, width: 1400, height: 900 }, screen1)).toEqual({ width: 1400, height: 900 });
+    expect(placementFor({ x: -1800, y: 100, width: 1400, height: 900 }, screen1)).toEqual({ width: 1400, height: 900 });
   });
 
   it('keeps a sane rect that is on a present display', () => {
-    expect(popoutPlacement({ x: 40, y: 60, width: 1400, height: 900 }, screen1)).toEqual({ x: 40, y: 60, width: 1400, height: 900 });
+    expect(placementFor({ x: 40, y: 60, width: 1400, height: 900 }, screen1)).toEqual({ x: 40, y: 60, width: 1400, height: 900 });
   });
 
   it('returns nothing when the size itself is unusable or nothing is saved', () => {
-    expect(popoutPlacement({ x: 40, y: 60, width: 0, height: 900 }, screen1)).toEqual({});
-    expect(popoutPlacement(undefined, screen1)).toEqual({});
-    expect(popoutPlacement('junk', screen1)).toEqual({});
+    expect(placementFor({ x: 40, y: 60, width: 0, height: 900 }, screen1)).toEqual({});
+    expect(placementFor(undefined, screen1)).toEqual({});
+    expect(placementFor('junk', screen1)).toEqual({});
   });
 
-  it('centres bounds in a work area, shrinking to fit', () => {
-    expect(centredIn({ width: 1000, height: 600 }, { x: 0, y: 0, width: 1920, height: 1040 })).toEqual({ x: 460, y: 220, width: 1000, height: 600 });
-    expect(centredIn({ width: 3000, height: 2000 }, { x: 100, y: 50, width: 1280, height: 720 })).toEqual({ x: 100, y: 50, width: 1280, height: 720 });
+  it('saneSize accepts ordinary sizes and rejects zero, tiny, huge and non-numeric ones', () => {
+    expect(saneSize(1400, 900)).toBe(true);
+    expect(saneSize(0, 900)).toBe(false);
+    expect(saneSize(1400, 199)).toBe(false);
+    expect(saneSize(20001, 900)).toBe(false);
+    expect(saneSize(Number.NaN, 900)).toBe(false);
+    expect(saneSize('1400', 900)).toBe(false);
+    expect(saneSize(undefined, undefined)).toBe(false);
+  });
+
+  it('places the main window the same way: a saved rect on a gone monitor keeps only its size', () => {
+    expect(placementFor({ x: 2500, y: 10, width: 1500, height: 950, maximized: true }, screen1)).toEqual({ width: 1500, height: 950 });
+    expect(placementFor({ x: 10, y: 10, width: 1500, height: 950, maximized: true }, screen1)).toEqual({ x: 10, y: 10, width: 1500, height: 950 });
   });
 });

@@ -6,6 +6,7 @@ can move to abfp_core later without changing these signatures.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import NamedTuple
 
 import numpy as np
@@ -215,33 +216,40 @@ def frm_spiral(
     return x, y, revs_cum
 
 
-# Wire-bin budget for welch_spectra. Was 240 with a stride pick (#186); now ~1024 with max-pooling.
+# Wire-bin budget for welch_spectra: the DC bin plus up to this many minus one pooled groups.
 SPECTRUM_MAX_BINS = 1024
+
+
+@lru_cache(maxsize=8)
+def _pool_starts(n: int, max_bins: int) -> tuple[np.ndarray, np.ndarray]:
+    """Group starts (into the bins after DC) and widths for pooling `n` bins to ~`max_bins`.
+
+    max_bins - 1 groups of near-equal width (e.g. 4 or 5 source bins), so the output is as close
+    to the budget as the source allows. Cached: n and max_bins repeat every live frame."""
+    starts = np.unique(np.linspace(1, n, max_bins - 1, endpoint=False).astype(int)) - 1
+    counts = np.diff(np.append(starts, n - 1))
+    starts.flags.writeable = counts.flags.writeable = False
+    return starts, counts
 
 
 def _maxpool_bins(
     f: np.ndarray, amps: dict[str, np.ndarray], max_bins: int
 ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
-    """Reduce a spectrum to at most ~`max_bins` points WITHOUT losing narrow peaks (#186).
+    """Reduce a spectrum to at most ~`max_bins` points without losing narrow peaks (#186).
 
-    The old reduction kept every step-th bin (`f[::step]`), so ~7 of every 8 bins were discarded
-    and a narrow peak that fell between the kept bins simply vanished from the plot. Here each
-    output bin takes the MAXIMUM amplitude of the group of source bins it covers, so a peak always
-    survives at full height. The output frequency is the group's CENTRE (mean of its source
-    frequencies), shared by every channel so one `f` array serves all spectra; a peak is therefore
-    located to within half a group width (group width * df / 2). The DC bin stays a separate output bin
-    (f = 0): a load cell's static offset would otherwise swamp the first pooled group.
+    Each output bin takes the MAXIMUM amplitude of the group of source bins it covers, so a peak
+    always survives at full height. The output frequency is the group's centre (mean of its source
+    frequencies), shared by every channel so one `f` array serves all spectra; a peak is located
+    to within half a group width. The DC bin stays a separate output bin (f = 0): a load cell's
+    static offset would otherwise swamp the first pooled group.
     """
     n = f.size
     if n <= max_bins:
         return f, amps
-    # max_bins - 1 groups of near-equal width (e.g. 4 or 5 source bins) after the DC bin, so the
-    # output is as close to the budget as the source allows rather than rounding the stride up.
-    starts = np.unique(np.linspace(1, n, max_bins - 1, endpoint=False).astype(int))
-    counts = np.diff(np.append(starts, n))
-    f_out = np.concatenate(([f[0]], np.add.reduceat(f[1:], starts - 1) / counts))
+    starts, counts = _pool_starts(n, max_bins)
+    f_out = np.concatenate(([f[0]], np.add.reduceat(f[1:], starts) / counts))
     a_out = {
-        name: np.concatenate(([a[0]], np.maximum.reduceat(a[1:], starts - 1)))
+        name: np.concatenate(([a[0]], np.maximum.reduceat(a[1:], starts)))
         for name, a in amps.items()
     }
     return f_out, a_out

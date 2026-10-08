@@ -110,3 +110,23 @@ def test_real_changelog_notes_keep_every_fixed_note_under_fixed():
     groups = release_plan.group_notes(notes)
     assert sum(len(v) for v in groups.values()) == len(notes)
     assert len(groups.get("Fixed", [])) >= sum(1 for n in notes if n.startswith("Fixed: "))
+
+
+def test_web_and_release_plan_prefix_tables_match():
+    """changelogGroups.ts (the in-app What's new) and release_plan.py (the GitHub Release body)
+    each carry their own copy of the prefix table; a prefix added to one must be added to both."""
+    text = (ROOT / "apps/force-app/web/src/changelogGroups.ts").read_text(encoding="utf-8")
+    table = re.search(r"NOTE_PREFIXES[^=]*=\s*\{(.*?)\n\};", text, re.S)
+    assert table, "NOTE_PREFIXES table not found in changelogGroups.ts"
+    web = {
+        name: (group.capitalize(), strip == "true")
+        for name, group, strip in re.findall(
+            r"(\w+):\s*\{\s*group:\s*'(\w+)',\s*strip:\s*(true|false)\s*\}", table.group(1)
+        )
+    }
+    assert web, "no prefixes parsed from changelogGroups.ts"
+    assert web == release_plan.NOTE_PREFIXES
+    order = re.search(r"GROUP_KEYS[^=]*=\s*\[(.*?)\]", text, re.S)
+    assert order, "GROUP_KEYS not found in changelogGroups.ts"
+    web_order = tuple(k.capitalize() for k in re.findall(r"'(\w+)'", order.group(1)))
+    assert web_order == release_plan.NOTE_GROUPS
