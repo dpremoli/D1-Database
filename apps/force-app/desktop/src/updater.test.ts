@@ -174,6 +174,40 @@ describe('update prompt with a main window (#197)', () => {
   });
 });
 
+// A later check that fails (Help > Check for updates while offline) must not hide, or disable the
+// install of, an update that is already on disk.
+describe('a downloaded update survives a later check', () => {
+  it('get-info still reports downloaded after an error push, and install proceeds', async () => {
+    await boot(async () => false);
+    h.showMessageBox.mockResolvedValue({ response: 1 });
+    h.updater.emit('update-downloaded', { version: '2.0.0', releaseNotes: 'notes' });
+    await vi.advanceTimersByTimeAsync(0);
+    h.updater.emit('checking-for-update');
+    h.updater.emit('error', new Error('net::ERR_INTERNET_DISCONNECTED'));
+    const info = await h.handlers.get('update:get-info')!(APP) as { status: unknown };
+    expect(info.status).toEqual({ state: 'downloaded', version: '2.0.0', notes: 'notes' });
+    expect(await h.handlers.get('update:install')!(APP)).toEqual({ ok: true });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.quitAndInstall).toHaveBeenCalledWith(true, true);
+  });
+
+  it('install still refuses while recording after the error push', async () => {
+    await boot(async () => true);
+    await downloaded();
+    h.updater.emit('error', new Error('offline'));
+    expect(await h.handlers.get('update:install')!(APP)).toMatchObject({ ok: false, reason: expect.stringContaining('recording') });
+  });
+
+  it('once the install has started, get-info reports installing', async () => {
+    await boot(async () => false);
+    h.showMessageBox.mockResolvedValue({ response: 1 });
+    await downloaded();
+    await h.handlers.get('update:install')!(APP);
+    const info = await h.handlers.get('update:get-info')!(APP) as { status: unknown };
+    expect(info.status).toEqual({ state: 'installing', version: '2.0.0' });
+  });
+});
+
 describe('startUpdateCheck before the updater is initialized', () => {
   it('says updates will be available once the recorder has started, while it is still starting', async () => {
     vi.resetModules();

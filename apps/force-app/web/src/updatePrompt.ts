@@ -28,3 +28,11 @@ export function shouldShowUpdatePrompt(i: UpdatePromptInput): boolean {
 	if (i.recording) return false;
 	return i.dismissedVersion !== i.status.version;
 }
+
+/** The status the prompt keeps after a push. Once an update is downloaded, a later checking /
+ * not-available / error push (Help > Check for updates while offline) must not hide it: the
+ * installer is still on disk. Only a newer download or the install starting replaces it. */
+export function nextPromptStatus(current: UpdateStatus, pushed: UpdateStatus): UpdateStatus {
+	if (current.state === 'downloaded' && pushed.state !== 'downloaded' && pushed.state !== 'installing') return current;
+	return pushed;
+}

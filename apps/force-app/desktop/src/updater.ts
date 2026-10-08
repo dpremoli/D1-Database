@@ -14,6 +14,10 @@ export type UpdateStatus =
   | { state: 'error'; message: string };
 
 let status: UpdateStatus = { state: 'idle' };
+// The downloaded update lives apart from `status`: a later check (Help > Check for updates) or its
+// failure (offline) overwrites `status` with checking/error, but the installer is still on disk and
+// the operator must still be able to install it. Only a newer update-downloaded replaces it.
+let downloaded: { version: string; notes: string } | null = null;
 let getWindow: (() => BrowserWindow | null) | null = null;
 let isRecording: () => Promise<boolean> = async () => false;
 // True once initAutoUpdater() has attached the electron-updater listeners (packaged builds only).
@@ -29,8 +33,16 @@ export function markRecorderStartFailed(): void {
   recorderStartFailed = true;
 }
 
+/** What a new page should show: the downloaded update wins over a later checking/error push, but
+ * not over 'installing', which is the truest state once the install has started. */
+function snapshot(): UpdateStatus {
+  if (downloaded && status.state !== 'installing') return { state: 'downloaded', ...downloaded };
+  return status;
+}
+
 function push(next: UpdateStatus): void {
   status = next;
+  if (next.state === 'downloaded') downloaded = { version: next.version, notes: next.notes };
   getWindow?.()?.webContents.send('update:status', status);
 }
 
@@ -159,7 +171,7 @@ export function initAutoUpdater(getMainWindow: () => BrowserWindow | null, recor
   const NOT_ALLOWED = { ok: false, reason: 'not allowed from this page' };
   ipcMain.handle('update:get-info', (event) =>
     isAppSender(event)
-      ? { version: app.getVersion(), packaged: app.isPackaged, status }
+      ? { version: app.getVersion(), packaged: app.isPackaged, status: snapshot() }
       : { version: '', packaged: false, status: { state: 'idle' } satisfies UpdateStatus });
   ipcMain.handle('update:check', (event) => {
     if (!isAppSender(event)) return NOT_ALLOWED;
@@ -170,9 +182,9 @@ export function initAutoUpdater(getMainWindow: () => BrowserWindow | null, recor
   // since recording could have started in between.
   ipcMain.handle('update:install', async (event) => {
     if (!isAppSender(event)) return NOT_ALLOWED;
-    if (status.state !== 'downloaded') return { ok: false, reason: 'no update downloaded yet' };
+    if (!downloaded) return { ok: false, reason: 'no update downloaded yet' };
     if (await isRecording()) return { ok: false, reason: 'a recording is in progress or still being saved — try again once it finishes' };
-    performInstall(status.version);
+    performInstall(downloaded.version);
     return { ok: true };
   });
 

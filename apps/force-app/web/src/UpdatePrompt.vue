@@ -5,7 +5,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import type { UpdateStatus } from './electronBridge';
-import { dismissedUpdateVersion, shouldShowUpdatePrompt } from './updatePrompt';
+import { dismissedUpdateVersion, nextPromptStatus, shouldShowUpdatePrompt } from './updatePrompt';
 
 const props = defineProps<{ recording: boolean }>();
 
@@ -52,7 +52,7 @@ onMounted(async () => {
 	// older snapshot; the snapshot covers an update that finished downloading before this mounted
 	// (for instance while the login page was showing).
 	let pushed = false;
-	unsubscribe = bridge.onUpdateStatus((s) => { pushed = true; status.value = s; });
+	unsubscribe = bridge.onUpdateStatus((s) => { pushed = true; status.value = nextPromptStatus(status.value, s); });
 	try {
 		const info = await bridge.getUpdateInfo();
 		if (!gone && !pushed) status.value = info.status;
