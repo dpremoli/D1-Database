@@ -34,6 +34,12 @@ class CutDetector:
         self.detected = False
         self.cut_t: float | None = None
 
+    def force_start(self, cut_t: float) -> None:
+        """The operator marked the cut start by hand (#184): count it as detected at `cut_t`, so
+        the detector never fires a second, re-origining time."""
+        self.detected = True
+        self.cut_t = float(cut_t)
+
     def update(self, t: np.ndarray, fz_abs: np.ndarray) -> float | None:
         """Feed one chunk; returns the cut time (s) if detected this call, else None."""
         if self.detected or fz_abs.size == 0:

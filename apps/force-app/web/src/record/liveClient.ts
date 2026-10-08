@@ -4,6 +4,7 @@
 import { reactive, ref } from 'vue';
 import { getConfig } from '../config';
 import { authHeaders } from '../directusClient';
+import { cutStartRefusal } from './cutStart';
 import type { RecordConfig } from './types';
 import { firstAtOrAfter, WINDOW_MAX_SEC, WINDOW_SLIDER_MAX_SEC } from './plotWindow';
 import { RELAY_HEARTBEAT_MS, RelayPeers } from './relayPeers';
@@ -274,6 +275,7 @@ export class RecordClient {
 				const p = data.peaks ?? {};
 				this.status.peaks = { Fx: Number(p.Fx ?? 0), Fy: Number(p.Fy ?? 0), Fz: Number(p.Fz ?? 0) };
 				this.status.railed = parseRailed(data.railed);
+				this.status.cutStartSec = typeof data.cut_start_sec === 'number' ? data.cut_start_sec : null;
 				// No WebSocket message carries this transition, so a pop-out would never learn it.
 				if (this.hasRelayPeer) this.sendSnapshot(true);
 			}
@@ -695,6 +697,19 @@ export class RecordClient {
 		this.status.state = j.state;
 		this.status.captureId = j.id ?? this.status.captureId;
 		this.status.summary = j.summary ?? this.status.summary;
+	}
+
+	/**
+	 * "Start FRM now" (#184): ask the recorder to set the cut origin at the latest sample, for when
+	 * its causal detector never fires. The recorder then publishes the same `cutstart` message an
+	 * auto detection does; this also adopts the reply so the panel updates without waiting for it.
+	 * Throws the recorder's refusal reason (409: not recording, or the cut start is already set).
+	 */
+	async startCutNow(): Promise<void> {
+		const res = await fetch(this.base + '/record/cut-start', { method: 'POST', headers: { ...authHeaders() } });
+		if (!res.ok) throw new Error(cutStartRefusal(res.status, await res.text().catch(() => '')));
+		const j = await res.json();
+		if (typeof j?.t === 'number') this.status.cutStartSec = j.t;
 	}
 
 	reset() {
