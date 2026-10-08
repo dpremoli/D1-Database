@@ -24,6 +24,13 @@ export const CHANGELOG: ChangelogEntry[] = [
 			'Fixed: plots could come back blank after the window was minimised or hidden, and the force panel flipped between the whole cut and the last few seconds when the save dialog opened.',
 			'Fixed: live pop-out windows could open off-screen (after a monitor was unplugged or the window was minimised) and could not be reached from the taskbar.',
 			'Fixed: on the Plot page, Bake is disabled for a cut uploaded without a .mat file, which it would have marked as failed.',
+			'Fixed: with the NI-DAQ, the live plot and the force alarm worked in volts instead of newtons, so live forces read 10 to 20 times too low and the alarm could not trip. Live values are now in newtons, like the saved files. Check your force alarm limit and cut-detect threshold before the first cut: a value tuned against the old live plot is now 10 to 20 times stricter.',
+			'Fixed: an NI-DAQ cut was stamped with the sample rate you asked for, not the rate the NI 9234 really ran at (25,000 Hz ran at 25,600 Hz). Start now refuses a rate the hardware would change and puts the nearest rate it can do in the field.',
+			'Fixed: the clipping warning and auto-range assumed a 10 V input, but the NI 9234 force modules saturate at 5 V, so a channel could clip without a warning. They now use the module\'s real input range.',
+			'Fixed: the Channels check above Start said "ok" for a channel that is not on the connected NI-DAQ chassis.',
+			'Fixed: choosing a capture folder you cannot write to never answered. It is now refused straight away.',
+			'Fixed: the Record page did not notice the Lab Amp or the NI-DAQ chassis being unplugged until the Connectivity Doctor was run. It now checks every few seconds while waiting to start.',
+			'Fixed: Sample, Machine, Operator and operation type were forgotten after quitting the app.',
 		],
 	},
 	{

@@ -269,12 +269,18 @@ jobs:
           path: release
 
       # A tag with no Release is left by a release build that failed (force-app-v0.1.34 was):
-      # nothing shipped from it, so it is moved to the commit being released.
+      # nothing shipped from it, so it is moved to the commit being released. A missing tag must
+      # read as empty: on a 404, gh prints the error JSON to stdout, and `|| true` kept it as the
+      # "sha", so every first release of a version tried to delete a tag that did not exist
+      # (0.1.35, 2026-10-08).
       - name: Create the GitHub Release
         run: |
           set -euo pipefail
           ls -l release
-          tag_sha="$(gh api "repos/$GH_REPO/commits/refs/tags/$TAG" --jq .sha 2>/dev/null || true)"
+          tag_sha=""
+          if out="$(gh api "repos/$GH_REPO/commits/refs/tags/$TAG" --jq .sha 2>/dev/null)"; then
+            tag_sha="$out"
+          fi
           if [[ -n "$tag_sha" && "$tag_sha" != "$SHA" ]]; then
             echo "::notice::Moving unreleased tag $TAG from ${tag_sha:0:7} to ${SHA:0:7}"
             gh api -X DELETE "repos/$GH_REPO/git/refs/tags/$TAG"
