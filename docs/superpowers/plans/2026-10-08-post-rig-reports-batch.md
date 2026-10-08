@@ -57,7 +57,11 @@ each under `.claude/worktrees/`. Workers don't edit the backlog, the changelog o
 | C — Plot loading + hover | #191 (P3), #100 slice (P3) | `agent-ae84af1c48ac989d7` | merged (`3d73761`, `6d5885f`); Full keeps a corner pill while streaming |
 | D — Settings, pop-outs, login | #193 (P3), #108 (P2), #196 (P3) | `agent-a59e3ac952ddf81db` | merged (`b1266ce`, `c8eeecb`); #196 light login looks consistent, no change, needs the reporter's screenshot |
 | Simplify, debug, review | /simplify, force-app-verify, force-app-reviewer (Opus) | main checkout | done: simplify `b89b23c`; debug all PASS, found a clipped Clear button; Opus review 2 should-fix + 5 optional, all fixed (`d4bbed9`..`e4f7d40`) |
-| Coordinator | changelog 0.1.36, backlog, preflight, PR | main checkout | in progress |
+| E — Manual FRM start | #184 | `batch2-e-frm-start` | in progress |
+| F — MAT v7.3 for long cuts | #194 format | `batch2-f-mat73` | in progress |
+| G — Channel check | #195 (c) | `batch2-g-channels` | in progress |
+| H — Update notifications | #197 (closed app) | `batch2-h-update-notify` | in progress |
+| Coordinator | changelog 0.1.36, backlog, preflight, PR #230 | main checkout | in progress |
 
 ### A. Record actions — #192, #194 wording
 - **#192 cause:** in the done state `RecordingActions.vue:66-75` shows Start and New. New
@@ -113,6 +117,23 @@ each under `.claude/worktrees/`. Workers don't edit the backlog, the changelog o
   suspects are the slate primary button (`styles.css:214`) and the aura (`LoginPage.vue:94-104`).
   Fix what is clearly inverted in `LoginPage.vue` only; otherwise leave the issue open for a
   screenshot.
+
+### Second wave (owner decisions of 2026-10-08)
+
+The owner chose: include #184; #194 long cuts as MAT v7.3; #195 option (c); #197 notifications
+while the app is closed. Worktrees cut from the batch branch at `27ffa20`.
+
+- **E #184:** `POST /record/cut-start` sets the live FRM cut origin now, as the detector would;
+  FrmPanel shows "Start FRM now" while recording and waiting. Only while no start is detected (no
+  re-origin). summary.json records the source (`auto`/`manual`). The saved crop is unchanged
+  (finalize's post-hoc crop stays the reference). Detector threshold unchanged.
+- **F #194:** captures over `MAT_MAX_BYTES` get a MAT v7.3 (HDF5) file written block by block with
+  h5py, same variable names and layout as the v5 file; under the limit stays v5. Packaged backend
+  bundles h5py. Note and Bake follow.
+- **G #195:** pre-flight `channels` warns when saved bindings name ports missing from the scan,
+  with one-click re-assign (existing autoassign).
+- **H #197:** a Windows toast when an update has downloaded and the window isn't focused; a daily
+  / at-logon scheduled check while the app is closed, with a Settings toggle.
 
 ## 4. After the streams merge
 
