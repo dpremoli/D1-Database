@@ -3,6 +3,7 @@
 // browser-served /app/ build has no window.forceApp and auto-update has no meaning there.
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { CHANGELOG } from '../changelog';
+import { groupNotes } from '../changelogGroups';
 
 type UpdateStatus =
 	| { state: 'idle' }
@@ -133,9 +134,13 @@ onBeforeUnmount(() => { gone = true; unsubscribeStatus?.(); unsubscribeStatus = 
 					<span v-if="isElectron && c.version === appVersion" class="badge current-badge">running now</span>
 					<span class="entry-date">{{ c.date }}</span>
 				</div>
-				<ul>
-					<li v-for="n in c.notes" :key="n">{{ n }}</li>
-				</ul>
+				<!-- #137: notes are grouped by their leading Fixed:/Improved:/New: prefix (changelogGroups.ts). -->
+				<template v-for="g in groupNotes(c.notes)" :key="g.key">
+					<h4 class="group-head" :class="g.key">{{ g.label }}</h4>
+					<ul>
+						<li v-for="n in g.notes" :key="n">{{ n }}</li>
+					</ul>
+				</template>
 			</div>
 		</div>
 	</div>
@@ -171,6 +176,8 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 .entry-version { font-family: var(--mono); font-size: var(--fs-md); font-weight: 700; color: var(--text); }
 .entry-date { font-size: var(--fs-xs); color: var(--text-dim); margin-left: auto; }
 .current-badge { font-size: var(--fs-xs); font-weight: 700; padding: 1px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent-ink); background: var(--accent); }
-.entry ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.group-head { margin: 10px 0 4px; font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text); }
+.group-head:first-of-type { margin-top: 0; }
+.entry ul {margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
 .entry li { font-size: var(--fs-md); color: var(--text-dim); line-height: 1.45; }
 </style>
