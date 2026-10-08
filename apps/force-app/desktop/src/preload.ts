@@ -27,6 +27,11 @@ contextBridge.exposeInMainWorld('forceApp', {
     subscribe<UpdateStatus>('update:status', callback),
   /** Native folder picker; resolves to the chosen folder, or null if cancelled. */
   pickFolder: (defaultPath?: string): Promise<string | null> => ipcRenderer.invoke('dialog:pickFolder', defaultPath),
+  /** Settings > About: notify about updates while the app is closed (a Windows scheduled task, #197).
+   * `supported` is false outside the installed Windows app. */
+  getUpdateNotifyWhenClosed: (): Promise<{ supported: boolean; enabled: boolean }> => ipcRenderer.invoke('updateNotify:get'),
+  setUpdateNotifyWhenClosed: (enabled: boolean): Promise<{ ok: boolean; enabled: boolean; reason?: string }> =>
+    ipcRenderer.invoke('updateNotify:set', enabled),
   /** Stops and respawns the recorder backend (R11). Refused while a recording is running or being
    * saved; `reason` says why. */
   restartRecorder: (): Promise<{ ok: boolean; reason?: string }> => ipcRenderer.invoke('sidecar:restart'),

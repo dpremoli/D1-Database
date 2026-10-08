@@ -15,6 +15,7 @@ import { autoUpdater } from 'electron-updater';
 import { initAutoUpdater, markRecorderStartFailed, startUpdateCheck } from './updater';
 import { APP_USER_MODEL_ID, isUpdateCheckArgv } from './updateNotify';
 import { notifiedMarker, runUpdateCheck } from './updateCheck';
+import { makeUpdateTaskDeps, registerUpdateTaskIpc, syncUpdateTaskOnStartup, updateNotifyPref } from './updateTaskIpc';
 import { classifyWindowOpen, guardNavigation, isAppSender, popoutKey } from './windowOpen';
 import { DEFAULT_MAIN_SIZE, DEFAULT_POPOUT_SIZE, WindowStateStore, placementFor } from './windowState';
 
@@ -267,7 +268,14 @@ function fromApp(event: IpcMainInvokeEvent): boolean {
   return isAppSender(event);
 }
 
+let updateTaskPref: ReturnType<typeof updateNotifyPref> | null = null;
+let updateTaskDeps: ReturnType<typeof makeUpdateTaskDeps> | null = null;
+
 function registerShellIpc(): void {
+  // #197: Settings > About's toggle for the update-check scheduled task.
+  updateTaskPref = updateNotifyPref(app.getPath('userData'));
+  updateTaskDeps = makeUpdateTaskDeps({ packaged: app.isPackaged, exePath: process.execPath });
+  registerUpdateTaskIpc(ipcMain, (e) => fromApp(e as IpcMainInvokeEvent), updateTaskPref, updateTaskDeps);
   // #101: Settings > General's "Choose folder…". The browser build has no such dialog and types
   // the path instead; either way the backend validates the choice (POST /storage/config).
   ipcMain.handle('dialog:pickFolder', async (event, defaultPath: unknown) => {
@@ -516,6 +524,7 @@ async function createWindow(): Promise<void> {
   await mainWindow.loadURL('app://force/');
   reopenPopouts();
   void offerScheduledTaskCleanup();
+  if (updateTaskPref && updateTaskDeps) void syncUpdateTaskOnStartup(updateTaskPref, updateTaskDeps);
   initAutoUpdater(() => mainWindow, async () => (await activeSession()) != null);
 }
 

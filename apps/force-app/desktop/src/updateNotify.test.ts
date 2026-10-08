@@ -28,3 +28,14 @@ describe('APP_USER_MODEL_ID', () => {
     expect(yml.match(/^appId:\s*(\S+)/m)?.[1]).toBe(APP_USER_MODEL_ID);
   });
 });
+
+describe('installer script', () => {
+  it('uninstall deletes the same task name the app creates, and electron-builder includes the script', async () => {
+    const { UPDATE_TASK_NAME } = await import('./updateTask');
+    const nsh = fs.readFileSync(path.join(__dirname, '..', 'build', 'installer.nsh'), 'utf-8');
+    expect(nsh).toContain(`schtasks /delete /tn "${UPDATE_TASK_NAME}" /f`);
+    expect(nsh).toContain('!macro customUnInstall');
+    const yml = fs.readFileSync(path.join(__dirname, '..', 'electron-builder.yml'), 'utf-8');
+    expect(yml).toMatch(/^\s+include:\s*build\/installer\.nsh/m);
+  });
+});

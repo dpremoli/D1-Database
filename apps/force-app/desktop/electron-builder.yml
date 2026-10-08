@@ -39,6 +39,8 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
+  # Uninstall removes the update-check scheduled task (see the script).
+  include: build/installer.nsh
 publish:
   - provider: generic
     url: https://d1-server.tail54eeb6.ts.net/force-app-updates/
