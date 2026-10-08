@@ -326,7 +326,7 @@ _FORBIDDEN_NODES: tuple[type[exp.Expression], ...] = (
     exp.Delete,
     exp.Drop,
     exp.Create,
-    exp.AlterTable,
+    exp.Alter,
     exp.Command,  # raw/unknown utility statements (GRANT, VACUUM, ...)
     exp.Copy,
     exp.TruncateTable,
@@ -482,6 +482,9 @@ def _ident_key(ident: exp.Expression) -> str:
 def _function_name(node: exp.Expression) -> str:
     if isinstance(node, exp.Anonymous):
         return str(node.name).lower()
+    if isinstance(node, exp.GenerateSeries):
+        # sqlglot parses generate_series() in FROM as ExplodingGenerateSeries.
+        return "generate_series"
     return node.sql_name().lower()
 
 
@@ -497,7 +500,7 @@ def _collect_tables(
     and nowhere else. A same-named CTE in a sibling or nested scope therefore
     cannot hide a real table.
     """
-    with_ = node.args.get("with")
+    with_ = node.args.get("with_")
     if isinstance(with_, exp.With):
         recursive = bool(with_.args.get("recursive"))
         scope = visible
@@ -512,7 +515,7 @@ def _collect_tables(
         out.append((node, visible))
 
     for arg, value in node.args.items():
-        if arg == "with":
+        if arg == "with_":
             continue
         for child in value if isinstance(value, list) else [value]:
             if isinstance(child, exp.Expression):
