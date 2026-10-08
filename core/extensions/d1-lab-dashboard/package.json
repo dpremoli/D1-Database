@@ -10,7 +10,7 @@
   "devDependencies": {
     "@directus/extensions-sdk": "^17",
     "@vue/compiler-sfc": "^3",
-    "typescript": "^5",
+    "typescript": "^7",
     "vue-tsc": "^2.2.0",
     "vue": "^3"
   },
