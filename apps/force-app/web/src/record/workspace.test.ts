@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { nextTick } from 'vue';
+import { effectScope, nextTick } from 'vue';
 
 // createWorkspace() start/stop/upload paths (stream-2 review 2.1, 2.2, 2.5, 2.7). Everything the
 // workspace talks to (Directus, the recorder, dialogs) is faked at the module boundary.
@@ -40,7 +40,7 @@ const confirmMock = vi.hoisted(() => ({ confirmAction: vi.fn().mockResolvedValue
 vi.mock('../ui/confirm', () => confirmMock);
 vi.mock('../ui/spotlight', () => ({ spotlight: vi.fn() }));
 
-import { createWorkspace } from './workspace';
+import { createWorkspace, getWorkspace } from './workspace';
 import { clearUploadProgress, uploadProgress } from './uploadResume';
 import { alarmController } from './alarms';
 import { hwStatus } from './hwStatus';
@@ -127,6 +127,9 @@ async function uploadable() {
 	const w = await make();
 	w.st.state = 'done'; w.st.captureId = 'cap-up'; w.st.summary = { mat_written: true, peaks: { Fx: 1, Fy: 2, Fz: 3 } };
 	w.link.sampleId = 'sample-1';
+	await nextTick();   // idle -> done has the workspace load the finished cache (as a reconcile would)
+	await new Promise((r) => setTimeout(r, 0));
+	w.finishedCache.value = null; w.editCutStartSec.value = null; w.editCutEndSec.value = null;
 	return w;
 }
 let fileN = 0;
@@ -334,6 +337,13 @@ describe('workspace crop kept locally (#190)', () => {
 		expect(putCalls()).toHaveLength(1);
 		expect(JSON.parse(putCalls()[0][1].body)).toEqual({ crop_start_idx_override: null, crop_end_idx_override: null });
 		expect(dx.post.mock.calls.find((c) => c[0] === '/items/machining_force_analysis')![1]).not.toHaveProperty('crop_start_idx_override');
+	});
+
+	it("converts the crop with the capture's own rate, not the form's", async () => {
+		const w = await withCrop();
+		w.st.summary = { ...w.st.summary, fs: 500 };   // form says 1000 Hz
+		await w.saveCropLocally();
+		expect(JSON.parse(putCalls()[0][1].body)).toEqual({ crop_start_idx_override: 1250, crop_end_idx_override: 3500 });
 	});
 
 	it('an unreachable recorder does not stop saving the crop or the upload', async () => {
@@ -1103,5 +1113,31 @@ describe('workspace.releaseStream() (#185)', () => {
 		w.st.state = 'done';
 		await nextTick();
 		expect(disc).not.toHaveBeenCalled();
+	});
+});
+
+describe('getWorkspace() singleton', () => {
+	it('keeps its watchers after the component that first built it unmounts', async () => {
+		const page = effectScope();   // stands in for RecordPage's setup
+		const w = page.run(() => getWorkspace())!;
+		page.stop();
+		const disc = vi.spyOn(w.client, 'disconnect').mockImplementation(() => {});
+		w.st.state = 'recording';
+		await nextTick();
+		w.releaseStream();
+		w.st.state = 'done';
+		await nextTick();
+		expect(disc).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('save dialog when a cut ends on its own', () => {
+	it('opens from the workspace, so it also opens while the Record page is not mounted', async () => {
+		const w = await make();
+		w.st.state = 'recording';
+		await nextTick();
+		w.st.state = 'finalizing';
+		await nextTick();
+		expect(w.saveOpen.value).toBe(true);
 	});
 });

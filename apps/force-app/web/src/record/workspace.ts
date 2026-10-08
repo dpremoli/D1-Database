@@ -1,7 +1,8 @@
 // Shared state for the modular Recording workspace. Created once in RecordPage and provided to
 // every panel via inject(), so panels stay small and independent while sharing one RecordClient,
 // config, metadata, plot options, and the start/stop/replay actions.
-import { computed, inject, reactive, ref, shallowRef, watch, type InjectionKey } from 'vue';
+import { computed, effectScope, inject, reactive, ref, shallowRef, watch, type InjectionKey } from 'vue';
+import { shouldOpenSaveDialog } from './saveDialogGate';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS, RecordClient } from './liveClient';
 import { api } from '../directusClient';
 import { buildSeriesEnvelope, debouncePublish, parseCache, type Cache } from '@d1/force-plotting';
@@ -743,8 +744,12 @@ export function createWorkspace() {
 		const cache = finishedCache.value;
 		const s = editCutStartSec.value, e = editCutEndSec.value;
 		if (!cache || s == null || e == null || (s === cache.csSec && e === cache.ceSec)) return null;
-		return { start: Math.round(s * cfg.sample_rate), end: Math.round(e * cfg.sample_rate) };
+		const fs = captureFs();
+		return { start: Math.round(s * fs), end: Math.round(e * fs) };
 	}
+	// The cut's own rate from its summary: the form's rate can differ (an adopted cut, an edit after
+	// the cut, NI-DAQ coercion), and the backend checks the indices against summary.n.
+	function captureFs(): number { return Number(st.summary?.fs) || cfg.sample_rate; }
 	// #190: the edited crop used to live only in memory and in the Directus POST, so a failed upload
 	// (or a restart) lost it. Writing it to the capture's summary.json first means the local plot,
 	// a retry from Local Captures and a cold start all still have it. Best effort and never throws:
@@ -761,7 +766,7 @@ export function createWorkspace() {
 				headers: JSON_HEADERS,
 				body: JSON.stringify({ crop_start_idx_override: crop?.start ?? null, crop_end_idx_override: crop?.end ?? null }),
 			}));
-		} catch { /* best effort */ }
+		} catch (e) { console.warn('could not save the crop to the capture folder', e); }   // best effort
 	}
 	async function uploadCutToDatabase(): Promise<string> {
 		const id = st.captureId;
@@ -831,7 +836,7 @@ export function createWorkspace() {
 			directus_files_id: matFileId,
 			live_cache_file: cacheFileId,
 			status: 'done',
-			sample_rate: cfg.sample_rate,
+			sample_rate: captureFs(),
 			feed: cfg.feed,
 			cut_diameter: cfg.diam,
 			max_rpm: cfg.rpm,
@@ -873,7 +878,7 @@ export function createWorkspace() {
 			machining_tacho_used: true,
 			machining_coolant_used: !!(meta.coolant && meta.coolant.trim()),
 			capture_software: 'force-app',
-			capture_frequency_khz: Number((cfg.sample_rate / 1000).toFixed(3)),
+			capture_frequency_khz: Number((captureFs() / 1000).toFixed(3)),
 			outcome_notes: meta.notes || null,
 			// Machining details (folded Directus form section)
 			machining_axial_depth_of_cut_mm: numOrNull(machining.axial_doc),
@@ -1103,6 +1108,15 @@ export function createWorkspace() {
 		} catch { /* best-effort — the cut is still replayable even if metadata hydration fails */ }
 	}
 
+	// The cut can end while the operator is on another page (the stream stays open, #185), so the
+	// Save dialog and the finished cache are driven from here, not from RecordPage.
+	watch(() => st.state, async (s, prev) => {
+		if (mode.value === 'playback') return;   // playback never finalizes anything to save
+		// Covers auto-stop (duration, disk full) where stop() was never called; a manual stop opens it in stop().
+		if (shouldOpenSaveDialog(s, prev)) saveOpen.value = true;
+		if (s === 'done' && prev !== 'done' && !finishedCache.value) await loadFinished();
+	});
+
 	return {
 		client, source, setSource, nidaqChannels, cfg, meta, machining, plot, replay, st, busy, errMsg, finishedCache,
 		editCutStartSec, editCutEndSec,
@@ -1143,7 +1157,9 @@ export type Workspace = ReturnType<typeof createWorkspace>;
 // same timing as before), then reuses it for the app's lifetime.
 let _workspace: Workspace | null = null;
 export function getWorkspace(): Workspace {
-	if (!_workspace) _workspace = createWorkspace();
+	// Detached scope: built inside RecordPage's setup, its watchers would otherwise belong to that
+	// component and stop when it unmounts -- alarms, prefs and the deferred stream close included.
+	if (!_workspace) _workspace = effectScope(true).run(createWorkspace)!;
 	return _workspace;
 }
 export const WORKSPACE: InjectionKey<Workspace> = Symbol('record-workspace');

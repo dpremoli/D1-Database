@@ -9,7 +9,6 @@ import { startSync } from './directusSync';
 import { hwStatus } from './hwStatus';
 import { labamp } from './labampApi';
 import { IntervalGate, shouldPollBackup, shouldPollPreflight, syncDiskGate } from './recordPolling';
-import { shouldOpenSaveDialog } from './saveDialogGate';
 import { DEFAULT_LAYOUT, dockPanel, GRID_COLS, oppositeSide, parseDismissedIds, parseSavedLayout, type RecordPanelInst as Inst } from './recordLayout';
 import PanelFrame from './panels/PanelFrame.vue';
 import { PLOT_MODES, type PlotMode } from './plotModes';
@@ -149,21 +148,6 @@ function addPanel(type: string) {
 }
 function closePanel(i: string) { layout.value = layout.value.filter((p) => p.i !== i); }
 const addable = computed(() => Object.entries(PANEL_TYPES).map(([type, m]) => ({ type, ...m, disabled: !!m.single && hasType(type) })));
-
-watch(() => st.state, async (s, prev) => {
-	// Playback never finalizes anything, so there is nothing to save — and its state only ever
-	// moves recording <-> idle, which would not match here anyway. Guarded explicitly so it stays
-	// true if playback's state handling changes.
-	if (w.mode.value === 'playback') return;
-	// Covers auto-stop (self-terminating duration, disk-full, etc) where the frontend never called
-	// w.stop() itself — the manual-stop path already opens this via workspace.ts's stop().
-	// A reconcile that adopts a cut already finalizing resets the client first, so prev is never
-	// 'recording' there (saveDialogGate.ts).
-	if (shouldOpenSaveDialog(s, prev)) w.saveOpen.value = true;
-	if (s === 'done' && prev !== 'done' && !w.finishedCache.value) {
-		await w.loadFinished();
-	}
-});
 
 // Periodic disk space check during recording (every 30s)
 const diskInfo = reactive<{ free_gb: number; total_gb: number; used_pct: number; checking: boolean }>({ free_gb: -1, total_gb: 0, used_pct: 0, checking: false });
