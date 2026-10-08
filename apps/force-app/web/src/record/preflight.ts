@@ -7,7 +7,10 @@
 // Sample ("Start anyway"): an offline cut can be linked to a Sample later, so it is a warning, not
 // a block.
 
+import { groupMissing, missingBindings, missingFromChassis, noForceBound, reassignConfirmText } from './channelBindings';
 import { RAW_BYTES_PER_SAMPLE, RAW_COLUMNS, SUB_NAMES } from './liveClient';
+
+export { missingFromChassis };
 
 export type PreflightLevel = 'ok' | 'info' | 'warn' | 'fail' | 'skip';
 export type PreflightId = 'sample' | 'auth' | 'amp' | 'tacho' | 'disk' | 'channels';
@@ -23,7 +26,12 @@ export interface PreflightItem {
 	detail: string;
 	/** Present when "Show me" has somewhere to go. */
 	focus?: PreflightFocus;
+	/** Present when the problem has a one-click fix (#195): the Record page asks `confirm`, then runs it. */
+	action?: PreflightAction;
 }
+
+/** Re-assign channels: the backend's own auto-assign over the ports the NI-DAQ scan reports. */
+export interface PreflightAction { kind: 'reassign'; label: string; confirm: string }
 
 /** The NI-DAQ page's channel as the checklist needs it (a subset of nidaqApi.Channel). */
 export interface ChannelLike { name: string; role?: string; physical: string | null; source?: string }
@@ -133,16 +141,6 @@ export function channelConfigIssues(channels: ChannelLike[]): { fail: string[]; 
 	return { fail, warn };
 }
 
-/** Inputs in `physical` that the connected hardware does not have (#213). Nothing is missing when
- *  there is no real device list to compare with: an absent chassis is the NI-DAQ source button's
- *  business, and a simulated tree has no real inputs to miss. */
-export function missingFromChassis(physical: readonly string[], chassisInputs: readonly string[] | null | undefined): string[] {
-	if (!chassisInputs || !chassisInputs.length) return [];
-	// DAQmx takes "force1_mod1/ai0" for "Force1_Mod1/ai0": names differ only if they differ in more than case.
-	const have = new Set(chassisInputs.map((p) => p.toLowerCase()));
-	return [...new Set(physical)].filter((p) => !have.has(p.toLowerCase()));
-}
-
 export function computePreflight(i: PreflightInput): PreflightItem[] {
 	if (i.source === 'replay') return [];
 	const items: PreflightItem[] = [];
@@ -230,11 +228,19 @@ function channelsItem(i: PreflightInput): PreflightItem {
 	}
 	if (!channels) return { id: 'channels', label: 'Channels', level: 'skip', detail: 'Channel configuration not read yet.' };
 	const { fail, warn } = channelConfigIssues(channels);
-	fail.push(...notOnChassis(modelPhysicals(channels)));
-	if (fail.length) return { id: 'channels', label: 'Channels', level: 'fail', focus, detail: `Channel configuration problem: ${fail.join('; ')}.` };
+	// #195: bindings that name ports the scan lacks (module swapped or unplugged, another chassis),
+	// or none at all while the scan has ports, can be fixed in one click by the existing auto-assign.
+	// A rotating-dyno layout is not offered it: the auto-assign here builds the stationary one.
+	const missing = missingBindings(channels, i.chassisInputs);
+	fail.push(...groupMissing(missing).map((g) => `${g.physical} is not on the connected NI-DAQ hardware (${g.names.join(', ')})`));
+	const rotating = channels.some((c) => c.name === 'Mz' || c.role === 'Mz');
+	const action: PreflightAction | undefined = !rotating && (missing.length || noForceBound(channels, i.chassisInputs))
+		? { kind: 'reassign', label: 'Re-assign channels', confirm: reassignConfirmText(channels, i.chassisInputs) }
+		: undefined;
+	if (fail.length) return { id: 'channels', label: 'Channels', level: 'fail', focus, action, detail: `Channel configuration problem: ${fail.join('; ')}.` };
 	if (warn.length) {
 		return {
-			id: 'channels', label: 'Channels', level: 'warn', focus,
+			id: 'channels', label: 'Channels', level: 'warn', focus, action,
 			detail: `Channel configuration is incomplete: ${warn.join('; ')}. Start falls back to the default input for each.`,
 		};
 	}
