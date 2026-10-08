@@ -36,10 +36,15 @@ export function oppositeSide(layout: readonly LayoutItem[], id: string, cols: nu
 
 /**
  * Docks one panel against the left or right edge of the grid (#136). The grid only pushes
- * collisions DOWN, so dragging a full-height panel to the other side leaves its old columns empty
- * and sends the panels it landed on below the bottom row. Here the panel's column strip is moved
- * instead: the panels that were on the far side of it close the gap by its width and the panel
- * takes the edge, so nothing overlaps, no panel changes row or size, and the bottom row is unchanged.
+ * collisions DOWN, so dragging a panel to the other side leaves its old columns empty and sends
+ * the panels it landed on below the bottom row. Here the panel's column strip is moved instead.
+ * Every panel that lies entirely within the strip (the ones stacked above or below it) travels
+ * with it to the edge, and the panels entirely on the far side of it close the gap by its width.
+ * Nothing changes row or size, so nothing overlaps and the bottom row is unchanged.
+ *
+ * If a panel straddles the strip's edge (wider than the strip, or only partly in it) the strip
+ * cannot be moved cleanly, so the whole layout is mirrored horizontally instead (x' = cols - x - w),
+ * which cannot create an overlap either.
  * Returns a new array of new objects; a panel already docked on that side comes back unchanged.
  */
 export function dockPanel<T extends LayoutItem>(layout: readonly T[], id: string, side: DockSide, cols: number = GRID_COLS): T[] {
@@ -49,13 +54,19 @@ export function dockPanel<T extends LayoutItem>(layout: readonly T[], id: string
 	const target = side === 'right' ? cols - p.w : 0;
 	if (p.x === target) return out;
 	const x0 = p.x;
-	const w = p.w;
-	for (const o of out) {
-		if (o === p) continue;
-		if (side === 'right' && o.x >= x0 + w) o.x -= w; // panels right of the old slot close the gap
-		else if (side === 'left' && o.x + o.w <= x0) o.x += w; // panels left of the old slot make room
+	const x1 = p.x + p.w;
+	const within = (o: T) => o.x >= x0 && o.x + o.w <= x1;
+	const intersects = (o: T) => o.x < x1 && o.x + o.w > x0;
+	if (out.some((o) => intersects(o) && !within(o))) {
+		for (const o of out) o.x = cols - o.x - o.w;
+		return out;
 	}
-	p.x = target;
+	const shift = target - x0;
+	for (const o of out) {
+		if (within(o)) o.x += shift; // the strip, with whatever is stacked in it
+		else if (side === 'right' && o.x >= x1) o.x -= p.w; // panels right of the old slot close the gap
+		else if (side === 'left' && o.x + o.w <= x0) o.x += p.w; // panels left of the old slot make room
+	}
 	return out;
 }
 
