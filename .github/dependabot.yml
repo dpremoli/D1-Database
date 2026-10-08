@@ -1,4 +1,7 @@
-# Version updates, grouped so each ecosystem opens at most a few PRs a month. Security updates
+# Version updates, grouped so each ecosystem opens at most a few PRs a month: one for minor and
+# patch updates and one for major updates, each spanning every directory of the entry. Without the
+# "major" groups, every major bump (and every 0.x minor, which Dependabot counts as major) opened its
+# own PR per directory: about 40 PRs, each running the full CI, on 2026-10-08. Security updates
 # are separate and immediate once "Dependabot security updates" is on in the repo settings.
 # Every update PR runs the full CI, including the diag goldens that pin numpy/scipy/scikit-learn.
 version: 2
@@ -23,6 +26,8 @@ updates:
     groups:
       npm-workspace:
         update-types: [minor, patch]
+      npm-workspace-major:
+        update-types: [major]
 
   # The Directus extensions with their own lockfile.
   - package-ecosystem: npm
@@ -48,6 +53,8 @@ updates:
     groups:
       directus-extensions:
         update-types: [minor, patch]
+      directus-extensions-major:
+        update-types: [major]
 
   - package-ecosystem: pip
     directories:
@@ -67,3 +74,5 @@ updates:
     groups:
       python:
         update-types: [minor, patch]
+      python-major:
+        update-types: [major]
