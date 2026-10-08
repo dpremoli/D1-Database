@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { StartRequestError, describeRecordingFailure, parseStartError, sampleRateIssue } from './recordingErrors';
+import { StartRequestError, describeRecordingFailure, parseStartError, sampleRateIssue, suggestedSampleRate } from './recordingErrors';
 
 const DAQ_TEXT = 'could not start acquisition: DaqError: Requested value is not a supported value for this property.\n'
 	+ 'Property: DAQmx_SampClk_Rate\nRequested Value: 52.0e3\nMaximum Value: 51.367188e3\nStatus Code: -200077';
@@ -18,6 +18,19 @@ describe('parseStartError', () => {
 			.toBe('start failed: 409 a recording is already in progress');
 		expect(parseStartError(500, 'Internal Server Error').message).toBe('start failed: 500 Internal Server Error');
 		expect(parseStartError(500, 'x').detail.field).toBeUndefined();
+	});
+});
+
+describe('suggestedSampleRate', () => {
+	it('is the rate a refused Start says the hardware would use (#199)', () => {
+		const e = parseStartError(400, JSON.stringify({ detail: { field: 'sample_rate', value: 25000, suggested: 25600, message: 'use 25,600 Hz' } }));
+		expect(suggestedSampleRate(e)).toBe(25600);
+	});
+	it('is null without a usable suggestion, for another field, or for any other error', () => {
+		expect(suggestedSampleRate(parseStartError(400, JSON.stringify({ detail: { field: 'sample_rate', max: 51200, message: 'too fast' } })))).toBeNull();
+		expect(suggestedSampleRate(new StartRequestError(400, { field: 'ppr', suggested: 3, message: 'x' }))).toBeNull();
+		expect(suggestedSampleRate(new StartRequestError(400, { field: 'sample_rate', suggested: 0, message: 'x' }))).toBeNull();
+		expect(suggestedSampleRate(new Error('Failed to fetch'))).toBeNull();
 	});
 });
 

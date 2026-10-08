@@ -18,7 +18,7 @@ from .acquisition.consumers import CutDetector, Decimator, FrmIntegrator
 from .acquisition.ring import Ring
 from .backup import BackupStreamer, mark_remote_deleted
 from .backup import load_config as load_backup_config
-from .clipping import RailDetector
+from .clipping import RailDetector, dyno_gain_array
 from .config import RecordConfig
 from .d1rw import RawWriter
 from .dsp import sum_axes, tacho_column, welch_spectra
@@ -91,8 +91,11 @@ class RecordingSession:
         self.cut_started_t: float | None = None
         # Live railing test on the raw volts (see clipping.py); needs the per-channel gains, so
         # it is inert for sim/replay. Its latched set is streamed and reported in status().
-        self.rails = RailDetector(cfg.dyno_gains, cfg.analog_fullscale_v)
+        self.rails = RailDetector(cfg.dyno_gains, cfg.analog_fullscale_v, cfg.daq_input_range_v)
         self._rail_sent = 0.0
+        # Volts -> N for the live view (#212), the same per-channel gains finalize applies. None
+        # when there are none (sim/replay data is already in newtons).
+        self._live_gains = dyno_gain_array(cfg.dyno_gains)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._finalize_thread: threading.Thread | None = None
@@ -320,13 +323,27 @@ class RecordingSession:
             }
         )
 
+    def _in_newtons(self, data: np.ndarray) -> np.ndarray:
+        """This chunk with the 8 dyno columns converted from volts to newtons, as finalize.py's
+        `gained` does for the saved outputs (#212). The live view used to be the bare volts, so on
+        the NI-DAQ path the force plot, the running peaks, the cut detector and, through the
+        peaks, the force alarm all read low by the N/V gain: a 300 N hit showed as about 15 and
+        never tripped a newton limit. Tacho and extra hardware columns are left as acquired; with
+        no per-channel gains (sim/replay) the chunk is returned untouched. Drift compensation
+        stays a finalize-only step: it needs the whole capture."""
+        if self._live_gains is None:
+            return data
+        live = np.array(data, dtype=np.float64)
+        live[:, :8] *= self._live_gains
+        return live
+
     def _extra_values(self, data: np.ndarray, axes: dict[str, np.ndarray]) -> np.ndarray:
         """This chunk's value for every configured extra (Aux/virtual) channel — see
         virtual_channels.compute_extra_columns for the shared logic (also used by finalize.py, so
-        the two can't disagree). `data` is this chunk straight from the acquisition source: columns
-        0-7 are the dyno sub-channels, 8 is Tacho, and 9+ are any real hardware extra channels
-        NidaqSource appended (never gain-corrected here — same as the live Fx/Fy/Fz preview, which
-        is also pre-gain; finalize.py's archived values are the gain/drift-corrected ones)."""
+        the two can't disagree). `data` is this chunk after `_in_newtons`: columns 0-7 are the
+        dyno sub-channels in newtons, 8 is Tacho, and 9+ are any real hardware extra channels
+        NidaqSource appended (never gain-corrected, here or in finalize.py; only drift
+        compensation separates the live values from the archived ones)."""
         hw_raw = data[:, 9:] if data.shape[1] > 9 else None
 
         def _on_error(name: str, e: virtual_channels.FormulaError) -> None:
@@ -376,6 +393,9 @@ class RecordingSession:
             ):
                 self._rail_sent = time.monotonic()
                 self._publish_control({"type": "railed", "channels": self.rails.railed})
+            # The raw file and the rail test above take the volts as acquired; everything the
+            # operator watches from here on is in newtons.
+            data = self._in_newtons(data)
             axes = sum_axes(data)
             for i, ax in enumerate(("Fx", "Fy", "Fz")):
                 self.peaks[i] = max(self.peaks[i], float(np.max(np.abs(axes[ax]))))

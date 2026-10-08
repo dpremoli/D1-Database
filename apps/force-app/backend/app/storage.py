@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import time as _time
+import uuid
 
 # Windows refuses os.replace onto a file another handle has open (WinError 5), e.g. a threadpool
 # endpoint reading summary.json at that moment. Those reads are brief, so retry for up to ~0.5 s.
@@ -51,9 +52,15 @@ def writable_error(path: str) -> str | None:
     Creates, writes and removes a real file rather than trusting os.access: on Windows that ignores
     ACLs, and it says nothing about a read-only share, a full disk, or a removable drive that has
     been write-protected, all of which only show up on an actual write.
+
+    One attempt, not tempfile.mkstemp: on Windows mkstemp takes a PermissionError in an existing
+    directory for a name collision and tries the next name, up to os.TMP_MAX (2**31 - 1) times,
+    whenever os.access calls the directory writable, which is always for an ACL denial. Choosing a
+    folder the user may not write to then never answered (#214).
     """
+    tmp = os.path.join(path, f".force-app-write-test-{uuid.uuid4().hex}.tmp")
     try:
-        fd, tmp = tempfile.mkstemp(dir=path, prefix=".force-app-write-test-", suffix=".tmp")
+        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0), 0o600)
     except OSError as e:
         return str(e)
     try:

@@ -9,6 +9,7 @@ import { startSync } from './directusSync';
 import { hwStatus } from './hwStatus';
 import { labamp } from './labampApi';
 import { IntervalGate, shouldPollBackup, shouldPollPreflight, syncDiskGate } from './recordPolling';
+import { checkNidaqPresence } from './nidaqHardware';
 import { DEFAULT_LAYOUT, dockPanel, GRID_COLS, oppositeSide, parseDismissedIds, parseSavedLayout, type RecordPanelInst as Inst } from './recordLayout';
 import PanelFrame from './panels/PanelFrame.vue';
 import { PLOT_MODES, type PlotMode } from './plotModes';
@@ -174,7 +175,15 @@ const diskGate = new IntervalGate(checkDisk, 30_000);
 // R4: while waiting to Start, the disk poll also feeds the checklist's runway (preflight.ts reads
 // hwStatus.diskFreeGb), and its other inputs (amp mode, saved channel list, NI-DAQ only) are
 // refreshed on the same terms and whenever the source changes.
-const preflightGate = new IntervalGate(() => { void w.refreshPreflight(); }, 15_000);
+// #215: the chassis is re-read on the same tick, whatever source is selected, so the NI-DAQ button
+// (and the Channels chip) follow a cable being pulled or plugged back in without a visit to
+// another page. 5 s, not the disk poll's 30: this is the wait before a cut, when the operator is
+// looking at these chips, and not at all while the window is hidden.
+const preflightGate = new IntervalGate(() => {
+	if (document.hidden) return;
+	void w.refreshPreflight();
+	void checkNidaqPresence(w.client.baseUrl);
+}, 5_000);
 watch([() => st.state, () => w.mode.value], ([s, m], old) => {
 	syncDiskGate(diskGate, m, s, old?.[0] && old[1] ? { state: old[0], mode: old[1] } : undefined);
 	preflightGate.set(shouldPollPreflight(m, s));

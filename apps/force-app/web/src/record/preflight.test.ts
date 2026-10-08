@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-	attentionItems, channelConfigIssues, computePreflight, diskRunwayMinutes, formatRunway, isCustomChannelList, needsSampleConfirm,
+	attentionItems, channelConfigIssues, computePreflight, diskRunwayMinutes, formatRunway, isCustomChannelList, missingFromChassis, needsSampleConfirm,
 	type ChannelLike, type PreflightInput, type PreflightItem,
 } from './preflight';
 
@@ -227,5 +227,38 @@ describe('isCustomChannelList', () => {
 	it('before the model has been read, anything but the default is custom', () => {
 		expect(isCustomChannelList('Dev1/ai0\nDev1/ai1\nDev1/ai2', defaults, null)).toBe(true);
 		expect(isCustomChannelList('Dev1/ai0', defaults, [])).toBe(true);
+	});
+});
+
+describe('channels against the connected hardware (#213)', () => {
+	const chassis = goodChannels().map((c) => c.physical as string);
+	const tachoElsewhere = () => goodChannels().map((c) => (c.name === 'Tacho' ? { ...c, physical: 'Missing_Mod9/ai0' } : c));
+
+	it('missingFromChassis lists unknown inputs once, and nothing without a real device list', () => {
+		expect(missingFromChassis(['a/ai0', 'x/ai0', 'x/ai0'], ['a/ai0'])).toEqual(['x/ai0']);
+		expect(missingFromChassis(['MOD1/AI0'], ['Mod1/ai0'])).toEqual([]); // DAQmx ignores case
+		expect(missingFromChassis(['x/ai0'], null)).toEqual([]);
+		expect(missingFromChassis(['x/ai0'], [])).toEqual([]);
+	});
+
+	it('fails when the saved model names an input the chassis does not have', () => {
+		const c = byId(computePreflight(input({ channels: tachoElsewhere(), chassisInputs: chassis })), 'channels');
+		expect(c.level).toBe('fail');
+		expect(c.detail).toContain('Missing_Mod9/ai0 is not on the connected NI-DAQ hardware');
+		expect(c.focus).toEqual({ id: 'nidaq-channels', route: '/nidaq' });
+	});
+
+	it('stays ok when every input is there, and when there is no real device to compare with', () => {
+		expect(byId(computePreflight(input({ chassisInputs: chassis })), 'channels').level).toBe('ok');
+		expect(byId(computePreflight(input({ channels: tachoElsewhere(), chassisInputs: null })), 'channels').level).toBe('ok');
+	});
+
+	it('checks a custom list too, because that is what Start sends', () => {
+		const list = [...chassis.slice(0, 8), 'Missing_Mod9/ai0'];
+		const bad = byId(computePreflight(input({ channelsCustom: true, channelList: list, chassisInputs: chassis })), 'channels');
+		expect(bad.level).toBe('fail');
+		expect(bad.detail).toContain('Missing_Mod9/ai0');
+		const fine = byId(computePreflight(input({ channelsCustom: true, channelList: chassis, chassisInputs: chassis })), 'channels');
+		expect(fine.level).toBe('skip');
 	});
 });

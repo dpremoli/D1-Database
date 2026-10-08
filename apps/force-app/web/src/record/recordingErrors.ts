@@ -19,6 +19,8 @@ export interface StartErrorDetail {
 	field?: string;
 	max?: number | null;
 	min?: number | null;
+	/** The value to use instead, when the backend knows one (#199: the rate the hardware runs at). */
+	suggested?: number | null;
 	message: string;
 }
 
@@ -39,6 +41,15 @@ export function parseStartError(status: number, body: string): StartRequestError
 	}
 	const text = typeof detail === 'string' ? detail : body.slice(0, 200);
 	return new StartRequestError(status, { message: `start failed: ${status} ${text}`.trim() });
+}
+
+/** The sample rate a refused Start says to use instead, or null. The NI-DAQ modules only run at
+ *  certain rates and the backend refuses any other, naming the one the driver would really use
+ *  (#199), so the form can take it rather than leave the operator to work it out. */
+export function suggestedSampleRate(e: unknown): number | null {
+	if (!(e instanceof StartRequestError) || e.detail.field !== 'sample_rate') return null;
+	const v = e.detail.suggested;
+	return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
 }
 
 const hz = (v: number) => `${Math.floor(v).toLocaleString()} Hz`;

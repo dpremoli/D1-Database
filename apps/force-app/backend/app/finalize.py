@@ -31,7 +31,7 @@ import numpy as np
 from scipy.io import savemat
 
 from . import virtual_channels
-from .clipping import near_full_scale
+from .clipping import dyno_gain_array, near_full_scale, rail_volts
 from .config import AXIS_SUM, SIGNAL_CHANNELS, RecordConfig
 from .d1lc import write_d1lc
 from .d1rw import read_header, read_rows, row_count
@@ -120,8 +120,8 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     # Apply volts→N gain to the 8 charge channels (Tacho is the last column — leave it). Per-channel
     # gains (from the amp's auto-ranged ranges) calibrate each channel independently; otherwise the
     # scalar gain applies (sim/replay data is already in N, so gain 1).
-    gains = list(cfg.dyno_gains or [])
-    scale = np.array([float(g) for g in gains[:8]]) if len(gains) >= 8 else float(gain)
+    per_channel = dyno_gain_array(cfg.dyno_gains)
+    scale = per_channel if per_channel is not None else float(gain)
     # Optional linear drift compensation on the 8 dyno channels (like the MATLAB app's driftComp):
     # the least-squares line against sample index, fitted over the whole capture in the first pass
     # and subtracted from every block after it. Only affects the derived outputs (.mat DATA +
@@ -215,13 +215,16 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     # Per-channel ranging info (for the converging between-cuts auto-range): the peak force each
     # sensor channel saw, whether it railed (clipped), and the per-cut N/V + range that produced it.
     vfs = float(cfg.analog_fullscale_v or 10.0)
-    chan_gains = [float(g) for g in gains[:8]] if len(gains) >= 8 else [float(gain)] * 8
+    chan_gains = per_channel.tolist() if per_channel is not None else [float(gain)] * 8
     chan_ranges = [g * vfs for g in chan_gains]
     chan_peaks = [float(p) for p in chan_peaks]
+    # Where a channel actually saturates: the amp's full scale, or the DAQ module's input range
+    # when that is smaller (#200). `ranges_n` stays the amp's range, which auto-range sets.
+    rail_v = rail_volts(vfs, cfg.daq_input_range_v)
     # Clipping only meaningful with real per-channel gains (nidaq path); sim/replay never rails.
     chan_clipped = [
-        bool(len(gains) >= 8 and hit)  # same test the live stream applies per block (clipping.py)
-        for hit in near_full_scale(np.array(chan_peaks), np.array(chan_ranges))
+        bool(per_channel is not None and hit)  # the test the live stream applies per block
+        for hit in near_full_scale(np.array(chan_peaks), np.array(chan_gains) * rail_v)
     ]
 
     # --- Cut window: first/last time |Fz| exceeds CUT_FRAC of its peak — the active cut ---

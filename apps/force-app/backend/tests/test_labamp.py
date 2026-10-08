@@ -107,3 +107,28 @@ def test_mock_labamp():
     assert len(rows) == 8 and rows[4]["physicalQuantity"] == "Force"
     assert "device" in m.export_params()
     assert m.signal_get([1, 2])[0]["channel"] == 1
+
+
+def test_ping_gives_up_quickly_but_other_calls_keep_the_full_timeout():
+    # #215: with the amp's cable pulled, a 10 s ping made the Record page slow to say so.
+    from app.labamp import PING_TIMEOUT_SEC
+
+    seen = []
+
+    def handler(request):
+        seen.append(request.extensions["timeout"]["connect"])
+        return httpx.Response(200, json={"result": 0, "data": {"mode": "MEASURE"}})
+
+    c = LabAmpClient("http://10.255.255.1", timeout=10.0, transport=httpx.MockTransport(handler))
+    assert c.ping() is True
+    assert c.probe() == (True, "MEASURE")  # reachability and mode from one request
+    c.get_operation_mode()
+    assert seen == [PING_TIMEOUT_SEC, PING_TIMEOUT_SEC, 10.0]
+
+
+def test_probe_of_an_unreachable_amp():
+    def boom(request):
+        raise httpx.ConnectError("no route", request=request)
+
+    c = LabAmpClient("http://10.255.255.1", transport=httpx.MockTransport(boom))
+    assert c.probe() == (False, None)

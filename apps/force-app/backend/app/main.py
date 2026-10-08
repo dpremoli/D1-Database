@@ -1796,6 +1796,20 @@ def sample_rate_problem(rate: float, limits: dict) -> dict | None:
     }
 
 
+def coerced_rate_problem(rate: float, actual: float | None) -> dict | None:
+    """A structured 400 detail when the hardware would sample at `actual` instead of `rate`
+    (#199), else None. `suggested` is the rate to use, for the UI to put in the field."""
+    if actual is None or math.isclose(rate, actual, rel_tol=nidaq_enum.SAMPLE_RATE_REL_TOL):
+        return None
+    return {
+        "field": "sample_rate",
+        "value": rate,
+        "suggested": actual,
+        "message": f"These NI-DAQ modules cannot sample at {rate:,.0f} Hz: the driver would run "
+        f"at {actual:,.0f} Hz and the cut would be saved with the wrong rate. Use {actual:,.0f} Hz.",
+    }
+
+
 @app.post("/record/start")
 async def record_start(cfg: RecordConfig) -> dict:
     global _session
@@ -1848,6 +1862,20 @@ async def record_start(cfg: RecordConfig) -> dict:
         problem = sample_rate_problem(cfg.sample_rate, limits)
         if problem:
             raise HTTPException(400, problem)
+        # #199: inside those limits the driver silently moves to a rate the modules can produce.
+        # The capture is stamped with cfg.sample_rate, so it must be the rate really used.
+        actual = await run_in_threadpool(
+            nidaq_enum.coerced_sample_rate, cfg.nidaq_channels, cfg.sample_rate
+        )
+        problem = coerced_rate_problem(cfg.sample_rate, actual)
+        if problem:
+            raise HTTPException(400, problem)
+        if actual is not None:
+            cfg.sample_rate = actual
+        # #200: where the force channels really saturate, for the live rail test and finalize.
+        cfg.daq_input_range_v = (
+            await run_in_threadpool(nidaq_enum.input_range_v, cfg.nidaq_channels[:8]) or 0.0
+        )
         try:
             source = NidaqSource(
                 cfg, physical_channels=cfg.nidaq_channels or None, extra_channels=cfg.extra_channels
@@ -2429,13 +2457,9 @@ async def capture_mat(cid: str) -> FileResponse:
 @app.get("/labamp/status")
 async def labamp_status() -> dict:
     amp = _labamp
-    reachable = await run_in_threadpool(amp.ping)
-    mode = None
-    if reachable:
-        try:
-            mode = await run_in_threadpool(amp.get_operation_mode)
-        except LabAmpError:
-            pass
+    # One round-trip tells both: the Record page reads this every few seconds while waiting to
+    # Start, and the amp takes about 0.3 s per call.
+    reachable, mode = await run_in_threadpool(amp.probe)
     return {
         "reachable": reachable,
         "mode": mode,
@@ -2520,6 +2544,20 @@ def _daq() -> tuple[int, int, int, float]:
     return nidaq, dac, effective_bits(dac, nidaq), vfs
 
 
+def _autorange_headroom(headroom: float, vfs: float) -> float:
+    """The headroom to size ranges with (#200). Auto-range puts the expected peak at 1/headroom
+    of the amp's full scale; when the NI-DAQ modules on the force channels read less than the amp
+    puts out, the peak has to sit that much lower again or it is clipped at the DAQ. Blocking
+    (asks the driver): call it off the event loop."""
+    try:
+        cc = _channel_config()
+        force = chan.to_record_channels(cc, kind=chan.infer_dyno_kind(cc))[:8]
+    except ValueError:
+        return headroom
+    limit = nidaq_enum.input_range_v(force)
+    return headroom * vfs / limit if limit and limit < vfs else headroom
+
+
 @app.get("/labamp/autorange")
 async def labamp_autorange(headroom: float | None = None) -> dict:
     hr = float(headroom) if headroom else float(_labamp_cfg.get("autorange_headroom", 1.5))
@@ -2534,7 +2572,11 @@ async def labamp_autorange(headroom: float | None = None) -> dict:
         "effective_bits": eff,
         "fullscale_v": vfs,
         "recommendations": recommend_ranges(
-            peaks, currents, headroom=hr, bits=eff, fullscale_v=vfs
+            peaks,
+            currents,
+            headroom=await run_in_threadpool(_autorange_headroom, hr, vfs),
+            bits=eff,
+            fullscale_v=vfs,
         ),
     }
 
@@ -2550,6 +2592,7 @@ async def labamp_autorange_apply(body: dict) -> dict:
     nidaq, dac, eff, vfs = _daq()
     peaks = await run_in_threadpool(_measure_peaks, _labamp, ch)
     currents = await run_in_threadpool(_current_ranges, _labamp, ch)
+    hr = await run_in_threadpool(_autorange_headroom, hr, vfs)
     recs = recommend_ranges(peaks, currents, headroom=hr, bits=eff, fullscale_v=vfs)
     await run_in_threadpool(_labamp.set_operation_mode, "RESET")
     for r in recs:
@@ -2572,7 +2615,9 @@ async def labamp_autorange_converge(body: dict) -> dict:
     currents = body.get("currents")
     hr = float(body.get("headroom") or _labamp_cfg.get("autorange_headroom", 1.5))
     nidaq, dac, eff, vfs = _daq()
-    recs = converge_ranges(peaks, clipped, currents, headroom=hr, bits=eff, fullscale_v=vfs)
+    # `hr` stays what was asked for (it is echoed in the reply, as GET /labamp/autorange does).
+    sized = await run_in_threadpool(_autorange_headroom, hr, vfs)
+    recs = converge_ranges(peaks, clipped, currents, headroom=sized, bits=eff, fullscale_v=vfs)
     status: dict[str, str] = {}
     if body.get("apply"):
         # Computing recommendations (above) is a pure read + math, safe anytime -- only writing
