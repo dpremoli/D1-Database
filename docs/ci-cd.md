@@ -53,26 +53,26 @@ Things worth knowing:
 [`ci.yml`](../.github/workflows/ci.yml) runs on every PR, on every push to `main`, and on demand
 (*Run workflow*, any branch). A newer push to the same PR cancels its run still in progress.
 
-| Job | What it proves |
-|---|---|
-| Lint (pre-commit) | The hooks in `.pre-commit-config.yaml`: whitespace, YAML/JSON, ruff, sqlfluff, hadolint, geometry copies in sync |
-| Sample geometry engine | Geometry unit tests and every extension's `index.test.mjs` |
-| Foundation smoke test | `tests/phase0_smoke.sh`, including `docker compose config` |
-| Schema migrations | Migrations and seed apply. Then the phase 1/6/7 schema tests run. Then [`migration_roundtrip.sh`](../scripts/ci/migration_roundtrip.sh) rolls back **every** migration (each down must succeed), fails on any table, view, function, type or schema left behind, and applies them all again |
-| Scripts and diagnostics | `tests/scripts` against a real database, including the diag goldens. A skipped DB test fails the job |
-| Service images | Each Dockerfile in `docker-compose.yml` builds, and its tests run inside the image (diag-service and filter-service tests read files outside their image, so Force app Python runs them) |
-| Directus extension *name* | Each extension with its own lockfile installs, builds and passes its own tests, exactly as on the server |
-| Force app JS | `@d1/force-plotting`, `force-app-web` and `force-app-desktop` tests, typechecks and builds |
-| Explorer UI | `@d1/ui` tests, typechecks of the Explorer pages, the lab dashboard and the campaign interface, and the workspace extension builds |
-| Force app Python | Backend (Python 3.11 with the `nidaq` extra, as the release freezes it), backup server, bug-report relay, filter service and diag service (Python 3.12, as their images run) |
-| **CI passed** | Every job above passed or was not needed |
+| Job | What it proves | Runs on a PR when it touches |
+|---|---|---|
+| Lint and quick checks | The hooks in `.pre-commit-config.yaml` (whitespace, YAML/JSON, ruff, sqlfluff, hadolint, geometry copies in sync), geometry unit tests and every extension's `index.test.mjs`, the CI-plan tests, and `tests/phase0_smoke.sh` including `docker compose config` | always |
+| Schema migrations | Migrations and seed apply. Then the phase 1/6/7 schema tests run. Then [`migration_roundtrip.sh`](../scripts/ci/migration_roundtrip.sh) rolls back **every** migration (each down must succeed), fails on any table, view, function, type or schema left behind, and applies them all again | `db/`, `scripts/`, `tests/`, `d1-access-guard` |
+| Scripts and diagnostics | `tests/scripts` against a real database, including the diag goldens. A skipped DB test fails the job | the same, plus the force app's changelog |
+| Service images | Each selected Dockerfile in `docker-compose.yml` builds, and its tests run inside the image (diag-service and filter-service tests read files outside their image, so Python services runs them) | that image's directory |
+| Directus extensions | Each selected extension with its own lockfile installs, builds and passes its own tests, exactly as on the server | that extension's directory |
+| Force app JS | `@d1/force-plotting`, `force-app-web` and `force-app-desktop` tests, typechecks and builds | the force app's web/desktop, either `packages/`, the force dashboard, the root `package*.json` |
+| Explorer UI | `@d1/ui` tests, typechecks of the Explorer pages, the lab dashboard and the campaign interface, and the workspace extension builds | `packages/d1-ui`, the workspace extensions, the root `package*.json` |
+| Force app Python (recorder backend) | Backend tests on Python 3.11 with the `nidaq` extra, as the release freezes it | `apps/force-app/backend/` |
+| Python services | Backup server, bug-report relay, filter service and diag service on Python 3.12 (as their images run), each in its own venv | that service (filter: also the backend's `d1lc.py`; diag: also `scripts/diag/`) |
+| **CI passed** | Every job above passed or was not needed | always |
 
-On a PR, the extension and image matrices only build what the PR touches. A push to `main`, or a
-change under `.github/`, builds everything. [`ci-plan.mjs`](../.github/scripts/ci-plan.mjs)
-decides; run `node .github/scripts/ci-plan.mjs $(git diff --name-only origin/main...HEAD)` to see
-what your branch would build. Adding an extension with its own `package-lock.json` adds it to CI
-automatically. A new service image needs a line in `ci-plan.mjs`'s `IMAGES` (the `new-plugin`
-skill does this).
+A push to `main`, a manual run, or a PR that changes anything under `.github/` runs every job.
+[`ci-plan.mjs`](../.github/scripts/ci-plan.mjs) decides (its tests are `ci-plan.test.mjs`); run
+`node .github/scripts/ci-plan.mjs $(git diff --name-only origin/main...HEAD)` to see what your
+branch would run. A job that reads a new path needs that path in `ci-plan.mjs`'s `JOBS`, or a PR
+touching only that path will skip it. Adding an extension with its own `package-lock.json` adds it
+to CI automatically. A new service image needs a line in `ci-plan.mjs`'s `IMAGES` (the
+`new-plugin` skill does this).
 
 Not in CI, because they need the full running stack: `tests/phase3_api.sh`,
 `tests/phase4_heavy_data.sh` and `tests/ui/`. Anything that needs a rig or real Directus data
@@ -90,6 +90,18 @@ These can only be set in GitHub's settings, not from a file:
 ## Cost
 
 The repository is private, so Actions minutes count against the plan, and Windows minutes count
-double. A normal PR uses about 25 Linux minutes. The Windows release build (about 15 minutes, so
-about 30 billed) runs only for a release, or for the dry run of a PR that touches the version or
-packaging.
+double. Every job is billed rounded **up** to a whole minute, so many short jobs cost far more
+than their run time: before 2026-10-08 a full run was 37 jobs, about 22 minutes of work billed as
+about 45. Hence the layout above:
+
+- Small components run as loops inside one job (extensions, images, Python services), and the
+  quick checks share the lint job. A full run (`main`, `.github/` changes) is about 11 jobs.
+- On a PR every job is gated on the paths it reads. A docs-only push (plans, backlog, runbooks)
+  costs the plan, lint and CI passed jobs: about 3 minutes.
+- The Windows release build (about 18 minutes, so about 36 billed) runs for a release, and as a
+  PR dry run only when the PR changes the version, the packaging files, the desktop package's
+  runtime dependencies or the installer tools (electron, electron-builder, electron-updater,
+  Playwright), also when only the lockfile moves them (`release_plan.py`
+  `pr_packaging_changes`). A Dependabot bump of anything else skips it.
+- Each push to an open PR runs CI again (a newer push cancels the older run). Batch doc and
+  status-table commits into the next code push once a PR is open.
