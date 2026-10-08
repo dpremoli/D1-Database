@@ -50,7 +50,8 @@ don't edit the backlog, the changelog or the version; the coordinator does.
 | C — FFT and pop-outs | #186 #187 | `agent-a48f8683250a6d659` | merged (`7ff136c`, `8c30d9d`); `ensurePopoutReachable` untested (needs Electron) |
 | D — Settings, layout, release notes | #135 #136 #137 | `agent-ab54cf260692df0c3` | merged (`e88352b`..`77c88f6`) |
 | /simplify fixes | crop/upload · stream/plots · FFT/desktop/notes | `agent-ad597db19cf601364`, `agent-a4c9bb20f328ab690`, `agent-a52c0889f3615aae7` | merged; untouched-crop clear fixed after; skipped: shared linkAnalysis(), NULL-file CHECK constraint, seq-based gaps, FFT `f` only on change |
-| Coordinator | merge, /simplify, debug, review, changelog 0.1.35, PR | main checkout | /simplify merged; all suites green (web 648, desktop 181, plotting 690, backend 651, release_plan 6); debug pass next |
+| Debug pass + review | Opus: force-app-verify run, /code-review high | main checkout + `agent-a08f087e361db4861`, `agent-af9c16a2dc765e230` | merged. Debug found a pre-existing P0 (workspace watchers died with the first RecordPage: alarms, stop-on-trip, prefs) — fixed `0ca1740`; review: 9 of 10 fixed, per-side crop override kept as both-sides (dashboard only honours both) |
+| Coordinator | changelog 0.1.35, backlog, preflight, PR | main checkout | preflight 0 failed; pre-commit clean; PR next |
 
 ### A. Upload and crop — #190 (P1)
 - **Cause:** captures over `MAT_MAX_BYTES` (`finalize.py:59`, ~366 s at 51.2 kHz × 10 cols) skip
