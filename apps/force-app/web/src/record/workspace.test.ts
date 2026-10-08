@@ -268,6 +268,80 @@ describe('workspace.uploadCutToDatabase() resume (2.2)', () => {
 	});
 });
 
+// #190: the crop set with the sliders is written to the recorder before the upload can fail.
+describe('workspace crop kept locally (#190)', () => {
+	const putCalls = () => (fetch as any).mock.calls.filter((c: any[]) => c[1]?.method === 'PUT');
+	beforeEach(() => {
+		okReplies(); fileN = 0; dx.get.mockResolvedValue({ data: { data: [] } });
+		replies['/captures/cap-up/crop'] = { body: {} };
+	});
+	async function withCrop() {
+		const w = await uploadable();
+		w.cfg.sample_rate = 1000;
+		w.finishedCache.value = { csSec: 1, ceSec: 9 } as any;
+		w.editCutStartSec.value = 2.5; w.editCutEndSec.value = 7;
+		return w;
+	}
+
+	it('PUTs the moved crop to the recorder before the Directus POST, even when the POST fails', async () => {
+		const order: string[] = [];
+		(fetch as any).mockImplementation(async (url: string, init?: { method?: string }) => {
+			const path = new URL(url, 'http://x').pathname;
+			if (init?.method === 'PUT') order.push('PUT crop');
+			return { ok: true, status: 200, json: async () => ({}), text: async () => '', blob: async () => new Blob(['x']), arrayBuffer: async () => new ArrayBuffer(8), _p: path };
+		});
+		dx.post.mockImplementation(async (url: string) => {
+			order.push(`POST ${url}`);
+			if (url === '/items/manufacturing_operations') return { data: { data: { operation_id: 'op-c' } } };
+			if (url === '/files') return { data: { data: { id: `file-${++fileN}` } } };
+			throw serverErr();
+		});
+		const w = await withCrop();
+		await expect(w.uploadCutToDatabase()).rejects.toThrow(/linking the capture failed/);
+		expect(order[0]).toBe('PUT crop');
+		const [url, init] = putCalls()[0];
+		expect(new URL(url, 'http://x').pathname).toBe('/captures/cap-up/crop');
+		expect(JSON.parse(init.body)).toEqual({ crop_start_idx_override: 2500, crop_end_idx_override: 7000 });
+		// and a retry does not PUT the same crop again
+		await expect(w.uploadCutToDatabase()).rejects.toThrow();
+		expect(putCalls()).toHaveLength(1);
+	});
+
+	it('sends both overrides in the analysis POST when a handle moved', async () => {
+		dx.post.mockImplementation(async (url: string) => (url === '/items/manufacturing_operations'
+			? { data: { data: { operation_id: 'op-c' } } }
+			: url === '/files' ? { data: { data: { id: `file-${++fileN}` } } } : { data: { data: {} } }));
+		const w = await withCrop();
+		w.editCutStartSec.value = 1;   // only the end moved
+		await w.uploadCutToDatabase();
+		expect(dx.post.mock.calls.find((c) => c[0] === '/items/machining_force_analysis')![1])
+			.toMatchObject({ crop_start_idx_override: 1000, crop_end_idx_override: 7000 });
+	});
+
+	it('untouched handles write nothing locally and send no override', async () => {
+		dx.post.mockImplementation(async (url: string) => (url === '/items/manufacturing_operations'
+			? { data: { data: { operation_id: 'op-c' } } }
+			: url === '/files' ? { data: { data: { id: `file-${++fileN}` } } } : { data: { data: {} } }));
+		const w = await withCrop();
+		w.editCutStartSec.value = 1; w.editCutEndSec.value = 9;
+		await w.uploadCutToDatabase();
+		expect(putCalls()).toHaveLength(0);
+		expect(dx.post.mock.calls.find((c) => c[0] === '/items/machining_force_analysis')![1]).not.toHaveProperty('crop_start_idx_override');
+	});
+
+	it('an unreachable recorder does not stop the upload', async () => {
+		(fetch as any).mockImplementation(async (url: string, init?: { method?: string }) => {
+			if (init?.method === 'PUT') throw new TypeError('Failed to fetch');
+			return { ok: true, status: 200, json: async () => ({}), text: async () => '', blob: async () => new Blob(['x']), arrayBuffer: async () => new ArrayBuffer(8) };
+		});
+		dx.post.mockImplementation(async (url: string) => (url === '/items/manufacturing_operations'
+			? { data: { data: { operation_id: 'op-c' } } }
+			: url === '/files' ? { data: { data: { id: `file-${++fileN}` } } } : { data: { data: {} } }));
+		const w = await withCrop();
+		await expect(w.uploadCutToDatabase()).resolves.toBe('op-c');
+	});
+});
+
 describe('workspace.uploadCutToDatabase() with an unknown summary', () => {
 	beforeEach(() => {
 		fileN = 0; dx.get.mockResolvedValue({ data: { data: [] } });
@@ -286,6 +360,19 @@ describe('workspace.uploadCutToDatabase() with an unknown summary', () => {
 		await expect(w.uploadCutToDatabase()).resolves.toBe('op-s');
 		expect(posts('/files')).toBe(1);
 		expect(dx.post.mock.calls.find((c) => c[0] === '/items/machining_force_analysis')![1].directus_files_id).toBeNull();
+	});
+
+	it('a failed insert for an over-size cut says the .mat was skipped, not "both files uploaded" (#190)', async () => {
+		replies['/captures/cap-up/summary'] = { body: { mat_written: false } };
+		dx.post.mockImplementation(async (url: string) => {
+			if (url === '/items/manufacturing_operations') return { data: { data: { operation_id: 'op-s' } } };
+			if (url === '/files') return { data: { data: { id: `file-${++fileN}` } } };
+			throw Object.assign(new Error('x'), { response: { status: 400, data: { errors: [{ message: 'Value can\'t be null' }] } } });
+		});
+		const w = await noSummary();
+		const err = await w.uploadCutToDatabase().catch((e) => e);
+		expect(err.message).toMatch(/size limit/);
+		expect(err.message).not.toMatch(/both files/);
 	});
 
 	it('fails retryably, without logging a run, when the summary cannot be read', async () => {

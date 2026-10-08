@@ -12,6 +12,7 @@ import { getConfig } from '../config';
 import { FrmCloud, parseCache, useAutoColorScale, type Cache } from '@d1/force-plotting';
 import FinishedForcePlot from '../record/FinishedForcePlot.vue';
 import { uploadCaptureColdStart } from '../record/uploadCapture';
+import { cropOverrideForUpload, cropWindowSec } from '../record/cropOverride';
 
 const route = useRoute();
 const router = useRouter();
@@ -26,6 +27,9 @@ const axis = ref<'Fx' | 'Fy' | 'Fz'>('Fz');
 
 // This view has no colour-scale editor, so the scale just follows the cloud's own auto range.
 const { colorScale, onClimits } = useAutoColorScale();
+
+// The crop the operator set in the final summary (kept in summary.json), else the cache's own.
+const crop = computed(() => cache.value ? cropWindowSec(summary.value, cache.value) : null);
 
 const retrying = ref(false);
 const retryErr = ref<string | null>(null);
@@ -56,6 +60,7 @@ async function retryUpload() {
 	retrying.value = true;
 	retryErr.value = null;
 	try {
+		const override = cropOverrideForUpload(summary.value, cache.value);
 		retryOpId.value = await uploadCaptureColdStart({
 			captureId: captureId.value,
 			matUrl: `${baseUrl}/captures/${captureId.value}/capture.mat`,
@@ -64,6 +69,8 @@ async function retryUpload() {
 			peaks: summary.value.peaks,
 			cache: cache.value,
 			matWritten: summary.value.mat_written,
+			cropStartIdx: override?.start ?? null,
+			cropEndIdx: override?.end ?? null,
 		});
 	} catch (e: any) {
 		retryErr.value = e?.message || 'retry failed';
@@ -128,7 +135,7 @@ function goToDbPlot() {
 			<div class="lcv-plots">
 				<div class="lcv-plot">
 					<div class="lcv-plot-label">Force</div>
-					<FinishedForcePlot v-if="cache" :cache="cache" />
+					<FinishedForcePlot v-if="cache" :cache="cache" :crop-start-sec="crop?.startSec" :crop-end-sec="crop?.endSec" />
 				</div>
 				<div class="lcv-plot">
 					<div class="lcv-plot-label">
@@ -140,7 +147,7 @@ function goToDbPlot() {
 					<FrmCloud v-if="cache && summary" cache-file-id="" :cache-override="cache"
 						:axis="axis" :feed="cache.feed" :diam="cache.diam" :inner-diam="summary.config?.inner_diam ?? 0"
 						speed-mode="measured" :rpm="summary.config?.rpm ?? 0" :vc="0" :time-scale="1" :ppr="summary.config?.ppr ?? 1"
-						:crop-start-sec="cache.csSec" :crop-end-sec="cache.ceSec"
+						:crop-start-sec="crop?.startSec ?? cache.csSec" :crop-end-sec="crop?.endSec ?? cache.ceSec"
 						:stride="1" :gridding="false" :grid-n="600" :point-size="2" :color-scale="colorScale"
 						pane-label="local" @climits="onClimits" />
 				</div>

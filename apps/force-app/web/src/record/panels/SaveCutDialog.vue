@@ -181,6 +181,7 @@ async function confirmSave() {
 	errMsg.value = null;
 	stage.value = 'saving';
 	try {
+		await w.saveCropLocally();   // #190: keep the adjusted crop on the recorder before anything can fail
 		if (saveMat.value) downloadMat();
 		if (saveCsv.value) downloadCsv();
 		if (uploadDb.value) savedOpId.value = await w.uploadCutToDatabase();
