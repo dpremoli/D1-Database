@@ -2,7 +2,7 @@
 // Live spectrogram: a time × frequency heatmap of ONE channel, built from the rolling spectra the
 // backend publishes (client.fftHistory). X = time (older left → newest right), Y = frequency
 // (0 bottom → Nyquist top), colour = amplitude (dB). Painted via an offscreen image the size of the
-// history grid, then stretched to the canvas — cheap even for ~220 frames × ~240 bins.
+// history grid, then stretched to the canvas — cheap even for ~150 frames × ~1024 bins.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { RecordClient } from './liveClient';
 import { theme } from '../theme';
