@@ -21,7 +21,7 @@ const target = computed(() => w.rpmTarget.value || 0);
 const scale = createStableMax({ floor: 100 });
 const max = ref(scale.value);
 const sparkDom = createSparkDomain();
-const dom = ref<SparkDomain>({ lo: 0, hi: 20 });
+const dom = ref<SparkDomain>(sparkDom.update([], 0));   // the tracker's empty-history default
 function rescale() { max.value = scale.update(Math.max(target.value * 1.25, rpm.value * 1.1), performance.now()); }
 watch(target, rescale, { immediate: true });
 

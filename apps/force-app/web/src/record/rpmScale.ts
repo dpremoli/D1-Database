@@ -55,9 +55,8 @@ export function createStableMax(o: { floor?: number; shrinkAfterMs?: number } = 
 export interface SparkDomain { lo: number; hi: number }
 
 export interface SparkDomainTracker {
-	/** Feed the visible history at `now` (ms); returns the y-domain to draw it in. */
+	/** Feed the visible history at `now` (ms); returns the y-domain to draw it in (empty history: the minimum span from 0). */
 	update(values: readonly number[], now: number): SparkDomain;
-	readonly domain: SparkDomain | null;
 	reset(): void;
 }
 
@@ -79,7 +78,6 @@ export function createSparkDomain(o: { minSpan?: number; pad?: number; relMin?: 
 			}
 			return dom;
 		},
-		get domain() { return dom; },
 		reset() { span.reset(); dom = null; },
 	};
 }
