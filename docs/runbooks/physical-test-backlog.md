@@ -613,6 +613,56 @@ branch's own backend; the items below are what still needs the app window and ha
   set Sample, Machine, Operator and operation type, quit and relaunch. Expect: all four are back,
   with the cut parameters.
 
+### Left open by the 2026-10-08 rig run
+Things the run found or could not settle, that are neither fixed by the branch above nor filed as
+an issue yet. Each needs the rig, or a decision by the owner, before it becomes one.
+
+- [ ] **A does not acknowledge on its own (R10).** A opens "Silence this alarm?" with "Keep
+  alerting" focused, so A then Enter keeps the alarm; Silence has to be clicked. Decide whether
+  that is wanted. If A should silence in one go, or A then Enter should, file it; if not, change
+  the R10 item and the shortcut hint ("A: Acknowledge a safety alarm") to say what happens.
+- [ ] **Lab Amp chip while the amp is busy.** The reachability check now gives up after 2 s
+  (#215). With the amp plugged in, start and stop several cuts and switch RESET / MEASURE from the
+  Lab Amp page while watching the chip. Expect: it never shows "not reachable". If it flickers,
+  raise `PING_TIMEOUT_SEC` in `backend/app/labamp.py`.
+- [ ] **Bulk delete is slow.** Deleting five captures took 39 s in a copy of the app with no real
+  sign-in: each delete is instant and the waits (2 to 19 s) fall between them. Repeat signed in,
+  on 5 to 10 real captures, and note the time. If it is still seconds per capture, file it.
+- [ ] **A cut with no Sample is named SIM-CUT.** An NI-DAQ cut recorded without a Sample shows as
+  "SIM-CUT" in Local Captures and on the local Plot page (the recorder's default `sample_name`),
+  which reads as a simulated cut. Confirm on the rig and decide on a name ("Untitled cut", as the
+  save dialog already says).
+- [ ] **Tacho generator default.** `POST /nidaq/tacho/start` with no counter answers 500 on this
+  chassis because the default is the device name `STAR_DAQ`; with `cDAQ1/_ctr0` it starts. Nothing
+  in the app calls it today. Decide: take the chassis name from the enumeration, or remove it.
+- [ ] **Lab Amp output 4 is scaled differently.** The amp's export has output 4 (y2) at 9.833 V
+  for the top of its range where the other seven are at 10 V. If that is what it looks like, Fy2
+  is recorded about 1.7 % low, because the app assumes one full-scale voltage for all channels.
+  Look at the amp's web page (Outputs) and set it to 10 V, or tell the app per channel.
+- [ ] **Tacho level above the module's range.** The tacho's high level is over 10 V: the NI 9201
+  reads it pinned at 10.53 V. Edges are still clean (3,341 found in `20261008-132200-fdb783`), so
+  RPM is right. Note the sensor's real output level; nothing to do unless pulses go missing.
+- [ ] **The same input-range question on the tacho and aux channels.** #200 only judges the eight
+  force channels against the module's input range. Check on the rig whether any aux channel can
+  exceed its module's range, and if so whether it should be flagged too.
+- [ ] **Free space on the acquisition PC.** C: went from 48.9 GB to 35.5 GB free during the run
+  (the test data was 0.8 GB at most), and the drive is 96 % full. The recorder stops a cut below
+  1 GB. Find what is using it and free space before long cuts.
+
+Follow-up work from the review of the fixes, no issue yet (code, not rig checks; move to issues
+when picked up):
+
+- The recorder should refuse a channel that is not on the hardware itself, with a structured
+  answer naming it. Today only the Channels chip knows (#213), so a direct API call still gets
+  the raw DAQmx -200220 text.
+- An unsupported sample rate should be flagged before Start, next to the above-maximum check
+  (`/nidaq/max_rate`, `sampleRateIssue`), instead of by a refused Start that then rewrites the
+  field (#199). With the default of 25,000 Hz every first Start on NI 9234 modules is refused once.
+- Auto-range should take the DAQ's input limit as its own parameter rather than through a scaled
+  headroom (#200).
+- A release note for the next version: live values are newtons, so alarm limits and cut-detect
+  thresholds set against the old live plot must be looked at (first item of the re-checks above).
+
 ### Earlier issues that need the rig (from the 2026-10-02 batch)
 - [ ] **#84** Real DAQmx error text and codes (‑200077); whether the chassis or the module limits the
   rate; coerced rates on discrete-rate modules. — 2026-10-08, Claude (recorder API and DAQmx 24.5
