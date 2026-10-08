@@ -24,12 +24,15 @@ const props = withDefaults(
 const data = useCampaignData(toRef(props, 'campaignId'));
 const { junction, operations, tests, analyses, analysisUnavailable, overview, matrix, reload } = data;
 
-// A user who can read the campaign but not change it (an investigator, someone who only sees it
-// through a sample) gets the lists without the pickers and remove buttons. Unknown (null) keeps
-// them: the server refuses a write the user may not make, and the panels say so.
+// Rights are per row, not per campaign (ADR-0011): putting an operation or test in or out of a
+// campaign is an update of that operation or test (its owner, or the owner or a co-owner of its
+// sample), so those panels always offer the picker and remove buttons and the server refuses what
+// the user may not move, in words. Adding a sample needs the campaign's owner, so only the sample
+// picker and add button depend on owning the campaign (unknown, null, keeps them). Removing a sample
+// needs the campaign's owner or the sample's own owner, so it stays.
 const askId = computed(() => (props.canUpdate === undefined ? props.campaignId : null));
 const own = useCanUpdate('campaigns', askId);
-const readonly = computed(() => (props.canUpdate === undefined ? own.canUpdate.value : props.canUpdate) === false);
+const cannotAdd = computed(() => (props.canUpdate === undefined ? own.canUpdate.value : props.canUpdate) === false);
 
 defineExpose({ reload });
 </script>
@@ -53,19 +56,18 @@ defineExpose({ reload });
 			</LoadState>
 		</Section>
 
-		<p v-if="readonly" class="d1-cnote">Only the campaign's owner can change its lists.</p>
+		<p v-if="cannotAdd" class="d1-cnote">Only the campaign's owner can add samples here. Operations and tests are moved by their own owner.</p>
 
-		<SamplesPanel :campaign-id="campaignId" :rows="overview.sampleRows" :junction="junction" :readonly="readonly" :hidden-count="overview.counts.hiddenSamples" @changed="reload" />
+		<SamplesPanel :campaign-id="campaignId" :rows="overview.sampleRows" :junction="junction" :cannot-add="cannotAdd" :hidden-count="overview.counts.hiddenSamples" @changed="reload" />
 		<OperationsPanel
 			:campaign-id="campaignId"
 			:campaign-type="campaignType"
 			:rows="overview.opRows"
 			:section="operations"
 			:force-hidden="analysisUnavailable || !!analyses.error"
-			:readonly="readonly"
 			@changed="reload"
 		/>
-		<TestsPanel :campaign-id="campaignId" :rows="overview.testRows" :section="tests" :readonly="readonly" @changed="reload" />
+		<TestsPanel :campaign-id="campaignId" :rows="overview.testRows" :section="tests" @changed="reload" />
 	</div>
 </template>
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	campaignAssignPatch, changeOutcomeMessage, forbiddenWriteMessage, inheritCampaignProject, lostRaceMessage, projectInheritPatch,
-	readCampaignProject, readCanUpdate,
+	notPermittedMessage, readCampaignProject, readCanUpdate,
 } from './assign';
 
 describe('campaignAssignPatch', () => {
@@ -53,12 +53,41 @@ describe('lostRaceMessage and permissions', () => {
 		expect(forbiddenWriteMessage({ response: { status: 403 } }, false)).toBe('Only the owner or a co-owner can change this record.');
 		expect(forbiddenWriteMessage({ response: { status: 500 } }, true)).toBeNull();
 	});
-	it("shows the guard's reason, else words the refusal for the collection", () => {
-		const reason = 'Only the campaign owner can edit its lists.';
-		const guard = { response: { status: 403, data: { errors: [{ message: reason, extensions: { code: 'FORBIDDEN', reason } }] } } };
-		expect(forbiddenWriteMessage(guard, false, 'campaigns')).toBe(reason);
+	it("shows the guard's refusal, else words the refusal for the collection", () => {
+		const reason = "Only the campaign's owner can add samples to it.";
+		const guard = {
+			response: { status: 403, data: { errors: [{ message: reason, extensions: { code: 'FORBIDDEN', reason, source: 'd1-access-guard', kind: 'junction', collection: 'campaign_samples', parent: 'campaigns', id: 'c1' } }] } },
+		};
+		expect(forbiddenWriteMessage(guard, true, 'campaign_samples')).toBe(reason);
+		// Directus's stock 403 has a reason too (developer text): never shown.
+		const stockReason = 'You don\'t have permission to perform "update" for collection "manufacturing_operations" or it does not exist.';
+		const stock = { response: { status: 403, data: { errors: [{ message: stockReason, extensions: { code: 'FORBIDDEN', reason: stockReason } }] } } };
+		expect(forbiddenWriteMessage(stock, false, 'campaigns')).toBe("Only the campaign's owner can change it.");
 		expect(forbiddenWriteMessage({ response: { status: 403 } }, false, 'campaigns')).toBe("Only the campaign's owner can change it.");
 		expect(forbiddenWriteMessage({ response: { status: 403 } }, true, 'campaigns')).toBe('You can only add records you own or co-own.');
+	});
+});
+
+describe('moving an operation or test, and adding or removing a sample (Campaign Workbench rights)', () => {
+	const stockOf = (collection: string) => {
+		const reason = `You don't have permission to perform "update" for collection "${collection}" or it does not exist.`;
+		return { response: { status: 403, data: { errors: [{ message: reason, extensions: { code: 'FORBIDDEN', reason } }] } } };
+	};
+	it('says who may move an operation or test, by its code, for add and remove alike', () => {
+		for (const adding of [true, false]) {
+			expect(forbiddenWriteMessage(stockOf('manufacturing_operations'), adding, 'manufacturing_operations', 'OP-7')).toBe('Only the owner of OP-7 (or of its sample) can move it.');
+			expect(forbiddenWriteMessage(stockOf('test_sessions'), adding, 'test_sessions', 'tensile')).toBe('Only the owner of tensile (or of its sample) can move it.');
+		}
+		expect(notPermittedMessage(true, 'manufacturing_operations')).toBe('Only the owner of this operation (or of its sample) can move it.');
+		expect(notPermittedMessage(false, 'test_sessions')).toBe('Only the owner of this test (or of its sample) can move it.');
+	});
+	it('words a refused sample add or remove for campaign_samples', () => {
+		expect(forbiddenWriteMessage(stockOf('campaign_samples'), true, 'campaign_samples')).toBe("Only the campaign's owner can add a sample they own or co-own.");
+		expect(forbiddenWriteMessage(stockOf('campaign_samples'), false, 'campaign_samples')).toBe("Only the campaign's owner, or the sample's owner or a co-owner, can remove it.");
+	});
+	it('an empty batch answer for an unmovable record gives the move text without a repeated label', () => {
+		expect(lostRaceMessage([], true, 'OP-7', false, 'manufacturing_operations')).toBe('Only the owner of OP-7 (or of its sample) can move it.');
+		expect(lostRaceMessage([], false, 'tensile', false, 'test_sessions')).toBe('Only the owner of tensile (or of its sample) can move it.');
 	});
 });
 
@@ -70,7 +99,7 @@ describe('changeOutcomeMessage', () => {
 		expect(api.get).not.toHaveBeenCalled();
 	});
 	it('tells lost race from not permitted on an empty answer', async () => {
-		expect(await changeOutcomeMessage(perm(false), 'test_sessions', 't1', [], true, 'T')).toContain('own or co-own');
+		expect(await changeOutcomeMessage(perm(false), 'test_sessions', 't1', [], true, 'T')).toBe('Only the owner of T (or of its sample) can move it.');
 		expect(await changeOutcomeMessage(perm(true), 'test_sessions', 't1', [], true, 'T')).toBe('T is already in another campaign.');
 		const failing = { get: vi.fn().mockRejectedValue(new Error('x')), patch: vi.fn() };
 		expect(await readCanUpdate(failing, 'test_sessions', 't1')).toBeNull();

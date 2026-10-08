@@ -66,10 +66,19 @@ describe('saveErrors', () => {
 		expect(saveErrors(code)).toEqual(['Only the owner or a co-owner can change this record.']);
 	});
 
-	it("shows the guard's own reason for a refusal", () => {
-		const reason = 'Only the owner can change the owner.';
-		const e = { response: { status: 403, data: { errors: [{ message: reason, extensions: { code: 'FORBIDDEN', reason } }] } } };
+	it("shows the guard's refusal in plain words (the real guard shape)", () => {
+		const reason = "Only the sample's owner can hand it to someone else.";
+		const e = {
+			response: { status: 403, data: { errors: [{ message: reason, extensions: { code: 'FORBIDDEN', reason, source: 'd1-access-guard', kind: 'owner', collection: 'physical_samples', id: 's1' } }] } },
+		};
 		expect(saveErrors(e, 'physical_samples')).toEqual([reason]);
+	});
+
+	it("does not show Directus's stock 403 reason (developer text); it falls back to the collection's wording", () => {
+		const message = 'You don\'t have permission to perform "update" for collection "manufacturing_operations" or it does not exist.';
+		const e = { response: { status: 403, data: { errors: [{ message, extensions: { code: 'FORBIDDEN', reason: message } }] } } };
+		expect(saveErrors(e, 'manufacturing_operations')).toEqual(['Only the owner or a co-owner can change this record.']);
+		expect(saveErrors(e, 'campaigns')).toEqual(["Only the campaign's owner can change it."]);
 	});
 
 	it('words a reasonless refusal for the collection', () => {
