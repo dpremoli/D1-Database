@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CHANGELOG } from './changelog';
-import { classifyNote, groupNotes, NOTE_PREFIXES } from './changelogGroups';
+import { groupNotes, NOTE_PREFIXES } from './changelogGroups';
 
 describe('groupNotes (#137)', () => {
 	it('splits notes into New, Improved and Fixed, in that order, stripping the label prefix', () => {
@@ -30,7 +30,7 @@ describe('groupNotes (#137)', () => {
 
 	it('treats an area prefix, a lower-case prefix and a missing space as ordinary New text', () => {
 		for (const n of ['Plot page: x', 'fixed: x', 'Fixed:x', 'Fixed', 'toString: x']) {
-			expect(classifyNote(n)).toEqual({ group: 'new', text: n });
+			expect(groupNotes([n])).toEqual([{ key: 'new', label: 'New', notes: [n] }]);
 		}
 	});
 });
