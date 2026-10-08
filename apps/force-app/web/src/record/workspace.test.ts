@@ -283,28 +283,33 @@ describe('workspace crop kept locally (#190)', () => {
 		return w;
 	}
 
-	it('PUTs the moved crop to the recorder before the Directus POST, even when the POST fails', async () => {
-		const order: string[] = [];
-		(fetch as any).mockImplementation(async (url: string, init?: { method?: string }) => {
-			const path = new URL(url, 'http://x').pathname;
-			if (init?.method === 'PUT') order.push('PUT crop');
-			return { ok: true, status: 200, json: async () => ({}), text: async () => '', blob: async () => new Blob(['x']), arrayBuffer: async () => new ArrayBuffer(8), _p: path };
-		});
+	it('saveCropLocally() PUTs the moved crop to the recorder, and uploading does not PUT it again', async () => {
 		dx.post.mockImplementation(async (url: string) => {
-			order.push(`POST ${url}`);
 			if (url === '/items/manufacturing_operations') return { data: { data: { operation_id: 'op-c' } } };
 			if (url === '/files') return { data: { data: { id: `file-${++fileN}` } } };
 			throw serverErr();
 		});
 		const w = await withCrop();
-		await expect(w.uploadCutToDatabase()).rejects.toThrow(/linking the capture failed/);
-		expect(order[0]).toBe('PUT crop');
+		await w.saveCropLocally();
+		expect(putCalls()).toHaveLength(1);
 		const [url, init] = putCalls()[0];
 		expect(new URL(url, 'http://x').pathname).toBe('/captures/cap-up/crop');
+		expect(init.headers).toEqual({ 'Content-Type': 'application/json' });
 		expect(JSON.parse(init.body)).toEqual({ crop_start_idx_override: 2500, crop_end_idx_override: 7000 });
-		// and a retry does not PUT the same crop again
+		// the upload (even a failing, retried one) leaves the crop on the recorder alone: the save dialog
+		// saves it once, before the upload starts
+		await expect(w.uploadCutToDatabase()).rejects.toThrow(/linking the capture failed/);
 		await expect(w.uploadCutToDatabase()).rejects.toThrow();
 		expect(putCalls()).toHaveLength(1);
+	});
+
+	it('uploadCutToDatabase() on its own does not touch the recorder crop (the save dialog owns that)', async () => {
+		dx.post.mockImplementation(async (url: string) => (url === '/items/manufacturing_operations'
+			? { data: { data: { operation_id: 'op-c' } } }
+			: url === '/files' ? { data: { data: { id: `file-${++fileN}` } } } : { data: { data: {} } }));
+		const w = await withCrop();
+		await w.uploadCutToDatabase();
+		expect(putCalls()).toHaveLength(0);
 	});
 
 	it('sends both overrides in the analysis POST when a handle moved', async () => {
@@ -324,12 +329,13 @@ describe('workspace crop kept locally (#190)', () => {
 			: url === '/files' ? { data: { data: { id: `file-${++fileN}` } } } : { data: { data: {} } }));
 		const w = await withCrop();
 		w.editCutStartSec.value = 1; w.editCutEndSec.value = 9;
+		await w.saveCropLocally();
 		await w.uploadCutToDatabase();
 		expect(putCalls()).toHaveLength(0);
 		expect(dx.post.mock.calls.find((c) => c[0] === '/items/machining_force_analysis')![1]).not.toHaveProperty('crop_start_idx_override');
 	});
 
-	it('an unreachable recorder does not stop the upload', async () => {
+	it('an unreachable recorder does not stop saving the crop or the upload', async () => {
 		(fetch as any).mockImplementation(async (url: string, init?: { method?: string }) => {
 			if (init?.method === 'PUT') throw new TypeError('Failed to fetch');
 			return { ok: true, status: 200, json: async () => ({}), text: async () => '', blob: async () => new Blob(['x']), arrayBuffer: async () => new ArrayBuffer(8) };
@@ -338,6 +344,7 @@ describe('workspace crop kept locally (#190)', () => {
 			? { data: { data: { operation_id: 'op-c' } } }
 			: url === '/files' ? { data: { data: { id: `file-${++fileN}` } } } : { data: { data: {} } }));
 		const w = await withCrop();
+		await expect(w.saveCropLocally()).resolves.toBeUndefined();
 		await expect(w.uploadCutToDatabase()).resolves.toBe('op-c');
 	});
 });
