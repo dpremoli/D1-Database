@@ -8,12 +8,14 @@ const h = vi.hoisted(() => ({
   showMessageBox: vi.fn(),
   quitAndInstall: vi.fn(),
   updater: null as any,
+  windows: [] as any[],
 }));
 
 vi.mock('electron', () => ({
   app: { isPackaged: true, getVersion: () => '1.0.0' },
   dialog: { showMessageBox: (...a: unknown[]) => h.showMessageBox(...a) },
   ipcMain: { handle: (ch: string, fn: (...a: unknown[]) => unknown) => { h.handlers.set(ch, fn); } },
+  BrowserWindow: { getAllWindows: () => h.windows },
   Notification: class { static isSupported() { return false; } show() {} },
 }));
 vi.mock('electron-updater', () => {
@@ -44,6 +46,7 @@ beforeEach(() => {
   h.showMessageBox.mockReset();
   h.quitAndInstall.mockReset();
   h.updater?.removeAllListeners();
+  h.windows = [];
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -148,6 +151,26 @@ describe('update prompt with a main window (#197)', () => {
     busy = false;
     await vi.advanceTimersByTimeAsync(120_000);
     expect(h.showMessageBox).not.toHaveBeenCalled();
+  });
+
+  it('pushes update:status to the pop-out app windows too, not to destroyed or foreign ones', async () => {
+    const { send, win } = windowStub();
+    const popSend = vi.fn(), deadSend = vi.fn(), foreignSend = vi.fn();
+    h.windows = [
+      win,
+      { isDestroyed: () => false, webContents: { send: popSend, getURL: () => 'app://force/live-force?mode=1' } },
+      { isDestroyed: () => true, webContents: { send: deadSend, getURL: () => 'app://force/' } },
+      { isDestroyed: () => false, webContents: { send: foreignSend, getURL: () => 'https://example.com/' } },
+    ];
+    await bootWithWindow(async () => false, win);
+    await downloaded();
+    const want = { state: 'downloaded', version: '2.0.0', notes: '' };
+    expect(popSend).toHaveBeenCalledWith('update:status', want);
+    expect(send).toHaveBeenCalledTimes(1); // the main window is also in getAllWindows(): once only
+    expect(deadSend).not.toHaveBeenCalled();
+    expect(foreignSend).not.toHaveBeenCalled();
+    h.updater.emit('error', new Error('x'));
+    expect(popSend).toHaveBeenLastCalledWith('update:status', { state: 'error', message: 'x' });
   });
 
   it('flashes the taskbar button when the window is minimised or hidden, and stops on focus', async () => {

@@ -1,7 +1,7 @@
-import { app, dialog, ipcMain, Notification, type BrowserWindow } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Notification } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { formatReleaseNotes } from './releaseNotes';
-import { isAppSender } from './windowOpen';
+import { isAppSender, isAppUrl } from './windowOpen';
 
 export type UpdateStatus =
   | { state: 'idle' }
@@ -40,10 +40,29 @@ function snapshot(): UpdateStatus {
   return status;
 }
 
+/** The main window plus every other app page (AppShell's pop-outs): each runs its own
+ * UpdatePrompt, which only gets the get-info snapshot at mount, so it needs the pushes too. */
+function appWindows(): BrowserWindow[] {
+  const out = new Set<BrowserWindow>();
+  const main = getWindow?.();
+  if (main && !main.isDestroyed()) out.add(main);
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed()) continue;
+    try {
+      if (isAppUrl(w.webContents.getURL())) out.add(w);
+    } catch { /* a window torn down mid-call */ }
+  }
+  return [...out];
+}
+
 function push(next: UpdateStatus): void {
   status = next;
   if (next.state === 'downloaded') downloaded = { version: next.version, notes: next.notes };
-  getWindow?.()?.webContents.send('update:status', status);
+  for (const w of appWindows()) {
+    try {
+      w.webContents.send('update:status', status);
+    } catch { /* destroyed between the check and the send */ }
+  }
 }
 
 // A silent NSIS install (see below) closes the window with no wizard and no taskbar progress of
