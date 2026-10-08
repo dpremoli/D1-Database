@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, screen, shell, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { ConfigStore } from './config';
 import { applyMenuBarMode, buildMenu } from './menu';
@@ -11,8 +11,10 @@ import { PopoutTracker } from './popouts';
 import { fetchBusySession, fetchRecorderActivity, confirmQuit, type BusySession } from './quitGuard';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
+import { autoUpdater } from 'electron-updater';
 import { initAutoUpdater, markRecorderStartFailed, startUpdateCheck } from './updater';
-import { APP_USER_MODEL_ID } from './updateNotify';
+import { APP_USER_MODEL_ID, isUpdateCheckArgv } from './updateNotify';
+import { notifiedMarker, runUpdateCheck } from './updateCheck';
 import { classifyWindowOpen, guardNavigation, isAppSender, popoutKey } from './windowOpen';
 import { DEFAULT_MAIN_SIZE, DEFAULT_POPOUT_SIZE, WindowStateStore, placementFor } from './windowState';
 
@@ -24,15 +26,26 @@ if (process.platform === 'win32' && app.isPackaged) app.setAppUserModelId(APP_US
 const PREFERRED_PORT = 8200;
 const HEALTH_PATH = '/health';
 
+// #197: the scheduled task launches `Force App.exe --update-check` while the app is closed. That
+// run is only a notifier: no window, no recorder backend, no config or capture access.
+const updateCheckMode = isUpdateCheckArgv(process.argv);
+let updateToast: Notification | null = null; // kept referenced, or the toast's click handler is collected
+
 // Single-instance lock. A second launch would spawn a second sidecar (the port probe would push
 // it to 8201) with both instances writing the same <userData>/config.json and, worse, the same
 // capture storage root — a data-integrity hazard for an instrument. Focus the running window
 // instead. `mainWindow` is assigned later; this closure only runs once the app is up.
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
+// The update-check run never counts as an instance (it has its own, see startUpdateCheckMode).
+const gotLock = updateCheckMode ? false : app.requestSingleInstanceLock();
+if (updateCheckMode) {
+  startUpdateCheckMode();
+} else if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    // The scheduled update check found this instance via the lock and is quitting: not a user
+    // launch, so don't pull the window forward.
+    if (isUpdateCheckArgv(argv)) return;
     restorePopouts();
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
@@ -41,6 +54,49 @@ if (!gotLock) {
   });
 }
 
+/** `--update-check`: tell the operator about a newer version, then quit. Holds the single-instance
+ * lock only to find out whether the app is already running (then this run has nothing to do: the
+ * running app does its own checks). If a real launch arrives meanwhile, it loses the lock to this
+ * process and would silently do nothing, so this process hands over and starts the app itself. */
+function startUpdateCheckMode(): void {
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+    return;
+  }
+  const launchApp = () => {
+    app.releaseSingleInstanceLock();
+    app.relaunch({ args: [] }); // explicitly no flag: the relaunch is a normal start
+    app.exit(0);
+  };
+  app.on('second-instance', (_event, argv) => {
+    if (!isUpdateCheckArgv(argv)) launchApp();
+  });
+  void app.whenReady().then(() => {
+    const marker = notifiedMarker(app.getPath('userData'));
+    void runUpdateCheck({
+      isPackaged: app.isPackaged,
+      checkForUpdate: async () => {
+        autoUpdater.autoDownload = false; // only tell; the app downloads once the operator opens it
+        autoUpdater.autoInstallOnAppQuit = false;
+        const res = await autoUpdater.checkForUpdates();
+        return res?.isUpdateAvailable ? res.updateInfo.version : null;
+      },
+      lastNotified: marker.read,
+      markNotified: marker.write,
+      notify: (n, onClick) => {
+        if (!Notification.isSupported()) return app.quit();
+        const toast = new Notification(n);
+        toast.on('click', onClick);
+        updateToast = toast;
+        toast.show();
+      },
+      launchApp,
+      quit: () => app.quit(),
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    });
+  });
+}
 registerAppScheme();
 
 let mainWindow: BrowserWindow | null = null;
