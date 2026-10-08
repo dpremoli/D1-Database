@@ -52,12 +52,12 @@ each under `.claude/worktrees/`. Workers don't edit the backlog, the changelog o
 
 | Stream | Scope | Worktree / branch | State |
 |---|---|---|---|
-| A — Record actions | #192 (P1), #194 wording (P2) | `agent-a618ae3a5960c5690` | in progress |
-| B — Update prompt | #197 (P2) | `agent-a26be31214eaecb5d` | in progress |
-| C — Plot loading + hover | #191 (P3), #100 slice (P3) | `agent-ae84af1c48ac989d7` | in progress |
-| D — Settings, pop-outs, login | #193 (P3), #108 (P2), #196 (P3) | `agent-a59e3ac952ddf81db` | in progress |
-| Simplify, debug, review | /simplify, force-app-verify, force-app-reviewer (Opus) | | in progress |
-| Coordinator | changelog 0.1.36, backlog, preflight, PR | main checkout | pending |
+| A — Record actions | #192 (P1), #194 wording (P2) | `agent-a618ae3a5960c5690` | merged (`6fb1529`, `de657c3`) |
+| B — Update prompt | #197 (P2) | `agent-a26be31214eaecb5d` | merged (`8d607b8`, `1ebccc7`) |
+| C — Plot loading + hover | #191 (P3), #100 slice (P3) | `agent-ae84af1c48ac989d7` | merged (`3d73761`, `6d5885f`); Full keeps a corner pill while streaming |
+| D — Settings, pop-outs, login | #193 (P3), #108 (P2), #196 (P3) | `agent-a59e3ac952ddf81db` | merged (`b1266ce`, `c8eeecb`); #196 light login looks consistent, no change, needs the reporter's screenshot |
+| Simplify, debug, review | /simplify, force-app-verify, force-app-reviewer (Opus) | main checkout | done: simplify `b89b23c`; debug all PASS, found a clipped Clear button; Opus review 2 should-fix + 5 optional, all fixed (`d4bbed9`..`e4f7d40`) |
+| Coordinator | changelog 0.1.36, backlog, preflight, PR | main checkout | in progress |
 
 ### A. Record actions — #192, #194 wording
 - **#192 cause:** in the done state `RecordingActions.vue:66-75` shows Start and New. New

@@ -1012,13 +1012,17 @@ when picked up):
   Press "Clear for next cut" first instead: Start reads "Start" and the sequence moves on only once.
   Since the 0.1.36 batch PR.
 - [ ] **#194 long-cut note.** Record past the .mat limit (about 6 min at 51.2 kHz with 10 columns):
-  the save dialog explains the limit in minutes; database upload, the raw files and the .csv copy
-  still work. Since the 0.1.36 batch PR.
+  the save dialog explains the limit in minutes and calls the .csv a reduced-resolution preview;
+  database upload and the full-resolution raw file still work. Since the 0.1.36 batch PR.
 - [ ] **#197 update prompt (packaged app).** With an update downloaded while the sign-in page is
   showing, typing the password shows no dialog and keeps focus. After sign-in the in-app card
   appears in the corner; Enter in a text field does not install; "Not now" hides it until the next
   launch while Settings → About still offers the install; during a recording the card stays hidden.
-  "Restart and update" installs and relaunches. Since the 0.1.36 batch PR.
+  "Restart and update" installs and relaunches. With the window minimised when the download
+  finishes, the taskbar button flashes until the window is focused. Help → Check for updates while
+  offline after a download keeps the card and "Restart and update" working. A page pop-out window
+  shows the same card and its "Installing…" state. On /record the card sits bottom-centre and
+  covers neither Start nor Stop with the panel docked on either side. Since the 0.1.36 batch PR.
 - [ ] **#108 pop-out settings survive a relaunch (packaged app).** Change the mode, channels or
   colour map inside a Live Force / FRM / Polar pop-out, quit, relaunch: it reopens as changed.
   Since the 0.1.36 batch PR.
@@ -1027,6 +1031,10 @@ when picked up):
 - [ ] **#191 loading screens.** On the Plot page against d1-server, Figure, Lite, Full and a
   filtered single pane show the same centred loading veil (Full keeps a corner pill while it
   streams). Since the 0.1.36 batch PR.
+- [ ] **Electron 44 in the packaged app.** 0.1.36 is the first installer built on Electron 44
+  (`electron-builder.yml` was still pinned to 43 after the dependency bump). Install it on the rig
+  PC: the app starts, signs in, records a cut, opens pop-outs and updates itself. Since the 0.1.36
+  batch PR.
 - [ ] **#30 settings scroll.** On the rig PC, switching Settings tabs no longer animates or jumps
   (fixed in 0.1.33; reopened for confirmation).
 

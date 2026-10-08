@@ -7,7 +7,7 @@ productName: Force App
 # inside this workspace's own node_modules and can't fall back to a caret-range version string,
 # so it must be told explicitly. Keep this in sync with the installed electron version
 # (electron-builder logs the version it expects if this drifts).
-electronVersion: 43.3.0
+electronVersion: 44.5.1
 directories:
   output: release
 files:
