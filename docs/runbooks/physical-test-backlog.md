@@ -782,6 +782,13 @@ tool; a test cut on scrap stock is fine.
   needs the chassis).
 - [ ] **#90** Packaged NSIS build and the Tailscale update feed (held back).
 
+### Release pipeline (CI/CD overhaul)
+- [ ] **NI-DAQmx detection on a PC without the driver.** Install the packaged app on a Windows PC
+  with no NI-DAQmx driver (not the rig). Connectivity Doctor / self-check shows "NI-DAQmx runtime
+  not available", not "driver detected"; starting an NI-DAQ recording and *Start tacho* answer
+  "not available" instead of an internal error. On the rig, the same checks still report the
+  driver and record normally. Since: CI/CD overhaul (PR TBD).
+
 ## C. d1-server and infrastructure
 
 - [ ] **Official crop reaches the octree and grid builds; `d1_build.json` is published.** On
@@ -818,6 +825,12 @@ tool; a test cut on scrap stock is fine.
 - [ ] **#10** Figure-mode PNGs re-baked by MATLAB for cuts with a saved crop (held back).
 - [ ] **#97** Tailscale serve, phone access, live-DAQ load (held back; security model is an owner
   decision).
+- [ ] **First automated force-app release reaches the rigs.** After the CI/CD overhaul merges, the
+  `force-app-release` run on `main` publishes Force App 0.1.34 (tag moved from the failed run's
+  commit). Within ~10 minutes `auto-publish.log` on d1-server shows it published, and a rig on 0.1.31
+  is offered the update and installs it. Since: CI/CD overhaul (PR TBD).
+- [ ] **Branch protection requires "CI passed".** In GitHub *Settings > Branches*, `main` requires
+  the **CI passed** check. A PR with a failing job cannot merge. Since: CI/CD overhaul (PR TBD).
 
 ## Done
 
