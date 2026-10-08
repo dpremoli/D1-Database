@@ -30,7 +30,9 @@ function mount({ canUpdate = () => true, readError = null } = {}) {
 
 // db(table).whereIn(pk, keys).select(...) -> the rows of `existing`.
 // db(table).where(column, id).whereRaw(sql).first(column) -> the row when `table:id` is in `created`
-// (the parent was inserted by this transaction), else undefined.
+// (the parent was written by this transaction), else undefined. An entry `table:id@N` is a row written
+// here whose OCC version is N (N > 1: it existed and was UPDATED here); a plain `table:id` was inserted
+// here (version 1). The fake applies the `version = 1` part of the SQL, as Postgres would.
 function fakeDb(existing = [], created = []) {
   const calls = [];
   const db = (table) => ({
@@ -44,7 +46,11 @@ function fakeDb(existing = [], created = []) {
       whereRaw: (sql) => ({
         first: async (selected) => {
           calls.push({ table, column, id, sql, selected });
-          return created.includes(`${table}:${id}`) ? { [column]: id } : undefined;
+          const entry = created.find((c) => c === `${table}:${id}` || c.startsWith(`${table}:${id}@`));
+          if (!entry) return undefined;
+          const version = entry.includes('@') ? Number(entry.split('@')[1]) : 1;
+          if (/version\s*=\s*1/.test(sql) && version !== 1) return undefined;
+          return { [column]: id };
         },
       }),
     }),
@@ -60,11 +66,18 @@ const ctx = (overrides = {}) => ({
   accountability: member,
   ...overrides,
 });
+// A refusal as the guard throws it: a 403 FORBIDDEN carrying the marker and structured details, with
+// a user-facing message in plain words. `re` matches "<parent or collection> <id>" of the details
+// (which record was refused); the message itself never names tables, ids or ADRs.
 const denied = (re) => (err) => {
   assert.equal(err.status, 403);
   assert.equal(err.code, 'FORBIDDEN');
   assert.equal(err.extensions.code, 'FORBIDDEN');
-  assert.match(err.message, re);
+  assert.equal(err.extensions.source, 'd1-access-guard');
+  assert.ok(['junction', 'owner'].includes(err.extensions.kind), err.extensions.kind);
+  assert.match(`${err.extensions.parent ?? err.extensions.collection} ${err.extensions.id}`, re);
+  assert.equal(err.extensions.reason, err.message);
+  assert.doesNotMatch(err.message, /_|ADR|[0-9a-f]{8}-|\b(s|p|c|t|k|o)\d\b/i, 'the message is plain words');
   return true;
 };
 
@@ -226,7 +239,22 @@ test('a parent inserted by this transaction passes without its update rule (proj
   assert.equal(database.calls.length, 1);
   const [call] = database.calls;
   assert.deepEqual([call.table, call.column, call.id, call.selected], ['projects', 'project_id', 'p-new', 'project_id']);
-  assert.match(call.sql, /xmin\s*=\s*pg_current_xact_id\(\)::xid/);
+  assert.match(call.sql, /xmin\s*=\s*pg_current_xact_id\(\)::xid\s+AND\s+version\s*=\s*1/);
+});
+
+test('a pre-existing parent merely UPDATED in this transaction is not "created here" (xmin alone would match)', async () => {
+  const { filters } = mount({ canUpdate: () => false });
+  // Same xmin as ours, but OCC version 2: it existed before and an FK action or trigger updated it.
+  const database = fakeDb([], ['projects:p-old@2', 'physical_samples:s-old@5', 'test_sessions:t-old@2', 'campaigns:c-old@3']);
+  const cases = [
+    ['project_investigators', { project_id: 'p-old', user_id: 'user-1' }, /projects p-old/],
+    ['sample_co_owners', { sample_id: 's-old', user_id: 'user-1' }, /physical_samples s-old/],
+    ['test_sessions_subject', { test_sessions_id: 't-old', collection: 'physical_samples', item: 'x' }, /test_sessions t-old/],
+    ['campaign_samples', { campaign_id: 'c-old', sample_id: 's1' }, /campaigns c-old/],
+  ];
+  for (const [collection, payload, re] of cases) {
+    await assert.rejects(filters['items.create'](payload, { collection }, ctx({ database })), denied(re), collection);
+  }
 });
 
 test('a parent that merely exists is not "created here": the update rule decides (self-grant stays closed)', async () => {
@@ -636,4 +664,43 @@ test('owner change: collections without an owner guard, and creates, are left al
   await filters['items.create']({ owner_person_id: 'p2' }, { collection: 'physical_samples' }, ctx({ database }));
   assert.equal(log.reads.length, 0);
   assert.equal(database.calls.length, 0);
+});
+
+// ---- what the person sees --------------------------------------------------------------------------
+
+const refusal = (promise) => promise.then(() => assert.fail('expected a refusal'), (err) => err);
+
+test('refusal texts and details, by what was refused', async () => {
+  const { filters } = mount({ canUpdate: () => false });
+  const create = (collection, payload) => refusal(filters['items.create'](payload, { collection }, ctx()));
+  const cases = [
+    ['sample_co_owners', { sample_id: 's1', user_id: 'u' }, 'You can only add this to a sample you own or co-own.', 'physical_samples'],
+    ['campaign_samples', { campaign_id: 'c1', sample_id: 's1' }, "Only the campaign's owner can add samples to it.", 'campaigns'],
+    ['project_investigators', { project_id: 'p1', user_id: 'u' }, "Only the project's principal investigator can add investigators to it.", 'projects'],
+    ['test_sessions_subject', { test_sessions_id: 't1', collection: 'physical_samples', item: 'x' }, 'You can only change the samples of a test you own, or of a test on a sample you own or co-own.', 'test_sessions'],
+  ];
+  for (const [collection, payload, message, parent] of cases) {
+    const err = await create(collection, payload);
+    assert.equal(err.message, message);
+    assert.equal(err.name, 'DirectusError');
+    assert.deepEqual(
+      { ...err.extensions, id: undefined },
+      { code: 'FORBIDDEN', reason: message, source: 'd1-access-guard', kind: 'junction', collection, parent, id: undefined },
+    );
+  }
+});
+
+test('refusal text of an owner change, by record', async () => {
+  const { filters } = mount({ canUpdate: () => false });
+  const nouns = { physical_samples: ['sample_id', 'sample'], manufacturing_operations: ['operation_id', 'operation'], test_sessions: ['session_id', 'test'] };
+  for (const [collection, [pk, noun]] of Object.entries(nouns)) {
+    const database = ownerDb([{ [pk]: 'k1', owner_person_id: 'p1' }]);
+    const err = await refusal(
+      filters['items.update']({ owner_person_id: 'p2' }, { collection, keys: ['k1'] }, ctx({ database })),
+    );
+    assert.equal(err.message, `Only the ${noun}'s owner can hand it to someone else.`);
+    assert.deepEqual(err.extensions, {
+      code: 'FORBIDDEN', reason: err.message, source: 'd1-access-guard', kind: 'owner', collection, id: 'k1',
+    });
+  }
 });

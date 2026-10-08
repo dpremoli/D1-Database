@@ -40,8 +40,10 @@
 // transaction, so its update rule may not hold for the creator (they named someone else as owner or
 // PI), yet the creator is the one making that record. A parent key therefore also passes when the
 // parent row was inserted by the current transaction (Postgres: its xmin is this transaction's id),
-// without checking its update rule. Only a row INSERTED here can match, one that merely exists
-// cannot, so this never lets a member attach themselves to a record someone else made. The sample of
+// without checking its update rule. Only a row INSERTED here and never updated since can match
+// (xmin is this transaction AND the OCC version is still 1), so neither a row that merely exists nor
+// a pre-existing row that was updated in this transaction (by this request, an FK action or a
+// trigger) qualifies, and this never lets a member attach themselves to a record someone else made. The sample of
 // a campaign_samples row is still checked (it is a different row) unless it is new too. A row
 // created inside a savepoint carries the sub-transaction id and is not recognised: that fails closed
 // (refused); Directus does not use savepoints.
@@ -55,14 +57,30 @@ const OWNER_GUARDS = RULES.ownerGuards ?? {};
 const CURRENT_USER = '$CURRENT_USER';
 
 // The shape of a Directus ForbiddenError (status 403, code FORBIDDEN), without importing the package.
-function forbidden(reason) {
+// `reason` is shown to the person who made the request, so it is plain words (no table names, ids or
+// ADR numbers). Directus's own 403 also carries `extensions.reason` ("You don't have permission to
+// perform ... for collection ..."), so the guard marks its errors with `source` and gives the
+// details as fields (`kind`, `collection`, `parent`, `id`): a client that wants to word the refusal
+// itself keys on those, and one that does not shows `reason`.
+const SOURCE = 'd1-access-guard';
+
+function forbidden(reason, details = {}) {
   const err = new Error(reason);
   err.name = 'DirectusError';
   err.status = 403;
   err.code = 'FORBIDDEN';
-  err.extensions = { code: 'FORBIDDEN', reason };
+  err.extensions = { code: 'FORBIDDEN', reason, source: SOURCE, ...details };
   return err;
 }
+
+// What a refused junction row says, by the parent record the caller may not change.
+const PARENT_MESSAGES = {
+  physical_samples: 'You can only add this to a sample you own or co-own.',
+  campaigns: "Only the campaign's owner can add samples to it.",
+  projects: "Only the project's principal investigator can add investigators to it.",
+  test_sessions: 'You can only change the samples of a test you own, or of a test on a sample you own or co-own.',
+};
+const OWNER_NOUNS = { physical_samples: 'sample', manufacturing_operations: 'operation', test_sessions: 'test' };
 
 const isDenied = (err) => err?.code === 'FORBIDDEN' || err?.status === 403;
 const isBlank = (value) => value === undefined || value === null || value === '';
@@ -108,13 +126,20 @@ export default ({ filter }, { services }) => {
     }
   }
 
-  // True when the parent row was inserted by the transaction this request runs in. xmin is the id of
-  // the inserting transaction; pg_current_xact_id() is ours (cast to the 32-bit xid xmin uses).
+  // True when the parent row was INSERTED by the transaction this request runs in and not updated
+  // since. xmin is the id of the transaction that last wrote the row (insert or update), and
+  // pg_current_xact_id() is ours (cast to the 32-bit xid xmin uses), so xmin alone also matches a
+  // pre-existing row merely UPDATED here (by this request, an FK action or a trigger side effect).
+  // Every guarded parent (physical_samples, projects, campaigns, test_sessions) carries the OCC
+  // `version` column, which starts at 1 and which occ_update_trigger_function() raises on every
+  // update, so `version = 1` separates "inserted here, never updated" from "updated here". A parent
+  // without that column would make this query fail, which refuses the write (fails closed); the
+  // phase1 suite checks that all four have it and its trigger.
   async function createdInThisTransaction(check, id, context) {
     const row = await context
       .database(check.parent)
       .where(check.key, id)
-      .whereRaw('xmin = pg_current_xact_id()::xid')
+      .whereRaw('xmin = pg_current_xact_id()::xid AND version = 1')
       .first(check.key);
     return row !== undefined && row !== null;
   }
@@ -127,10 +152,12 @@ export default ({ filter }, { services }) => {
       const id = parentKey(item[check.field], check.key);
       if (id === null || id === undefined) continue; // not set (the database refuses it) or a new parent
       if (!(await canUpdate(check, id, context)) && !(await createdInThisTransaction(check, id, context))) {
-        throw forbidden(
-          `You can only change ${collection} rows for a ${check.parent} record you may update ` +
-            `(you are not allowed to update ${check.parent} ${id}). This controls who can see the record (ADR-0011).`,
-        );
+        throw forbidden(PARENT_MESSAGES[check.parent] ?? 'You cannot change this record.', {
+          kind: 'junction',
+          collection,
+          parent: check.parent,
+          id: String(id),
+        });
       }
     }
   }
@@ -151,10 +178,12 @@ export default ({ filter }, { services }) => {
       const had = current.get(String(key));
       if (known && (isBlank(had) ? next === null : String(had) === String(next))) continue;
       if (!(await canUpdate({ parent: collection, key: guard.key, filter: guard.filter }, key, context))) {
-        throw forbidden(
-          `Only the owner of a ${collection} record can change who owns it (you do not own ${collection} ${key}). ` +
-            'Whoever owns a record may delete it (ADR-0011).',
-        );
+        // Whoever owns a record may delete it, which is why only the owner may hand it over.
+        throw forbidden(`Only the ${OWNER_NOUNS[collection] ?? 'record'}'s owner can hand it to someone else.`, {
+          kind: 'owner',
+          collection,
+          id: String(key),
+        });
       }
     }
   }

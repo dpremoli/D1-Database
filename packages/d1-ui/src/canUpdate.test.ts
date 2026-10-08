@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { forbiddenReason, itemPermissionsUrl, notOwnerMessage, updateAccess } from './canUpdate';
+import { forbiddenReason, guardRefusal, itemPermissionsUrl, notOwnerMessage, updateAccess } from './canUpdate';
 
 describe('itemPermissionsUrl', () => {
 	it('builds the Directus 11 item-permissions path and encodes the key', () => {
@@ -31,15 +31,49 @@ describe('notOwnerMessage', () => {
 	});
 });
 
+// The two real shapes of a 403 body. Directus 11's stock ForbiddenError ALWAYS has `extensions.reason`
+// (developer text naming the collection); the d1-access-guard's carries the marker, `kind` and details.
+const stock = (collection = 'manufacturing_operations') => ({
+	response: {
+		status: 403,
+		data: {
+			errors: [{
+				message: `You don't have permission to perform "update" for collection "${collection}" or it does not exist.`,
+				extensions: { code: 'FORBIDDEN', reason: `You don't have permission to perform "update" for collection "${collection}" or it does not exist.` },
+			}],
+		},
+	},
+});
+const guard = (reason: string, details: Record<string, unknown>) => ({
+	response: { status: 403, data: { errors: [{ message: reason, extensions: { code: 'FORBIDDEN', reason, source: 'd1-access-guard', ...details } }] } },
+});
+
 describe('forbiddenReason', () => {
-	const guard = (reason: unknown) => ({ response: { status: 403, data: { errors: [{ message: 'm', extensions: { code: 'FORBIDDEN', reason } }] } } });
-	it("reads the guard's extensions.reason", () => {
-		expect(forbiddenReason(guard('Only the owner can change the owner.'))).toBe('Only the owner can change the owner.');
+	it("ignores Directus's stock 403 even though it carries a reason, so the fallback text shows", () => {
+		expect(forbiddenReason(stock())).toBeNull();
+		expect(forbiddenReason({ response: { status: 403, data: { errors: [{ message: "You don't have permission", extensions: { code: 'FORBIDDEN', reason: 'anything' } }] } } })).toBeNull();
 	});
-	it('is null for a stock 403, an empty reason or no error', () => {
-		expect(forbiddenReason({ response: { status: 403, data: { errors: [{ message: "You don't have permission" }] } } })).toBeNull();
-		expect(forbiddenReason(guard('  '))).toBeNull();
-		expect(forbiddenReason(guard(5))).toBeNull();
+	it('words the guard refusals by kind and collection', () => {
+		expect(forbiddenReason(guard('x', { kind: 'owner', collection: 'physical_samples', id: 's1' }))).toBe("Only the sample's owner can hand it to someone else.");
+		expect(forbiddenReason(guard('x', { kind: 'owner', collection: 'manufacturing_operations' }))).toBe("Only the operation's owner can hand it to someone else.");
+		expect(forbiddenReason(guard('x', { kind: 'owner', collection: 'test_sessions' }))).toBe("Only the test's owner can hand it to someone else.");
+		expect(forbiddenReason(guard('x', { kind: 'junction', collection: 'sample_co_owners', parent: 'physical_samples' }))).toBe('You can only add this to a sample you own or co-own.');
+		expect(forbiddenReason(guard('x', { kind: 'junction', collection: 'campaign_samples', parent: 'campaigns' }))).toBe("Only the campaign's owner can add samples to it.");
+		expect(forbiddenReason(guard('x', { kind: 'junction', collection: 'project_investigators', parent: 'projects' }))).toBe("Only the project's principal investigator can add investigators to it.");
+	});
+	it("falls back to the guard's own plain reason for a kind it does not know, and to null without one", () => {
+		expect(forbiddenReason(guard('Plain words.', { kind: 'new-kind' }))).toBe('Plain words.');
+		expect(forbiddenReason(guard('  ', { kind: 'new-kind' }))).toBeNull();
 		expect(forbiddenReason(undefined)).toBeNull();
+		expect(forbiddenReason({ response: { status: 500 } })).toBeNull();
+	});
+});
+
+describe('guardRefusal', () => {
+	it('returns the details of a marked error only', () => {
+		expect(guardRefusal(guard('r', { kind: 'junction', collection: 'sample_co_owners', parent: 'physical_samples', id: 'x' }))).toEqual({
+			kind: 'junction', collection: 'sample_co_owners', parent: 'physical_samples', reason: 'r',
+		});
+		expect(guardRefusal(stock())).toBeNull();
 	});
 });

@@ -1862,6 +1862,78 @@ do
     run "index $idx exists" "SELECT indexname FROM pg_indexes WHERE schemaname='public' AND indexname='$idx'"
 done
 
+# d1-access-guard "created in this transaction" proof (ADR-0011): xmin = pg_current_xact_id() alone also
+# matches a pre-existing row merely UPDATED in the transaction (FK action, trigger, the request itself),
+# which would let a member attach themselves to someone else's record. The guard adds `version = 1`
+# (inserted here and never updated). Every guarded parent must therefore carry the OCC version column
+# and its trigger, and the exact SQL the guard sends must tell "inserted here" from "updated here".
+guard_sql="xmin = pg_current_xact_id()::xid AND version = 1"
+grep -qF "$guard_sql" core/extensions/d1-access-guard/index.js \
+    && ok "d1-access-guard sends the 'inserted here and never updated' proof this test exercises" \
+    || bad "d1-access-guard/index.js no longer contains: $guard_sql (update this test with it)"
+guard_parents=$(python3 -c "import json;print(' '.join(sorted({c['parent'] for v in json.load(open('core/extensions/d1-access-guard/rules.json'))['guards'].values() for c in v})))")
+[[ "$guard_parents" == "campaigns physical_samples projects test_sessions" ]] \
+    && ok "the guarded parents are exactly campaigns, physical_samples, projects and test_sessions" \
+    || bad "d1-access-guard now guards another parent ($guard_parents): give it a version column or fail it closed, and extend this test"
+run_eq "every guarded parent has the OCC version column" \
+    "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND column_name='version' AND data_type='integer' AND table_name IN ('campaigns','physical_samples','projects','test_sessions')" "4"
+run_eq "every guarded parent has its OCC trigger (version rises on every update)" \
+    "SELECT count(*) FROM pg_trigger WHERE tgfoid='occ_update_trigger_function'::regproc AND NOT tgisinternal AND tgrelid IN ('campaigns'::regclass,'physical_samples'::regclass,'projects'::regclass,'test_sessions'::regclass)" "4"
+XP=c0000000-0000-4000-8000-00000000f0
+# The "existing" parents are committed first (a transaction cannot be both old and new), then removed.
+$PSQL -q >/dev/null 2>&1 <<SQL
+INSERT INTO projects (project_id, project_code, project_name) VALUES ('${XP}01', 'ZZ-XMIN-OLD', 'xmin probe (pre-existing)');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('${XP}02', 'XMIN-OLD-S');
+INSERT INTO campaigns (campaign_id, project_id, campaign_type, name) VALUES ('${XP}03', '${XP}01', 'testing_campaign', 'xmin old campaign');
+INSERT INTO test_sessions (session_id) VALUES ('${XP}04');
+SQL
+xmin_out=$($PSQL 2>&1 <<SQL
+BEGIN;
+-- parents inserted by this transaction
+INSERT INTO projects (project_id, project_code, project_name) VALUES ('${XP}11', 'ZZ-XMIN-NEW', 'xmin probe (new)');
+INSERT INTO physical_samples (sample_id, sample_code) VALUES ('${XP}12', 'XMIN-NEW-S');
+INSERT INTO campaigns (campaign_id, project_id, campaign_type, name) VALUES ('${XP}13', '${XP}01', 'testing_campaign', 'xmin new campaign');
+INSERT INTO test_sessions (session_id) VALUES ('${XP}14');
+SELECT 'old_before_update:' || (SELECT count(*) FROM projects WHERE project_id='${XP}01' AND xmin = pg_current_xact_id()::xid AND version = 1);
+-- pre-existing parents updated by this transaction (same xmin as ours, version raised by the OCC trigger)
+UPDATE projects SET project_name = 'touched' WHERE project_id = '${XP}01';
+UPDATE physical_samples SET notes = 'touched' WHERE sample_id = '${XP}02';
+UPDATE campaigns SET name = 'touched' WHERE campaign_id = '${XP}03';
+UPDATE test_sessions SET notes = 'touched' WHERE session_id = '${XP}04';
+SELECT 'updated_here_xmin_alone:' || (
+    (SELECT count(*) FROM projects WHERE project_id='${XP}01' AND xmin = pg_current_xact_id()::xid)
+  + (SELECT count(*) FROM physical_samples WHERE sample_id='${XP}02' AND xmin = pg_current_xact_id()::xid)
+  + (SELECT count(*) FROM campaigns WHERE campaign_id='${XP}03' AND xmin = pg_current_xact_id()::xid)
+  + (SELECT count(*) FROM test_sessions WHERE session_id='${XP}04' AND xmin = pg_current_xact_id()::xid));
+SELECT 'updated_here_guard:' || (
+    (SELECT count(*) FROM projects WHERE project_id='${XP}01' AND $guard_sql)
+  + (SELECT count(*) FROM physical_samples WHERE sample_id='${XP}02' AND $guard_sql)
+  + (SELECT count(*) FROM campaigns WHERE campaign_id='${XP}03' AND $guard_sql)
+  + (SELECT count(*) FROM test_sessions WHERE session_id='${XP}04' AND $guard_sql));
+SELECT 'inserted_here_guard:' || (
+    (SELECT count(*) FROM projects WHERE project_id='${XP}11' AND $guard_sql)
+  + (SELECT count(*) FROM physical_samples WHERE sample_id='${XP}12' AND $guard_sql)
+  + (SELECT count(*) FROM campaigns WHERE campaign_id='${XP}13' AND $guard_sql)
+  + (SELECT count(*) FROM test_sessions WHERE session_id='${XP}14' AND $guard_sql));
+-- a new row that is then updated in the same transaction no longer qualifies either (fails closed)
+UPDATE projects SET project_name = 'touched' WHERE project_id = '${XP}11';
+SELECT 'inserted_then_updated_guard:' || count(*) FROM projects WHERE project_id='${XP}11' AND $guard_sql;
+ROLLBACK;
+SQL
+)
+$PSQL -q >/dev/null 2>&1 <<SQL
+DELETE FROM test_sessions WHERE session_id = '${XP}04';
+DELETE FROM campaigns WHERE campaign_id = '${XP}03';
+DELETE FROM physical_samples WHERE sample_id = '${XP}02';
+DELETE FROM projects WHERE project_id = '${XP}01';
+SQL
+xm_check() { grep -qxF -- "$1" <<<"$xmin_out" && ok "$2" || bad "$2 (psql output: $xmin_out)"; }
+xm_check "old_before_update:0" "a pre-existing parent is not 'created here' (xmin differs)"
+xm_check "updated_here_xmin_alone:4" "xmin alone matches all four pre-existing parents once updated in the transaction (why version = 1 is needed)"
+xm_check "updated_here_guard:0" "the guard's proof refuses a pre-existing parent updated in the same transaction (samples, tests, campaigns, projects)"
+xm_check "inserted_here_guard:4" "the guard's proof accepts a parent inserted by the transaction (samples, tests, campaigns, projects)"
+xm_check "inserted_then_updated_guard:0" "a parent inserted and then updated in the same transaction is refused (fails closed)"
+
 # Every path of every rule must resolve against the Directus metadata: a filter on owner_person_id.user_id
 # silently stops working when directus_relations loses the owner_person_id -> people row. Checked on the
 # metadata the migrations leave (A) and on what the configure_*.sql scripts leave (B: they run in

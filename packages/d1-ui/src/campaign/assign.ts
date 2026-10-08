@@ -42,20 +42,40 @@ export function lostRaceMessage(
 	collection?: string,
 ): string | null {
 	if (!Array.isArray(changed) || changed.length) return null;
-	if (canUpdate === false) return `${label}: ${notPermittedMessage(adding, collection)}`;
+	if (canUpdate === false) {
+		const text = notPermittedMessage(adding, collection, label);
+		return isMoved(collection) ? text : `${label}: ${text}`;
+	}
 	return adding ? `${label} is already in another campaign.` : `${label} is no longer in this campaign.`;
 }
 
-// What to tell a user whose write was refused: adding needs a record they own or co-own, changing
-// or removing needs whoever may change the record in `collection` (its owner, co-owner or PI).
-export function notPermittedMessage(adding: boolean, collection?: string): string {
+// Putting an operation or test in or out of a campaign sets its own campaign_id, so it is an update of
+// that operation or test (its owner, or the owner or a co-owner of its sample), not of the campaign.
+const isMoved = (collection?: string) => collection === 'manufacturing_operations' || collection === 'test_sessions';
+
+export const ADD_SAMPLE_MESSAGE = "Only the campaign's owner can add a sample they own or co-own.";
+export const REMOVE_SAMPLE_MESSAGE = "Only the campaign's owner, or the sample's owner or a co-owner, can remove it.";
+
+// What to tell a user whose write was refused, by what they were doing:
+//  - an operation or test (`label` is its code): its owner, or an owner or co-owner of its sample, moves it;
+//  - a sample in `campaign_samples`: adding needs the campaign's owner (and the sample's editor), removing
+//    the campaign's owner or the sample's owner or co-owner;
+//  - anything else: adding needs a record they own or co-own, changing needs whoever may change the
+//    record in `collection` (its owner, co-owner or PI).
+export function notPermittedMessage(adding: boolean, collection?: string, label?: string): string {
+	if (isMoved(collection)) {
+		const what = label || (collection === 'test_sessions' ? 'this test' : 'this operation');
+		return `Only the owner of ${what} (or of its sample) can move it.`;
+	}
+	if (collection === 'campaign_samples') return adding ? ADD_SAMPLE_MESSAGE : REMOVE_SAMPLE_MESSAGE;
 	return adding ? NOT_YOUR_RECORD_MESSAGE : notOwnerMessage(collection);
 }
 
 // A refused write (403) as text, null for any other failure (the caller shows errorText then).
-// The server's own reason (d1-access-guard) wins over the generic text.
-export function forbiddenWriteMessage(e: unknown, adding: boolean, collection?: string): string | null {
-	return isForbidden(e) ? (forbiddenReason(e) ?? notPermittedMessage(adding, collection)) : null;
+// The d1-access-guard's own refusal (marked, see canUpdate.ts) wins over the text for the collection:
+// Directus's stock 403 also has a reason, but it is developer text and never used.
+export function forbiddenWriteMessage(e: unknown, adding: boolean, collection?: string, label?: string): string | null {
+	return isForbidden(e) ? (forbiddenReason(e) ?? notPermittedMessage(adding, collection, label)) : null;
 }
 
 interface Api {

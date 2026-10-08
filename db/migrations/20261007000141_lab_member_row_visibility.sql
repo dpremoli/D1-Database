@@ -48,12 +48,14 @@
 --     campaign or co-owners until someone assigns an owner (scripts/transfer_sample_ownership.py).
 
 -- 0. A private schema for what this migration keeps for its own `down`. It is not `public`, so the
--- tables in it are not in v_schema_dictionary (the Ask-DB prompt), not in Directus' collection scan
--- (the Data Studio) and not readable by the LLM role or the Directus database user: nothing is
--- granted on the schema, and the default privileges that hand out new tables apply to `public` only.
+-- tables in it are not in v_schema_dictionary (the Ask-DB prompt), not exposed by Directus (it only
+-- scans `public`, so the Data Studio and the API never list them) and not readable by the LLM role:
+-- nothing is granted on the schema, and the default privileges that hand out new tables apply to
+-- `public` only. This is not a permission wall against Directus: it connects as the same database
+-- role that owns the schema, so it could read these tables if asked; it just does not look.
 CREATE SCHEMA IF NOT EXISTS d1_private;
 COMMENT ON SCHEMA d1_private IS
-    'Internal bookkeeping of migrations (backups they restore in `migrate:down`). Never exposed: no grants to d1_llm_readonly or the Directus roles, and not scanned by Directus or v_schema_dictionary.';
+    'Internal bookkeeping of migrations (backups they restore in `migrate:down`). Not exposed by Directus (outside its schema scan) and not granted to d1_llm_readonly; not in v_schema_dictionary.';
 REVOKE ALL ON SCHEMA d1_private FROM PUBLIC;
 
 -- What `up` changed in the Directus metadata that `down` must undo again: the hidden projects

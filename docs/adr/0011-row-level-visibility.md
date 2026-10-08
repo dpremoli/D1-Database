@@ -215,15 +215,19 @@ co-owners, a campaign with samples, a test with subjects) must work even when th
 someone else as owner or PI, in which case the new row's update rule does not hold for them. Directus
 inserts the parent first and then runs the junction's create filter inside the same transaction, so
 when the update rule refuses, the hook asks the database whether that parent row was **inserted by
-the current transaction**: `SELECT <key> FROM <parent> WHERE <key> = $1 AND xmin = pg_current_xact_id()::xid`
-on `context.database` (the request's transaction). A match passes; a row that merely exists, or one that
-was only updated by someone else earlier, has another `xmin` and goes by the update rule, so a member
-still cannot attach themselves to a record they did not just make. This is per parent: for
+the current transaction and never updated since**:
+`SELECT <key> FROM <parent> WHERE <key> = $1 AND xmin = pg_current_xact_id()::xid AND version = 1`
+on `context.database` (the request's transaction). `xmin` alone is the id of the transaction that last
+*wrote* the row, so it also matches a pre-existing row merely updated here (by the request, an FK
+action or a trigger); every guarded parent carries the OCC `version` column, which starts at 1 and
+which the OCC trigger raises on every update, so `version = 1` keeps only rows inserted here. A match
+passes; a row that merely exists, or was updated in this transaction, goes by the update rule, so a
+member still cannot attach themselves to a record they did not just make. This is per parent: for
 `campaign_samples` the campaign may be new while the sample still needs its own update rule, unless
 that sample is new too. A parent created inside a savepoint has the sub-transaction's id and is not
-recognised, which refuses (fails closed); Directus does not use savepoints. A residual case: a row
-that a trigger *updates* in the same transaction as the junction insert also carries that `xmin`;
-no trigger does this to a record the caller could not already change. A payload that nests a parent
+recognised, which refuses (fails closed); Directus does not use savepoints. A parent without the
+`version` column would make the query fail and so refuse the write; phase1 asserts that all four guarded
+parents (samples, tests, campaigns, projects) have it and its OCC trigger. A payload that nests a parent
 with no key has nothing to check and passes (the caller is creating that record). A drift check (`gen_access_rules.py --check`, in
 pre-commit, phase1 and pytest) fails when `rules.json` is stale. It guards the Directus API, as
 everything here does: SQL imports (`migrate_legacy.py`) are not checked.
@@ -295,6 +299,20 @@ Two schema changes make the filters expressible:
   owning something in a project is one of the ways to read the project. The same holds for
   `campaign_id` pointing at a campaign they cannot read: it makes the *record* readable to that
   campaign's owner, not the campaign to them.
+- **Create of child rows is unfiltered, by name.** Besides the four guarded junctions, these child
+  collections have an unfiltered create (their read, update and delete do follow the parent):
+  `sample_genealogy`, `sample_stock_provenance`, `sample_data_files`, `operation_data_files`,
+  `session_data_files` and `machining_force_analysis`. A member can therefore attach a row to a
+  sample, operation or test they cannot update (a file link, a genealogy edge, a force analysis).
+  No read is gained by doing so: the rows follow the parent's read rule, and the member's own
+  involvement filters do not look at them. They are not guarded because machine users (crawler,
+  workers, equipment nodes) write some of them, and a guard keyed on the parent's update rule
+  would refuse those.
+- **`campaign-inherit` reads campaigns with the root connection.** An operation or test created
+  with another person's `campaign_id` (one the member cannot read) inherits that campaign's
+  `project_id` when it names none, and so makes that **project row** readable to the member (owning
+  an operation in a project is one of the ways to read the project). It is the same accepted gap as
+  a hand-typed `project_id` above: the project row only, never its samples or other records.
 - **People need a `people` row.** A member without a `people` row linked by `user_id` owns
   nothing, because the hook cannot fill the owner, and sees only what others share with them. A
   member can create their own row (no login, or their own) but only an admin can link or relink a

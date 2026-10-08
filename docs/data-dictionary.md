@@ -108,8 +108,8 @@ Views (v_ prefix — LLM query targets)
 Private schema (not exposed)
   d1_private.*               migration bookkeeping that is not data: the Lab Member permission rows
                              migration 141 saved and the aliases it added (its down restores and
-                             drops them). Not in this dictionary, not scanned by Directus, no grants
-                             to the LLM role or the Directus roles.
+                             drops them). Not in this dictionary, not exposed by Directus (outside
+                             its schema scan), not granted to the LLM role.
 ```
 
 ---

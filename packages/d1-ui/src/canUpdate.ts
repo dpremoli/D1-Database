@@ -33,11 +33,57 @@ export function notOwnerMessage(collection?: string | null): string {
 	return NOT_OWNER_MESSAGE;
 }
 
-// The d1-access-guard's own reason for a refusal: it throws a 403 FORBIDDEN whose
-// `extensions.reason` (also the message) says exactly what was refused, for example that only the
-// owner may change the owner. Directus's stock 403 ("You don't have permission to access this.")
-// has no reason, so it gives null and the caller falls back to notOwnerMessage().
+// The d1-access-guard marks the 403s it throws (`extensions.source`) and describes them in fields:
+// `kind` 'owner' (changing who owns a record) or 'junction' (adding a row that would grant read or edit
+// of a record the user may not change), `collection`, `parent` (the record the user may not change)
+// and `id`. Directus's own 403 also has `extensions.reason` ("You don't have permission to perform
+// "update" for collection ... or it does not exist."), so a reason alone says nothing about who
+// threw it: only a marked error is the guard's.
+export const GUARD_SOURCE = 'd1-access-guard';
+
+export interface GuardRefusal {
+	kind: string;
+	collection?: string;
+	parent?: string;
+	reason?: string;
+}
+
+// The guard's refusal in a failed request, or null for any other error (a stock Directus 403, a 500...).
+export function guardRefusal(e: any): GuardRefusal | null {
+	const list: any[] = e?.response?.data?.errors ?? [];
+	for (const x of list) {
+		const ext = x?.extensions;
+		if (ext?.source !== GUARD_SOURCE) continue;
+		const reason = typeof ext.reason === 'string' && ext.reason.trim() ? ext.reason.trim() : undefined;
+		return { kind: String(ext.kind ?? ''), collection: ext.collection, parent: ext.parent, reason };
+	}
+	return null;
+}
+
+const OWNER_NOUN: Record<string, string> = {
+	physical_samples: 'sample',
+	manufacturing_operations: 'operation',
+	test_sessions: 'test',
+};
+const PARENT_SENTENCE: Record<string, string> = {
+	physical_samples: 'You can only add this to a sample you own or co-own.',
+	campaigns: "Only the campaign's owner can add samples to it.",
+	projects: "Only the project's principal investigator can add investigators to it.",
+	test_sessions: 'You can only change the samples of a test you own, or of a test on a sample you own or co-own.',
+};
+
+// The sentence for a guard refusal: by kind and collection, else the guard's own plain-words reason.
+export function guardMessage(g: GuardRefusal): string | null {
+	if (g.kind === 'owner' && g.collection && OWNER_NOUN[g.collection]) {
+		return `Only the ${OWNER_NOUN[g.collection]}'s owner can hand it to someone else.`;
+	}
+	if (g.kind === 'junction' && g.parent && PARENT_SENTENCE[g.parent]) return PARENT_SENTENCE[g.parent];
+	return g.reason ?? null;
+}
+
+// Why the d1-access-guard refused a write, as one sentence; null when the error is not the guard's (the
+// caller then falls back to notOwnerMessage(collection)).
 export function forbiddenReason(e: any): string | null {
-	const reason = e?.response?.data?.errors?.[0]?.extensions?.reason;
-	return typeof reason === 'string' && reason.trim() ? reason.trim() : null;
+	const g = guardRefusal(e);
+	return g ? guardMessage(g) : null;
 }
