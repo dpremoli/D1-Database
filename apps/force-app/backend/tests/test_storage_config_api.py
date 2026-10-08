@@ -104,6 +104,26 @@ def test_writable_error_reports_a_missing_folder(tmp_path):
     assert storage.writable_error(str(tmp_path / "missing")) is not None
 
 
+def test_writable_error_gives_up_after_one_denied_attempt(tmp_path, monkeypatch):
+    # #214: an existing folder the user may not write to. tempfile.mkstemp retried a denied create
+    # as if the name were taken (os.TMP_MAX times on Windows), so the request never answered.
+    calls = []
+
+    def denied(path, flags, mode=0o777):
+        calls.append(path)
+        raise PermissionError(13, "Permission denied", path)
+
+    monkeypatch.setattr(storage.os, "open", denied)
+    assert "Permission denied" in storage.writable_error(str(tmp_path))
+    assert len(calls) == 1
+    assert list(tmp_path.iterdir()) == []  # and nothing is left behind
+
+
+def test_writable_error_leaves_no_probe_file(tmp_path):
+    assert storage.writable_error(str(tmp_path)) is None
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.parametrize("busy_set", ["_recovering", "_discarding"])
 def test_refused_while_a_recover_or_discard_is_running(client, tmp_path, monkeypatch, busy_set):
     monkeypatch.setattr(recovery, busy_set, {"20261001-100000-abc"})
