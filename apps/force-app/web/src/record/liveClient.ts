@@ -582,7 +582,7 @@ export class RecordClient {
 			this.status.captureId = msg.id ?? this.status.captureId;
 			this.status.summary = msg.summary ?? null;
 		} else if (msg.type === 'fft') {
-			const spectra: Record<string, number[]> = msg.spectra ?? (msg.axis ? { [msg.axis]: msg.amp ?? [] } : {});
+			const spectra: Record<string, number[]> = msg.spectra ?? {};
 			this.pushFft(msg.axis, msg.f, msg.fs ?? 0, spectra, this.status.tSec);
 		} else if (msg.type === 'cutstart') {
 			this.status.cutStartSec = msg.t;
