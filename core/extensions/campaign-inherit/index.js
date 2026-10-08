@@ -1,16 +1,16 @@
 // Directus hook: campaign-inherit
 //
 // Campaigns (machining trials / testing campaigns) group children under a project
-// and carry defaults. When a child is created with a campaign set, it should inherit
-// the campaign's common fields so the user doesn't re-enter them. When a campaign is
-// created under a project, it inherits the project's principal investigator as owner.
+// and carry defaults. When a child is created with a campaign set, it inherits the
+// campaign's project, default equipment and default material so the user doesn't
+// re-enter them.
 //
-// Loads before `d1-default-owner` (alphabetical), so a campaign-supplied owner wins;
-// d1-default-owner still fills the owner with the current user when nothing upstream
-// set it. All fills are blank-only, so the two hooks compose safely.
-//
-// Ownership is a person (owner_person_id → people); the project's principal
-// investigator is likewise principal_investigator_person.
+// It deliberately does NOT fill the owner. This hook loads before `d1-default-owner`
+// (alphabetical), and every fill here is blank-only, so an owner copied from the project's
+// PI or the campaign's owner would be in place before d1-default-owner ran and would beat
+// "the creator becomes the owner" (ADR-0011 decision 8). Since ADR-0011 the owner is what
+// lets the creator see and edit the record they just made, so the creator must always win;
+// someone else owns it only when the form or API names them.
 
 const CHILD_COLLECTIONS = new Set(['manufacturing_operations', 'test_sessions']);
 
@@ -26,11 +26,10 @@ export default ({ filter }) => {
     if (CHILD_COLLECTIONS.has(collection) && !isBlank(payload.campaign_id)) {
       const campaign = await db('campaigns')
         .where('campaign_id', payload.campaign_id)
-        .select('project_id', 'owner_person_id', 'default_equipment_id', 'default_material_id')
+        .select('project_id', 'default_equipment_id', 'default_material_id')
         .first();
       if (campaign) {
         if (isBlank(payload.project_id) && campaign.project_id) payload.project_id = campaign.project_id;
-        if (isBlank(payload.owner_person_id) && campaign.owner_person_id) payload.owner_person_id = campaign.owner_person_id;
         if (isBlank(payload.equipment_id) && campaign.default_equipment_id) {
           payload.equipment_id = campaign.default_equipment_id;
         }
@@ -40,15 +39,6 @@ export default ({ filter }) => {
           payload.material_id = campaign.default_material_id;
         }
       }
-    }
-
-    // Campaign inherits the project's principal investigator as owner.
-    if (collection === 'campaigns' && !isBlank(payload.project_id) && isBlank(payload.owner_person_id)) {
-      const project = await db('projects')
-        .where('project_id', payload.project_id)
-        .select('principal_investigator_person')
-        .first();
-      if (project?.principal_investigator_person) payload.owner_person_id = project.principal_investigator_person;
     }
 
     return payload;
