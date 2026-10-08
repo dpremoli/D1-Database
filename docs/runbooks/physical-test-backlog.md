@@ -79,6 +79,14 @@ named in the step.
 - [ ] **P2 — PNG export in Directus.** "Save chart as PNG" and "as SVG" download a correct image
   (Directus's CSP allows the `blob:` image used for the PNG). Since #125.
 
+### No-.mat force analyses (#190)
+- [ ] **Plot dashboard with a no-.mat cut.** Open a Force App cut uploaded over the recorder's .mat
+  size limit (its analysis row has no `directus_files_id`). Charts render from `series`, the saved
+  crop is applied, Bake is disabled with the "needs the archive .mat" explanation, and Apply and
+  Clear still work. Directus returns `directus_files_id` as null (not `{}`) for it. Since the rig-day batch (0.1.35).
+- [ ] **Recrawl leaves no-.mat rows alone.** On the force crawler panel, "Recrawl all" and
+  "Recrawl matching" don't touch rows with no `directus_files_id`. Since the rig-day batch (0.1.35).
+
 ### Sample timeline and campaign overview
 - [ ] **D5 — timeline on a real sample with genealogy.** Restart Directus so `d1-trace` and the
   rebuilt Lab Dashboard load. Lab Dashboard > Samples > pick a sample that has a parent, a child, a
@@ -520,6 +528,45 @@ tool; a test cut on scrap stock is fine.
   needs the chassis).
 - [ ] **#90** Packaged NSIS build and the Tailscale update feed (held back).
 
+### Rig-day batch (2026-10-08, 0.1.35)
+- [ ] **#190 long cut links and keeps its crop.** Record a cut over ~6 min at 51.2 kHz (no .mat).
+  Move both crop handles in the final summary and Save: the analysis row links with no .mat (no
+  400), the status leaves "partial upload". Repeat with the network off: the dialog says the .mat
+  was skipped (not "both files uploaded"); restart the app; Local Captures → the capture's plot
+  shows the moved crop on the force plot and FRM; Retry upload (from the plot and from Settings →
+  Local Captures) sends it. Moving the handles back to auto and saving clears it. Since the rig-day batch (0.1.35).
+- [ ] **#185 leaving the Record page mid-cut.** During a real cut go to Plot and Settings for
+  ~30 s and come back: the trace has no hole, the backend log shows one `/record/stream` socket.
+  Let a cut end (duration or Stop from a pop-out) while on another page: on return the Save dialog
+  is open with the finished trace, and the stream closes. A real gap (unplug the network briefly)
+  shows as "no live data", not a straight line. Since the rig-day batch (0.1.35).
+- [ ] **Safety alarms after navigating.** With a low software force limit, record once, visit
+  Settings, return and record again: the alarm (and stop-on-trip, if enabled) still fires, and
+  setup fields typed after the round trip are remembered after a restart. Since the rig-day batch (0.1.35).
+- [ ] **#189 plots after hiding the window.** After a cut, minimise and alt-tab away for a minute,
+  switch routes, come back: force, FFT, spectrogram and waterfall are drawn without touching the
+  window slider. With the Save dialog open the force panel shows the whole cut and no window
+  slider; it doesn't flip when the dialog closes. Since the rig-day batch (0.1.35).
+- [ ] **#186 FFT on real data.** Live FFT at the real rate with 12 channels shows narrow peaks
+  (tooth-pass and harmonics) and looks smooth; CPU and the UI stay responsive; spectrogram and
+  waterfall keep up and hold a 60 s window. The Welch average now has fewer segments, so check the
+  spectrum isn't too noisy to read. Since the rig-day batch (0.1.35).
+- [ ] **#187 pop-outs reachable.** Open Live Force / FRM pop-outs, minimise them, Win+D, launch the
+  app a second time: they restore. Save a pop-out on a second monitor, unplug it, relaunch: the
+  pop-out and main window open centred and fully on the remaining screen. Save a window at
+  2560×1440, reopen on 1920×1080: it fits, title bar reachable. A stale `/live/*` entry in
+  `%APPDATA%\…\window-state.json` no longer hides pop-outs. Since the rig-day batch (0.1.35).
+- [ ] **#188 RPM sparkline.** On a low-RPM CSS cut with a high target, the RPM panel's curve uses
+  most of its box instead of a flat line at the bottom. Since the rig-day batch (0.1.35).
+- [ ] **#135 backup URL.** On a rig with no saved backup URL, Settings → Backup shows the suggested
+  URL with "Suggested — not saved yet"; Save with backups off does not store it (the Doctor stays
+  quiet); enabling and saving stores it. A rig with a saved URL keeps it. Since the rig-day batch (0.1.35).
+- [ ] **#136 move the Recording & Metadata panel.** The "move panel to the other side" button
+  docks it right without panels falling below the bottom, also after resizing panels; the layout
+  survives a restart. Since the rig-day batch (0.1.35).
+- [ ] **#137 release notes.** After the 0.1.35 update, Settings → About and the update dialog show
+  New / Improved / Fixed groups. Since the rig-day batch (0.1.35).
+
 ### Release pipeline (CI/CD overhaul)
 - [ ] **NI-DAQmx detection on a PC without the driver.** Install the packaged app on a Windows PC
   with no NI-DAQmx driver (not the rig). Connectivity Doctor / self-check shows "NI-DAQmx runtime
@@ -528,6 +575,12 @@ tool; a test cut on scrap stock is fine.
   driver and record normally. Since: CI/CD overhaul (PR TBD).
 
 ## C. d1-server and infrastructure
+
+- [ ] **#190 migration 140 on d1-server.** Apply `20261008000140_machining_force_analysis_file_nullable`
+  (`dbmate up`). Directus accepts a `machining_force_analysis` POST with `directus_files_id: null`
+  and the field isn't required in its form. Set such a row to `pending` by hand with the
+  orchestrator daemon running: it comes back `done` with the "needs an archive .mat" message and its
+  `series`, `live_cache_file`, `live_render_points` and `matlab_version` unchanged. Since the rig-day batch (0.1.35).
 
 - [ ] **Official crop reaches the octree and grid builds; `d1_build.json` is published.** On
   `d1-server`, in the Plot page save an official crop on an archived cut that has Full and Gridded
