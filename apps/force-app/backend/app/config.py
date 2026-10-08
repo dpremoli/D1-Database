@@ -94,6 +94,10 @@ class RecordConfig(BaseModel):
     # Amp analog-output full scale (±V) — used to detect per-channel clipping (railing) for the
     # converging between-cuts auto-range, and to record each cut's per-channel range with its data.
     analog_fullscale_v: float = 10.0
+    # Input range (±V) of the NI-DAQ modules the 8 dyno channels are on, read from the driver at
+    # record start; 0 = not known. When it is below the amp's full scale the channels saturate
+    # there, so clipping is judged against it (#200).
+    daq_input_range_v: float = 0.0
 
     # Optional linear drift compensation applied to the .mat + live_cache outputs (like the MATLAB
     # app). The raw .d1raw is ALWAYS saved un-compensated (source of truth).

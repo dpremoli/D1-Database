@@ -224,3 +224,45 @@ def sample_rate_limits(channels: list[str], system=None) -> dict:
     out["max"] = min(maxes) if maxes else None
     out["min"] = max(mins) if mins else None
     return out
+
+
+def input_range_v(channels: list[str], system=None) -> float | None:
+    """The largest voltage the modules behind `channels` can read (#200): each device's widest
+    input range, and the smallest of those across the devices in play. None when there is no real
+    DAQmx system to ask or the devices do not say."""
+    sysobj = system if system is not None else _local_system()
+    if sysobj is None:
+        return None
+    dev_names = {ch.split("/")[0] for ch in channels if "/" in ch}
+    limits = []
+    for dev in _safe(lambda: list(sysobj.devices or []), []):
+        if dev.name in dev_names:
+            # ai_voltage_rngs is flat: [low, high, low, high, ...]
+            highs = _safe(lambda: [float(v) for v in dev.ai_voltage_rngs][1::2], [])
+            if highs:
+                limits.append(max(highs))
+    return min(limits) if limits else None
+
+
+def coerced_sample_rate(channels: list[str], rate: float) -> float | None:
+    """The rate DAQmx would really sample `channels` at when asked for `rate` Hz (#199).
+
+    Inside a module's limits DAQmx does not refuse a rate the module cannot produce, it moves to
+    the next one it can: an NI 9234 only runs at 51,200 / n Hz, so a request for 25,000 is sampled
+    at 25,600. The task is built and its sample clock read back, never started. None when there is
+    nothing to ask (no runtime, no such channel, a simulated tree): the caller then keeps the
+    requested rate and any real fault surfaces when the acquisition starts.
+    """
+    if not channels or _local_system() is None:
+        return None
+    try:
+        import nidaqmx
+        from nidaqmx.constants import AcquisitionType
+
+        with nidaqmx.Task() as task:
+            for ch in channels:
+                task.ai_channels.add_ai_voltage_chan(ch)
+            task.timing.cfg_samp_clk_timing(float(rate), sample_mode=AcquisitionType.CONTINUOUS)
+            return float(task.timing.samp_clk_rate)
+    except Exception:
+        return None

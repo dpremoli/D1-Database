@@ -89,7 +89,7 @@ class RecordingSession:
         self.cut_started_t: float | None = None
         # Live railing test on the raw volts (see clipping.py); needs the per-channel gains, so
         # it is inert for sim/replay. Its latched set is streamed and reported in status().
-        self.rails = RailDetector(cfg.dyno_gains, cfg.analog_fullscale_v)
+        self.rails = RailDetector(cfg.dyno_gains, cfg.analog_fullscale_v, cfg.daq_input_range_v)
         self._rail_sent = 0.0
         # Volts -> N for the live view (#212), the same per-channel gains finalize applies. None
         # when there are none (sim/replay data is already in newtons).

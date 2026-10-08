@@ -14,6 +14,7 @@ driver for the sim/replay paths.
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 
@@ -123,6 +124,16 @@ class NidaqSource:
                 sample_mode=constants.AcquisitionType.CONTINUOUS,
                 samps_per_chan=max(self.chunk * 8, 100_000),
             )
+            # The time axis and the file's rate come from self.rate, so the driver must be running
+            # at exactly that (#199). /record/start settles the rate before this; a difference
+            # here would stamp every sample with the wrong time, so it is a refusal, not a warning.
+            actual = float(task.timing.samp_clk_rate)
+            if not math.isclose(actual, self.rate, rel_tol=1e-4):
+                task.close()
+                raise ValueError(
+                    f"the NI-DAQ would sample at {actual:,.1f} Hz, not the requested "
+                    f"{self.rate:,.1f} Hz"
+                )
             self._reader = reader_cls(task.in_stream)
             self._task = task
         self._task.start()

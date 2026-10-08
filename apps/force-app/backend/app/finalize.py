@@ -31,7 +31,7 @@ import numpy as np
 from scipy.io import savemat
 
 from . import virtual_channels
-from .clipping import near_full_scale
+from .clipping import near_full_scale, rail_volts
 from .config import AXIS_SUM, SIGNAL_CHANNELS, RecordConfig
 from .d1lc import write_d1lc
 from .d1rw import read_header, read_rows, row_count
@@ -218,10 +218,13 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     chan_gains = [float(g) for g in gains[:8]] if len(gains) >= 8 else [float(gain)] * 8
     chan_ranges = [g * vfs for g in chan_gains]
     chan_peaks = [float(p) for p in chan_peaks]
+    # Where a channel actually saturates: the amp's full scale, or the DAQ module's input range
+    # when that is smaller (#200). `ranges_n` stays the amp's range, which auto-range sets.
+    rail_v = rail_volts(vfs, cfg.daq_input_range_v)
     # Clipping only meaningful with real per-channel gains (nidaq path); sim/replay never rails.
     chan_clipped = [
         bool(len(gains) >= 8 and hit)  # same test the live stream applies per block (clipping.py)
-        for hit in near_full_scale(np.array(chan_peaks), np.array(chan_ranges))
+        for hit in near_full_scale(np.array(chan_peaks), np.array(chan_gains) * rail_v)
     ]
 
     # --- Cut window: first/last time |Fz| exceeds CUT_FRAC of its peak — the active cut ---
@@ -444,6 +447,7 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
             "gains_n_per_v": chan_gains,
             "ranges_n": chan_ranges,
             "fullscale_v": vfs,
+            "rail_v": rail_v,
         },
         "metadata": cfg.extra_metadata or {},
         "config": cfg.model_dump(),

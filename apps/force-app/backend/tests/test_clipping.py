@@ -211,3 +211,71 @@ def test_nidaq_start_uses_the_lab_amp_full_scale_for_railing(monkeypatch, tmp_pa
             assert sum(sess.summary["channels_ranging"]["clipped"]) == 1
     finally:
         monkeypatch.setattr(main, "_session", None)
+
+
+# ---- #200: the NI-DAQ module's input range can be below the amp's full scale ----
+
+
+def test_rail_volts_is_the_smaller_of_amp_and_daq():
+    from app.clipping import rail_volts
+
+    assert rail_volts(10.0) == 10.0
+    assert rail_volts(10.0, 0.0) == 10.0  # not known
+    assert rail_volts(10.0, 5.0) == 5.0  # NI 9234 behind a 10 V amp output
+    assert rail_volts(5.0, 10.0) == 5.0
+
+
+def test_detector_rails_at_the_daq_input_limit():
+    # 5.1 V is all an NI 9234 will ever report; against the amp's 10 V that is 51 % of range.
+    assert RailDetector(GAINS, VFS).update(_block(rail_col=4, rail_v=5.1)) is False
+    det = RailDetector(GAINS, VFS, 5.0)
+    assert det.update(_block(rail_col=4, rail_v=5.1)) is True
+    assert det.railed == [4]
+
+
+def test_session_and_finalize_flag_a_channel_clipped_by_the_daq(tmp_path):
+    cfg = RecordConfig(
+        sample_rate=1000,
+        duration_sec=0.3,
+        dyno_gains=GAINS,
+        analog_fullscale_v=VFS,
+        daq_input_range_v=5.0,
+    )
+    sess = RecordingSession(cfg, str(tmp_path), _RailAtVoltsSource(), broadcaster=_Bus())
+    sess.start()
+    sess._thread.join(15)
+    sess.join_finalize(30)
+    ranging = sess.summary["channels_ranging"]
+    assert sess.status()["railed"] == [3]
+    assert ranging["clipped"][3] is True and sum(ranging["clipped"]) == 1
+    assert ranging["rail_v"] == 5.0
+    assert ranging["ranges_n"][3] == GAINS[3] * VFS  # still the amp's range
+
+
+def test_input_range_v_is_the_smallest_of_the_devices_in_play():
+    from types import SimpleNamespace
+
+    from app import nidaq_enum
+
+    system = SimpleNamespace(
+        devices=[
+            SimpleNamespace(name="Force1", ai_voltage_rngs=[-5.0, 5.0]),
+            SimpleNamespace(name="Force2", ai_voltage_rngs=[-1.0, 1.0, -5.0, 5.0]),
+            SimpleNamespace(name="Tacho", ai_voltage_rngs=[-10.0, 10.0]),
+            SimpleNamespace(name="cDAQ1", ai_voltage_rngs=[]),
+        ]
+    )
+    assert nidaq_enum.input_range_v(["Force1/ai0", "Force2/ai1"], system=system) == 5.0
+    assert nidaq_enum.input_range_v(["Tacho/ai0"], system=system) == 10.0
+    assert nidaq_enum.input_range_v(["Nope/ai0"], system=system) is None
+    assert nidaq_enum.input_range_v(["cDAQ1/ai0"], system=system) is None
+
+
+def test_autorange_headroom_grows_when_the_daq_reads_less_than_the_amp(monkeypatch):
+    import app.main as main
+
+    monkeypatch.setattr(main.nidaq_enum, "input_range_v", lambda _c: 5.0)
+    assert main._autorange_headroom(1.5, 10.0) == 3.0  # the peak must sit at 1/3 of the range
+    assert main._autorange_headroom(1.5, 5.0) == 1.5
+    monkeypatch.setattr(main.nidaq_enum, "input_range_v", lambda _c: None)
+    assert main._autorange_headroom(1.5, 10.0) == 1.5

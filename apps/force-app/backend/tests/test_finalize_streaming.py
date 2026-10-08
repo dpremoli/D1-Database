@@ -163,6 +163,13 @@ def test_streamed_finalize_matches_the_whole_array_one(tmp_path, monkeypatch, ca
     for key in old:
         if key in ("file_sizes_mb", "local_diag", "cut_window_sec", "duration_sec", "peaks"):
             continue
+        if key == "channels_ranging":
+            # rail_v is newer than the frozen reference (#200); with no DAQ input range in the
+            # config it is the amp's full scale, and everything else is unchanged.
+            now = dict(new[key])
+            assert now.pop("rail_v") == old[key]["fullscale_v"]
+            assert now == old[key], key
+            continue
         assert new[key] == old[key], key
     np.testing.assert_allclose(new["cut_window_sec"], old["cut_window_sec"], rtol=F32_REL)
     np.testing.assert_allclose(new["duration_sec"], old["duration_sec"], rtol=F32_REL)
