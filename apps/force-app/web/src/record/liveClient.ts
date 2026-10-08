@@ -76,7 +76,7 @@ export class RecordClient {
 	// spectrogram/waterfall views draw from (accumulated client-side; only current frames cross).
 	fft: { axis: string; f: number[]; fs: number; spectra: Record<string, number[]> } | null = null;
 	fftHistory: { t: number; spectra: Record<string, number[]> }[] = [];
-	fftHistCap = 220;
+	fftHistCap = 150; // 12 channels x ~1024 bins x 150 frames ~ 15 MB of doubles (#186: was 220 frames of 240 bins)
 	fftSeq = ref(0);
 
 	// rolling trace envelope (min/max per axis + per dyno sub-channel), capped to retainSec.

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { WindowStateStore, isOnSomeDisplay } from './windowState';
+import { WindowStateStore, centredIn, isOnSomeDisplay, isSaneBounds, popoutPlacement } from './windowState';
 
 let dir: string;
 
@@ -39,6 +39,18 @@ describe('WindowStateStore', () => {
     new WindowStateStore(dir).save('main', { width: 1600, height: 1000, maximized: true });
 
     expect(new WindowStateStore(dir).get('main')).toEqual({ width: 1600, height: 1000, maximized: true });
+  });
+
+  it('never persists minimised-origin or zero-size bounds, and keeps the previous good entry (#187)', () => {
+    const store = new WindowStateStore(dir);
+    store.save('/live/force', { x: 40, y: 60, width: 1400, height: 900 });
+    store.save('/live/force', { x: -32000, y: -32000, width: 1400, height: 900 });
+    store.save('/live/force', { x: 100, y: -32000, width: 1400, height: 900 });
+    store.save('/live/force', { x: 100, y: 100, width: 0, height: 900 });
+    store.save('/live/force', { x: 100, y: 100, width: 1400, height: 0 });
+    expect(store.get('/live/force')).toEqual({ x: 40, y: 60, width: 1400, height: 900 });
+    store.save('/live/frm', { x: -32000, y: -32000, width: 160, height: 28 });
+    expect(store.get('/live/frm')).toBeUndefined();
   });
 
   it('does not throw when the underlying file is missing or corrupt', () => {
@@ -78,5 +90,42 @@ describe('isOnSomeDisplay', () => {
 
   it('accepts anything when no displays are reported, rather than discarding placement', () => {
     expect(isOnSomeDisplay({ x: 10, y: 10, width: 800, height: 600 }, [])).toBe(true);
+  });
+});
+
+describe('isSaneBounds / popoutPlacement / centredIn (#187)', () => {
+  const screen1 = [{ x: 0, y: 0, width: 1920, height: 1040 }];
+
+  it('rejects the minimised origin and empty sizes, accepts ordinary bounds incl. a left monitor', () => {
+    expect(isSaneBounds({ x: -32000, y: -32000, width: 800, height: 600 })).toBe(false);
+    expect(isSaneBounds({ x: 10, y: -30000, width: 800, height: 600 })).toBe(false);
+    expect(isSaneBounds({ x: 10, y: 10, width: 0, height: 600 })).toBe(false);
+    expect(isSaneBounds({ x: 10, y: 10, width: Number.NaN, height: 600 })).toBe(false);
+    expect(isSaneBounds({ x: -1500, y: 20, width: 800, height: 600 })).toBe(true);
+    expect(isSaneBounds({ width: 800, height: 600 })).toBe(true);
+    expect(isSaneBounds(undefined)).toBe(false);
+  });
+
+  it('drops x/y for the -32000 origin but keeps a sane size', () => {
+    expect(popoutPlacement({ x: -32000, y: -32000, width: 1400, height: 900 }, screen1)).toEqual({ width: 1400, height: 900 });
+  });
+
+  it('drops x/y for a rect on a monitor that is no longer there', () => {
+    expect(popoutPlacement({ x: -1800, y: 100, width: 1400, height: 900 }, screen1)).toEqual({ width: 1400, height: 900 });
+  });
+
+  it('keeps a sane rect that is on a present display', () => {
+    expect(popoutPlacement({ x: 40, y: 60, width: 1400, height: 900 }, screen1)).toEqual({ x: 40, y: 60, width: 1400, height: 900 });
+  });
+
+  it('returns nothing when the size itself is unusable or nothing is saved', () => {
+    expect(popoutPlacement({ x: 40, y: 60, width: 0, height: 900 }, screen1)).toEqual({});
+    expect(popoutPlacement(undefined, screen1)).toEqual({});
+    expect(popoutPlacement('junk', screen1)).toEqual({});
+  });
+
+  it('centres bounds in a work area, shrinking to fit', () => {
+    expect(centredIn({ width: 1000, height: 600 }, { x: 0, y: 0, width: 1920, height: 1040 })).toEqual({ x: 460, y: 220, width: 1000, height: 600 });
+    expect(centredIn({ width: 3000, height: 2000 }, { x: 100, y: 50, width: 1280, height: 720 })).toEqual({ x: 100, y: 50, width: 1280, height: 720 });
   });
 });

@@ -43,6 +43,8 @@ DISK_BACKUP_GB = 3.0
 DISK_STOP_GB = 1.0
 DISK_CHECK_INTERVAL = 10.0
 RAIL_REPUBLISH_SEC = 2.0
+# Live FFT window length (samples) when the rolling buffer holds that many; see _update_fft.
+FFT_NPERSEG = 8192
 
 
 def _raw_rows(capture_dir: str) -> int:
@@ -432,7 +434,9 @@ class RecordingSession:
             return
         self._fft_last = now
         fs = float(self.source.rate)
-        nper = int(min(self._fft_bufs[self._fft_axis].size, 4096))
+        # 8192 once the ~1 s window holds that many samples (25 kHz: 3 Hz per bin, was 6 Hz at 4096,
+        # #186); a shorter window uses all it has. welch_spectra max-pools the result to ~1024 bins.
+        nper = int(min(self._fft_bufs[self._fft_axis].size, FFT_NPERSEG))
         fout, spectra_out = welch_spectra(self._fft_bufs, fs=fs, nperseg=nper)
         if fout is None:
             return

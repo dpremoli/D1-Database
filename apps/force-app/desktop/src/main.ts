@@ -13,7 +13,7 @@ import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
 import { initAutoUpdater, markRecorderStartFailed, startUpdateCheck } from './updater';
 import { classifyWindowOpen, guardNavigation, isAppSender, popoutKey } from './windowOpen';
-import { WindowStateStore, isOnSomeDisplay } from './windowState';
+import { WindowStateStore, centredIn, isOnSomeDisplay, isSaneBounds } from './windowState';
 
 const PREFERRED_PORT = 8200;
 const HEALTH_PATH = '/health';
@@ -27,6 +27,7 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
+    restorePopouts();
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
@@ -323,6 +324,30 @@ function currentDisplayAreas() {
   }
 }
 
+/** #187: a pop-out that is minimised (Win+D, or the taskbar) or sits on no connected screen shows
+ * in the taskbar as an empty preview and cannot be switched to. Restore it, and if its bounds are
+ * on no display (a stale saved position, an undocked monitor) move it to the middle of the
+ * primary one. Called when a pop-out is created and when the app is focused again. */
+function ensurePopoutReachable(win: BrowserWindow): void {
+  if (win.isDestroyed()) return;
+  try {
+    if (win.isMinimized()) win.restore();
+    const b = win.getBounds();
+    if (!isSaneBounds(b) || !isOnSomeDisplay(b, currentDisplayAreas())) {
+      const area = screen.getPrimaryDisplay().workArea;
+      win.setBounds(centredIn({ width: isSaneBounds(b) ? b.width : 1400, height: isSaneBounds(b) ? b.height : 900 }, area));
+    }
+  } catch (err) {
+    console.error('placing a pop-out failed', err);
+  }
+}
+
+/** Pop-outs currently open, so a second launch can bring minimised ones back too. */
+const popoutWindows = new Set<BrowserWindow>();
+function restorePopouts(): void {
+  for (const win of popoutWindows) ensurePopoutReachable(win);
+}
+
 async function createWindow(): Promise<void> {
   const configStore = new ConfigStore(app.getPath('userData'));
   configStore.seedIfMissing();
@@ -399,13 +424,16 @@ async function createWindow(): Promise<void> {
     mainWindow = null;
     app.quit();
   });
-  mainWindow.webContents.setWindowOpenHandler((details) => classifyWindowOpen(details, windowState));
+  mainWindow.webContents.setWindowOpenHandler((details) => classifyWindowOpen(details, windowState, currentDisplayAreas()));
   // setWindowOpenHandler only returns creation OPTIONS, not a handle to the window itself — this
   // is the hook that actually gets one, so a pop-out's size/position can be saved when it closes.
   mainWindow.webContents.on('did-create-window', (win, details) => {
     const key = popoutKey(details.url);
     watchRenderer(win, 'pop-out', rendererWatchDeps);
     popouts?.track(win, details.url);
+    popoutWindows.add(win);
+    win.once('closed', () => popoutWindows.delete(win));
+    ensurePopoutReachable(win);
     win.on('close', () => windowState.save(key, win.isMinimized() || win.isMaximized() ? win.getNormalBounds() : win.getBounds()));
   });
 

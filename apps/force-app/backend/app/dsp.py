@@ -215,22 +215,55 @@ def frm_spiral(
     return x, y, revs_cum
 
 
+# Wire-bin budget for welch_spectra. Was 240 with a stride pick (#186); now ~1024 with max-pooling.
+SPECTRUM_MAX_BINS = 1024
+
+
+def _maxpool_bins(
+    f: np.ndarray, amps: dict[str, np.ndarray], max_bins: int
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """Reduce a spectrum to at most ~`max_bins` points WITHOUT losing narrow peaks (#186).
+
+    The old reduction kept every step-th bin (`f[::step]`), so ~7 of every 8 bins were discarded
+    and a narrow peak that fell between the kept bins simply vanished from the plot. Here each
+    output bin takes the MAXIMUM amplitude of the group of source bins it covers, so a peak always
+    survives at full height. The output frequency is the group's CENTRE (mean of its source
+    frequencies), shared by every channel so one `f` array serves all spectra; a peak is therefore
+    located to within half a group width (group width * df / 2). The DC bin stays a separate output bin
+    (f = 0): a load cell's static offset would otherwise swamp the first pooled group.
+    """
+    n = f.size
+    if n <= max_bins:
+        return f, amps
+    # max_bins - 1 groups of near-equal width (e.g. 4 or 5 source bins) after the DC bin, so the
+    # output is as close to the budget as the source allows rather than rounding the stride up.
+    starts = np.unique(np.linspace(1, n, max_bins - 1, endpoint=False).astype(int))
+    counts = np.diff(np.append(starts, n))
+    f_out = np.concatenate(([f[0]], np.add.reduceat(f[1:], starts - 1) / counts))
+    a_out = {
+        name: np.concatenate(([a[0]], np.maximum.reduceat(a[1:], starts - 1)))
+        for name, a in amps.items()
+    }
+    return f_out, a_out
+
+
 def welch_spectra(
     bufs: dict[str, np.ndarray],
     fs: float,
     nperseg: int,
     min_samples: int = 256,
-    max_bins: int = 240,
+    max_bins: int = SPECTRUM_MAX_BINS,
 ) -> tuple[list[float] | None, dict[str, list[float]]]:
-    """Welch AMPLITUDE spectra for a set of named channel buffers, decimated for the wire.
+    """Welch AMPLITUDE spectra for a set of named channel buffers, reduced for the wire.
 
     One implementation shared by the live recording path (session._update_fft) and the
     /dsp/spectrum endpoint that playback calls, so a replayed cut's FFT cannot drift from a
     live one's. Buffers shorter than `min_samples` are skipped rather than erroring, since
     live chunks arrive before the rolling window has filled.
 
-    Returns (f, {name: amp}) with f decimated to at most `max_bins` points, or (None, {}) if
-    no buffer was long enough.
+    Returns (f, {name: amp}) with at most about `max_bins` points per spectrum, reduced by
+    max-pooling (see _maxpool_bins) so narrow peaks survive, or (None, {}) if no buffer was
+    long enough.
     """
     f: np.ndarray | None = None
     psd: dict[str, np.ndarray] = {}
@@ -238,12 +271,11 @@ def welch_spectra(
         if buf.size < min_samples:
             continue
         f, p = ssig.welch(buf, fs=fs, nperseg=min(int(nperseg), buf.size))
-        psd[name] = p
+        psd[name] = np.sqrt(p)
     if f is None:
         return None, {}
-    step = max(1, f.size // max_bins)
-    fout = f[::step].round(2).tolist()
-    return fout, {n: np.sqrt(p[::step]).round(4).tolist() for n, p in psd.items()}
+    f_out, amps = _maxpool_bins(f, psd, max(2, int(max_bins)))
+    return f_out.round(2).tolist(), {n: a.round(4).tolist() for n, a in amps.items()}
 
 
 # Revolution-grid points per order-spectrum FFT: 4096 revolutions at the default 64 samples/rev.
