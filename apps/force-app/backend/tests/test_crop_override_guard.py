@@ -51,16 +51,25 @@ def test_crop_is_stored_in_summary_and_served_by_the_summary_get(client, tmp_pat
     assert got["mat_written"] is False  # the rest of the summary is untouched
 
 
-def test_null_clears_and_a_missing_side_is_cleared(client, tmp_path):
+def test_both_null_clears_the_stored_crop(client, tmp_path):
     path = _capture(tmp_path)
     client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": 5, "crop_end_idx_override": 50})
-    client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": 7})  # end omitted -> cleared
-    s = _summary(path)
-    assert s["crop_start_idx_override"] == 7
-    assert "crop_end_idx_override" not in s
-    client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": None, "crop_end_idx_override": None})
+    r = client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": None, "crop_end_idx_override": None})
+    assert r.status_code == 200
     s = _summary(path)
     assert "crop_start_idx_override" not in s and "crop_end_idx_override" not in s
+    client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": 5, "crop_end_idx_override": 50})
+    assert client.put(f"/captures/{CID}/crop", json={}).status_code == 200  # both omitted: same
+    assert "crop_start_idx_override" not in _summary(path)
+
+
+@pytest.mark.parametrize("body", [{"crop_start_idx_override": 7}, {"crop_end_idx_override": 50}])
+def test_one_side_alone_is_refused_and_keeps_the_stored_crop(client, tmp_path, body):
+    path = _capture(tmp_path)
+    client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": 5, "crop_end_idx_override": 40})
+    assert client.put(f"/captures/{CID}/crop", json=body).status_code == 422
+    s = _summary(path)
+    assert (s["crop_start_idx_override"], s["crop_end_idx_override"]) == (5, 40)
 
 
 @pytest.mark.parametrize(
@@ -89,8 +98,15 @@ def test_the_whole_recording_is_a_valid_crop(client, tmp_path):
 
 
 def test_unknown_id_is_404_and_a_bad_id_is_400(client):
-    assert client.put("/captures/nope-123/crop", json={"crop_start_idx_override": 1}).status_code == 404
-    assert client.put("/captures/..%2Fx/crop", json={"crop_start_idx_override": 1}).status_code in (400, 404)
+    body = {"crop_start_idx_override": 1, "crop_end_idx_override": 9}
+    assert client.put("/captures/nope-123/crop", json=body).status_code == 404
+    assert client.put("/captures/..%2Fx/crop", json=body).status_code in (400, 404)
+
+
+def test_a_capture_folder_without_a_summary_is_404(client, tmp_path):
+    os.makedirs(os.path.join(str(tmp_path), CID))
+    body = {"crop_start_idx_override": 1, "crop_end_idx_override": 9}
+    assert client.put(f"/captures/{CID}/crop", json=body).status_code == 404
 
 
 def test_refused_while_that_capture_is_recording(client, tmp_path, monkeypatch):
@@ -104,16 +120,19 @@ def test_refused_while_that_capture_is_recording(client, tmp_path, monkeypatch):
 def test_refused_while_that_capture_is_finalizing(client, tmp_path, monkeypatch):
     _capture(tmp_path)
     monkeypatch.setattr(main, "_session", SimpleNamespace(id=CID, state="finalizing"))
-    assert client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": 1}).status_code == 409
+    body = {"crop_start_idx_override": 1, "crop_end_idx_override": 9}
+    assert client.put(f"/captures/{CID}/crop", json=body).status_code == 409
 
 
 def test_another_capture_is_still_editable_while_one_records(client, tmp_path, monkeypatch):
     _capture(tmp_path, "20261008-090000-old")
     monkeypatch.setattr(main, "_session", SimpleNamespace(id=CID, state="recording"))
-    assert client.put("/captures/20261008-090000-old/crop", json={"crop_start_idx_override": 1}).status_code == 200
+    body = {"crop_start_idx_override": 1, "crop_end_idx_override": 9}
+    assert client.put("/captures/20261008-090000-old/crop", json=body).status_code == 200
 
 
 def test_refused_while_a_recover_owns_the_capture(client, tmp_path):
     _capture(tmp_path)
+    body = {"crop_start_idx_override": 1, "crop_end_idx_override": 9}
     with recovery.recovering(CID):
-        assert client.put(f"/captures/{CID}/crop", json={"crop_start_idx_override": 1}).status_code == 409
+        assert client.put(f"/captures/{CID}/crop", json=body).status_code == 409
