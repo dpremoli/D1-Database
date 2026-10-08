@@ -115,10 +115,12 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
 				<button type="button" class="btn sm" data-testid="preflight-reassign" :disabled="w.locked.value || reassignBusy"
 					@click="reassignErr = ''; reassignAsk = true">{{ reassignItem.action!.label }}</button>
 			</p>
-			<p v-if="reassignItem && reassignAsk" class="pf-confirm" role="alert" data-testid="preflight-reassign-confirm">
+			<p v-if="reassignItem && reassignAsk" class="pf-confirm stack" role="alert" data-testid="preflight-reassign-confirm">
 				<span>{{ reassignItem.action!.confirm }}</span>
-				<button type="button" class="btn sm" data-testid="preflight-reassign-go" :disabled="w.locked.value || reassignBusy" @click="runReassign">Re-assign</button>
-				<button type="button" class="linkbtn" :disabled="reassignBusy" @click="reassignAsk = false">Cancel</button>
+				<span class="pf-btns">
+					<button type="button" class="btn sm" data-testid="preflight-reassign-go" :disabled="w.locked.value || reassignBusy" @click="runReassign">Re-assign</button>
+					<button type="button" class="linkbtn" :disabled="reassignBusy" @click="reassignAsk = false">Cancel</button>
+				</span>
 			</p>
 			<p v-if="reassignErr" class="err">{{ reassignErr }}</p>
 			<p v-if="w.sampleConfirmOpen.value" class="pf-confirm" role="alert" data-testid="preflight-sample-confirm">
@@ -175,6 +177,8 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
 .pf-line { margin: 0; font-size: var(--fs-sm); color: var(--text-dim); }
 .pf-line.warn { color: var(--warn); }
 .pf-line.fail { color: var(--danger); }
+.pf-confirm.stack { flex-direction: column; align-items: stretch; font-weight: 500; }
+.pf-btns { display: flex; align-items: center; gap: 10px; }
 .pf-confirm { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0; padding: 4px 8px; font-size: var(--fs-sm); font-weight: 600; color: var(--warn); border: 1px solid var(--warn); border-radius: 8px; }
 .linkbtn { padding: 0; border: none; background: none; color: var(--accent); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 </style>
