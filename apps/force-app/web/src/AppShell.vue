@@ -12,6 +12,7 @@ import { getConfig } from './config';
 import { formatDuration } from './format';
 import { bannerRunFromStatus, type BannerRun } from './record/recordingBanner';
 import OfflineSessionBanner from './OfflineSessionBanner.vue';
+import UpdatePrompt from './UpdatePrompt.vue';
 
 const router = useRouter();
 const route = useRoute();
@@ -190,6 +191,7 @@ function openWindow(to: string) { window.open(appUrl(to), '_blank', 'noopener,wi
 		</nav>
 		<main ref="mainEl" class="content" :class="{ fill: route.meta.fillViewport }" tabindex="-1">
 			<OfflineSessionBanner />
+			<UpdatePrompt :recording="!!recording" />
 			<div v-if="showBanner" class="rec-banner">
 				<span class="rec-banner-dot"></span>
 				<span class="rec-banner-name">{{ recording!.phase === 'finalizing' ? 'Saving' : 'Recording' }} — {{ recording!.sampleName }}</span>
