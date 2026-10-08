@@ -23,7 +23,7 @@ import { spotlight } from '../ui/spotlight';
 import { FIELD_FOCUS, StartRequestError, sampleRateIssue, suggestedSampleRate } from './recordingErrors';
 import { nidaqHardware } from './nidaqHardware';
 import { railBannerText } from './railing';
-import { computePreflight, isCustomChannelList, needsSampleConfirm, parseChannelList, type AmpReading, type ChannelLike } from './preflight';
+import { computePreflight, isCustomChannelList, modelPhysicals, needsSampleConfirm, parseChannelList, type AmpReading, type ChannelLike } from './preflight';
 import { hwStatus } from './hwStatus';
 import { nidaqApi } from '../nidaq/nidaqApi';
 import { authStore } from '../authStore';
@@ -329,6 +329,14 @@ export function createWorkspace() {
 		// starting up, and Start has its own error path for a backend that really is down.
 		preflightReads.amp = amp.status === 'fulfilled' ? { reachable: !!amp.value.reachable, mode: amp.value.mode ?? null, mock: !!amp.value.mock } : null;
 		preflightReads.channels = chans.status === 'fulfilled' ? chans.value.channels : null;
+	}
+	// #195: the pre-flight's "Re-assign channels". The backend refuses it mid-recording (409) as well.
+	// The Record page's own list follows the new model, or it would read as a hand-edited one.
+	async function reassignChannels() {
+		if (locked.value) return;
+		const { channels } = await nidaqApi.autoassign();
+		nidaqChannels.value = modelPhysicals(channels).join('\n');
+		await refreshPreflight();
 	}
 	const preflight = computed(() => computePreflight({
 		source: source.value,
@@ -1146,7 +1154,7 @@ export function createWorkspace() {
 		// converging between-cuts auto-range
 		converge, convergeAfterCut,
 		// R4: pre-flight checklist and the Start flow that honours it
-		preflight, refreshPreflight, requestStart, startAnyway, sampleConfirmOpen,
+		preflight, refreshPreflight, reassignChannels, requestStart, startAnyway, sampleConfirmOpen,
 		// R5: live rail warning banner (once per cut)
 		railBanner, dismissRailBanner,
 		// Recording-behaviour toggles (Detect cut start / Drift compensation / Converging auto-range)
