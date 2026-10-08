@@ -180,13 +180,14 @@ export class RecordClient {
 	}
 
 	connect() {
+		// Fully idempotent while a socket is connecting or open: the Record page acquires the stream on
+		// every mount and no longer disconnects mid-recording (#185). A second socket would double every
+		// frame in the trace, and a repeat would also recreate the relay and re-announce source-ready.
+		if (this.wantConnected && this.ws && this.ws.readyState <= WebSocket.OPEN) return;
 		this.wantConnected = true;
 		this.reconnectAttempts = 0;
 		if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-		// Idempotent while a socket is connecting or open: the Record page calls connect() on every
-		// mount and no longer disconnects mid-recording (#185), so a second socket would double
-		// every frame in the trace.
-		if (!this.ws || this.ws.readyState > 1) this.openSocket();
+		if (!this.ws || this.ws.readyState > WebSocket.OPEN) this.openSocket();
 		// Close any channel from a previous connect() before replacing it — reconnecting otherwise
 		// leaks the old BroadcastChannel, which stays subscribed and keeps its handler alive.
 		this.relay?.close();

@@ -1072,6 +1072,13 @@ describe('workspace.releaseStream() (#185)', () => {
 		expect(disc).toHaveBeenCalledTimes(1);
 	});
 
+	it('acquireStream() connects the client, and releaseStream() is the only way the page closes it', async () => {
+		const w = await make();
+		const conn = vi.spyOn(w.client, 'connect').mockImplementation(() => {});
+		w.acquireStream();
+		expect(conn).toHaveBeenCalledTimes(1);
+	});
+
 	it('closes it at once when nothing is recording', async () => {
 		const w = await make();
 		const disc = vi.spyOn(w.client, 'disconnect').mockImplementation(() => {});
@@ -1084,7 +1091,7 @@ describe('workspace.releaseStream() (#185)', () => {
 		const disc = vi.spyOn(w.client, 'disconnect').mockImplementation(() => {});
 		w.st.state = 'recording';
 		w.releaseStream();
-		w.claimStream();
+		w.acquireStream();
 		w.st.state = 'done';
 		await nextTick();
 		expect(disc).not.toHaveBeenCalled();

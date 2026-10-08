@@ -478,7 +478,7 @@ onMounted(() => {
 	// page was away, or a backend that restarted, is never announced over the stream (#2.1). The
 	// stream also reconnects by itself, so a restart that leaves this route unchanged recovers too.
 	w.client.onStreamOpen = () => { checkRecovery(); checkRemoteBackupIds(); checkBackup(); };
-	w.claimStream(); w.client.connect(); void w.client.reconcile(); startSync(); checkDisk(); checkRecovery(); checkRemoteBackupIds(); checkBackup();
+	w.acquireStream(); void w.client.reconcile(); startSync(); checkDisk(); checkRecovery(); checkRemoteBackupIds(); checkBackup();
 	// ResizeObserver catches content reflow (a banner appearing/dismissing shifts the grid's top);
 	// the window listener is the belt-and-braces fallback, since RO can fire unreliably under rapid
 	// or programmatic viewport changes. Same pairing ForceDashboard uses.
