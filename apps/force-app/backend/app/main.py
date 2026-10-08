@@ -60,7 +60,7 @@ from .d1lc import read_d1lc_header
 from .dsp import welch_spectra
 from .labamp import LabAmpClient, LabAmpError, MockLabAmp
 from .labamp_autorange import converge_ranges, effective_bits, recommend_ranges
-from .session import RecordingSession
+from .session import CutStartRefusedError, RecordingSession
 from .sources.nidaq import nidaq_available
 from .sources.replay import ReplaySource
 from .sources.sim import SimSource
@@ -2018,6 +2018,21 @@ async def record_stop() -> dict:
         "error_kind": _session.error_kind,
         "summary": _session.summary,
     }
+
+
+@app.post("/record/cut-start")
+async def record_cut_start() -> dict:
+    """Start the live FRM now (#184), for when the causal cut detector never fires. Sets the cut
+    origin at the latest acquired sample through the same path the detector uses. 409 when not
+    recording or when a cut start is already set (auto or manual); never re-origins."""
+    if _session is None or _session.state != "recording":
+        raise HTTPException(409, "no recording in progress")
+    try:
+        mark = _session.mark_cut_start_now()
+    except CutStartRefusedError as e:
+        raise HTTPException(409, str(e)) from e
+    log.info("record_cut_start: id=%s manual at t=%.3f", _session.id, mark["t"])
+    return {"id": _session.id, **mark}
 
 
 @app.get("/record/status")
