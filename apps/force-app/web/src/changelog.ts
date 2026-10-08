@@ -9,6 +9,19 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
 	{
+		version: '0.1.36',
+		date: '2026-10-08',
+		notes: [
+			'Settings > Logs colours each line by type (errors, warnings, network, app, recording) and has a Type filter next to Level.',
+			'Improved: when an update has downloaded, the app shows its own "Restart and update" card in the corner instead of a Windows dialog. It never appears on the sign-in page, never takes focus from what you are typing, and waits until a recording has finished.',
+			'Improved: Figure, Lite and Full on the Plot page show the same loading screen.',
+			'Improved: moving the mouse over a force chart on the Plot page is smoother on long cuts.',
+			'Improved: when a cut is too long for a .mat file, the save dialog says why, how many minutes fit at this sample rate, and that the recording is still kept and can still be uploaded.',
+			'Fixed: after a finished cut, Start reused the previous cut\'s sequence number, Cut ID, chips and new-edge flag unless New was pressed first. Start now reads "Start next cut" and moves those fields on by itself; New is now "Clear for next cut".',
+			'Fixed: changes made inside a live pop-out (plot mode, channels, window, colour map) were forgotten when the app was restarted.',
+		],
+	},
+	{
 		version: '0.1.35',
 		date: '2026-10-08',
 		notes: [

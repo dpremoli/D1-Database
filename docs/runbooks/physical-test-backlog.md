@@ -1006,6 +1006,30 @@ when picked up):
 - [ ] **#137 release notes.** After the 0.1.35 update, Settings → About and the update dialog show
   New / Improved / Fixed groups. Since #198 (0.1.35).
 
+### Post-rig reports batch (2026-10-08, 0.1.36)
+- [ ] **#192 Start next cut.** Record a cut, save it, choose Open in Plot and come back: Start reads
+  "Start next cut"; the next cut has sequence +1, an empty chips ref, new-edge off and a new Cut ID.
+  Press "Clear for next cut" first instead: Start reads "Start" and the sequence moves on only once.
+  Since the 0.1.36 batch PR.
+- [ ] **#194 long-cut note.** Record past the .mat limit (about 6 min at 51.2 kHz with 10 columns):
+  the save dialog explains the limit in minutes; database upload, the raw files and the .csv copy
+  still work. Since the 0.1.36 batch PR.
+- [ ] **#197 update prompt (packaged app).** With an update downloaded while the sign-in page is
+  showing, typing the password shows no dialog and keeps focus. After sign-in the in-app card
+  appears in the corner; Enter in a text field does not install; "Not now" hides it until the next
+  launch while Settings → About still offers the install; during a recording the card stays hidden.
+  "Restart and update" installs and relaunches. Since the 0.1.36 batch PR.
+- [ ] **#108 pop-out settings survive a relaunch (packaged app).** Change the mode, channels or
+  colour map inside a Live Force / FRM / Polar pop-out, quit, relaunch: it reopens as changed.
+  Since the 0.1.36 batch PR.
+- [ ] **#193 log colours.** Settings → Logs with a real backend log: the type colours and the Type
+  filter read well in light and dark. Since the 0.1.36 batch PR.
+- [ ] **#191 loading screens.** On the Plot page against d1-server, Figure, Lite, Full and a
+  filtered single pane show the same centred loading veil (Full keeps a corner pill while it
+  streams). Since the 0.1.36 batch PR.
+- [ ] **#30 settings scroll.** On the rig PC, switching Settings tabs no longer animates or jumps
+  (fixed in 0.1.33; reopened for confirmation).
+
 ### Release pipeline (CI/CD overhaul)
 - [ ] **NI-DAQmx detection on a PC without the driver.** Install the packaged app on a Windows PC
   with no NI-DAQmx driver (not the rig). Connectivity Doctor / self-check shows "NI-DAQmx runtime
