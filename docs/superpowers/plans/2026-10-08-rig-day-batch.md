@@ -38,17 +38,17 @@ Code and unit tests are written here; the right-hand column goes in
 
 ## 3. This batch — work streams
 
-Workers: `force-app-implementer` (Sonnet, high), one worktree each, based on `d40314b`. Workers
+Workers: `force-app-implementer` (Sonnet, high), one worktree each under `.claude/worktrees/`, branch `worktree-agent-<id>`, fast-forwarded to `7901489`. Workers
 don't edit the backlog, the changelog or the version; the coordinator does.
 
 ### Status
 
 | Stream | Scope | Worktree / branch | State |
 |---|---|---|---|
-| A — Upload and crop (P1) | #190 A+B | — | not started |
-| B — Live and finished plots | #185 #189 #188 | — | not started |
-| C — FFT and pop-outs | #186 #187 | — | not started |
-| D — Settings, layout, release notes | #135 #136 #137 | — | not started |
+| A — Upload and crop (P1) | #190 A+B | `agent-ad791c74b30c88930` | in progress |
+| B — Live and finished plots | #185 #189 #188 | `agent-adf2dbacd89896db7` | in progress |
+| C — FFT and pop-outs | #186 #187 | `agent-a48f8683250a6d659` | in progress |
+| D — Settings, layout, release notes | #135 #136 #137 | `agent-ab54cf260692df0c3` | in progress |
 | Coordinator | merge, /simplify, debug, review, changelog 0.1.35, PR | main checkout | not started |
 
 ### A. Upload and crop — #190 (P1)
