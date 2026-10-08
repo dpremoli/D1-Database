@@ -76,6 +76,10 @@ export interface PreflightInput {
 	/** The Record page's own channel list is not the default one, so Start sends it and the backend
 	 *  ignores the saved channel model: checking the model would answer for a different list. */
 	channelsCustom?: boolean;
+	/** The physical inputs Start will send, in order (the Record page's list as parsed). */
+	channelList?: readonly string[];
+	/** Every input the connected NI-DAQ hardware has; null/absent = no real device to compare with. */
+	chassisInputs?: readonly string[] | null;
 }
 
 /** The recorder force-stops a cut below this much free space (backend session.DISK_STOP_GB), so
@@ -124,6 +128,15 @@ export function channelConfigIssues(channels: ChannelLike[]): { fail: string[]; 
 	return { fail, warn };
 }
 
+/** Inputs in `physical` that the connected hardware does not have (#213). Nothing is missing when
+ *  there is no real device list to compare with: an absent chassis is the NI-DAQ source button's
+ *  business, and a simulated tree has no real inputs to miss. */
+export function missingFromChassis(physical: readonly string[], chassisInputs: readonly string[] | null | undefined): string[] {
+	if (!chassisInputs || !chassisInputs.length) return [];
+	const have = new Set(chassisInputs);
+	return [...new Set(physical)].filter((p) => !have.has(p));
+}
+
 export function computePreflight(i: PreflightInput): PreflightItem[] {
 	if (i.source === 'replay') return [];
 	const items: PreflightItem[] = [];
@@ -156,7 +169,7 @@ export function computePreflight(i: PreflightInput): PreflightItem[] {
 
 	items.push(diskItem(i.diskFreeGb, i.sampleRate));
 
-	if (i.source === 'nidaq') items.push(channelsItem(i.channels, !!i.channelsCustom));
+	if (i.source === 'nidaq') items.push(channelsItem(i));
 
 	return items;
 }
@@ -192,9 +205,18 @@ function diskItem(freeGb: number | null, rate: number): PreflightItem {
 	return { id: 'disk', label: 'Disk', level: 'ok', detail: `${where}.` };
 }
 
-function channelsItem(channels: ChannelLike[] | null, custom: boolean): PreflightItem {
+function channelsItem(i: PreflightInput): PreflightItem {
+	const { channels } = i;
 	const focus = { id: 'nidaq-channels', route: '/nidaq' };
-	if (custom) {
+	const notOnChassis = (list: readonly string[]) => missingFromChassis(list, i.chassisInputs)
+		.map((p) => `${p} is not on the connected NI-DAQ hardware`);
+	if (i.channelsCustom) {
+		// The saved model is not what Start sends, but the list that is sent can still be checked
+		// against the hardware: DAQmx refuses the whole task for one unknown input (-200220).
+		const missing = notOnChassis(i.channelList ?? []);
+		if (missing.length) {
+			return { id: 'channels', label: 'Channels', level: 'fail', detail: `Channel list problem: ${missing.join('; ')}. Start would fail.` };
+		}
 		return {
 			id: 'channels', label: 'Channels', level: 'skip',
 			detail: 'Not checked: this Start sends the custom channel list from the Record page, not the saved channel model.',
@@ -202,6 +224,7 @@ function channelsItem(channels: ChannelLike[] | null, custom: boolean): Prefligh
 	}
 	if (!channels) return { id: 'channels', label: 'Channels', level: 'skip', detail: 'Channel configuration not read yet.' };
 	const { fail, warn } = channelConfigIssues(channels);
+	fail.push(...notOnChassis(channels.filter((c) => c.physical && c.source !== 'virtual').map((c) => String(c.physical).trim())));
 	if (fail.length) return { id: 'channels', label: 'Channels', level: 'fail', focus, detail: `Channel configuration problem: ${fail.join('; ')}.` };
 	if (warn.length) {
 		return {

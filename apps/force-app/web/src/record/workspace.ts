@@ -340,6 +340,8 @@ export function createWorkspace() {
 		sampleRate: cfg.sample_rate,
 		channels: preflightReads.channels,
 		channelsCustom: customChannelList.value,
+		channelList: parseChannelList(nidaqChannels.value),
+		chassisInputs: nidaqHardware.physicalInputs,
 	}));
 	// A missing Sample is a warning, not a block: the first Start press shows "Start anyway".
 	const sampleConfirmOpen = ref(false);

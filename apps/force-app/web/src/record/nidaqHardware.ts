@@ -3,11 +3,21 @@
 // answer instead of each fetching its own, and so it survives the panel remounting.
 import { reactive } from 'vue';
 
+interface DevicePorts { ports?: { physical?: string | null }[] }
+
 export interface NidaqDevicesReply {
 	simulated?: boolean;
 	runtime_available?: boolean;
 	hardware_present?: boolean;
 	nimax_simulated?: boolean;
+	chassis?: { modules?: DevicePorts[] }[];
+	standalone?: DevicePorts[];
+}
+
+/** Every physical input ("Mod1/ai0") in a /nidaq/devices tree. */
+export function physicalInputs(d: NidaqDevicesReply): string[] {
+	const devices = [...(d.chassis ?? []).flatMap((c) => c.modules ?? []), ...(d.standalone ?? [])];
+	return devices.flatMap((dev) => dev.ports ?? []).map((p) => p.physical).filter((p): p is string => !!p);
 }
 
 export const nidaqHardware = reactive({
@@ -20,6 +30,9 @@ export const nidaqHardware = reactive({
 	/** #46/#84: the highest rate the assigned channels' modules can sample at, or null when there
 	 *  is no real limit to check (simulated hardware, no DAQmx runtime). */
 	maxRateHz: null as number | null,
+	/** #213: the inputs the connected hardware really has, for the Channels pre-flight chip. Null
+	 *  when there is no real device to compare with (none connected, or the simulated tree). */
+	physicalInputs: null as string[] | null,
 });
 
 /** Why NI-DAQ can't be picked as the recording source, or null when it can (#86). Only an
@@ -40,6 +53,7 @@ export function applyNidaqDevices(d: NidaqDevicesReply): void {
 	nidaqHardware.hardwarePresent = !!d.hardware_present;
 	nidaqHardware.runtimeAvailable = !!d.runtime_available;
 	nidaqHardware.nimaxSimulated = !!d.nimax_simulated;
+	nidaqHardware.physicalInputs = d.hardware_present && !d.simulated ? physicalInputs(d) : null;
 	nidaqHardware.checked = true;
 }
 
