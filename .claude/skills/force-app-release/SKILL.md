@@ -30,6 +30,13 @@ Commits touching the app since the last tag:
    - Plain language about what the operator sees or can now do, not code. "The live FFT stayed
      blank until a channel chip was clicked", not "fixed RecordClient reactivity".
    - Features first, then `Fixed: …` lines. Name the screen or button.
+   - Start each note with the category it belongs to. Settings → About and the GitHub Release (the
+     update dialog) group by it: `Fixed: …` → Fixed, `Security: …` → Fixed (the word stays in the
+     text), `Improved: …` → Improved, `New: …` or no prefix → New. A prefix is exactly that
+     spelling plus a colon and a space; anything else (`Plot page: …`) is part of the sentence and
+     counts as New. `notes` stays a flat `string[]`: `release_plan.py` reads it with a regex, so
+     don't turn the notes into objects. `web/src/changelogGroups.test.ts` fails on a misspelt
+     prefix such as `Fix:` or `fixed:`.
    - Leave out internal-only changes (refactors, tests, CI, docs).
 3. **Preflight.** `bash .claude/skills/force-app-release/scripts/preflight.sh` (~2.5 min). It checks
    that the version, lockfile, changelog, free tag and `electronVersion` agree, and runs every
