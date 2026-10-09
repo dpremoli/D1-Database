@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import time
 
 import numpy as np
 from scipy.io import savemat
@@ -120,6 +121,23 @@ def _mat73_failure(n: int, mat_bytes: int, e: Exception) -> str:
         f"and writing the MATLAB v7.3 file failed ({type(e).__name__}: {e}). live_cache.bin and "
         "summary.json were still produced; the raw capture remains on disk at full resolution."
     )
+
+
+# Windows: an antivirus or the indexer can hold a just-written multi-GB file open for a moment, and
+# os.replace then fails with a sharing violation (PermissionError). Wait it out instead of throwing
+# away a finished file: these are the pauses before the 2nd..6th attempts.
+_REPLACE_DELAYS_S = (0.2, 0.5, 1.0, 2.0, 4.0)
+
+
+def _replace_with_retry(src: str, dst: str) -> None:
+    for delay in _REPLACE_DELAYS_S:
+        try:
+            os.replace(src, dst)
+            return
+        except OSError as e:
+            log.warning("finalize: renaming %s failed (%s); retrying in %.1fs", src, e, delay)
+            time.sleep(delay)
+    os.replace(src, dst)  # last attempt: its error propagates
 
 
 def _abort_mat73(writer: Mat73Writer | None, part: str) -> None:
@@ -303,6 +321,14 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         if k not in metadata and v not in (None, ""):
             metadata[str(k)] = v
     if mat_format == "v7.3":
+        # A capture.mat.part left by a crash during an earlier finalize (this one is a recovery) is
+        # a partial file of up to several GB: remove it before checking the disk, or it would be
+        # counted against the space the new file needs.
+        try:
+            os.remove(mat_part)
+            log.warning("finalize: removed a stale %s", mat_part)
+        except OSError:
+            pass
         free = _free_bytes(capture_dir)
         need = mat73_disk_need(n, n_mat_cols)
         if free is not None and free < need:
@@ -463,11 +489,23 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     elif mat73 is not None:
         try:
             mat73.close()
-            os.replace(mat_part, mat_path)
         except Exception as e:
             log.exception("finalize: closing the v7.3 .mat failed for %s", capture_dir)
             mat_format, mat_skip_reason = None, _mat73_failure(n, mat_bytes, e)
             _abort_mat73(mat73, mat_part)
+        else:
+            try:
+                _replace_with_retry(mat_part, mat_path)
+            except OSError as e:
+                # The file is complete and valid, only its name is wrong: keep it, never delete it.
+                log.exception("finalize: could not rename the finished v7.3 .mat for %s", capture_dir)
+                mat_format = None
+                mat_skip_reason = (
+                    f"capture has {n:,} samples ({mat_bytes / 1e9:.1f}GB uncompressed) -- too large "
+                    f"for MAT5; the MATLAB v7.3 file was written but could not be renamed to "
+                    f"capture.mat ({type(e).__name__}: {e}). It is kept at {mat_part}: rename it "
+                    "by hand. live_cache.bin and summary.json were still produced."
+                )
 
     mat_written = mat_format is not None
 
