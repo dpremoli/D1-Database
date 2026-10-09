@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import h5py
 import numpy as np
+
+if TYPE_CHECKING:  # h5py itself is imported lazily, in Mat73Writer.__init__ (see there)
+    import h5py
 
 USERBLOCK_BYTES = 512
 _HEADER_TEXT = "MATLAB 7.3 MAT-file, Platform: force-app, Created on: {stamp} HDF5 schema 1.00 ."
@@ -72,6 +74,13 @@ class Mat73Writer:
 
     def __init__(self, path: str) -> None:
         self.path = path
+        # Imported here, not at module level: h5py loads its own HDF5 DLL, which can fail on a
+        # machine where another hdf5.dll (MATLAB, NI) shadows it on PATH. A module-level import
+        # would then stop the whole backend from starting; here it only costs the .mat of a cut
+        # over the MAT5 limit (finalize turns the failure into "no .mat" with a reason).
+        import h5py
+
+        self._h5py = h5py
         self._f = h5py.File(path, "w", userblock_size=USERBLOCK_BYTES)
         self._refs: h5py.Group | None = None
         self._n_refs = 0
@@ -179,7 +188,7 @@ class Mat73Writer:
                 continue
             self._write(grp, str(key), val)
             names.append(str(key))
-        vlen = h5py.vlen_dtype(np.dtype("S1"))
+        vlen = self._h5py.vlen_dtype(np.dtype("S1"))
         listing = np.empty(len(names), dtype=object)
         for i, nm in enumerate(names):
             listing[i] = np.frombuffer(nm.encode("utf-8"), dtype="S1")
@@ -188,13 +197,13 @@ class Mat73Writer:
     def _write_cell_of_char(self, parent: h5py.Group, name: str, strings: list[str]) -> None:
         if self._refs is None:
             self._refs = self._f.require_group("#refs#")
-        refs = np.empty(len(strings), dtype=h5py.ref_dtype)
+        refs = np.empty(len(strings), dtype=self._h5py.ref_dtype)
         for i, s in enumerate(strings):
             ref_name = f"c{self._n_refs}"
             self._n_refs += 1
             self._write_char(self._refs, ref_name, s)
             refs[i] = self._refs[ref_name].ref
-        ds = parent.create_dataset(name, data=refs.reshape(-1, 1), dtype=h5py.ref_dtype)
+        ds = parent.create_dataset(name, data=refs.reshape(-1, 1), dtype=self._h5py.ref_dtype)
         _set_class(ds, "cell")
 
 

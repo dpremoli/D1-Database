@@ -20,11 +20,13 @@ hidden_imports = collect_submodules("uvicorn") + collect_submodules("scipy") + c
 datas = []
 binaries = []
 
-# h5py writes the MATLAB v7.3 .mat for long cuts (app/mat73.py, #194). It is imported at module
-# level by app.mat73, which a hidden "app" import pulls in, but its compiled extensions (h5py.defs,
+# h5py writes the MATLAB v7.3 .mat for long cuts (app/mat73.py, #194). It is imported lazily,
+# inside Mat73Writer.__init__, so a broken h5py/HDF5 install cannot stop the backend starting; the
+# static trace may therefore miss it, and its compiled extensions (h5py.defs,
 # h5py._conv, ... ) are loaded by name and h5py ships HDF5 itself as a bundled library (hdf5.dll
 # and friends on Windows, h5py.libs/ elsewhere): collect both explicitly rather than rely on the
-# static trace, because a frozen build that lacks them only fails when a >1.5 GB cut is finalized.
+# static trace, because a frozen build that lacks them only loses the .mat of a >1.5 GB cut (finalize
+# records why in summary.json's mat_skip_reason) instead of failing at startup.
 hidden_imports += collect_submodules("h5py")
 binaries += collect_dynamic_libs("h5py")
 datas += collect_data_files("h5py")
