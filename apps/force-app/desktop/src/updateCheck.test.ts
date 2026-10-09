@@ -36,6 +36,22 @@ describe('runUpdateCheck', () => {
     expect(d.quit).toHaveBeenCalled();
   });
 
+  it('a notification that cannot be shown still ends the process and is not marked as told', async () => {
+    const d = deps({ notify: vi.fn(() => { throw new Error('no notifications'); }) });
+    await runUpdateCheck(d);
+    expect(d.markNotified).not.toHaveBeenCalled();   // the next run tries again
+    expect(d.quit).toHaveBeenCalled();
+    expect(d.timers[0].cleared).toBe(true);
+    expect(d.timers[1].ms).toBe(LINGER_MS);          // armed before notify, so a throw cannot strand the process
+  });
+
+  it('marks the version only after the notification was shown', async () => {
+    const order: string[] = [];
+    const d = deps({ notify: vi.fn(() => { order.push('notify'); }), markNotified: vi.fn(() => { order.push('mark'); }) });
+    await runUpdateCheck(d);
+    expect(order).toEqual(['notify', 'mark']);
+  });
+
   it('the notification click launches the app', async () => {
     const d = deps();
     await runUpdateCheck(d);

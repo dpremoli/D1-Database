@@ -85,7 +85,8 @@ function startUpdateCheckMode(): void {
       lastNotified: marker.read,
       markNotified: marker.write,
       notify: (n, onClick) => {
-        if (!Notification.isSupported()) return app.quit();
+        // Throws (rather than quitting here) so runUpdateCheck does not mark the version as told.
+        if (!Notification.isSupported()) throw new Error('notifications are not supported');
         const toast = new Notification(n);
         toast.on('click', onClick);
         updateToast = toast;

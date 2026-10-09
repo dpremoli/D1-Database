@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   requestLock: vi.fn(),
   checkResult: { isUpdateAvailable: true, updateInfo: { version: '2.0.0' } } as any,
   toasts: [] as any[],
+  notificationsSupported: true,
   userData: '',
 }));
 
@@ -30,7 +31,7 @@ vi.mock('electron', () => {
     quit: () => h.quit(), exit: (c: number) => h.exit(c), relaunch: (o: unknown) => h.relaunch(o),
   };
   class Notification {
-    static isSupported() { return true; }
+    static isSupported() { return h.notificationsSupported; }
     handlers = new Map<string, () => void>();
     constructor(public opts: any) { h.toasts.push(this); }
     on(ev: string, fn: () => void) { this.handlers.set(ev, fn); }
@@ -62,7 +63,7 @@ beforeEach(async () => {
   const os = await import('node:os');
   const path = await import('node:path');
   h.userData = fs.mkdtempSync(path.join(os.tmpdir(), 'force-uc-'));
-  h.windows = 0; h.sidecars = 0; h.toasts = [];
+  h.windows = 0; h.sidecars = 0; h.toasts = []; h.notificationsSupported = true;
   for (const f of [h.quit, h.exit, h.relaunch, h.releaseLock]) f.mockReset();
   h.requestLock.mockReset().mockReturnValue(true);
   h.checkResult = { isUpdateAvailable: true, updateInfo: { version: '2.0.0' } };
@@ -94,6 +95,18 @@ describe('main.ts in --update-check mode', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(h.toasts).toHaveLength(0);
     expect(h.quit).toHaveBeenCalled();
+  });
+
+  it('without notification support it quits and does not mark the version as told', async () => {
+    h.notificationsSupported = false;
+    await boot(['--update-check']);
+    h.ready!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.toasts).toHaveLength(0);
+    expect(h.quit).toHaveBeenCalled();
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    expect(fs.existsSync(path.join(h.userData, 'update-notified.json'))).toBe(false);
   });
 
   it('exits immediately when the real app already holds the single-instance lock', async () => {

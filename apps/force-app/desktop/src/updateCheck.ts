@@ -19,7 +19,8 @@ export interface UpdateCheckDeps {
   /** The version the operator was last told about (persisted between runs), or null. */
   lastNotified: () => string | null;
   markNotified: (version: string) => void;
-  /** Shows the toast; `onClick` fires when it is clicked. */
+  /** Shows the toast; `onClick` fires when it is clicked. Throws when it could not be shown (the
+   * platform has no notifications, or creating it failed): the version is then not marked as told. */
   notify: (n: { title: string; body: string }, onClick: () => void) => void;
   /** Starts the app normally (no flag) and ends this process. */
   launchApp: () => void;
@@ -40,10 +41,20 @@ export async function runUpdateCheck(d: UpdateCheckDeps): Promise<void> {
   }
   // Told once per version, not at every logon and every day while it sits uninstalled.
   if (!version || d.lastNotified() === version) return d.quit();
+  // The linger timer goes up BEFORE anything that can throw, and replaces the give-up timer: this
+  // windowless process must end by itself whatever happens next (the /sc DAILY fallback task has no
+  // execution time limit, schtasks /create has no flag for one, so it would otherwise live on
+  // for the task's default 72 hours).
   d.clearTimer(giveUp);
-  d.markNotified(version);
-  d.notify(availableNotification(version), () => d.launchApp());
   d.setTimer(() => d.quit(), LINGER_MS);
+  try {
+    d.notify(availableNotification(version), () => d.launchApp());
+  } catch {
+    // Could not tell the operator: leave the version unmarked so the next run tries again, and
+    // there is nothing to wait for.
+    return d.quit();
+  }
+  d.markNotified(version);
 }
 
 /** The "already told you about X" marker, in the app's userData folder. */

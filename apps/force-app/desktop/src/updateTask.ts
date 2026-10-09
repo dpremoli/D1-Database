@@ -57,7 +57,10 @@ export function encodeTaskXml(xml: string): Buffer {
 }
 
 /** Fallback when the XML definition is refused: daily only. The exe path is quoted (Program Files
- * and per-user install folders contain spaces); Node adds the outer quoting and escapes these. */
+ * and per-user install folders contain spaces); Node adds the outer quoting and escapes these.
+ * `schtasks /create` has no flag for an execution time limit (the XML's ExecutionTimeLimit is not
+ * available here), so a task made this way keeps Windows' 72 h default: updateCheck.ts therefore
+ * limits the process itself (give-up and linger timers, armed before anything that can throw). */
 export function buildDailyCreateArgs(exePath: string): string[] {
   return ['/create', '/tn', UPDATE_TASK_NAME, '/tr', `"${exePath}" ${UPDATE_CHECK_FLAG}`, '/sc', 'DAILY', '/st', '12:00', '/f'];
 }
