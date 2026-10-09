@@ -41,9 +41,20 @@ describe('update-notify preference', () => {
 });
 
 describe('updateNotify IPC', () => {
-  it('get reports supported and the stored default (on)', async () => {
-    const { handlers } = setup();
-    expect(await handlers.get('updateNotify:get')!(APP)).toEqual({ supported: true, enabled: true });
+  it('get reports supported, the stored default (on), and whether the task really exists', async () => {
+    expect(await setup(false).handlers.get('updateNotify:get')!(APP)).toEqual({ supported: true, enabled: true, active: false });
+    expect(await setup(true).handlers.get('updateNotify:get')!(APP)).toEqual({ supported: true, enabled: true, active: true });
+  });
+
+  it('get is not active when the query throws, and never queries on an unsupported platform', async () => {
+    const { handlers, deps, calls } = setup(true);
+    deps.exec = async () => { throw new Error('spawn failed'); };
+    expect(await handlers.get('updateNotify:get')!(APP)).toEqual({ supported: true, enabled: true, active: false });
+    const u = setup(true);
+    u.deps.supported = false;
+    calls.length = 0;
+    expect(await u.handlers.get('updateNotify:get')!(APP)).toEqual({ supported: false, enabled: true, active: false });
+    expect(u.calls).toHaveLength(0);
   });
 
   it('set(false) removes the task and remembers off', async () => {
@@ -73,7 +84,7 @@ describe('updateNotify IPC', () => {
     const { handlers, calls } = setup();
     expect(await handlers.get('updateNotify:set')!(FOREIGN, false)).toMatchObject({ ok: false });
     expect(await handlers.get('updateNotify:set')!(APP, 'yes')).toMatchObject({ ok: false });
-    expect(await handlers.get('updateNotify:get')!(FOREIGN)).toEqual({ supported: false, enabled: false });
+    expect(await handlers.get('updateNotify:get')!(FOREIGN)).toEqual({ supported: false, enabled: false, active: false });
     expect(calls).toHaveLength(0);
   });
 });

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { closedNotifyBridge, loadClosedNotify, setClosedNotify } from './closedNotify';
+import { closedNotifyBridge, closedNotifyWarning, loadClosedNotify, setClosedNotify } from './closedNotify';
 
 const bridge = (over: Record<string, unknown> = {}) => ({
-	getUpdateNotifyWhenClosed: vi.fn(async () => ({ supported: true, enabled: true })),
+	getUpdateNotifyWhenClosed: vi.fn(async () => ({ supported: true, enabled: true, active: true })),
 	setUpdateNotifyWhenClosed: vi.fn(async (e: boolean) => ({ ok: true, enabled: e })),
 	...over,
 }) as never;
@@ -20,11 +20,19 @@ describe('closedNotifyBridge', () => {
 
 describe('loadClosedNotify', () => {
 	it('passes the shell state through', async () => {
-		expect(await loadClosedNotify(bridge())).toEqual({ supported: true, enabled: true });
+		expect(await loadClosedNotify(bridge())).toEqual({ supported: true, enabled: true, active: true });
+	});
+	it('reports a preference that is on with no scheduled task behind it', async () => {
+		const b = bridge({ getUpdateNotifyWhenClosed: async () => ({ supported: true, enabled: true, active: false }) });
+		expect(await loadClosedNotify(b)).toEqual({ supported: true, enabled: true, active: false });
+	});
+	it('assumes the task exists when an older shell does not say', async () => {
+		const b = bridge({ getUpdateNotifyWhenClosed: async () => ({ supported: true, enabled: true }) });
+		expect((await loadClosedNotify(b)).active).toBe(true);
 	});
 	it('reports unsupported when the call fails', async () => {
 		const b = bridge({ getUpdateNotifyWhenClosed: async () => { throw new Error('x'); } });
-		expect(await loadClosedNotify(b)).toEqual({ supported: false, enabled: false });
+		expect(await loadClosedNotify(b)).toEqual({ supported: false, enabled: false, active: false });
 	});
 });
 
@@ -41,5 +49,14 @@ describe('setClosedNotify', () => {
 	it('does not throw when the call rejects', async () => {
 		const b = bridge({ setUpdateNotifyWhenClosed: async () => { throw new Error('ipc gone'); } });
 		expect(await setClosedNotify(b, true, false)).toEqual({ enabled: false, error: 'ipc gone' });
+	});
+});
+
+describe('closedNotifyWarning', () => {
+	it('warns only when it is on, supported and the task is missing', () => {
+		expect(closedNotifyWarning(true, true, false)).toMatch(/Couldn't set up the scheduled check \(Windows refused\)/);
+		expect(closedNotifyWarning(true, true, true)).toBe('');
+		expect(closedNotifyWarning(true, false, false)).toBe('');   // off: nothing is expected to exist
+		expect(closedNotifyWarning(false, true, false)).toBe('');   // browser build: no toggle at all
 	});
 });

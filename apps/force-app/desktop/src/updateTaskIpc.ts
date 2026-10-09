@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { applyUpdateTask, runSchtasks, type UpdateTaskDeps } from './updateTask';
+import { applyUpdateTask, runSchtasks, taskIsCurrent, type UpdateTaskDeps } from './updateTask';
 
 /** `<userData>/desktop-prefs.json`. Absent or unreadable means the default: on. (Not config.json:
  * that file is served to the renderer as the runtime config.) */
@@ -45,8 +45,10 @@ export function makeUpdateTaskDeps(opts: { packaged: boolean; exePath: string })
 
 interface IpcLike { handle: (channel: string, fn: (event: any, ...args: any[]) => unknown) => void }
 
-/** `updateNotify:get` -> { supported, enabled }; `updateNotify:set` (enabled) -> { ok, enabled, reason? }.
- * Same sender check as the other shell IPC: only the app's own pages. Turning it on is only
+/** `updateNotify:get` -> { supported, enabled, active }; `updateNotify:set` (enabled) -> { ok, enabled, reason? }.
+ * `enabled` is the preference (default on); `active` is whether the scheduled task really exists
+ * and points at this exe, so a GPO/EDR that blocks schtasks shows as "on, but not active" instead
+ * of a toggle that silently does nothing. Same sender check as the other shell IPC: only the app's own pages. Turning it on is only
  * remembered if the task could really be created; turning it off always is. */
 export function registerUpdateTaskIpc(
   ipc: IpcLike,
@@ -54,8 +56,14 @@ export function registerUpdateTaskIpc(
   pref: ReturnType<typeof updateNotifyPref>,
   deps: UpdateTaskDeps,
 ): void {
-  ipc.handle('updateNotify:get', (event) =>
-    isApp(event) ? { supported: deps.supported, enabled: pref.read() } : { supported: false, enabled: false });
+  ipc.handle('updateNotify:get', async (event) => {
+    if (!isApp(event)) return { supported: false, enabled: false, active: false };
+    let active = false;
+    if (deps.supported) {
+      try { active = await taskIsCurrent(deps); } catch { /* unknown counts as not active */ }
+    }
+    return { supported: deps.supported, enabled: pref.read(), active };
+  });
   ipc.handle('updateNotify:set', async (event, enabled: unknown) => {
     if (!isApp(event)) return { ok: false, enabled: pref.read(), reason: 'not allowed from this page' };
     if (typeof enabled !== 'boolean') return { ok: false, enabled: pref.read(), reason: 'invalid value' };

@@ -84,7 +84,7 @@ export interface TaskResult { ok: boolean; reason?: string }
 
 /** Is the task registered and pointing at this exe? A moved install folder leaves a task that
  * launches nothing, so a mismatch counts as missing. */
-async function taskIsCurrent(deps: UpdateTaskDeps): Promise<boolean> {
+export async function taskIsCurrent(deps: UpdateTaskDeps): Promise<boolean> {
   const res = await deps.exec(buildQueryXmlArgs());
   return res.ok && (res.stdout.includes(xmlEscape(deps.exePath)) || res.stdout.includes(deps.exePath));
 }

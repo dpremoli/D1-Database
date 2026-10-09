@@ -28,7 +28,7 @@ declare global {
       pickFolder: (defaultPath?: string) => Promise<string | null>;
       /** Notify about updates while the app is closed (#197): a Windows scheduled task the desktop shell
        * creates and removes. `supported` is false outside the installed Windows app. */
-      getUpdateNotifyWhenClosed: () => Promise<{ supported: boolean; enabled: boolean }>;
+      getUpdateNotifyWhenClosed: () => Promise<{ supported: boolean; enabled: boolean; active: boolean }>;
       setUpdateNotifyWhenClosed: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean; reason?: string }>;
       /** Stops and respawns the recorder backend (R11). Refused while a recording is running or
        * being saved; `reason` says why. Resolves once the backend is healthy again, or failed to be. */

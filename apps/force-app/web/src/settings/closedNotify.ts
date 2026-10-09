@@ -12,15 +12,24 @@ export function closedNotifyBridge(w: { forceApp?: Partial<Bridge> } | undefined
 export interface ClosedNotifyState {
 	/** False outside the installed Windows app: the toggle is not shown. */
 	supported: boolean;
+	/** The preference (default on). */
 	enabled: boolean;
+	/** Whether the Windows scheduled task really exists: Group Policy or an endpoint-security tool
+	 * can block it, leaving the preference on with nothing running. */
+	active: boolean;
+}
+
+/** The warning to show under the toggle when it is on but the task is not there; else ''. */
+export function closedNotifyWarning(supported: boolean, enabled: boolean, active: boolean): string {
+	return supported && enabled && !active ? "Couldn't set up the scheduled check (Windows refused)." : '';
 }
 
 export async function loadClosedNotify(bridge: Bridge): Promise<ClosedNotifyState> {
 	try {
 		const r = await bridge.getUpdateNotifyWhenClosed();
-		return { supported: !!r.supported, enabled: !!r.enabled };
+		return { supported: !!r.supported, enabled: !!r.enabled, active: r.active !== false };   // an older shell that does not report it: assume it exists
 	} catch {
-		return { supported: false, enabled: false };
+		return { supported: false, enabled: false, active: false };
 	}
 }
 

@@ -60,8 +60,8 @@ describe('update-notify bridge (#197)', () => {
   it('get/set go through the updateNotify channels', async () => {
     const { ipcRenderer } = await import('electron');
     const invoke = ipcRenderer.invoke as ReturnType<typeof vi.fn>;
-    invoke.mockResolvedValueOnce({ supported: true, enabled: true });
-    await expect(h.exposed.getUpdateNotifyWhenClosed()).resolves.toEqual({ supported: true, enabled: true });
+    invoke.mockResolvedValueOnce({ supported: true, enabled: true, active: true });
+    await expect(h.exposed.getUpdateNotifyWhenClosed()).resolves.toEqual({ supported: true, enabled: true, active: true });
     expect(invoke).toHaveBeenCalledWith('updateNotify:get');
     invoke.mockResolvedValueOnce({ ok: true, enabled: false });
     await h.exposed.setUpdateNotifyWhenClosed(false);

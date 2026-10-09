@@ -5,7 +5,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { CHANGELOG } from '../changelog';
 import { groupNotes } from '../changelogGroups';
 import type { UpdateStatus } from '../electronBridge';
-import { closedNotifyBridge, loadClosedNotify, setClosedNotify } from './closedNotify';
+import { closedNotifyBridge, closedNotifyWarning, loadClosedNotify, setClosedNotify } from './closedNotify';
 
 // The changelog is static, so group each entry's notes once, not on every render.
 const ENTRIES = CHANGELOG.map((c) => ({ ...c, groups: groupNotes(c.notes) }));
@@ -22,6 +22,7 @@ const installNotice = ref('');
 const closedBridge = closedNotifyBridge();
 const closedSupported = ref(false);
 const closedEnabled = ref(true);
+const closedActive = ref(true);   // the scheduled task really exists (see closedNotify.ts)
 const closedBusy = ref(false);
 const closedError = ref('');
 async function toggleClosedNotify(wanted: boolean) {
@@ -30,6 +31,7 @@ async function toggleClosedNotify(wanted: boolean) {
 	closedError.value = '';
 	const r = await setClosedNotify(closedBridge, wanted, closedEnabled.value);
 	closedEnabled.value = r.enabled;
+	if (!r.error) closedActive.value = r.enabled;   // a success means the task was made (or removed)
 	closedError.value = r.error;
 	closedBusy.value = false;
 }
@@ -76,6 +78,7 @@ onMounted(async () => {
 		if (gone) return;
 		closedSupported.value = c.supported;
 		closedEnabled.value = c.enabled;
+		closedActive.value = c.active;
 	}
 });
 onBeforeUnmount(() => { gone = true; unsubscribeStatus?.(); unsubscribeStatus = null; });
@@ -128,6 +131,9 @@ onBeforeUnmount(() => { gone = true; unsubscribeStatus?.(); unsubscribeStatus = 
 				<span>Notify me about updates when the app is closed</span>
 			</label>
 			<p v-if="closedSupported" class="hint">A small Windows scheduled task checks for a new version at sign-in and once a day and shows a notification. It never installs anything.</p>
+			<p v-if="closedNotifyWarning(closedSupported, closedEnabled, closedActive)" class="err">
+				<span class="material-symbols-rounded" style="font-size: var(--icon-xs)">error</span> {{ closedNotifyWarning(closedSupported, closedEnabled, closedActive) }}
+			</p>
 			<p v-if="closedError" class="err">
 				<span class="material-symbols-rounded" style="font-size: var(--icon-xs)">error</span> {{ closedError }}
 			</p>
