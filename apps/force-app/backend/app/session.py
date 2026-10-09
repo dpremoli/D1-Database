@@ -408,7 +408,7 @@ class RecordingSession:
                 raise CutStartRefusedError("no recording in progress")
             if not self.cfg.frm_from_cut:
                 raise CutStartRefusedError(
-                    "the FRM is not waiting for the cut (\"Detect cut start\" is off for this "
+                    'the FRM is not waiting for the cut ("Detect cut start" is off for this '
                     "recording), so there is nothing to start"
                 )
             if self.cut_started_t is not None:

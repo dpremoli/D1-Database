@@ -23,7 +23,9 @@ def _small_limit_and_no_waiting(monkeypatch):
 
 def _capture(tmp_path):
     d = str(tmp_path)
-    w = RawWriter(os.path.join(d, "raw.d1raw"), n_cols=1 + len(SIGNAL_CHANNELS), rate=FS, start_unix=0.0)
+    w = RawWriter(
+        os.path.join(d, "raw.d1raw"), n_cols=1 + len(SIGNAL_CHANNELS), rate=FS, start_unix=0.0
+    )
     data = np.zeros((N, len(SIGNAL_CHANNELS)))
     data[:, 4] = 5.0
     w.append(np.arange(N) / FS, data)
@@ -74,7 +76,7 @@ def test_a_rename_that_never_works_keeps_the_part_and_names_it(tmp_path, monkeyp
     assert summary["mat_written"] is False
     assert summary["files"]["mat"] is None
     assert part in summary["mat_skip_reason"]
-    assert os.path.isfile(part) and os.path.getsize(part) > 0   # the finished file is not deleted
+    assert os.path.isfile(part) and os.path.getsize(part) > 0  # the finished file is not deleted
     assert not os.path.exists(os.path.join(d, "capture.mat"))
     assert os.path.isfile(os.path.join(d, "live_cache.bin"))
 

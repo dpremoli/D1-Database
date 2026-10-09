@@ -498,7 +498,9 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
                 _replace_with_retry(mat_part, mat_path)
             except OSError as e:
                 # The file is complete and valid, only its name is wrong: keep it, never delete it.
-                log.exception("finalize: could not rename the finished v7.3 .mat for %s", capture_dir)
+                log.exception(
+                    "finalize: could not rename the finished v7.3 .mat for %s", capture_dir
+                )
                 mat_format = None
                 mat_skip_reason = (
                     f"capture has {n:,} samples ({mat_bytes / 1e9:.1f}GB uncompressed) -- too large "

@@ -32,7 +32,9 @@ def test_an_over_limit_cut_finishes_without_a_mat_when_h5py_cannot_be_loaded(tmp
     monkeypatch.setitem(sys.modules, "h5py", None)
     fs, n = 4000, 8000
     d = str(tmp_path)
-    w = RawWriter(os.path.join(d, "raw.d1raw"), n_cols=1 + len(SIGNAL_CHANNELS), rate=fs, start_unix=0.0)
+    w = RawWriter(
+        os.path.join(d, "raw.d1raw"), n_cols=1 + len(SIGNAL_CHANNELS), rate=fs, start_unix=0.0
+    )
     data = np.zeros((n, len(SIGNAL_CHANNELS)))
     data[:, 4] = 5.0
     w.append(np.arange(n) / fs, data)
