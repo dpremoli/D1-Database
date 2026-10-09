@@ -7,8 +7,11 @@ export type LoadStage =
 	| { kind: 'open' }
 	| { kind: 'stream'; fraction: number | null };
 
-/** What a renderer reports to its host (e.g. for the busy mark on the active view-type button). */
-export interface StageInfo { label: string; progress: number | null }
+/**
+ * What a renderer reports to its host: the busy mark on the active view-type button (label,
+ * progress) and the host's loading overlay (the raw stage).
+ */
+export interface StageInfo { label: string; progress: number | null; stage: LoadStage }
 
 const mb = (n: number) => `${(n / 1048576).toFixed(n >= 10 * 1048576 ? 0 : 1)} MB`;
 const pct = (f: number) => `${Math.round(Math.max(0, Math.min(1, f)) * 100)}%`;
@@ -34,7 +37,7 @@ export function stageLabel(s: LoadStage): string {
 }
 
 export function stageInfo(s: LoadStage | null): StageInfo | null {
-	return s ? { label: stageLabel(s), progress: stageProgress(s) } : null;
+	return s ? { label: stageLabel(s), progress: stageProgress(s), stage: s } : null;
 }
 
 /**
@@ -54,4 +57,18 @@ export function sameStage(a: LoadStage | null, b: LoadStage | null): boolean {
 	if (a === b) return true;
 	if (!a || !b) return false;
 	return stageLabel(a) === stageLabel(b);
+}
+
+/** The FRM view that is on screen (after fallbacks), not just the one the user asked for. */
+export type OverlayMode = 'figure' | 'lite' | 'full';
+
+/**
+ * The stage the Plot page's one loading overlay shows over the FRM area (#191), or null for none.
+ * Lite and Full report theirs through `stage` (the renderer's @stage). Figure has no renderer, so it
+ * uses its download (`figStage`, null = not yet sized) while `figLoading`; that download only counts
+ * in Figure mode, since the PNG is also fetched in the background for Lite / Full.
+ */
+export function frmOverlay(mode: OverlayMode, stage: LoadStage | null, figLoading: boolean, figStage: LoadStage | null = null): LoadStage | null {
+	if (mode !== 'figure') return stage;
+	return figLoading ? (figStage ?? { kind: 'download', loaded: 0, total: null, what: 'figure' }) : null;
 }

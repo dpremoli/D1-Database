@@ -16,27 +16,28 @@ import LiveFrm from './LiveFrm.vue';
 import { COLORMAPS, colormapLabel, PlotModeFlyout, useAutoColorScale, type ColorScale } from '@d1/force-plotting';
 import { PLOT_MODES } from './plotModes';
 import { showWindowControl } from './panels/forcePlotView';
+import { buildPopoutQuery, CHANNEL_ORDER as ORDER, parsePopoutQuery, SUMMED_CHANNELS as SUMMED, type FrmAxis, type PolarAngle, type PolarRadius } from './popoutQuery';
 import { clampWindowSec, WINDOW_MAX_SEC, WINDOW_MIN_SEC, WINDOW_SLIDER_MAX_SEC } from './plotWindow';
+import { debounceFlush } from './debounceFlush';
 
 const route = useRoute();
 const panel = computed(() => String(route.params.panel || 'force'));
 const isFrm = computed(() => panel.value === 'frm');
 const isPolar = computed(() => panel.value === 'polar');
 
-const q = new URLSearchParams(window.location.search);
-const mode = ref<string>(q.get('mode') || 'time');
-const SUMMED = ['Fx', 'Fy', 'Fz'];
-const ORDER = [...SUMMED, ...SUB_NAMES];
-const channels = ref<string[]>(q.get('channels')?.split(',').filter(Boolean) || [...SUMMED]);
-const windowSec = ref(clampWindowSec(Number(q.get('window'))));
-const initColormap = ref<string>(q.get('colormap') || 'viridis');
-const initPointSize = ref(Number(q.get('pointSize')) || 2.2);
-const frmAxis = ref<'Fx' | 'Fy' | 'Fz'>((q.get('frmAxis') as 'Fx' | 'Fy' | 'Fz') || 'Fz');
-const initStride = ref(Number(q.get('stride')) || 1);
+// Seeded from the URL the window was opened (or restored) with; written back below (#108).
+const init = parsePopoutQuery(window.location.search);
+const mode = ref<string>(init.mode);
+const channels = ref<string[]>(init.channels);
+const windowSec = ref(init.windowSec);
+const initColormap = ref<string>(init.colormap);
+const initPointSize = ref(init.pointSize);
+const frmAxis = ref<FrmAxis>(init.frmAxis);
+const initStride = ref(init.stride);
 // Polar pop-out: mirrors PolarPanel.vue's radius/angle-source selection so the two surfaces stay
 // in sync when opened from the panel (query params carry the panel's current selection).
-const polarRadius = ref<'Fz' | 'Fxy' | 'Mz'>((q.get('radius') as 'Fz' | 'Fxy' | 'Mz') || 'Fz');
-const polarAngleSource = ref<'tacho' | 'force_vector'>((q.get('angle') as 'tacho' | 'force_vector') || 'tacho');
+const polarRadius = ref<PolarRadius>(init.radius);
+const polarAngleSource = ref<PolarAngle>(init.angle);
 
 // The OS window title (taskbar/alt-tab); the bar itself shows the mode picker instead.
 const title = computed(() => {
@@ -87,8 +88,37 @@ const frmColorScale = computed<ColorScale>(() => ({ ...autoFrmScale.value, color
 // onMounted alone only ever set it once, from the URL the window was opened with.
 watch(title, (t) => { document.title = t; }, { immediate: true });
 
-onMounted(() => { client.connectViaRelay(); });
-onBeforeUnmount(() => client.disconnect());
+// Write this window's settings back into its URL: the desktop shell reopens each pop-out from its
+// current URL, so without this every change was lost (#108). replaceState, not a router push; immediate,
+// so a junk URL is normalised.
+function syncUrl() {
+	const panelKey = isFrm.value ? 'frm' : isPolar.value ? 'polar' : 'force';
+	const q = buildPopoutQuery(panelKey, {
+		mode: mode.value, channels: channels.value, windowSec: viewWindowSec.value,
+		colormap: colormap.value, pointSize: pointSize.value, frmAxis: frmAxis.value, stride: initStride.value,
+		radius: polarRadius.value, angle: polarAngleSource.value,
+	});
+	try { history.replaceState(history.state, '', `${location.pathname}?${q}${location.hash}`); } catch { /* sandboxed or blocked: the settings just won't persist */ }
+}
+// The first write is immediate (it normalises a junk URL); later changes are debounced, because
+// Chromium throttles history.replaceState (~200 calls / 10 s) and a fast slider drag could lose the
+// last value. A pending write is flushed on pagehide / beforeunload, so a clean quit keeps it.
+syncUrl();
+const urlSync = debounceFlush(syncUrl, 250);
+watch([mode, channels, viewWindowSec, colormap, pointSize, frmAxis, initStride, polarRadius, polarAngleSource], () => urlSync.call());
+const flushUrl = () => urlSync.flush();
+
+onMounted(() => {
+	window.addEventListener('pagehide', flushUrl);
+	window.addEventListener('beforeunload', flushUrl);
+	client.connectViaRelay();
+});
+onBeforeUnmount(() => {
+	window.removeEventListener('pagehide', flushUrl);
+	window.removeEventListener('beforeunload', flushUrl);
+	urlSync.flush();
+	client.disconnect();
+});
 </script>
 
 <template>

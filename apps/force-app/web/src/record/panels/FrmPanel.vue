@@ -6,9 +6,24 @@ import { useWorkspace } from '../workspace';
 import LiveFrm from '../LiveFrm.vue';
 import { FrmCloud, ColorScaleEditor, defaultScale, useAutoColorScale, withOpenDisplay, type ColorScale, type Histogram } from '@d1/force-plotting';
 import { appUrl } from '../../appUrl';
+import { buildPopoutQuery } from '../popoutQuery';
 import { FRM_STRIDES } from '../plotPrefs';
+import { frmWaitingForCut } from '../cutStart';
 const w = useWorkspace();
 const editorOpen = ref(false);
+
+// "Start FRM now" (#184): while the live FRM waits for the causal cut detector, the operator can
+// set the origin by hand. The refusal reason (409) is shown beside the button.
+const waitingForCut = computed(() => w.mode.value === 'record'
+	&& frmWaitingForCut(w.client.status.state, w.recordingPrefs.frmFromCut, w.client.status.cutStartSec));
+const startingNow = ref(false);
+const startNowError = ref<string | null>(null);
+async function startFrmNow() {
+	startingNow.value = true; startNowError.value = null;
+	try { await w.client.startCutNow(); }
+	catch (e) { startNowError.value = e instanceof Error ? e.message : String(e); }
+	finally { startingNow.value = false; }
+}
 
 // FrmCloud.vue and LiveFrm.vue both take a ColorScale prop now (Stage 2/3/4 of the colour-scale
 // port); Stage 5 adds the full editor here. `colorScale` is this panel's real source of truth
@@ -40,7 +55,7 @@ const colorDomainLo = computed(() => autoClimits.value?.cmin ?? 0);
 const colorDomainHi = computed(() => autoClimits.value?.cmax ?? 1);
 const colorHistogram = ref<Histogram | null>(null);
 function openLive() {
-	const q = new URLSearchParams({ colormap: w.plot.colormap, pointSize: String(w.plot.pointSize), frmAxis: w.plot.frmAxis, stride: String(w.plot.liveFrmStride) });
+	const q = buildPopoutQuery('frm', { colormap: w.plot.colormap, pointSize: w.plot.pointSize, frmAxis: w.plot.frmAxis, stride: w.plot.liveFrmStride });
 	window.open(appUrl(`/live/frm?${q}`), '_blank', 'noopener,width=1200,height=1000');
 }
 </script>
@@ -60,6 +75,11 @@ function openLive() {
 				title="Live map decimation — keep every Nth point. Raise this for long/dense cuts to keep the map responsive and under its point cap.">
 				<option v-for="s in FRM_STRIDES" :key="s" :value="s">{{ s === 1 ? 'full res' : `1 / ${s}` }}</option>
 			</select>
+			<span v-if="startNowError" class="start-err" role="alert">{{ startNowError }}</span>
+			<button v-if="waitingForCut" class="btn sm start-now" :disabled="startingNow"
+				title="The cut start has not been detected yet. Start the live FRM from the latest sample instead." @click="startFrmNow">
+				Start FRM now
+			</button>
 			<button class="btn icon sm" :class="{ on: editorOpen }" :aria-pressed="editorOpen" title="Colour scale editor" @click="editorOpen = !editorOpen">
 				<span class="material-symbols-rounded">palette</span>
 			</button>
@@ -92,6 +112,7 @@ function openLive() {
 .frm-controls { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
 .axis-seg { margin-right: auto; }
 .cmap { padding: 5px 7px; font-size: var(--fs-sm); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
+.start-err { color: var(--danger); font-size: var(--fs-sm); }
 .psize { width: 84px; accent-color: var(--accent); }
 .cscale-editor { padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .frm-body { flex: 1; min-height: 0; }

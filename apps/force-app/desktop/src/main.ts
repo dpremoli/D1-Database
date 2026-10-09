@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, screen, shell, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { ConfigStore } from './config';
 import { applyMenuBarMode, buildMenu } from './menu';
@@ -11,22 +11,42 @@ import { PopoutTracker } from './popouts';
 import { fetchBusySession, fetchRecorderActivity, confirmQuit, type BusySession } from './quitGuard';
 import { offerScheduledTaskCleanup } from './scheduledTask';
 import { SidecarSupervisor, type SidecarState } from './sidecar';
+import { autoUpdater } from 'electron-updater';
 import { initAutoUpdater, markRecorderStartFailed, startUpdateCheck } from './updater';
+import { APP_USER_MODEL_ID, isUpdateCheckArgv } from './updateNotify';
+import { notifiedMarker, runUpdateCheck } from './updateCheck';
+import { makeUpdateTaskDeps, registerUpdateTaskIpc, syncUpdateTaskOnStartup, updateNotifyPref } from './updateTaskIpc';
 import { classifyWindowOpen, guardNavigation, isAppSender, popoutKey } from './windowOpen';
 import { DEFAULT_MAIN_SIZE, DEFAULT_POPOUT_SIZE, WindowStateStore, placementFor } from './windowState';
 
+// Windows shows a toast only for an app whose AppUserModelID matches its Start-menu shortcut, which
+// electron-builder stamps with the appId (updateNotify.ts keeps the two equal). Packaged only: dev
+// runs the stock electron.exe, which has no such shortcut.
+if (process.platform === 'win32' && app.isPackaged) app.setAppUserModelId(APP_USER_MODEL_ID);
+
 const PREFERRED_PORT = 8200;
 const HEALTH_PATH = '/health';
+
+// #197: the scheduled task launches `Force App.exe --update-check` while the app is closed. That
+// run is only a notifier: no window, no recorder backend, no config or capture access.
+const updateCheckMode = isUpdateCheckArgv(process.argv);
+let updateToast: Notification | null = null; // kept referenced, or the toast's click handler is collected
 
 // Single-instance lock. A second launch would spawn a second sidecar (the port probe would push
 // it to 8201) with both instances writing the same <userData>/config.json and, worse, the same
 // capture storage root — a data-integrity hazard for an instrument. Focus the running window
 // instead. `mainWindow` is assigned later; this closure only runs once the app is up.
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
+// The update-check run never counts as an instance (it has its own, see startUpdateCheckMode).
+const gotLock = updateCheckMode ? false : app.requestSingleInstanceLock();
+if (updateCheckMode) {
+  startUpdateCheckMode();
+} else if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    // The scheduled update check found this instance via the lock and is quitting: not a user
+    // launch, so don't pull the window forward.
+    if (isUpdateCheckArgv(argv)) return;
     restorePopouts();
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
@@ -35,6 +55,50 @@ if (!gotLock) {
   });
 }
 
+/** `--update-check`: tell the operator about a newer version, then quit. Holds the single-instance
+ * lock only to find out whether the app is already running (then this run has nothing to do: the
+ * running app does its own checks). If a real launch arrives meanwhile, it loses the lock to this
+ * process and would silently do nothing, so this process hands over and starts the app itself. */
+function startUpdateCheckMode(): void {
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+    return;
+  }
+  const launchApp = () => {
+    app.releaseSingleInstanceLock();
+    app.relaunch({ args: [] }); // explicitly no flag: the relaunch is a normal start
+    app.exit(0);
+  };
+  app.on('second-instance', (_event, argv) => {
+    if (!isUpdateCheckArgv(argv)) launchApp();
+  });
+  void app.whenReady().then(() => {
+    const marker = notifiedMarker(app.getPath('userData'));
+    void runUpdateCheck({
+      isPackaged: app.isPackaged,
+      checkForUpdate: async () => {
+        autoUpdater.autoDownload = false; // only tell; the app downloads once the operator opens it
+        autoUpdater.autoInstallOnAppQuit = false;
+        const res = await autoUpdater.checkForUpdates();
+        return res?.isUpdateAvailable ? res.updateInfo.version : null;
+      },
+      lastNotified: marker.read,
+      markNotified: marker.write,
+      notify: (n, onClick) => {
+        // Throws (rather than quitting here) so runUpdateCheck does not mark the version as told.
+        if (!Notification.isSupported()) throw new Error('notifications are not supported');
+        const toast = new Notification(n);
+        toast.on('click', onClick);
+        updateToast = toast;
+        toast.show();
+      },
+      launchApp,
+      quit: () => app.quit(),
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    });
+  });
+}
 registerAppScheme();
 
 let mainWindow: BrowserWindow | null = null;
@@ -205,7 +269,14 @@ function fromApp(event: IpcMainInvokeEvent): boolean {
   return isAppSender(event);
 }
 
+let updateTaskPref: ReturnType<typeof updateNotifyPref> | null = null;
+let updateTaskDeps: ReturnType<typeof makeUpdateTaskDeps> | null = null;
+
 function registerShellIpc(): void {
+  // #197: Settings > About's toggle for the update-check scheduled task.
+  updateTaskPref = updateNotifyPref(app.getPath('userData'));
+  updateTaskDeps = makeUpdateTaskDeps({ packaged: app.isPackaged, exePath: process.execPath });
+  registerUpdateTaskIpc(ipcMain, (e) => fromApp(e as IpcMainInvokeEvent), updateTaskPref, updateTaskDeps);
   // #101: Settings > General's "Choose folder…". The browser build has no such dialog and types
   // the path instead; either way the backend validates the choice (POST /storage/config).
   ipcMain.handle('dialog:pickFolder', async (event, defaultPath: unknown) => {
@@ -454,6 +525,7 @@ async function createWindow(): Promise<void> {
   await mainWindow.loadURL('app://force/');
   reopenPopouts();
   void offerScheduledTaskCleanup();
+  if (updateTaskPref && updateTaskDeps) void syncUpdateTaskOnStartup(updateTaskPref, updateTaskDeps);
   initAutoUpdater(() => mainWindow, async () => (await activeSession()) != null);
 }
 

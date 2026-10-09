@@ -19,13 +19,16 @@ blocks over a few passes — whole-capture statistics first (gains, peaks, the d
 fit, the tacho's range), then the corrected |Fz| peak if drift_comp moved it, then the cut window,
 then one pass that derives RPM/revs and fills the live cache, the cut-window diagnostics and the
 .mat. Peak memory is a few blocks' worth however long the capture ran. The only full-length array
-left is the .mat's DATA, which only exists under MAT_MAX_BYTES.
+left is the .mat's v5 DATA, which only exists under MAT_MAX_BYTES; over that, DATA goes to a MATLAB v7.3
+file block by block (mat73.py) and nothing full-length is held (#194).
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import shutil
+import time
 
 import numpy as np
 from scipy.io import savemat
@@ -44,6 +47,7 @@ from .dsp import (
     tacho_threshold,
     uniform_chunk,
 )
+from .mat73 import Mat73Writer, mat73_disk_need
 from .storage import atomic_write_json
 
 log = logging.getLogger("force_app.finalize")
@@ -52,10 +56,10 @@ VAR_NAMES = ["Time"] + SIGNAL_CHANNELS  # 10 columns
 LIVE_CACHE_TARGET = 300_000  # decimate the cache to ~this many points for the client
 # MAT5's data-element header holds a size in a 32-bit field (scipy hits this as an OverflowError,
 # "Python int too large to convert to C long", once the uncompressed array crosses roughly 2GB) --
-# this is a format ceiling, not a scipy bug, so oversized captures skip the .mat write entirely
-# rather than crash finalize (see #40: a ~245M-sample capture allocated 19.6GB for `data` and then
-# blew past this ceiling, taking the whole app down with it). Threshold has generous headroom
-# under the real ~2^31 byte limit.
+# this is a format ceiling, not a scipy bug (see #40: a ~245M-sample capture allocated 19.6GB for
+# `data` and then blew past this ceiling, taking the whole app down with it). Under the threshold
+# the .mat is written as v5 exactly as before; over it (#194) as a MATLAB v7.3 / HDF5 file, streamed
+# block by block. Threshold has generous headroom under the real ~2^31 byte limit.
 MAT_MAX_BYTES = 1_500_000_000
 # Rows per streamed block (40 MB of float32 at the 10-column layout). Peak memory is a small
 # multiple of this — the float64 signals, axis sums, RPM/revs for one block — not of the capture.
@@ -102,6 +106,49 @@ class _Blocks:
                 self._cache.pop(min(self._cache))
             self._cache[k] = block
         return block
+
+
+def _free_bytes(path: str) -> int | None:
+    try:
+        return shutil.disk_usage(path).free
+    except OSError:
+        return None
+
+
+def _mat73_failure(n: int, mat_bytes: int, e: Exception) -> str:
+    return (
+        f"capture has {n:,} samples ({mat_bytes / 1e9:.1f}GB uncompressed) -- too large for MAT5, "
+        f"and writing the MATLAB v7.3 file failed ({type(e).__name__}: {e}). live_cache.bin and "
+        "summary.json were still produced; the raw capture remains on disk at full resolution."
+    )
+
+
+# Windows: an antivirus or the indexer can hold a just-written multi-GB file open for a moment, and
+# os.replace then fails with a sharing violation (PermissionError). Wait it out instead of throwing
+# away a finished file: these are the pauses before the 2nd..6th attempts.
+_REPLACE_DELAYS_S = (0.2, 0.5, 1.0, 2.0, 4.0)
+
+
+def _replace_with_retry(src: str, dst: str) -> None:
+    for delay in _REPLACE_DELAYS_S:
+        try:
+            os.replace(src, dst)
+            return
+        except OSError as e:
+            log.warning("finalize: renaming %s failed (%s); retrying in %.1fs", src, e, delay)
+            time.sleep(delay)
+    os.replace(src, dst)  # last attempt: its error propagates
+
+
+def _abort_mat73(writer: Mat73Writer | None, part: str) -> None:
+    """Drop a half-written v7.3 file. `writer` is None when it could not even be created."""
+    if writer is not None:
+        writer.abort()  # closes and deletes `part`
+        return
+    try:
+        os.remove(part)
+    except OSError:
+        pass
 
 
 def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
@@ -244,13 +291,65 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
             ce_sec = float(time_of(k)[on[-1]])
 
     # --- .mat (v1.0), full resolution: DATA is filled block by block in the final pass ---
+    # Under MAT_MAX_BYTES: the v5 file, one in-memory DATA array. Over it (#194): a MATLAB v7.3
+    # (HDF5) file written block by block, so memory stays bounded however long the cut. Only a
+    # disk too small for that file (or a write error) leaves a cut with no .mat at all.
     extra_names = [c.name for c in cfg.extra_channels]
     var_names = VAR_NAMES + extra_names
     n_mat_cols = 10 + len(extra_names)
     mat_bytes = n * n_mat_cols * 8
-    mat_written = mat_bytes <= MAT_MAX_BYTES
+    mat_path = os.path.join(capture_dir, "capture.mat")
+    mat_part = mat_path + ".part"
+    mat_format: str | None = "v5" if mat_bytes <= MAT_MAX_BYTES else "v7.3"
     mat_skip_reason = None
-    data = np.empty((n, n_mat_cols), dtype=np.float64) if mat_written else None
+    data = np.empty((n, n_mat_cols), dtype=np.float64) if mat_format == "v5" else None
+    mat73: Mat73Writer | None = None
+    metadata = {
+        "fileVersion": 1.0,
+        "SampleName": cfg.sample_name,
+        "Rate": fs,
+        "CutDiameter": cfg.diam,
+        "InnerDiameter": cfg.inner_diam,
+        "Feed": cfg.feed,
+        "MaxRPM": cfg.rpm,
+        "SurfaceSpeed": np.pi * cfg.diam * cfg.rpm / 1000.0,  # m/min
+        "PulsesPerRev": cfg.ppr,
+        "Source": "force-app 2a",
+    }
+    # Stamp any UI-compiled metadata (sample/insert/tool/etc.) into the .mat struct.
+    for k, v in (cfg.extra_metadata or {}).items():
+        if k not in metadata and v not in (None, ""):
+            metadata[str(k)] = v
+    if mat_format == "v7.3":
+        # A capture.mat.part left by a crash during an earlier finalize (this one is a recovery) is
+        # a partial file of up to several GB: remove it before checking the disk, or it would be
+        # counted against the space the new file needs.
+        try:
+            os.remove(mat_part)
+            log.warning("finalize: removed a stale %s", mat_part)
+        except OSError:
+            pass
+        free = _free_bytes(capture_dir)
+        need = mat73_disk_need(n, n_mat_cols)
+        if free is not None and free < need:
+            mat_format = None
+            mat_skip_reason = (
+                f"capture has {n:,} samples ({mat_bytes / 1e9:.1f}GB uncompressed) -- too large for "
+                f"MAT5, and the drive has {free / 1e9:.1f}GB free but a MATLAB v7.3 .mat needs about "
+                f"{need / 1e9:.1f}GB. live_cache.bin and summary.json were still produced; the raw "
+                "capture remains on disk at full resolution."
+            )
+        else:
+            try:
+                mat73 = Mat73Writer(mat_part)
+                mat73.write_variable("metadata", metadata)
+                mat73.write_variable("VariableNames", var_names)
+                mat73.create_data(n, n_mat_cols, blocks.rows)
+            except Exception as e:  # never take finalize down for the .mat
+                log.exception("finalize: could not start the v7.3 .mat for %s", capture_dir)
+                mat_format, mat_skip_reason = None, _mat73_failure(n, mat_bytes, e)
+                _abort_mat73(mat73, mat_part)
+                mat73 = None
     bad_formulas: set[str] = set()
 
     def on_formula_error(name: str, e: virtual_channels.FormulaError) -> None:
@@ -335,17 +434,19 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         lc["rpm"][dst] = rpm[src]
         lc["revs"][dst] = revs[src]
 
-        if data is not None:
+        if data is not None or mat73 is not None:
             # Extra (Aux/virtual) channels, if any were configured for this capture — computed
             # from the SAME gain/drift-corrected signals+axes the fixed 9 already use, so a virtual
             # channel's archived value is in the same units as what it references. Never touches
             # raw.d1raw (already written, verbatim, before finalize ever runs) — only appended to
             # the derived outputs. Formulas are elementwise, so evaluating per block is exact.
-            data[a:b, 0] = t
-            data[a:b, 1:10] = sig
+            # v5: a view into the one in-memory DATA; v7.3: this block's own buffer, written out.
+            out = data[a:b] if data is not None else np.empty((b - a, n_mat_cols))
+            out[:, 0] = t
+            out[:, 1:10] = sig
             if extra_names:
                 hw_extra_raw = np.array(block[:, 10:], dtype=np.float64) if n_cols > 10 else None
-                data[a:b, 10:] = virtual_channels.compute_extra_columns(
+                out[:, 10:] = virtual_channels.compute_extra_columns(
                     cfg.extra_channels,
                     sig[:, :8],
                     sig[:, 8],
@@ -353,6 +454,14 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
                     hw_extra_raw,
                     on_error=on_formula_error,
                 )
+            if mat73 is not None:
+                try:
+                    mat73.write_rows(a, out)
+                except Exception as e:  # disk full mid-write, ...: drop the .mat, keep the rest
+                    log.exception("finalize: writing the v7.3 .mat failed for %s", capture_dir)
+                    mat_format, mat_skip_reason = None, _mat73_failure(n, mat_bytes, e)
+                    _abort_mat73(mat73, mat_part)
+                    mat73 = None
 
     if tacho_measured:
         os_orders, os_amp = spectrum.result()
@@ -367,24 +476,8 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
     }
 
     if data is not None:
-        metadata = {
-            "fileVersion": 1.0,
-            "SampleName": cfg.sample_name,
-            "Rate": fs,
-            "CutDiameter": cfg.diam,
-            "InnerDiameter": cfg.inner_diam,
-            "Feed": cfg.feed,
-            "MaxRPM": cfg.rpm,
-            "SurfaceSpeed": np.pi * cfg.diam * cfg.rpm / 1000.0,  # m/min
-            "PulsesPerRev": cfg.ppr,
-            "Source": "force-app 2a",
-        }
-        # Stamp any UI-compiled metadata (sample/insert/tool/etc.) into the .mat struct.
-        for k, v in (cfg.extra_metadata or {}).items():
-            if k not in metadata and v not in (None, ""):
-                metadata[str(k)] = v
         savemat(
-            os.path.join(capture_dir, "capture.mat"),
+            mat_path,
             {
                 "DATA": data,
                 "metadata": metadata,
@@ -393,12 +486,30 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
             do_compression=True,
         )
         del data
-    else:
-        mat_skip_reason = (
-            f"capture has {n:,} samples ({mat_bytes / 1e9:.1f}GB uncompressed) -- "
-            "too large for the MAT5 format's 32-bit size field. live_cache.bin and summary.json "
-            "were still produced; the raw capture remains on disk at full resolution."
-        )
+    elif mat73 is not None:
+        try:
+            mat73.close()
+        except Exception as e:
+            log.exception("finalize: closing the v7.3 .mat failed for %s", capture_dir)
+            mat_format, mat_skip_reason = None, _mat73_failure(n, mat_bytes, e)
+            _abort_mat73(mat73, mat_part)
+        else:
+            try:
+                _replace_with_retry(mat_part, mat_path)
+            except OSError as e:
+                # The file is complete and valid, only its name is wrong: keep it, never delete it.
+                log.exception(
+                    "finalize: could not rename the finished v7.3 .mat for %s", capture_dir
+                )
+                mat_format = None
+                mat_skip_reason = (
+                    f"capture has {n:,} samples ({mat_bytes / 1e9:.1f}GB uncompressed) -- too large "
+                    f"for MAT5; the MATLAB v7.3 file was written but could not be renamed to "
+                    f"capture.mat ({type(e).__name__}: {e}). It is kept at {mat_part}: rename it "
+                    "by hand. live_cache.bin and summary.json were still produced."
+                )
+
+    mat_written = mat_format is not None
 
     write_d1lc(
         os.path.join(capture_dir, "live_cache.bin"),
@@ -438,6 +549,8 @@ def finalize(capture_dir: str, cfg: RecordConfig, gain: float = 1.0) -> dict:
         # a real 0, instead of trusting a number that was never measured.
         "tacho_measured": bool(tacho_measured),
         "mat_written": mat_written,
+        # "v5" (normal) or "v7.3" (HDF5, a cut over MAT_MAX_BYTES, #194); None when no .mat exists.
+        "mat_format": mat_format,
         "mat_skip_reason": mat_skip_reason,
         "file_sizes_mb": file_sizes,
         # Per-channel ranging (drives converging between-cuts auto-range + records the per-cut N/V).

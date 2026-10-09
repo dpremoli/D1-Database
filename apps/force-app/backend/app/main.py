@@ -60,7 +60,7 @@ from .d1lc import read_d1lc_header
 from .dsp import welch_spectra
 from .labamp import LabAmpClient, LabAmpError, MockLabAmp
 from .labamp_autorange import converge_ranges, effective_bits, recommend_ranges
-from .session import RecordingSession
+from .session import CutStartRefusedError, RecordingSession
 from .sources.nidaq import nidaq_available
 from .sources.replay import ReplaySource
 from .sources.sim import SimSource
@@ -2020,6 +2020,25 @@ async def record_stop() -> dict:
     }
 
 
+@app.post("/record/cut-start")
+def record_cut_start() -> dict:  # plain def: runs in the threadpool, it takes a threading lock
+    """Start the live FRM now (#184), for when the causal cut detector never fires. Sets the cut
+    origin at the latest acquired sample through the same path the detector uses. 409 when not
+    recording, when a cut start is already set (auto or manual), or when the recording does not
+    hold the FRM for the cut (frm_from_cut off); never re-origins.
+
+    A plain `def`, not `async def`: mark_cut_start_now() takes the session's threading `_cut_lock`,
+    which the consumer thread holds per chunk; on the event loop that would stall every request."""
+    if _session is None:
+        raise HTTPException(409, "no recording in progress")
+    try:
+        mark = _session.mark_cut_start_now()
+    except CutStartRefusedError as e:
+        raise HTTPException(409, str(e)) from e
+    log.info("record_cut_start: id=%s manual at t=%.3f", _session.id, mark["t"])
+    return {"id": _session.id, **mark}
+
+
 @app.get("/record/status")
 async def record_status() -> dict:
     return _session.status() if _session else {"state": "idle"}
@@ -2825,7 +2844,15 @@ async def nidaq_validate_formula(body: dict) -> dict:
 
 @app.post("/nidaq/channels/autoassign")
 async def nidaq_autoassign() -> dict:
+    """Replace the saved channel list with the automatic layout (#195). That drops names,
+    sensitivities and virtual channels, so the list it replaces is first kept as
+    nidaq_channels.json.bak (one generation: the next auto-assign overwrites it)."""
     _refuse_nidaq_change_if_busy()
+    try:
+        if os.path.isfile(NIDAQ_CHANNELS_PATH):
+            shutil.copyfile(NIDAQ_CHANNELS_PATH, NIDAQ_CHANNELS_PATH + ".bak")
+    except OSError:
+        log.warning("could not back up %s before auto-assign", NIDAQ_CHANNELS_PATH, exc_info=True)
     channels = chan.autoassign(_devices())
     _save_json(NIDAQ_CHANNELS_PATH, {"channels": channels})
     return {"channels": channels}

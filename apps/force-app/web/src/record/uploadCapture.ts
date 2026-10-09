@@ -39,11 +39,14 @@ export function directusErrorMessage(e: any): string {
 }
 
 // The error shown when the machining_force_analysis insert fails. A cut over the recorder's .mat size
-// limit has no capture.mat, so only the live cache was uploaded: say so instead of "both files".
-export function analysisCreateFailure(e: any, opId: string, matWritten: boolean): Error {
-	const uploaded = matWritten
-		? 'and both files uploaded'
-		: 'and the live cache uploaded (no capture.mat: the cut is over the recorder\'s .mat size limit, so it was skipped)';
+// limit has no capture.mat, so only the live cache was uploaded: say so instead of "both files". A
+// .mat that failed to upload (`matFailed`) is a third case: the cache is in, the .mat is kept locally.
+export function analysisCreateFailure(e: any, opId: string, matWritten: boolean, matFailed = false): Error {
+	const uploaded = matFailed
+		? 'and the live cache uploaded (the .mat did not upload; it is kept locally)'
+		: matWritten
+			? 'and both files uploaded'
+			: 'and the live cache uploaded (no capture.mat: the cut is over the recorder\'s .mat size limit, so it was skipped)';
 	return new Error(`linking the capture failed - ${directusErrorMessage(e)} (the run was logged as operation ${opId}, ${uploaded}, but the analysis record could not be created)`);
 }
 
@@ -65,37 +68,69 @@ export async function uploadFile(blob: Blob, filename: string): Promise<string> 
 	}
 }
 
-// A capture too large for the MAT5 format (see finalize.py's MAT_MAX_BYTES) never had a capture.mat
-// written at all -- fetching it would 404 and abort the whole upload, so it comes back null instead.
+// The two local reads, settled independently: a multi-GB capture.mat failing to read (or to upload,
+// see uploadCaptureFiles) must not take the small live cache down with it, or the cut never reaches
+// the database. A file `progress` already holds, or a capture with no capture.mat (over MAT_MAX_BYTES,
+// where fetching it would 404), is not fetched and resolves to null.
 // `signal` lets a caller that started this early cancel it (e.g. when the run insert it was
 // racing fails), so a capture of hundreds of MB isn't downloaded for nothing.
-export function fetchCaptureBlobs(matUrl: string, cacheUrl: string, matWritten: boolean, signal?: AbortSignal): Promise<[Blob | null, Blob]> {
+export interface CaptureBlobReads { mat: Promise<Blob | null>; cache: Promise<Blob | null> }
+export function fetchCaptureBlobs(
+	matUrl: string, cacheUrl: string, matWritten: boolean, signal?: AbortSignal, progress: UploadProgress = {},
+): CaptureBlobReads {
 	const get = (url: string, what: string) =>
 		fetch(url, { signal }).then((r) => { if (!r.ok) throw new Error(`${what} fetch failed`); return r.blob(); });
-	return Promise.all([
-		matWritten ? get(matUrl, 'capture.mat') : Promise.resolve(null),
-		get(cacheUrl, 'live_cache.bin'),
-	]);
+	const reads: CaptureBlobReads = {
+		mat: matWritten && progress.matFileId === undefined ? get(matUrl, 'capture.mat') : Promise.resolve(null),
+		cache: progress.cacheFileId === undefined ? get(cacheUrl, 'live_cache.bin') : Promise.resolve(null),
+	};
+	// Each is awaited later (and its failure handled there), not left as an unhandled rejection here.
+	reads.mat.catch(() => {});
+	reads.cache.catch(() => {});
+	return reads;
 }
 
-// Uploads what `progress` does not already hold, recording each file's id as soon as it lands: if
-// one of the two fails the other is still waited for and remembered, so a retry uploads only the
-// missing one instead of both again.
+/** A .mat that could not be read or uploaded; `bytes` is its size when it was read. */
+export interface MatFailure { reason: string; bytes: number | null }
+
+function sizeText(bytes: number | null): string {
+	if (bytes == null) return '';
+	return bytes >= 1e9 ? ` (${(bytes / 1e9).toFixed(1)} GB)` : ` (${Math.max(1, Math.round(bytes / 1e6))} MB)`;
+}
+
+// The error thrown AFTER the run, the live cache and the analysis row are saved but the .mat is not.
+// An error (not a success) so the save dialog / Local Captures keep offering Retry upload.
+export function matNotUploadedError(f: MatFailure, opId: string): Error {
+	return new Error(`the .mat${sizeText(f.bytes)} didn't upload - ${f.reason}. The run and the live cache are saved (operation ${opId}); the .mat is kept locally. Retry upload sends it.`);
+}
+
+// Uploads what `progress` does not already hold, recording each file's id as soon as it lands. The
+// two are independent, and both are waited for (so whichever landed is remembered even if the other
+// failed). The live cache failing throws (the analysis row is useless without it). The .mat failing
+// to read or upload comes back as a MatFailure instead, so the caller can still create the analysis
+// row (directus_files_id null) and report it honestly; a retry then uploads only the .mat and links
+// it to that row.
 export async function uploadCaptureFiles(
-	captureId: string, matBlob: Blob | null, cacheBlob: Blob, progress: UploadProgress = {},
-): Promise<[string | null, string]> {
-	const mat = progress.matFileId !== undefined
-		? Promise.resolve(progress.matFileId)
-		: matBlob
-			? uploadFile(matBlob, `${captureId}.mat`).then((id) => (progress.matFileId = id))
-			: Promise.resolve((progress.matFileId = null));
-	const cache = progress.cacheFileId !== undefined
-		? Promise.resolve(progress.cacheFileId)
-		: uploadFile(cacheBlob, `${captureId}_live_cache.bin`).then((id) => (progress.cacheFileId = id));
-	const [m, c] = await Promise.allSettled([mat, cache]);
-	if (m.status === 'rejected') throw m.reason;
+	captureId: string, reads: CaptureBlobReads, progress: UploadProgress, matWritten: boolean,
+): Promise<MatFailure | null> {
+	let bytes: number | null = null;
+	const cache = async () => {
+		if (progress.cacheFileId !== undefined) return;
+		const blob = await reads.cache;
+		if (!blob) throw new Error('live_cache.bin was not read');
+		progress.cacheFileId = await uploadFile(blob, `${captureId}_live_cache.bin`);
+	};
+	const mat = async () => {
+		if (progress.matFileId !== undefined) return;
+		if (!matWritten) { progress.matFileId = null; return; }   // nothing to upload
+		const blob = await reads.mat;
+		if (!blob) throw new Error('capture.mat was not read');
+		bytes = blob.size;
+		progress.matFileId = await uploadFile(blob, `${captureId}.mat`);
+	};
+	const [c, m] = await Promise.allSettled([cache(), mat()]);
 	if (c.status === 'rejected') throw c.reason;
-	return [m.value, c.value];
+	return m.status === 'rejected' ? { reason: m.reason?.message || String(m.reason), bytes } : null;
 }
 
 export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<string> {
@@ -156,9 +191,8 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 	// wait for it, so a failed insert never leaves orphaned files -- and cancels the reads.
 	const blobReads = new AbortController();
 	let blobs = needsBlobs(progress, matWritten)
-		? fetchCaptureBlobs(info.matUrl, info.cacheUrl, matWritten, blobReads.signal)
+		? fetchCaptureBlobs(info.matUrl, info.cacheUrl, matWritten, blobReads.signal, progress)
 		: null;
-	blobs?.catch(() => {});   // surfaced by the await below, not as an unhandled rejection
 	let opId: string;
 	let existing: boolean;
 	try {
@@ -184,16 +218,25 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 	if (blobs && !needsBlobs(progress, matWritten)) { blobReads.abort(); blobs = null; }
 
 	let cacheBlob: Blob | null = null;
+	let matFailure: MatFailure | null = null;
 	if (blobs) {
-		const [matBlob, cb] = await blobs;
-		cacheBlob = cb;
-		await uploadCaptureFiles(info.captureId, matBlob, cb, progress);
+		try {
+			matFailure = await uploadCaptureFiles(info.captureId, blobs, progress, matWritten);
+		} finally {
+			blobReads.abort();   // a failed cache upload must not leave the .mat download running
+		}
+		cacheBlob = await blobs.cache;
 	}
+	let linked: boolean;
 	try {
 		// Completes an existing but partial analysis row (PATCH of the missing links), else false.
-		if (await analysisAlreadyLinked(progress)) return opId;
+		linked = await analysisAlreadyLinked(progress, matWritten);
 	} catch (e: any) {
 		throw new Error(`linking the capture failed - ${directusErrorMessage(e)} (the run was logged as operation ${opId}, but its existing analysis record could not be completed)`);
+	}
+	if (linked) {
+		if (matFailure) throw matNotUploadedError(matFailure, opId);
+		return opId;
 	}
 	const matFileId = progress.matFileId ?? null;
 	const cacheFileId = progress.cacheFileId!;
@@ -228,9 +271,10 @@ export async function uploadCaptureColdStart(info: ColdUploadInfo): Promise<stri
 			matlab_version: 'force-app-direct',
 			processed_at: new Date().toISOString(),
 		});
-		progress.analysisDone = true;
+		progress.analysisDone = !matFailure;
 	} catch (e: any) {
-		throw analysisCreateFailure(e, opId, matWritten);
+		throw analysisCreateFailure(e, opId, matWritten, !!matFailure);
 	}
+	if (matFailure) throw matNotUploadedError(matFailure, opId);
 	return opId;
 }

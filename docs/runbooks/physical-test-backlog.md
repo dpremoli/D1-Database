@@ -1006,6 +1006,60 @@ when picked up):
 - [ ] **#137 release notes.** After the 0.1.35 update, Settings → About and the update dialog show
   New / Improved / Fixed groups. Since #198 (0.1.35).
 
+### Post-rig reports batch (2026-10-08, 0.1.36)
+- [ ] **#192 Start next cut.** Record a cut, save it, choose Open in Plot and come back: Start reads
+  "Start next cut"; the next cut has sequence +1, an empty chips ref, new-edge off and a new Cut ID.
+  Press "Clear for next cut" first instead: Start reads "Start" and the sequence moves on only once.
+  Since the 0.1.36 batch PR.
+- [ ] **#194 long cuts get a v7.3 .mat.** Record past the v5 limit (about 6 min at 51.2 kHz with 10
+  columns) on the rig PC: finalize writes `capture.mat` as MATLAB v7.3 in acceptable time and disk;
+  the save dialog says so. In MATLAB, `load('capture.mat')` and `matfile` give the same DATA,
+  VariableNames and metadata as a v5 capture; `process_force.m` bakes it. Upload the multi-GB .mat
+  through Directus (check `FILES_MAX_UPLOAD_SIZE`, the Caddy body limit, and that the app doesn't run
+  out of memory) and Bake it from the Plot page. If the .mat upload fails (pull the network
+  mid-upload), the cut still reaches the database without it and the message names the .mat; Retry
+  upload sends only the .mat and links it. The frozen backend loads h5py, and still starts (long cuts
+  then get no .mat and a reason) with a conflicting `hdf5.dll` on PATH. With antivirus scanning the
+  captures folder, a long cut's .mat still lands (the rename is retried). Since the 0.1.36 batch PR.
+- [ ] **#184 Start FRM now.** On a real cut where the detector stays silent ("Detect cut start" on),
+  press Start FRM now: the FRM spiral starts from that moment, the Cut cell shows a time and
+  summary.json says `cut_start_source: "manual"`. The button disappears when the detector fires
+  first; a double press shows the refusal text. Since the 0.1.36 batch PR.
+- [ ] **#195 Re-assign channels.** Unplug or swap a 9234 module: the Channels pre-flight item fails
+  naming the missing ports, Re-assign maps to the real `cDAQ1ModN` ports, and is refused during a
+  recording. A fresh config with no force channels bound warns the same way. Since the 0.1.36 batch PR.
+- [ ] **#197 update notifications.** Packaged app: a toast when an update has downloaded and the
+  window is minimised or behind another window, and clicking it brings the app forward. After
+  install, `schtasks /query /tn ForceAppUpdateCheck` shows a logon and a daily trigger with no UAC
+  prompt. With the app closed and a newer version on the feed, the scheduled run shows a toast and
+  no window or backend; clicking it opens the app. With the app running, the scheduled run exits
+  without touching the window. Turning the toggle off in Settings > About removes the task;
+  uninstalling removes it too. On a PC where policy blocks creating the task, the toggle says
+  "Couldn't set up the scheduled check" and doesn't stay ticked. Since the 0.1.36 batch PR.
+- [ ] **#197 update prompt (packaged app).** With an update downloaded while the sign-in page is
+  showing, typing the password shows no dialog and keeps focus. After sign-in the in-app card
+  appears in the corner; Enter in a text field does not install; "Not now" hides it until the next
+  launch while Settings → About still offers the install; during a recording the card stays hidden.
+  "Restart and update" installs and relaunches. With the window minimised when the download
+  finishes, the taskbar button flashes until the window is focused. Help → Check for updates while
+  offline after a download keeps the card and "Restart and update" working. A page pop-out window
+  shows the same card and its "Installing…" state. On /record the card sits bottom-centre and
+  covers neither Start nor Stop with the panel docked on either side. Since the 0.1.36 batch PR.
+- [ ] **#108 pop-out settings survive a relaunch (packaged app).** Change the mode, channels or
+  colour map inside a Live Force / FRM / Polar pop-out, quit, relaunch: it reopens as changed.
+  Since the 0.1.36 batch PR.
+- [ ] **#193 log colours.** Settings → Logs with a real backend log: the type colours and the Type
+  filter read well in light and dark. Since the 0.1.36 batch PR.
+- [ ] **#191 loading screens.** On the Plot page against d1-server, Figure, Lite, Full and a
+  filtered single pane show the same centred loading veil (Full keeps a corner pill while it
+  streams). Since the 0.1.36 batch PR.
+- [ ] **Electron 44 in the packaged app.** 0.1.36 is the first installer built on Electron 44
+  (`electron-builder.yml` was still pinned to 43 after the dependency bump). Install it on the rig
+  PC: the app starts, signs in, records a cut, opens pop-outs and updates itself. Since the 0.1.36
+  batch PR.
+- [ ] **#30 settings scroll.** On the rig PC, switching Settings tabs no longer animates or jumps
+  (fixed in 0.1.33; reopened for confirmation).
+
 ### Release pipeline (CI/CD overhaul)
 - [ ] **NI-DAQmx detection on a PC without the driver.** Install the packaged app on a Windows PC
   with no NI-DAQmx driver (not the rig). Connectivity Doctor / self-check shows "NI-DAQmx runtime

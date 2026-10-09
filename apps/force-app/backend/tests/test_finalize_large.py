@@ -70,7 +70,8 @@ def test_a_long_capture_finalizes_in_bounded_memory(big_capture):
 
     assert peak < PEAK_BUDGET
     assert summary["n"] == N
-    assert summary["mat_written"] is False  # 4 GB of DATA: over MAT_MAX_BYTES, skipped as before
+    # 4 GB of DATA: over MAT_MAX_BYTES, so a streamed MATLAB v7.3 file (#194), not a 4 GB array.
+    assert summary["mat_written"] is True and summary["mat_format"] == "v7.3"
     assert summary["tacho_measured"] is True
     # Exact sample times (float64), which the float32 column could not resolve at t ~ 1650 s.
     assert summary["cut_window_sec"] == [CUT[0] / FS, CUT[1] / FS]

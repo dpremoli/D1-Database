@@ -17,6 +17,7 @@ const w = useWorkspace();
 const hints = shortcutHints(isMacPlatform());
 const startKeys = hints[0].keys;
 const stopKeys = hints[1].keys;
+const newKeys = hints[3].keys;
 const hintsOpen = ref(false);
 
 // #84: a rate the assigned NI-DAQ modules can't do is caught here, before Start, instead of as a
@@ -30,6 +31,18 @@ const attention = computed(() => attentionItems(w.preflight.value));
 const LEVEL_ICON: Record<PreflightLevel, string> = {
 	ok: 'check_circle', info: 'info', warn: 'warning', fail: 'error', skip: 'radio_button_unchecked',
 };
+// #195: Re-assign channels asks first (the confirm names what will change), then runs the backend's
+// auto-assign and re-reads the pre-flight. Never offered mid-recording: the list is hidden while locked.
+const reassignAsk = ref(false);
+const reassignBusy = ref(false);
+const reassignErr = ref('');
+const reassignItem = computed(() => attention.value.find((it) => it.action?.kind === 'reassign') ?? null);
+async function runReassign() {
+	reassignBusy.value = true; reassignErr.value = '';
+	try { await w.reassignChannels(); reassignAsk.value = false; }
+	catch (e: any) { reassignErr.value = e?.message || 'Re-assign failed.'; }
+	finally { reassignBusy.value = false; }
+}
 function showMe(it: PreflightItem) {
 	const f = it.focus;
 	if (!f) return;
@@ -66,13 +79,14 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
 			</div>
 			<div class="actions">
 				<button v-if="!w.locked.value" class="btn success start" :disabled="w.startDisabled.value"
-					:title="w.sampleRateBlocker.value || `Start (${startKeys})`" @click="w.requestStart()">
-					<span class="material-symbols-rounded">fiber_manual_record</span> Start
+					:title="w.sampleRateBlocker.value || (w.isDone.value ? `Start the next cut: steps the cut sequence and clears the Cut ID, chips and new-edge marks first (${startKeys})` : `Start (${startKeys})`)"
+					data-testid="start-btn" @click="w.requestStart()">
+					<span class="material-symbols-rounded">fiber_manual_record</span> {{ w.isDone.value ? 'Start next cut' : 'Start' }}
 				</button>
 				<button v-else class="btn danger stop" :disabled="w.stopDisabled.value" :title="`Stop (${stopKeys})`" @click="w.stop()">
 					<span class="material-symbols-rounded">stop</span> {{ w.isFinalizing.value ? 'Finalizing…' : 'Stop' }}
 				</button>
-				<button v-if="w.isDone.value" class="btn" @click="w.newRun()">New</button>
+				<button v-if="w.isDone.value" class="btn" data-testid="clear-next-cut" :title="`Clear for the next cut without recording: steps the cut sequence and clears the Cut ID, chips and new-edge marks (${newKeys})`" @click="w.newRun()">Clear for next cut</button>
 			</div>
 		</div>
 		<div v-if="w.mode.value !== 'playback'" class="kbd-hint">
@@ -97,6 +111,18 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
 				{{ it.detail }}
 				<button v-if="it.focus" type="button" class="linkbtn" @click="showMe(it)">Show me</button>
 			</p>
+			<p v-if="reassignItem && !reassignAsk" class="pf-line">
+				<button type="button" class="btn sm" data-testid="preflight-reassign" :disabled="w.locked.value || reassignBusy"
+					@click="reassignErr = ''; reassignAsk = true">{{ reassignItem.action!.label }}</button>
+			</p>
+			<p v-if="reassignItem && reassignAsk" class="pf-confirm stack" role="alert" data-testid="preflight-reassign-confirm">
+				<span>{{ reassignItem.action!.confirm }}</span>
+				<span class="pf-btns">
+					<button type="button" class="btn sm" data-testid="preflight-reassign-go" :disabled="w.locked.value || reassignBusy" @click="runReassign">Re-assign</button>
+					<button type="button" class="linkbtn" :disabled="reassignBusy" @click="reassignAsk = false">Cancel</button>
+				</span>
+			</p>
+			<p v-if="reassignErr" class="err">{{ reassignErr }}</p>
 			<p v-if="w.sampleConfirmOpen.value" class="pf-confirm" role="alert" data-testid="preflight-sample-confirm">
 				<span>Start without a Sample?</span>
 				<button type="button" class="btn sm" data-testid="start-anyway" @click="w.startAnyway()">Start anyway</button>
@@ -117,8 +143,11 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
    until their labels clip. The 999:1 grow split keeps Start at its natural width while the two
    share a row; alone on its row it takes the whole width. */
 .actions-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
-.actions { flex: 1 0 auto; display: flex; justify-content: flex-end; gap: 8px; }
-.actions .btn { flex: 1 0 auto; justify-content: center; }
+/* Wraps: after a cut this holds "Start next cut" and "Clear for next cut", which together are wider
+   than the default ~220 px Record column ("Clear for ne" was clipped). Wrapped, each takes a full
+   row; Start stays first and keeps its colour. min-width: 0 lets the row shrink with the panel. */
+.actions { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.actions .btn { flex: 1 0 auto; min-width: 0; justify-content: center; }
 /* Acquisition's processing toggles — relocated from a Details card (see RecordingOptions.vue). */
 .segproc { flex: 999 0 auto; display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .segproc button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 4px; background: var(--bg-3); white-space: nowrap; border: none; border-right: 1px solid var(--border); color: var(--text-dim); font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.01em; cursor: pointer; }
@@ -148,6 +177,8 @@ const failure = computed(() => (w.st.state === 'error' && w.st.error
 .pf-line { margin: 0; font-size: var(--fs-sm); color: var(--text-dim); }
 .pf-line.warn { color: var(--warn); }
 .pf-line.fail { color: var(--danger); }
+.pf-confirm.stack { flex-direction: column; align-items: stretch; font-weight: 500; }
+.pf-btns { display: flex; align-items: center; gap: 10px; }
 .pf-confirm { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0; padding: 4px 8px; font-size: var(--fs-sm); font-weight: 600; color: var(--warn); border: 1px solid var(--warn); border-radius: 8px; }
 .linkbtn { padding: 0; border: none; background: none; color: var(--accent); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 </style>

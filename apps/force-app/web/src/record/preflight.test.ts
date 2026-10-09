@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-	attentionItems, channelConfigIssues, computePreflight, diskRunwayMinutes, formatRunway, isCustomChannelList, missingFromChassis, needsSampleConfirm,
+	attentionItems, channelConfigIssues, computePreflight, diskRunwayMinutes, formatRunway, isCustomChannelList, needsSampleConfirm,
 	type ChannelLike, type PreflightInput, type PreflightItem,
 } from './preflight';
+import { missingFromChassis } from './channelBindings';
 
 const CORE = ['Fx1', 'Fx2', 'Fy1', 'Fy2', 'Fz1', 'Fz2', 'Fz3', 'Fz4', 'Tacho'];
 const goodChannels = (): ChannelLike[] => CORE.map((name, i) => ({ name, physical: `cDAQ1Mod${1 + Math.floor(i / 4)}/ai${i % 4}`, source: 'hardware' }));
@@ -260,5 +261,42 @@ describe('channels against the connected hardware (#213)', () => {
 		expect(bad.detail).toContain('Missing_Mod9/ai0');
 		const fine = byId(computePreflight(input({ channelsCustom: true, channelList: chassis, chassisInputs: chassis })), 'channels');
 		expect(fine.level).toBe('skip');
+	});
+});
+
+describe('re-assign offer (#195)', () => {
+	const chassis = goodChannels().map((c) => c.physical as string);
+
+	it('a module that is gone from the scan fails, names the roles, and offers Re-assign', () => {
+		const scan = chassis.filter((p) => !p.startsWith('cDAQ1Mod2/'));
+		const c = byId(computePreflight(input({ chassisInputs: scan })), 'channels');
+		expect(c.level).toBe('fail');
+		expect(c.detail).toContain('cDAQ1Mod2/ai0 is not on the connected NI-DAQ hardware (Fz1)');
+		expect(c.action?.kind).toBe('reassign');
+		expect(c.action?.label).toBe('Re-assign channels');
+		expect(c.action?.confirm).toContain('cDAQ1Mod2/ai0 (Fz1)');
+		expect(c.action?.confirm).toContain('replaces the whole saved channel list');
+	});
+
+	it('no force channel bound while the scan has ports warns and offers Re-assign', () => {
+		const unbound = goodChannels().map((c) => ({ ...c, physical: null }));
+		const c = byId(computePreflight(input({ channels: unbound, chassisInputs: chassis })), 'channels');
+		expect(c.level).toBe('warn');
+		expect(c.action?.kind).toBe('reassign');
+		expect(c.action?.confirm).toContain('No force channel has an input assigned');
+	});
+
+	it('no offer when everything is there, on a simulated tree, or with an empty scan', () => {
+		expect(byId(computePreflight(input({ chassisInputs: chassis })), 'channels').action).toBeUndefined();
+		const unbound = goodChannels().map((c) => ({ ...c, physical: null }));
+		expect(byId(computePreflight(input({ channels: unbound, chassisInputs: null })), 'channels').action).toBeUndefined();
+		expect(byId(computePreflight(input({ channels: unbound, chassisInputs: [] })), 'channels').action).toBeUndefined();
+	});
+
+	it('no offer for a rotating-dyno layout, which the stationary auto-assign would replace', () => {
+		const rot = [...goodChannels(), { name: 'Mz', role: 'Mz', physical: 'gone/ai0', source: 'hardware' as const }];
+		const c = byId(computePreflight(input({ channels: rot, chassisInputs: chassis })), 'channels');
+		expect(c.level).toBe('fail');
+		expect(c.action).toBeUndefined();
 	});
 });

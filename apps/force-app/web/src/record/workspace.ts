@@ -14,7 +14,7 @@ import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
 import { loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
 import { clearSetupPrefs, defaultSetupPrefs, loadSetupPrefs, pickSetup, saveSetupPrefs, type SetupPrefs } from './setupPrefs';
-import { analysisCreateFailure, directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
+import { analysisCreateFailure, directusErrorMessage, fetchCaptureBlobs, matNotUploadedError, numOrNull, uploadCaptureFiles, type MatFailure } from './uploadCapture';
 import { adoptExistingAnalysis, analysisAlreadyLinked, ensureOperation, needsBlobs, uploadProgress } from './uploadResume';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
 import { isFetchFailure } from '../netErrors';
@@ -23,7 +23,7 @@ import { spotlight } from '../ui/spotlight';
 import { FIELD_FOCUS, StartRequestError, sampleRateIssue, suggestedSampleRate } from './recordingErrors';
 import { nidaqHardware } from './nidaqHardware';
 import { railBannerText } from './railing';
-import { computePreflight, isCustomChannelList, needsSampleConfirm, parseChannelList, type AmpReading, type ChannelLike } from './preflight';
+import { computePreflight, isCustomChannelList, modelPhysicals, needsSampleConfirm, parseChannelList, type AmpReading, type ChannelLike } from './preflight';
 import { hwStatus } from './hwStatus';
 import { nidaqApi } from '../nidaq/nidaqApi';
 import { authStore } from '../authStore';
@@ -330,6 +330,14 @@ export function createWorkspace() {
 		preflightReads.amp = amp.status === 'fulfilled' ? { reachable: !!amp.value.reachable, mode: amp.value.mode ?? null, mock: !!amp.value.mock } : null;
 		preflightReads.channels = chans.status === 'fulfilled' ? chans.value.channels : null;
 	}
+	// #195: the pre-flight's "Re-assign channels". The backend refuses it mid-recording (409) as well.
+	// The Record page's own list follows the new model, or it would read as a hand-edited one.
+	async function reassignChannels() {
+		if (locked.value) return;
+		const { channels } = await nidaqApi.autoassign();
+		nidaqChannels.value = modelPhysicals(channels).join('\n');
+		await refreshPreflight();
+	}
 	const preflight = computed(() => computePreflight({
 		source: source.value,
 		sampleSet: !!link.sampleId,
@@ -576,6 +584,9 @@ export function createWorkspace() {
 		try {
 			if (!(await checkAlarmsBeforeStart())) return;
 			if (!(await checkDiskBeforeStart())) return;
+			// #192: Start on a finished cut is "Start next cut": step the per-cut fields first, as New
+			// does. Checked after the prompts above so a New pressed during one isn't stepped twice.
+			if (st.state === 'done' && source.value !== 'replay') newRun();
 			errMsg.value = null; finishedCache.value = null;
 			alarms.reset();
 			// Replay is played, not recorded (it throws below): it keeps stamping lazily in metaObj().
@@ -806,9 +817,8 @@ export function createWorkspace() {
 		// the decimated cache; directus_files_id just goes in as null.
 		const blobReads = new AbortController();
 		let blobs = needsBlobs(progress, matWritten)
-			? fetchCaptureBlobs(client.matUrl(id), client.cacheUrl(id), matWritten, blobReads.signal)
+			? fetchCaptureBlobs(client.matUrl(id), client.cacheUrl(id), matWritten, blobReads.signal, progress)
 			: null;
-		blobs?.catch(() => {});   // surfaced by the await below, not as an unhandled rejection
 		let opId: string;
 		let existing: boolean;
 		try {
@@ -821,15 +831,26 @@ export function createWorkspace() {
 		// An existing analysis row may already link some files: don't upload those again.
 		await adoptExistingAnalysis(progress, opId, existing);
 		if (blobs && !needsBlobs(progress, matWritten)) { blobReads.abort(); blobs = null; }
+		// The .mat is independent of the cache: if it fails (reading or uploading a multi-GB file),
+		// the row is still created with directus_files_id null and a retry sends just the .mat.
+		let matFailure: MatFailure | null = null;
 		if (blobs) {
-			const [matBlob, cacheBlob] = await blobs;
-			await uploadCaptureFiles(id, matBlob, cacheBlob, progress);
+			try {
+				matFailure = await uploadCaptureFiles(id, blobs, progress, matWritten);
+			} finally {
+				blobReads.abort();   // a failed cache upload must not leave the .mat download running
+			}
 		}
+		let linked: boolean;
 		try {
 			// Completes an existing but partial analysis row (PATCH of the missing links), else false.
-			if (await analysisAlreadyLinked(progress)) return opId;
+			linked = await analysisAlreadyLinked(progress, matWritten);
 		} catch (e: any) {
 			throw new Error(`linking the capture failed - ${directusErrorMessage(e)} (the run was logged as operation ${opId}, but its existing analysis record could not be completed)`);
+		}
+		if (linked) {
+			if (matFailure) throw matNotUploadedError(matFailure, opId);
+			return opId;
 		}
 		const matFileId = progress.matFileId ?? null;
 		const cacheFileId = progress.cacheFileId!;
@@ -860,10 +881,11 @@ export function createWorkspace() {
 			matlab_version: 'force-app-direct',
 			processed_at: new Date().toISOString(),
 		});
-		progress.analysisDone = true;
+		progress.analysisDone = !matFailure;
 		} catch (e: any) {
-			throw analysisCreateFailure(e, opId, matWritten);
+			throw analysisCreateFailure(e, opId, matWritten, !!matFailure);
 		}
+		if (matFailure) throw matNotUploadedError(matFailure, opId);
 		return opId;
 	}
 
@@ -1143,7 +1165,7 @@ export function createWorkspace() {
 		// converging between-cuts auto-range
 		converge, convergeAfterCut,
 		// R4: pre-flight checklist and the Start flow that honours it
-		preflight, refreshPreflight, requestStart, startAnyway, sampleConfirmOpen,
+		preflight, refreshPreflight, reassignChannels, requestStart, startAnyway, sampleConfirmOpen,
 		// R5: live rail warning banner (once per cut)
 		railBanner, dismissRailBanner,
 		// Recording-behaviour toggles (Detect cut start / Drift compensation / Converging auto-range)

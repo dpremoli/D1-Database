@@ -419,3 +419,35 @@ def test_put_channels_rejects_formulas_that_would_crash_at_record_time(
         assert not path.exists()
         res = client.post("/nidaq/channels/validate-formula", json={"formula": formula})
         assert res.json()["valid"] is False
+
+
+# ---- #195: auto-assign keeps the list it replaces ----
+
+
+def test_autoassign_keeps_the_replaced_channel_list_as_a_bak(monkeypatch, tmp_path):
+    path = tmp_path / "nidaq_channels.json"
+    monkeypatch.setattr(main, "NIDAQ_CHANNELS_PATH", str(path))
+    monkeypatch.setattr(main, "NIDAQ_SIM_PATH", str(tmp_path / "nidaq_sim.json"))
+    bak = tmp_path / "nidaq_channels.json.bak"
+    with TestClient(fastapi_app) as client:
+        mine = {"channels": [chan.make_channel("Probe", "Aux", physical="cDAQ1Mod3/ai1")]}
+        assert client.put("/nidaq/channels", json=mine).status_code == 200
+        before = path.read_text()
+        assert not bak.exists()
+
+        assert client.post("/nidaq/channels/autoassign").status_code == 200
+        assert bak.read_text() == before  # the operator's list, byte for byte
+        assert path.read_text() != before  # the live file is the automatic layout now
+
+        # One generation: the next auto-assign overwrites the backup with what it replaced.
+        second = path.read_text()
+        assert client.post("/nidaq/channels/autoassign").status_code == 200
+        assert bak.read_text() == second
+
+
+def test_autoassign_with_no_saved_list_makes_no_bak(monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "NIDAQ_CHANNELS_PATH", str(tmp_path / "nidaq_channels.json"))
+    monkeypatch.setattr(main, "NIDAQ_SIM_PATH", str(tmp_path / "nidaq_sim.json"))
+    with TestClient(fastapi_app) as client:
+        assert client.post("/nidaq/channels/autoassign").status_code == 200
+    assert not (tmp_path / "nidaq_channels.json.bak").exists()

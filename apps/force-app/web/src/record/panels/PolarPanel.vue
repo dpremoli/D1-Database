@@ -9,6 +9,7 @@ import { computed } from 'vue';
 import { useWorkspace } from '../workspace';
 import { PolarPlot, COLORMAPS, colormapLabel, type PolarParams } from '@d1/force-plotting';
 import { appUrl } from '../../appUrl';
+import { buildPopoutQuery } from '../popoutQuery';
 
 const w = useWorkspace();
 const RADII = ['Fz', 'Fxy', 'Mz'] as const;
@@ -34,9 +35,9 @@ const params = computed<PolarParams>(() => ({
 }));
 
 function openLive() {
-	const q = new URLSearchParams({
+	const q = buildPopoutQuery('polar', {
 		radius: w.plot.polarRadius, angle: w.plot.polarAngleSource,
-		colormap: w.plot.colormap, pointSize: String(w.plot.pointSize),
+		colormap: w.plot.colormap, pointSize: w.plot.pointSize,
 	});
 	window.open(appUrl(`/live/polar?${q}`), '_blank', 'noopener,width=1000,height=1000');
 }

@@ -3,13 +3,13 @@
 // read-only /app/ browser surface (infra/caddy/Caddyfile), where it is undefined.
 export {};
 
-type UpdateStatus =
+export type UpdateStatus =
   | { state: 'idle' }
   | { state: 'checking' }
   | { state: 'available'; version: string }
   | { state: 'not-available' }
   | { state: 'downloading'; percent: number }
-  | { state: 'downloaded'; version: string }
+  | { state: 'downloaded'; version: string; notes: string }
   | { state: 'installing'; version: string }
   | { state: 'error'; message: string };
 
@@ -26,6 +26,10 @@ declare global {
       onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
       /** Native folder picker (#101); the chosen folder, or null if cancelled. */
       pickFolder: (defaultPath?: string) => Promise<string | null>;
+      /** Notify about updates while the app is closed (#197): a Windows scheduled task the desktop shell
+       * creates and removes. `supported` is false outside the installed Windows app. */
+      getUpdateNotifyWhenClosed: () => Promise<{ supported: boolean; enabled: boolean; active: boolean }>;
+      setUpdateNotifyWhenClosed: (enabled: boolean) => Promise<{ ok: boolean; enabled: boolean; reason?: string }>;
       /** Stops and respawns the recorder backend (R11). Refused while a recording is running or
        * being saved; `reason` says why. Resolves once the backend is healthy again, or failed to be. */
       restartRecorder: () => Promise<{ ok: boolean; reason?: string }>;

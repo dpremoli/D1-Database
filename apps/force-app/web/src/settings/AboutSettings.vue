@@ -4,19 +4,11 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { CHANGELOG } from '../changelog';
 import { groupNotes } from '../changelogGroups';
+import type { UpdateStatus } from '../electronBridge';
+import { closedNotifyBridge, closedNotifyWarning, loadClosedNotify, toggleClosedNotifyBox } from './closedNotify';
 
 // The changelog is static, so group each entry's notes once, not on every render.
 const ENTRIES = CHANGELOG.map((c) => ({ ...c, groups: groupNotes(c.notes) }));
-
-type UpdateStatus =
-	| { state: 'idle' }
-	| { state: 'checking' }
-	| { state: 'available'; version: string }
-	| { state: 'not-available' }
-	| { state: 'downloading'; percent: number }
-	| { state: 'downloaded'; version: string }
-	| { state: 'installing'; version: string }
-	| { state: 'error'; message: string };
 
 const isElectron = !!window.forceApp;
 const appVersion = ref('');
@@ -25,6 +17,24 @@ const updateStatus = ref<UpdateStatus>({ state: 'idle' });
 const checking = ref(false);
 const installing = ref(false);
 const installNotice = ref('');
+
+// #197: tell me about updates while the app is closed (the shell's Windows scheduled task).
+const closedBridge = closedNotifyBridge();
+const closedSupported = ref(false);
+const closedEnabled = ref(true);
+const closedActive = ref(true);   // the scheduled task really exists (see closedNotify.ts)
+const closedBusy = ref(false);
+const closedError = ref('');
+async function toggleClosedNotify(box: HTMLInputElement) {
+	if (!closedBridge) return;
+	closedBusy.value = true;
+	closedError.value = '';
+	const r = await toggleClosedNotifyBox(closedBridge, box, closedEnabled.value);
+	closedEnabled.value = r.enabled;
+	if (!r.error) closedActive.value = r.enabled;   // a success means the task was made (or removed)
+	closedError.value = r.error;
+	closedBusy.value = false;
+}
 
 async function checkForUpdates() {
 	if (!window.forceApp) return;
@@ -63,6 +73,13 @@ onMounted(async () => {
 	packaged.value = info.packaged;
 	updateStatus.value = info.status;
 	unsubscribeStatus = window.forceApp.onUpdateStatus((s) => { updateStatus.value = s; });
+	if (closedBridge) {
+		const c = await loadClosedNotify(closedBridge);
+		if (gone) return;
+		closedSupported.value = c.supported;
+		closedEnabled.value = c.enabled;
+		closedActive.value = c.active;
+	}
 });
 onBeforeUnmount(() => { gone = true; unsubscribeStatus?.(); unsubscribeStatus = null; });
 </script>
@@ -106,6 +123,19 @@ onBeforeUnmount(() => { gone = true; unsubscribeStatus?.(); unsubscribeStatus = 
 			</p>
 			<p v-if="installNotice" class="err">
 				<span class="material-symbols-rounded" style="font-size: var(--icon-xs)">error</span> {{ installNotice }}
+			</p>
+
+			<label v-if="closedSupported" class="notify-toggle">
+				<input type="checkbox" :checked="closedEnabled" :disabled="closedBusy"
+					@change="toggleClosedNotify($event.target as HTMLInputElement)" />
+				<span>Notify me about updates when the app is closed</span>
+			</label>
+			<p v-if="closedSupported" class="hint">A small Windows scheduled task checks for a new version at sign-in and once a day and shows a notification. It never installs anything.</p>
+			<p v-if="closedNotifyWarning(closedSupported, closedEnabled, closedActive)" class="err">
+				<span class="material-symbols-rounded" style="font-size: var(--icon-xs)">error</span> {{ closedNotifyWarning(closedSupported, closedEnabled, closedActive) }}
+			</p>
+			<p v-if="closedError" class="err">
+				<span class="material-symbols-rounded" style="font-size: var(--icon-xs)">error</span> {{ closedError }}
 			</p>
 		</template>
 
@@ -157,6 +187,7 @@ h2 { margin: 0 0 4px; font-size: var(--fs-xl); }
 .hint { display: flex; align-items: center; gap: 5px; font-size: var(--fs-sm); color: var(--text-dim); margin-top: 4px; }
 .err { display: flex; align-items: center; gap: 5px; color: var(--danger); font-size: var(--fs-sm); margin: 4px 0 0; }
 .actions { display: flex; gap: 10px; margin-top: 6px; }
+.notify-toggle { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: var(--fs-md); color: var(--text); cursor: pointer; }
 
 .install-overlay { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column;
 	align-items: center; justify-content: center; gap: 6px; background: rgba(0,0,0,0.75); color: #fff; text-align: center; }

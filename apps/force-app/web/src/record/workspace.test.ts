@@ -1065,6 +1065,86 @@ describe('workspace.newRun() (R3)', () => {
 	});
 });
 
+// ---- #192: Start on a finished cut is "Start next cut" ----
+describe('workspace.requestStart() after a finished cut (#192)', () => {
+	beforeEach(() => { alarmController.testedSinceStart.value = true; hwStatus.diskFreeGb = 200; });
+	afterEach(() => { hwStatus.diskFreeGb = -1; });
+	const startPosts = () => calls.filter((c) => c === 'POST /record/start').length;
+	const lastStartMeta = () => {
+		const call = vi.mocked(fetch).mock.calls.filter(([u]) => String(u).endsWith('/record/start')).at(-1)!;
+		return JSON.parse(String((call[1] as { body: string }).body)).extra_metadata as Record<string, unknown>;
+	};
+	async function finishedCut() {
+		replies['/record/start'] = { body: { id: 'cap-next' } };
+		const w = await make();
+		w.link.sampleId = 'sample-1'; w.link.sampleLabel = 'S-1'; w.meta.op_type = 'MT-F';
+		w.machining.operation_sequence = '3'; w.machining.new_edge = true;
+		w.machining.chips_ref = 'CH-3'; w.machining.chips_collected = true;
+		w.meta.operation = 'S-1-MT3';   // the auto Cut ID, copied in by the "use" button
+		w.st.state = 'done'; w.st.captureId = 'cap-prev';
+		return w;
+	}
+
+	it('Start steps the sequence and clears the per-cut fields before the cut is recorded', async () => {
+		const w = await finishedCut();
+		await w.requestStart();
+		expect(startPosts()).toBe(1);
+		const m = lastStartMeta();
+		expect(m.operation_sequence).toBe('4');
+		expect(m.new_edge).toBe(false);
+		expect(m.chips_collected).toBe(false);
+		expect(m.chips_ref).toBeUndefined();
+		expect(m.operation).toBeUndefined();     // the previous cut's auto Cut ID is gone: the panel composes S-1-MT4
+		expect(w.machining.operation_sequence).toBe('4');
+	});
+
+	it('New then Start steps the sequence only once', async () => {
+		const w = await finishedCut();
+		w.newRun();
+		expect(w.machining.operation_sequence).toBe('4');
+		await w.requestStart();
+		expect(lastStartMeta().operation_sequence).toBe('4');
+		expect(w.machining.operation_sequence).toBe('4');
+	});
+
+	it('a Start from idle (no finished cut) leaves the per-cut fields alone', async () => {
+		const w = await finishedCut();
+		w.st.state = 'idle';
+		await w.requestStart();
+		expect(lastStartMeta().operation_sequence).toBe('3');
+		expect(lastStartMeta().new_edge).toBe(true);
+	});
+
+	it.each([409, 400])('a Start that fails with %i and is then retried steps the sequence exactly once', async (status) => {
+		const w = await finishedCut();
+		let attempt = 0;
+		replies['/record/start'] = () => (++attempt === 1 ? { ok: false, status, text: 'refused' } : { body: { id: 'cap-next' } });
+		await w.requestStart();
+		expect(startPosts()).toBe(1);
+		expect(w.errMsg.value).toBeTruthy();
+		const afterFail = w.machining.operation_sequence;
+		await w.requestStart();                      // the operator presses Start again
+		expect(startPosts()).toBe(2);
+		expect(w.errMsg.value).toBeNull();
+		expect(afterFail).toBe('4');                 // stepped once by the first press
+		expect(lastStartMeta().operation_sequence).toBe('4');   // not stepped again by the retry
+		expect(w.machining.operation_sequence).toBe('4');
+	});
+
+	it('the "Start without a Sample" confirm path steps once, and only when it actually starts', async () => {
+		const w = await finishedCut();
+		w.link.sampleId = '';
+		await w.requestStart();
+		expect(w.sampleConfirmOpen.value).toBe(true);
+		expect(startPosts()).toBe(0);
+		expect(w.machining.operation_sequence).toBe('3');   // asking is not starting
+		await w.startAnyway();
+		expect(startPosts()).toBe(1);
+		expect(lastStartMeta().operation_sequence).toBe('4');
+		expect(w.machining.operation_sequence).toBe('4');
+	});
+});
+
 // ---- R5: live rail warning ----
 describe('workspace.railBanner (R5)', () => {
 	const railed = (w: Awaited<ReturnType<typeof make>>, ch: number[]) => { w.st.railed = ch; return nextTick(); };

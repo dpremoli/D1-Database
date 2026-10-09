@@ -17,7 +17,6 @@ import type { ColorScale } from './colorScale';
 import { createScaleTexture, syncScaleTexture } from './scaleTexture';
 import { exportFrmFigure } from './frmExport';
 import { useForceHost } from './host';
-import LoadingOverlay from './LoadingOverlay.vue';
 import LinkRings from './LinkRings.vue';
 import { createLoadToken } from './loadToken';
 import { createGlLifecycle } from './glLifecycle';
@@ -71,7 +70,8 @@ const loading = ref(true);
 // used to clear as soon as the root was in, so the rest of the full-res streaming looked finished
 // (#102).
 const stage = ref<LoadStage | null>({ kind: 'open' });
-watch(stage, (s) => emit('stage', stageInfo(s)));
+// immediate: this view starts in 'open' and the host's overlay (#191) must hear about it.
+watch(stage, (s) => emit('stage', stageInfo(s)), { immediate: true });
 // Only the initial fill counts: after it, a pan or zoom re-streams a few nodes and a pill flashing
 // on every gesture would be noise.
 let lastChangeAt = performance.now();
@@ -687,7 +687,7 @@ defineExpose({ currentBounds, exportViewport, revealTime, timeWindow });
 
 <template>
 	<div class="frm-octree">
-		<LoadingOverlay v-if="stage" :stage="stage" />
+		<!-- No loading overlay here: the host draws one for every view type from @stage (#191). -->
 		<div v-if="error" class="fc-msg err"><v-icon name="error" small /> {{ error }}</div>
 		<canvas :key="canvasKey" v-show="!error" ref="canvasEl"></canvas>
 		<!-- linked-moment rings (shared with FrmCloud); placed by updateRings() -->

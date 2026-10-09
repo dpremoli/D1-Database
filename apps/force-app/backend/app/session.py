@@ -24,7 +24,7 @@ from .d1rw import RawWriter
 from .dsp import sum_axes, tacho_column, welch_spectra
 from .finalize import finalize
 from .recovery import raw_info, write_manifest
-from .storage import disk_usage_for
+from .storage import atomic_write_json, disk_usage_for
 from .stream.broadcast import Broadcaster
 from .stream.frame import encode_frame
 
@@ -51,6 +51,11 @@ def _raw_rows(capture_dir: str) -> int:
     """Rows actually in the capture's raw file (0 when it is missing or has only its header)."""
     info = raw_info(capture_dir)
     return info["n_rows"] if info else 0
+
+
+class CutStartRefusedError(Exception):
+    """A manual cut-start mark that must not be applied; the message is the reason shown to the
+    operator (HTTP 409)."""
 
 
 class RecordingSession:
@@ -89,6 +94,13 @@ class RecordingSession:
         self.frm = FrmIntegrator(cfg, fs=self.source.rate)
         self.cut = CutDetector(cfg, self.source.rate)
         self.cut_started_t: float | None = None
+        # Where the cut origin came from ("auto" = the causal detector, "manual" = the operator's
+        # "Start FRM now", #184) and the sample index it sits at; both None until a cut starts.
+        # `_cut_lock` serialises the consumer thread's per-chunk detect/FRM work with a manual mark
+        # arriving on an HTTP thread, so exactly one of them sets the origin.
+        self.cut_start_source: str | None = None
+        self.cut_start_sample: int | None = None
+        self._cut_lock = threading.Lock()
         # Live railing test on the raw volts (see clipping.py); needs the per-channel gains, so
         # it is inert for sim/replay. Its latched set is streamed and reported in status().
         self.rails = RailDetector(cfg.dyno_gains, cfg.analog_fullscale_v, cfg.daq_input_range_v)
@@ -299,6 +311,7 @@ class RecordingSession:
         log.info("session._finalize_async: starting (n_total=%d)", self.n_total)
         try:
             self.summary = finalize(self.dir, self.cfg)
+            self._record_cut_start()
             self.state = "error" if self.error else "done"
             if self.error:
                 self.error_kind = "acquisition"
@@ -322,6 +335,26 @@ class RecordingSession:
                 "summary": self.summary,
             }
         )
+
+    def _record_cut_start(self) -> None:
+        """Add how the live FRM's cut origin was set to summary.json and the in-memory summary
+        (#184): "auto" (causal detector), "manual" ("Start FRM now") or null (it never started),
+        plus its time and sample index. Provenance only: finalize's crop and the detector are
+        untouched. Best effort, since the capture is already complete without it."""
+        extra = {
+            "cut_start_source": self.cut_start_source,
+            "cut_start_sec": self.cut_started_t,
+            "cut_start_sample": self.cut_start_sample,
+        }
+        try:
+            path = os.path.join(self.dir, "summary.json")
+            with open(path) as f:
+                on_disk = json.load(f)
+            atomic_write_json(path, {**on_disk, **extra}, indent=2)
+        except Exception:
+            log.exception("could not record the cut start in summary.json")
+        if self.summary is not None:
+            self.summary.update(extra)
 
     def _in_newtons(self, data: np.ndarray) -> np.ndarray:
         """This chunk with the 8 dyno columns converted from volts to newtons, as finalize.py's
@@ -354,6 +387,41 @@ class RecordingSession:
         return virtual_channels.compute_extra_columns(
             self.cfg.extra_channels, data[:, :8], data[:, 8], axes, hw_raw, on_error=_on_error
         )
+
+    def _set_cut_start(self, t: float, source: str, sample: int) -> None:
+        """The one place a cut origin is set, for the detector and the manual button alike (caller
+        holds `_cut_lock`): record it, reset the FRM spiral to the origin, and tell the clients."""
+        self.cut_started_t = t
+        self.cut_start_source = source
+        self.cut_start_sample = sample
+        self.frm.mark_cut_start()
+        self._publish_control({"type": "cutstart", "t": t, "source": source})
+
+    def mark_cut_start_now(self) -> dict:
+        """Operator's "Start FRM now" (#184): set the cut origin at the latest acquired sample, as
+        if the causal detector had fired there. Raises CutStartRefusedError (-> 409) when not recording,
+        when no sample has arrived yet, when a cut start is already set (auto or manual): the
+        origin is never moved once set, or when this recording does not hold the FRM for the cut
+        (frm_from_cut off): its FRM has run from the first sample, so a mark would re-origin it."""
+        with self._cut_lock:
+            if self.state != "recording":
+                raise CutStartRefusedError("no recording in progress")
+            if not self.cfg.frm_from_cut:
+                raise CutStartRefusedError(
+                    'the FRM is not waiting for the cut ("Detect cut start" is off for this '
+                    "recording), so there is nothing to start"
+                )
+            if self.cut_started_t is not None:
+                raise CutStartRefusedError(
+                    f"the cut start is already set ({self.cut_start_source}, "
+                    f"t={self.cut_started_t:.2f} s)"
+                )
+            if self.n_total == 0:
+                raise CutStartRefusedError("no samples acquired yet")
+            t = self._t_last
+            self.cut.force_start(t)
+            self._set_cut_start(t, "manual", self.n_total - 1)
+            return {"t": t, "sample": self.cut_start_sample, "source": "manual"}
 
     def _consume(self) -> None:
         """Consumer thread. Any failure here (a disk error on the raw append, a bad frame...) must
@@ -399,26 +467,28 @@ class RecordingSession:
             axes = sum_axes(data)
             for i, ax in enumerate(("Fx", "Fy", "Fz")):
                 self.peaks[i] = max(self.peaks[i], float(np.max(np.abs(axes[ax]))))
-            # Causal cut-start detection: reset the FRM spiral origin + tell the UI when it begins.
-            ct = self.cut.update(t, np.abs(axes["Fz"]))
-            if ct is not None:
-                self.cut_started_t = ct
-                self.frm.mark_cut_start()
-                self._publish_control({"type": "cutstart", "t": ct})
             trace = self.decimator.process(t, axes)
             # Per-sub-channel envelopes (the 8 dyno columns, plus any configured Aux/virtual extra)
             # so the client can plot any single sensor live, not just the summed axes.
             extra = self._extra_values(data, axes)
             sub_cols = np.concatenate([data[:, :9], extra], axis=1) if extra.size else data[:, :9]
             sub = self.decimator.process_cols(t, np.asarray(sub_cols, dtype=np.float64))
-            pts, rpm, tacho_ok = self.frm.process(t, axes, tacho_column(data))
+            # Only what depends on the cut origin is under the lock, so a manual mark (#184) waits
+            # for one detect + FRM step, not the whole chunk.
+            with self._cut_lock:
+                # Causal cut-start detection: reset the FRM spiral origin + tell the UI when it
+                # begins. (A manual mark has already flagged the detector, so it stays silent.)
+                ct = self.cut.update(t, np.abs(axes["Fz"]))
+                if ct is not None:
+                    self._set_cut_start(ct, "auto", self.n_total + int(np.searchsorted(t, ct)))
+                pts, rpm, tacho_ok = self.frm.process(t, axes, tacho_column(data))
+                self.n_total += t.size
+                self._t_last = float(t[-1])
             # Only on a transition — this runs per chunk (tens of times a second), and the client
             # only needs to know when the tacho starts or stops being readable.
             if tacho_ok != self._tacho_ok:
                 self._tacho_ok = tacho_ok
                 self._publish_control({"type": "tacho", "ok": tacho_ok})
-            self.n_total += t.size
-            self._t_last = float(t[-1])
             if self.broadcaster is not None:
                 frame = encode_frame(
                     seq, self._t_last, rpm, tuple(self.peaks), self.n_total, trace, pts, sub=sub
@@ -495,6 +565,10 @@ class RecordingSession:
             "tacho_ok": self._tacho_ok,
             # Indices (0-7, Fx1..Fz4) of the sensor channels that have railed this cut.
             "railed": self.rails.railed,
+            # The cut origin the live FRM runs from (None until it starts), so a client that
+            # connects or reloads mid-recording knows whether it is still waiting (#184).
+            "cut_start_sec": self.cut_started_t,
+            "cut_start_source": self.cut_start_source,
         }
         if self.backup:
             s["backup"] = self.backup.status()

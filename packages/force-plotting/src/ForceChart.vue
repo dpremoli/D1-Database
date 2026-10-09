@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, onDeactivated, ref } from 'vue';
 import { hoverIndexAt } from './hoverIndex';
+import ChartHoverLayer from './ChartHoverLayer.vue';
+import { niceNum, type HoverSource } from './chartHover';
 import { createLongPress, isTouchContextMenu, TOUCH_MENU_OFFSET_PX } from './longPress';
 import { markInView, markTagText } from './chartMark';
 import { displayUnit, yAxisTitle, type ChartSnapshot } from './chartExport';
@@ -21,7 +23,8 @@ const props = defineProps<{
 	xUnit?: string;
 	yUnit?: string;
 	logY?: boolean;
-	hoverIndex?: number | null;
+	// The shared hover index (charts scrub together); only ChartHoverLayer reads it (#100).
+	hover?: HoverSource;
 	cropStart?: number | null;
 	cropEnd?: number | null;
 	cropEditable?: boolean;           // Live mode: draggable crop handles that emit updates
@@ -96,17 +99,6 @@ onMounted(() => {
 onBeforeUnmount(() => { longPress.cancel(); ro?.disconnect(); if (rafId) cancelAnimationFrame(rafId); });
 // The Plot page is kept alive: a finger down as it hides never sends its pointerup here.
 onDeactivated(() => longPress.cancel());
-
-function niceNum(v: number): string {
-	const a = Math.abs(v);
-	if (a === 0) return '0';
-	if (a >= 1000) return `${(v / 1000).toFixed(1)}k`;
-	if (a >= 100) return v.toFixed(0);
-	if (a >= 10) return v.toFixed(1);
-	if (a >= 1) return v.toFixed(2);
-	if (a >= 0.01) return v.toFixed(3);
-	return v.toExponential(0);
-}
 
 // A "nice" step (1/2/5 * 10^n) so evenly-spaced x-ticks land on round numbers
 // rather than arbitrary fractions.
@@ -302,20 +294,6 @@ const crop = computed(() => {
 		cropStartX: props.cropStart != null ? sx(props.cropStart) : null,
 		cropEndX: props.cropEnd != null ? sx(props.cropEnd) : null,
 	};
-});
-
-const hoverPt = computed(() => {
-	const g = geom.value;
-	const i = props.hoverIndex;
-	if (!g || i == null || i < g.iA || i > g.iB) return null;
-	const d = props.data;
-	if (props.kind === 'env') {
-		const mid = (d.min[i] + d.max[i]) / 2;
-		return { px: g.sx(g.xs[i]), py: g.sy(mid),
-			label: `${mid.toFixed(2)} ${yLabelUnit.value}`.trim(), sub: `${niceNum(g.xs[i])} ${props.xUnit || ''}`.trim() };
-	}
-	return { px: g.sx(g.xs[i]), py: g.sy(d.amp[i]),
-		label: `${d.amp[i].toPrecision(3)}`, sub: `${niceNum(g.xs[i])} ${props.xUnit || 'Hz'}`.trim() };
 });
 
 // Raw mousemove can fire far faster than the screen repaints, and hoverIndex is a single ref
@@ -551,10 +529,8 @@ function onWheel(ev: WheelEvent) {
 					<text :x="t.x" :y="MT_EFF - 6" text-anchor="middle" class="tick">{{ t.label }}</text>
 				</g>
 			</g>
-			<g v-if="hoverPt">
-				<line :x1="hoverPt.px" :x2="hoverPt.px" :y1="MT_EFF" :y2="geom.Hh - MB" stroke="#64748b" stroke-width="0.6" stroke-dasharray="3 3" />
-				<circle :cx="hoverPt.px" :cy="hoverPt.py" r="2.8" :fill="stroke" />
-			</g>
+			<ChartHoverLayer part="svg" :hover="hover" :geom="geom" :kind="kind" :data="data" :y-label-unit="yLabelUnit" :x-unit="xUnit"
+				:stroke="stroke" :top="MT_EFF" :bottom="geom.Hh - MB" />
 			<!-- Pinned marker: solid, in its own colour (not the chart's --accent, which the active
 			     chart overrides with its trace colour) so it reads apart from the dashed hover line
 			     and the teal/red crop handles. -->
@@ -580,7 +556,8 @@ function onWheel(ev: WheelEvent) {
 		</svg>
 		<div v-else class="chart-empty">no data</div>
 		</div>
-		<div v-if="hoverPt" class="chart-tip"><strong>{{ hoverPt.label }}</strong><span>{{ hoverPt.sub }}</span></div>
+		<ChartHoverLayer v-if="geom" part="tip" :hover="hover" :geom="geom" :kind="kind" :data="data" :y-label-unit="yLabelUnit" :x-unit="xUnit"
+			:stroke="stroke" :top="MT_EFF" :bottom="geom.Hh - MB" />
 	</div>
 </template>
 
@@ -615,11 +592,4 @@ function onWheel(ev: WheelEvent) {
 .chart-empty { flex: 1; display: grid; place-items: center; color: var(--theme--foreground-subdued, #98a2b3); font-size: var(--fs-sm, 12px); }
 /* The accent, not a sky blue a shade off the Fz trace it is dragged across. */
 .zoom-rect { fill: var(--accent, #38bdf8); fill-opacity: 0.16; stroke: var(--accent, #0ea5e9); stroke-width: 0.8; }
-.chart-tip {
-	/* below the header row so it never covers the "peak … N" readout in the top-right */
-	position: absolute; top: 30px; right: 12px; display: flex; flex-direction: column; align-items: flex-end;
-	background: color-mix(in srgb, var(--theme--background, #fff) 85%, transparent); border-radius: 8px; padding: 2px 7px; pointer-events: none;
-}
-.chart-tip strong { font-size: var(--fs-sm, 12px); font-variant-numeric: tabular-nums; }
-.chart-tip span { font-size: var(--fs-xs, 11px); color: var(--theme--foreground-subdued, #98a2b3); }
 </style>

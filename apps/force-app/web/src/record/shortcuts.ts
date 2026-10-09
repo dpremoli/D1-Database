@@ -16,7 +16,7 @@ export interface ShortcutContext {
 	canStop: boolean;
 	/** The alarm overlay is on screen. */
 	alarmShowing: boolean;
-	/** A cut is finished (the New button is showing) and nothing else is in front of it. */
+	/** A cut is finished (the "Clear for next cut" button is showing) and nothing else is in front of it. */
 	canNew: boolean;
 	/** The end-of-cut save dialog is open. */
 	saveDialogOpen: boolean;
@@ -88,10 +88,10 @@ export interface ShortcutHint { keys: string; label: string }
 export function shortcutHints(mac: boolean): ShortcutHint[] {
 	const m = mac ? 'Cmd' : 'Ctrl';
 	return [
-		{ keys: `${m}+Enter`, label: 'Start' },
+		{ keys: `${m}+Enter`, label: 'Start (after a cut: start the next cut)' },
 		{ keys: `${m}+.`, label: 'Stop' },
 		{ keys: 'A', label: 'Acknowledge a safety alarm' },
-		{ keys: `${m}+N`, label: 'New (after a cut is finished)' },
+		{ keys: `${m}+N`, label: 'Clear for next cut (after a cut, without recording)' },
 		{ keys: 'Enter', label: 'Save, in the save dialog' },
 	];
 }
