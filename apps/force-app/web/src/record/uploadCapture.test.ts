@@ -312,3 +312,86 @@ describe('uploadCaptureColdStart failure text for the analysis insert', () => {
 		expect(err.message).toMatch(/both files uploaded/);
 	});
 });
+
+// #194: a multi-GB .mat failing to read or upload must not take the live cache down with it.
+describe('uploadCaptureColdStart when the .mat fails', () => {
+	const info = { ...BASE_INFO, matWritten: true, cfg: { source: 'nidaq', extra_metadata: {} } };
+	const filesPosted = () => post.mock.calls.filter(([u]) => u === '/files').map(([, fd]) => (fd as FormData).get('file') as File);
+	const analysisPosts = () => post.mock.calls.filter(([u]) => u === '/items/machining_force_analysis');
+	beforeEach(() => { patchFn.mockReset(); patchFn.mockResolvedValue({ data: { data: {} } }); });
+
+	it('a .mat fetch that rejects still uploads the cache and creates the row with a null file', async () => {
+		vi.stubGlobal('fetch', vi.fn((url: string) => (url.endsWith('.mat')
+			? Promise.reject(new Error('capture.mat fetch failed'))
+			: Promise.resolve({ ok: true, blob: async () => new Blob(['x']) }))));
+		const err = await uploadCaptureColdStart(info).catch((e) => e);
+		expect(err.message).toMatch(/the \.mat/);
+		expect(err.message).toMatch(/kept locally/);
+		expect(err.message).toMatch(/Retry upload/);
+		expect(filesPosted().map((f) => f.name)).toEqual(['cap-1_live_cache.bin']);
+		expect(analysisPosts()).toHaveLength(1);
+		expect(analysisPosts()[0][1]).toMatchObject({ operation_id: 'op-123', directus_files_id: null, live_cache_file: 'file-1' });
+	});
+
+	it('a .mat upload that fails is reported with its size, and the cache is in', async () => {
+		vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({ ok: true, blob: async () => new Blob([url.endsWith('.mat') ? 'x'.repeat(2048) : 'x']) })));
+		post.mockImplementation((url: string, body: any) => {
+			if (url === '/items/manufacturing_operations') return Promise.resolve({ data: { data: { operation_id: 'op-123' } } });
+			if (url === '/files') {
+				return (body.get('file') as File).name.endsWith('.mat')
+					? Promise.reject(Object.assign(new Error('x'), { response: { status: 413 } }))
+					: Promise.resolve({ data: { data: { id: 'cache-1' } } });
+			}
+			return Promise.resolve({ data: { data: {} } });
+		});
+		const err = await uploadCaptureColdStart(info).catch((e) => e);
+		expect(err.message).toMatch(/the \.mat \(1 MB\) didn't upload/);
+		expect(analysisPosts()[0][1]).toMatchObject({ directus_files_id: null, live_cache_file: 'cache-1' });
+	});
+
+	it('Retry upload sends only the .mat and PATCHes it onto the existing row', async () => {
+		let matFails = true;
+		vi.stubGlobal('fetch', vi.fn((url: string) => (url.endsWith('.mat') && matFails
+			? Promise.reject(new Error('capture.mat fetch failed'))
+			: Promise.resolve({ ok: true, blob: async () => new Blob(['x']) }))));
+		await expect(uploadCaptureColdStart(info)).rejects.toThrow(/the \.mat/);
+		matFails = false;
+		// The row the first attempt created, as the lookup finds it.
+		get.mockImplementation(async (url: string) => (url === '/items/machining_force_analysis'
+			? { data: { data: [{ id: 'a-1', live_cache_file: 'file-1', directus_files_id: null }] } }
+			: { data: { data: [] } }));
+		post.mockClear();
+		await expect(uploadCaptureColdStart(info)).resolves.toBe('op-123');
+		expect(filesPosted().map((f) => f.name)).toEqual(['cap-1.mat']);
+		expect(analysisPosts()).toHaveLength(0);
+		expect(patchFn).toHaveBeenCalledWith('/items/machining_force_analysis/a-1', { directus_files_id: 'file-1' });
+		// And it is now done: a further retry does nothing.
+		post.mockClear();
+		await expect(uploadCaptureColdStart(info)).resolves.toBe('op-123');
+		expect(post).not.toHaveBeenCalled();
+	});
+
+	it('a failed analysis insert after a failed .mat says the .mat did not upload', async () => {
+		vi.stubGlobal('fetch', vi.fn((url: string) => (url.endsWith('.mat')
+			? Promise.reject(new Error('boom')) : Promise.resolve({ ok: true, blob: async () => new Blob(['x']) }))));
+		post.mockImplementation((url: string) => {
+			if (url === '/items/manufacturing_operations') return Promise.resolve({ data: { data: { operation_id: 'op-9' } } });
+			if (url === '/files') return Promise.resolve({ data: { data: { id: 'file-1' } } });
+			return Promise.reject(Object.assign(new Error('x'), { response: { status: 500 } }));
+		});
+		const err = await uploadCaptureColdStart(info).catch((e) => e);
+		expect(err.message).toMatch(/linking the capture failed/);
+		expect(err.message).toMatch(/\.mat did not upload/);
+		expect(err.message).not.toMatch(/both files/);
+	});
+
+	it('a failed cache upload still fails the upload (the row is useless without it)', async () => {
+		post.mockImplementation((url: string) => {
+			if (url === '/items/manufacturing_operations') return Promise.resolve({ data: { data: { operation_id: 'op-9' } } });
+			if (url === '/files') return Promise.reject(Object.assign(new Error('x'), { response: { status: 500 } }));
+			return Promise.resolve({ data: { data: {} } });
+		});
+		await expect(uploadCaptureColdStart(info)).rejects.toThrow(/live_cache\.bin|file upload/);
+		expect(analysisPosts()).toHaveLength(0);
+	});
+});

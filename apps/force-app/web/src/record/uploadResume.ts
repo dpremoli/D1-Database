@@ -19,7 +19,8 @@ export interface UploadProgress {
 	/** undefined = not uploaded yet; null = nothing to upload (no capture.mat was written). */
 	matFileId?: string | null;
 	cacheFileId?: string;
-	/** The machining_force_analysis row exists AND carries every file this capture has. */
+	/** The machining_force_analysis row exists AND carries every file this capture has (a row whose
+	 * .mat failed to upload is NOT done: a retry sends just the .mat and PATCHes the link in). */
 	analysisDone?: boolean;
 	/** An analysis row found for the operation (an earlier attempt, or a lost reply), possibly
 	 * lacking a file link: completed with a PATCH instead of a second row. */
@@ -121,9 +122,10 @@ export async function adoptExistingAnalysis(p: UploadProgress, opId: string, exi
  * Call after the files are uploaded. True when the analysis row must not be posted: it already
  * exists (`analysisRow`, found by adoptExistingAnalysis) or an earlier attempt created it. An
  * existing row that lacks a file link is completed here by PATCHing only the missing fields (a
- * link that is already present is never overwritten); this throws if that PATCH fails.
+ * link that is already present is never overwritten); this throws if that PATCH fails. With
+ * `matWritten`, a row still lacking the .mat is not marked done, so the next attempt sends it.
  */
-export async function analysisAlreadyLinked(p: UploadProgress): Promise<boolean> {
+export async function analysisAlreadyLinked(p: UploadProgress, matWritten = false): Promise<boolean> {
 	if (p.analysisDone) return true;
 	const row = p.analysisRow;
 	if (!row) return false;
@@ -131,6 +133,6 @@ export async function analysisAlreadyLinked(p: UploadProgress): Promise<boolean>
 	if (!row.live_cache_file && p.cacheFileId) patch.live_cache_file = p.cacheFileId;
 	if (!row.directus_files_id && p.matFileId) patch.directus_files_id = p.matFileId;
 	if (Object.keys(patch).length) await api.patch(`/items/machining_force_analysis/${row.id}`, patch);
-	p.analysisDone = true;
+	p.analysisDone = !(matWritten && p.matFileId === undefined);
 	return true;
 }

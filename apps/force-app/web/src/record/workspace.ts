@@ -14,7 +14,7 @@ import { labamp, type AutoRangeRec } from './labampApi';
 import { createPlaybackEngine } from './playback/engine';
 import { loadPlotPrefs, savePlotPrefs, type PlotPrefs } from './plotPrefs';
 import { clearSetupPrefs, defaultSetupPrefs, loadSetupPrefs, pickSetup, saveSetupPrefs, type SetupPrefs } from './setupPrefs';
-import { analysisCreateFailure, directusErrorMessage, fetchCaptureBlobs, numOrNull, uploadCaptureFiles } from './uploadCapture';
+import { analysisCreateFailure, directusErrorMessage, fetchCaptureBlobs, matNotUploadedError, numOrNull, uploadCaptureFiles, type MatFailure } from './uploadCapture';
 import { adoptExistingAnalysis, analysisAlreadyLinked, ensureOperation, needsBlobs, uploadProgress } from './uploadResume';
 import { OFFLINE_SESSION_UPLOAD_MESSAGE, currentRecorder, hasServerSession, ownerPersonId, recorderFields, resolveOwnerPersonId, syncerFields } from '../recorder';
 import { isFetchFailure } from '../netErrors';
@@ -817,9 +817,8 @@ export function createWorkspace() {
 		// the decimated cache; directus_files_id just goes in as null.
 		const blobReads = new AbortController();
 		let blobs = needsBlobs(progress, matWritten)
-			? fetchCaptureBlobs(client.matUrl(id), client.cacheUrl(id), matWritten, blobReads.signal)
+			? fetchCaptureBlobs(client.matUrl(id), client.cacheUrl(id), matWritten, blobReads.signal, progress)
 			: null;
-		blobs?.catch(() => {});   // surfaced by the await below, not as an unhandled rejection
 		let opId: string;
 		let existing: boolean;
 		try {
@@ -832,15 +831,26 @@ export function createWorkspace() {
 		// An existing analysis row may already link some files: don't upload those again.
 		await adoptExistingAnalysis(progress, opId, existing);
 		if (blobs && !needsBlobs(progress, matWritten)) { blobReads.abort(); blobs = null; }
+		// The .mat is independent of the cache: if it fails (reading or uploading a multi-GB file),
+		// the row is still created with directus_files_id null and a retry sends just the .mat.
+		let matFailure: MatFailure | null = null;
 		if (blobs) {
-			const [matBlob, cacheBlob] = await blobs;
-			await uploadCaptureFiles(id, matBlob, cacheBlob, progress);
+			try {
+				matFailure = await uploadCaptureFiles(id, blobs, progress, matWritten);
+			} finally {
+				blobReads.abort();   // a failed cache upload must not leave the .mat download running
+			}
 		}
+		let linked: boolean;
 		try {
 			// Completes an existing but partial analysis row (PATCH of the missing links), else false.
-			if (await analysisAlreadyLinked(progress)) return opId;
+			linked = await analysisAlreadyLinked(progress, matWritten);
 		} catch (e: any) {
 			throw new Error(`linking the capture failed - ${directusErrorMessage(e)} (the run was logged as operation ${opId}, but its existing analysis record could not be completed)`);
+		}
+		if (linked) {
+			if (matFailure) throw matNotUploadedError(matFailure, opId);
+			return opId;
 		}
 		const matFileId = progress.matFileId ?? null;
 		const cacheFileId = progress.cacheFileId!;
@@ -871,10 +881,11 @@ export function createWorkspace() {
 			matlab_version: 'force-app-direct',
 			processed_at: new Date().toISOString(),
 		});
-		progress.analysisDone = true;
+		progress.analysisDone = !matFailure;
 		} catch (e: any) {
-			throw analysisCreateFailure(e, opId, matWritten);
+			throw analysisCreateFailure(e, opId, matWritten, !!matFailure);
 		}
+		if (matFailure) throw matNotUploadedError(matFailure, opId);
 		return opId;
 	}
 
