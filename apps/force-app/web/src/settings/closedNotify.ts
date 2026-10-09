@@ -50,3 +50,17 @@ export async function setClosedNotify(bridge: Bridge, wanted: boolean, previous:
 		return { enabled: previous, error: e instanceof Error ? e.message : 'Could not change the setting.' };
 	}
 }
+
+/**
+ * `setClosedNotify` for a checkbox the operator just clicked. After a refused enable the bound
+ * value does not change (it was false before and still is), so Vue never re-patches `:checked` and
+ * the box would stay ticked with nothing behind it: put the box back to the real state here.
+ */
+export async function toggleClosedNotifyBox(
+	bridge: Bridge, box: { checked: boolean }, previous: boolean,
+): Promise<ClosedNotifyOutcome> {
+	const wanted = box.checked;
+	const outcome = await setClosedNotify(bridge, wanted, previous);
+	box.checked = outcome.enabled;
+	return outcome;
+}

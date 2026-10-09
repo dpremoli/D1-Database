@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { closedNotifyBridge, closedNotifyWarning, loadClosedNotify, setClosedNotify } from './closedNotify';
+import { closedNotifyBridge, closedNotifyWarning, loadClosedNotify, setClosedNotify, toggleClosedNotifyBox } from './closedNotify';
 
 const bridge = (over: Record<string, unknown> = {}) => ({
 	getUpdateNotifyWhenClosed: vi.fn(async () => ({ supported: true, enabled: true, active: true })),
@@ -58,5 +58,27 @@ describe('closedNotifyWarning', () => {
 		expect(closedNotifyWarning(true, true, true)).toBe('');
 		expect(closedNotifyWarning(true, false, false)).toBe('');   // off: nothing is expected to exist
 		expect(closedNotifyWarning(false, true, false)).toBe('');   // browser build: no toggle at all
+	});
+});
+
+describe('toggleClosedNotifyBox', () => {
+	it('unticks the box again when Windows refuses the enable', async () => {
+		const b = bridge({ setUpdateNotifyWhenClosed: async () => ({ ok: false, enabled: false, reason: 'Windows refused' }) });
+		const box = { checked: true };   // the click ticked it
+		const r = await toggleClosedNotifyBox(b, box, false);
+		expect(r.error).toBe('Windows refused');
+		expect(box.checked).toBe(false);
+	});
+	it('re-ticks the box when a refused disable leaves it on', async () => {
+		const b = bridge({ setUpdateNotifyWhenClosed: async () => { throw new Error('ipc gone'); } });
+		const box = { checked: false };
+		await toggleClosedNotifyBox(b, box, true);
+		expect(box.checked).toBe(true);
+	});
+	it('leaves the box as clicked when the change took', async () => {
+		const box = { checked: false };
+		const r = await toggleClosedNotifyBox(bridge(), box, true);
+		expect(r).toEqual({ enabled: false, error: '' });
+		expect(box.checked).toBe(false);
 	});
 });

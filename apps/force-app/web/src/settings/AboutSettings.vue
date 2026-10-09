@@ -5,7 +5,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { CHANGELOG } from '../changelog';
 import { groupNotes } from '../changelogGroups';
 import type { UpdateStatus } from '../electronBridge';
-import { closedNotifyBridge, closedNotifyWarning, loadClosedNotify, setClosedNotify } from './closedNotify';
+import { closedNotifyBridge, closedNotifyWarning, loadClosedNotify, toggleClosedNotifyBox } from './closedNotify';
 
 // The changelog is static, so group each entry's notes once, not on every render.
 const ENTRIES = CHANGELOG.map((c) => ({ ...c, groups: groupNotes(c.notes) }));
@@ -25,11 +25,11 @@ const closedEnabled = ref(true);
 const closedActive = ref(true);   // the scheduled task really exists (see closedNotify.ts)
 const closedBusy = ref(false);
 const closedError = ref('');
-async function toggleClosedNotify(wanted: boolean) {
+async function toggleClosedNotify(box: HTMLInputElement) {
 	if (!closedBridge) return;
 	closedBusy.value = true;
 	closedError.value = '';
-	const r = await setClosedNotify(closedBridge, wanted, closedEnabled.value);
+	const r = await toggleClosedNotifyBox(closedBridge, box, closedEnabled.value);
 	closedEnabled.value = r.enabled;
 	if (!r.error) closedActive.value = r.enabled;   // a success means the task was made (or removed)
 	closedError.value = r.error;
@@ -127,7 +127,7 @@ onBeforeUnmount(() => { gone = true; unsubscribeStatus?.(); unsubscribeStatus = 
 
 			<label v-if="closedSupported" class="notify-toggle">
 				<input type="checkbox" :checked="closedEnabled" :disabled="closedBusy"
-					@change="toggleClosedNotify(($event.target as HTMLInputElement).checked)" />
+					@change="toggleClosedNotify($event.target as HTMLInputElement)" />
 				<span>Notify me about updates when the app is closed</span>
 			</label>
 			<p v-if="closedSupported" class="hint">A small Windows scheduled task checks for a new version at sign-in and once a day and shows a notification. It never installs anything.</p>
