@@ -57,10 +57,10 @@ each under `.claude/worktrees/`. Workers don't edit the backlog, the changelog o
 | C — Plot loading + hover | #191 (P3), #100 slice (P3) | `agent-ae84af1c48ac989d7` | merged (`3d73761`, `6d5885f`); Full keeps a corner pill while streaming |
 | D — Settings, pop-outs, login | #193 (P3), #108 (P2), #196 (P3) | `agent-a59e3ac952ddf81db` | merged (`b1266ce`, `c8eeecb`); #196 light login looks consistent, no change, needs the reporter's screenshot |
 | Simplify, debug, review | /simplify, force-app-verify, force-app-reviewer (Opus) | main checkout | done: simplify `b89b23c`; debug all PASS, found a clipped Clear button; Opus review 2 should-fix + 5 optional, all fixed (`d4bbed9`..`e4f7d40`) |
-| E — Manual FRM start | #184 | `batch2-e-frm-start` | in progress |
-| F — MAT v7.3 for long cuts | #194 format | `batch2-f-mat73` | in progress |
-| G — Channel check | #195 (c) | `batch2-g-channels` | in progress |
-| H — Update notifications | #197 (closed app) | `batch2-h-update-notify` | in progress |
+| E — Manual FRM start | #184 | `batch2-e-frm-start` | merged (`6b08a5f`, `cc4d19d`) |
+| F — MAT v7.3 for long cuts | #194 format | `batch2-f-mat73` | merged (`cbc015d`, `d6b8303`) |
+| G — Channel check | #195 (c) | `batch2-g-channels` | merged (`655b20c`..`45eddd0`) |
+| H — Update notifications | #197 (closed app) | `batch2-h-update-notify` | merged (`57ef258`..`3687507`); simplify `2c9ecf4`; Opus review: 6 should-fix + 3 optional, 8 fixed (`2cacd3d`..`9a40ee5`), skipped: longer finalize blocks the next cut; debug rerun after a usage-limit stop |
 | Coordinator | changelog 0.1.36, backlog, preflight, PR #230 | main checkout | in progress |
 
 ### A. Record actions — #192, #194 wording

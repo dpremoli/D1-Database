@@ -1016,8 +1016,11 @@ when picked up):
   the save dialog says so. In MATLAB, `load('capture.mat')` and `matfile` give the same DATA,
   VariableNames and metadata as a v5 capture; `process_force.m` bakes it. Upload the multi-GB .mat
   through Directus (check `FILES_MAX_UPLOAD_SIZE`, the Caddy body limit, and that the app doesn't run
-  out of memory) and Bake it from the Plot page. The frozen backend loads h5py. Since the 0.1.36
-  batch PR.
+  out of memory) and Bake it from the Plot page. If the .mat upload fails (pull the network
+  mid-upload), the cut still reaches the database without it and the message names the .mat; Retry
+  upload sends only the .mat and links it. The frozen backend loads h5py, and still starts (long cuts
+  then get no .mat and a reason) with a conflicting `hdf5.dll` on PATH. With antivirus scanning the
+  captures folder, a long cut's .mat still lands (the rename is retried). Since the 0.1.36 batch PR.
 - [ ] **#184 Start FRM now.** On a real cut where the detector stays silent ("Detect cut start" on),
   press Start FRM now: the FRM spiral starts from that moment, the Cut cell shows a time and
   summary.json says `cut_start_source: "manual"`. The button disappears when the detector fires
@@ -1031,7 +1034,8 @@ when picked up):
   prompt. With the app closed and a newer version on the feed, the scheduled run shows a toast and
   no window or backend; clicking it opens the app. With the app running, the scheduled run exits
   without touching the window. Turning the toggle off in Settings > About removes the task;
-  uninstalling removes it too. Since the 0.1.36 batch PR.
+  uninstalling removes it too. On a PC where policy blocks creating the task, the toggle says
+  "Couldn't set up the scheduled check" and doesn't stay ticked. Since the 0.1.36 batch PR.
 - [ ] **#197 update prompt (packaged app).** With an update downloaded while the sign-in page is
   showing, typing the password shows no dialog and keeps focus. After sign-in the in-app card
   appears in the corner; Enter in a text field does not install; "Not now" hides it until the next
