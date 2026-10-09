@@ -74,6 +74,7 @@ describe('reassignConfirmText', () => {
 		expect(t).toContain('cDAQ1Mod3/ai0 (Tacho)');
 		expect(t).toContain('replaces the whole saved channel list');
 		expect(t).toContain('4 inputs');
+		expect(t).toContain('kept as a backup file');
 	});
 	it('says so when nothing is bound', () => {
 		expect(reassignConfirmText([], ['a/ai0'])).toContain('No force channel has an input assigned');

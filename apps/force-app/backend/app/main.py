@@ -2844,7 +2844,15 @@ async def nidaq_validate_formula(body: dict) -> dict:
 
 @app.post("/nidaq/channels/autoassign")
 async def nidaq_autoassign() -> dict:
+    """Replace the saved channel list with the automatic layout (#195). That drops names,
+    sensitivities and virtual channels, so the list it replaces is first kept as
+    nidaq_channels.json.bak (one generation: the next auto-assign overwrites it)."""
     _refuse_nidaq_change_if_busy()
+    try:
+        if os.path.isfile(NIDAQ_CHANNELS_PATH):
+            shutil.copyfile(NIDAQ_CHANNELS_PATH, NIDAQ_CHANNELS_PATH + ".bak")
+    except OSError:
+        log.warning("could not back up %s before auto-assign", NIDAQ_CHANNELS_PATH, exc_info=True)
     channels = chan.autoassign(_devices())
     _save_json(NIDAQ_CHANNELS_PATH, {"channels": channels})
     return {"channels": channels}

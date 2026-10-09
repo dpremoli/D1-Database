@@ -58,12 +58,13 @@ export function describeMissing(missing: readonly MissingBinding[]): string[] {
 
 /** What the "Re-assign channels" confirm says: what is wrong now, and that the whole saved list is
  *  replaced by the automatic layout (the backend rebuilds every channel, so sensitivities, gains
- *  and virtual channels set on the NI-DAQ page go too). */
+ *  and virtual channels set on the NI-DAQ page go too), though the backend keeps the previous list
+ *  as nidaq_channels.json.bak. */
 export function reassignConfirmText(bindings: readonly BoundChannel[], scan: readonly string[] | null | undefined): string {
 	const missing = missingBindings(bindings, scan);
 	const now = missing.length
 		? `The saved channels name ${missing.length} port${missing.length === 1 ? '' : 's'} the NI-DAQ does not have: ${describeMissing(missing).join('; ')}.`
 		: 'No force channel has an input assigned.';
 	const n = scan?.length ?? 0;
-	return `${now} Re-assign replaces the whole saved channel list (names, sensitivities, gains and virtual channels) with the automatic layout on the ${n} input${n === 1 ? '' : 's'} the NI-DAQ reports.`;
+	return `${now} Re-assign replaces the whole saved channel list (names, sensitivities, gains and virtual channels) with the automatic layout on the ${n} input${n === 1 ? '' : 's'} the NI-DAQ reports. The previous list is kept as a backup file (nidaq_channels.json.bak, next to the recorder's settings); only the latest one is kept.`;
 }
