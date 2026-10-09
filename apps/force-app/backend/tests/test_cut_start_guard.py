@@ -72,6 +72,25 @@ def test_409_when_nothing_is_recording(client):
     assert "no recording" in r.json()["detail"]
 
 
+def test_409_when_the_recording_does_not_wait_for_the_cut(client):
+    # frm_from_cut off ("Detect cut start" unticked): the FRM ran from the first sample, so a manual
+    # mark would re-origin it mid-cut. Refused; nothing is moved or published.
+    _recording(client, {**NO_FORCE, "frm_from_cut": False})
+    s = main._session
+    assert s.frm._active is True
+    r = client.post("/record/cut-start")
+    assert r.status_code == 409
+    assert "Detect cut start" in r.json()["detail"]
+    assert s.cut_started_t is None and s.cut.detected is False
+    assert not [m for m in client.tap.control if m.get("type") == "cutstart"]
+
+
+def test_the_handler_is_a_plain_def_so_the_threading_lock_stays_off_the_event_loop():
+    import inspect
+
+    assert not inspect.iscoroutinefunction(main.record_cut_start)
+
+
 def test_manual_mark_sets_the_origin_and_the_frm_and_stream_see_it(client):
     _recording(client, NO_FORCE)
     s = main._session

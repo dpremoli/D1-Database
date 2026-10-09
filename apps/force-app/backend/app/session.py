@@ -400,11 +400,17 @@ class RecordingSession:
     def mark_cut_start_now(self) -> dict:
         """Operator's "Start FRM now" (#184): set the cut origin at the latest acquired sample, as
         if the causal detector had fired there. Raises CutStartRefusedError (-> 409) when not recording,
-        when no sample has arrived yet, or when a cut start is already set (auto or manual): the
-        origin is never moved once set."""
+        when no sample has arrived yet, when a cut start is already set (auto or manual): the
+        origin is never moved once set, or when this recording does not hold the FRM for the cut
+        (frm_from_cut off): its FRM has run from the first sample, so a mark would re-origin it."""
         with self._cut_lock:
             if self.state != "recording":
                 raise CutStartRefusedError("no recording in progress")
+            if not self.cfg.frm_from_cut:
+                raise CutStartRefusedError(
+                    "the FRM is not waiting for the cut (\"Detect cut start\" is off for this "
+                    "recording), so there is nothing to start"
+                )
             if self.cut_started_t is not None:
                 raise CutStartRefusedError(
                     f"the cut start is already set ({self.cut_start_source}, "

@@ -2021,10 +2021,14 @@ async def record_stop() -> dict:
 
 
 @app.post("/record/cut-start")
-async def record_cut_start() -> dict:
+def record_cut_start() -> dict:  # plain def: runs in the threadpool, it takes a threading lock
     """Start the live FRM now (#184), for when the causal cut detector never fires. Sets the cut
     origin at the latest acquired sample through the same path the detector uses. 409 when not
-    recording or when a cut start is already set (auto or manual); never re-origins."""
+    recording, when a cut start is already set (auto or manual), or when the recording does not
+    hold the FRM for the cut (frm_from_cut off); never re-origins.
+
+    A plain `def`, not `async def`: mark_cut_start_now() takes the session's threading `_cut_lock`,
+    which the consumer thread holds per chunk; on the event loop that would stall every request."""
     if _session is None:
         raise HTTPException(409, "no recording in progress")
     try:
